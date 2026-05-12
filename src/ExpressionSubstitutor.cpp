@@ -762,6 +762,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		} else {
 			// Original logic for non-pack arguments
 			// Substitute template parameters in the template arguments
+			auto append_resolved_explicit_type_arg = [&](const TypeSpecifierNode& explicit_type) {
+				TypeSpecifierNode resolved_explicit_type = substituteInType(explicit_type);
+				substituted_template_args.emplace_back(resolved_explicit_type);
+			};
 			for (const ASTNode& arg_node : explicit_template_arg_nodes) {
 				FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
 
@@ -819,16 +823,21 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								FLASH_LOG(Templates, Debug, "    Substituting: ", param_name, " -> type_index=", it2->second.type_index);
 								substituted_template_args.push_back(it2->second);
 							} else {
-								FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
-							// Return as-is if we can't substitute
-								return wrapOriginalCall();
+								// Not every TypeCategory::Template spelling is an active template
+								// parameter in this substitution context (e.g. dependent aliases
+								// like size_type inside a class template instantiation). Preserve
+								// it as a concrete explicit type argument instead of bailing out.
+								FLASH_LOG(Templates, Debug, "    Template-like type not present in substitution map, preserving explicit argument: ", param_name);
+								append_resolved_explicit_type_arg(type_spec);
 							}
+						} else {
+							// Keep unresolved template-category spellings as explicit type args.
+							append_resolved_explicit_type_arg(type_spec);
 						}
 					} else {
 					// Non-template type argument - use it directly
 						FLASH_LOG(Templates, Debug, "    Template argument is concrete type, using directly");
-						TemplateTypeArg arg(type_spec);
-						substituted_template_args.push_back(arg);
+						append_resolved_explicit_type_arg(type_spec);
 					}
 				}
 			// Check if this is a TemplateParameterReferenceNode that needs substitution
@@ -2159,6 +2168,45 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			}
 
 			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
+		}
+
+		auto try_resolve_alias_handle = [&](StringHandle type_handle) -> std::optional<TypeSpecifierNode> {
+			auto type_it = getTypesByNameMap().find(type_handle);
+			if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+				return std::nullopt;
+			}
+			const TypeInfo* alias_info = type_it->second;
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				alias_info->registeredTypeIndex().withCategory(alias_info->typeEnum()));
+			if (!resolved_alias.type_index.is_valid()) {
+				return std::nullopt;
+			}
+			TypeSpecifierNode substituted_type =
+				buildTerminalTypeFromResolvedAlias(resolved_alias, type.token());
+			applyResolvedAliasModifiers(substituted_type, resolved_alias);
+			applyOuterTypeModifiers(substituted_type, type);
+			return substituted_type;
+		};
+
+		// Resolve dependent member aliases from the current owner class template,
+		// e.g. "size_type" inside basic_string_view<Traits...>.
+		if (current_owner_type_name_.isValid()) {
+			StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(current_owner_type_name_)
+					.append("::")
+					.append(token_type_name)
+					.commit());
+			if (std::optional<TypeSpecifierNode> resolved_alias = try_resolve_alias_handle(qualified_alias_handle)) {
+				return *resolved_alias;
+			}
+		}
+
+		// Also allow unqualified lookup for type aliases/types already visible in the
+		// current template instantiation context.
+		StringHandle direct_type_handle = StringTable::getOrInternStringHandle(token_type_name);
+		if (std::optional<TypeSpecifierNode> resolved_direct = try_resolve_alias_handle(direct_type_handle)) {
+			return *resolved_direct;
 		}
 
 		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", token_type_name);

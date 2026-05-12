@@ -679,7 +679,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		const TemplateClassDeclarationNode& template_class = template_class_opt->as<TemplateClassDeclarationNode>();
 		const StructDeclarationNode& struct_decl = template_class.class_declaration().as<StructDeclarationNode>();
 
-		// Find the member function with matching name
+		// Find the member function declaration with matching name and parameter arity.
+		// Matching on name alone produces false diagnostics for overload sets.
+		const FunctionDeclarationNode* best_candidate = nullptr;
+		const FunctionDeclarationNode* first_name_match = nullptr;
 		for (const auto& member : struct_decl.member_functions()) {
 			// Skip constructors, destructors, and non-FunctionDeclarationNode entries
 			// (they use ConstructorDeclarationNode/DestructorDeclarationNode types)
@@ -687,15 +690,28 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 				continue;
 			}
 			const FunctionDeclarationNode& member_func = member.function_declaration.as<FunctionDeclarationNode>();
-			if (member_func.decl_node().identifier_token().value() == function_name_token.value()) {
-				// Use validate_signature_match for validation
-				auto validation_result = validate_signature_match(member_func, func_ref);
-				if (!validation_result.is_match()) {
-					FLASH_LOG(Parser, Warning, validation_result.error_message, " in out-of-line template member '",
-							  class_name, "::", function_name_token.value(), "'");
-					// Don't fail - templates may have dependent types that can't be fully resolved yet
-				}
+			if (member_func.decl_node().identifier_token().value() != function_name_token.value()) {
+				continue;
+			}
+			if (!first_name_match) {
+				first_name_match = &member_func;
+			}
+			if (member_func.parameter_nodes().size() == func_ref.parameter_nodes().size()) {
+				best_candidate = &member_func;
 				break;
+			}
+		}
+		if (!best_candidate) {
+			best_candidate = first_name_match;
+		}
+		if (best_candidate &&
+			best_candidate->parameter_nodes().size() == func_ref.parameter_nodes().size()) {
+			// Use validate_signature_match for validation
+			auto validation_result = validate_signature_match(*best_candidate, func_ref);
+			if (!validation_result.is_match()) {
+				FLASH_LOG(Parser, Warning, validation_result.error_message, " in out-of-line template member '",
+						  class_name, "::", function_name_token.value(), "'");
+				// Don't fail - templates may have dependent types that can't be fully resolved yet
 			}
 		}
 	}

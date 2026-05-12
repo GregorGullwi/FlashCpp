@@ -8855,6 +8855,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Check if this function is in the instantiated struct's member functions
 		// We need to find the matching declaration in the instantiated struct and add the definition
 		bool found_match = false;
+		const size_t out_of_line_param_count = func_decl.parameter_nodes().size();
 		for (auto& mem_func : instantiated_struct_ref.member_functions()) {
 			if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
 				FunctionDeclarationNode& inst_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
@@ -8862,6 +8863,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Check if function names match
 				if (inst_decl.identifier_token().value() == decl.identifier_token().value()) {
+					// For overloaded members, the out-of-line definition must attach to the
+					// declaration with the same parameter arity. Matching on name alone
+					// misbinds overloads (e.g., assign/find 2-arg vs 3-arg forms).
+					if (inst_func.parameter_nodes().size() != out_of_line_param_count) {
+						continue;
+					}
 					// Save current position
 					SaveHandle saved_pos = save_token_position();
 
@@ -8871,6 +8878,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Use FunctionParsingScopeGuard for full member-function context:
 					// scope, current_function_, member context push, 'this' injection,
 					// and parameter registration — matching the normal delayed-body path.
+					std::vector<ASTNode> definition_scope_params = inst_func.parameter_nodes();
+					const auto& definition_params = func_decl.parameter_nodes();
+					if (definition_scope_params.size() == definition_params.size()) {
+						auto get_decl_const = [](const ASTNode& node) -> const DeclarationNode* {
+							if (node.is<DeclarationNode>()) {
+								return &node.as<DeclarationNode>();
+							}
+							if (node.is<VariableDeclarationNode>()) {
+								return &node.as<VariableDeclarationNode>().declaration();
+							}
+							return nullptr;
+						};
+						auto get_decl_mut = [&](ASTNode& node) -> DeclarationNode* {
+							return const_cast<DeclarationNode*>(get_decl_const(node));
+						};
+						for (size_t param_index = 0; param_index < definition_scope_params.size(); ++param_index) {
+							DeclarationNode* scope_decl = get_decl_mut(definition_scope_params[param_index]);
+							const DeclarationNode* def_decl = get_decl_const(definition_params[param_index]);
+							if (!scope_decl || !def_decl) {
+								continue;
+							}
+							if (!def_decl->identifier_token().value().empty()) {
+								scope_decl->set_identifier_token(def_decl->identifier_token());
+							}
+						}
+					}
 					{
 						FlashCpp::FunctionParsingScopeGuard func_guard(
 							*this,
@@ -8879,7 +8912,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							&instantiated_struct_ref,
 							instantiated_name,
 							struct_type_info.type_index_,
-							inst_func.parameter_nodes(),
+							definition_scope_params,
 							&inst_func);
 
 						// Parse the function body (handles function-try-blocks too)
