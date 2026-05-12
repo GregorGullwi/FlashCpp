@@ -22,6 +22,7 @@ class ArraySubscriptNode;
 class MemberAccessNode;
 class BinaryOperatorNode;
 class UnaryOperatorNode;
+class StructuredBindingNode;
 
 class ConstructorCallNode;
 class InitializerListNode;
@@ -81,6 +82,25 @@ public:
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
 	// such as prvalue member access becoming an xvalue.
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg);
+
+	enum class StructuredBindingDecompositionKind : uint8_t {
+		Aggregate,
+		TupleLike,
+	};
+
+	struct StructuredBindingTupleElementPlan {
+		StringHandle get_mangled_name{};
+		TypeCategory element_type = TypeCategory::Invalid;
+		TypeIndex element_type_index{};
+		SizeInBits element_size{0};
+	};
+
+	struct StructuredBindingPlan {
+		StructuredBindingDecompositionKind decomposition_kind = StructuredBindingDecompositionKind::Aggregate;
+		std::vector<StructuredBindingTupleElementPlan> tuple_elements;
+	};
+
+	const StructuredBindingPlan* getStructuredBindingPlan(const StructuredBindingNode* key) const;
 
 	// Returns true if sema normalized the function body identified by its ASTNode pointer.
 	// Codegen uses this to skip Phase 15 warnings for bodies sema never visited.
@@ -231,6 +251,7 @@ private:
 	// Statement handler
 	void normalizeStatement(const ASTNode& node, const SemanticContext& ctx);
 	void normalizeBlock(const BlockNode& block, const SemanticContext& ctx);
+	void normalizeStructuredBinding(const StructuredBindingNode& binding, const SemanticContext& ctx);
 
 	// Expression handler (counts and infers types for annotatable expressions)
 	SemanticExprInfo normalizeExpression(ASTNode node, const SemanticContext& ctx);
@@ -478,6 +499,7 @@ private:
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;
+	std::unordered_map<const StructuredBindingNode*, StructuredBindingPlan> structured_binding_plans_;
 
 	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
 	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.
