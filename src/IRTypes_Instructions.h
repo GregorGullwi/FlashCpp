@@ -1354,6 +1354,14 @@ public:
 		return instructions.size();
 	}
 
+	// Rollback: discard all instructions added after the given checkpoint.
+	// Used to undo partial IR emitted by a codegen step that subsequently throws.
+	void truncateTo(size_t n) {
+		if (n < instructions.size()) {
+			instructions.erase(instructions.begin() + static_cast<ptrdiff_t>(n), instructions.end());
+		}
+	}
+
 	size_t reservedCapacity() const {
 		return reserved_capacity_;
 	}

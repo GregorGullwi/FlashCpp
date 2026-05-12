@@ -3860,6 +3860,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 					resolved.constant_type = enum_info->underlying_type;
 					resolved.constant_size = enum_info->underlying_size;
 					resolved.constant_value = static_cast<unsigned long long>(enum_info->getEnumeratorValue(name_handle));
+					resolved.enum_owner_type_index = owner_type_info->type_index_;
 					return resolved;
 				}
 			}
@@ -4692,6 +4693,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						case ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
 							return canonicalizeType(resolved->type);
 						case ResolvedQualifiedIdentifierInfo::Kind::EnumConstant: {
+							// Fast path: use the stored enum owner TypeIndex if available.
+							if (resolved->enum_owner_type_index.is_valid()) {
+								CanonicalTypeDesc desc;
+								desc.type_index = resolved->enum_owner_type_index;
+								return type_context_.intern(desc);
+							}
 							NamespaceHandle ns_handle = e.namespace_handle();
 							if (!ns_handle.isGlobal()) {
 								std::string_view owner_name = gNamespaceRegistry.getName(ns_handle);

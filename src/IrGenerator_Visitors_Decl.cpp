@@ -1345,6 +1345,8 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 		}
 	} else {
 		FLASH_LOG(Codegen, Debug, "[STRUCT] ", struct_name, " - visiting members immediately, count=", node.member_functions().size());
+		// Snapshot IR before member functions so we can rollback on error.
+		const size_t ir_snapshot_before_members = ir_.instructionCount();
 		for (const auto& member_func : node.member_functions()) {
 			const StringHandle member_name = member_func.getName();
 			// Each member function can be a FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
@@ -1495,11 +1497,14 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 			} catch (const std::exception& ex) {
 				FLASH_LOG(Codegen, Error, "Exception while visiting member function in struct ",
 						  struct_name, ": ", ex.what());
-				throw;
+				// Rollback partial IR and skip remaining member functions for this struct.
+				// Re-throwing aborts the entire top-level node (e.g. a whole namespace);
+				// for partially-instantiated template structs this is overly aggressive.
+				ir_.truncateTo(ir_snapshot_before_members);
 			} catch (...) {
 				FLASH_LOG(Codegen, Error, "Unknown exception while visiting member function in struct ",
 						  struct_name);
-				throw;
+				ir_.truncateTo(ir_snapshot_before_members);
 			}
 		}
 	}  // End of if-else for local vs global struct

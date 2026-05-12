@@ -161,6 +161,7 @@ public:
 		SizeInBits constant_size{0};
 		unsigned long long constant_value = 0;
 		bool is_global = false;
+		TypeIndex enum_owner_type_index{};  // For EnumConstant kind: TypeIndex of the owning enum type
 	};
 	struct MemberContext {
 		TypeIndex type_index{};
