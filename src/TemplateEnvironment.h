@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <span>
 
@@ -30,8 +31,13 @@ struct TemplateBindingSnapshot {
 	InlineVector<TypeInfo::TemplateArgInfo, 1> args;
 };
 
-struct TemplateEnvironmentSnapshot {
+struct TemplateEnvironmentSnapshotNode {
+	std::shared_ptr<const TemplateEnvironmentSnapshotNode> parent;
 	InlineVector<TemplateBindingSnapshot, 4> bindings;
+};
+
+struct TemplateEnvironmentSnapshot {
+	std::shared_ptr<const TemplateEnvironmentSnapshotNode> node;
 };
 
 struct TemplateEnvironment {
