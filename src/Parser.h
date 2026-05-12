@@ -3096,7 +3096,7 @@ private:	 // Resume private methods
 	std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
 	const TypeInfo* resolveBaseClassMemberTypeChain(
 		std::string_view base_class_name,
-		const std::vector<QualifiedTypeMemberAccess>& member_type_chain);
+		const std::span<QualifiedTypeMemberAccess> member_type_chain);
 
 	// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 	// Shared across all base class deferral sites.

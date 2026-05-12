@@ -762,6 +762,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		} else {
 			// Original logic for non-pack arguments
 			// Substitute template parameters in the template arguments
+			auto append_resolved_explicit_type_arg = [&](const TypeSpecifierNode& explicit_type) {
+				TypeSpecifierNode resolved_explicit_type = substituteInType(explicit_type);
+				substituted_template_args.emplace_back(resolved_explicit_type);
+			};
 			for (const ASTNode& arg_node : explicit_template_arg_nodes) {
 				FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
 
@@ -819,16 +823,21 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								FLASH_LOG(Templates, Debug, "    Substituting: ", param_name, " -> type_index=", it2->second.type_index);
 								substituted_template_args.push_back(it2->second);
 							} else {
-								FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
-							// Return as-is if we can't substitute
-								return wrapOriginalCall();
+								// Not every TypeCategory::Template spelling is an active template
+								// parameter in this substitution context (e.g. dependent aliases
+								// like size_type inside a class template instantiation). Preserve
+								// it as a concrete explicit type argument instead of bailing out.
+								FLASH_LOG(Templates, Debug, "    Template-like type not present in substitution map, preserving explicit argument: ", param_name);
+								append_resolved_explicit_type_arg(type_spec);
 							}
+						} else {
+							// Keep unresolved template-category spellings as explicit type args.
+							append_resolved_explicit_type_arg(type_spec);
 						}
 					} else {
 					// Non-template type argument - use it directly
 						FLASH_LOG(Templates, Debug, "    Template argument is concrete type, using directly");
-						TemplateTypeArg arg(type_spec);
-						substituted_template_args.push_back(arg);
+						append_resolved_explicit_type_arg(type_spec);
 					}
 				}
 			// Check if this is a TemplateParameterReferenceNode that needs substitution
@@ -2159,6 +2168,41 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			}
 
 			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
+		}
+
+		// Resolve a type name that is a member of the current class template instantiation
+		// (e.g. "size_type" used inside a member function of basic_string_view<CharT>).
+		// C++20 [temp.dep.type]: a name that refers to a member of the current instantiation
+		// is resolved by looking it up in the scope of the concrete instantiation.
+		// We use resolveBaseClassMemberTypeChain, the same proper lookup path used by
+		// resolveDependentMemberType and deferred base-class resolution.
+		if (current_owner_type_name_.isValid()) {
+			QualifiedTypeMemberAccess member_access;
+			member_access.member_name = StringTable::getOrInternStringHandle(token_type_name);
+			InlineVector<QualifiedTypeMemberAccess, 4> member_chain;
+			member_chain.push_back(std::move(member_access));
+			std::string_view owner_name = StringTable::getStringView(current_owner_type_name_);
+			const TypeInfo* resolved_member =
+				parser_.resolveBaseClassMemberTypeChain(owner_name, member_chain);
+			if (resolved_member != nullptr) {
+				FLASH_LOG(Templates, Debug, "  Resolved '", token_type_name,
+					"' as member type of '", owner_name, "'");
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					resolved_member->registeredTypeIndex().withCategory(resolved_member->typeEnum()));
+				TypeSpecifierNode resolved_type = resolved_alias.type_index.is_valid()
+					? buildTerminalTypeFromResolvedAlias(resolved_alias, type.token())
+					: TypeSpecifierNode(
+						resolved_member->registeredTypeIndex().withCategory(resolved_member->typeEnum()),
+						resolved_member->sizeInBits(),
+						type.token(),
+						CVQualifier::None,
+						ReferenceQualifier::None);
+				if (resolved_alias.type_index.is_valid()) {
+					applyResolvedAliasModifiers(resolved_type, resolved_alias);
+				}
+				applyOuterTypeModifiers(resolved_type, type);
+				return resolved_type;
+			}
 		}
 
 		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", token_type_name);

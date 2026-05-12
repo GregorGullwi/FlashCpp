@@ -669,36 +669,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 	func_ref.set_is_variadic(params.is_variadic);
 
-	// Phase 7: Validate signature against the template class declaration (if it exists)
-	// Look up the template class to find the member function declaration
-	auto template_class_opt = gTemplateRegistry.lookupTemplate(
-		QualifiedIdentifier::fromQualifiedName(
-			qualified_class_name,
-			gSymbolTable.get_current_namespace_handle()));
-	if (template_class_opt.has_value() && template_class_opt->is<TemplateClassDeclarationNode>()) {
-		const TemplateClassDeclarationNode& template_class = template_class_opt->as<TemplateClassDeclarationNode>();
-		const StructDeclarationNode& struct_decl = template_class.class_declaration().as<StructDeclarationNode>();
-
-		// Find the member function with matching name
-		for (const auto& member : struct_decl.member_functions()) {
-			// Skip constructors, destructors, and non-FunctionDeclarationNode entries
-			// (they use ConstructorDeclarationNode/DestructorDeclarationNode types)
-			if (member.is_constructor || member.is_destructor || !member.function_declaration.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-			const FunctionDeclarationNode& member_func = member.function_declaration.as<FunctionDeclarationNode>();
-			if (member_func.decl_node().identifier_token().value() == function_name_token.value()) {
-				// Use validate_signature_match for validation
-				auto validation_result = validate_signature_match(member_func, func_ref);
-				if (!validation_result.is_match()) {
-					FLASH_LOG(Parser, Warning, validation_result.error_message, " in out-of-line template member '",
-							  class_name, "::", function_name_token.value(), "'");
-					// Don't fail - templates may have dependent types that can't be fully resolved yet
-				}
-				break;
-			}
-		}
-	}
+	// Signature validation is deferred until class-template instantiation where concrete
+	// template arguments are available. Parse-time checks here see dependent placeholders
+	// and can produce false mismatches for valid C++20 code.
 
 	// Skip function trailing specifiers (const, volatile, noexcept, etc.)
 	FlashCpp::MemberQualifiers member_quals;
