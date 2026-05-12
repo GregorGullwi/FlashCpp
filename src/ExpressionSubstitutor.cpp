@@ -2170,43 +2170,39 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
 		}
 
-		auto try_resolve_alias_handle = [&](StringHandle type_handle) -> std::optional<TypeSpecifierNode> {
-			auto type_it = getTypesByNameMap().find(type_handle);
-			if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
-				return std::nullopt;
-			}
-			const TypeInfo* alias_info = type_it->second;
-			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-				alias_info->registeredTypeIndex().withCategory(alias_info->typeEnum()));
-			if (!resolved_alias.type_index.is_valid()) {
-				return std::nullopt;
-			}
-			TypeSpecifierNode substituted_type =
-				buildTerminalTypeFromResolvedAlias(resolved_alias, type.token());
-			applyResolvedAliasModifiers(substituted_type, resolved_alias);
-			applyOuterTypeModifiers(substituted_type, type);
-			return substituted_type;
-		};
-
-		// Resolve dependent member aliases from the current owner class template,
-		// e.g. "size_type" inside basic_string_view<Traits...>.
+		// Resolve a type name that is a member of the current class template instantiation
+		// (e.g. "size_type" used inside a member function of basic_string_view<CharT>).
+		// C++20 [temp.dep.type]: a name that refers to a member of the current instantiation
+		// is resolved by looking it up in the scope of the concrete instantiation.
+		// We use resolveBaseClassMemberTypeChain, the same proper lookup path used by
+		// resolveDependentMemberType and deferred base-class resolution.
 		if (current_owner_type_name_.isValid()) {
-			StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
-				StringBuilder()
-					.append(current_owner_type_name_)
-					.append("::")
-					.append(token_type_name)
-					.commit());
-			if (std::optional<TypeSpecifierNode> resolved_alias = try_resolve_alias_handle(qualified_alias_handle)) {
-				return *resolved_alias;
+			QualifiedTypeMemberAccess member_access;
+			member_access.member_name = StringTable::getOrInternStringHandle(token_type_name);
+			std::vector<QualifiedTypeMemberAccess> member_chain;
+			member_chain.push_back(std::move(member_access));
+			std::string_view owner_name = StringTable::getStringView(current_owner_type_name_);
+			const TypeInfo* resolved_member =
+				parser_.resolveBaseClassMemberTypeChain(owner_name, member_chain);
+			if (resolved_member != nullptr) {
+				FLASH_LOG(Templates, Debug, "  Resolved '", token_type_name,
+					"' as member type of '", owner_name, "'");
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					resolved_member->registeredTypeIndex().withCategory(resolved_member->typeEnum()));
+				TypeSpecifierNode resolved_type = resolved_alias.type_index.is_valid()
+					? buildTerminalTypeFromResolvedAlias(resolved_alias, type.token())
+					: TypeSpecifierNode(
+						resolved_member->registeredTypeIndex().withCategory(resolved_member->typeEnum()),
+						resolved_member->sizeInBits(),
+						type.token(),
+						CVQualifier::None,
+						ReferenceQualifier::None);
+				if (resolved_alias.type_index.is_valid()) {
+					applyResolvedAliasModifiers(resolved_type, resolved_alias);
+				}
+				applyOuterTypeModifiers(resolved_type, type);
+				return resolved_type;
 			}
-		}
-
-		// Also allow unqualified lookup for type aliases/types already visible in the
-		// current template instantiation context.
-		StringHandle direct_type_handle = StringTable::getOrInternStringHandle(token_type_name);
-		if (std::optional<TypeSpecifierNode> resolved_direct = try_resolve_alias_handle(direct_type_handle)) {
-			return *resolved_direct;
 		}
 
 		FLASH_LOG(Templates, Warning, "  Template parameter not found in substitution map: ", token_type_name);
