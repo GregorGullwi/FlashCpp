@@ -399,6 +399,118 @@ static bool constructorDeclarationsHaveMatchingParameterShape(
 	return true;
 }
 
+static bool typeSpecifiersMatchForSignatureValidation(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs) {
+	auto normalizeTypeIndex = [](const TypeSpecifierNode& type_spec) {
+		TypeIndex effective = type_spec.type_index().withCategory(type_spec.type());
+		if (!effective.is_valid()) {
+			return effective;
+		}
+		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(effective);
+		if (resolved_alias.type_index.is_valid()) {
+			return resolved_alias.type_index.withCategory(resolved_alias.typeEnum());
+		}
+		return effective;
+	};
+
+	const TypeIndex lhs_effective_type = normalizeTypeIndex(lhs);
+	const TypeIndex rhs_effective_type = normalizeTypeIndex(rhs);
+	if (lhs_effective_type.category() != rhs_effective_type.category() ||
+		lhs_effective_type != rhs_effective_type ||
+		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.reference_qualifier() != rhs.reference_qualifier()) {
+		return false;
+	}
+
+	if (lhs.pointer_depth() > 0) {
+		if (lhs.cv_qualifier() != rhs.cv_qualifier()) {
+			return false;
+		}
+
+		const auto& lhs_levels = lhs.pointer_levels();
+		const auto& rhs_levels = rhs.pointer_levels();
+		for (size_t i = 0; i < lhs_levels.size() && i < rhs_levels.size(); ++i) {
+			if (lhs_levels[i].cv_qualifier != rhs_levels[i].cv_qualifier) {
+				return false;
+			}
+		}
+	}
+
+	if (lhs.is_reference() && lhs.cv_qualifier() != rhs.cv_qualifier()) {
+		return false;
+	}
+
+	return true;
+}
+
+static std::optional<TypeSpecifierNode> substituteOutOfLineSignatureType(
+	Parser& parser,
+	const TypeSpecifierNode& original_type,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle owner_type_name) {
+	ASTNode substituted_type_node = parser.substituteTemplateParameters(
+		ASTNode::emplace_node<TypeSpecifierNode>(original_type),
+		template_params,
+		template_args,
+		owner_type_name);
+	if (!substituted_type_node.is<TypeSpecifierNode>()) {
+		return std::nullopt;
+	}
+	const TypeSpecifierNode& substituted_type = substituted_type_node.as<TypeSpecifierNode>();
+	if (substituted_type.type() == TypeCategory::Template) {
+		return std::nullopt;
+	}
+	if (substituted_type.type_index().is_valid()) {
+		if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type.type_index());
+			substituted_type_info != nullptr && substituted_type_info->isDependentPlaceholder()) {
+			return std::nullopt;
+		}
+	}
+	return substituted_type;
+}
+
+static std::optional<bool> functionDeclarationsMatchAfterTemplateSubstitution(
+	Parser& parser,
+	const FunctionDeclarationNode& instantiated_decl,
+	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle owner_type_name) {
+	if (instantiated_decl.parameter_nodes().size() != out_of_line_decl.parameter_nodes().size()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < instantiated_decl.parameter_nodes().size(); ++i) {
+		const TypeSpecifierNode* instantiated_param =
+			getDeclarationParamTypeNode(instantiated_decl.parameter_nodes()[i]);
+		const TypeSpecifierNode* out_of_line_param =
+			getDeclarationParamTypeNode(out_of_line_decl.parameter_nodes()[i]);
+		if (instantiated_param == nullptr || out_of_line_param == nullptr) {
+			return std::nullopt;
+		}
+
+		std::optional<TypeSpecifierNode> substituted_param = substituteOutOfLineSignatureType(
+			parser,
+			*out_of_line_param,
+			template_params,
+			template_args,
+			owner_type_name);
+		if (!substituted_param.has_value()) {
+			return std::nullopt;
+		}
+
+		if (!typeSpecifiersMatchForSignatureValidation(
+				*instantiated_param,
+				*substituted_param)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 // Resolve any stored template arguments on a deferred base member-type chain after a class
 // template's substitution maps are available.
 // Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.
@@ -8869,6 +8981,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (inst_func.parameter_nodes().size() != out_of_line_param_count) {
 						continue;
 					}
+
+					std::optional<bool> signature_match =
+						functionDeclarationsMatchAfterTemplateSubstitution(
+							*this,
+							inst_func,
+							func_decl,
+							std::span<const TemplateParameterNode>(
+								out_of_line_member.template_params.data(),
+								out_of_line_member.template_params.size()),
+							std::span<const TemplateTypeArg>(
+								template_args_to_use.data(),
+								template_args_to_use.size()),
+							instantiated_name);
+					if (signature_match.has_value() && !*signature_match) {
+						FLASH_LOG(Parser, Warning,
+							"Substituted signature mismatch for out-of-line template member candidate '",
+							inst_decl.identifier_token().value(),
+							"' in instantiated class '",
+							StringTable::getStringView(instantiated_name),
+							"'");
+					}
+
 					// Save current position
 					SaveHandle saved_pos = save_token_position();
 

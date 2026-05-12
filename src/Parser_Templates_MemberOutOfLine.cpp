@@ -669,52 +669,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 	func_ref.set_is_variadic(params.is_variadic);
 
-	// Phase 7: Validate signature against the template class declaration (if it exists)
-	// Look up the template class to find the member function declaration
-	auto template_class_opt = gTemplateRegistry.lookupTemplate(
-		QualifiedIdentifier::fromQualifiedName(
-			qualified_class_name,
-			gSymbolTable.get_current_namespace_handle()));
-	if (template_class_opt.has_value() && template_class_opt->is<TemplateClassDeclarationNode>()) {
-		const TemplateClassDeclarationNode& template_class = template_class_opt->as<TemplateClassDeclarationNode>();
-		const StructDeclarationNode& struct_decl = template_class.class_declaration().as<StructDeclarationNode>();
-
-		// Find the member function declaration with matching name and parameter arity.
-		// Matching on name alone produces false diagnostics for overload sets.
-		const FunctionDeclarationNode* best_candidate = nullptr;
-		const FunctionDeclarationNode* first_name_match = nullptr;
-		for (const auto& member : struct_decl.member_functions()) {
-			// Skip constructors, destructors, and non-FunctionDeclarationNode entries
-			// (they use ConstructorDeclarationNode/DestructorDeclarationNode types)
-			if (member.is_constructor || member.is_destructor || !member.function_declaration.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-			const FunctionDeclarationNode& member_func = member.function_declaration.as<FunctionDeclarationNode>();
-			if (member_func.decl_node().identifier_token().handle() != function_name_token.handle()) {
-				continue;
-			}
-			if (!first_name_match) {
-				first_name_match = &member_func;
-			}
-			if (member_func.parameter_nodes().size() == func_ref.parameter_nodes().size()) {
-				best_candidate = &member_func;
-				break;
-			}
-		}
-		if (!best_candidate) {
-			best_candidate = first_name_match;
-		}
-		if (best_candidate &&
-			best_candidate->parameter_nodes().size() == func_ref.parameter_nodes().size()) {
-			// Use validate_signature_match for validation
-			auto validation_result = validate_signature_match(*best_candidate, func_ref);
-			if (!validation_result.is_match()) {
-				FLASH_LOG(Parser, Warning, validation_result.error_message, " in out-of-line template member '",
-						  class_name, "::", function_name_token.value(), "'");
-				// Don't fail - templates may have dependent types that can't be fully resolved yet
-			}
-		}
-	}
+	// Signature validation is deferred until class-template instantiation where concrete
+	// template arguments are available. Parse-time checks here see dependent placeholders
+	// and can produce false mismatches for valid C++20 code.
 
 	// Skip function trailing specifiers (const, volatile, noexcept, etc.)
 	FlashCpp::MemberQualifiers member_quals;
