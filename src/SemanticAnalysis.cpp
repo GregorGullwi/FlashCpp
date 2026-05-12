@@ -2905,17 +2905,19 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		}
 
 		std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
-		StringHandle namespace_handle = get_func->namespace_handle().isGlobal()
-											? StringHandle{}
-											: gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
+		StringHandle namespace_handle{};
+		if (!get_func->namespace_handle().isGlobal()) {
+			namespace_handle = gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
+		}
 		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 			decl_node.identifier_token().value(), return_type, param_types, template_args,
 			get_func->is_variadic(), namespace_handle, get_func->namespace_handle(), false);
 
 		TypeCategory element_type = element_type_spec->type();
-		TypeIndex element_type_index = element_type_spec->type_index().is_valid()
-										   ? element_type_spec->type_index()
-										   : nativeTypeIndex(element_type).withCategory(element_type);
+		TypeIndex element_type_index = element_type_spec->type_index();
+		if (!element_type_index.is_valid()) {
+			element_type_index = nativeTypeIndex(element_type).withCategory(element_type);
+		}
 		SizeInBits element_size{static_cast<int>(element_type_spec->size_in_bits())};
 		if (!element_size.is_set()) {
 			if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {

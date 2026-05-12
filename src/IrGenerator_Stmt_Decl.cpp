@@ -3301,6 +3301,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		}
 
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Using sema tuple-like plan with ", tuple_size_value, " elements");
+		auto clampSizeToTypeSpecifierBits = [](SizeInBits size_bits) -> unsigned char {
+			return static_cast<unsigned char>(size_bits.value > 255 ? 255 : size_bits.value);
+		};
 
 		for (size_t i = 0; i < tuple_size_value; ++i) {
 			StringHandle binding_id = node.identifiers()[i];
@@ -3344,7 +3347,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			TypeSpecifierNode binding_type(
 				current_binding.element_type,
 				TypeQualifier::None,
-				static_cast<unsigned char>(current_binding.element_size.value > 255 ? 255 : current_binding.element_size.value),
+				clampSizeToTypeSpecifierBits(current_binding.element_size),
 				Token(),
 				CVQualifier::None);
 			binding_type.set_type_index(current_binding.element_type_index);
