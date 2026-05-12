@@ -690,7 +690,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 				continue;
 			}
 			const FunctionDeclarationNode& member_func = member.function_declaration.as<FunctionDeclarationNode>();
-			if (member_func.decl_node().identifier_token().value() != function_name_token.value()) {
+			if (member_func.decl_node().identifier_token().handle() != function_name_token.handle()) {
 				continue;
 			}
 			if (!first_name_match) {
