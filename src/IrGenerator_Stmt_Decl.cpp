@@ -3393,6 +3393,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			index_arg.value = static_cast<int64_t>(index);
 			return index_arg;
 		};
+		// Try the most common NTTP index categories used by tuple-like protocols first.
+		// Different libraries/tests in this codebase may spell I as unsigned long,
+		// unsigned long long, unsigned int, or signed integral variants.
 		const TypeCategory index_arg_candidates[] = {
 			TypeCategory::UnsignedLong,
 			TypeCategory::UnsignedLongLong,
