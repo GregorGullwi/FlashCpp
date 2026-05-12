@@ -2,6 +2,7 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 #include "BuiltinListInitNarrowing.h"
+#include <bit>
 
 namespace {
 
@@ -3453,11 +3454,43 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				}
 
 				ExprResult arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
+				const TypeCategory member_type = member.memberType();
+				const int member_size_bits = static_cast<int>(member.size * 8);
+				if (!is_struct_type(member_type) &&
+					arg_operands.pointer_depth.value == 0 &&
+					arg_operands.typeEnum() != member_type) {
+					TypeConversionResult conv = can_convert_type(arg_operands.typeEnum(), member_type);
+					if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+						arg_operands = generateTypeConversion(
+							arg_operands,
+							arg_operands.typeEnum(),
+							member_type,
+							constructorCallNode.called_from());
+					}
+				}
+				// Keep float immediates in 32-bit member representation before MemberStore.
+				// generateTypeConversion currently may leave floating immediates as `double`
+				// literals with only metadata changed to float, which backend MemberStore
+				// then treats as raw 64-bit literal bits. Encode the actual float object
+				// representation here so the emitted 32-bit store is correct.
+				if (member_type == TypeCategory::Float &&
+					std::holds_alternative<double>(arg_operands.value)) {
+					const float converted = static_cast<float>(std::get<double>(arg_operands.value));
+					const uint32_t converted_bits = std::bit_cast<uint32_t>(converted);
+					arg_operands = makeExprResult(
+						nativeTypeIndex(TypeCategory::Float),
+						SizeInBits{member_size_bits},
+						IrOperand{static_cast<unsigned long long>(converted_bits)},
+						PointerDepth{},
+						ValueStorage::ContainsData);
+				}
 				MemberStoreOp store_op;
 				store_op.object = ret_var;
 				store_op.member_name = member.getName();
 				store_op.offset = static_cast<int>(member.offset);
 				store_op.value = toTypedValue(arg_operands);
+				store_op.value.setType(member_type);
+				store_op.value.size_in_bits = SizeInBits{member_size_bits};
 				store_op.struct_type_info = nullptr;
 				store_op.ref_qualifier = CVReferenceQualifier::None;
 				store_op.is_pointer_to_member = false;
