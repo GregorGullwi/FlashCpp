@@ -2179,7 +2179,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 		if (current_owner_type_name_.isValid()) {
 			QualifiedTypeMemberAccess member_access;
 			member_access.member_name = StringTable::getOrInternStringHandle(token_type_name);
-			std::vector<QualifiedTypeMemberAccess> member_chain;
+			InlineVector<QualifiedTypeMemberAccess, 4> member_chain;
 			member_chain.push_back(std::move(member_access));
 			std::string_view owner_name = StringTable::getStringView(current_owner_type_name_);
 			const TypeInfo* resolved_member =

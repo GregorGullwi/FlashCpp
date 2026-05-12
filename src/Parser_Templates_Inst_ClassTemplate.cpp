@@ -2329,7 +2329,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	auto instantiateAndResolveBaseName = [&](
 		std::string_view base_template_name,
-		const std::vector<TemplateTypeArg>& base_args,
+		std::span<TemplateTypeArg> base_args,
 		bool force_eager_instantiation) -> std::string_view {
 		auto result = try_instantiate_class_template(base_template_name, base_args, force_eager_instantiation);
 		if (result.has_value() && result->is<StructDeclarationNode>()) {
@@ -3279,7 +3279,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								final_base_type,
 								template_params,
 								template_args,
-								[&instantiateAndResolveBaseName](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+								[&instantiateAndResolveBaseName](std::string_view concrete_base_template_name, std::span<TemplateTypeArg> concrete_base_args) {
 									return instantiateAndResolveBaseName(concrete_base_template_name, concrete_base_args, true);
 								});
 							final_base_name = StringTable::getStringView(final_base_type->name());
