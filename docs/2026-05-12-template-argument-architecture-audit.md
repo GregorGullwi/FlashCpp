@@ -350,4 +350,3 @@ single parser bug; it is the absence of one semantic template system that owns:
 4. deduction and constraints;
 5. substitution and point-of-instantiation materialization;
 6. constant evaluation under an instantiated semantic context.
-
