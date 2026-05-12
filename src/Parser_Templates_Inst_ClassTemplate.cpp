@@ -5947,6 +5947,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG_FORMAT(Templates, Debug, "Identifier '{}' unresolved in deferred base – falling through", id_name);
 						}
 
+						auto makeEvaluatedDeferredBaseValueArg = [&](const auto& constant_value) {
+							TypeCategory target_category = constant_value.type;
+							if (target_category != TypeCategory::Bool &&
+								is_integer_type(target_category)) {
+								target_category = TypeCategory::Int;
+							}
+							TemplateTypeArg val_arg(constant_value.value, target_category);
+							val_arg.is_pack = arg_info.is_pack;
+							return val_arg;
+						};
+
 						// Special handling for TypeTraitExprNode - need to substitute template parameters
 						if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 							const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
@@ -6009,9 +6020,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 
 								if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
-									TemplateTypeArg val_arg(value->value, value->type);
-									val_arg.is_pack = arg_info.is_pack;
-									resolved_args.push_back(val_arg);
+									resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 									continue;
 								}
 							}
@@ -6122,9 +6131,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 															// Try to evaluate the return expression as a constant
 															if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
 																FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
-																TemplateTypeArg val_arg(ret_value->value, ret_value->type);
-																val_arg.is_pack = arg_info.is_pack;
-																resolved_args.push_back(val_arg);
+																resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*ret_value));
 																continue;
 															}
 														}
@@ -6153,9 +6160,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (auto value = try_evaluate_constant_expression(*var_decl.initializer())) {
 											FLASH_LOG_FORMAT(Templates, Debug, "Evaluated variable template '{}' to value {}",
 															 func_name, value->value);
-											TemplateTypeArg val_arg(value->value, value->type);
-											val_arg.is_pack = arg_info.is_pack;
-											resolved_args.push_back(val_arg);
+											resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 											continue;
 										}
 									}
@@ -6175,9 +6180,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Now try to evaluate the substituted expression
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
 								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
@@ -6194,9 +6197,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Now try to evaluate the substituted expression
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
 								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
@@ -6207,9 +6208,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted qualified identifier to value {}", value->value);
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
 								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted qualified identifier");
@@ -6217,9 +6216,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						} else {
 							// Try to evaluate non-type template argument after substitution
 							if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							}
 						}
@@ -6885,8 +6882,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Check if this static member should be lazily instantiated
 			bool member_needs_complex_substitution = needs_complex_substitution(static_member.initializer);
+			bool member_refs_current_template_identifier = false;
+			if (static_member.initializer.has_value()) {
+				member_refs_current_template_identifier = RebindStaticMemberAst::visitASTUntil(
+					*static_member.initializer,
+					[&](const ASTNode& node) {
+						return node.is<IdentifierNode>() &&
+							node.as<IdentifierNode>().name() == template_name;
+					});
+			}
 
-			if (is_implicit_instantiation && member_needs_complex_substitution) {
+			if (is_implicit_instantiation &&
+				member_needs_complex_substitution &&
+				!member_refs_current_template_identifier) {
 				// Register for lazy instantiation instead of processing now
 				FLASH_LOG(Templates, Debug, "Registering static member '", static_member.getName(),
 						  "' for lazy instantiation");

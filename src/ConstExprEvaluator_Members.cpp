@@ -6550,6 +6550,9 @@ EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 									context)
 								: evaluate(static_member.initializer.value(), context);
 		context.current_depth--;
+		if (!result.success() && IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+			FLASH_LOG(ConstExpr, Debug, "Static member initializer evaluation failed: ", result.error_message);
+		}
 		return result;
 	}
 

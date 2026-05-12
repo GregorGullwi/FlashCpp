@@ -852,6 +852,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				  instantiated_class_name, "::", member_name);
 		return false;
 	}
+	if (FLASH_LOG_ENABLED(Templates, Debug)) {
+		FLASH_LOG(Templates, Debug, "  lazy template params=", lazy_info_ptr->template_params.size(),
+				  ", template args=", lazy_info_ptr->template_args.size());
+	}
 
 	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
 	const InlineVector<TemplateParameterNode, 4>& lazy_template_params_inline =
@@ -872,7 +876,6 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	// Perform initializer substitution if needed
 	std::optional<ASTNode> substituted_initializer = lazy_info.initializer;
-	bool initializer_replayed = false;
 
 	auto try_reparse_lazy_static_initializer = [&]() -> bool {
 		if (!lazy_info.initializer_position.has_value() || !lazy_info.declaration.has_value()) {
@@ -913,7 +916,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			}
 		} lexer_restore_guard{this, current_pos};
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-		parsing_template_depth_ = 0;
+		// Keep template-context parsing semantics during replay so dependent NTTP
+		// expressions are preserved as AST and can be concretely substituted below.
+		parsing_template_depth_ = 1;
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -965,11 +970,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	};
 
 	if (lazy_info.needs_substitution) {
-		initializer_replayed = try_reparse_lazy_static_initializer();
+		(void)try_reparse_lazy_static_initializer();
 	}
 
 	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() &&
-		!initializer_replayed &&
 		lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
 		const auto& template_params = lazy_template_params_inline;
@@ -1102,7 +1106,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (!sub_map.empty()) {
 				ExpressionSubstitutor substitutor(substitution_environment, *this);
 				substitutor.setCurrentOwnerTypeName(struct_info->getName());
-				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
+				substituted_initializer = substitutor.substitute(substituted_initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
 			}
 		}
