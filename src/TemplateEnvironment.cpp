@@ -248,6 +248,8 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 	InlineVector<TemplateBindingSnapshot, 4> bindings =
 		buildSnapshotBindingsForCurrentScope(param_names, args);
 	if (bindings.empty()) {
+		// Keep empty snapshots pointer-free, but preserve an existing parent chain
+		// when this scope introduces no new bindings.
 		if (parent != nullptr) {
 			snapshot = *parent;
 		}

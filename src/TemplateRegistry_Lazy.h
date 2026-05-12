@@ -14,6 +14,23 @@ static StringHandle normalizeClassName(StringHandle handle) {
 	return handle;
 }
 
+inline StringHandle makeLazyMemberExactKey(
+	StringHandle class_name,
+	StringHandle member_name,
+	bool is_const,
+	const void* declaration_identity) {
+	StringBuilder key_builder;
+	class_name = normalizeClassName(class_name);
+	key_builder.append(class_name).append("::").append(member_name);
+	if (is_const) {
+		key_builder.append("$const");
+	}
+	key_builder.append("#decl:");
+	key_builder.append(static_cast<uint64_t>(
+		reinterpret_cast<uintptr_t>(declaration_identity)));
+	return StringTable::getOrInternStringHandle(key_builder);
+}
+
 template <typename ParamContainer, typename ArgContainer>
 TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshotFromBindings(
 	const ParamContainer& template_params,
@@ -110,13 +127,32 @@ struct LazyMemberKey {
 	StringHandle member_function_name;
 	std::optional<bool> is_const_method;
 	StringHandle exact_registry_key;
+	const void* declaration_identity = nullptr;
+
+	static StringHandle buildSyntheticExactKey(
+		StringHandle class_name,
+		StringHandle member_name,
+		bool is_const,
+		const void* declaration_identity) {
+		return makeLazyMemberExactKey(
+			class_name,
+			member_name,
+			is_const,
+			declaration_identity);
+	}
 
 	static LazyMemberKey exact(
 		StringHandle instantiated_class_name,
 		StringHandle member_function_name,
 		bool is_const_method,
-		StringHandle exact_registry_key = {}) {
-		return {instantiated_class_name, member_function_name, is_const_method, exact_registry_key};
+		StringHandle exact_registry_key = {},
+		const void* declaration_identity = nullptr) {
+		return {
+			instantiated_class_name,
+			member_function_name,
+			is_const_method,
+			exact_registry_key,
+			declaration_identity};
 	}
 
 	static LazyMemberKey exact(
@@ -124,7 +160,7 @@ struct LazyMemberKey {
 		const FunctionDeclarationNode& function_decl) {
 		StringHandle exact_key = function_decl.lazy_member_registry_key();
 		if (!exact_key.isValid()) {
-			exact_key = LazyMemberInstantiationRegistry::makeExactKey(
+			exact_key = buildSyntheticExactKey(
 				instantiated_class_name,
 				function_decl.decl_node().identifier_token().handle(),
 				function_decl.is_const_member_function(),
@@ -134,7 +170,8 @@ struct LazyMemberKey {
 			instantiated_class_name,
 			function_decl.decl_node().identifier_token().handle(),
 			function_decl.is_const_member_function(),
-			exact_key);
+			exact_key,
+			&function_decl);
 	}
 
 	static LazyMemberKey exact(
@@ -142,7 +179,7 @@ struct LazyMemberKey {
 		const ConstructorDeclarationNode& ctor_decl) {
 		StringHandle exact_key = ctor_decl.lazy_member_registry_key();
 		if (!exact_key.isValid()) {
-			exact_key = LazyMemberInstantiationRegistry::makeExactKey(
+			exact_key = buildSyntheticExactKey(
 				instantiated_class_name,
 				ctor_decl.name(),
 				false,
@@ -152,7 +189,8 @@ struct LazyMemberKey {
 			instantiated_class_name,
 			ctor_decl.name(),
 			false,
-			exact_key);
+			exact_key,
+			&ctor_decl);
 	}
 
 	static LazyMemberKey exact(
@@ -160,7 +198,7 @@ struct LazyMemberKey {
 		const DestructorDeclarationNode& dtor_decl) {
 		StringHandle exact_key = dtor_decl.lazy_member_registry_key();
 		if (!exact_key.isValid()) {
-			exact_key = LazyMemberInstantiationRegistry::makeExactKey(
+			exact_key = buildSyntheticExactKey(
 				instantiated_class_name,
 				dtor_decl.name(),
 				false,
@@ -170,13 +208,14 @@ struct LazyMemberKey {
 			instantiated_class_name,
 			dtor_decl.name(),
 			false,
-			exact_key);
+			exact_key,
+			&dtor_decl);
 	}
 
 	static LazyMemberKey anyConst(
 		StringHandle instantiated_class_name,
 		StringHandle member_function_name) {
-		return {instantiated_class_name, member_function_name, std::nullopt, {}};
+		return {instantiated_class_name, member_function_name, std::nullopt, {}, nullptr};
 	}
 
 	bool hasExactConstness() const {
@@ -218,15 +257,11 @@ public:
 		StringHandle member_name,
 		bool is_const,
 		const void* declaration_identity) {
-		StringBuilder key_builder;
-		appendMemberKeyPrefix(key_builder, class_name, member_name);
-		if (is_const) {
-			key_builder.append("$const");
-		}
-		key_builder.append("#decl:");
-		key_builder.append(static_cast<uint64_t>(
-			reinterpret_cast<uintptr_t>(declaration_identity)));
-		return StringTable::getOrInternStringHandle(key_builder);
+		return makeLazyMemberExactKey(
+			class_name,
+			member_name,
+			is_const,
+			declaration_identity);
 	}
 
 	static StringHandle makeExactKey(const DeferredMemberIdentity& identity) {
@@ -262,7 +297,9 @@ public:
 	// Check if a member function needs lazy instantiation
 	bool needsInstantiation(const LazyMemberKey& key) const {
 		if (key.hasExactRegistryKey()) {
-			return lazy_members_.find(key.exact_registry_key) != lazy_members_.end();
+			if (lazy_members_.find(key.exact_registry_key) != lazy_members_.end()) {
+				return true;
+			}
 		}
 
 		auto has_live_bucket_entry = [&](bool is_const) {
@@ -312,7 +349,6 @@ public:
 			if (it != lazy_members_.end()) {
 				return it->second;
 			}
-			return std::nullopt;
 		}
 
 		std::optional<StringHandle> exact_key = resolveUniqueLiveKey(key);
@@ -390,8 +426,10 @@ public:
 	// which record/query both variants.
 	void markOdrUsed(const LazyMemberKey& key) {
 		if (key.hasExactRegistryKey()) {
-			odr_used_.insert(key.exact_registry_key);
-			return;
+			if (lazy_members_.find(key.exact_registry_key) != lazy_members_.end()) {
+				odr_used_.insert(key.exact_registry_key);
+				return;
+			}
 		}
 
 		if (std::optional<StringHandle> exact_key = resolveUniqueLiveKey(key);
@@ -444,7 +482,9 @@ public:
 
 	bool isOdrUsed(const LazyMemberKey& key) const {
 		if (key.hasExactRegistryKey()) {
-			return odr_used_.find(key.exact_registry_key) != odr_used_.end();
+			if (odr_used_.find(key.exact_registry_key) != odr_used_.end()) {
+				return true;
+			}
 		}
 
 		if (std::optional<StringHandle> exact_key = resolveUniqueLiveOrUsedKey(key);
@@ -521,6 +561,30 @@ private:
 	LazyMemberInstantiationRegistry() = default;
 
 	std::optional<StringHandle> resolveUniqueLiveKey(const LazyMemberKey& key) const {
+		if (key.declaration_identity != nullptr) {
+			std::optional<StringHandle> declaration_match;
+			for (const auto& [exact_key, info] : lazy_members_) {
+				if (info.identity.instantiated_owner_name != key.instantiated_class_name ||
+					effectiveLookupName(info.identity) != key.member_function_name) {
+					continue;
+				}
+				if (key.is_const_method.has_value() &&
+					info.identity.is_const_method != *key.is_const_method) {
+					continue;
+				}
+				if (info.identity.original_member_node.raw_pointer() != key.declaration_identity) {
+					continue;
+				}
+				if (declaration_match.has_value() && *declaration_match != exact_key) {
+					return std::nullopt;
+				}
+				declaration_match = exact_key;
+			}
+			if (declaration_match.has_value()) {
+				return declaration_match;
+			}
+		}
+
 		std::optional<StringHandle> result;
 		auto consider_bucket = [&](bool is_const) -> bool {
 			auto bucket_it = lazy_member_lookup_.find(

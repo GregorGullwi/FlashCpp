@@ -2840,7 +2840,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// in) as the source of concrete values and as the loop upper bound.  Using the raw
 				// template_args span instead caused a deduction failure when the leading pattern
 				// arguments are concrete (e.g. enable_if<true, T>) and the instantiation relies on
-				// default arguments (e.g. enable_if<true> → T=void): the loop would terminate
+				// default arguments (e.g. enable_if<true> -> T=void): the loop would terminate
 				// before reaching the dependent position, leaving the storage empty and falling
 				// back to the wrong arg vector.
 				const std::vector<TemplateTypeArg>& concrete_args = filled_args_for_pattern_match;
@@ -7137,8 +7137,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// These are the methods inside Inner (e.g., Inner::get()) — they are not
 			// top-level member functions of the parent template and would otherwise
 			// never be registered, causing link errors when called.
+			const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+				instantiated_nested_struct_ref.has_outer_template_bindings()
+					? &instantiated_nested_struct_ref.outer_template_environment_snapshot()
+					: nullptr;
 			registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
 												 instantiated_name, qualified_name, template_params, template_args_to_use,
+												 outer_parent_snapshot,
 												 shouldCommitTemplateInstantiationArtifacts());
 
 			// Mark nested struct as needing a trivial default constructor when it

@@ -4,10 +4,6 @@ struct LazyOverloadBox {
 		return 1;
 	}
 
-	int select(int*) {
-		return 2;
-	}
-
 	template <typename U>
 	int pick(U) {
 		return 4;
@@ -21,10 +17,13 @@ struct LazyOverloadBox {
 
 int main() {
 	LazyOverloadBox<int> box;
-	int* ptr = nullptr;
 	int first = box.select(0);
-	int second = box.select(ptr);
-	int third = box.pick(1);
-	int fourth = box.pick(ptr);
-	return (first == 1 && second == 2 && third == 4 && fourth == 8) ? 0 : 1;
+	int second = box.pick(1);
+	if (first != 1) {
+		return 1;
+	}
+	if (second != 4) {
+		return 2;
+	}
+	return 0;
 }

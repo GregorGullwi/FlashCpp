@@ -1453,9 +1453,16 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	// Process member functions: register for lazy instantiation and add signatures to StructTypeInfo.
 	// Uses the shared helper defined in Parser_Templates_Inst_ClassTemplate.cpp (included first
 	// in the unity build, so it is visible here).
+	TemplateEnvironmentSnapshot nested_outer_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+		lazy_info->parent_template_params,
+		lazy_info->parent_template_args,
+		nullptr);
 	registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
 										 lazy_info->parent_class_name, lazy_info->qualified_name,
 										 lazy_info->parent_template_params, lazy_info->parent_template_args,
+										 hasTemplateEnvironmentSnapshotBindings(nested_outer_snapshot)
+											 ? &nested_outer_snapshot
+											 : nullptr,
 										 shouldCommitTemplateInstantiationArtifacts());
 
 	// Set the struct info on the type
