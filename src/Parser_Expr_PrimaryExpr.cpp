@@ -5071,8 +5071,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								// the whole expression as a dependent call that will be resolved during instantiation.
 								if (any_dependent) {
 									pending_explicit_template_args_.reset();
+									QualifiedIdentifier dependent_owner_template =
+										QualifiedIdentifier::fromQualifiedName(
+											template_name,
+											gSymbolTable.get_current_namespace_handle());
+									std::string_view qualified_template_name =
+										dependent_owner_template.hasNamespace()
+										? StringBuilder()
+											.append(gNamespaceRegistry.getQualifiedName(dependent_owner_template.namespace_handle))
+											.append("::"sv)
+											.append(dependent_owner_template.identifier_handle)
+											.commit()
+										: StringTable::getStringView(dependent_owner_template.identifier_handle);
 									std::string_view dependent_owner_name =
-										get_instantiated_class_name(template_name, *explicit_template_args);
+										get_instantiated_class_name(qualified_template_name, *explicit_template_args);
 									StringHandle dependent_owner_handle =
 										StringTable::getOrInternStringHandle(dependent_owner_name);
 									if (getTypesByNameMap().find(dependent_owner_handle) == getTypesByNameMap().end()) {
@@ -5083,8 +5095,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 										placeholder_type.setTemplateInstantiationInfo(
 											QualifiedIdentifier::fromQualifiedName(
-												template_name,
-												gSymbolTable.get_current_namespace_handle()),
+												qualified_template_name,
+												NamespaceRegistry::GLOBAL_NAMESPACE),
 											toTemplateArgInfoList(*explicit_template_args));
 										getTypesByNameMap()[dependent_owner_handle] = &placeholder_type;
 									}
@@ -5906,8 +5918,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 						}
 						if (any_dependent) {
+							QualifiedIdentifier dependent_owner_template =
+								QualifiedIdentifier::fromQualifiedName(
+									identifier_token.value(),
+									gSymbolTable.get_current_namespace_handle());
+							std::string_view qualified_template_name =
+								dependent_owner_template.hasNamespace()
+								? StringBuilder()
+									.append(gNamespaceRegistry.getQualifiedName(dependent_owner_template.namespace_handle))
+									.append("::"sv)
+									.append(dependent_owner_template.identifier_handle)
+									.commit()
+								: StringTable::getStringView(dependent_owner_template.identifier_handle);
 							std::string_view dependent_owner_name =
-								get_instantiated_class_name(identifier_token.value(), *explicit_template_args);
+								get_instantiated_class_name(qualified_template_name, *explicit_template_args);
 							StringHandle dependent_owner_handle =
 								StringTable::getOrInternStringHandle(dependent_owner_name);
 							if (getTypesByNameMap().find(dependent_owner_handle) == getTypesByNameMap().end()) {
@@ -5918,8 +5942,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 								placeholder_type.setTemplateInstantiationInfo(
 									QualifiedIdentifier::fromQualifiedName(
-										identifier_token.value(),
-										gSymbolTable.get_current_namespace_handle()),
+										qualified_template_name,
+										NamespaceRegistry::GLOBAL_NAMESPACE),
 									toTemplateArgInfoList(*explicit_template_args));
 								getTypesByNameMap()[dependent_owner_handle] = &placeholder_type;
 							}

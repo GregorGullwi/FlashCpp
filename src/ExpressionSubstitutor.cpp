@@ -537,7 +537,6 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 				materialized_arg.dependent_expr = std::move(substituted_expr);
 				materialized_arg.is_dependent = true;
 				result.had_substitution = true;
-				substituted = true;
 			}
 		}
 
@@ -1895,37 +1894,28 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			continue;
 		}
 
-		if (arg.is_value && arg.dependent_expr.has_value()) {
-			ASTNode substituted_expr = substitute(*arg.dependent_expr);
-			if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
-				TemplateTypeArg concrete_arg(value->value, value->type);
-				concrete_arg.is_pack = arg.is_pack;
-				arg = concrete_arg;
-				continue;
+		for (size_t concretize_attempt = 0; concretize_attempt < 8 && arg.is_dependent; ++concretize_attempt) {
+			if (arg.dependent_name.isValid()) {
+				std::string_view dependent_name = StringTable::getStringView(arg.dependent_name);
+				auto param_it = param_map_.find(dependent_name);
+				if (param_it != param_map_.end()) {
+					arg = rebindDependentTemplateTypeArg(param_it->second, arg);
+					continue;
+				}
 			}
-			arg.dependent_expr = std::move(substituted_expr);
-		}
 
-		if (arg.dependent_name.isValid()) {
-			std::string_view dependent_name = StringTable::getStringView(arg.dependent_name);
-			auto param_it = param_map_.find(dependent_name);
-			if (param_it != param_map_.end()) {
-				TemplateTypeArg concrete_arg = param_it->second;
-				concrete_arg.is_pack = arg.is_pack;
-				arg = concrete_arg;
-				continue;
+			if (arg.is_value && arg.dependent_expr.has_value()) {
+				ASTNode substituted_expr = substitute(*arg.dependent_expr);
+				if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
+					TemplateTypeArg concrete_arg(value->value, value->type);
+					concrete_arg.is_pack = arg.is_pack;
+					arg = concrete_arg;
+					break;
+				}
+				arg.dependent_expr = std::move(substituted_expr);
 			}
-		}
 
-		if (!arg.dependent_expr.has_value()) {
-			continue;
-		}
-
-		ASTNode substituted_expr = substitute(*arg.dependent_expr);
-		if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
-			TemplateTypeArg concrete_arg(value->value, value->type);
-			concrete_arg.is_pack = arg.is_pack;
-			arg = concrete_arg;
+			break;
 		}
 	}
 	if (!inst_args.empty() && template_args_still_dependent(inst_args)) {
