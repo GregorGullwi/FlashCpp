@@ -202,7 +202,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		const ASTNode* template_node = nullptr;
 		std::vector<TemplateTypeArg> template_args;
 		int specificity = 0;
-		size_t overload_index = 0;  // index in *all_templates, used for key discrimination
+		size_t overload_index = 0;  // assigned externally to *all_templates index; used to build
+		                            // discriminated cache keys when multiple overloads exist
 	};
 
 	auto tryDeduceCandidate = [&](const ASTNode& template_node_cand) -> std::optional<CandidateResult> {
@@ -262,9 +263,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 				StringHandle base_name = getBaseName(fp_type);
 				if (base_name.isValid() && tparam_names.count(base_name) > 0) {
-					// Viability check: pointer pattern requires enough pointer levels in the arg.
+					// Viability check: a parameter pattern U*^N (e.g. U*, U**) requires at least
+					// N pointer levels in the call argument.  Without this, pick(U*) would be
+					// treated as viable for a plain-int argument, which is incorrect.
 					if (fp_type.pointer_depth() > ca_type.pointer_depth()) {
-						return std::nullopt;
+						return std::nullopt;  // not enough pointer levels in the call argument
 					}
 					tparam_fp_pointer_depth[base_name] = fp_type.pointer_depth();
 				}
