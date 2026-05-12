@@ -8967,7 +8967,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Check if this function is in the instantiated struct's member functions
 		// We need to find the matching declaration in the instantiated struct and add the definition
 		bool found_match = false;
-		const size_t out_of_line_param_count = func_decl.parameter_nodes().size();
 		for (auto& mem_func : instantiated_struct_ref.member_functions()) {
 			if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
 				FunctionDeclarationNode& inst_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
@@ -8978,7 +8977,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// For overloaded members, the out-of-line definition must attach to the
 					// declaration with the same parameter arity. Matching on name alone
 					// misbinds overloads (e.g., assign/find 2-arg vs 3-arg forms).
-					if (inst_func.parameter_nodes().size() != out_of_line_param_count) {
+					if (inst_func.parameter_nodes().size() != func_decl.parameter_nodes().size()) {
 						continue;
 					}
 
