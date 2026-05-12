@@ -941,15 +941,14 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 		!ctor_op.resolved_constructor->is_materialized() &&
 		ctor_op.resolved_constructor->has_any_body_source() &&
 		struct_info.name.isValid()) {
-		StringHandle ctor_name = ctor_op.resolved_constructor->name();
-		if (ctor_name.isValid()) {
-			sema_->ensureMemberFunctionMaterialized(struct_info.name, ctor_name, false);
-			// Re-fetch after materialization: the lazy materializer replaces the
-			// function_decl in struct_info in-place, so default_ctor->function_decl
-			// now refers to the materialized node.
-			if (default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-				ctor_op.resolved_constructor = &default_ctor->function_decl.as<ConstructorDeclarationNode>();
-			}
+		sema_->ensureMemberFunctionMaterialized(
+			struct_info.name,
+			*ctor_op.resolved_constructor);
+		// Re-fetch after materialization: the lazy materializer replaces the
+		// function_decl in struct_info in-place, so default_ctor->function_decl
+		// now refers to the materialized node.
+		if (default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			ctor_op.resolved_constructor = &default_ctor->function_decl.as<ConstructorDeclarationNode>();
 		}
 	}
 

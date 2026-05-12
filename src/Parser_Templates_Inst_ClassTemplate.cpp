@@ -7746,13 +7746,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Slice 2: fill canonical instantiated lookup name (conversion operator renaming)
 				lazy_info.identity.instantiated_lookup_name = shell.effective_name;
 
-				// Save the effective lookup name before moving lazy_info, since
-				// effectiveLookupName accesses lazy_info.identity which will be
-				// in a moved-from state after registerLazyMember.
-				StringHandle effective_name = effectiveLookupName(lazy_info.identity);
+				StringHandle lazy_registry_key{};
 
 				if (shouldCommitTemplateInstantiationArtifacts()) {
-					LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+					lazy_registry_key =
+						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
 				}
 
 				FLASH_LOG(Templates, Debug, "Registered lazy member function: ",
@@ -7760,6 +7758,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				ASTNode new_func_node = shell.function_node;
 				FunctionDeclarationNode& new_func_ref = *shell.function;
+				if (lazy_registry_key.isValid()) {
+					new_func_ref.set_lazy_member_registry_key(lazy_registry_key);
+				}
 				size_t saved_pack_info = pack_param_info_.size();
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
@@ -7794,7 +7795,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
-					StringHandle func_name_handle = effective_name;
+					StringHandle func_name_handle = shell.effective_name;
 					struct_info_ptr->addMemberFunction(
 						func_name_handle,
 						new_func_node,
@@ -7812,7 +7813,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				StringBuilder qualified_name_builder;
 				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
 					.append("::")
-					.append(effective_name);
+					.append(shell.effective_name);
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 				OuterTemplateBinding outer_binding;
 				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);

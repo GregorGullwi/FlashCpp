@@ -2614,6 +2614,9 @@ public:
 	bool has_outer_template_bindings() const { return !outer_template_args_.empty(); }
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
+	void set_lazy_member_registry_key(StringHandle key) { lazy_member_registry_key_ = key; }
+	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
+	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
 
 private:
 	DeclarationNode& decl_node_;
@@ -2650,6 +2653,7 @@ private:
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
+	StringHandle lazy_member_registry_key_;
 };
 
 

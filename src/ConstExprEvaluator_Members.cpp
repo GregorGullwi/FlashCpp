@@ -2728,6 +2728,29 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		lookup_mode,
 		require_static,
 		detect_ambiguity_in_current_struct);
+	if (result.function && !result.function->is_materialized()) {
+		StringHandle owner_name = context.struct_info->name;
+		if (!result.function->parent_struct_name().empty()) {
+			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
+		}
+		if (context.sema) {
+			(void)context.sema->ensureMemberFunctionMaterialized(owner_name, *result.function);
+		} else if (context.parser) {
+			if (context.parser->instantiateLazyMemberIfNeeded(
+					LazyMemberKey::exact(owner_name, *result.function))
+					.has_value()) {
+				context.normalizePendingSemanticRoots();
+			}
+		}
+		result = find_member_function_candidate(
+			context.struct_info,
+			function_name_handle,
+			argument_count,
+			context,
+			lookup_mode,
+			require_static,
+			detect_ambiguity_in_current_struct);
+	}
 	if (result.function || result.ambiguous) {
 		return result;
 	}

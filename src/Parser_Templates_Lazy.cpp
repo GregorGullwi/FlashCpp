@@ -55,7 +55,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey
 		LazyMemberKey::exact(
 			lazy_info_opt->identity.instantiated_owner_name,
 			effectiveLookupName(lazy_info_opt->identity),
-			lazy_info_opt->identity.is_const_method));
+			lazy_info_opt->identity.is_const_method,
+			lazy_info_opt->registry_key));
 	return instantiated;
 }
 
@@ -89,6 +90,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 		auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, ctor_name_handle);
+		new_ctor_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
 			new_ctor_ref.set_outer_template_bindings(lazy_info.outer_template_environment_snapshot);
 		} else {
@@ -442,6 +444,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 		auto [new_dtor_node, new_dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(
 			lazy_info.identity.instantiated_owner_name, dtor_name_handle);
+		new_dtor_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 		new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 
 		std::vector<TemplateTypeArg> converted_template_args;
@@ -547,6 +550,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		true);		   // Force resolved TypeIndex onto full AST substitutions
 	ASTNode new_func_node = shell.function_node;
 	FunctionDeclarationNode& new_func_ref = *shell.function;
+	new_func_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 	if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
 		InlineVector<StringHandle, 4> outer_param_names;
 		InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
@@ -789,8 +793,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		if (struct_info) {
 			// Find and update the member function
 			for (auto& member_func : struct_info->member_functions) {
-				if (member_func.getName() == effectiveLookupName(lazy_info.identity) &&
-					member_func.is_const() == lazy_info.identity.is_const_method) {
+				if (getLazyMemberRegistryKey(member_func.function_decl) == lazy_info.registry_key) {
 					// Replace with the instantiated function
 					member_func.function_decl = new_func_node;
 					FLASH_LOG(Templates, Debug, "Updated StructTypeInfo with instantiated function body");

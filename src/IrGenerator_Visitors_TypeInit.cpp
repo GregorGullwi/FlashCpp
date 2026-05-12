@@ -1761,9 +1761,10 @@ void AstToIr::generateTrivialDefaultConstructors() {
 								base_default_ctor->function_decl.is<ConstructorDeclarationNode>() &&
 								!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_materialized()) {
 								StringHandle base_name = base_struct_info->name;
-								StringHandle ctor_name = base_default_ctor->function_decl.as<ConstructorDeclarationNode>().name();
+								const auto& ctor_decl = base_default_ctor->function_decl.as<ConstructorDeclarationNode>();
+								StringHandle ctor_name = ctor_decl.name();
 								if (base_name.isValid() && ctor_name.isValid()) {
-									LazyMemberKey key = LazyMemberKey::exact(base_name, ctor_name, false);
+									LazyMemberKey key = LazyMemberKey::exact(base_name, ctor_decl);
 									parser_->instantiateLazyMemberIfNeeded(key);
 									normalizePendingSemanticRoots();
 								}

@@ -1074,19 +1074,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(
 	StringHandle owner_handle = StringTable::getOrInternStringHandle(owner_name);
 	StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 	LazyMemberKey member_key = LazyMemberKey::anyConst(owner_handle, member_handle);
-	if (!LazyMemberInstantiationRegistry::getInstance().needsInstantiation(member_key)) {
-		return std::nullopt;
-	}
-
-	FLASH_LOG(
-		Templates,
-		Debug,
-		"Lazy instantiation triggered for canonical owner: ",
-		owner_name,
-		"::",
-		member_name);
 	std::optional<ASTNode> instantiated = instantiateLazyMemberIfNeeded(member_key);
 	if (instantiated.has_value()) {
+		FLASH_LOG(
+			Templates,
+			Debug,
+			"Lazy instantiation triggered for canonical owner: ",
+			owner_name,
+			"::",
+			member_name);
 		normalizePendingSemanticRootsIfAvailable();
 	}
 	return instantiated;
