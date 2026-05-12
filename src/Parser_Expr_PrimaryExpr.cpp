@@ -2853,7 +2853,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* type_info_ptr = type_it->second;
-					const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
 					TypeIndex type_index = type_info_ptr->type_index_;
 
 					advance(); // consume '{'
@@ -2878,8 +2877,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::error("Expected '}' after brace initializer", current_token_);
 					}
 
-					const SizeInBits type_size = struct_info ? struct_info->sizeInBits() : SizeInBits{};
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
+					const SizeInBits type_size = type_info_ptr->sizeInBits();
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(type_info_ptr->category()), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
 					return ParseResult::success(*result);
 				}
@@ -2934,12 +2933,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
 					auto type_it = types_by_name.find(qualified_handle);
-					if (type_it != types_by_name.end() && type_it->second->isStruct()) {
+					if (type_it != types_by_name.end() &&
+						(type_it->second->isStruct() || type_it->second->isEnum())) {
 						const TypeInfo& type_info = *type_it->second;
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						const SizeInBits type_size = struct_info ? struct_info->sizeInBits() : SizeInBits{};
+						const SizeInBits type_size = type_info.sizeInBits();
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
-							type_info.type_index_.withCategory(TypeCategory::Struct),
+							type_info.type_index_.withCategory(type_info.category()),
 							type_size,
 							final_identifier,
 							CVQualifier::None,

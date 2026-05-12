@@ -871,6 +871,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		}
 		return ConversionPlan::no_match();
 	}
+	if (from_type_index.isEnum() && to_type_index.isEnum() &&
+		from_type_index.is_valid() && to_type_index.is_valid()) {
+		if (from_type_index == to_type_index) {
+			return ConversionPlan::exact_match();
+		}
+		return ConversionPlan::no_match();
+	}
 	return buildConversionPlan(from_type_category, to_type_category);
 }
 
