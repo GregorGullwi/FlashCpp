@@ -10,7 +10,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1418ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~400ms (retested 2026-05-07, Linux/libstdc++-14). No longer stops at unresolved `auto` mangling in `std::__is_complete_or_unbounded`; targeted trait assertions compile end-to-end again. Regression coverage includes `tests/std/test_std_is_complete_or_unbounded_resolved.cpp` and `tests/std/test_std_utility_is_complete_or_unbounded_ret0.cpp`. |
-| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~609ms (retested 2026-04-11). Targeted test still compiles, but bare `#include <compare>` now fails with "Ambiguous constructor call" during codegen of a namespace-level node. |
+| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~680ms (retested 2026-05-12, Linux/libstdc++-14). Targeted test still compiles, but bare `#include <compare>` now reaches the hidden friend comparison-category operators before failing with `Sema-normalized constructor call is missing a resolved constructor for 'std::partial_ordering'`. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
@@ -22,7 +22,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~2710ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops are fixed; current first hard error is `Failed to instantiate template function` in `bits/max_size_type.h:790` (`min()`). |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
@@ -100,6 +100,31 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-12 Linux/libstdc++ hidden-friend constructor-normalization follow-up
+
+This pass fixed two high-layer overload/semantic-analysis issues found while
+retesting `<compare>`:
+
+- Hidden friend function declarations now expose their stored function AST by
+  reference, so semantic normalization annotates the same body that codegen
+  later lowers instead of a temporary copy.
+- Constructor overload resolution now treats different enum types as different
+  types for exact-match ranking.  This prevents two enum-parameter constructors
+  from tying just because both parameters have `TypeCategory::Enum`.
+
+Regression coverage:
+
+- `tests/std/test_hidden_friend_ctor_normalization_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_hidden_friend_ctor_normalization_ret0.cpp` | ✅ Pass | 0.03s | New regression verifies hidden friends returning `PartialOrdering(Ord(...))` and `PartialOrdering(Ncmp::unordered)` resolve the selected explicit enum constructors. |
+| `<compare>` (bare `#include <compare>`) | ❌ Codegen Error | 0.68s | Progresses through more comparison-category hidden friend bodies; current stop is still a later `std::partial_ordering` constructor call with unresolved sema constructor metadata. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | 3.22s | Current first hard error is lazy member-body replay failure for `basic_string<...>::clear`. |
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2283 pass / 0 fail, 172 `_fail` correct. |
 
 ### 2026-05-11 Linux/libstdc++ tuple semantic-boundary follow-up
 

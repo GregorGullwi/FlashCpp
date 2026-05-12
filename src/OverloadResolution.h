@@ -852,9 +852,11 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		}
 	}
 
-	// Non-pointer, non-reference types: use basic type conversion with resolved types.
-	// For struct-to-struct, use type_index to distinguish same struct (ExactMatch) from
-	// different struct (UserDefined if a converting constructor exists, else no_match).
+	// Non-pointer, non-reference user-defined categories need resolved TypeIndex
+	// checks before falling back to primitive-category conversion.  Structs and
+	// enums both share a coarse TypeCategory across distinct concrete types, so
+	// overload resolution must compare the resolved type indices to distinguish
+	// exact matches from different types.
 	if (from_type_index.isStruct() && to_type_index.isStruct() &&
 		from_type_index.is_valid() && to_type_index.is_valid()) {
 		if (from_type_index == to_type_index) {
@@ -869,6 +871,16 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			!getTypeInfo(to.type_index()).getStructInfo()) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
+		return ConversionPlan::no_match();
+	}
+	if (from_type_index.isEnum() && to_type_index.isEnum() &&
+		from_type_index.is_valid() && to_type_index.is_valid()) {
+		if (from_type_index == to_type_index) {
+			return ConversionPlan::exact_match();
+		}
+		// C++20 [conv.prom]/4 and [conv.integral] allow enum-to-integral
+		// conversions, not implicit conversions between distinct enum types.
+		// Unlike structs, enums cannot provide converting constructors.
 		return ConversionPlan::no_match();
 	}
 	return buildConversionPlan(from_type_category, to_type_category);

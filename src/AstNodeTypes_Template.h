@@ -920,7 +920,7 @@ public:
 
 	// For friend functions, store the function declaration
 	void set_function_declaration(ASTNode decl) { function_decl_ = decl; }
-	std::optional<ASTNode> function_declaration() const { return function_decl_; }
+	const std::optional<ASTNode>& function_declaration() const { return function_decl_; }
 
 private:
 	FriendKind kind_;
