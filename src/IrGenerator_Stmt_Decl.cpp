@@ -3296,7 +3296,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 	object_type_arg.type_index = init_type_index;
 	object_type_arg.setType(init_type);
 
-	auto resolve_struct_specialization = [&](std::string_view template_name, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
+	auto resolve_struct_specialization = [&](std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) -> const StructDeclarationNode* {
 		auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (!specialization.has_value()) {
 			specialization = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
@@ -3386,12 +3386,19 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		std::vector<TupleBindingInfo> binding_info;
 		binding_info.reserve(tuple_size_value);
 
-		auto make_index_arg = [](size_t index) -> TemplateTypeArg {
+		auto make_index_arg = [](size_t index, TypeCategory index_type) -> TemplateTypeArg {
 			TemplateTypeArg index_arg;
-			index_arg.setType(TypeCategory::UnsignedLongLong);
+			index_arg.setType(index_type);
 			index_arg.is_value = true;
 			index_arg.value = static_cast<int64_t>(index);
 			return index_arg;
+		};
+		const TypeCategory index_arg_candidates[] = {
+			TypeCategory::UnsignedLong,
+			TypeCategory::UnsignedLongLong,
+			TypeCategory::UnsignedInt,
+			TypeCategory::LongLong,
+			TypeCategory::Int
 		};
 
 		StringHandle type_alias_name = StringTable::getOrInternStringHandle("type");
@@ -3399,12 +3406,19 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: tuple_size detected with ", tuple_size_value, " elements");
 
 		for (size_t i = 0; i < tuple_size_value; ++i) {
-			TemplateTypeArg index_arg = make_index_arg(i);
-			std::vector<TemplateTypeArg> tuple_element_args = {index_arg, object_type_arg};
-
-			const StructDeclarationNode* tuple_element_decl = resolve_struct_specialization("tuple_element", tuple_element_args);
-			if (!tuple_element_decl) {
-				tuple_element_decl = resolve_struct_specialization("std::tuple_element", tuple_element_args);
+			const StructDeclarationNode* tuple_element_decl = nullptr;
+			TemplateTypeArg resolved_index_arg;
+			for (TypeCategory index_type : index_arg_candidates) {
+				TemplateTypeArg index_arg = make_index_arg(i, index_type);
+				std::vector<TemplateTypeArg> tuple_element_args = {index_arg, object_type_arg};
+				tuple_element_decl = resolve_struct_specialization("tuple_element", tuple_element_args);
+				if (!tuple_element_decl) {
+					tuple_element_decl = resolve_struct_specialization("std::tuple_element", tuple_element_args);
+				}
+				if (tuple_element_decl) {
+					resolved_index_arg = index_arg;
+					break;
+				}
 			}
 			if (!tuple_element_decl) {
 				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: missing tuple_element<", i, ", ",
@@ -3444,23 +3458,26 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			int element_size = element_type_spec->size_in_bits();
 			if (element_size == 0) {
 				if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
-					element_size = element_type_info->sizeInBits();
+					element_size = element_type_info->sizeInBits().value;
 				}
 				if (element_size == 0) {
 					element_size = get_type_size_bits(element_type);
 				}
 			}
 
-			std::vector<TemplateTypeArg> get_template_args = {index_arg};
-			auto get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
-			if (!get_spec.has_value()) {
-				get_spec = gTemplateRegistry.matchSpecializationPattern("get", get_template_args);
-			}
-			if (!get_spec.has_value()) {
-				get_spec = gTemplateRegistry.lookupExactSpecialization("std::get", get_template_args);
-			}
-			if (!get_spec.has_value()) {
-				get_spec = gTemplateRegistry.matchSpecializationPattern("std::get", get_template_args);
+			std::optional<ASTNode> get_spec;
+			{
+				std::vector<TemplateTypeArg> get_template_args = {resolved_index_arg};
+				get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
+				if (!get_spec.has_value()) {
+					get_spec = gTemplateRegistry.matchSpecializationPattern("get", get_template_args);
+				}
+				if (!get_spec.has_value()) {
+					get_spec = gTemplateRegistry.lookupExactSpecialization("std::get", get_template_args);
+				}
+				if (!get_spec.has_value()) {
+					get_spec = gTemplateRegistry.matchSpecializationPattern("std::get", get_template_args);
+				}
 			}
 			if (!get_spec.has_value()) {
 				FLASH_LOG(Codegen, Error, "Structured binding tuple-like protocol failed: missing get<", i,
@@ -3488,7 +3505,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 												? StringHandle{}
 												: gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
 			auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
-				decl_node.name(), return_type, param_types, template_args,
+				decl_node.identifier_token().value(), return_type, param_types, template_args,
 				get_func->is_variadic(), namespace_handle, get_func->namespace_handle(), false);
 
 			binding_info.push_back({
