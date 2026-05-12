@@ -1,5 +1,6 @@
 #include "TemplateEnvironment.h"
 
+#include "ChunkedAnyVector.h"
 #include "TemplateRegistry_Pattern.h"
 #include "TemplateRegistry_Types.h"
 
@@ -191,14 +192,14 @@ InlineVector<TemplateBindingSnapshot, 4> buildSnapshotBindingsForCurrentScope(
 
 template <typename Fn>
 void forEachTemplateEnvironmentSnapshotBinding(
-	const std::shared_ptr<const TemplateEnvironmentSnapshotNode>& node,
+	const TemplateEnvironmentSnapshotNode* node,
 	Fn&& fn) {
 	// Walk parent-first so legacy replay and environment reconstruction see the
 	// same outer-to-inner binding order that flattened snapshots previously had.
 	InlineVector<const TemplateEnvironmentSnapshotNode*, 4> chain;
-	for (const TemplateEnvironmentSnapshotNode* current = node.get();
+	for (const TemplateEnvironmentSnapshotNode* current = node;
 		current != nullptr;
-		current = current->parent.get()) {
+		current = current->parent) {
 		chain.push_back(current);
 	}
 	for (size_t i = chain.size(); i > 0; --i) {
@@ -209,25 +210,25 @@ void forEachTemplateEnvironmentSnapshotBinding(
 }
 
 size_t countTemplateEnvironmentSnapshotBindings(
-	const std::shared_ptr<const TemplateEnvironmentSnapshotNode>& node) {
+	const TemplateEnvironmentSnapshotNode* node) {
 	// Count one entry per stored binding segment across the full parent chain.
 	size_t count = 0;
-	for (const TemplateEnvironmentSnapshotNode* current = node.get();
+	for (const TemplateEnvironmentSnapshotNode* current = node;
 		current != nullptr;
-		current = current->parent.get()) {
+		current = current->parent) {
 		count += current->bindings.size();
 	}
 	return count;
 }
 
 size_t countTemplateEnvironmentSnapshotLegacyEntries(
-	const std::shared_ptr<const TemplateEnvironmentSnapshotNode>& node) {
+	const TemplateEnvironmentSnapshotNode* node) {
 	// Legacy param/arg views expand packs back into one entry per argument, so
 	// reserve using that expanded count across the full parent chain.
 	size_t count = 0;
-	for (const TemplateEnvironmentSnapshotNode* current = node.get();
+	for (const TemplateEnvironmentSnapshotNode* current = node;
 		current != nullptr;
-		current = current->parent.get()) {
+		current = current->parent) {
 		for (const TemplateBindingSnapshot& binding : current->bindings) {
 			count += binding.is_pack
 				? binding.args.size()
@@ -255,11 +256,11 @@ TemplateEnvironmentSnapshot buildTemplateEnvironmentSnapshot(
 		}
 		return snapshot;
 	}
-	std::shared_ptr<TemplateEnvironmentSnapshotNode> node =
-		std::make_shared<TemplateEnvironmentSnapshotNode>();
-	node->parent = parent != nullptr ? parent->node : nullptr;
-	node->bindings = std::move(bindings);
-	snapshot.node = std::move(node);
+	TemplateEnvironmentSnapshotNode& node =
+		gChunkedAnyStorage.emplace_back<TemplateEnvironmentSnapshotNode>();
+	node.parent = parent != nullptr ? parent->node : nullptr;
+	node.bindings = std::move(bindings);
+	snapshot.node = &node;
 	return snapshot;
 }
 

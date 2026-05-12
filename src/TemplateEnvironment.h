@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <optional>
 #include <span>
 
@@ -32,12 +31,12 @@ struct TemplateBindingSnapshot {
 };
 
 struct TemplateEnvironmentSnapshotNode {
-	std::shared_ptr<const TemplateEnvironmentSnapshotNode> parent;
+	const TemplateEnvironmentSnapshotNode* parent = nullptr;
 	InlineVector<TemplateBindingSnapshot, 4> bindings;
 };
 
 struct TemplateEnvironmentSnapshot {
-	std::shared_ptr<const TemplateEnvironmentSnapshotNode> node;
+	const TemplateEnvironmentSnapshotNode* node = nullptr;
 };
 
 struct TemplateEnvironment {
