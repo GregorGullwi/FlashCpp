@@ -80,10 +80,50 @@ normalization/subsumption.
 ## What is left / next
 
 The completed refactor should be treated as the foundation, not the finish line.
-The next work is split into immediate cleanup items that can be attacked in
-small PRs and larger architecture tracks that need focused design.
+The immediate cleanup items from the first follow-up pass are closed. The
+remaining work is now mostly architecture work plus a few hardening passes that
+should be split into focused investigations.
 
-### Completed immediate follow-up items
+### Open next steps
+
+1. **Unify semantic lookup for template candidate discovery.**
+   Template lookup still has direct registry-by-name paths. The next pass should
+   route class/function/alias/variable template candidate discovery through one
+   semantic lookup result that records declaration identity, lookup kind,
+   dependency, and definition-vs-POI timing.
+
+2. **Broaden two-phase lookup records beyond non-dependent function calls.**
+   Definition-context records now protect selected non-dependent unqualified
+   calls, but qualified names, static initializers, member templates, dependent
+   bases, unknown specializations, and broader ADL still need explicit
+   definition/POI records.
+
+3. **Implement real structural NTTP values.**
+   Typed integral/enum/`nullptr` identity is implemented. Pointer, reference,
+   function-pointer, member-pointer, floating-point, and structural class-type
+   NTTPs are still unsupported or placeholder categories until parser and
+   constexpr evaluation can produce standard semantic values.
+
+4. **Expand shape-only deduction and ranking.**
+   Selected overloaded free/member function-template paths can rank
+   signature-only candidates before body materialization. The older
+   full-instantiation fallback remains for unhandled cases; keep moving
+   candidate construction, deduction, constraints, partial ordering, and ranking
+   into sema-owned phases.
+
+5. **Complete dependent-name and current-instantiation modeling.**
+   `TypeInfo::DependentQualifiedNameRecord` covers high-value member-type
+   placeholders, but full `[temp.dep]` support still needs current-instantiation
+   identity, dependent base lookup, unknown specialization classification,
+   expression qualified-id records, and alias ordering.
+
+6. **Harden constructor annotation fallback into an invariant.**
+   Current valid coverage no longer needs the fallback in tested cases, but
+   codegen still intentionally keeps a soft fallback for uncovered/invalid
+   paths. Keep widening sema coverage until the fallback can be converted into a
+   hard diagnostic or invariant without losing valid code.
+
+### Recently closed follow-up items
 
 1. **Close the remaining typed-NTTP identity holes.**
    `makeEvaluatedDeferredBaseValueArg` can still collapse non-bool integer
@@ -484,44 +524,40 @@ Converge from parser/codegen repair paths to a sema-owned, declaration-context
 template system while preserving the newly stabilized static `constexpr`
 behavior as compatibility constraints.
 
-### Work plan (phased delivery)
+### Work plan (remaining phased delivery)
 
-1. **Stabilize current static-constexpr semantics as explicit contracts**
-   Document and test the current scalar-only folding gate, normalized-bytes
-   preference, recursive base-chain behavior, and depth-limit behavior so later
-   refactors preserve expected outcomes.
-
-2. **Introduce one semantic static-member constant-evaluation service**
-   Build a sema service that answers: "Can this static member be read as a
-   constant here?" Move recursive/base-chain policy and normalized-init
-   interpretation into this service; make IR callers consume only the service.
-
-3. **Complete parameter-context argument classification first**
-   Keep this as top priority architecture work:
-   parse argument syntax first, resolve template declaration, match parameters,
-   then classify each argument by parameter kind.
-
-4. **Unify declaration lookup for template names**
+1. **Unify declaration lookup for template names**
    Route class/function/alias/variable template candidate discovery through one
    semantic lookup result so template-id classification and deduction use the
    same declaration identity model.
 
-5. **Consolidate substitution context ownership**
-   Replace ad-hoc name/vector substitution channels with a single
-   `TemplateInstantiationContext` carrying bindings, pack state, definition/POI
-   lookup context, and constexpr/sema context.
-
-6. **Separate deduction from instantiation/materialization**
-   Ensure candidate viability, deduction, constraints, and partial ordering run
-   without body materialization. Instantiate only after winner selection.
-
-7. **Advance two-phase lookup records**
+2. **Advance two-phase lookup records**
    Persist non-dependent lookup at definition time and defer only dependent
-   completion to instantiation time, including static initializer paths.
+   completion to instantiation time. Extend the current function-call record
+   slice to qualified names, member templates, static initializer paths,
+   dependent bases, unknown specializations, and ADL-sensitive dependent calls.
 
-8. **Expand NTTP identity beyond integral-centric representation**
-   Implement structural constant-value identity (pointers/references/member
-   pointers/nullptr/fp/structural class values), then migrate keys and mangling.
+3. **Consolidate substitution context ownership**
+   Continue replacing ad-hoc name/vector substitution channels with
+   `TemplateInstantiationContext` as the authoritative owner of scalar
+   bindings, pack bindings, current-instantiation identity, lookup context,
+   constexpr context, and failure policy.
+
+4. **Separate deduction from instantiation/materialization**
+   Expand shape-only candidate viability until deduction, constraints, partial
+   ordering, and overload ranking can run without body materialization in normal
+   selection paths. Instantiate only after winner selection.
+
+5. **Expand structural NTTP identity beyond supported scalar cases**
+   Typed integral/enum/`nullptr` identities are implemented. Add standard
+   semantic values and equivalence for pointer, reference, function-pointer,
+   member-pointer, floating-point, and structural class-type NTTPs, then migrate
+   keys and mangling for those categories.
+
+6. **Complete dependent-name/current-instantiation modeling**
+   Build on `DependentQualifiedNameRecord` with semantic records for expression
+   qualified-ids, dependent bases, unknown specialization, injected-class-name,
+   and current-instantiation member lookup.
 
 ### Concrete artifacts to implement
 
@@ -540,13 +576,15 @@ behavior as compatibility constraints.
    bindings, pack bindings, current-instantiation identity, lookup context,
    constexpr context, and failure policy.
 
-4. **Static member constexpr semantic service**
-   Centralize "can read as constant" decisions and recursive base-member
-   evaluation in sema/constexpr logic; IR should consume service outputs only.
+4. **Structural NTTP value representation**
+   Extend the current typed scalar identity into value variants and
+   equivalence/hashing rules for pointer, reference, function-pointer,
+   member-pointer, floating-point, and structural class-type NTTPs.
 
-5. **Structural NTTP value representation**
-   Introduce typed value variants and equivalence/hashing rules that match C++20
-   template-argument equivalence requirements.
+5. **Dependent-name/current-instantiation records**
+   Preserve current-instantiation, dependent base, unknown specialization,
+   dependent qualified-name, and dependent template-id identity without falling
+   back to string-only placeholders.
 
 ### Phase gates and dependency order
 
