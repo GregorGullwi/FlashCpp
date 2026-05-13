@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-13 (template infrastructure refactor completed)
+**Last updated:** 2026-05-13 (follow-up architecture slices completed)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -40,19 +40,23 @@ architecture pass while preserving the behavior described in this audit. The
 branch now includes:
 
 - centralized static `constexpr` member reads through one semantic service;
-- ordered and typed deferred NTTP identity preservation;
+- ordered and typed NTTP identity preservation, including exact integral/enum
+  identity and typed `nullptr` identity;
 - shared alias/type-size query infrastructure;
 - parameter-context-driven explicit template argument classification;
 - `TemplateInstantiationContext` plumbing for template lookup and substitution;
-- shape-only template deduction viability checks used before materialization;
+- conservative template definition lookup records for non-dependent calls;
+- shape-only template deduction viability checks used before body
+  materialization for selected free and member function-template overload paths;
+- dependent qualified-name records for high-value member-type placeholders;
 - dependent alias-size, nested pack/materialization, and dependent constexpr
   regression fixes;
 - explicit-template SFINAE repair so explicitly supplied template arguments are
   substituted before remaining call-argument deduction.
 
 Validation after these changes passed the Windows sharded build and the full
-PowerShell test suite: 2333 regular tests compiled, linked, and ran with the
-expected return values, and all 174 `_fail.cpp` tests failed as expected.
+PowerShell test suite: 2352 regular tests compiled, linked, and ran with the
+expected return values, and all 181 `_fail.cpp` tests failed as expected.
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
@@ -63,29 +67,34 @@ The remaining work is not another broad parser cleanup. The next useful passes
 should target the places where FlashCpp still lacks standard-owned semantic
 state.
 
-### Short-term cleanup targets
+### Completed follow-up cleanup targets
 
 1. **Typed NTTP identity completion.**
    Preserve exact integral categories in deferred evaluation and remove the
    exact-lookup linear fallback that scans specializations for integral
-   mismatches.
+   mismatches. **Completed** by preserving evaluated expression/static-member
+   type identity and stable typed value identities.
 
 2. **Static `constexpr` correctness cleanup.**
    Treat namespace-qualified constexpr owners as valid lookup owners, and reject
    invalid non-dependent `static constexpr` initializers instead of recovering
-   through zero-like fallback behavior.
+   through zero-like fallback behavior. **Completed** with precise dependent
+   deferral and hard errors for invalid non-dependent initializers.
 
 3. **Dependent NTTP concretization simplification.**
    Reduce dependent value materialization to a deterministic bind/substitute/
-   evaluate pass.
+   evaluate pass. **Completed** for dependent alias/default NTTP paths.
 
 4. **Constructor annotation coverage.**
    Extend sema constructor-call inference until well-formed code no longer
-   falls back to codegen-time overload resolution.
+   falls back to codegen-time overload resolution. **Completed for current
+   valid test coverage**; the codegen fallback remains soft for uncovered or
+   invalid expected-failure cases.
 
 5. **Alias-size query ownership.**
    Move the concrete alias-size fallback chain into a shared sema helper instead
-   of keeping it as codegen-local recovery logic.
+   of keeping it as codegen-local recovery logic. **Completed** through shared
+   alias-aware size query helpers.
 
 ### Highest-impact architecture targets
 
@@ -94,21 +103,33 @@ state.
    definition-context lookup records, while dependent names need explicit
    point-of-instantiation completion records. This also gives qualified lookup,
    ADL, static initializers, and member-template calls a shared source of truth.
+   **Progress:** conservative definition-context records now guard
+   non-dependent unqualified function calls, with dependent POI/ADL behavior
+   regression-tested.
 
 2. **Structural NTTP value model.**
    The current concrete value identity remains too integral-centric for C++20.
    Pointer, reference, member-pointer, `nullptr`, floating-point, enum, and
    structural class-type arguments need typed equivalence and hashing.
+   **Progress:** the value model now distinguishes typed integral/enum,
+   `nullptr`, pointer/reference/member-pointer placeholder categories, and
+   explicitly rejects unsupported structural class-type NTTPs instead of
+   manufacturing scalar identities.
 
 3. **Deduction and constraint pipeline separation.**
    Candidate construction, deduction, constraint checking, partial ordering,
    overload ranking, substitution, and instantiation should keep moving into
-   separate sema-owned phases.
+   separate sema-owned phases. **Progress:** overloaded free function templates
+   and implicit member function templates can rank signature-only candidates
+   before instantiating the selected body.
 
 4. **Dependent-name and current-instantiation model.**
    Replace dependent strings/placeholders with first-class entities for current
    instantiation, unknown specialization, dependent bases, dependent
-   qualified-names, and dependent template-ids.
+   qualified-names, and dependent template-ids. **Progress:** dependent
+   qualified member-type placeholders now carry
+   `TypeInfo::DependentQualifiedNameRecord` metadata for `typename T::type` and
+   dependent member-template chains.
 
 ## Current representations
 
