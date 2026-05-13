@@ -2,11 +2,11 @@
 // Expected return: 42
 
 struct S {
-int x;
-int y;
+	int x;
+	float y;
 };
 
 int main() {
-auto [a, b] = S{2, 40};
-return a + b;
+	auto [a, b] = S{2, 40.5f};
+	return a + static_cast<int>(b);
 }
