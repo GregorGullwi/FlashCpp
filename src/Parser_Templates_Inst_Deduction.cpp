@@ -3478,10 +3478,13 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	static int recursion_depth = 0;
 	recursion_depth++;
+	struct DepthGuard {
+		int& depth;
+		~DepthGuard() { depth--; }
+	} depth_guard{recursion_depth};
 
 	if (recursion_depth > 64) {
 		FLASH_LOG(Templates, Error, "try_instantiate_template recursion depth exceeded 64! Possible infinite loop for template '", template_name, "'");
-		recursion_depth--;
 		return std::nullopt;
 	}
 
@@ -3533,7 +3536,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// This is expected for regular (non-template) functions - the caller will fall back
 		// to creating a forward declaration. Only log at Debug level to avoid noise.
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
-		recursion_depth--;
 		return std::nullopt;
 	}
 
@@ -3579,6 +3581,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		std::vector<ASTNode> shape_overloads;
 		shape_candidate_indices.reserve(all_templates->size());
 		shape_overloads.reserve(all_templates->size());
+		StringHandle template_name_handle = StringTable::getOrInternStringHandle(template_name);
 
 		for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
 			size_t overload_idx = overload_iteration_order[sorted_idx];
@@ -3616,7 +3619,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			}
 
 			auto key = FlashCpp::makeInstantiationKey(
-				StringTable::getOrInternStringHandle(template_name),
+				template_name_handle,
 				template_args);
 			const uintptr_t overload_id = reinterpret_cast<uintptr_t>(&func_decl);
 			if (gTemplateRegistry.isFailedInstantiation(key, overload_id)) {
@@ -3686,7 +3689,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 								recursion_depth,
 								selected_overload_idx,
 								template_name);
-							recursion_depth--;
 							return result;
 						}
 						break;
@@ -3748,7 +3750,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				// Non-SFINAE: success — return first good match.
 				FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Successfully instantiated overload {} for '{}'",
 								 recursion_depth, overload_idx, template_name);
-				recursion_depth--;
 				return result;
 			}
 		} else {
@@ -3784,13 +3785,11 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
-			recursion_depth--;
 			return std::nullopt;
 		}
 		FLASH_LOG_FORMAT(Templates, Debug,
 			"[depth={}]: SFINAE best match for '{}' is overload {} specificity={} deleted=false",
 			recursion_depth, template_name, best_non_deleted->overload_idx, best_specificity);
-		recursion_depth--;
 		return best_non_deleted->result;
 	}
 
@@ -3801,14 +3800,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			"[depth={}]: Falling back to deferred bodyless overload for '{}'",
 			recursion_depth,
 			template_name);
-		recursion_depth--;
 		return deferred_forward_declaration_result;
 	}
 
 	// All overloads failed
 	FLASH_LOG_FORMAT(Templates, Error, "[depth={}]: All {} template overload(s) failed for '{}'",
 					 recursion_depth, all_templates->size(), template_name);
-	recursion_depth--;
 	return std::nullopt;
 }
 
