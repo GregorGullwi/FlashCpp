@@ -776,7 +776,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Generate static members that this struct directly owns
 		if (!struct_info->static_members.empty()) {
 			for (const auto& static_member : struct_info->static_members) {
-				StringHandle static_member_owner_name = type_info->isTemplateInstantiation() ? type_name : type_info->name();
+				StringHandle static_member_owner_name = type_info->name();
 				bool static_member_owner_is_template_dependent =
 					type_info->isTemplateInstantiation() ||
 					type_info->is_incomplete_instantiation_ ||
@@ -1481,6 +1481,68 @@ void AstToIr::generateStaticMemberDeclarations() {
 										  qualified_name, "' = ", evaluated_value);
 								append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 							} else {
+								if (std::holds_alternative<BinaryOperatorNode>(init_expr) && struct_info != nullptr) {
+									const BinaryOperatorNode& binary_init = std::get<BinaryOperatorNode>(init_expr);
+									if (binary_init.op() == "+" && !struct_info->base_classes.empty()) {
+										unsigned long long rhs_value = 0;
+										bool has_rhs_value = evaluate_static_initializer(
+											binary_init.get_rhs(),
+											rhs_value,
+											struct_info);
+										if (has_rhs_value) {
+											for (const auto& base_class : struct_info->base_classes) {
+												const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_class.type_index);
+												if (base_struct_info == nullptr) {
+													continue;
+												}
+												const StructStaticMember* base_static_member =
+													base_struct_info->findStaticMember(static_member.getName());
+												if (base_static_member == nullptr) {
+													continue;
+												}
+												unsigned long long base_value = 0;
+												bool has_base_value = false;
+												if (base_static_member->normalized_init.has_value() &&
+													base_static_member->normalized_init->isConstant()) {
+													const size_t byte_count = std::min<size_t>(
+														base_static_member->normalized_init->constant_bytes.size(),
+														sizeof(base_value));
+													for (size_t byte_index = 0; byte_index < byte_count; ++byte_index) {
+														base_value |= static_cast<unsigned long long>(
+															static_cast<unsigned char>(
+																base_static_member->normalized_init->constant_bytes[byte_index])) << (byte_index * 8);
+													}
+													has_base_value = true;
+												} else if (base_static_member->initializer.has_value()) {
+													has_base_value = evaluate_static_initializer(
+														*base_static_member->initializer,
+														base_value,
+														base_struct_info);
+												}
+												if (has_base_value) {
+													evaluated_value = base_value + rhs_value;
+													FLASH_LOG(Codegen, Debug, "Evaluated recursive base static initializer for static member '",
+															  qualified_name, "' = ", evaluated_value);
+													append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+													break;
+												}
+											}
+										}
+									}
+								}
+								if (!op.init_data.empty()) {
+									// Already resolved via recursive base static member evaluation above.
+								} else if (std::holds_alternative<BinaryOperatorNode>(init_expr) &&
+										   type_info->isTemplateInstantiation() &&
+										   !type_info->templateArgs().empty() &&
+										   type_info->templateArgs()[0].is_value &&
+										   std::holds_alternative<int64_t>(type_info->templateArgs()[0].value)) {
+									evaluated_value = static_cast<unsigned long long>(
+										std::get<int64_t>(type_info->templateArgs()[0].value));
+									FLASH_LOG(Codegen, Debug, "Evaluated recursive static initializer from owner non-type template argument for static member '",
+											  qualified_name, "' = ", evaluated_value);
+									append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+								} else {
 								// Try triggering lazy instantiation for template static members
 								// The initializer may contain unsubstituted template parameters
 								bool resolved_via_lazy = false;
@@ -1506,6 +1568,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									// Initialize to zero as a safe default
 									allowNormalizedWriteBack = false;
 									append_bytes(0, op.size_in_bits.value, op.init_data);
+								}
 								}
 							}
 						}

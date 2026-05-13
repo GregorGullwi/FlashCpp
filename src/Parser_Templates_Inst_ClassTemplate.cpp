@@ -1306,6 +1306,14 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 
 	instantiateDeferredStaticInitializerCalls(*initializer, parser, struct_info);
 
+	if (parser != nullptr && initializer->is<ExpressionNode>()) {
+		initializer = parser->substituteTemplateParameters(
+			initializer.value(),
+			template_params,
+			template_args,
+			struct_info->getName());
+	}
+
 	if (initializer->is<ExpressionNode>()) {
 		auto sub_map = buildSubstitutionParamMap(template_params, template_args);
 		if (!sub_map.empty()) {
