@@ -1188,6 +1188,16 @@ ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 	const Token& source_token) {
 	std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 	const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
+	if (!instantiated_type_name.empty()) {
+		AliasTemplateMaterializationResult canonical_owner =
+			resolveCanonicalInstantiatedOwnerForLookup(instantiated_type_name);
+		if (!canonical_owner.instantiated_name.empty()) {
+			instantiated_type_name = canonical_owner.instantiated_name;
+		}
+		if (canonical_owner.resolved_type_info != nullptr) {
+			instantiated_type_info = canonical_owner.resolved_type_info;
+		}
+	}
 	if (instantiated_type_name.empty()) {
 		return ParseResult::error(
 			"Failed to materialize class template for functional-style cast",
@@ -2604,14 +2614,61 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Check if this is an alias template (like detail::cref<int> -> int)
 					// Alias templates should resolve to their underlying type
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
+					std::string_view alias_lookup_name = qualified_name.view();
 					if (!alias_opt.has_value()) {
 						// Try with simple name
 						alias_opt = gTemplateRegistry.lookup_alias_template(qual_id.name());
+						alias_lookup_name = qual_id.name();
 					}
 
 					if (alias_opt.has_value()) {
 						FLASH_LOG(Templates, Debug, "Found alias template, resolving: ", qualified_name);
 						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+						AliasTemplateMaterializationResult materialized_alias =
+							materializeAliasTemplateInstantiation(alias_lookup_name, *template_args);
+						if (materialized_alias.resolved_type_info != nullptr) {
+							const TypeInfo* resolved_alias_type = materialized_alias.resolved_type_info;
+							ResolvedAliasTypeInfo resolved_terminal_alias = resolveAliasTypeInfo(
+								resolved_alias_type->registeredTypeIndex().withCategory(
+									resolved_alias_type->typeEnum()));
+							if (resolved_terminal_alias.terminal_type_info != nullptr) {
+								resolved_alias_type = resolved_terminal_alias.terminal_type_info;
+							}
+							if (!is_struct_type(resolved_alias_type->typeEnum())) {
+								std::string_view resolved_type_name =
+									StringTable::getStringView(resolved_alias_type->name());
+								Token resolved_token(
+									Token::Type::Identifier,
+									resolved_type_name,
+									final_identifier.line(),
+									final_identifier.column(),
+									final_identifier.file_index());
+								result = emplace_node<ExpressionNode>(IdentifierNode(resolved_token));
+								return ParseResult::success(*result);
+							}
+						}
+						if (std::optional<TemplateTypeArg> rebound_alias_arg =
+								tryRebindAliasTargetTemplateArg(alias_node, *template_args);
+							rebound_alias_arg.has_value() && !rebound_alias_arg->is_value) {
+							std::string_view rebound_type_name;
+							if (const TypeInfo* rebound_type_info =
+									tryGetTypeInfo(rebound_alias_arg->type_index);
+								rebound_type_info != nullptr) {
+								rebound_type_name = StringTable::getStringView(rebound_type_info->name());
+							} else {
+								rebound_type_name = getTypeName(rebound_alias_arg->category());
+							}
+							if (!rebound_type_name.empty()) {
+								Token rebound_token(
+									Token::Type::Identifier,
+									rebound_type_name,
+									final_identifier.line(),
+									final_identifier.column(),
+									final_identifier.file_index());
+								result = emplace_node<ExpressionNode>(IdentifierNode(rebound_token));
+								return ParseResult::success(*result);
+							}
+						}
 
 						// Get the target type of the alias
 						// For a simple alias like `template<typename T> using cref = T;`, the target type is T
@@ -2658,6 +2715,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							qual_id.name(),
 							*template_args);
 					std::string_view instantiated_name = materialized_owner.instantiated_name;
+					if (instantiated_name.empty() && materialized_owner.resolved_type_info != nullptr) {
+						instantiated_name =
+							StringTable::getStringView(materialized_owner.resolved_type_info->name());
+					}
 					if (instantiated_name.empty()) {
 						auto instantiation_result = try_instantiate_template_explicit(qual_id.name(), *template_args);
 						if (!instantiation_result.has_value()) {
@@ -5071,17 +5132,50 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								// the whole expression as a dependent call that will be resolved during instantiation.
 								if (any_dependent) {
 									pending_explicit_template_args_.reset();
-									// Skip ::member<T>(args) segments — template args and call
-									// parens must be consumed inside the loop so multi-level
-									// expressions like A<T>::B<U>::C(args) are fully skipped.
+									QualifiedIdentifier dependent_owner_template =
+										QualifiedIdentifier::fromQualifiedName(
+											template_name,
+											gSymbolTable.get_current_namespace_handle());
+									std::string_view qualified_template_name =
+										dependent_owner_template.hasNamespace()
+										? StringBuilder()
+											.append(gNamespaceRegistry.getQualifiedName(dependent_owner_template.namespace_handle))
+											.append("::"sv)
+											.append(dependent_owner_template.identifier_handle)
+											.commit()
+										: StringTable::getStringView(dependent_owner_template.identifier_handle);
+									std::string_view dependent_owner_name =
+										get_instantiated_class_name(qualified_template_name, *explicit_template_args);
+									StringHandle dependent_owner_handle =
+										StringTable::getOrInternStringHandle(dependent_owner_name);
+									if (getTypesByNameMap().find(dependent_owner_handle) == getTypesByNameMap().end()) {
+										TypeInfo& placeholder_type = add_empty_type_entry();
+										placeholder_type.fallback_size_bits_ = 0;
+										placeholder_type.name_ = dependent_owner_handle;
+										placeholder_type.is_incomplete_instantiation_ = true;
+										placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+										placeholder_type.setTemplateInstantiationInfo(
+											QualifiedIdentifier::fromQualifiedName(
+												qualified_template_name,
+												NamespaceRegistry::GLOBAL_NAMESPACE),
+											toTemplateArgInfoList(*explicit_template_args));
+										getTypesByNameMap()[dependent_owner_handle] = &placeholder_type;
+									}
+
+									NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+										NamespaceRegistry::GLOBAL_NAMESPACE,
+										dependent_owner_handle);
+									Token final_identifier{};
 									while (peek() == "::"_tok) {
 										advance(); // consume ::
 										if (peek() == "template"_tok) {
 											advance(); // consume 'template' keyword
 										}
-										if (peek().is_identifier()) {
-											advance(); // consume member name
+										if (!peek().is_identifier()) {
+											return ParseResult::error("Expected identifier after '::'", peek_info());
 										}
+										final_identifier = peek_info();
+										advance(); // consume member name
 										// Skip template arguments on member if present (e.g., ::member<T>)
 										if (peek() == "<"_tok) {
 											skip_template_arguments();
@@ -5090,11 +5184,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (peek() == "("_tok) {
 											skip_balanced_parens();
 										}
+										if (peek() == "::"_tok) {
+											ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+												ns_handle,
+												final_identifier.handle());
+										}
 									}
 									FLASH_LOG_FORMAT(Parser, Debug,
 										"Deferred dependent qualified call: {}< dependent args >::...",
 										template_name);
-									result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+									if (final_identifier.type() != Token::Type::Identifier) {
+										return ParseResult::error("Expected dependent qualified member name", identifier_token);
+									}
+									result = emplace_node<ExpressionNode>(
+										QualifiedIdentifierNode(ns_handle, final_identifier));
 									return ParseResult::success(*result);
 								}
 								pending_explicit_template_args_.reset();
@@ -5876,17 +5979,50 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 						}
 						if (any_dependent) {
-							// Skip ::member<T>(args) segments — template args and call
-							// parens must be consumed inside the loop so multi-level
-							// expressions like A<T>::B<U>::C(args) are fully skipped.
+							QualifiedIdentifier dependent_owner_template =
+								QualifiedIdentifier::fromQualifiedName(
+									identifier_token.value(),
+									gSymbolTable.get_current_namespace_handle());
+							std::string_view qualified_template_name =
+								dependent_owner_template.hasNamespace()
+								? StringBuilder()
+									.append(gNamespaceRegistry.getQualifiedName(dependent_owner_template.namespace_handle))
+									.append("::"sv)
+									.append(dependent_owner_template.identifier_handle)
+									.commit()
+								: StringTable::getStringView(dependent_owner_template.identifier_handle);
+							std::string_view dependent_owner_name =
+								get_instantiated_class_name(qualified_template_name, *explicit_template_args);
+							StringHandle dependent_owner_handle =
+								StringTable::getOrInternStringHandle(dependent_owner_name);
+							if (getTypesByNameMap().find(dependent_owner_handle) == getTypesByNameMap().end()) {
+								TypeInfo& placeholder_type = add_empty_type_entry();
+								placeholder_type.fallback_size_bits_ = 0;
+								placeholder_type.name_ = dependent_owner_handle;
+								placeholder_type.is_incomplete_instantiation_ = true;
+								placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+								placeholder_type.setTemplateInstantiationInfo(
+									QualifiedIdentifier::fromQualifiedName(
+										qualified_template_name,
+										NamespaceRegistry::GLOBAL_NAMESPACE),
+									toTemplateArgInfoList(*explicit_template_args));
+								getTypesByNameMap()[dependent_owner_handle] = &placeholder_type;
+							}
+
+							NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+								NamespaceRegistry::GLOBAL_NAMESPACE,
+								dependent_owner_handle);
+							Token final_identifier{};
 							while (peek() == "::"_tok) {
 								advance(); // consume ::
 								if (peek() == "template"_tok) {
 									advance(); // consume 'template' keyword
 								}
-								if (peek().is_identifier()) {
-									advance(); // consume member name
+								if (!peek().is_identifier()) {
+									return ParseResult::error("Expected identifier after '::'", peek_info());
 								}
+								final_identifier = peek_info();
+								advance(); // consume member name
 								// Skip template arguments on member if present
 								if (peek() == "<"_tok) {
 									skip_template_arguments();
@@ -5895,11 +6031,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								if (peek() == "("_tok) {
 									skip_balanced_parens();
 								}
+								if (peek() == "::"_tok) {
+									ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+										ns_handle,
+										final_identifier.handle());
+								}
 							}
 							FLASH_LOG_FORMAT(Parser, Debug,
 								"Deferred dependent qualified call: {}< dependent args >::...",
 								identifier_token.value());
-							result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+							if (final_identifier.type() != Token::Type::Identifier) {
+								return ParseResult::error("Expected dependent qualified member name", identifier_token);
+							}
+							result = emplace_node<ExpressionNode>(
+								QualifiedIdentifierNode(ns_handle, final_identifier));
 							return ParseResult::success(*result);
 						}
 						return ParseResult::error(

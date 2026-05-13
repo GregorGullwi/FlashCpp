@@ -1466,6 +1466,45 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qualified_name, "' is a concrete type, falling through to type parsing");
 								}
 							}
+							if (!is_concrete_type) {
+								auto is_template_like_name = [&](std::string_view candidate_name) {
+									if (candidate_name.empty()) {
+										return false;
+									}
+									if (gTemplateRegistry.lookup_alias_template(candidate_name).has_value()) {
+										return true;
+									}
+									if (gTemplateRegistry.lookupTemplate(candidate_name).has_value()) {
+										return true;
+									}
+									return gTemplateRegistry.isClassTemplate(
+										StringTable::getOrInternStringHandle(candidate_name));
+								};
+
+								std::string_view qualifier_name =
+									gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+								std::string_view base_member_name =
+									extractBaseTemplateName(qual_id.name());
+								std::string_view qualified_base_member_name;
+								if (!qualifier_name.empty() && !base_member_name.empty()) {
+									qualified_base_member_name = StringBuilder()
+										.append(qualifier_name)
+										.append("::")
+										.append(base_member_name)
+										.commit();
+								}
+
+								if (is_template_like_name(qual_id.name()) ||
+									is_template_like_name(base_member_name) ||
+									is_template_like_name(qualified_name) ||
+									is_template_like_name(qualified_base_member_name)) {
+									is_concrete_type = true;
+									FLASH_LOG(Templates, Debug,
+											  "QualifiedIdentifierNode '",
+											  qualified_name,
+											  "' names a template/alias target, falling through to type parsing");
+								}
+							}
 						}
 
 					// If it's a concrete type, restore and let type parsing handle it

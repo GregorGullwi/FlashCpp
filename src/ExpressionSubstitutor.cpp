@@ -527,30 +527,23 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			substituted = true;
 		};
 
+		if (materialized_arg.is_value && materialized_arg.dependent_expr.has_value()) {
+			const ASTNode& stored_expr = *materialized_arg.dependent_expr;
+			ASTNode substituted_expr = substitute(stored_expr);
+			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+				applyEvaluatedValue(*eval_result);
+				FLASH_LOG(Templates, Debug, "materializeStoredTemplateArgs: evaluated dependent value expr -> ", eval_result->value);
+			} else {
+				materialized_arg.dependent_expr = std::move(substituted_expr);
+				materialized_arg.is_dependent = true;
+				result.had_substitution = true;
+			}
+		}
+
 		if (materialized_arg.dependent_name.isValid()) {
 			std::string_view dependent_name = StringTable::getStringView(materialized_arg.dependent_name);
 			auto dep_subst_it = param_map_.find(dependent_name);
 			if (dep_subst_it != param_map_.end()) {
-				// When the dependent arg stores a TypeTraitExprNode (e.g. __is_final(H)) the
-				// right thing is to substitute the concrete type into the trait expression and
-				// evaluate it to a bool, rather than copying the concrete struct type verbatim
-				// into what is actually a bool-typed NTTP slot.
-				if (materialized_arg.is_value && materialized_arg.dependent_expr.has_value()) {
-					const ASTNode& stored_expr = *materialized_arg.dependent_expr;
-					ASTNode substituted_expr = substitute(stored_expr);
-					if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
-						applyEvaluatedValue(*eval_result);
-						FLASH_LOG(Templates, Debug, "materializeStoredTemplateArgs: evaluated dependent TypeTraitExpr -> ", eval_result->value);
-					} else {
-						// Keep the substituted expression for a later materialization pass.
-						// This avoids rebinding the value placeholder to a type argument when
-						// the trait still depends on other template parameters.
-						materialized_arg.dependent_expr = std::move(substituted_expr);
-						materialized_arg.is_dependent = true;
-						result.had_substitution = true;
-						substituted = true;
-					}
-				}
 				if (!substituted) {
 					materialized_arg = rebindDependentTemplateTypeArg(dep_subst_it->second, materialized_arg);
 					result.had_substitution = true;
@@ -1896,10 +1889,40 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			}
 		}
 	}
+	for (TemplateTypeArg& arg : inst_args) {
+		if (!arg.is_dependent) {
+			continue;
+		}
+
+		for (size_t concretize_attempt = 0; concretize_attempt < 8 && arg.is_dependent; ++concretize_attempt) {
+			if (arg.dependent_name.isValid()) {
+				std::string_view dependent_name = StringTable::getStringView(arg.dependent_name);
+				auto param_it = param_map_.find(dependent_name);
+				if (param_it != param_map_.end()) {
+					arg = rebindDependentTemplateTypeArg(param_it->second, arg);
+					continue;
+				}
+			}
+
+			if (arg.is_value && arg.dependent_expr.has_value()) {
+				ASTNode substituted_expr = substitute(*arg.dependent_expr);
+				if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
+					TemplateTypeArg concrete_arg(value->value, value->type);
+					concrete_arg.is_pack = arg.is_pack;
+					arg = concrete_arg;
+					break;
+				}
+				arg.dependent_expr = std::move(substituted_expr);
+			}
+
+			break;
+		}
+	}
 	if (!inst_args.empty() && template_args_still_dependent(inst_args)) {
 		// Keep unresolved qualified-ids dependent until a later instantiation phase.
 		// This is standard-conforming for dependent names and avoids selecting an
 		// unrelated concrete specialization from global type state.
+		FLASH_LOG(Templates, Debug, "  substituteQualifiedIdentifier: inst_args still dependent, returning as-is for ns='", ns_name, "'");
 		ExpressionNode& deferred_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 		return ASTNode(&deferred_expr);
 	}

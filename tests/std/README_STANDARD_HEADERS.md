@@ -29,10 +29,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<tuple>` | `test_std_tuple.cpp` | 💥 Codegen Crash | ~2500ms (retested 2026-05-11, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker and tuple constructor pack-boundary stop are fixed; the header now reaches IR/codegen before `std::partial_ordering` unresolved semantic type category 25. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2650ms (retested 2026-05-10, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop is fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'list'`. |
+| `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4740ms (retested 2026-05-10, Linux/libstdc++-14). The deleted dependent `std::pair::swap`, block-scope `using std::swap`, and shared `_Head_base` default-NTTP stops are fixed; current first hard error is `Max template instantiation depth (24) exceeded for 'basic_string'`. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4980ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap`, block-scope `using std::swap`, and shared `_Head_base` default-NTTP stops remain fixed; after raising template nesting limits the first hard error is now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,25 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-12 Linux/libstdc++ template-instantiation depth guard follow-up
+
+This pass raises parser-side template-instantiation nesting guards from 24 to
+40 for both class-template and member-function-template replay paths. The goal
+is to push high-layer semantic/template analysis further through deeply nested
+libstdc++ container metaprogramming before tripping the recursion guard.
+
+Regression coverage:
+
+- `tests/test_template_instantiation_depth_40_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_template_instantiation_depth_40_ret0.cpp` | ✅ Pass | n/a | New regression validates successful non-recursive template nesting beyond 24 levels (`Nest<30>`). |
+| `<list>` (`test_std_list.cpp`) | ❌ Compile Error | 2.94s | Progresses deeper than before; current first hard error is `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 4.98s | Progresses deeper than before; current first hard error is `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 
 ### 2026-05-12 Linux/libstdc++ hidden-friend constructor-normalization follow-up
 

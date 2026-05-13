@@ -852,6 +852,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				  instantiated_class_name, "::", member_name);
 		return false;
 	}
+	if (FLASH_LOG_ENABLED(Templates, Debug)) {
+		FLASH_LOG(Templates, Debug, "  lazy template params=", lazy_info_ptr->template_params.size(),
+				  ", template args=", lazy_info_ptr->template_args.size());
+	}
 
 	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
 	const InlineVector<TemplateParameterNode, 4>& lazy_template_params_inline =
@@ -872,13 +876,15 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	// Perform initializer substitution if needed
 	std::optional<ASTNode> substituted_initializer = lazy_info.initializer;
-	bool initializer_replayed = false;
 
 	auto try_reparse_lazy_static_initializer = [&]() -> bool {
 		if (!lazy_info.initializer_position.has_value() || !lazy_info.declaration.has_value()) {
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: skipping — ",
+					  !lazy_info.initializer_position.has_value() ? "no initializer_position" : "no declaration");
 			return false;
 		}
 		if (!lazy_info.declaration->is<DeclarationNode>()) {
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: skipping — declaration is not a DeclarationNode");
 			return false;
 		}
 
@@ -910,7 +916,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			}
 		} lexer_restore_guard{this, current_pos};
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-		parsing_template_depth_ = 0;
+		// Keep template-context parsing semantics during replay so dependent NTTP
+		// expressions are preserved as AST and can be concretely substituted below.
+		parsing_template_depth_ = 1;
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -940,7 +948,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		TypeSpecifierNode& type_spec = decl.type_specifier_node();
 
 		if (peek() == "="_tok) {
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: reparsing from '=' position");
 			substituted_initializer = parse_copy_initialization(decl, type_spec);
+			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: parse_copy_initialization result has_value=",
+					  substituted_initializer.has_value());
 		} else if (peek() == "{"_tok) {
 			ParseResult init_result = parse_brace_initializer(type_spec);
 			if (!init_result.is_error()) {
@@ -959,11 +970,12 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 	};
 
 	if (lazy_info.needs_substitution) {
-		initializer_replayed = try_reparse_lazy_static_initializer();
+		if (!try_reparse_lazy_static_initializer()) {
+			substituted_initializer = lazy_info.initializer;
+		}
 	}
 
 	if (lazy_info.needs_substitution && lazy_info.initializer.has_value() &&
-		!initializer_replayed &&
 		lazy_info.initializer->is<ExpressionNode>()) {
 		const ExpressionNode& expr = lazy_info.initializer->as<ExpressionNode>();
 		const auto& template_params = lazy_template_params_inline;
@@ -1096,7 +1108,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (!sub_map.empty()) {
 				ExpressionSubstitutor substitutor(substitution_environment, *this);
 				substitutor.setCurrentOwnerTypeName(struct_info->getName());
-				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
+				substituted_initializer = substitutor.substitute(substituted_initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
 			}
 		}
@@ -1146,6 +1158,10 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				eval_ctx.template_args.push_back(lazy_info.template_args[i]);
 			}
 			auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
+			if (!eval_result.success()) {
+				FLASH_LOG(Templates, Debug, "Inner ConstExpr eval FAILED for substituted lazy member initializer (error: ",
+						  eval_result.error_message, ")");
+			}
 			if (eval_result.success()) {
 				int64_t val = eval_result.as_int();
 				if (val < 0) {
@@ -1201,7 +1217,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			lazy_info.is_array,
 			lazy_info.array_dimensions,
 			lazy_info.declaration,
-			lazy_info.initializer_position);
+			lazy_info.initializer_position,
+			lazy_info.is_constexpr);
 	}
 
 	// Mark as instantiated (remove from lazy registry)

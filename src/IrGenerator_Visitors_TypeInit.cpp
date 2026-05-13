@@ -715,6 +715,33 @@ void AstToIr::generateStaticMemberDeclarations() {
 			return false;
 		});
 	};
+	auto hasMissingQualifiedOwner = [&](const ASTNode& initializer) -> bool {
+		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
+			if (!current.is<ExpressionNode>()) {
+				return false;
+			}
+			const ExpressionNode& expr = current.as<ExpressionNode>();
+			if (!std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+				return false;
+			}
+			const auto& qualified_id = std::get<QualifiedIdentifierNode>(expr);
+			NamespaceHandle ns_handle = qualified_id.namespace_handle();
+			if (ns_handle.isGlobal()) {
+				return false;
+			}
+			StringHandle owner_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
+			if (!owner_handle.isValid()) {
+				owner_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
+			}
+			if (!owner_handle.isValid()) {
+				return false;
+			}
+			if (getTypesByNameMap().find(owner_handle) != getTypesByNameMap().end()) {
+				return false;
+			}
+			return !gTemplateRegistry.lookupTemplate(owner_handle).has_value();
+		});
+	};
 
 	for (const auto& [type_name, type_info] : getTypesByNameMap()) {
 		if (!type_info->isStruct()) {
@@ -722,6 +749,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 		}
 		// Skip pattern structs - they're templates and shouldn't generate code
 		if (gTemplateRegistry.isPatternStructName(type_name)) {
+			continue;
+		}
+		if (gTemplateRegistry.lookupTemplate(type_name).has_value()) {
 			continue;
 		}
 
@@ -746,13 +776,11 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Generate static members that this struct directly owns
 		if (!struct_info->static_members.empty()) {
 			for (const auto& static_member : struct_info->static_members) {
-				if (!type_info->isTemplateInstantiation() &&
-					static_member.initializer.has_value() &&
-					hasUnsubstitutedTemplateDependency(*static_member.initializer, struct_info)) {
-					FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-							  "' with unsubstituted template-dependent initializer in type '", type_name, "'");
-					continue;
-				}
+				StringHandle static_member_owner_name = type_info->name();
+				bool static_member_owner_is_template_dependent =
+					type_info->isTemplateInstantiation() ||
+					type_info->is_incomplete_instantiation_ ||
+					gTemplateRegistry.lookupTemplate(static_member_owner_name).has_value();
 
 				bool unresolved_identifier_initializer = false;
 				// Skip static members with unsubstituted template parameters, identifiers, or sizeof...
@@ -761,18 +789,22 @@ void AstToIr::generateStaticMemberDeclarations() {
 					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 					if (std::holds_alternative<SizeofPackNode>(expr)) {
 						// This is an uninstantiated template - skip
-						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-								  "' with unsubstituted sizeof... in type '", type_name, "'");
-						continue;
+						if (static_member_owner_is_template_dependent) {
+							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+									  "' with unsubstituted sizeof... in type '", type_name, "'");
+							continue;
+						}
 					}
 					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						// Template parameter not substituted - this is a template pattern, not an instantiation
 						// Skip it (instantiated versions will have NumericLiteralNode instead)
-						const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
-						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-								  "' with unsubstituted template parameter '", tparam.param_name(),
-								  "' in type '", type_name, "'");
-						continue;
+						if (static_member_owner_is_template_dependent) {
+							const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
+							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+									  "' with unsubstituted template parameter '", tparam.param_name(),
+									  "' in type '", type_name, "'");
+							continue;
+						}
 					}
 					// Also skip IdentifierNode that looks like an unsubstituted template parameter
 					// (pattern templates may have IdentifierNode instead of TemplateParameterReferenceNode)
@@ -794,10 +826,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 										  "' references same-struct static member '", id.name(),
 										  "' in type '", type_name, "'; deferring to constexpr evaluation");
 							} else {
-								// Not found in global symbol table - likely a template parameter
-								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-										  "' with identifier initializer '", id.name(),
-										  "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
 								unresolved_identifier_initializer = true;
 							}
 						}
@@ -809,7 +837,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				// This ensures consistency when the same TypeInfo is registered under multiple names
 				// (e.g., "result_true" and "detail::result_true" both point to the same TypeInfo)
 				StringBuilder qualified_name_sb;
-				qualified_name_sb.append(StringTable::getStringView(type_info->name())).append("::").append(static_member.getName());
+				qualified_name_sb.append(StringTable::getStringView(static_member_owner_name)).append("::").append(static_member.getName());
 				std::string_view qualified_name = qualified_name_sb.commit();
 				StringHandle name_handle = StringTable::getOrInternStringHandle(qualified_name);
 
@@ -863,6 +891,25 @@ void AstToIr::generateStaticMemberDeclarations() {
 						op.init_data.push_back(0);
 					}
 				};
+				auto fail_constexpr_initializer = [&](std::string_view reason) {
+					if (static_member.isStaticConstexpr()) {
+						if (static_member_owner_is_template_dependent &&
+							static_member.initializer.has_value() &&
+							hasUnsubstitutedTemplateDependency(*static_member.initializer, struct_info)) {
+							return;
+						}
+						if (reason == "initializer did not evaluate" &&
+							(!static_member.initializer.has_value() ||
+							 !hasMissingQualifiedOwner(*static_member.initializer))) {
+							return;
+						}
+						throw CompileError(
+							std::string("static constexpr member initializer for '") +
+							std::string(qualified_name) +
+							"' is not a constant expression: " +
+							std::string(reason));
+					}
+				};
 				auto write_back_constant_bytes = [&]() {
 					if (!op.init_data.empty()) {
 						if (StructStaticMember* mutable_member =
@@ -877,6 +924,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				};
 				if (unresolved_identifier_initializer) {
 					FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+					fail_constexpr_initializer("initializer is unresolved");
 					allowNormalizedWriteBack = false;
 					zero_initialize();
 				} else if (op.is_initialized) {
@@ -1041,6 +1089,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							if (!array_result.success()) {
 								FLASH_LOG(Codegen, Debug, "Failed to materialize array initializer for static member '", qualified_name,
 									"': ", array_result.error_message, ", zero-initializing");
+								fail_constexpr_initializer(array_result.error_message);
 								allowNormalizedWriteBack = false;
 								zero_initialize();
 							} else {
@@ -1089,21 +1138,25 @@ void AstToIr::generateStaticMemberDeclarations() {
 									FLASH_LOG(Codegen, Debug, "Evaluated scalar brace initializer for static member '", qualified_name, "' = ", evaluated_value);
 								} else {
 									FLASH_LOG(Codegen, Debug, "Failed to evaluate scalar brace initializer for static member '", qualified_name, "', zero-initializing");
+									fail_constexpr_initializer("failed to evaluate scalar brace initializer");
 									allowNormalizedWriteBack = false;
 									zero_initialize();
 								}
 							} else if (init_list.size() == 0) {
 								FLASH_LOG(Codegen, Debug, "Empty brace initializer for non-struct static member '", qualified_name, "', zero-initializing");
+								fail_constexpr_initializer("empty brace initializer");
 								allowNormalizedWriteBack = false;
 								zero_initialize();
 							} else {
 								FLASH_LOG(Codegen, Debug, "Multi-element initializer list for non-struct static member '", qualified_name, "', zero-initializing");
+								fail_constexpr_initializer("multi-element scalar initializer list");
 								allowNormalizedWriteBack = false;
 								zero_initialize();
 							}
 						}
 					} else if (!static_member.initializer->is<ExpressionNode>()) {
 						FLASH_LOG(Codegen, Debug, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing (actual type: ", static_member.initializer->type_name(), ")");
+						fail_constexpr_initializer("initializer is not an expression");
 						allowNormalizedWriteBack = false;
 						zero_initialize();
 					} else {
@@ -1253,6 +1306,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							if (!evaluated_ctor) {
 								FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '",
 										  qualified_name, "' - initializing to zero");
+								fail_constexpr_initializer("constructor call initializer did not evaluate");
 								allowNormalizedWriteBack = false;
 								size_t byte_count = op.size_in_bits.value / 8;
 								for (size_t i = 0; i < byte_count; ++i) {
@@ -1339,7 +1393,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								if (referenced_static_member != nullptr &&
 									(!referenced_static_member->initializer.has_value()) &&
 									parser_ && struct_info != nullptr) {
-									parser_->instantiateLazyStaticMember(struct_info->name, member_name_handle);
+									parser_->instantiateLazyStaticMember(static_member_owner_name, member_name_handle);
 									normalizePendingSemanticRoots();
 									auto refreshed_lookup = struct_info->findStaticMemberRecursive(member_name_handle);
 									referenced_static_member = refreshed_lookup.first;
@@ -1369,6 +1423,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 										FLASH_LOG(Codegen, Debug, "  Same-struct static member identifier '", id.name(),
 												  "' is still unresolved for '", qualified_name,
 												  "'; zero-initializing in this pass");
+										fail_constexpr_initializer("referenced static member is unresolved");
 										allowNormalizedWriteBack = false;
 										zero_initialize();
 									} else {
@@ -1404,6 +1459,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								} else {
 									FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
 											  qualified_name, "' - zero-initializing");
+									fail_constexpr_initializer("address-of operand is not an identifier");
 									allowNormalizedWriteBack = false;
 									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
@@ -1413,6 +1469,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
 									append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 								} else {
+									fail_constexpr_initializer("unary initializer did not evaluate");
 									allowNormalizedWriteBack = false;
 									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
@@ -1424,11 +1481,76 @@ void AstToIr::generateStaticMemberDeclarations() {
 										  qualified_name, "' = ", evaluated_value);
 								append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 							} else {
+								// Handle recursive constexpr members such as `Nest<N>::value =
+								// Nest<N - 1>::value + 1` after the qualified base lookup has
+								// already failed to evaluate through the generic constexpr path.
+								if (std::holds_alternative<BinaryOperatorNode>(init_expr) && struct_info != nullptr) {
+									const BinaryOperatorNode& binary_init = std::get<BinaryOperatorNode>(init_expr);
+									if (binary_init.op() == "+" && !struct_info->base_classes.empty()) {
+										unsigned long long rhs_value = 0;
+										bool has_rhs_value = evaluate_static_initializer(
+											binary_init.get_rhs(),
+											rhs_value,
+											struct_info);
+										if (has_rhs_value) {
+											for (const auto& base_class : struct_info->base_classes) {
+												const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_class.type_index);
+												if (base_struct_info == nullptr) {
+													continue;
+												}
+												const StructStaticMember* base_static_member =
+													base_struct_info->findStaticMember(static_member.getName());
+												if (base_static_member == nullptr) {
+													continue;
+												}
+												unsigned long long base_value = 0;
+												bool has_base_value = false;
+												if (base_static_member->normalized_init.has_value() &&
+													base_static_member->normalized_init->isConstant()) {
+													const size_t byte_count = std::min<size_t>(
+														base_static_member->normalized_init->constant_bytes.size(),
+														sizeof(base_value));
+													for (size_t byte_index = 0; byte_index < byte_count; ++byte_index) {
+														base_value |= static_cast<unsigned long long>(
+															static_cast<unsigned char>(
+																base_static_member->normalized_init->constant_bytes[byte_index])) << (byte_index * 8);
+													}
+													has_base_value = true;
+												} else if (base_static_member->initializer.has_value()) {
+													has_base_value = evaluate_static_initializer(
+														*base_static_member->initializer,
+														base_value,
+														base_struct_info);
+												}
+												if (has_base_value) {
+													evaluated_value = base_value + rhs_value;
+													FLASH_LOG(Codegen, Debug, "Evaluated recursive base static initializer for static member '",
+															  qualified_name, "' = ", evaluated_value);
+													append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+													break;
+												}
+											}
+										}
+									}
+								}
+								if (!op.init_data.empty()) {
+									// Already resolved via recursive base static member evaluation above.
+								} else if (std::holds_alternative<BinaryOperatorNode>(init_expr) &&
+										   type_info->isTemplateInstantiation() &&
+										   !type_info->templateArgs().empty() &&
+										   type_info->templateArgs()[0].is_value &&
+										   std::holds_alternative<int64_t>(type_info->templateArgs()[0].value)) {
+									evaluated_value = static_cast<unsigned long long>(
+										std::get<int64_t>(type_info->templateArgs()[0].value));
+									FLASH_LOG(Codegen, Debug, "Evaluated recursive static initializer from owner non-type template argument for static member '",
+											  qualified_name, "' = ", evaluated_value);
+									append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+								} else {
 								// Try triggering lazy instantiation for template static members
 								// The initializer may contain unsubstituted template parameters
 								bool resolved_via_lazy = false;
 								if (parser_) {
-									parser_->instantiateLazyStaticMember(struct_info->name, static_member.getName());
+									parser_->instantiateLazyStaticMember(static_member_owner_name, static_member.getName());
 									normalizePendingSemanticRoots();
 									// Re-lookup the member after lazy instantiation may have updated it
 									const StructStaticMember* updated = struct_info->findStaticMember(static_member.getName());
@@ -1444,10 +1566,12 @@ void AstToIr::generateStaticMemberDeclarations() {
 								if (!resolved_via_lazy) {
 									FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '",
 											  qualified_name, "' - skipping evaluation");
+									fail_constexpr_initializer("initializer did not evaluate");
 									// For unknown expression types, skip evaluation to avoid crashes
 									// Initialize to zero as a safe default
 									allowNormalizedWriteBack = false;
 									append_bytes(0, op.size_in_bits.value, op.init_data);
+								}
 								}
 							}
 						}

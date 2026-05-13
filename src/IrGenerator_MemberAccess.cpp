@@ -1661,6 +1661,44 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	// FIRST check if this is a static member (can be accessed via instance in C++)
 	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(member_name));
 	if (static_member) {
+		if (context != ExpressionContext::LValueAddress &&
+			static_member->is_constexpr &&
+			!is_struct_type(static_member->memberType()) &&
+			!static_member->is_array) {
+			if (static_member->normalized_init.has_value() &&
+				static_member->normalized_init->isConstant()) {
+				unsigned long long raw_value = 0;
+				const size_t byte_count = std::min<size_t>(
+					static_member->normalized_init->constant_bytes.size(),
+					sizeof(raw_value));
+				for (size_t byte_index = 0; byte_index < byte_count; ++byte_index) {
+					raw_value |= static_cast<unsigned long long>(
+						static_cast<unsigned char>(
+							static_member->normalized_init->constant_bytes[byte_index])) << (byte_index * 8);
+				}
+				TypeIndex type_index = static_member->type_index.is_valid()
+					? static_member->type_index
+					: nativeTypeIndex(static_member->memberType());
+				const int size_bits = static_member->size != 0
+					? static_cast<int>(static_member->size * 8)
+					: get_type_size_bits(static_member->memberType());
+				return makeExprResult(
+					type_index.withCategory(static_member->memberType()),
+					SizeInBits{size_bits},
+					raw_value,
+					PointerDepth{},
+					ValueStorage::ContainsData);
+			}
+			if (static_member->initializer.has_value() &&
+				static_member->initializer->is<ExpressionNode>()) {
+				ExprResult constexpr_result =
+					tryEvaluateAsConstExpr(static_member->initializer->as<ExpressionNode>());
+				if (constexpr_result.effectiveIrType() != IrType::Void) {
+					return constexpr_result;
+				}
+			}
+		}
+
 		// This is a static member! Access it via GlobalLoad instead of MemberLoad
 		// Static members are accessed using qualified names (OwnerClassName::memberName)
 		// Use the owner_struct name, not the current struct, to get the correct qualified name

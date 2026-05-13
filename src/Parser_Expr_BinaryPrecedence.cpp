@@ -1981,7 +1981,8 @@ ParseResult Parser::parse_static_member_block(
 				is_array,
 				array_dimensions,
 				*type_and_name.node(),
-				initializer_position);
+				initializer_position,
+				is_static_constexpr);
 		}
 	} else {
 		// Normal case - use provided struct_info directly
@@ -1998,7 +1999,8 @@ ParseResult Parser::parse_static_member_block(
 				is_array,
 				std::move(array_dimensions),
 				*type_and_name.node(),
-				initializer_position);
+				initializer_position,
+				is_static_constexpr);
 	}
 
 	return ParseResult::success();  // Signal caller to continue

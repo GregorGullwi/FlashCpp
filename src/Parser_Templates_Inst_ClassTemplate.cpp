@@ -1306,6 +1306,14 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 
 	instantiateDeferredStaticInitializerCalls(*initializer, parser, struct_info);
 
+	if (parser != nullptr && initializer->is<ExpressionNode>()) {
+		initializer = parser->substituteTemplateParameters(
+			initializer.value(),
+			template_params,
+			template_args,
+			struct_info->getName());
+	}
+
 	if (initializer->is<ExpressionNode>()) {
 		auto sub_map = buildSubstitutionParamMap(template_params, template_args);
 		if (!sub_map.empty()) {
@@ -1464,7 +1472,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// emit a diagnostic before the kernel kills us.
 	static thread_local size_t s_instantiation_nesting_depth = 0;
 	static thread_local bool s_instantiation_depth_warned = false;
-	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 24;
+	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 40;
 	++s_instantiation_nesting_depth;
 	// Iteration counters are file-scope thread_locals reset once per parse() call;
 	// see resetTemplateInstantiationCounters().  The NestingGuard here only manages
@@ -4097,7 +4105,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.is_array,
 						static_member.array_dimensions,
 						static_member.declaration,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 				}
 			}
 
@@ -5947,6 +5956,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG_FORMAT(Templates, Debug, "Identifier '{}' unresolved in deferred base – falling through", id_name);
 						}
 
+						auto makeEvaluatedDeferredBaseValueArg = [&](const auto& constant_value) {
+							TypeCategory target_category = constant_value.type;
+							if (target_category != TypeCategory::Bool &&
+								is_integer_type(target_category)) {
+								target_category = TypeCategory::Int;
+							}
+							TemplateTypeArg val_arg(constant_value.value, target_category);
+							val_arg.is_pack = arg_info.is_pack;
+							return val_arg;
+						};
+
 						// Special handling for TypeTraitExprNode - need to substitute template parameters
 						if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 							const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
@@ -6009,9 +6029,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 
 								if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
-									TemplateTypeArg val_arg(value->value, value->type);
-									val_arg.is_pack = arg_info.is_pack;
-									resolved_args.push_back(val_arg);
+									resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 									continue;
 								}
 							}
@@ -6122,9 +6140,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 															// Try to evaluate the return expression as a constant
 															if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
 																FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
-																TemplateTypeArg val_arg(ret_value->value, ret_value->type);
-																val_arg.is_pack = arg_info.is_pack;
-																resolved_args.push_back(val_arg);
+																resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*ret_value));
 																continue;
 															}
 														}
@@ -6153,9 +6169,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (auto value = try_evaluate_constant_expression(*var_decl.initializer())) {
 											FLASH_LOG_FORMAT(Templates, Debug, "Evaluated variable template '{}' to value {}",
 															 func_name, value->value);
-											TemplateTypeArg val_arg(value->value, value->type);
-											val_arg.is_pack = arg_info.is_pack;
-											resolved_args.push_back(val_arg);
+											resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 											continue;
 										}
 									}
@@ -6175,9 +6189,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Now try to evaluate the substituted expression
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
 								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
@@ -6194,9 +6206,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Now try to evaluate the substituted expression
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
 								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
@@ -6207,9 +6217,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
 							if (auto value = try_evaluate_constant_expression(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted qualified identifier to value {}", value->value);
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							} else {
 								FLASH_LOG(Templates, Debug, "Failed to evaluate substituted qualified identifier");
@@ -6217,9 +6225,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						} else {
 							// Try to evaluate non-type template argument after substitution
 							if (auto value = try_evaluate_constant_expression(arg_info.node)) {
-								TemplateTypeArg val_arg(value->value, value->type);
-								val_arg.is_pack = arg_info.is_pack;
-								resolved_args.push_back(val_arg);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;
 							}
 						}
@@ -6885,8 +6891,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Check if this static member should be lazily instantiated
 			bool member_needs_complex_substitution = needs_complex_substitution(static_member.initializer);
+			bool member_refs_current_template_identifier = false;
+			if (static_member.initializer.has_value()) {
+				member_refs_current_template_identifier = RebindStaticMemberAst::visitASTUntil(
+					*static_member.initializer,
+					[&](const ASTNode& node) {
+						return node.is<IdentifierNode>() &&
+							node.as<IdentifierNode>().name() == template_name;
+					});
+			}
+			bool member_is_constexpr = static_member.is_constexpr;
+			if (!member_is_constexpr &&
+				static_member.declaration.has_value() &&
+				static_member.declaration->is<VariableDeclarationNode>()) {
+				member_is_constexpr =
+					static_member.declaration->as<VariableDeclarationNode>().is_constexpr();
+			}
 
-			if (is_implicit_instantiation && member_needs_complex_substitution) {
+			if (is_implicit_instantiation &&
+				member_needs_complex_substitution &&
+				!member_refs_current_template_identifier &&
+				!member_is_constexpr) {
 				// Register for lazy instantiation instead of processing now
 				FLASH_LOG(Templates, Debug, "Registering static member '", static_member.getName(),
 						  "' for lazy instantiation");
@@ -6907,6 +6932,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.is_array = static_member.is_array;
 				lazy_info.array_dimensions = static_member.array_dimensions;
 				lazy_info.pointer_depth = static_member.pointer_depth;
+				lazy_info.is_constexpr = static_member.is_constexpr;
 				lazy_info.template_params = template_params_typed;
 				lazy_info.template_args = template_args_to_use;
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
@@ -6936,7 +6962,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					is_array_member,
 					resolved_array_dimensions,
 					static_member.declaration,
-					static_member.initializer_position);
+					static_member.initializer_position,
+					static_member.is_constexpr);
 
 				continue; // Skip the eager processing below
 			}
@@ -6980,7 +7007,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				is_array_member,
 				resolved_array_dimensions,
 				static_member.declaration,
-				static_member.initializer_position);
+				static_member.initializer_position,
+				static_member.is_constexpr);
 			if (normalized_initializer.has_value()) {
 				if (StructStaticMember* instantiated_static_member =
 						struct_info->findStaticMember(static_member.getName())) {
@@ -7019,7 +7047,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.is_array,
 				static_member.array_dimensions,
 				static_member.declaration,
-				static_member.initializer_position);
+				static_member.initializer_position,
+				static_member.is_constexpr);
 		}
 	}
 	std::vector<ASTNode> instantiated_nested_class_nodes;
@@ -7156,7 +7185,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.is_array,
 						static_member.array_dimensions,
 						static_member.declaration,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 					instantiated_nested_struct_ref.add_static_member(
 						static_member.getName(),
 						substituted_type_index,
@@ -7169,7 +7199,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.pointer_depth,
 						static_member.is_array,
 						static_member.array_dimensions,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 				}
 			};
 
@@ -7758,7 +7789,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.pointer_depth,
 			static_member.is_array,
 			static_member.array_dimensions,
-			static_member.initializer_position);
+			static_member.initializer_position,
+			static_member.is_constexpr);
 	}
 
 	for (auto& nested_class_node : instantiated_nested_class_nodes) {
@@ -9219,7 +9251,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					is_array,
 					std::move(array_dimensions),
 					std::nullopt,
-					std::nullopt);
+					std::nullopt,
+					false);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
@@ -9487,7 +9520,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.is_array,
 						static_member.array_dimensions,
 						static_member.declaration,
-						static_member.initializer_position);
+						static_member.initializer_position,
+						static_member.is_constexpr);
 				}
 			}
 		}

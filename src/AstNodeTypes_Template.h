@@ -957,6 +957,7 @@ struct StaticMemberDecl {
 	bool is_array = false;
 	std::vector<size_t> array_dimensions;
 	int pointer_depth = 0;		   // Pointer indirection level (e.g., int* = 1, int** = 2)
+	bool is_constexpr = false;
 	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' or '{' for lazy replay
 
 	// Returns the legacy Type enum derived from the embedded TypeCategory.
@@ -974,6 +975,11 @@ struct StaticMemberDecl {
 		array_dimensions = std::move(dims);
 	}
 
+	void setArrayInfo(bool is_arr, std::span<const size_t> dims) {
+		is_array = is_arr;
+		array_dimensions.assign(dims.begin(), dims.end());
+	}
+
 	void setDeclaration(ASTNode decl) {
 		declaration = std::move(decl);
 	}
@@ -981,6 +987,7 @@ struct StaticMemberDecl {
 	bool hasInitializerPosition() const { return initializer_position.has_value(); }
 	SaveHandle initializerPosition() const { return *initializer_position; }
 	void setInitializerPosition(SaveHandle pos) { initializer_position = pos; }
+	void setIsConstexpr(bool value) { is_constexpr = value; }
 };
 
 class StructDeclarationNode {
@@ -1144,6 +1151,14 @@ public:
 		}
 	}
 
+	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
+						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {
+		addStaticMemberImpl(name, std::nullopt, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
+							is_array, array_dimensions, initializer_position, is_constexpr);
+	}
+
 	void add_static_member(StringHandle name, ASTNode declaration, TypeIndex type_index, size_t size, size_t alignment,
 						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions,
@@ -1156,6 +1171,31 @@ public:
 		}
 	}
 
+	void add_static_member(StringHandle name, ASTNode declaration, TypeIndex type_index, size_t size, size_t alignment,
+						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {
+		addStaticMemberImpl(name, std::move(declaration), type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
+							is_array, array_dimensions, initializer_position, is_constexpr);
+	}
+
+private:
+	void addStaticMemberImpl(StringHandle name, std::optional<ASTNode> declaration, TypeIndex type_index, size_t size, size_t alignment,
+							 AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+							 ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+							 std::optional<SaveHandle> initializer_position, bool is_constexpr) {
+		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
+		if (declaration.has_value()) {
+			static_members_.back().setDeclaration(std::move(*declaration));
+		}
+		static_members_.back().setArrayInfo(is_array, array_dimensions);
+		if (initializer_position.has_value()) {
+			static_members_.back().setInitializerPosition(*initializer_position);
+		}
+		static_members_.back().setIsConstexpr(is_constexpr);
+	}
+
+public:
 	const std::vector<StaticMemberDecl>& static_members() const {
 		return static_members_;
 	}
