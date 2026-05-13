@@ -880,6 +880,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
 						if (const auto* identifier = std::get_if<IdentifierNode>(&substituted_expr)) {
 							StringHandle type_name = StringTable::getOrInternStringHandle(identifier->name());
+							if (gTemplateRegistry.lookup_alias_template(type_name).has_value() ||
+								gTemplateRegistry.lookupTemplate(type_name).has_value() ||
+								gTemplateRegistry.isClassTemplate(type_name)) {
+								substituted_template_args.push_back(TemplateTypeArg::makeTemplate(type_name));
+								continue;
+							}
 							if (const TypeInfo* type_info = findTypeByName(type_name)) {
 								substituted_template_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
 								continue;
@@ -2194,6 +2200,36 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					  " -> base_type=", (int)subst.typeEnum(), ", type_index=", subst.type_index);
 			if (subst.is_value) {
 				throw CompileError("Template argument used in a type position did not resolve to a type");
+			}
+
+			if (subst.is_template_template_arg && subst.template_name_handle.isValid()) {
+				if (const TypeInfo* original_type_info = tryGetTypeInfo(type.type_index());
+					original_type_info != nullptr && original_type_info->isTemplateInstantiation()) {
+					MaterializedStoredTemplateArgs substituted_args =
+						materializeStoredTemplateArgs(
+							*original_type_info,
+							/*evaluate_dependent_member_values=*/false,
+							kInitialDependentMemberTypeResolutionDepth);
+					if (!substituted_args.args.empty()) {
+						std::string_view concrete_template_name =
+							StringTable::getStringView(subst.template_name_handle);
+						Parser::AliasTemplateMaterializationResult materialized_type =
+							parser_.materializeTemplateInstantiationForLookup(
+								concrete_template_name,
+								substituted_args.args);
+						if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
+							TypeSpecifierNode resolved_type(
+								resolved_type_info->registeredTypeIndex().withCategory(
+									resolved_type_info->typeEnum()),
+								resolved_type_info->sizeInBits(),
+								type.token(),
+								type.cv_qualifier(),
+								ReferenceQualifier::None);
+							applyOuterTypeModifiers(resolved_type, type);
+							return resolved_type;
+						}
+					}
+				}
 			}
 
 			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());

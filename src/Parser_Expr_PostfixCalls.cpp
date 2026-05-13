@@ -973,6 +973,51 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				};
 
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
+				if (!decl_ptr) {
+					StringBuilder class_scope_builder;
+					for (size_t i = 0; i < namespaces.size(); ++i) {
+						if (i > 0) {
+							class_scope_builder.append("::");
+						}
+						class_scope_builder.append(std::string_view(namespaces[i]));
+					}
+					std::string_view class_scope = class_scope_builder.commit();
+					StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_scope);
+					const TypeInfo* class_type_info = lookupTypeInCurrentContext(class_name_handle);
+					if (class_type_info == nullptr) {
+						auto class_type_it = getTypesByNameMap().find(class_name_handle);
+						if (class_type_it != getTypesByNameMap().end()) {
+							class_type_info = class_type_it->second;
+						}
+					}
+					if (class_type_info != nullptr) {
+						if (class_type_info->isTypeAlias() && class_type_info->type_index_.is_valid()) {
+							ResolvedAliasTypeInfo resolved_alias =
+								resolveAliasTypeInfo(class_type_info->registeredTypeIndex().withCategory(class_type_info->typeEnum()));
+							if (resolved_alias.terminal_type_info != nullptr) {
+								class_type_info = resolved_alias.terminal_type_info;
+							} else if (resolved_alias.type_index.is_valid()) {
+								if (const TypeInfo* resolved_type = tryGetTypeInfo(resolved_alias.type_index)) {
+									class_type_info = resolved_type;
+								}
+							}
+						}
+						const StructTypeInfo* struct_info = class_type_info->getStructInfo();
+						if (struct_info == nullptr) {
+							struct_info = tryGetStructTypeInfo(class_type_info->registeredTypeIndex());
+						}
+						if (struct_info != nullptr) {
+							auto member_function_result =
+								struct_info->findMemberFunctionRecursive(final_identifier.handle());
+							if (const StructMemberFunction* member_function = member_function_result.first) {
+								if (member_function->function_decl.is<FunctionDeclarationNode>()) {
+									qualified_symbol = member_function->function_decl;
+									decl_ptr = &qualified_symbol->as<FunctionDeclarationNode>().decl_node();
+								}
+							}
+						}
+					}
+				}
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
 					if (!func_decl.is_materialized()) {

@@ -2358,6 +2358,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_type = resolved_alias_target.typeEnum();
 		}
 
+		if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index);
+			substituted_type_info != nullptr && substituted_type_info->isTemplateInstantiation()) {
+			std::string_view base_template_name =
+				StringTable::getStringView(substituted_type_info->baseTemplateName());
+			StringHandle base_template_handle =
+				StringTable::getOrInternStringHandle(base_template_name);
+			forEachNonPackTemplateParamArgBinding(
+				params,
+				args,
+				[&](const TemplateParameterNode& param, const TemplateTypeArg& concrete_arg, size_t) {
+					if (base_template_name.empty() ||
+						param.nameHandle() != base_template_handle ||
+						!concrete_arg.is_template_template_arg ||
+						!concrete_arg.template_name_handle.isValid()) {
+						return;
+					}
+					std::vector<TemplateTypeArg> concrete_template_args =
+						materializeTemplateArgs(*substituted_type_info, params, args);
+					std::string_view concrete_template_name =
+						StringTable::getStringView(concrete_arg.template_name_handle);
+					std::string_view instantiated_name =
+						get_instantiated_class_name(concrete_template_name, concrete_template_args);
+					if (auto instantiated_node =
+							try_instantiate_class_template(concrete_template_name, concrete_template_args);
+						instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+						instantiated_name =
+							StringTable::getStringView(instantiated_node->as<StructDeclarationNode>().name());
+					}
+					if (const TypeInfo* instantiated_type_info =
+							findTypeByName(StringTable::getOrInternStringHandle(instantiated_name))) {
+						substituted_type_index = instantiated_type_info->registeredTypeIndex();
+						substituted_type = instantiated_type_info->typeEnum();
+					}
+				});
+		}
+
 		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
@@ -4074,7 +4110,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.is_array,
 							static_member.array_dimensions,
 							std::nullopt,
-							std::nullopt);
+							std::nullopt,
+							static_member.is_constexpr);
 					}
 				}
 			}

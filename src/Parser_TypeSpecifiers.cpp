@@ -1536,6 +1536,27 @@ ParseResult Parser::parse_type_specifier() {
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
 
+				// Resolve template template parameter aliases before deciding that
+				// `Container<T>` is still dependent.  During instantiation-body
+				// reparse, the active template parameter list may still contain
+				// the parameter name, but template_param_substitutions_ binds it
+				// to the concrete primary template (e.g. Container -> MyVec).
+				// Substituting first ensures layout/codegen see MyVec<T>, not an
+				// unsized dependent placeholder.
+				{
+					StringHandle tn_handle = StringTable::getOrInternStringHandle(type_name);
+					for (const auto& subst : template_param_substitutions_) {
+						if (subst.is_template_template_param && subst.param_name == tn_handle &&
+							subst.concrete_template_name.isValid()) {
+							type_name = StringTable::getStringView(subst.concrete_template_name);
+							type_name_token = Token(Token::Type::Identifier, type_name,
+													type_name_token.line(), type_name_token.column(), type_name_token.file_index());
+							FLASH_LOG(Templates, Debug, "Resolved template template param alias -> '", type_name, "'");
+							break;
+						}
+					}
+				}
+
 				// Check if this is a template parameter being used with template arguments (e.g., Container<T>)
 				// When parsing a template body, if the type name is a template parameter (type or template template param),
 				// we should NOT try to instantiate it - it's a dependent type that will be resolved during instantiation

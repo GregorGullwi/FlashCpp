@@ -1238,7 +1238,20 @@ void Parser::populateTemplateParamSubstitutions(
 			if (binding.is_pack || binding.args.empty()) {
 				return;
 			}
-			const TemplateTypeArg& arg = binding.args.front();
+			TemplateTypeArg arg = binding.args.front();
+			if (binding.kind == TemplateParameterKind::Template) {
+				arg.is_template_template_arg = true;
+				if (!arg.template_name_handle.isValid()) {
+					if (arg.type_index.is_valid()) {
+						if (const TypeInfo* ti = tryGetTypeInfo(arg.type_index)) {
+							arg.template_name_handle = ti->name_;
+						}
+					}
+					if (!arg.template_name_handle.isValid() && arg.dependent_name.isValid()) {
+						arg.template_name_handle = arg.dependent_name;
+					}
+				}
+			}
 			subs.push_back(make_substitution(binding.name, arg));
 		});
 }
@@ -3061,7 +3074,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (explicit_idx < explicit_types.size()) {
 					StringHandle tpl_name_handle;
 					const auto& arg = explicit_types[explicit_idx];
-					if (arg.category() == TypeCategory::Struct) {
+					if (arg.is_template_template_arg && arg.template_name_handle.isValid()) {
+						tpl_name_handle = arg.template_name_handle;
+					} else if (arg.category() == TypeCategory::Struct) {
 						if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index))
 							tpl_name_handle = type_info->name();
 					} else if (arg.is_dependent) {

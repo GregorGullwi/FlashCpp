@@ -2131,6 +2131,19 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
+		if (!arg.is_template_template_arg && !arg.is_value) {
+			StringHandle template_name_handle = type_node.token().handle();
+			if (template_name_handle.isValid() &&
+				(gTemplateRegistry.lookup_alias_template(template_name_handle).has_value() ||
+				 gTemplateRegistry.lookupTemplate(template_name_handle).has_value() ||
+				 gTemplateRegistry.isClassTemplate(template_name_handle))) {
+				arg = TemplateTypeArg::makeTemplate(template_name_handle);
+				arg.is_pack = is_pack_expansion;
+				FLASH_LOG(Templates, Debug, "Classified explicit template argument '",
+						  StringTable::getStringView(template_name_handle),
+						  "' as a template-template argument");
+			}
+		}
 		if (type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias) {
 			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_node.token().value());
 			for (const auto& subst : template_param_substitutions_) {

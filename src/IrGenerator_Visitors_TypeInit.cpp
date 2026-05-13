@@ -702,6 +702,37 @@ void AstToIr::generateStaticMemberDeclarations() {
 				return true;
 			}
 
+			if (current.is<ExpressionNode>()) {
+				const ExpressionNode& expr = current.as<ExpressionNode>();
+				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+					const auto& qualified_id = std::get<QualifiedIdentifierNode>(expr);
+					NamespaceHandle ns_handle = qualified_id.namespace_handle();
+					if (ns_handle.isGlobal()) {
+						return false;
+					}
+					StringHandle owner_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
+					if (!owner_handle.isValid()) {
+						owner_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
+					}
+					if (!owner_handle.isValid()) {
+						return false;
+					}
+
+					if (const TypeInfo* owner_type = lookupTypeInCurrentContext(owner_handle)) {
+						if (!owner_type->isDependentPlaceholder() && !owner_type->is_incomplete_instantiation_) {
+							return false;
+						}
+					}
+					if (getTypesByNameMap().find(owner_handle) != getTypesByNameMap().end()) {
+						return false;
+					}
+					if (gTemplateRegistry.lookupTemplate(owner_handle).has_value()) {
+						return false;
+					}
+					return true;
+				}
+			}
+
 			if (current.is<SizeofExprNode>()) {
 				const auto& sizeof_expr = current.as<SizeofExprNode>();
 				return sizeof_expr.is_type() && hasUnresolvedTypeSpecifier(sizeof_expr.type_or_expr());
