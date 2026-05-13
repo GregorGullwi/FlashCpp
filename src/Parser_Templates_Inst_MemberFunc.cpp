@@ -454,7 +454,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				resolution.selected_overload != nullptr) {
 				for (size_t i = 0; i < shape_overloads.size(); ++i) {
 					if (resolution.selected_overload == &shape_overloads[i]) {
-						best_idx = shape_candidate_indices[i];
+						size_t selected_idx = shape_candidate_indices[i];
+						if (viable[selected_idx].specificity >= best_specificity) {
+							best_idx = selected_idx;
+						}
 						break;
 					}
 				}

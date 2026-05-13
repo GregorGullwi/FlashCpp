@@ -744,7 +744,9 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 
 	const TypeInfo* resolved_type = nullptr;
 	std::string_view current_base_name = base_class_name;
-	for (const QualifiedTypeMemberAccess& member_access : member_type_chain) {
+	for (size_t member_index = 0; member_index < member_type_chain.size(); ++member_index) {
+		const QualifiedTypeMemberAccess& member_access = member_type_chain[member_index];
+		const bool is_last_member = member_index + 1 == member_type_chain.size();
 		std::string_view member_name = StringTable::getStringView(member_access.member_name);
 		if (member_access.has_template_arguments) {
 			std::string_view qualified_member_template_name =
@@ -818,25 +820,27 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 			return nullptr;
 		}
 
-		size_t max_alias_depth = 10;
-		while (max_alias_depth-- > 0) {
-			const TypeInfo* underlying = tryGetTypeInfo(resolved_type->type_index_);
-			if (underlying == nullptr || underlying == resolved_type) {
-				break;
-			}
+		if (!is_last_member) {
+			size_t max_alias_depth = 10;
+			while (max_alias_depth-- > 0) {
+				const TypeInfo* underlying = tryGetTypeInfo(resolved_type->type_index_);
+				if (underlying == nullptr || underlying == resolved_type) {
+					break;
+				}
 
-			FLASH_LOG_FORMAT(
-				Templates,
-				Debug,
-				"Resolving base member alias '{}::{}' -> underlying type_index={}, type={}",
-				current_base_name,
-				member_name,
-				resolved_type->type_index_,
-				static_cast<int>(underlying->category()));
+				FLASH_LOG_FORMAT(
+					Templates,
+					Debug,
+					"Resolving base member alias '{}::{}' -> underlying type_index={}, type={}",
+					current_base_name,
+					member_name,
+					resolved_type->type_index_,
+					static_cast<int>(underlying->category()));
 
-			resolved_type = underlying;
-			if (underlying->isStruct()) {
-				break;
+				resolved_type = underlying;
+				if (underlying->isStruct()) {
+					break;
+				}
 			}
 		}
 

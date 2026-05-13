@@ -7202,18 +7202,10 @@ EvalResult Evaluator::materialize_constructor_object_value(
 		return std::move(*ctor_result);
 	}
 
-	// No matching constructor found - try aggregate initialization if arguments are provided.
-	// This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
-	if (ctor_call.arguments().size() > 0) {
-		if (struct_info->hasUserDeclaredConstructor()) {
-			return EvalResult::error(std::string(StringBuilder()
-				.append("No matching constructor for '"sv)
-				.append(StringTable::getStringView(struct_info->getName()))
-				.append("' with "sv)
-				.append(std::to_string(ctor_call.arguments().size()))
-				.append(" argument(s) in constexpr evaluation"sv)
-				.commit()));
-		}
+	// No matching constructor found - try aggregate initialization for aggregates.
+	// This handles cases like Pt{3, 7}, and also empty list-initialization
+	// such as true_type{} where the object has no non-static data members.
+	if (!struct_info->hasUserDeclaredConstructor()) {
 		// Convert arguments to InitializerListNode for aggregate initialization
 		InitializerListNode init_list;
 		for (size_t i = 0; i < ctor_call.arguments().size(); ++i) {
@@ -7224,6 +7216,14 @@ EvalResult Evaluator::materialize_constructor_object_value(
 		if (agg_result.success()) {
 			return agg_result;
 		}
+	} else if (ctor_call.arguments().size() > 0) {
+		return EvalResult::error(std::string(StringBuilder()
+			.append("No matching constructor for '"sv)
+			.append(StringTable::getStringView(struct_info->getName()))
+			.append("' with "sv)
+			.append(std::to_string(ctor_call.arguments().size()))
+			.append(" argument(s) in constexpr evaluation"sv)
+			.commit()));
 	}
 	return EvalResult::error("No matching constructor found for constexpr object");
 }

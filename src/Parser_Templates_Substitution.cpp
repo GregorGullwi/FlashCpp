@@ -1430,7 +1430,11 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 				if (const TypeInfo* resolved_dependent_type =
 						substitutor.resolveDependentMemberTypeForSubstitution(*dependent_type_info)) {
-					return makeTypeSpecifier(*resolved_dependent_type);
+					TypeSpecifierNode substituted_spec =
+						makeTypeSpecifierFromTemplateTypeArg(
+							resolveTypeInfoToTemplateArg(*resolved_dependent_type, type_spec),
+							type_spec.token());
+					return emplace_node<TypeSpecifierNode>(substituted_spec);
 				}
 			}
 		}

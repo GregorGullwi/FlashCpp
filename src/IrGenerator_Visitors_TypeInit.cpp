@@ -669,14 +669,68 @@ void AstToIr::generateStaticMemberDeclarations() {
 		return 0;
 	};
 
+	auto isDependentStaticInitTypeInfo = [](const TypeInfo* type_info) {
+		if (type_info == nullptr) {
+			return false;
+		}
+		return type_info->isDependentPlaceholder() ||
+			   type_info->is_incomplete_instantiation_ ||
+			   type_info->hasDependentQualifiedName() ||
+			   type_info->isTemplatePlaceholder();
+	};
+	auto isTemplateOwnedOrDependentTypeInfo = [&](const TypeInfo* type_info) {
+		return isDependentStaticInitTypeInfo(type_info) ||
+			   (type_info != nullptr &&
+				(type_info->isTemplateInstantiation() || type_info->hasInstantiationContext()));
+	};
+	auto isTemplateOwnedOrDependentTypeName = [&](StringHandle type_name_handle) {
+		if (!type_name_handle.isValid()) {
+			return false;
+		}
+		if (gTemplateRegistry.lookupTemplate(type_name_handle).has_value()) {
+			return true;
+		}
+		if (gTemplateRegistry.isPatternStructName(type_name_handle)) {
+			return true;
+		}
+		std::string_view type_name_view = StringTable::getStringView(type_name_handle);
+		size_t separator = type_name_view.size();
+		while ((separator = type_name_view.rfind("::", separator)) != std::string_view::npos) {
+			std::string_view owner_name_view = type_name_view.substr(0, separator);
+			StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name_view);
+			if (gTemplateRegistry.lookupTemplate(owner_name_handle).has_value()) {
+				return true;
+			}
+			if (gTemplateRegistry.isPatternStructName(owner_name_handle)) {
+				return true;
+			}
+			if (auto owner_it = getTypesByNameMap().find(owner_name_handle);
+				owner_it != getTypesByNameMap().end() &&
+				isTemplateOwnedOrDependentTypeInfo(owner_it->second)) {
+				return true;
+			}
+			if (separator == 0) {
+				break;
+			}
+			--separator;
+		}
+		return false;
+	};
 	auto hasUnsubstitutedTemplateDependency = [&](const ASTNode& initializer, const StructTypeInfo* owner_struct) -> bool {
-		auto hasUnresolvedTypeSpecifier = [](const ASTNode& node) {
+		auto hasUnresolvedTypeSpecifier = [&](const ASTNode& node) {
 			if (!node.is<TypeSpecifierNode>()) {
 				return false;
 			}
 
 			const auto& type_spec = node.as<TypeSpecifierNode>();
-			return type_spec.type_index().needsTypeIndex() && !type_spec.type_index().is_valid();
+			const TypeIndex type_index = type_spec.type_index();
+			if (type_index.needsTypeIndex()) {
+				if (!type_index.is_valid()) {
+					return true;
+				}
+				return isDependentStaticInitTypeInfo(tryGetTypeInfo(type_index));
+			}
+			return false;
 		};
 
 		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
@@ -702,10 +756,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				return true;
 			}
 
-			if (current.is<ExpressionNode>()) {
-				const ExpressionNode& expr = current.as<ExpressionNode>();
-				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-					const auto& qualified_id = std::get<QualifiedIdentifierNode>(expr);
+			auto qualifiedIdentifierHasDependency = [&](const QualifiedIdentifierNode& qualified_id) {
 					NamespaceHandle ns_handle = qualified_id.namespace_handle();
 					if (ns_handle.isGlobal()) {
 						return false;
@@ -721,19 +772,33 @@ void AstToIr::generateStaticMemberDeclarations() {
 					if (!owner_handle.isValid()) {
 						return false;
 					}
+					std::string_view owner_name_view = StringTable::getStringView(owner_handle);
+					if (owner_name_view.find('$') != std::string_view::npos) {
+						return true;
+					}
 
 					if (const TypeInfo* owner_type = lookupTypeInCurrentContext(owner_handle)) {
-						if (!owner_type->isDependentPlaceholder() && !owner_type->is_incomplete_instantiation_) {
+						if (!isTemplateOwnedOrDependentTypeInfo(owner_type)) {
 							return false;
 						}
+						return true;
 					}
-					if (getTypesByNameMap().find(owner_handle) != getTypesByNameMap().end()) {
-						return false;
+					if (auto type_it = getTypesByNameMap().find(owner_handle);
+						type_it != getTypesByNameMap().end()) {
+						return isTemplateOwnedOrDependentTypeInfo(type_it->second);
 					}
 					if (gTemplateRegistry.lookupTemplate(owner_handle).has_value()) {
 						return false;
 					}
 					return true;
+			};
+			if (current.is<QualifiedIdentifierNode>()) {
+				return qualifiedIdentifierHasDependency(current.as<QualifiedIdentifierNode>());
+			}
+			if (current.is<ExpressionNode>()) {
+				const ExpressionNode& expr = current.as<ExpressionNode>();
+				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+					return qualifiedIdentifierHasDependency(std::get<QualifiedIdentifierNode>(expr));
 				}
 			}
 
@@ -752,14 +817,19 @@ void AstToIr::generateStaticMemberDeclarations() {
 	};
 	auto hasMissingQualifiedOwner = [&](const ASTNode& initializer) -> bool {
 		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
-			if (!current.is<ExpressionNode>()) {
+			const QualifiedIdentifierNode* qualified_id_ptr = nullptr;
+			if (current.is<QualifiedIdentifierNode>()) {
+				qualified_id_ptr = &current.as<QualifiedIdentifierNode>();
+			} else if (current.is<ExpressionNode>()) {
+				const ExpressionNode& expr = current.as<ExpressionNode>();
+				if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+					qualified_id_ptr = &std::get<QualifiedIdentifierNode>(expr);
+				}
+			}
+			if (qualified_id_ptr == nullptr) {
 				return false;
 			}
-			const ExpressionNode& expr = current.as<ExpressionNode>();
-			if (!std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-				return false;
-			}
-			const auto& qualified_id = std::get<QualifiedIdentifierNode>(expr);
+			const auto& qualified_id = *qualified_id_ptr;
 			NamespaceHandle ns_handle = qualified_id.namespace_handle();
 			if (ns_handle.isGlobal()) {
 				return false;
@@ -775,8 +845,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 			if (!owner_handle.isValid()) {
 				return false;
 			}
-			if (getTypesByNameMap().find(owner_handle) != getTypesByNameMap().end()) {
-				return false;
+			if (auto type_it = getTypesByNameMap().find(owner_handle);
+				type_it != getTypesByNameMap().end()) {
+				return isDependentStaticInitTypeInfo(type_it->second);
 			}
 			return !gTemplateRegistry.lookupTemplate(owner_handle).has_value();
 		});
@@ -819,6 +890,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 				bool static_member_owner_is_template_dependent =
 					type_info->isTemplateInstantiation() ||
 					type_info->is_incomplete_instantiation_ ||
+					type_info->hasInstantiationContext() ||
+					type_info->hasDependentQualifiedName() ||
+					type_info->isDependentPlaceholder() ||
+					isTemplateOwnedOrDependentTypeName(static_member_owner_name) ||
 					gTemplateRegistry.lookupTemplate(static_member_owner_name).has_value();
 
 				bool unresolved_identifier_initializer = false;

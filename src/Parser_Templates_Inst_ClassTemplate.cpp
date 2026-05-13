@@ -1039,6 +1039,25 @@ static InlineVector<StringHandle, 4> collectParamNameHandles(
 	return names;
 }
 
+template <typename ParamContainer>
+static InlineVector<TypeInfo::TemplateArgInfo, 4> collectEnrichedTemplateArgInfos(
+	const ParamContainer& template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
+	result.reserve(template_args.size());
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		TemplateTypeArg arg = template_args[i];
+		if (i < template_params.size()) {
+			if (const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
+				param != nullptr) {
+				arg = enrichTemplateArgForParameter(*param, arg);
+			}
+		}
+		result.push_back(toTemplateArgInfo(arg));
+	}
+	return result;
+}
+
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info,
@@ -5593,7 +5612,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
 	// QualifiedIdentifier captures both the namespace and unqualified name.
-	auto template_args_info = toTemplateArgInfoList(template_args_to_use);
+	auto template_args_info = collectEnrichedTemplateArgInfos(template_params, template_args_to_use);
 	struct_type_info.setTemplateInstantiationInfo(
 		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
 		template_args_info);
@@ -7521,7 +7540,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // one and needs the enclosing template's bindings for constexpr evaluation.
 			nested_type_info.setInstantiationContext(
 				collectParamNameHandles(template_params, template_args_to_use.size()),
-				toTemplateArgInfoList(template_args_to_use),
+				collectEnrichedTemplateArgInfos(template_params, template_args_to_use),
 				struct_type_info.instantiationContext());
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
