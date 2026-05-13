@@ -3112,9 +3112,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				const TemplateParameterNode& param = template_params[param_idx];
 				if (param.is_variadic()) {
 					size_t remaining_args = explicit_types.size() - explicit_seed_idx;
-					size_t required_after = countRequiredTemplateArgsAfter(template_params, param_idx + 1);
-					size_t pack_size = remaining_args > required_after ? remaining_args - required_after : 0;
-					explicit_seed_idx += pack_size;
+					explicit_seed_idx += remaining_args;
 					continue;
 				}
 				explicitly_bound_args.emplace(param.nameHandle(), explicit_types[explicit_seed_idx]);
@@ -3890,11 +3888,12 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 		function_pack_arg_start = std::min(arg_types.size(), params_before_pack);
 	}
 
-	auto deduction_info = buildDeductionMapFromCallArgs(
-		template_params,
-		func_params,
-		arg_types,
-		recursion_depth);
+		auto deduction_info = buildDeductionMapFromCallArgs(
+			template_params,
+			func_params,
+			arg_types,
+			recursion_depth,
+			nullptr);
 	if (!deduction_info.has_value()) {
 		return std::nullopt;
 	}

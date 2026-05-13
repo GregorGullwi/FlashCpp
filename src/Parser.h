@@ -1723,17 +1723,17 @@ private:
 	// types. The returned metadata also carries the canonical function-param → call-arg
 	// mapping so deduction sites can reuse one pack-aware view of the call shape.
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const std::vector<ASTNode>& func_params,
-		const std::vector<TypeSpecifierNode>& arg_types,
-		int recursion_depth,
-		const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args = nullptr);
-	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
-		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const FunctionDeclarationNode& func_decl,
-		const std::vector<TypeSpecifierNode>& arg_types,
-		int recursion_depth,
-		const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args = nullptr);
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const std::vector<ASTNode>& func_params,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth,
+	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args);
+std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const FunctionDeclarationNode& func_decl,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth,
+	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args);
 	bool isTemplateFunctionParameterPack(
 		std::span<const TemplateParameterNode> template_params,
 		const DeclarationNode& func_param_decl);

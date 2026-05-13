@@ -293,7 +293,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			}
 		}
 
-		auto deduction_info = buildDeductionMapFromCallArgs(template_params, func_decl, arg_types, 0);
+		auto deduction_info = buildDeductionMapFromCallArgs(template_params, func_decl, arg_types, 0, nullptr);
 		if (!deduction_info.has_value()) {
 			return std::nullopt;
 		}
@@ -1154,7 +1154,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		template_params,
 		func_decl,
 		call_arg_types,
-		0);
+		0,
+		nullptr);
 
 	// Generate mangled name for the instantiation
 	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(member_name, template_args);
