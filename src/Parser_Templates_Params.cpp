@@ -1280,7 +1280,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							std::holds_alternative<OffsetofExprNode>(expr) ||
 							std::holds_alternative<NoexceptExprNode>(expr) ||
 							std::holds_alternative<TypeTraitExprNode>(expr) ||
-							std::holds_alternative<BinaryOperatorNode>(expr)) {
+							std::holds_alternative<BinaryOperatorNode>(expr) ||
+							std::holds_alternative<UnaryOperatorNode>(expr) ||
+							std::holds_alternative<StaticCastNode>(expr)) {
 							if (expr_result.node().has_value()) {
 								stored_expr = *expr_result.node();
 							}
