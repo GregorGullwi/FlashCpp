@@ -1130,11 +1130,31 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 		return std::nullopt;
 	};
+	// Helper: create a constexpr evaluation context with struct context and parser.
+	// is_speculative = true disables short-circuit && / || so that a truthy LHS of `||`
+	// does not give a false-positive result during template-argument disambiguation.
+	auto makeConstExprContext = [&]() {
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			ctx.struct_node = struct_ctx.struct_node;
+			ctx.struct_info = struct_ctx.local_struct_info;
+		}
+		ctx.parser = this;
+		ctx.is_speculative = true;
+		return ctx;
+	};
 
 	// Handle qualified identifier expressions (e.g., is_int<double>::value)
 	// This is the most common case for template member access in C++
 	if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 		const QualifiedIdentifierNode& qualified_id = std::get<QualifiedIdentifierNode>(expr);
+		auto ctx = makeConstExprContext();
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Qualified identifier constexpr evaluation succeeded: {}", eval_result.as_int());
+			return makeConstantValueFromEvalResult(eval_result);
+		}
 
 		// The qualified identifier represents something like "is_int<double>::value"
 		// We need to extract: type_name = "is_int<double>" and member_name = "value"
@@ -1359,21 +1379,6 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
 		return makeConstantValueFromCategory(eval_result.value ? 1 : 0, TypeCategory::Bool);
 	}
-
-	// Helper: create a constexpr evaluation context with struct context and parser.
-	// is_speculative = true disables short-circuit && / || so that a truthy LHS of `||`
-	// does not give a false-positive result during template-argument disambiguation.
-	auto makeConstExprContext = [&]() {
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		if (!struct_parsing_context_stack_.empty()) {
-			const auto& struct_ctx = struct_parsing_context_stack_.back();
-			ctx.struct_node = struct_ctx.struct_node;
-			ctx.struct_info = struct_ctx.local_struct_info;
-		}
-		ctx.parser = this;
-		ctx.is_speculative = true;
-		return ctx;
-	};
 
 	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {

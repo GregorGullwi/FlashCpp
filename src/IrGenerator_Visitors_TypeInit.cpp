@@ -710,6 +710,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 					if (ns_handle.isGlobal()) {
 						return false;
 					}
+					if (global_symbol_table_ != nullptr &&
+						global_symbol_table_->has_namespace_symbols(ns_handle)) {
+						return false;
+					}
 					StringHandle owner_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
 					if (!owner_handle.isValid()) {
 						owner_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
@@ -758,6 +762,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 			const auto& qualified_id = std::get<QualifiedIdentifierNode>(expr);
 			NamespaceHandle ns_handle = qualified_id.namespace_handle();
 			if (ns_handle.isGlobal()) {
+				return false;
+			}
+			if (global_symbol_table_ != nullptr &&
+				global_symbol_table_->has_namespace_symbols(ns_handle)) {
 				return false;
 			}
 			StringHandle owner_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
@@ -898,9 +906,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 				// Check if static member has an initializer
 				op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
+				bool defer_constexpr_initializer = false;
 
- // Phase C: if a NormalizedInitializer with pre-packed bytes exists, use it
- // directly and skip all AST-based classification / evaluation.
+				// Phase C: if a NormalizedInitializer with pre-packed bytes exists, use it
+				// directly and skip all AST-based classification / evaluation.
 				if (static_member.normalized_init.has_value() && static_member.normalized_init->isConstant()) {
 					op.is_initialized = true;
 					op.init_data = static_member.normalized_init->constant_bytes;
@@ -922,16 +931,22 @@ void AstToIr::generateStaticMemberDeclarations() {
 						op.init_data.push_back(0);
 					}
 				};
+				auto can_defer_constexpr_initializer = [&]() {
+					if (!static_member.initializer.has_value()) {
+						return false;
+					}
+					if (!static_member_owner_is_template_dependent) {
+						return false;
+					}
+					if (hasUnsubstitutedTemplateDependency(*static_member.initializer, struct_info)) {
+						return true;
+					}
+					return hasMissingQualifiedOwner(*static_member.initializer);
+				};
 				auto fail_constexpr_initializer = [&](std::string_view reason) {
 					if (static_member.isStaticConstexpr()) {
-						if (static_member_owner_is_template_dependent &&
-							static_member.initializer.has_value() &&
-							hasUnsubstitutedTemplateDependency(*static_member.initializer, struct_info)) {
-							return;
-						}
-						if (reason == "initializer did not evaluate" &&
-							(!static_member.initializer.has_value() ||
-							 !hasMissingQualifiedOwner(*static_member.initializer))) {
+						if (can_defer_constexpr_initializer()) {
+							defer_constexpr_initializer = true;
 							return;
 						}
 						throw CompileError(
@@ -942,7 +957,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 					}
 				};
 				auto write_back_constant_bytes = [&]() {
-					if (!op.init_data.empty()) {
+					if (!defer_constexpr_initializer && !op.init_data.empty()) {
 						if (StructStaticMember* mutable_member =
 								const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
 							NormalizedInitializer ni;
@@ -988,6 +1003,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 												node.as<InitializerListNode>(),
 												element_ctx);
 											if (!object_result.success()) {
+												fail_constexpr_initializer(
+													object_result.error_message.empty()
+														? "struct-array element initializer did not evaluate"
+														: std::string_view(object_result.error_message));
 												auto eval_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) {
 													return evalAggregateLeafToRaw(leaf_expr, target_type, struct_info);
 												};
@@ -1085,6 +1104,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 									0,
 									0);
 							} else {
+								fail_constexpr_initializer(
+									object_result.error_message.empty()
+										? "aggregate initializer did not evaluate"
+										: std::string_view(object_result.error_message));
 								auto eval_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) {
 									return evalAggregateLeafToRaw(leaf_expr, target_type, struct_info);
 								};
@@ -1633,6 +1656,13 @@ void AstToIr::generateStaticMemberDeclarations() {
 				} else if (!allowNormalizedWriteBack && !op.init_data.empty()) {
 					FLASH_LOG(Codegen, Debug, "Skipping Phase C write-back for '", qualified_name,
 							  "' because bytes came from a fallback zero-initialization path");
+				}
+
+				if (defer_constexpr_initializer) {
+					FLASH_LOG(Codegen, Debug, "Deferring static constexpr member '", qualified_name,
+							  "' because its initializer still depends on an unavailable template owner");
+					emitted_static_members_.erase(name_handle);
+					continue;
 				}
 
 				// static const/constexpr members with constant initializers go to .rodata (read-only).
