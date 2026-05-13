@@ -88,16 +88,18 @@ namespace {
 	}
 
 	auto sub_map = buildSubstitutionParamMap(template_params, template_args);
-	TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+	TemplateInstantiationContext substitution_context = buildTemplateInstantiationContext(
 		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 		template_args,
-		nullptr);
+		nullptr,
+		TemplateSubstitutionFailurePolicy::HardUse);
+	TemplateEnvironment& substitution_environment = substitution_context.environment;
 	sub_map = buildSubstitutionParamMap(substitution_environment);
 	if (sub_map.empty()) {
 		return default_node;
 	}
 
-	ExpressionSubstitutor substitutor(substitution_environment, parser);
+	ExpressionSubstitutor substitutor(substitution_context, parser);
 	return substitutor.substitute(default_node);
 }
 
@@ -751,6 +753,24 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 		if (materialized_target.resolved_type_info == nullptr &&
 			materialized_target.instantiated_name.empty()) {
+			const size_t alias_owner_sep = alias_template_name.rfind("::");
+			const std::string_view target_base_name =
+				StringTable::getStringView(target_type_info->baseTemplateName());
+			if (alias_owner_sep != std::string_view::npos &&
+				target_base_name.find("::") == std::string_view::npos) {
+				const std::string_view owner_member_template_name =
+					StringBuilder()
+						.append(alias_template_name.substr(0, alias_owner_sep))
+						.append("::")
+						.append(target_base_name)
+						.commit();
+				materialized_target = materializeTemplateInstantiationForLookup(
+					owner_member_template_name,
+					concrete_target_args);
+			}
+		}
+		if (materialized_target.resolved_type_info == nullptr &&
+			materialized_target.instantiated_name.empty()) {
 			return false;
 		}
 
@@ -805,6 +825,24 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					materialized_target = materializeTemplateInstantiationForLookup(
 						StringTable::getStringView(alias_target_info->baseTemplateName()),
 						concrete_target_args);
+				}
+				if (materialized_target.resolved_type_info == nullptr &&
+					materialized_target.instantiated_name.empty()) {
+					const size_t alias_owner_sep = alias_template_name.rfind("::");
+					const std::string_view target_base_name =
+						StringTable::getStringView(alias_target_info->baseTemplateName());
+					if (alias_owner_sep != std::string_view::npos &&
+						target_base_name.find("::") == std::string_view::npos) {
+						const std::string_view owner_member_template_name =
+							StringBuilder()
+								.append(alias_template_name.substr(0, alias_owner_sep))
+								.append("::")
+								.append(target_base_name)
+								.commit();
+						materialized_target = materializeTemplateInstantiationForLookup(
+							owner_member_template_name,
+							concrete_target_args);
+					}
 				}
 				if (!materialized_target.instantiated_name.empty() ||
 					materialized_target.resolved_type_info != nullptr) {
@@ -1545,7 +1583,14 @@ std::string_view Parser::instantiate_and_register_base_template(
 	// routes explicit function-template names through this helper, so non-class
 	// templates must report "not a class instantiation" instead of falling into
 	// the base-class-only internal error below.
-	auto template_entry = gTemplateRegistry.lookupTemplate(base_class_name);
+	TemplateNameLookupRequest base_template_lookup_request;
+	base_template_lookup_request.name = StringTable::getOrInternStringHandle(base_class_name);
+	base_template_lookup_request.lookup_kind = TemplateNameLookupKind::Qualified;
+	base_template_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+	TemplateNameLookupResult base_template_lookup =
+		gTemplateRegistry.lookupTemplateName(base_template_lookup_request);
+	auto template_entry = base_template_lookup.firstDeclarationOfKind(
+		TemplateDeclarationKind::ClassTemplate);
 	if (template_entry && template_entry->is<TemplateClassDeclarationNode>()) {
 		// Try to instantiate the base template
 		auto instantiated_base = try_instantiate_class_template(base_class_name, template_args);
@@ -1563,7 +1608,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 
 		// If instantiation returned nullopt (already instantiated), look up the existing type
 		// We need to fill in default arguments to find the correct name
-		auto primary_template_opt = gTemplateRegistry.lookupTemplate(base_class_name);
+		auto primary_template_opt = template_entry;
 		if (primary_template_opt.has_value() && primary_template_opt->is<TemplateClassDeclarationNode>()) {
 			const TemplateClassDeclarationNode& primary_template = primary_template_opt->as<TemplateClassDeclarationNode>();
 			const auto& primary_params = primary_template.template_parameters();

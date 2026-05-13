@@ -2,6 +2,7 @@
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
 #include "SemanticAnalysis.h"
+#include "TypeSizeQuery.h"
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type);
 
@@ -36,7 +37,7 @@ void AstToIr::populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNo
 		!return_type.has_function_signature();
 	call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 	call_op.referenced_value_size_in_bits = call_op.returns_reference
-												? SizeInBits{getTypeSpecSizeBits(return_type)}
+												? SizeInBits{requireConcreteAliasResolvedTypeSizeBits(return_type, "direct call reference return")}
 												: call_op.return_size_in_bits;
 }
 
@@ -46,7 +47,7 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 		!return_type.has_function_signature();
 	call_op.returns_rvalue_reference = return_type.is_rvalue_reference();
 	call_op.referenced_value_size_in_bits = call_op.returns_reference
-												? SizeInBits{getTypeSpecSizeBits(return_type)}
+												? SizeInBits{requireConcreteAliasResolvedTypeSizeBits(return_type, "virtual call reference return")}
 												: call_op.result.size_in_bits;
 }
 
@@ -86,9 +87,12 @@ TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& 
 
 int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const {
 	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
+	if (return_type.type() == TypeCategory::Void) {
+		return 0;
+	}
 	return (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 		? 64
-		: getTypeSpecSizeBits(return_type);
+		: requireConcreteAliasResolvedTypeSizeBits(return_type, "indirect call signature return size");
 }
 
 void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature) {
@@ -101,7 +105,7 @@ void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const Func
 	call_op.returns_reference = signature.returns_reference() && !return_type.has_function_signature();
 	call_op.returns_rvalue_reference = signature.returns_rvalue_reference();
 	call_op.referenced_value_size_in_bits = call_op.returns_reference
-												? SizeInBits{getTypeSpecSizeBits(return_type)}
+												? SizeInBits{requireConcreteAliasResolvedTypeSizeBits(return_type, "indirect call reference return")}
 												: call_op.return_size_in_bits;
 	call_op.use_return_slot = needsHiddenReturnParam(
 		call_op.returnType(),
@@ -132,21 +136,11 @@ void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& r
 			? POINTER_SIZE_BITS
 			: static_cast<int>(normalized_return_type.size_in_bits())};
 
-	// When TypeSpecifierNode reports size 0 for a non-void type, resolve it:
-	// structs via tryGetStructTypeInfo, primitives via get_type_size_bits.
+	// When TypeSpecifierNode reports size 0 for a non-void type, resolve it
+	// through the shared alias-aware concrete-size service.
 	if (!call_op.return_size_in_bits.is_set() && normalized_return_type.category() != TypeCategory::Void) {
-		const TypeCategory cat = normalized_return_type.category();
-		if (cat == TypeCategory::Struct && normalized_return_type.type_index().is_valid()) {
-			if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(normalized_return_type.type_index())) {
-				call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_struct->sizeInBits().value)};
-			}
-		}
-		if (!call_op.return_size_in_bits.is_set()) {
-			const int fallback_bits = get_type_size_bits(cat);
-			if (fallback_bits > 0) {
-				call_op.return_size_in_bits = SizeInBits{fallback_bits};
-			}
-		}
+		call_op.return_size_in_bits = SizeInBits{
+			requireConcreteAliasResolvedTypeSizeBits(normalized_return_type, "direct call return size")};
 	}
 
 	populateReferenceReturnInfo(call_op, normalized_return_type);
@@ -236,7 +230,7 @@ ExprResult AstToIr::buildCallReturnResult(
 	// ── Reference-returning functions ──────────────────────────────────────
 	if (normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference()) {
 		LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-		int referenced_size_bits = getTypeSpecSizeBits(normalized_return_type);
+		int referenced_size_bits = requireConcreteAliasResolvedTypeSizeBits(normalized_return_type, "call return result reference size");
 		if (normalized_return_type.is_rvalue_reference()) {
 			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, normalized_return_type.category(), referenced_size_bits));
 		} else {
@@ -1165,6 +1159,96 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 		}
+		if (scope_pos != std::string_view::npos && !matched_func_decl) {
+			std::string_view struct_part = lookup_name_view.substr(0, scope_pos);
+			std::string_view member_name_direct = lookup_name_view.substr(scope_pos + 2);
+			const TypeInfo* alias_type_info = nullptr;
+			if (current_struct_name_.isValid() && struct_part.find("::") == std::string_view::npos) {
+				alias_type_info = resolveQualifiedCallStruct(struct_part);
+				if (alias_type_info == nullptr) {
+					StringHandle alias_qualified_handle = StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(StringTable::getStringView(current_struct_name_))
+							.append("::")
+							.append(struct_part)
+							.commit());
+					auto alias_it = getTypesByNameMap().find(alias_qualified_handle);
+					if (alias_it != getTypesByNameMap().end()) {
+						alias_type_info = alias_it->second;
+					}
+				}
+			}
+			size_t direct_expected_param_count = 0;
+			callExprNode.arguments().visit([&](ASTNode) { ++direct_expected_param_count; });
+			const FunctionDeclarationNode* unique_static_member = nullptr;
+			StringHandle unique_owner;
+			for (const auto& [candidate_name, candidate_type_info] : getTypesByNameMap()) {
+				if (candidate_type_info == nullptr || !candidate_type_info->isStruct()) {
+					continue;
+				}
+				const StructTypeInfo* candidate_struct = candidate_type_info->getStructInfo();
+				if (candidate_struct == nullptr) {
+					continue;
+				}
+				for (const auto& mf : candidate_struct->member_functions) {
+					if (!mf.function_decl.is<FunctionDeclarationNode>()) {
+						continue;
+					}
+					const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+					if (!fd.is_static() ||
+						fd.decl_node().identifier_token().value() != member_name_direct ||
+						fd.parameter_nodes().size() != direct_expected_param_count) {
+						continue;
+					}
+					if (unique_static_member != nullptr && unique_static_member != &fd) {
+						unique_static_member = nullptr;
+						unique_owner = {};
+						goto ambiguous_qualified_static_member;
+					}
+					unique_static_member = &fd;
+					unique_owner = candidate_type_info->name();
+				}
+			}
+ambiguous_qualified_static_member:
+			if (unique_static_member != nullptr && unique_owner.isValid()) {
+				matched_func_decl = unique_static_member;
+				StringHandle owner_for_call = unique_owner;
+				if (alias_type_info != nullptr && !alias_type_info->isTemplateInstantiation() &&
+					alias_type_info->type_index_.is_valid()) {
+					if (const TypeInfo* underlying_alias_type =
+							tryGetTypeInfo(alias_type_info->type_index_)) {
+						alias_type_info = underlying_alias_type;
+					}
+				}
+				if (alias_type_info != nullptr && alias_type_info->isTemplateInstantiation()) {
+					InlineVector<TemplateTypeArg, 4> alias_args;
+					for (const auto& stored_arg : alias_type_info->templateArgs()) {
+						alias_args.push_back(toTemplateTypeArg(stored_arg));
+					}
+					if (!alias_args.empty()) {
+						std::string_view alias_instantiation_name =
+							StringTable::getStringView(alias_type_info->name());
+						std::string_view instantiated_owner =
+							alias_instantiation_name;
+						if (size_t dollar_pos = alias_instantiation_name.find('$');
+							dollar_pos != std::string_view::npos) {
+							instantiated_owner =
+								StringBuilder()
+									.append(StringTable::getStringView(unique_owner))
+									.append(alias_instantiation_name.substr(dollar_pos))
+									.commit();
+						}
+						owner_for_call = StringTable::getOrInternStringHandle(instantiated_owner);
+						DeferredMemberFunctionInfo deferred_info;
+						deferred_info.struct_name = owner_for_call;
+						deferred_info.function_node = ASTNode(unique_static_member);
+						deferred_info.namespace_handle = unique_static_member->namespace_handle();
+						deferred_member_functions_.push_back(std::move(deferred_info));
+					}
+				}
+				resolveMangledName(matched_func_decl, owner_for_call);
+			}
+		}
 		if (!matched_func_decl && !base_template_name.empty() && scope_pos != std::string_view::npos) {
 			std::string_view member_name = lookup_name_view.substr(scope_pos + 2);
 
@@ -1269,7 +1353,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			matched_func_decl->decl_node().type_specifier_node();
 		const TypeCategory ret_type = ret_spec.type();
 		const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
-		const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
+		const SizeInBits ret_size{
+			ret_bits_raw != 0
+				? ret_bits_raw
+				: (ret_type == TypeCategory::Void
+					   ? 0
+					   : requireConcreteAliasResolvedTypeSizeBits(ret_spec, "consteval call return size"))};
 
 		// Float / double
 		if (ret_type == TypeCategory::Float) {

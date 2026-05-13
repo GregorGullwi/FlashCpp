@@ -2,6 +2,7 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
+#include "TypeSizeQuery.h"
 
 // Returns the ExprResult for a sizeof/alignof/offsetof result with the correct size_t
 // type for the current target data model (unsigned long long on LLP64/Windows,
@@ -22,7 +23,7 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 	if (type_spec.is_array()) {
 		TypeSpecifierNode element_type = type_spec;
 		element_type.set_array_dimensions({});
-		const int element_size_bits = getTypeSpecSizeBits(element_type);
+		const int element_size_bits = queryConcreteAliasResolvedTypeSizeBits(element_type).size_bits;
 		if (element_size_bits <= 0) {
 			return std::nullopt;
 		}
@@ -33,7 +34,7 @@ static std::optional<size_t> tryGetTypeSizeForSizeof(const TypeSpecifierNode& ty
 		return total_size;
 	}
 
-	const int size_bits = getTypeSpecSizeBits(type_spec);
+	const int size_bits = queryConcreteAliasResolvedTypeSizeBits(type_spec).size_bits;
 	if (size_bits <= 0) {
 		return std::nullopt;
 	}
@@ -85,7 +86,7 @@ static std::optional<size_t> tryGetTypeAlignmentForAlignof(const TypeSpecifierNo
 		}
 	}
 
-	const int size_bits = getTypeSpecSizeBits(aligned_type);
+	const int size_bits = queryConcreteAliasResolvedTypeSizeBits(aligned_type).size_bits;
 	if (size_bits <= 0) {
 		return std::nullopt;
 	}
@@ -1665,37 +1666,19 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			static_member->is_constexpr &&
 			!is_struct_type(static_member->memberType()) &&
 			!static_member->is_array) {
-			if (static_member->normalized_init.has_value() &&
-				static_member->normalized_init->isConstant()) {
-				unsigned long long raw_value = 0;
-				const size_t byte_count = std::min<size_t>(
-					static_member->normalized_init->constant_bytes.size(),
-					sizeof(raw_value));
-				for (size_t byte_index = 0; byte_index < byte_count; ++byte_index) {
-					raw_value |= static_cast<unsigned long long>(
-						static_cast<unsigned char>(
-							static_member->normalized_init->constant_bytes[byte_index])) << (byte_index * 8);
-				}
-				TypeIndex type_index = static_member->type_index.is_valid()
-					? static_member->type_index
-					: nativeTypeIndex(static_member->memberType());
-				const int size_bits = static_member->size != 0
-					? static_cast<int>(static_member->size * 8)
-					: get_type_size_bits(static_member->memberType());
-				return makeExprResult(
-					type_index.withCategory(static_member->memberType()),
-					SizeInBits{size_bits},
-					raw_value,
-					PointerDepth{},
-					ValueStorage::ContainsData);
+			ConstExpr::EvaluationContext eval_ctx(symbol_table);
+			if (global_symbol_table_) {
+				eval_ctx.global_symbols = global_symbol_table_;
 			}
-			if (static_member->initializer.has_value() &&
-				static_member->initializer->is<ExpressionNode>()) {
-				ExprResult constexpr_result =
-					tryEvaluateAsConstExpr(static_member->initializer->as<ExpressionNode>());
-				if (constexpr_result.effectiveIrType() != IrType::Void) {
-					return constexpr_result;
-				}
+			eval_ctx.struct_info = owner_struct;
+			if (owner_struct && owner_struct->own_type_index_.has_value()) {
+				eval_ctx.struct_type_index = *owner_struct->own_type_index_;
+			}
+			ConstExpr::EvalResult static_value =
+				ConstExpr::Evaluator::tryReadStaticMemberConstant(*static_member, eval_ctx, true);
+			ExprResult constexpr_result = makeScalarConstexprEvalResult(static_value);
+			if (constexpr_result.effectiveIrType() != IrType::Void) {
+				return constexpr_result;
 			}
 		}
 

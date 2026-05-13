@@ -2,6 +2,7 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 #include "AstTraversal.h"
+#include "TypeSizeQuery.h"
 
 namespace {
 bool isAssignmentLikeOperator(std::string_view op) {
@@ -373,60 +374,7 @@ static TypeCategory resolveCodegenTypeCategory(const TypeSpecifierNode& type_nod
 static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::string_view context) {
 	TypeSpecifierNode resolved_type_node = type_node;
 	resolved_type_node.set_category(resolveCodegenTypeCategory(type_node, context));
-
-	const int resolved_size = getTypeSpecSizeBits(resolved_type_node);
-	if (resolved_size != 0) {
-		return resolved_size;
-	}
-
-	if (resolved_type_node.type_index().is_valid()) {
-		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_type_node.type_index())) {
-			const int struct_size_bits = static_cast<int>(struct_info->sizeInBits().value);
-			if (struct_size_bits > 0) {
-				return struct_size_bits;
-			}
-		}
-		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(resolved_type_node.type_index());
-		if (alias_info.type_index.is_valid()) {
-			// Alias may resolve to a non-struct concrete type (e.g. remove_reference<T>::type).
-			if (const TypeInfo* alias_type_info = tryGetTypeInfo(alias_info.type_index)) {
-				const int alias_size_bits = static_cast<int>(alias_type_info->sizeInBits().value);
-				if (alias_size_bits > 0) {
-					return alias_size_bits;
-				}
-			}
-			TypeSpecifierNode alias_resolved_type = resolved_type_node;
-			alias_resolved_type.set_type_index(alias_info.type_index);
-			alias_resolved_type.set_category(alias_info.typeEnum());
-			const int alias_spec_size_bits = getTypeSpecSizeBits(alias_resolved_type);
-			if (alias_spec_size_bits > 0) {
-				return alias_spec_size_bits;
-			}
-			if (const StructTypeInfo* alias_struct_info = tryGetStructTypeInfo(alias_info.type_index)) {
-				const int struct_size_bits = static_cast<int>(alias_struct_info->sizeInBits().value);
-				if (struct_size_bits > 0) {
-					return struct_size_bits;
-				}
-				// Incomplete/unspecialized alias type detected
-				throw CompileError(std::string(StringBuilder()
-											.append("Incomplete or unspecialized alias type (type_index=")
-											.append(static_cast<int64_t>(alias_info.type_index.index()))
-											.append(") in ")
-											.append(context)
-											.commit()));
-			}
-		}
-	}
-
-	throw InternalError(std::string(StringBuilder()
-										.append("Type with no runtime size reached codegen in ")
-										.append(context)
-										.append(" (type=")
-										.append(static_cast<int64_t>(resolved_type_node.type()))
-										.append(", pointer_depth=")
-										.append(static_cast<int64_t>(resolved_type_node.pointer_depth()))
-										.append(")")
-										.commit()));
+	return requireConcreteAliasResolvedTypeSizeBits(resolved_type_node, context);
 }
 
 int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
@@ -445,7 +393,7 @@ int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, boo
 		if (size_bits == 0) {
 			TypeSpecifierNode resolved_type_node = type_node;
 			resolved_type_node.set_category(resolveCodegenTypeCategory(type_node, "identifier size calculation"));
-			const int fallback_size = getTypeSpecSizeBits(resolved_type_node);
+			const int fallback_size = requireConcreteAliasResolvedTypeSizeBits(resolved_type_node, "identifier size calculation");
 			FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
 					  "' (type=", static_cast<int>(resolved_type_node.type()), ") - using fallback calculation (fallback_size=",
 					  fallback_size, ")");
@@ -1775,131 +1723,19 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						static_member->is_constexpr &&
 						!is_struct_type(static_member->memberType()) &&
 						!static_member->is_array) {
-						if (static_member->normalized_init.has_value() &&
-							static_member->normalized_init->isConstant()) {
-							unsigned long long raw_value = 0;
-							const size_t byte_count = std::min<size_t>(
-								static_member->normalized_init->constant_bytes.size(),
-								sizeof(raw_value));
-							for (size_t byte_index = 0; byte_index < byte_count; ++byte_index) {
-								raw_value |= static_cast<unsigned long long>(
-									static_cast<unsigned char>(
-										static_member->normalized_init->constant_bytes[byte_index])) << (byte_index * 8);
-							}
-							TypeIndex type_index = static_member->type_index.is_valid()
-								? static_member->type_index
-								: nativeTypeIndex(static_member->memberType());
-							const int size_bits = static_member->size != 0
-								? static_cast<int>(static_member->size * 8)
-								: get_type_size_bits(static_member->memberType());
-							return makeExprResult(
-								type_index.withCategory(static_member->memberType()),
-								SizeInBits{size_bits},
-								raw_value,
-								PointerDepth{},
-								ValueStorage::ContainsData);
+						ConstExpr::EvaluationContext eval_ctx(symbol_table);
+						if (global_symbol_table_) {
+							eval_ctx.global_symbols = global_symbol_table_;
 						}
-						if (static_member->initializer.has_value() &&
-							static_member->initializer->is<ExpressionNode>()) {
-							ExprResult constexpr_result =
-								tryEvaluateAsConstExpr(static_member->initializer->as<ExpressionNode>());
-							if (constexpr_result.effectiveIrType() != IrType::Void) {
-								return constexpr_result;
-							}
-
-							auto read_constant_bytes = [](const StructStaticMember& member, unsigned long long& value) {
-								if (!member.normalized_init.has_value() ||
-									!member.normalized_init->isConstant()) {
-									return false;
-								}
-								value = 0;
-								const size_t byte_count = std::min<size_t>(
-									member.normalized_init->constant_bytes.size(),
-									sizeof(value));
-								for (size_t byte_index = 0; byte_index < byte_count; ++byte_index) {
-									value |= static_cast<unsigned long long>(
-										static_cast<unsigned char>(
-											member.normalized_init->constant_bytes[byte_index])) << (byte_index * 8);
-								}
-								return true;
-							};
-							auto read_numeric_literal = [](const ASTNode& node, unsigned long long& value) {
-								if (!node.is<ExpressionNode>()) {
-									return false;
-								}
-								const ExpressionNode& expr = node.as<ExpressionNode>();
-								if (const auto* literal = std::get_if<NumericLiteralNode>(&expr)) {
-									NumericLiteralValue literal_value = literal->value();
-									if (const auto* ull_value = std::get_if<unsigned long long>(&literal_value)) {
-										value = *ull_value;
-										return true;
-									}
-								}
-								return false;
-							};
-							constexpr unsigned MAX_RECURSIVE_STATIC_EVAL_DEPTH = 64;
-							auto evaluate_recursive_static =
-								[&](const auto& self, const StructTypeInfo* current_struct, const StructStaticMember& member, unsigned depth, unsigned long long& value) -> bool {
-								if (depth > MAX_RECURSIVE_STATIC_EVAL_DEPTH) {
-									return false;
-								}
-								if (read_constant_bytes(member, value)) {
-									return true;
-								}
-								if (!member.initializer.has_value() ||
-									!member.initializer->is<ExpressionNode>()) {
-									return false;
-								}
-								const ExpressionNode& member_init = member.initializer->as<ExpressionNode>();
-								if (!std::holds_alternative<BinaryOperatorNode>(member_init)) {
-									return false;
-								}
-								const BinaryOperatorNode& binary = std::get<BinaryOperatorNode>(member_init);
-								if (binary.op() != "+" || current_struct == nullptr) {
-									return false;
-								}
-								unsigned long long rhs_value = 0;
-								if (!read_numeric_literal(binary.get_rhs(), rhs_value)) {
-									return false;
-								}
-								for (const auto& base_class : current_struct->base_classes) {
-									const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_class.type_index);
-									if (base_struct == nullptr) {
-										continue;
-									}
-									const StructStaticMember* base_member =
-										base_struct->findStaticMember(member.getName());
-									if (base_member == nullptr) {
-										continue;
-									}
-									unsigned long long base_value = 0;
-									if (self(self, base_struct, *base_member, depth + 1, base_value)) {
-										value = base_value + rhs_value;
-										return true;
-									}
-								}
-								return false;
-							};
-							unsigned long long recursive_value = 0;
-							if (evaluate_recursive_static(
-									evaluate_recursive_static,
-									struct_info,
-									*static_member,
-									0,
-									recursive_value)) {
-								TypeIndex type_index = static_member->type_index.is_valid()
-									? static_member->type_index
-									: nativeTypeIndex(static_member->memberType());
-								const int size_bits = static_member->size != 0
-									? static_cast<int>(static_member->size * 8)
-									: get_type_size_bits(static_member->memberType());
-								return makeExprResult(
-									type_index.withCategory(static_member->memberType()),
-									SizeInBits{size_bits},
-									recursive_value,
-									PointerDepth{},
-									ValueStorage::ContainsData);
-							}
+						eval_ctx.struct_info = owner_struct;
+						if (owner_struct->own_type_index_.has_value()) {
+							eval_ctx.struct_type_index = *owner_struct->own_type_index_;
+						}
+						ConstExpr::EvalResult static_value =
+							ConstExpr::Evaluator::tryReadStaticMemberConstant(*static_member, eval_ctx, true);
+						ExprResult constexpr_result = makeScalarConstexprEvalResult(static_value);
+						if (constexpr_result.effectiveIrType() != IrType::Void) {
+							return constexpr_result;
 						}
 					}
 

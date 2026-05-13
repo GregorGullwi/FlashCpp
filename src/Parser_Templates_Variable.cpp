@@ -51,7 +51,25 @@ StringHandle Parser::parseRawAliasTargetTemplateId(
 	std::string_view full_name = name_builder.commit();
 
 	if (peek() == "<"_tok) {
-		auto parsed_args = parse_explicit_template_arguments(&out_args);
+		std::optional<InlineVector<TemplateTypeArg, 4>> parsed_args;
+		if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(full_name);
+			alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
+			parsed_args = parse_explicit_template_arguments(
+				alias_template_opt->as<TemplateAliasNode>().template_parameters(),
+				&out_args);
+		} else if (auto class_template_opt = gTemplateRegistry.lookupTemplate(full_name);
+				   class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+			parsed_args = parse_explicit_template_arguments(
+				class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+				&out_args);
+		} else if (auto variable_template_opt = gTemplateRegistry.lookupVariableTemplate(full_name);
+				   variable_template_opt.has_value() && variable_template_opt->is<TemplateVariableDeclarationNode>()) {
+			parsed_args = parse_explicit_template_arguments(
+				variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters(),
+				&out_args);
+		} else {
+			parsed_args = parse_explicit_template_arguments(&out_args);
+		}
 		out_has_template_args = parsed_args.has_value();
 		if (parsed_args.has_value()) {
 			out_concrete_args = std::move(*parsed_args).toVector();
@@ -173,7 +191,13 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 				target_member_template_name,
 				target_member_template_arg_nodes,
 				false) &&
-			gTemplateRegistry.lookup_alias_template(target_template_name).has_value()) {
+			[&]() {
+				TemplateNameLookupRequest request;
+				request.name = target_template_name;
+				request.lookup_kind = TemplateNameLookupKind::Qualified;
+				request.timing = TemplateNameLookupTiming::PointOfDefinition;
+				return gTemplateRegistry.lookupTemplateName(request).hasAliasTemplate();
+			}()) {
 			has_deferred_target = true;
 			FLASH_LOG_FORMAT(
 				Parser,

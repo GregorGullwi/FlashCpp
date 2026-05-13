@@ -4,6 +4,7 @@
 #include "OverloadResolution.h"
 #include "SemanticAnalysis.h"
 #include "StringLiteralTokenUtils.h"
+#include "TypeSizeQuery.h"
 
 namespace {
 [[noreturn]] void throwDeletedSameTypeConstructorCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
@@ -2227,7 +2228,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				TypeSpecifierNode element_type = type_node;
 				element_type.set_array_dimensions({});
 				element_type.set_unsized_outer_array_dimension(false);
-				int bits = getTypeSpecSizeBits(element_type);
+				int bits = queryConcreteAliasResolvedTypeSizeBits(element_type).size_bits;
 				if (bits > 0) {
 					return bits;
 				}

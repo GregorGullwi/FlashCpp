@@ -273,6 +273,12 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	rebuildEnvironmentFromCurrentBindings();
 }
 
+ExpressionSubstitutor::ExpressionSubstitutor(
+	const TemplateInstantiationContext& context,
+	Parser& parser)
+	: ExpressionSubstitutor(context.environment, parser) {
+}
+
 void ExpressionSubstitutor::rebuildEnvironmentFromCurrentBindings() {
 	environment_ = {};
 	environment_.bindings.reserve(param_map_.size() + pack_map_.size());
@@ -874,6 +880,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
 						if (const auto* identifier = std::get_if<IdentifierNode>(&substituted_expr)) {
 							StringHandle type_name = StringTable::getOrInternStringHandle(identifier->name());
+							if (gTemplateRegistry.lookup_alias_template(type_name).has_value() ||
+								gTemplateRegistry.lookupTemplate(type_name).has_value() ||
+								gTemplateRegistry.isClassTemplate(type_name)) {
+								substituted_template_args.push_back(TemplateTypeArg::makeTemplate(type_name));
+								continue;
+							}
 							if (const TypeInfo* type_info = findTypeByName(type_name)) {
 								substituted_template_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
 								continue;
@@ -1656,10 +1668,16 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			const TemplateTypeArg& concrete_type = param_it->second;
 			FLASH_LOG(Templates, Debug, "  Namespace '", ns_name, "' is a template parameter, substituting with concrete type");
 
-			// The concrete type should be a struct type - get its instantiated name
-			if (const TypeInfo* type_info = (is_struct_type(concrete_type.category()))
-												? tryGetTypeInfo(concrete_type.type_index)
-												: nullptr) {
+			// The concrete type should be a class type - get its instantiated name.
+			//
+			// Do not gate this solely on TemplateTypeArg::category().  Several dependent
+			// substitution paths preserve the correct TypeIndex slot but leave the
+			// embedded category as Invalid/UserDefined until the TypeInfo is consulted.
+			// For a qualified-id such as A::value in a default NTTP, failing to look
+			// through the TypeIndex keeps the name as the dependent spelling "A::value"
+			// and the constexpr evaluator quite correctly diagnoses it as undefined.
+			const TypeInfo* type_info = tryGetTypeInfo(concrete_type.type_index);
+			if (type_info != nullptr && (type_info->isStruct() || type_info->getStructInfo() != nullptr)) {
 				StringHandle type_name_handle = type_info->name();
 
 				if (type_info->isTemplateInstantiation()) {
@@ -2188,6 +2206,36 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					  " -> base_type=", (int)subst.typeEnum(), ", type_index=", subst.type_index);
 			if (subst.is_value) {
 				throw CompileError("Template argument used in a type position did not resolve to a type");
+			}
+
+			if (subst.is_template_template_arg && subst.template_name_handle.isValid()) {
+				if (const TypeInfo* original_type_info = tryGetTypeInfo(type.type_index());
+					original_type_info != nullptr && original_type_info->isTemplateInstantiation()) {
+					MaterializedStoredTemplateArgs substituted_args =
+						materializeStoredTemplateArgs(
+							*original_type_info,
+							/*evaluate_dependent_member_values=*/false,
+							kInitialDependentMemberTypeResolutionDepth);
+					if (!substituted_args.args.empty()) {
+						std::string_view concrete_template_name =
+							StringTable::getStringView(subst.template_name_handle);
+						Parser::AliasTemplateMaterializationResult materialized_type =
+							parser_.materializeTemplateInstantiationForLookup(
+								concrete_template_name,
+								substituted_args.args);
+						if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
+							TypeSpecifierNode resolved_type(
+								resolved_type_info->registeredTypeIndex().withCategory(
+									resolved_type_info->typeEnum()),
+								resolved_type_info->sizeInBits(),
+								type.token(),
+								type.cv_qualifier(),
+								ReferenceQualifier::None);
+							applyOuterTypeModifiers(resolved_type, type);
+							return resolved_type;
+						}
+					}
+				}
 			}
 
 			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());

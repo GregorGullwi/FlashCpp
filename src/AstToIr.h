@@ -493,6 +493,45 @@ private:
 
 	// Helper function to try evaluating sizeof/alignof using ConstExprEvaluator
 	// Returns the evaluated operands if successful, empty vector otherwise
+	ExprResult makeScalarConstexprEvalResult(const ConstExpr::EvalResult& eval_result) {
+		if (eval_result.success() &&
+			!eval_result.is_array &&
+			!eval_result.object_type_index.is_valid() &&
+			!eval_result.pointer_to_var.isValid()) {
+			TypeCategory cat = TypeCategory::UnsignedLongLong;
+			int size_bits = 64;
+			if (eval_result.exact_type.has_value()) {
+				const TypeSpecifierNode& exact = *eval_result.exact_type;
+				cat = exact.category();
+				size_bits = exact.size_in_bits();
+			} else {
+				return ExprResult{};
+			}
+			if (!is_primitive_type(cat) && cat != TypeCategory::Enum) {
+				return ExprResult{};
+			}
+
+			IrOperand operand_value{0ULL};
+			if (std::holds_alternative<bool>(eval_result.value)) {
+				operand_value = IrOperand{std::get<bool>(eval_result.value) ? 1ULL : 0ULL};
+			} else if (std::holds_alternative<long long>(eval_result.value)) {
+				operand_value = IrOperand{static_cast<unsigned long long>(std::get<long long>(eval_result.value))};
+			} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+				operand_value = IrOperand{std::get<unsigned long long>(eval_result.value)};
+			} else if (std::holds_alternative<double>(eval_result.value)) {
+				operand_value = IrOperand{std::get<double>(eval_result.value)};
+			}
+
+			return makeExprResult(
+				nativeTypeIndex(cat),
+				SizeInBits{size_bits},
+				std::move(operand_value),
+				PointerDepth{},
+				ValueStorage::ContainsData);
+		}
+		return ExprResult{};
+	}
+
 	template <typename NodeType>
 	ExprResult tryEvaluateAsConstExpr(const NodeType& node) {
 		// Try to evaluate as a constant expression first
@@ -541,6 +580,9 @@ private:
 				size_bits = get_type_size_bits(cat);
 			} else {
 				return ExprResult{};
+			}
+			if (!eval_result.exact_type.has_value()) {
+				eval_result.set_exact_type(TypeSpecifierNode(cat, TypeQualifier::None, size_bits, Token{}, CVQualifier::None));
 			}
 			// Non-primitive types (structs, etc.) cannot be folded to a scalar constant.
 			if (!is_primitive_type(cat) && cat != TypeCategory::Enum) {

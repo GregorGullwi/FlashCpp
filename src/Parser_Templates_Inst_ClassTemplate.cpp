@@ -2358,6 +2358,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_type = resolved_alias_target.typeEnum();
 		}
 
+		if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index);
+			substituted_type_info != nullptr && substituted_type_info->isTemplateInstantiation()) {
+			std::string_view base_template_name =
+				StringTable::getStringView(substituted_type_info->baseTemplateName());
+			StringHandle base_template_handle =
+				StringTable::getOrInternStringHandle(base_template_name);
+			forEachNonPackTemplateParamArgBinding(
+				params,
+				args,
+				[&](const TemplateParameterNode& param, const TemplateTypeArg& concrete_arg, size_t) {
+					if (base_template_name.empty() ||
+						param.nameHandle() != base_template_handle ||
+						!concrete_arg.is_template_template_arg ||
+						!concrete_arg.template_name_handle.isValid()) {
+						return;
+					}
+					std::vector<TemplateTypeArg> concrete_template_args =
+						materializeTemplateArgs(*substituted_type_info, params, args);
+					std::string_view concrete_template_name =
+						StringTable::getStringView(concrete_arg.template_name_handle);
+					std::string_view instantiated_name =
+						get_instantiated_class_name(concrete_template_name, concrete_template_args);
+					if (auto instantiated_node =
+							try_instantiate_class_template(concrete_template_name, concrete_template_args);
+						instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+						instantiated_name =
+							StringTable::getStringView(instantiated_node->as<StructDeclarationNode>().name());
+					}
+					if (const TypeInfo* instantiated_type_info =
+							findTypeByName(StringTable::getOrInternStringHandle(instantiated_name))) {
+						substituted_type_index = instantiated_type_info->registeredTypeIndex();
+						substituted_type = instantiated_type_info->typeEnum();
+					}
+				});
+		}
+
 		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
@@ -2387,6 +2423,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_type_spec = makeTypeSpecifierFromTemplateTypeArg(*rebound_arg, substituted_type_spec.token());
 			substituted_type_index = substituted_type_spec.type_index();
 			substituted_type = substituted_type_spec.type();
+		}
+		if (substituted_type_spec.has_function_signature()) {
+			auto substitute_signature_type_index = [&](TypeIndex signature_type_index) {
+				const TypeInfo* signature_type_info = tryGetTypeInfo(signature_type_index);
+				if (signature_type_info == nullptr) {
+					return signature_type_index;
+				}
+				TypeIndex substituted_signature_index = signature_type_index;
+				forEachNonPackTemplateParamArgBinding(
+					params,
+					args,
+					[&](const TemplateParameterNode& param, const TemplateTypeArg& concrete_arg, size_t) {
+						if (substituted_signature_index != signature_type_index ||
+							concrete_arg.is_value ||
+							param.nameHandle() != signature_type_info->name()) {
+							return;
+						}
+						if (concrete_arg.type_index.is_valid()) {
+							substituted_signature_index =
+								concrete_arg.type_index.withCategory(concrete_arg.typeEnum());
+							return;
+						}
+						TypeIndex native_index = nativeTypeIndex(concrete_arg.typeEnum());
+						substituted_signature_index = native_index.is_valid()
+							? native_index.withCategory(concrete_arg.typeEnum())
+							: TypeIndex{0, concrete_arg.typeEnum()};
+					});
+				return substituted_signature_index;
+			};
+			FunctionSignature substituted_signature = substituted_type_spec.function_signature();
+			substituted_signature.return_type_index =
+				substitute_signature_type_index(substituted_signature.return_type_index);
+			for (TypeIndex& parameter_type_index : substituted_signature.parameter_type_indices) {
+				parameter_type_index = substitute_signature_type_index(parameter_type_index);
+			}
+			substituted_type_spec.set_function_signature(substituted_signature);
 		}
 
 		FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: alias_name=", StringTable::getStringView(type_alias.alias_name),
@@ -4038,7 +4110,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.is_array,
 							static_member.array_dimensions,
 							std::nullopt,
-							std::nullopt);
+							std::nullopt,
+							static_member.is_constexpr);
 					}
 				}
 			}
@@ -5653,6 +5726,83 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
 							 StringTable::getStringView(deferred_base.base_template_name), deferred_base.template_arguments.size());
+			const InlineVector<TemplateParameterNode, 4>* deferred_base_template_params = nullptr;
+			if (auto base_template_node = gTemplateRegistry.lookupTemplate(deferred_base.base_template_name);
+				base_template_node.has_value() && base_template_node->is<TemplateClassDeclarationNode>()) {
+				deferred_base_template_params = &base_template_node->as<TemplateClassDeclarationNode>().template_parameters();
+			}
+			auto makeTypeIndexForDeferredBaseNttp = [&](size_t arg_index, const std::vector<TemplateTypeArg>& resolved_args) {
+				TypeIndex target_index{};
+				if (deferred_base_template_params != nullptr &&
+					arg_index < deferred_base_template_params->size()) {
+					const TemplateParameterNode& target_param = (*deferred_base_template_params)[arg_index];
+					if (target_param.kind() == TemplateParameterKind::NonType &&
+						target_param.has_type()) {
+						const TypeSpecifierNode& param_type = target_param.type_specifier_node();
+						std::string_view param_type_name = param_type.token().value();
+						if (param_type_name.empty() &&
+							param_type.type_index().is_valid()) {
+							if (const TypeInfo* param_type_info = tryGetTypeInfo(param_type.type_index())) {
+								param_type_name = StringTable::getStringView(param_type_info->name());
+							}
+						}
+						for (size_t prior_index = 0;
+							 prior_index < arg_index &&
+							 prior_index < deferred_base_template_params->size() &&
+							 prior_index < resolved_args.size();
+							 ++prior_index) {
+							const TemplateParameterNode& prior_param = (*deferred_base_template_params)[prior_index];
+							if (prior_param.kind() == TemplateParameterKind::Type &&
+								prior_param.name() == param_type_name) {
+								target_index = resolved_args[prior_index].type_index.withCategory(resolved_args[prior_index].typeEnum());
+								break;
+							}
+						}
+						if (target_index.category() == TypeCategory::Invalid &&
+							(param_type.category() == TypeCategory::UserDefined ||
+							 param_type.category() == TypeCategory::Template ||
+							 typeIndexContainsDependentPlaceholder(param_type.type_index()))) {
+							const TemplateTypeArg* sole_prior_type_arg = nullptr;
+							for (size_t prior_index = 0;
+								 prior_index < arg_index &&
+								 prior_index < deferred_base_template_params->size() &&
+								 prior_index < resolved_args.size();
+								 ++prior_index) {
+								const TemplateParameterNode& prior_param = (*deferred_base_template_params)[prior_index];
+								if (prior_param.kind() != TemplateParameterKind::Type ||
+									resolved_args[prior_index].is_value) {
+									continue;
+								}
+								if (sole_prior_type_arg != nullptr) {
+									sole_prior_type_arg = nullptr;
+									break;
+								}
+								sole_prior_type_arg = &resolved_args[prior_index];
+							}
+							if (sole_prior_type_arg != nullptr) {
+								target_index = sole_prior_type_arg->type_index.withCategory(sole_prior_type_arg->typeEnum());
+							}
+						}
+						if (target_index.category() == TypeCategory::Invalid) {
+							TypeCategory target_category = param_type.category();
+							target_index = param_type.type_index();
+							if (target_index.is_valid()) {
+								if (const TypeInfo* target_type_info = tryGetTypeInfo(target_index)) {
+									if (target_type_info->typeEnum() != TypeCategory::Invalid) {
+										target_category = target_type_info->typeEnum();
+									}
+								}
+								target_index = target_index.withCategory(target_category);
+							} else if (TypeIndex native_index = nativeTypeIndex(target_category); native_index.is_valid()) {
+								target_index = native_index.withCategory(target_category);
+							} else {
+								target_index = TypeIndex{0, target_category};
+							}
+						}
+					}
+				}
+				return target_index;
+			};
 			DeferredBasePackExpansionBindingInfo base_pack_bindings =
 				collectDeferredBasePackExpansionBindings(deferred_base, pack_substitution_map);
 			if (base_pack_bindings.invalid) {
@@ -5674,7 +5824,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				std::vector<TemplateTypeArg> resolved_args;
 				bool unresolved_arg = false;
-				for (const auto& arg_info : deferred_base.template_arguments) {
+				for (size_t deferred_arg_index = 0; deferred_arg_index < deferred_base.template_arguments.size(); ++deferred_arg_index) {
+					const auto& arg_info = deferred_base.template_arguments[deferred_arg_index];
 					// Pack expansion handling
 					if (arg_info.is_pack) {
 						// If the argument node references a template parameter pack, expand it
@@ -5957,12 +6108,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						auto makeEvaluatedDeferredBaseValueArg = [&](const auto& constant_value) {
-							TypeCategory target_category = constant_value.type;
-							if (target_category != TypeCategory::Bool &&
-								is_integer_type(target_category)) {
-								target_category = TypeCategory::Int;
+							TypeIndex target_index = makeTypeIndexForDeferredBaseNttp(deferred_arg_index, resolved_args);
+							if (target_index.category() == TypeCategory::Invalid) {
+								TypeCategory target_category = constant_value.type;
+								target_index = constant_value.type_index;
+								if (target_index.is_valid()) {
+									if (const TypeInfo* target_type_info = tryGetTypeInfo(target_index)) {
+										if (target_type_info->typeEnum() != TypeCategory::Invalid) {
+											target_category = target_type_info->typeEnum();
+										}
+									}
+									target_index = target_index.withCategory(target_category);
+								} else if (TypeIndex native_index = nativeTypeIndex(target_category); native_index.is_valid()) {
+									target_index = native_index.withCategory(target_category);
+								} else {
+									target_index = TypeIndex{0, target_category};
+								}
 							}
-							TemplateTypeArg val_arg(constant_value.value, target_category);
+							TemplateTypeArg val_arg;
+							val_arg.is_value = true;
+							val_arg.value = constant_value.value;
+							val_arg.type_index = target_index;
 							val_arg.is_pack = arg_info.is_pack;
 							return val_arg;
 						};

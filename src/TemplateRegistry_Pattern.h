@@ -692,7 +692,7 @@ struct TemplatePattern {
 				return 0; // Depth limit reached; stop adding specificity
 			}
 			if (!inner_arg.is_value &&
-				(is_struct_type(inner_arg.category()))) {
+				(is_struct_type(inner_arg.category()) || inner_arg.category() == TypeCategory::Invalid)) {
 				if (const TypeInfo* inner_ti = tryGetTypeInfo(inner_arg.type_index)) {
 					if (inner_ti->isTemplateInstantiation()) {
 						// Nested template instantiation: structural constraint adds specificity.
@@ -729,7 +729,7 @@ struct TemplatePattern {
 			// Base score: any pattern parameter = 0
 
 			// Template instantiation pattern (e.g., pair<T,U> or Pair<Pair<A,B>,Pair<C,D>>) is more specific than bare T
-			if (is_struct_type(arg.category())) {
+			if (is_struct_type(arg.category()) || arg.category() == TypeCategory::Invalid) {
 				if (const TypeInfo* ti = tryGetTypeInfo(arg.type_index)) {
 					if (ti->isTemplateInstantiation()) {
 						score += 2 + static_cast<int>(ti->templateArgs().size());

@@ -4,6 +4,26 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+
+TypeIndex makeConstantValueTypeIndex(TypeCategory category, TypeIndex type_index) {
+	TypeCategory resolved_category = category;
+	if (type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			if (type_info->typeEnum() != TypeCategory::Invalid) {
+				resolved_category = type_info->typeEnum();
+			}
+		}
+		return type_index.withCategory(resolved_category);
+	}
+	if (TypeIndex native_index = nativeTypeIndex(resolved_category); native_index.is_valid()) {
+		return native_index.withCategory(resolved_category);
+	}
+	return TypeIndex{0, resolved_category};
+}
+
+}
+
 StringHandle Parser::getStructQualifiedNameForRegistration(const StructDeclarationNode& struct_node) const {
 	if (struct_parsing_context_stack_.empty()) {
 		return struct_node.qualified_name();
@@ -992,11 +1012,32 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	}
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+	auto makeConstantValue = [](int64_t value, TypeCategory category, TypeIndex type_index) {
+		return ConstantValue{value, category, makeConstantValueTypeIndex(category, type_index)};
+	};
+	auto makeConstantValueFromCategory = [&](int64_t value, TypeCategory category) {
+		return makeConstantValue(value, category, TypeIndex{});
+	};
+	auto makeConstantValueFromEvalResult = [&](const ConstExpr::EvalResult& eval_result) {
+		TypeCategory category = TypeCategory::Int;
+		TypeIndex type_index{};
+		if (eval_result.exact_type.has_value()) {
+			category = eval_result.exact_type->category();
+			type_index = eval_result.exact_type->type_index();
+		} else if (std::holds_alternative<bool>(eval_result.value)) {
+			category = TypeCategory::Bool;
+		} else if (std::holds_alternative<unsigned long long>(eval_result.value)) {
+			category = TypeCategory::UnsignedLongLong;
+		} else if (std::holds_alternative<double>(eval_result.value)) {
+			category = TypeCategory::Double;
+		}
+		return makeConstantValue(eval_result.as_int(), category, type_index);
+	};
 
 	// Handle boolean literals directly
 	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 		const BoolLiteralNode& lit = *bool_literal;
-		return ConstantValue{lit.value() ? 1 : 0, TypeCategory::Bool};
+		return makeConstantValueFromCategory(lit.value() ? 1 : 0, TypeCategory::Bool);
 	}
 
 	// Handle numeric literals directly
@@ -1004,9 +1045,9 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 		const auto& val = lit.value();
 		if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-			return ConstantValue{static_cast<int64_t>(*ull_val), lit.type()};
+			return makeConstantValueFromCategory(static_cast<int64_t>(*ull_val), lit.type());
 		} else if (const auto* d_val = std::get_if<double>(&val)) {
-			return ConstantValue{static_cast<int64_t>(*d_val), lit.type()};
+			return makeConstantValueFromCategory(static_cast<int64_t>(*d_val), lit.type());
 		}
 	}
 
@@ -1107,7 +1148,18 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				// instantiated already if it's used correctly
 
 				// Check if this is a known template
-				auto template_entry = gTemplateRegistry.lookupTemplate(template_name);
+				TemplateNameLookupRequest template_lookup_request;
+				template_lookup_request.name = StringTable::getOrInternStringHandle(template_name);
+				template_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
+				template_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+				TemplateNameLookupResult template_lookup =
+					gTemplateRegistry.lookupTemplateName(template_lookup_request);
+				auto template_entry = template_lookup.firstDeclarationOfKind(
+					TemplateDeclarationKind::FunctionTemplate);
+				if (!template_entry.has_value()) {
+					template_entry = template_lookup.firstDeclarationOfKind(
+						TemplateDeclarationKind::ClassTemplate);
+				}
 				if (template_entry.has_value()) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Found template '{}', but instantiation failed or incomplete", template_name);
 				}
@@ -1253,7 +1305,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			// No-argument traits like __is_constant_evaluated
 			if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
 				// We're evaluating in a constant context, so return true
-				return ConstantValue{1, TypeCategory::Bool};
+				return makeConstantValueFromCategory(1, TypeCategory::Bool);
 			}
 			return std::nullopt;
 		}
@@ -1279,7 +1331,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 
 		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
-		return ConstantValue{eval_result.value ? 1 : 0, TypeCategory::Bool};
+		return makeConstantValueFromCategory(eval_result.value ? 1 : 0, TypeCategory::Bool);
 	}
 
 	// Helper: create a constexpr evaluation context with struct context and parser.
@@ -1304,7 +1356,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Ternary evaluated to: {}", eval_result.as_int());
-			return ConstantValue{eval_result.as_int(), TypeCategory::Int};
+			return makeConstantValueFromEvalResult(eval_result);
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate ternary operator");
 		return std::nullopt;
@@ -1317,7 +1369,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Binary op evaluated to: {}", eval_result.as_int());
-			return ConstantValue{eval_result.as_int(), TypeCategory::Int};
+			return makeConstantValueFromEvalResult(eval_result);
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate binary operator");
 		return std::nullopt;
@@ -1330,7 +1382,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Unary op evaluated to: {}", eval_result.as_int());
-			return ConstantValue{eval_result.as_int(), TypeCategory::Int};
+			return makeConstantValueFromEvalResult(eval_result);
 		}
 		FLASH_LOG(Templates, Debug, "Failed to evaluate unary operator");
 		return std::nullopt;
@@ -1340,7 +1392,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 	if (eval_result.success()) {
 		FLASH_LOG_FORMAT(Templates, Debug, "General constexpr evaluation succeeded: {}", eval_result.as_int());
-		return ConstantValue{eval_result.as_int(), TypeCategory::Int};
+		return makeConstantValueFromEvalResult(eval_result);
 	}
 
 	return std::nullopt;

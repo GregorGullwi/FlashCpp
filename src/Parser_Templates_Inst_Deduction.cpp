@@ -1238,7 +1238,20 @@ void Parser::populateTemplateParamSubstitutions(
 			if (binding.is_pack || binding.args.empty()) {
 				return;
 			}
-			const TemplateTypeArg& arg = binding.args.front();
+			TemplateTypeArg arg = binding.args.front();
+			if (binding.kind == TemplateParameterKind::Template) {
+				arg.is_template_template_arg = true;
+				if (!arg.template_name_handle.isValid()) {
+					if (arg.type_index.is_valid()) {
+						if (const TypeInfo* ti = tryGetTypeInfo(arg.type_index)) {
+							arg.template_name_handle = ti->name_;
+						}
+					}
+					if (!arg.template_name_handle.isValid() && arg.dependent_name.isValid()) {
+						arg.template_name_handle = arg.dependent_name;
+					}
+				}
+			}
 			subs.push_back(make_substitution(binding.name, arg));
 		});
 }
@@ -1353,10 +1366,12 @@ void Parser::reparse_template_function_body(
 	// template instantiations inside the body.
 	{
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		TemplateInstantiationContext substitution_context = buildTemplateInstantiationContext(
 			template_params,
 			template_args,
-			nullptr);
+			nullptr,
+			currentTemplateSubstitutionFailurePolicy());
+		TemplateEnvironment& substitution_environment = substitution_context.environment;
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 
 		// Phase 1 (C++20 [temp.res]/9): record the template body's opening-brace line so
@@ -1381,7 +1396,7 @@ void Parser::reparse_template_function_body(
 			auto block_result = parse_function_body();  // handles function-try-blocks
 			if (!block_result.is_error() && block_result.node().has_value()) {
 				new_func_ref.set_definition(
-					substituteTemplateParameters(*block_result.node(), template_params, template_args));
+					substituteTemplateParameters(*block_result.node(), substitution_context));
 			}
 		}  // current_template_param_names_ restored here by ScopedState
 	} // template_param_substitutions_ restored here by ScopedState
@@ -1621,9 +1636,13 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<ASTNode>& func_params,
 	const std::vector<TypeSpecifierNode>& arg_types,
-	int recursion_depth) {
+	int recursion_depth,
+	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args) {
 	CallArgDeductionInfo deduction_info;
 	auto& param_name_to_arg = deduction_info.param_name_to_arg;
+	if (prebound_template_args != nullptr) {
+		param_name_to_arg = *prebound_template_args;
+	}
 	auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
 	auto& func_param_to_call_arg_index = deduction_info.func_param_to_call_arg_index;
 
@@ -1754,7 +1773,17 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		}
 		auto direct_param_it = tparam_nodes_by_name.find(direct_fp_type_name);
 		if (direct_param_it != tparam_nodes_by_name.end() &&
-			direct_param_it->second->kind() == TemplateParameterKind::Type) {
+			direct_param_it->second->kind() == TemplateParameterKind::Type &&
+			direct_fp_type.pointer_depth() == 0) {
+			// Only mark a template type parameter as positionally deducible when the
+			// function-parameter type is NOT pointer-qualified (i.e. T, T&, const T& etc.).
+			// For pointer patterns like U* or U**, the base name U is the underlying type
+			// but cannot be deduced positionally without first stripping the extra pointer
+			// levels from the call argument.  Positional deduction for these cases would
+			// incorrectly bind U=int for a plain-int argument to pick(U*).
+			// The legacy pointer-stripping deduction path in tryDeduceCandidate handles
+			// these cases correctly, and deduceTemplateCandidateViability will fall back
+			// to std::nullopt (SFINAE) when the call arg lacks sufficient pointer depth.
 			deduction_info.positional_deducible_param_names.insert(direct_fp_type_name);
 		}
 		// Detect whether this function parameter is a pack.  The explicit
@@ -1921,6 +1950,47 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		const TypeSpecifierNode& fp_type = fp_decl.type_specifier_node();
 		const TypeSpecifierNode& ca_type = arg_types[concrete_arg_index];
 
+		// Deduce through pointer-qualified parameters such as P = T* and A = int*.
+		if (fp_type.pointer_depth() > 0 && !fp_type.is_array() && !fp_decl.is_array()) {
+			TypeIndex fp_idx = fp_type.type_index();
+			const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
+			StringHandle fp_name = fp_type_info != nullptr ? fp_type_info->name() : StringHandle{};
+			if (!fp_name.isValid()) {
+				fp_name = fp_type.token().handle();
+			}
+			auto param_it = tparam_nodes_by_name.find(fp_name);
+			if (param_it != tparam_nodes_by_name.end() &&
+				param_it->second->kind() == TemplateParameterKind::Type &&
+				!param_name_to_arg.count(fp_name)) {
+				if (ca_type.pointer_depth() < fp_type.pointer_depth()) {
+					return std::nullopt;
+				}
+				TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
+				new_arg.pointer_depth =
+					static_cast<uint8_t>(new_arg.pointer_depth - fp_type.pointer_depth());
+				if (!new_arg.pointer_cv_qualifiers.empty()) {
+					std::vector<CVQualifier> remaining_pointer_cv;
+					const size_t remove_count = std::min<size_t>(
+						fp_type.pointer_depth(),
+						new_arg.pointer_cv_qualifiers.size());
+					for (size_t cv_index = remove_count;
+						 cv_index < new_arg.pointer_cv_qualifiers.size();
+						 ++cv_index) {
+						remaining_pointer_cv.push_back(new_arg.pointer_cv_qualifiers[cv_index]);
+					}
+					new_arg.pointer_cv_qualifiers = std::move(remaining_pointer_cv);
+				}
+				if (fp_type.reference_qualifier() == ReferenceQualifier::None) {
+					new_arg.ref_qualifier = ReferenceQualifier::None;
+				}
+				if (!recordPreDeducedArg(fp_name, new_arg, "type", new_arg.toString())) {
+					return std::nullopt;
+				}
+				pre_deduced_arg_indices.insert(concrete_arg_index);
+				continue;
+			}
+		}
+
 		// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
 		// Pointer-to-template (T*) cases are handled via substitution elsewhere.
 		// Array declarators use a separate deduction path so T in T(&)[N] binds to the
@@ -1983,12 +2053,14 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const FunctionDeclarationNode& func_decl,
 	const std::vector<TypeSpecifierNode>& arg_types,
-	int recursion_depth) {
+	int recursion_depth,
+	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args) {
 	return buildDeductionMapFromCallArgs(
 		template_params,
 		func_decl.parameter_nodes(),
 		arg_types,
-		recursion_depth);
+		recursion_depth,
+		prebound_template_args);
 }
 
 bool Parser::functionTemplateAcceptsCallArgumentCount(
@@ -3027,11 +3099,31 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// so non-pack template params (T, U in template<T, U, ...Rest>) are pre-deduced
 		// from the corresponding call argument positions.
 		if (current_explicit_call_arg_types_ != nullptr) {
+			// C++20 [temp.arg.explicit]/3: explicitly specified template arguments
+			// are substituted before any remaining deduction is performed.  Seed the
+			// deduction map with those bindings so call-argument pre-deduction does
+			// not incorrectly reject an already-bound parameter pattern such as U*
+			// when the call argument is a null pointer constant.
+			std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> explicitly_bound_args;
+			size_t explicit_seed_idx = 0;
+			for (size_t param_idx = 0;
+				 param_idx < template_params.size() && explicit_seed_idx < explicit_types.size();
+				 ++param_idx) {
+				const TemplateParameterNode& param = template_params[param_idx];
+				if (param.is_variadic()) {
+					size_t remaining_args = explicit_types.size() - explicit_seed_idx;
+					explicit_seed_idx += remaining_args;
+					continue;
+				}
+				explicitly_bound_args.emplace(param.nameHandle(), explicit_types[explicit_seed_idx]);
+				++explicit_seed_idx;
+			}
 			deduction_info = buildDeductionMapFromCallArgs(
 				template_params,
 				func_decl,
 				*current_explicit_call_arg_types_,
-				recursion_depth);
+				recursion_depth,
+				&explicitly_bound_args);
 			if (!deduction_info.has_value()) {
 				continue;
 			}
@@ -3049,7 +3141,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (explicit_idx < explicit_types.size()) {
 					StringHandle tpl_name_handle;
 					const auto& arg = explicit_types[explicit_idx];
-					if (arg.category() == TypeCategory::Struct) {
+					if (arg.is_template_template_arg && arg.template_name_handle.isValid()) {
+						tpl_name_handle = arg.template_name_handle;
+					} else if (arg.category() == TypeCategory::Struct) {
 						if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index))
 							tpl_name_handle = type_info->name();
 					} else if (arg.is_dependent) {
@@ -3732,6 +3826,145 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	return template_args;
 }
 
+std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const std::vector<ASTNode>& func_params,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	NamespaceHandle source_namespace,
+	int recursion_depth) {
+	bool all_variadic = true;
+	for (const TemplateParameterNode& template_param : template_params) {
+		if (!template_param.is_variadic()) {
+			all_variadic = false;
+			break;
+		}
+	}
+	if (arg_types.empty() && !all_variadic) {
+		return std::nullopt;
+	}
+
+	size_t min_required_args = 0;
+	size_t non_pack_params = 0;
+	bool has_function_parameter_pack = false;
+	for (const ASTNode& param_node : func_params) {
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		if (isTemplateFunctionParameterPack(template_params, param_decl)) {
+			has_function_parameter_pack = true;
+			continue;
+		}
+		++non_pack_params;
+		if (!param_decl.has_default_value()) {
+			++min_required_args;
+		}
+	}
+	if (arg_types.size() < min_required_args ||
+		(!has_function_parameter_pack && arg_types.size() > non_pack_params)) {
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"[depth={}]: SFINAE: argument count {} is not viable for template candidate "
+			"(required={}, fixed_params={}, has_pack={})",
+			recursion_depth,
+			arg_types.size(),
+			min_required_args,
+			non_pack_params,
+			has_function_parameter_pack);
+		return std::nullopt;
+	}
+
+	size_t function_pack_arg_start = SIZE_MAX;
+	if (has_function_parameter_pack) {
+		size_t params_before_pack = 0;
+		for (const ASTNode& param_node : func_params) {
+			if (param_node.is<DeclarationNode>() &&
+				isTemplateFunctionParameterPack(template_params, param_node.as<DeclarationNode>())) {
+				break;
+			}
+			if (param_node.is<DeclarationNode>()) {
+				++params_before_pack;
+			}
+		}
+		function_pack_arg_start = std::min(arg_types.size(), params_before_pack);
+	}
+
+		auto deduction_info = buildDeductionMapFromCallArgs(
+			template_params,
+			func_params,
+			arg_types,
+			recursion_depth,
+			nullptr);
+	if (!deduction_info.has_value()) {
+		return std::nullopt;
+	}
+
+	auto template_args = deduceTemplateArgsFromCall(
+		template_params,
+		arg_types,
+		*deduction_info,
+		function_pack_arg_start,
+		recursion_depth,
+		source_namespace);
+	if (!template_args.has_value()) {
+		return std::nullopt;
+	}
+
+	// This shape-only context is deliberately not used to materialize anything.
+	// It makes the candidate viability/deduction boundary explicit and gives
+	// later substitution checks a single TemplateInstantiationContext seed.
+	TemplateInstantiationContext deduction_context = buildTemplateInstantiationContext(
+		template_params,
+		std::span<const TemplateTypeArg>(template_args->data(), template_args->size()),
+		nullptr,
+		TemplateSubstitutionFailurePolicy::ShapeOnly);
+	(void)deduction_context;
+
+	TemplateDeductionCandidate candidate;
+	candidate.template_args = std::move(*template_args);
+	candidate.deduction_info = std::move(*deduction_info);
+	candidate.function_pack_arg_start = function_pack_arg_start;
+	return candidate;
+}
+
+std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const FunctionDeclarationNode& func_decl,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth) {
+	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
+		size_t required_params = countMinRequiredArgs(func_decl);
+		if (arg_types.size() < required_params) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"[depth={}]: SFINAE: argument count {} < required parameter count {}",
+				recursion_depth, arg_types.size(), required_params);
+		} else {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"[depth={}]: SFINAE: argument count {} > parameter count {}",
+				recursion_depth, arg_types.size(), func_decl.parameter_nodes().size());
+		}
+		return std::nullopt;
+	}
+	return deduceTemplateCandidateViability(
+		template_params,
+		func_decl.parameter_nodes(),
+		arg_types,
+		func_decl.namespace_handle(),
+		recursion_depth);
+}
+
+std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const ConstructorDeclarationNode& ctor_decl,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth) {
+	return deduceTemplateCandidateViability(
+		template_params,
+		ctor_decl.parameter_nodes(),
+		arg_types,
+		NamespaceHandle{},
+		recursion_depth);
+}
+
 // Helper function: Try to instantiate a specific template node
 // This contains the core instantiation logic extracted from try_instantiate_template
 // Returns nullopt if instantiation fails (for SFINAE)
@@ -3752,72 +3985,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// More complex deduction (partial ordering, template-template params) is still
 	// limited; see Phase 6 audit in docs/2026-04-21-phase5-slice-g-analysis.md.
 
-	// Check if we have only variadic parameters - they can be empty
-	bool all_variadic = true;
-	for (const auto& template_param_node : template_params) {
-		const TemplateParameterNode& param = template_param_node;
-		if (!param.is_variadic()) {
-			all_variadic = false;
-		}
-	}
-
-	if (arg_types.empty() && !all_variadic) {
-		return std::nullopt;	 // No arguments to deduce from
-	}
-
-	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
-		size_t required_params = countMinRequiredArgs(func_decl);
-		if (arg_types.size() < required_params) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for template '{}'",
-							 recursion_depth, arg_types.size(), required_params, template_name);
-		} else {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} > parameter count {} for template '{}'",
-							 recursion_depth, arg_types.size(), func_decl.parameter_nodes().size(), template_name);
-		}
-		return std::nullopt;
-	}
-
-	bool has_function_parameter_pack = false;
-	for (const auto& param : func_decl.parameter_nodes()) {
-		if (param.is<DeclarationNode>() &&
-			isTemplateFunctionParameterPack(template_params, param.as<DeclarationNode>())) {
-			has_function_parameter_pack = true;
-			break;
-		}
-	}
-
-	// Build template argument list
-	size_t function_pack_arg_start = SIZE_MAX;
-	if (has_function_parameter_pack) {
-		size_t params_before_pack = 0;
-		for (const auto& param : func_decl.parameter_nodes()) {
-			if (param.is<DeclarationNode>() && param.as<DeclarationNode>().is_parameter_pack()) {
-				break;
-			}
-			++params_before_pack;
-		}
-		function_pack_arg_start = std::min(arg_types.size(), params_before_pack);
-	}
-
-	auto deduction_info = buildDeductionMapFromCallArgs(
+	auto deduction_candidate = deduceTemplateCandidateViability(
 		template_params,
 		func_decl,
 		arg_types,
 		recursion_depth);
-	if (!deduction_info.has_value()) {
+	if (!deduction_candidate.has_value()) {
 		return std::nullopt;
 	}
-	auto deduced_template_args = deduceTemplateArgsFromCall(
-		template_params,
-		arg_types,
-		*deduction_info,
-		function_pack_arg_start,
-		recursion_depth,
-		func_decl.namespace_handle());
-	if (!deduced_template_args.has_value()) {
-		return std::nullopt;
-	}
-	InlineVector<TemplateTypeArg, 4> template_args = std::move(*deduced_template_args);
+	InlineVector<TemplateTypeArg, 4> template_args = std::move(deduction_candidate->template_args);
+	std::optional<CallArgDeductionInfo> deduction_info = std::move(deduction_candidate->deduction_info);
 	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
 	const auto has_structurally_dependent_template_args = [](std::span<const TemplateTypeArg> args) {
 		return std::any_of(

@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-13 (post PR #1502)
+**Last updated:** 2026-05-13 (template infrastructure refactor completed)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -37,6 +37,38 @@ preserved through refactoring:
 
 These rules are compatibility constraints while migrating ownership to semantic
 lookup, deduction, and instantiation services.
+
+## Completed refactor status
+
+The first-pass refactor described by this investigation has been implemented on
+the template standard-compliance branch. The implementation did not attempt to
+finish every long-term C++20 item below; it moved the hot paths onto more
+standard-shaped ownership boundaries and kept the remaining gaps explicit.
+
+Completed work:
+
+1. centralized static `constexpr` member reads and recursive base-member
+   evaluation policy behind a shared semantic service;
+2. preserved ordered, typed deferred NTTP identities in instantiation keys;
+3. consolidated alias-aware concrete size queries;
+4. added parameter-context-driven classification for explicit template
+   arguments across function, class, alias, and variable template use sites;
+5. introduced and threaded `TemplateInstantiationContext` through lookup and
+   substitution paths;
+6. extracted shape-only template deduction viability so candidate filtering can
+   run before materializing definitions;
+7. fixed regressions found during full-suite validation in dependent alias size
+   fallback, template-template leftovers, nested pack/materialization, dependent
+   constexpr evaluation, and explicit-template SFINAE deduction.
+
+The final validation run passed `.\build_flashcpp.bat` and
+`pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`:
+2333 regular tests compiled, linked, and returned expected values, and all 174
+expected-failure tests failed as expected.
+
+The remaining target architecture sections are retained as the next conformance
+roadmap, especially full two-phase lookup records, structural NTTP values, and
+constraint normalization/subsumption.
 
 ## Target architecture
 

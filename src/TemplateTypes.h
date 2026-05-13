@@ -191,7 +191,7 @@ struct TypeIndexArg {
  * Key invariants:
  * - is_dependent == true implies dependent_name.isValid()
  * - is_dependent == false implies !dependent_name.isValid() (concrete arg)
- * - Bool/Int are interchangeable for value comparison (C++ allows bool as non-type template param)
+ * - Concrete non-type values keep their full type identity (including bool and integral width/signedness)
  * 
  * This replaces the scattered `is_value + value + is_dependent + dependent_name` fields in:
  * - TemplateTypeArg (when is_value==true)
@@ -249,26 +249,23 @@ struct NonTypeValueIdentity {
 		return id;
 	}
 
-	// Helper: normalize Bool/Int to Int for comparison/hashing.
-	// C++ non-type template argument matching treats bool/int values as interchangeable
-	// in the places FlashCpp currently models with an integral carrier.
+	// Helper retained for older call sites; value identity is exact, so no category
+	// is normalized away. C++20 template-argument equivalence for converted constant
+	// template arguments must preserve the parameter type, including bool and
+	// integral signedness/width.
 	static TypeCategory normalizedTypeForComparison(TypeCategory t) {
-		return (t == TypeCategory::Bool || t == TypeCategory::Int) ? TypeCategory::Int : t;
+		return t;
 	}
 
 	static bool equalValueTypeIdentity(TypeIndex lhs, TypeIndex rhs) {
 		// Comparison tiers:
-		// 1. Different normalized categories never match.
-		// 2. Normalized integral values (bool/int) match by category alone.
-		// 3. User-defined / index-backed types must match by full TypeIndex identity.
-		// 4. Other native types match by normalized category alone.
+		// 1. Different categories never match.
+		// 2. User-defined / index-backed types must match by full TypeIndex identity.
+		// 3. Other native types match by category alone.
 		TypeCategory lhs_category = normalizedTypeForComparison(lhs.category());
 		TypeCategory rhs_category = normalizedTypeForComparison(rhs.category());
 		if (lhs_category != rhs_category) {
 			return false;
-		}
-		if (lhs_category == TypeCategory::Int) {
-			return true;
 		}
 		if (lhs.needsTypeIndex() || rhs.needsTypeIndex()) {
 			return equalTypeIndexIdentity(lhs, rhs);
@@ -292,7 +289,7 @@ struct NonTypeValueIdentity {
 			// Dependent args: identity is the name only
 			return dependent_name == other.dependent_name;
 		}
-		// Concrete args: identity is value + type (with Bool/Int interchangeability)
+		// Concrete args: identity is value + exact type.
 		return value == other.value &&
 			   equalValueTypeIdentity(value_type_index, other.value_type_index);
 	}

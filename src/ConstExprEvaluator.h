@@ -531,6 +531,10 @@ public:
 	static EvalResult evaluate_static_member_initializer_or_default(
 		const StructStaticMember& static_member,
 		EvaluationContext& context);
+	static EvalResult tryReadStaticMemberConstant(
+		const StructStaticMember& static_member,
+		EvaluationContext& context,
+		bool scalar_only = false);
 
 	static EvalResult evaluate_function_call_member_access(
 		const CallExprNode& call_expr,

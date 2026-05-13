@@ -419,6 +419,31 @@ TemplateEnvironment buildTemplateEnvironment(const TypeInfo::InstantiationContex
 	return environment;
 }
 
+TemplateInstantiationContext buildTemplateInstantiationContext(
+	std::span<const TemplateParameterNode> params,
+	std::span<const TemplateTypeArg> args,
+	const TemplateEnvironment* parent,
+	TemplateSubstitutionFailurePolicy failure_policy) {
+	TemplateInstantiationContext context;
+	context.template_parameters = params;
+	context.template_arguments = args;
+	context.environment = buildTemplateEnvironment(params, args, parent);
+	context.failure_policy = failure_policy;
+
+	for (const TemplateBinding& binding : context.environment.bindings) {
+		if (!binding.is_pack) {
+			continue;
+		}
+		TemplatePackExpansionState pack_state;
+		pack_state.pack_name = binding.name;
+		pack_state.element_count = binding.args.size();
+		pack_state.expanding = true;
+		context.pack_state.push_back(pack_state);
+	}
+
+	return context;
+}
+
 std::optional<TemplateTypeArg> resolveContextBinding(
 	StringHandle target_name,
 	const TemplateEnvironment& environment) {

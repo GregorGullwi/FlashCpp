@@ -67,7 +67,11 @@ public:
 	// getTypesByNameMap() without accidentally skipping non-template structs that share an
 	// unqualified name with a template in a different namespace.
 	bool isClassTemplate(StringHandle name) const {
-		return class_template_names_.count(name) > 0;
+		TemplateNameLookupRequest request;
+		request.name = name;
+		request.lookup_kind = TemplateNameLookupKind::Ordinary;
+		request.timing = TemplateNameLookupTiming::PointOfDefinition;
+		return lookupTemplateName(request).hasClassTemplate();
 	}
 
 	// Register a template using QualifiedIdentifier.
@@ -126,11 +130,11 @@ public:
 	}
 
 	std::optional<ASTNode> lookupVariableTemplate(StringHandle name) const {
-		auto it = variable_templates_.find(name);
-		if (it != variable_templates_.end()) {
-			return it->second;
-		}
-		return std::nullopt;
+		TemplateNameLookupRequest request;
+		request.name = name;
+		request.lookup_kind = TemplateNameLookupKind::Ordinary;
+		request.timing = TemplateNameLookupTiming::PointOfDefinition;
+		return lookupTemplateName(request).firstDeclarationOfKind(TemplateDeclarationKind::VariableTemplate);
 	}
 
 	// Register a variable template partial specialization with its pattern args
@@ -191,11 +195,11 @@ public:
 	}
 
 	std::optional<ASTNode> lookup_alias_template(StringHandle name) const {
-		auto it = alias_templates_.find(name);
-		if (it != alias_templates_.end()) {
-			return it->second;
-		}
-		return std::nullopt;
+		TemplateNameLookupRequest request;
+		request.name = name;
+		request.lookup_kind = TemplateNameLookupKind::Ordinary;
+		request.timing = TemplateNameLookupTiming::PointOfDefinition;
+		return lookupTemplateName(request).firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
 	}
 
 	// Get all alias template names with a given prefix (for template instantiation)
@@ -251,11 +255,16 @@ public:
 	}
 
 	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
-		auto it = templates_.find(name);
-		if (it != templates_.end() && !it->second.empty()) {
-			return it->second.front();
+		TemplateNameLookupRequest request;
+		request.name = name;
+		request.lookup_kind = TemplateNameLookupKind::Ordinary;
+		request.timing = TemplateNameLookupTiming::PointOfDefinition;
+		TemplateNameLookupResult lookup = lookupTemplateName(request);
+		if (auto class_template = lookup.firstDeclarationOfKind(TemplateDeclarationKind::ClassTemplate);
+			class_template.has_value()) {
+			return class_template;
 		}
-		return std::nullopt;
+		return lookup.firstDeclarationOfKind(TemplateDeclarationKind::FunctionTemplate);
 	}
 
 	// Look up a template using QualifiedIdentifier.
@@ -264,11 +273,70 @@ public:
 		if (qi.hasNamespace()) {
 			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
 				qi.namespace_handle, qi.identifier_handle);
-			auto result = lookupTemplate(qualified);
-			if (result.has_value())
-				return result;
+			TemplateNameLookupRequest request;
+			request.name = qualified;
+			request.lookup_kind = TemplateNameLookupKind::Qualified;
+			request.timing = TemplateNameLookupTiming::PointOfDefinition;
+			request.definition_namespace = qi.namespace_handle;
+			TemplateNameLookupResult result = lookupTemplateName(request);
+			if (auto class_template = result.firstDeclarationOfKind(TemplateDeclarationKind::ClassTemplate);
+				class_template.has_value()) {
+				return class_template;
+			}
+			if (auto function_template = result.firstDeclarationOfKind(TemplateDeclarationKind::FunctionTemplate);
+				function_template.has_value()) {
+				return function_template;
+			}
 		}
 		return lookupTemplate(qi.identifier_handle);
+	}
+
+	TemplateNameLookupResult lookupTemplateName(const TemplateNameLookupRequest& request) const {
+		TemplateNameLookupResult result;
+		result.request = request;
+		result.resolved_name = request.name;
+		result.used_definition_context =
+			request.timing == TemplateNameLookupTiming::PointOfDefinition ||
+			(!request.is_dependent && request.timing == TemplateNameLookupTiming::Immediate);
+		result.used_point_of_instantiation_context =
+			request.timing == TemplateNameLookupTiming::PointOfInstantiation ||
+			(request.is_dependent && request.timing == TemplateNameLookupTiming::Immediate);
+
+		auto appendCandidate = [&](TemplateDeclarationKind kind, const ASTNode& node, size_t ordinal) {
+			TemplateNameLookupCandidate candidate;
+			candidate.declaration = node;
+			candidate.identity.kind = kind;
+			candidate.identity.lookup_name = request.name;
+			candidate.identity.declared_name = request.name;
+			candidate.identity.declaration_address = node.raw_pointer();
+			candidate.identity.overload_ordinal = ordinal;
+			result.candidates.push_back(candidate);
+		};
+
+		if (auto alias_it = alias_templates_.find(request.name);
+			alias_it != alias_templates_.end()) {
+			appendCandidate(TemplateDeclarationKind::AliasTemplate, alias_it->second, 0);
+		}
+
+		if (auto variable_it = variable_templates_.find(request.name);
+			variable_it != variable_templates_.end()) {
+			appendCandidate(TemplateDeclarationKind::VariableTemplate, variable_it->second, 0);
+		}
+
+		if (auto template_it = templates_.find(request.name);
+			template_it != templates_.end()) {
+			size_t ordinal = 0;
+			for (const ASTNode& template_node : template_it->second) {
+				TemplateDeclarationKind kind = TemplateDeclarationKind::FunctionTemplate;
+				if (template_node.is<TemplateClassDeclarationNode>()) {
+					kind = TemplateDeclarationKind::ClassTemplate;
+				}
+				appendCandidate(kind, template_node, ordinal);
+				++ordinal;
+			}
+		}
+
+		return result;
 	}
 
 	// Look up all template overloads for a given name
@@ -742,23 +810,6 @@ public:
 			return it->second;
 		}
 
-		// Fallback: some deferred instantiation paths can evaluate NTTP integral expressions
-		// using a wider integral carrier than the original parameter declaration (for example
-		// `int` parameter evaluated as `long long`).  For exact specialization lookup of the
-		// same primary template, treat concrete integral value args with the same value as
-		// equivalent regardless of signed integral category.
-		for (const auto& [spec_key, spec_node] : specializations_) {
-			if (spec_key.template_name != template_name) {
-				continue;
-			}
-			if (spec_key.template_args.size() != key.template_args.size()) {
-				continue;
-			}
-			if (relaxedExactSpecializationArgsMatch(spec_key.template_args, key.template_args)) {
-				FLASH_LOG(Templates, Debug, "lookupExactSpecialization: matched via integral NTTP fallback");
-				return spec_node;
-			}
-		}
 		return std::nullopt;
 	}
 
@@ -948,37 +999,6 @@ public:
 	}
 
 private:
-	static bool isIntegralValueArgCategory(TypeCategory category) {
-		return category == TypeCategory::Bool || is_integer_type(category);
-	}
-
-	static bool relaxedExactSpecializationArgMatch(const TemplateTypeArg& lhs, const TemplateTypeArg& rhs) {
-		if (lhs == rhs) {
-			return true;
-		}
-		if (!(lhs.is_value && rhs.is_value) || lhs.is_dependent || rhs.is_dependent) {
-			return false;
-		}
-		if (!isIntegralValueArgCategory(lhs.category()) || !isIntegralValueArgCategory(rhs.category())) {
-			return false;
-		}
-		return lhs.value == rhs.value;
-	}
-
-	static bool relaxedExactSpecializationArgsMatch(
-		std::span<const TemplateTypeArg> lhs_args,
-		std::span<const TemplateTypeArg> rhs_args) {
-		if (lhs_args.size() != rhs_args.size()) {
-			return false;
-		}
-		for (size_t i = 0; i < lhs_args.size(); ++i) {
-			if (!relaxedExactSpecializationArgMatch(lhs_args[i], rhs_args[i])) {
-				return false;
-			}
-		}
-		return true;
-	}
-
 	// Canonicalize exact-specialization keys so alias-shaped arguments (for example
 	// a typedef that resolves to `int`) hit the same specialization entry as the
 	// underlying concrete type. Exact specializations are keyed structurally, not by
