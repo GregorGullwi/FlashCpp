@@ -570,6 +570,115 @@ struct TemplateTypeArgHash {
 	}
 };
 
+enum class TemplateDeclarationKind : uint8_t {
+	Unknown,
+	ClassTemplate,
+	FunctionTemplate,
+	AliasTemplate,
+	VariableTemplate,
+};
+
+enum class TemplateNameLookupKind : uint8_t {
+	Ordinary,
+	Qualified,
+	Member,
+	ADL,
+};
+
+enum class TemplateNameLookupTiming : uint8_t {
+	PointOfDefinition,
+	PointOfInstantiation,
+	Immediate,
+};
+
+struct TemplateDeclarationIdentity {
+	TemplateDeclarationKind kind = TemplateDeclarationKind::Unknown;
+	StringHandle lookup_name{};
+	StringHandle declared_name{};
+	const void* declaration_address = nullptr;
+	size_t overload_ordinal = 0;
+
+	bool isValid() const {
+		return kind != TemplateDeclarationKind::Unknown &&
+			   lookup_name.isValid() &&
+			   declaration_address != nullptr;
+	}
+};
+
+struct TemplateNameLookupCandidate {
+	TemplateDeclarationIdentity identity;
+	ASTNode declaration;
+};
+
+struct TemplateNameLookupRequest {
+	StringHandle name{};
+	TemplateNameLookupKind lookup_kind = TemplateNameLookupKind::Ordinary;
+	TemplateNameLookupTiming timing = TemplateNameLookupTiming::PointOfDefinition;
+	bool is_dependent = false;
+	NamespaceHandle definition_namespace{};
+	NamespaceHandle point_of_instantiation_namespace{};
+	StringHandle current_instantiation_name{};
+};
+
+struct TemplateNameLookupResult {
+	TemplateNameLookupRequest request;
+	StringHandle resolved_name{};
+	InlineVector<TemplateNameLookupCandidate, 4> candidates;
+	bool used_definition_context = false;
+	bool used_point_of_instantiation_context = false;
+
+	bool empty() const {
+		return candidates.empty();
+	}
+
+	bool isDependent() const {
+		return request.is_dependent;
+	}
+
+	bool hasKind(TemplateDeclarationKind kind) const {
+		for (const TemplateNameLookupCandidate& candidate : candidates) {
+			if (candidate.identity.kind == kind) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	std::optional<ASTNode> firstDeclarationOfKind(TemplateDeclarationKind kind) const {
+		for (const TemplateNameLookupCandidate& candidate : candidates) {
+			if (candidate.identity.kind == kind) {
+				return candidate.declaration;
+			}
+		}
+		return std::nullopt;
+	}
+
+	const TemplateNameLookupCandidate* firstCandidateOfKind(TemplateDeclarationKind kind) const {
+		for (const TemplateNameLookupCandidate& candidate : candidates) {
+			if (candidate.identity.kind == kind) {
+				return &candidate;
+			}
+		}
+		return nullptr;
+	}
+
+	bool hasClassTemplate() const {
+		return hasKind(TemplateDeclarationKind::ClassTemplate);
+	}
+
+	bool hasFunctionTemplate() const {
+		return hasKind(TemplateDeclarationKind::FunctionTemplate);
+	}
+
+	bool hasAliasTemplate() const {
+		return hasKind(TemplateDeclarationKind::AliasTemplate);
+	}
+
+	bool hasVariableTemplate() const {
+		return hasKind(TemplateDeclarationKind::VariableTemplate);
+	}
+};
+
 // Strip pattern modifiers from a concrete argument to recover the deduced type.
 // Per C++ deduction rules: for pattern T*, T is deduced as int (not int*);
 // for pattern T&, T is deduced as int (not int&); etc.

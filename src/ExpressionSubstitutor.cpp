@@ -273,6 +273,12 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	rebuildEnvironmentFromCurrentBindings();
 }
 
+ExpressionSubstitutor::ExpressionSubstitutor(
+	const TemplateInstantiationContext& context,
+	Parser& parser)
+	: ExpressionSubstitutor(context.environment, parser) {
+}
+
 void ExpressionSubstitutor::rebuildEnvironmentFromCurrentBindings() {
 	environment_ = {};
 	environment_.bindings.reserve(param_map_.size() + pack_map_.size());

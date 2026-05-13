@@ -1353,10 +1353,12 @@ void Parser::reparse_template_function_body(
 	// template instantiations inside the body.
 	{
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		TemplateInstantiationContext substitution_context = buildTemplateInstantiationContext(
 			template_params,
 			template_args,
-			nullptr);
+			nullptr,
+			currentTemplateSubstitutionFailurePolicy());
+		TemplateEnvironment& substitution_environment = substitution_context.environment;
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 
 		// Phase 1 (C++20 [temp.res]/9): record the template body's opening-brace line so
@@ -1381,7 +1383,7 @@ void Parser::reparse_template_function_body(
 			auto block_result = parse_function_body();  // handles function-try-blocks
 			if (!block_result.is_error() && block_result.node().has_value()) {
 				new_func_ref.set_definition(
-					substituteTemplateParameters(*block_result.node(), template_params, template_args));
+					substituteTemplateParameters(*block_result.node(), substitution_context));
 			}
 		}  // current_template_param_names_ restored here by ScopedState
 	} // template_param_substitutions_ restored here by ScopedState

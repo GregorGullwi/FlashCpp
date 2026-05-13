@@ -293,6 +293,16 @@ ASTNode Parser::substituteTemplateParameters(
 
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
+	const TemplateInstantiationContext& context) {
+	return substituteTemplateParameters(
+		node,
+		context.template_parameters,
+		context.template_arguments,
+		context.current_instantiation_name);
+}
+
+ASTNode Parser::substituteTemplateParameters(
+	const ASTNode& node,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle current_owner_type_name) {

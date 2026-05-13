@@ -1148,7 +1148,18 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				// instantiated already if it's used correctly
 
 				// Check if this is a known template
-				auto template_entry = gTemplateRegistry.lookupTemplate(template_name);
+				TemplateNameLookupRequest template_lookup_request;
+				template_lookup_request.name = StringTable::getOrInternStringHandle(template_name);
+				template_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
+				template_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+				TemplateNameLookupResult template_lookup =
+					gTemplateRegistry.lookupTemplateName(template_lookup_request);
+				auto template_entry = template_lookup.firstDeclarationOfKind(
+					TemplateDeclarationKind::FunctionTemplate);
+				if (!template_entry.has_value()) {
+					template_entry = template_lookup.firstDeclarationOfKind(
+						TemplateDeclarationKind::ClassTemplate);
+				}
 				if (template_entry.has_value()) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Found template '{}', but instantiation failed or incomplete", template_name);
 				}

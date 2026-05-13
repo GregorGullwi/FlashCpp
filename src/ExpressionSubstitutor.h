@@ -88,6 +88,10 @@ public:
 		const TemplateEnvironment& environment,
 		Parser& parser);
 
+	ExpressionSubstitutor(
+		const TemplateInstantiationContext& context,
+		Parser& parser);
+
 	/// Main entry point: Substitute template parameters in an expression
 	/// @param expr The expression AST node to process
 	/// @return A new expression with template parameters substituted
