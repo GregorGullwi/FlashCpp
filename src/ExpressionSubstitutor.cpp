@@ -240,7 +240,10 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 		}
 		self(self, current->parent);
 		for (const TemplateBinding& binding : current->bindings) {
-			if (!binding.name.isValid() || binding.args.empty()) {
+			if (!binding.name.isValid()) {
+				continue;
+			}
+			if (!binding.is_pack && binding.args.empty()) {
 				continue;
 			}
 			std::string_view binding_name = StringTable::getStringView(binding.name);

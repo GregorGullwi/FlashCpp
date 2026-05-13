@@ -1353,9 +1353,12 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	}
 
 	if (initializer->is<ExpressionNode>()) {
-		auto sub_map = buildSubstitutionParamMap(template_params, template_args);
-		if (!sub_map.empty()) {
-			ExpressionSubstitutor substitutor(sub_map.param_map, *parser, sub_map.param_order);
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+			template_args,
+			nullptr);
+		if (!substitution_environment.bindings.empty()) {
+			ExpressionSubstitutor substitutor(substitution_environment, *parser);
 			substitutor.setCurrentOwnerTypeName(struct_info->getName());
 			initializer = substitutor.substitute(initializer.value());
 		}
@@ -4221,12 +4224,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Use ExpressionSubstitutor to handle all types of template-dependent expressions
 					std::optional<ASTNode> substituted_initializer = static_member.initializer;
 					if (static_member.initializer.has_value()) {
-						// Build parameter substitution map and preserve parameter order
-						auto sub_map = buildSubstitutionParamMap(template_params, template_args);
+						TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+							std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+							template_args,
+							nullptr);
 
 						// Use ExpressionSubstitutor to substitute template parameters in the initializer
-						if (!sub_map.empty()) {
-							ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+						if (!substitution_environment.bindings.empty()) {
+							ExpressionSubstitutor substitutor(substitution_environment, *this);
 							substitutor.setCurrentOwnerTypeName(struct_info->getName());
 							substituted_initializer = substitutor.substitute(static_member.initializer.value());
 							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member initializer");
