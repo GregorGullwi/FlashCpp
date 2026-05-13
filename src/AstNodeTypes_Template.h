@@ -996,13 +996,12 @@ public:
 		: name_(name), is_class_(is_class), is_union_(is_union) {}
 
 	StringHandle name() const { return name_; }
-	const std::vector<StructMemberDecl>& members() const { return members_; }
-	const std::vector<StructMemberFunctionDecl>& member_functions() const { return member_functions_; }
+	std::span<const StructMemberDecl> members() const { return members_; }
+	std::span<const StructMemberFunctionDecl> member_functions() const { return member_functions_; }
 	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
-	const std::vector<BaseClassSpecifier>& base_classes() const { return base_classes_; }
-	const std::vector<DeferredBaseClassSpecifier>& deferred_base_classes() const { return deferred_base_classes_; }
-	std::vector<DeferredBaseClassSpecifier>& deferred_base_classes() { return deferred_base_classes_; }
-	const std::vector<DeferredTemplateBaseClassSpecifier>& deferred_template_base_classes() const { return deferred_template_base_classes_; }
+	std::span<const BaseClassSpecifier> base_classes() const { return base_classes_; }
+	std::span<const DeferredBaseClassSpecifier> deferred_base_classes() const { return deferred_base_classes_; }
+	std::span<const DeferredTemplateBaseClassSpecifier> deferred_template_base_classes() const { return deferred_template_base_classes_; }
 	bool is_class() const { return is_class_; }
 	bool is_union() const { return is_union_; }
 	bool is_final() const { return is_final_; }
@@ -1098,7 +1097,7 @@ public:
 		friend_declarations_.push_back(friend_decl);
 	}
 
-	const std::vector<ASTNode>& friend_declarations() const {
+	std::span<const ASTNode> friend_declarations() const {
 		return friend_declarations_;
 	}
 
@@ -1110,7 +1109,7 @@ public:
 		nested_classes_.push_back(nested_class);
 	}
 
-	const std::vector<ASTNode>& nested_classes() const {
+	std::span<const ASTNode> nested_classes() const {
 		return nested_classes_;
 	}
 
@@ -1123,57 +1122,15 @@ public:
 		type_aliases_.emplace_back(alias_name, type_node, std::move(array_dimensions), access);
 	}
 
-	const std::vector<TypeAliasDecl>& type_aliases() const {
+	std::span<const TypeAliasDecl> type_aliases() const {
 		return type_aliases_;
 	}
 
 	// Static member support (for template/partial specialization AST storage)
 	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
 						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth) {
-		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
-	}
-
-	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions) {
-		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
-		static_members_.back().setArrayInfo(is_array, std::move(array_dimensions));
-	}
-
-	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions,
-						   std::optional<SaveHandle> initializer_position) {
-		add_static_member(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth, is_array, std::move(array_dimensions));
-		if (initializer_position.has_value()) {
-			static_members_.back().setInitializerPosition(*initializer_position);
-		}
-	}
-
-	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
-						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {
-		addStaticMemberImpl(name, std::nullopt, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
-							is_array, array_dimensions, initializer_position, is_constexpr);
-	}
-
-	void add_static_member(StringHandle name, ASTNode declaration, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions,
-						   std::optional<SaveHandle> initializer_position) {
-		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
-		static_members_.back().setDeclaration(std::move(declaration));
-		static_members_.back().setArrayInfo(is_array, std::move(array_dimensions));
-		if (initializer_position.has_value()) {
-			static_members_.back().setInitializerPosition(*initializer_position);
-		}
-	}
-
-	void add_static_member(StringHandle name, ASTNode declaration, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+						   std::optional<ASTNode> declaration,
 						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {
 		addStaticMemberImpl(name, std::move(declaration), type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
 							is_array, array_dimensions, initializer_position, is_constexpr);
@@ -1196,7 +1153,7 @@ private:
 	}
 
 public:
-	const std::vector<StaticMemberDecl>& static_members() const {
+	std::span<const StaticMemberDecl> static_members() const {
 		return static_members_;
 	}
 
@@ -1365,7 +1322,7 @@ private:
 	std::vector<DeferredBaseClassSpecifier> deferred_base_classes_;	// Decltype base classes (for templates)
 	std::vector<DeferredTemplateBaseClassSpecifier> deferred_template_base_classes_;	 // Template-dependent base classes
 	std::vector<ASTNode> friend_declarations_;  // Friend declarations
-	std::vector<ASTNode> nested_classes_;  // Nested classes
+	InlineVector<ASTNode, 2> nested_classes_;  // Nested classes
 	std::vector<TypeAliasDecl> type_aliases_;  // Type aliases (using X = Y;)
 	std::vector<StaticMemberDecl> static_members_;  // Static members (for templates)
 	std::vector<AnonymousUnionInfo> anonymous_unions_;  // Anonymous union tracking info
@@ -1410,10 +1367,7 @@ public:
 	void set_deferred_bodies(std::vector<DeferredTemplateMemberBody> bodies) {
 		deferred_bodies_ = std::move(bodies);
 	}
-	const std::vector<DeferredTemplateMemberBody>& deferred_bodies() const {
-		return deferred_bodies_;
-	}
-	std::vector<DeferredTemplateMemberBody>& deferred_bodies() {
+	std::span<const DeferredTemplateMemberBody> deferred_bodies() const {
 		return deferred_bodies_;
 	}
 

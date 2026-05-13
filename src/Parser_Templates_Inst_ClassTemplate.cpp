@@ -4109,8 +4109,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.pointer_depth,
 							static_member.is_array,
 							static_member.array_dimensions,
-							std::nullopt,
-							std::nullopt,
+							/* declaration */ std::nullopt,
+							/* initializer_position */ std::nullopt,
 							static_member.is_constexpr);
 					}
 				}
@@ -4559,7 +4559,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.reference_qualifier,
 					static_member.pointer_depth,
 					static_member.is_array,
-					static_member.array_dimensions);
+					static_member.array_dimensions,
+					/* declaration */ std::nullopt,
+					/* initializer_position */ std::nullopt,
+					static_member.is_constexpr);
 			}
 
 			// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
@@ -7365,6 +7368,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.pointer_depth,
 						static_member.is_array,
 						static_member.array_dimensions,
+						static_member.declaration,
 						static_member.initializer_position,
 						static_member.is_constexpr);
 				}
@@ -7955,6 +7959,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.pointer_depth,
 			static_member.is_array,
 			static_member.array_dimensions,
+			static_member.declaration,
 			static_member.initializer_position,
 			static_member.is_constexpr);
 	}
@@ -9411,14 +9416,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_alignment,
 					AccessSpecifier::Public,
 					substituted_initializer,
-					type_spec.cv_qualifier(), // cv_qualifier
+					type_spec.cv_qualifier(),
 					type_spec.reference_qualifier(),
-					static_cast<int>(type_spec.pointer_depth()),
+					/* ptr_depth */ static_cast<int>(type_spec.pointer_depth()),
 					is_array,
-					std::move(array_dimensions),
-					std::nullopt,
-					std::nullopt,
-					false);
+					array_dimensions,
+					/* declaration */ std::nullopt,
+					/* initializer_position */ std::nullopt,
+					/* is_constexpr */ false);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
