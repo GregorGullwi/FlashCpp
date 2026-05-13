@@ -1758,7 +1758,9 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 				FLASH_LOG(Codegen, Debug, "findStaticMemberRecursive result: static_member=", (static_member != nullptr), ", owner_struct=", (owner_struct != nullptr));
 				if (static_member && owner_struct) {
 					if (context != ExpressionContext::LValueAddress &&
-						static_member->is_constexpr) {
+						static_member->is_constexpr &&
+						!is_struct_type(static_member->memberType()) &&
+						!static_member->is_array) {
 						if (static_member->normalized_init.has_value() &&
 							static_member->normalized_init->isConstant()) {
 							unsigned long long raw_value = 0;

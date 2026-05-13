@@ -1662,7 +1662,9 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(member_name));
 	if (static_member) {
 		if (context != ExpressionContext::LValueAddress &&
-			static_member->is_constexpr) {
+			static_member->is_constexpr &&
+			!is_struct_type(static_member->memberType()) &&
+			!static_member->is_array) {
 			if (static_member->normalized_init.has_value() &&
 				static_member->normalized_init->isConstant()) {
 				unsigned long long raw_value = 0;
