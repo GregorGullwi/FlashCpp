@@ -520,7 +520,7 @@ static std::optional<bool> functionDeclarationsMatchAfterTemplateSubstitution(
 // `std::optional<Parser::ConstantValue>` for non-type template arguments.
 template <typename SubstituteExpressionFn, typename EvaluateConstantExpressionFn>
 static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBaseMemberTypeChain(
-	const std::vector<QualifiedTypeMemberAccess>& member_type_chain,
+	std::span<const QualifiedTypeMemberAccess> member_type_chain,
 	const TemplateArgSubstitutionMap& name_substitution_map,
 	const TemplateArgPackSubstitutionMap& pack_substitution_map,
 	SubstituteExpressionFn&& substitute_expression,
@@ -807,7 +807,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 }
 
 void Parser::substituteAndCopyMemberFunctionParameters(
-	const std::vector<ASTNode>& original_params,
+	std::span<const ASTNode> original_params,
 	FunctionDeclarationNode& target_node,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
@@ -1152,7 +1152,7 @@ static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext
 	Parser* parser,
 	const StructTypeInfo* struct_info,
 	const TemplateParamsContainer& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	ConstExpr::EvaluationContext eval_ctx(symbol_table);
 	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 	eval_ctx.parser = parser;
@@ -1287,7 +1287,7 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	Parser* parser,
 	const StructTypeInfo* struct_info,
 	const TemplateParamsContainer& template_params,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	TypeIndex type_index,
 	size_t size_in_bytes,
 	ReferenceQualifier reference_qualifier,
@@ -1370,7 +1370,7 @@ static void retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 	StructTypeInfo* struct_info,
 	Parser* parser,
 	const TemplateParamsContainer& template_params,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 	if (!struct_info || !parser) {
 		return;
 	}
@@ -1963,7 +1963,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return SelfTypeRewriteInfo{pattern_struct_type_index, instantiated_struct_type_index};
 	};
 	auto substituteAndCopyParams = [&](
-									   const std::vector<ASTNode>& orig_params,
+									   std::span<const ASTNode> orig_params,
 									   auto& target_node,
 									   const auto& tmpl_params,
 									   const auto& tmpl_args,
@@ -2152,7 +2152,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Helper lambda to evaluate a fold expression with concrete pack values and create an AST node
 	// Uses ConstExpr::evaluate_fold_expression for the actual computation
-	auto evaluate_fold_expression = [this](std::string_view op, const std::vector<int64_t>& pack_values) -> std::optional<ASTNode> {
+	auto evaluate_fold_expression = [this](std::string_view op, std::span<const int64_t> pack_values) -> std::optional<ASTNode> {
 		auto result = ConstExpr::evaluate_fold_expression(op, pack_values);
 		if (!result.has_value()) {
 			return std::nullopt;
@@ -2247,7 +2247,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	auto substituteDefaultTemplateArg = [&](const ASTNode& default_node,
 											const auto& params,
-											const std::vector<TemplateTypeArg>& current_args) -> ASTNode {
+											std::span<const TemplateTypeArg> current_args) -> ASTNode {
 		if (current_args.empty()) {
 			return default_node;
 		}
@@ -2546,7 +2546,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::string_view type_name,
 		std::string_view member_name,
 		const auto& params,
-		const std::vector<TemplateTypeArg>& current_args,
+		std::span<const TemplateTypeArg> current_args,
 		std::string_view log_context) -> bool {
 		auto try_append_from_type_info = [&](const TypeInfo& candidate_info) -> bool {
 			const StructTypeInfo* struct_info = candidate_info.getStructInfo();
@@ -3035,7 +3035,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// default arguments (e.g. enable_if<true> -> T=void): the loop would terminate
 				// before reaching the dependent position, leaving the storage empty and falling
 				// back to the wrong arg vector.
-				const std::vector<TemplateTypeArg>& concrete_args = filled_args_for_pattern_match;
+				std::span<const TemplateTypeArg> concrete_args = filled_args_for_pattern_match;
 				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
 					std::optional<TemplateTypeArg> deduced_arg;
 					for (size_t pattern_idx = 0;
@@ -4238,7 +4238,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// defaulted primary-template parameter, the old bound cut the loop short before the
 				// dependent position, leaving the storage empty and causing the fallback below to
 				// yield an incorrect specialization-aligned arg vector.
-				const std::vector<TemplateTypeArg>& concrete_args = filled_args_for_pattern_match;
+				std::span<const TemplateTypeArg> concrete_args = filled_args_for_pattern_match;
 				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
 					std::optional<TemplateTypeArg> deduced_arg;
 					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < concrete_args.size(); ++pattern_idx) {
@@ -4478,7 +4478,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_size,
 					alias_registration_type_spec);
 				if (alias_registration_type_spec.is_array()) {
-					const std::vector<size_t>& alias_array_dimensions = alias_registration_type_spec.array_dimensions();
+					std::span<const size_t> alias_array_dimensions = alias_registration_type_spec.array_dimensions();
 					size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;
 					substituted_size = static_cast<int>(element_size * std::accumulate(
 						alias_array_dimensions.begin(),
@@ -5319,7 +5319,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Use the filled template args for the rest of the function
-	const std::vector<TemplateTypeArg>& template_args_to_use = filled_template_args;
+	std::span<const TemplateTypeArg> template_args_to_use = filled_template_args;
 	InlineVector<TemplateParameterNode, 4> effective_template_params;
 	InlineVector<TemplateTypeArg, 4> effective_template_args;
 	if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(template_name)) {
@@ -5734,7 +5734,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				base_template_node.has_value() && base_template_node->is<TemplateClassDeclarationNode>()) {
 				deferred_base_template_params = &base_template_node->as<TemplateClassDeclarationNode>().template_parameters();
 			}
-			auto makeTypeIndexForDeferredBaseNttp = [&](size_t arg_index, const std::vector<TemplateTypeArg>& resolved_args) {
+			auto makeTypeIndexForDeferredBaseNttp = [&](size_t arg_index, std::span<const TemplateTypeArg> resolved_args) {
 				TypeIndex target_index{};
 				if (deferred_base_template_params != nullptr &&
 					arg_index < deferred_base_template_params->size()) {
@@ -6044,7 +6044,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										type_spec,
 										template_params,
 										template_args_to_use,
-										[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+										[this](std::string_view concrete_base_template_name, std::span<const TemplateTypeArg> concrete_base_args) {
 											return instantiate_and_register_base_template(concrete_base_template_name, concrete_base_args);
 										});
 								substituted_arg.has_value()) {
@@ -6469,7 +6469,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						resolved_type,
 						template_params,
 						template_args_to_use,
-						[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+						[this](std::string_view concrete_base_template_name, std::span<const TemplateTypeArg> concrete_base_args) {
 							std::string_view mutable_template_name = concrete_base_template_name;
 							return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
 						});
@@ -6516,7 +6516,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				candidate_base_type,
 				template_params,
 				template_args_to_use,
-				[this](std::string_view concrete_base_template_name, const std::vector<TemplateTypeArg>& concrete_base_args) {
+				[this](std::string_view concrete_base_template_name, std::span<const TemplateTypeArg> concrete_base_args) {
 					std::string_view mutable_template_name = concrete_base_template_name;
 					return instantiate_and_register_base_template(mutable_template_name, concrete_base_args);
 				});
@@ -7103,7 +7103,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.pointer_depth = static_member.pointer_depth;
 				lazy_info.is_constexpr = static_member.is_constexpr;
 				lazy_info.template_params = template_params_typed;
-				lazy_info.template_args = template_args_to_use;
+				lazy_info.template_args.assign(template_args_to_use.begin(), template_args_to_use.end());
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 					effective_template_params,
 					effective_template_args,
@@ -7795,7 +7795,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_size,
 			alias_registration_type_spec);
 		if (alias_registration_type_spec.is_array()) {
-			const std::vector<size_t>& alias_array_dimensions = alias_registration_type_spec.array_dimensions();
+			std::span<const size_t> alias_array_dimensions = alias_registration_type_spec.array_dimensions();
 			size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;
 			substituted_size = static_cast<int>(element_size * std::accumulate(
 				alias_array_dimensions.begin(),
@@ -9214,7 +9214,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Use FunctionParsingScopeGuard for full member-function context:
 					// scope, current_function_, member context push, 'this' injection,
 					// and parameter registration — matching the normal delayed-body path.
-					std::vector<ASTNode> definition_scope_params = inst_func.parameter_nodes();
+					const std::span<const ASTNode> inst_func_params = inst_func.parameter_nodes();
+					std::vector<ASTNode> definition_scope_params(inst_func_params.begin(), inst_func_params.end());
 					const auto& definition_params = func_decl.parameter_nodes();
 					if (definition_scope_params.size() == definition_params.size()) {
 						auto get_decl_const = [](const ASTNode& node) -> const DeclarationNode* {

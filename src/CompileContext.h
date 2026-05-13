@@ -36,7 +36,7 @@ public:
 		verboseMode_ = verboseMode;
 	}
 
-	const std::vector<std::string>& getIncludeDirs() const {
+	std::span<const std::string> getIncludeDirs() const {
 		return includeDirs_;
 	}
 
@@ -47,7 +47,7 @@ public:
 		includeDirs_.emplace_back(includeDir);
 	}
 
-	const std::vector<std::string>& getDependencies() const {
+	std::span<const std::string> getDependencies() const {
 		return dependencies_;
 	}
 

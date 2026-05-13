@@ -465,7 +465,7 @@ public:
 
 	// Add function signature information for proper mangling
 	// Returns the mangled name for the function
-	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false) {
+	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
@@ -476,7 +476,7 @@ public:
 	}
 
 	// Overload that accepts pre-computed mangled name (for function definitions from IR)
-	void addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
+	void addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
@@ -485,8 +485,8 @@ public:
 	}
 
 	// --- Method declarations (ObjFileWriter_Symbols.cpp) ---
-	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
+	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None);
 	void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
 	void add_data(std::span<const uint8_t> data, SectionType section_type);
@@ -505,7 +505,7 @@ public:
 	void add_source_file(const std::string& filename);
 	void set_current_function_for_debug(const std::string& name, uint32_t file_id);
 	void add_line_mapping(uint32_t code_offset, uint32_t line_number);
-	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags, const std::vector<CodeView::VariableLocation>& locations);
+	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags, std::span<const CodeView::VariableLocation> locations);
 	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset);
 	void update_function_length(const std::string_view manged_name, uint32_t code_length);
 	void set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size);
@@ -541,14 +541,14 @@ public:
 	UnwindCodeResult build_unwind_codes(bool is_cpp, uint32_t stack_frame_size);
 
 	// --- Method declarations (ObjFileWriter_EH.cpp) ---
-	void build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start, const std::vector<SehTryBlockInfo>& seh_try_blocks, std::vector<ScopeTableReloc>& scope_relocs);
+	void build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start, std::span<const SehTryBlockInfo> seh_try_blocks, std::vector<ScopeTableReloc>& scope_relocs);
 	void ensure_type_descriptor(const std::string& type_name);
-	void build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset, uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, uint32_t effective_frame_size, uint32_t stack_frame_size, uint32_t cpp_funcinfo_rva_field_offset, bool has_cpp_funcinfo_rva_field, uint32_t& cpp_funcinfo_local_offset_out, std::vector<uint32_t>& cpp_xdata_rva_field_offsets, std::vector<uint32_t>& cpp_text_rva_field_offsets);
-	void emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset, bool is_seh, bool is_cpp, const std::vector<ScopeTableReloc>& scope_relocs, const std::vector<uint32_t>& cpp_xdata_rva_field_offsets, const std::vector<uint32_t>& cpp_text_rva_field_offsets);
-	void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
+	void build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset, uint32_t function_start, uint32_t function_size, std::string_view mangled_name, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, uint32_t effective_frame_size, uint32_t stack_frame_size, uint32_t cpp_funcinfo_rva_field_offset, bool has_cpp_funcinfo_rva_field, uint32_t& cpp_funcinfo_local_offset_out, std::vector<uint32_t>& cpp_xdata_rva_field_offsets, std::vector<uint32_t>& cpp_text_rva_field_offsets);
+	void emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset, bool is_seh, bool is_cpp, std::span<const ScopeTableReloc> scope_relocs, std::span<const uint32_t> cpp_xdata_rva_field_offsets, std::span<const uint32_t> cpp_text_rva_field_offsets);
+	void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
 
 	// --- Method declarations (ObjFileWriter_RTTI.cpp) ---
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0);
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks = {}, std::span<const UnwindMapEntryInfo> unwind_map = {}, std::span<const SehTryBlockInfo> seh_try_blocks = {}, uint32_t stack_frame_size = 0);
 	void finalize_debug_info();
 	std::string_view add_string_literal(std::string_view str_content);
 	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata = false);

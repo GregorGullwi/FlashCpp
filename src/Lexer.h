@@ -23,10 +23,10 @@ struct TokenPosition {
 class Lexer {
 public:
 	explicit Lexer(std::string_view source,
-				   const std::vector<SourceLineMapping>& line_map = {},
+				   std::span<const SourceLineMapping> line_map = {},
 				   const std::deque<std::string>& file_paths = {})
 		: source_(source), source_size_(source.size()), cursor_(0), line_(1),
-		  column_(1), file_paths_(file_paths), line_map_(line_map) {
+		  column_(1), file_paths_(file_paths), line_map_(line_map.begin(), line_map.end()) {
 		if (file_paths_.empty()) {
 			file_paths_.push_back("<unknown>");
 		}

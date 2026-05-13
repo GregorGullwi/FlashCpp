@@ -163,7 +163,7 @@ struct LambdaInfo {
 				if (stored_type.matches_signature(type_node) &&
 					stored_type.cv_qualifier() == type_node.cv_qualifier() &&
 					stored_type.reference_qualifier() == type_node.reference_qualifier() &&
-					stored_type.array_dimensions() == type_node.array_dimensions() &&
+					std::ranges::equal(stored_type.array_dimensions(), type_node.array_dimensions()) &&
 					stored_type.pointer_depth() == type_node.pointer_depth()) {
 					return;
 				}
@@ -208,7 +208,7 @@ inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is
 
 // Resolve a runtime namespace component stack back into a declaration NamespaceHandle.
 // Returns INVALID when any component cannot be resolved through the namespace registry.
-inline NamespaceHandle buildNamespaceHandleFromStrings(const std::vector<std::string>& namespace_stack) {
+inline NamespaceHandle buildNamespaceHandleFromStrings(std::span<const std::string> namespace_stack) {
 	if (namespace_stack.empty()) {
 		return NamespaceRegistry::GLOBAL_NAMESPACE;
 	}

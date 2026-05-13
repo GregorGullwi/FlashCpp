@@ -6,10 +6,10 @@
 // Part of ElfFileWriter class (unity build)
 
 void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start,
-												uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks,
-												[[maybe_unused]] const std::vector<UnwindMapEntryInfo>& unwind_map,
-												const std::vector<ElfFileWriter::CFIInstruction>& cfi_instructions,
-												const std::vector<ElfFileWriter::CleanupBlockInfo>& cleanup_blocks) {
+												uint32_t function_size, std::span<const TryBlockInfo> try_blocks,
+												[[maybe_unused]] std::span<const UnwindMapEntryInfo> unwind_map,
+												std::span<const ElfFileWriter::CFIInstruction> cfi_instructions,
+												std::span<const ElfFileWriter::CleanupBlockInfo> cleanup_blocks) {
 	// Check if exception info has already been added for this function (O(1) with unordered_set)
 	std::string mangled_name_str(mangled_name);
 	if (!added_exception_functions_.insert(mangled_name_str).second) {

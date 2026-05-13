@@ -875,7 +875,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 						if (!handled_as_struct_array) {
-							auto flattenAndAppend = [&](const auto& self, const std::vector<ASTNode>& elems) -> void {
+							auto flattenAndAppend = [&](const auto& self, std::span<const ASTNode> elems) -> void {
 								for (const auto& elem : elems) {
 									if (elem.is<InitializerListNode>()) {
 										self(self, elem.as<InitializerListNode>().initializers());
@@ -2255,6 +2255,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				const size_t element_size_bytes = static_cast<size_t>(element_size_bits / 8);
 				if (element_size_bytes > 0 && array_count > std::numeric_limits<size_t>::max() / element_size_bytes)
 					throw InternalError("Local array initializer size overflow");
+				const std::span<const size_t> type_array_dimensions = type_node.array_dimensions();
 				StructMember array_member(
 					decl.identifier_token().handle(),
 					type_node.type_index(),
@@ -2266,7 +2267,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					ReferenceQualifier::None,
 					0,
 					true,
-					type_node.array_dimensions(),
+					std::vector<size_t>(type_array_dimensions.begin(), type_array_dimensions.end()),
 					static_cast<int>(type_node.pointer_depth()),
 					std::nullopt);
 				if (tryEmitArrayMemberStores(array_member, init_list, decl.identifier_token().handle(), 0, node.declaration().identifier_token()))

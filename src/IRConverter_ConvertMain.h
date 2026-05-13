@@ -959,7 +959,7 @@ private:
 	// Patch ELF catch handler filter values in the generated code.
 	// This is called at function finalization when we know the complete type table.
 	// The filter values must match what the LSDA generator will produce.
-	void patchElfCatchFilterValues(const std::vector<ObjectFileWriter::TryBlockInfo>& try_blocks);
+	void patchElfCatchFilterValues(std::span<const ObjectFileWriter::TryBlockInfo> try_blocks);
 
 	// Debug information tracking
 	void addLineMapping(uint32_t line_number, int32_t manual_offset = 0);

@@ -156,7 +156,7 @@ public:
 	/**
 	 * @brief Add data to a section
 	 */
-	void add_data(const std::vector<char>& data, SectionType section_type) {
+	void add_data(std::span<const char> data, SectionType section_type) {
 		auto* section = getSectionForType(section_type);
 		if (!section) {
 			throw std::runtime_error("Section not found for type");
@@ -171,7 +171,7 @@ public:
 		section->append_data(data.data(), data.size());
 	}
 
-	void add_data(const std::vector<uint8_t>& data, SectionType section_type) {
+	void add_data(std::span<const uint8_t> data, SectionType section_type) {
 		auto* section = getSectionForType(section_type);
 		if (!section) {
 			throw std::runtime_error("Section not found for type");
@@ -361,16 +361,16 @@ public:
 	std::string get_or_create_class_typeinfo(const StructTypeInfo* struct_info);
 	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr, TypeIndex subobject_type_index = {}, int64_t offset_to_top = 0);
 	std::string_view generateMangledName(std::string_view name, const FunctionSignature& sig);
-	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false);
+	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false);
 
 	// --- Method declarations (ElfFileWriter_FuncSig.cpp) ---
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
-	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
+	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
 	void add_source_file(const std::string& filename);
 	void set_current_function_for_debug(const std::string& name, uint32_t file_id);
 	void add_line_mapping(uint32_t code_offset, uint32_t line_number);
-	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags, const std::vector<CodeView::VariableLocation>& locations);
+	void add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags, std::span<const CodeView::VariableLocation> locations);
 	void add_function_parameter(const std::string& name, uint32_t type_index, int32_t stack_offset);
 	void update_function_length(const std::string_view mangled_name, uint32_t code_length);
 	void set_function_debug_range(const std::string_view manged_name, uint32_t prologue_size, uint32_t epilogue_size);
@@ -413,7 +413,7 @@ public:
 	};
 
 	// --- Method declarations (ElfFileWriter_EH.cpp) ---
-	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<CFIInstruction>& cfi_instructions = {}, const std::vector<CleanupBlockInfo>& cleanup_blocks = {});
+	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks = {}, std::span<const UnwindMapEntryInfo> unwind_map = {}, std::span<const CFIInstruction> cfi_instructions = {}, std::span<const CleanupBlockInfo> cleanup_blocks = {});
 	std::string get_typeinfo_symbol(const std::string& type_name) const;
 	void add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, int64_t addend = -4);
 	void add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, uint32_t xdata_offset);

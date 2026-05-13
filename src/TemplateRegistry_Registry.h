@@ -140,7 +140,7 @@ public:
 	// Register a variable template partial specialization with its pattern args
 	void registerVariableTemplateSpecialization(std::string_view base_name,
 												std::span<const TemplateParameterNode> template_params,
-												const std::vector<TemplateTypeArg>& pattern_args,
+												std::span<const TemplateTypeArg> pattern_args,
 												ASTNode specialized_node) {
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
 		InlineVector<TemplateParameterNode, 4> typed_template_params;
@@ -160,7 +160,7 @@ public:
 
 	std::optional<VarTemplateSpecMatch> findVariableTemplateSpecialization(
 		std::string_view base_name,
-		const std::vector<TemplateTypeArg>& concrete_args) const {
+		std::span<const TemplateTypeArg> concrete_args) const {
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
 		auto it = variable_template_specializations_.find(key);
 		if (it == variable_template_specializations_.end()) {
@@ -383,7 +383,7 @@ public:
 
 	// Convenience method: register instantiation using template name and TemplateTypeArg args
 	void registerInstantiation(StringHandle template_name,
-							   const std::vector<TemplateTypeArg>& args,
+							   std::span<const TemplateTypeArg> args,
 							   ASTNode instantiated_node) {
 		auto key = FlashCpp::makeInstantiationKey(template_name, args);
 		instantiations_[key] = instantiated_node;
@@ -646,7 +646,7 @@ public:
 	// Register a template specialization pattern (StringHandle overload)
 	void registerSpecializationPattern(StringHandle template_name,
 									   const InlineVector<TemplateParameterNode, 4>& template_params,
-									   const std::vector<TemplateTypeArg>& pattern_args,
+									   std::span<const TemplateTypeArg> pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 
@@ -738,7 +738,7 @@ public:
 	}
 	void registerSpecializationPattern(StringHandle template_name,
 									   std::span<const TemplateParameterNode> template_params,
-									   const std::vector<TemplateTypeArg>& pattern_args,
+									   std::span<const TemplateTypeArg> pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		InlineVector<TemplateParameterNode, 4> typed_template_params;
@@ -752,7 +752,7 @@ public:
 	// Register a template specialization pattern (string_view overload)
 	void registerSpecializationPattern(std::string_view template_name,
 									   std::span<const TemplateParameterNode> template_params,
-									   const std::vector<TemplateTypeArg>& pattern_args,
+									   std::span<const TemplateTypeArg> pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		StringHandle key = StringTable::getOrInternStringHandle(template_name);
@@ -762,7 +762,7 @@ public:
 	// Register a template specialization pattern using QualifiedIdentifier.
 	void registerSpecializationPattern(QualifiedIdentifier qi,
 									   std::span<const TemplateParameterNode> template_params,
-									   const std::vector<TemplateTypeArg>& pattern_args,
+									   std::span<const TemplateTypeArg> pattern_args,
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
@@ -771,7 +771,7 @@ public:
 	}
 
 	// Register a template specialization (exact match)
-	void registerSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
+	void registerSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode specialized_node) {
 		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
 		specializations_[key] = specialized_node;
 		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
@@ -785,7 +785,7 @@ public:
 	}
 
 	// Register a template specialization using QualifiedIdentifier.
-	void registerSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
+	void registerSpecialization(QualifiedIdentifier qi, std::span<const TemplateTypeArg> template_args, ASTNode specialized_node) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerSpecialization(name, template_args, specialized_node);
 		});
@@ -851,14 +851,14 @@ public:
 
 	// Find a matching specialization pattern (StringHandle overload)
 	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name,
-													  const std::vector<TemplateTypeArg>& concrete_args) const {
+													  std::span<const TemplateTypeArg> concrete_args) const {
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
 			FLASH_LOG(Templates, Debug, "    No patterns registered for template '", StringTable::getStringView(template_name), "'");
 			return std::nullopt;	 // No patterns for this template
 		}
 
-		const std::vector<TemplatePattern>& patterns = patterns_it->second;
+		std::span<const TemplatePattern> patterns = patterns_it->second;
 		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", StringTable::getStringView(template_name), "'");
 
 		const TemplatePattern* best_match = nullptr;
@@ -893,7 +893,7 @@ public:
 
 	// Find a matching specialization pattern (string_view overload)
 	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name,
-													  const std::vector<TemplateTypeArg>& concrete_args) const {
+													  std::span<const TemplateTypeArg> concrete_args) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
@@ -901,7 +901,7 @@ public:
 			return std::nullopt;	 // No patterns for this template
 		}
 
-		const std::vector<TemplatePattern>& patterns = patterns_it->second;
+		std::span<const TemplatePattern> patterns = patterns_it->second;
 		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", template_name, "'");
 
 		const TemplatePattern* best_match = nullptr;
@@ -1005,7 +1005,7 @@ private:
 	// the incidental alias TypeIndex/category that happened to reach registration or
 	// lookup.
 	static InlineVector<TemplateTypeArg, 4> canonicalizeTemplateArgsForExactSpecialization(
-		const std::vector<TemplateTypeArg>& template_args) {
+		std::span<const TemplateTypeArg> template_args) {
 		InlineVector<TemplateTypeArg, 4> canonical_args;
 		canonical_args.reserve(template_args.size());
 		for (const TemplateTypeArg& arg : template_args) {

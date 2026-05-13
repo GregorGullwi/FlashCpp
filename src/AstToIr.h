@@ -126,7 +126,7 @@ private:
 	// parameter pack (which may be omitted). Throws InternalError if a non-pack
 	// parameter without a default value is encountered (indicates an overload
 	// resolution bug).
-	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
+	void fillInDefaultArguments(CallOp& call_op, std::span<const ASTNode> param_nodes, size_t arg_idx);
 	void populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type);
 	void populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type);
 	TypeSpecifierNode buildFunctionSignatureReturnType(const FunctionSignature& signature) const;
@@ -354,8 +354,8 @@ private:
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
 										ExpressionContext context);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);
-	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);
+	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method);
 	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, StringHandle struct_name_override, NamespaceHandle namespace_handle);
 	std::optional<ExprResult> tryGenerateIntrinsicIr(std::string_view func_name, const CallExprNode& callExprNode);
 	ExprResult generateBuiltinAbsIntIntrinsic(const CallExprNode& callExprNode);
@@ -453,8 +453,8 @@ private:
 	void generateLambdaFunctions(LambdaInfo& lambda_info);
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
-	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
-										   const std::vector<ASTNode>& captured_var_decls);
+	void addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNode> captures,
+										   std::span<const ASTNode> captured_var_decls);
 
 	// ── inline private helpers (IrGenerator_Visitors_TypeInit.cpp) ──
 	// Helper: resolve self-referential struct types in template instantiations.
@@ -914,7 +914,7 @@ private:
 		const ArgRange& args,
 		const Token& source_token) {
 		ctor_op.resolved_constructor = resolved_ctor;
-		const auto* ctor_params = resolved_ctor ? &resolved_ctor->parameter_nodes() : nullptr;
+		const std::span<const ASTNode> ctor_params = resolved_ctor ? resolved_ctor->parameter_nodes() : std::span<const ASTNode>();
 		size_t arg_index = 0;
 		for (const auto& arg : args) {
 			if (!arg.template is<ExpressionNode>()) {
@@ -922,10 +922,9 @@ private:
 			}
 
 			const TypeSpecifierNode* param_type = nullptr;
-			if (ctor_params &&
-				arg_index < ctor_params->size() &&
-				(*ctor_params)[arg_index].is<DeclarationNode>()) {
-				param_type = &(*ctor_params)[arg_index].as<DeclarationNode>().type_specifier_node();
+			if (arg_index < ctor_params.size() &&
+				ctor_params[arg_index].is<DeclarationNode>()) {
+				param_type = &ctor_params[arg_index].as<DeclarationNode>().type_specifier_node();
 			}
 
 			ExpressionContext arg_context = ExpressionContext::Load;
@@ -1282,7 +1281,7 @@ private:
 
 		const TypeSpecifierNode* type() const;
 	};
-	CallParamView resolveCallParamView(const std::vector<ASTNode>& param_nodes,
+	CallParamView resolveCallParamView(std::span<const ASTNode> param_nodes,
 									   size_t arg_index,
 									   const std::vector<TypeSpecifierNode>* deduced_param_types,
 									   const std::vector<CachedParamInfo>* cached_params) const;
@@ -1300,7 +1299,7 @@ private:
 											 const ASTNode& argument,
 											 const TypeSpecifierNode* param_type,
 											 const Token& token);
-	void fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx);
+	void fillInCachedDefaultArguments(CallOp& call_op, std::span<const CachedParamInfo> cached_params, size_t arg_idx);
 
 	// Collected lambdas for deferred generation
 	std::vector<LambdaInfo> collected_lambdas_;

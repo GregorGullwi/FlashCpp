@@ -875,7 +875,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 // Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 std::vector<TemplateArgumentNodeInfo> Parser::build_template_arg_infos(
 	std::span<const TemplateTypeArg> template_args,
-	const std::vector<ASTNode>& template_arg_nodes) {
+	std::span<const ASTNode> template_arg_nodes) {
 	std::vector<TemplateArgumentNodeInfo> arg_infos;
 	arg_infos.reserve(template_args.size());
 	for (size_t i = 0; i < template_args.size(); ++i) {
@@ -1122,7 +1122,7 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 		return {};
 	};
-	auto areTemplateArgsConcrete = [&](const std::vector<TemplateTypeArg>& args) {
+	auto areTemplateArgsConcrete = [&](std::span<const TemplateTypeArg> args) {
 		for (const TemplateTypeArg& arg : args) {
 			if (arg.is_dependent) {
 				return false;
@@ -1141,7 +1141,7 @@ TypeIndex Parser::substitute_template_parameter(
 	};
 	auto resolveConcreteInstantiatedMemberChain =
 		[&](std::string_view base_template_name,
-			const std::vector<TemplateTypeArg>& concrete_args,
+			std::span<const TemplateTypeArg> concrete_args,
 			std::string_view member_chain) -> const TypeInfo* {
 		if (base_template_name.empty() || !areTemplateArgsConcrete(concrete_args)) {
 			return nullptr;

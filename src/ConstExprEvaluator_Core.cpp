@@ -133,7 +133,7 @@ EvalResult validateConstexprRead(const EvalResult& heap_val) {
 
 std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type_spec) {
 	if (type_spec.is_array()) {
-		const std::vector<size_t> dimensions = type_spec.array_dimensions();
+		const std::span<const size_t> dimensions = type_spec.array_dimensions();
 		TypeSpecifierNode element_type = type_spec;
 		element_type.set_array_dimensions({});
 		const int element_size_bits = getTypeSpecSizeBits(element_type);
@@ -2391,7 +2391,7 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 	if (lhs.type() != rhs.type() ||
 		lhs.type_index() != rhs.type_index() ||
 		lhs.pointer_depth() != rhs.pointer_depth() ||
-		lhs.array_dimensions() != rhs.array_dimensions() ||
+		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions()) ||
 		lhs.has_member_class() != rhs.has_member_class() ||
 		lhs.has_function_signature() != rhs.has_function_signature()) {
 		return false;
@@ -2527,7 +2527,7 @@ static TypeSpecifierNode make_member_type_spec(const StructMember& member) {
 
 static EvalResult make_local_default_init(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
 	if (type_spec.is_array()) {
-		const std::vector<size_t>& dims = type_spec.array_dimensions();
+		std::span<const size_t> dims = type_spec.array_dimensions();
 		if (dims.empty()) {
 			return EvalResult::error("Default-initialized local array is missing dimensions in constexpr evaluation");
 		}
@@ -3379,7 +3379,7 @@ const ConstructorCallNode* Evaluator::extract_constructor_call(const std::option
 }
 
 EvalResult Evaluator::evaluate_lambda_captures(
-	const std::vector<LambdaCaptureNode>& captures,
+	std::span<const LambdaCaptureNode> captures,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
@@ -4957,7 +4957,7 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 }
 
 EvalResult Evaluator::bind_evaluated_arguments(
-	const std::vector<ASTNode>& parameters,
+	std::span<const ASTNode> parameters,
 	const ChunkedVector<ASTNode>& arguments,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
@@ -5013,8 +5013,8 @@ EvalResult Evaluator::bind_evaluated_arguments(
 }
 
 EvalResult Evaluator::bind_pre_evaluated_arguments(
-	const std::vector<ASTNode>& parameters,
-	const std::vector<EvalResult>& evaluated_arguments,
+	std::span<const ASTNode> parameters,
+	std::span<const EvalResult> evaluated_arguments,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	std::string_view invalid_parameter_error,
@@ -5853,15 +5853,15 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 // For struct types, builds an EvalResult with object_member_bindings.
 // For scalar types, returns a single scalar value.
 EvalResult Evaluator::materializeFromConstantBytes(
-	const std::vector<char>& bytes,
+	std::span<const char> bytes,
 	TypeIndex type_index) {
 	return materializeFromConstantBytes(bytes, type_index, {});
 }
 
 EvalResult Evaluator::materializeFromConstantBytes(
-	const std::vector<char>& bytes,
+	std::span<const char> bytes,
 	TypeIndex type_index,
-	const std::vector<size_t>& array_dimensions) {
+	std::span<const size_t> array_dimensions) {
 /* extractScalar removed: use local extractLeafScalar inside materializeLeaf for leaf byte extraction. */
 
 	auto getElementByteSize = [](TypeIndex current_type_index) -> size_t {
@@ -5874,7 +5874,7 @@ EvalResult Evaluator::materializeFromConstantBytes(
 		return static_cast<size_t>(get_type_size_bits(current_type_index.category()) / 8);
 	};
 
-	auto materializeLeaf = [&](const std::vector<char>& leaf_bytes) -> EvalResult {
+	auto materializeLeaf = [&](std::span<const char> leaf_bytes) -> EvalResult {
 		auto extractLeafScalar = [&leaf_bytes](size_t offset, size_t size, TypeCategory cat) -> EvalResult {
 			if (offset + size > leaf_bytes.size()) {
 				return EvalResult::error("NormalizedInitializer: offset out of range");

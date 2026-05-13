@@ -5,7 +5,7 @@
 // Part of ObjectFileWriter class (unity build)
 
 void ObjectFileWriter::build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start,
-											 const std::vector<SehTryBlockInfo>& seh_try_blocks,
+											 std::span<const SehTryBlockInfo> seh_try_blocks,
 											 std::vector<ObjectFileWriter::ScopeTableReloc>& scope_relocs) {
 	// SEH uses a scope table instead of FuncInfo
 	// Scope table format:
@@ -151,8 +151,8 @@ void ObjectFileWriter::ensure_type_descriptor(const std::string& type_name) {
 void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset,
 													uint32_t function_start, uint32_t function_size,
 													std::string_view mangled_name,
-													const std::vector<TryBlockInfo>& try_blocks,
-													const std::vector<UnwindMapEntryInfo>& unwind_map,
+													std::span<const TryBlockInfo> try_blocks,
+													std::span<const UnwindMapEntryInfo> unwind_map,
 													uint32_t effective_frame_size, [[maybe_unused]] uint32_t stack_frame_size,
 													uint32_t cpp_funcinfo_rva_field_offset,
 													bool has_cpp_funcinfo_rva_field,
@@ -883,9 +883,9 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 
 void ObjectFileWriter::emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset,
 												  bool is_seh, bool is_cpp,
-												  const std::vector<ObjectFileWriter::ScopeTableReloc>& scope_relocs,
-												  const std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
-												  const std::vector<uint32_t>& cpp_text_rva_field_offsets) {
+												  std::span<const ObjectFileWriter::ScopeTableReloc> scope_relocs,
+												  std::span<const uint32_t> cpp_xdata_rva_field_offsets,
+												  std::span<const uint32_t> cpp_text_rva_field_offsets) {
 	// Add relocation for the exception handler RVA
 	// Point to __C_specific_handler (SEH) or __CxxFrameHandler3 (C++)
 	if (is_seh) {
@@ -968,8 +968,8 @@ void ObjectFileWriter::emit_exception_relocations(uint32_t xdata_offset, uint32_
 
 void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t function_size,
 										   std::string_view mangled_name,
-										   const std::vector<TryBlockInfo>& try_blocks,
-										   const std::vector<UnwindMapEntryInfo>& unwind_map,
+										   std::span<const TryBlockInfo> try_blocks,
+										   std::span<const UnwindMapEntryInfo> unwind_map,
 										   bool is_cpp, uint32_t xdata_offset,
 										   const ObjectFileWriter::UnwindCodeResult& unwind_info,
 										   uint32_t cpp_funcinfo_local_offset) {
@@ -1194,8 +1194,8 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 		std::vector<CatchFuncletMetadataRef> catch_funclet_metadata_refs;
 
 		auto emit_cpp_metadata_relocations = [this](uint32_t record_xdata_offset,
-													const std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
-													const std::vector<uint32_t>& cpp_text_rva_field_offsets) {
+													std::span<const uint32_t> cpp_xdata_rva_field_offsets,
+													std::span<const uint32_t> cpp_text_rva_field_offsets) {
 			auto* xdata_symbol = coffi_.get_symbol(".xdata");
 			auto* text_symbol = coffi_.get_symbol(".text");
 			auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
@@ -1251,7 +1251,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 											std::string_view funclet_metadata_name,
 											uint32_t funclet_start_rel,
 											uint32_t funclet_end_rel,
-											const std::vector<TryBlockInfo>& funclet_try_blocks,
+											std::span<const TryBlockInfo> funclet_try_blocks,
 											uint32_t inherited_funcinfo_rva) -> CatchFuncletXdataResult {
 			std::vector<char> catch_xdata = {
 				static_cast<char>(0x19),

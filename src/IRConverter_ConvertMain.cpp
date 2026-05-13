@@ -2027,7 +2027,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 			// Lambda: compute outgoing stack bytes for a set of arguments on Linux SysV AMD64.
 			// int_slots_start: number of integer register slots already consumed (e.g., 1 for 'this').
-		auto computeSysVOutgoingBytes = [](const std::vector<TypedValue>& args, size_t int_slots_start) -> size_t {
+		auto computeSysVOutgoingBytes = [](std::span<const TypedValue> args, size_t int_slots_start) -> size_t {
 			size_t int_slots_used = int_slots_start;
 			size_t float_slots_used = 0;
 			size_t int_stack_slots = 0;
@@ -15907,7 +15907,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 		current_function_unwind_map_.clear();
 		size_t cleanup_funclet_index = 0;
 
-		auto emitCleanupFunclet = [&](const std::vector<std::pair<StringHandle, StringHandle>>& cleanup_vars) -> StringHandle {
+		auto emitCleanupFunclet = [&](std::span<const std::pair<StringHandle, StringHandle>> cleanup_vars) -> StringHandle {
 			if (cleanup_vars.empty() || !current_function_mangled_name_.isValid()) {
 				return StringHandle();
 			}
@@ -15940,7 +15940,7 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 			return symbol_handle;
 		};
 
-		auto populateCleanupChain = [&](const std::vector<std::pair<StringHandle, StringHandle>>& cleanup_vars,
+		auto populateCleanupChain = [&](std::span<const std::pair<StringHandle, StringHandle>> cleanup_vars,
 										int32_t head_state,
 										int32_t tail_to_state) {
 			if (cleanup_vars.empty() || head_state < 0) {
@@ -17142,7 +17142,7 @@ void IrToObjConverter<TWriterClass>::finalizeFunctionBranches() {
 }
 
 template <class TWriterClass>
-void IrToObjConverter<TWriterClass>::patchElfCatchFilterValues(const std::vector<ObjectFileWriter::TryBlockInfo>& try_blocks) {
+void IrToObjConverter<TWriterClass>::patchElfCatchFilterValues(std::span<const ObjectFileWriter::TryBlockInfo> try_blocks) {
 	if (elf_catch_filter_patches_.empty())
 		return;
 

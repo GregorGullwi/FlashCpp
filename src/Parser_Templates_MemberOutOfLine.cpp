@@ -805,8 +805,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 // This is called during code generation to instantiate member function templates
 std::optional<ASTNode> Parser::parseTemplateBody(
 	SaveHandle body_pos,
-	const InlineVector<std::string_view, 4>& template_param_names,
-	const std::vector<TypeCategory>& concrete_types,
+	std::span<const std::string_view> template_param_names,
+	std::span<const TypeCategory> concrete_types,
 	StringHandle struct_name,
 	TypeIndex struct_type_index) {
 	// Save current parser state using save_token_position so we can restore properly

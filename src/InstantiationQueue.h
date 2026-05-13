@@ -169,7 +169,7 @@ public:
 	}
 
 	// Get all pending instantiations
-	const std::vector<InstantiationRecord>& getPending() const {
+	std::span<const InstantiationRecord> getPending() const {
 		return pending_;
 	}
 

@@ -310,7 +310,7 @@ struct TemplatePattern {
 	// Check if this pattern matches the given concrete arguments
 	// For example, pattern T& matches int&, float&, etc.
 	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
-	bool matches(const std::vector<TemplateTypeArg>& concrete_args,
+	bool matches(std::span<const TemplateTypeArg> concrete_args,
 				 std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) const {
 		FLASH_LOG(Templates, Trace, "      matches(): pattern has ", pattern_args.size(), " args, concrete has ", concrete_args.size(), " args");
 

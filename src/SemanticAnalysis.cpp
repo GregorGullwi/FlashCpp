@@ -59,7 +59,7 @@ bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifi
 		lhs.cv_qualifier() != rhs.cv_qualifier() ||
 		lhs.reference_qualifier() != rhs.reference_qualifier() ||
 		lhs.pointer_depth() != rhs.pointer_depth() ||
-		lhs.array_dimensions() != rhs.array_dimensions()) {
+		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions())) {
 		return false;
 	}
 
@@ -790,7 +790,7 @@ private:
 
 class PostParseBoundaryChecker {
 public:
-	PostParseBoundaryReport run(const std::vector<ASTNode>& roots) {
+	PostParseBoundaryReport run(std::span<const ASTNode> roots) {
 		for (const auto& root : roots) {
 			visit(root);
 		}
@@ -1396,10 +1396,10 @@ size_t SemanticAnalysis::normalizePendingSemanticRoots() {
 }
 
 std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
-	const std::vector<ASTNode>& parameter_nodes,
-	const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const {
+	std::span<const ASTNode> parameter_nodes,
+	std::span<const std::pair<size_t, TypeSpecifierNode>> deduced_types) const {
 	if (deduced_types.empty()) {
-		return parameter_nodes;
+		return std::vector<ASTNode>(parameter_nodes.begin(), parameter_nodes.end());
 	}
 
 	std::vector<ASTNode> resolved_nodes;
@@ -1943,7 +1943,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 	}
 
 	if (node.is<NamespaceDeclarationNode>()) {
-		auto& declarations = const_cast<std::vector<ASTNode>&>(node.as<NamespaceDeclarationNode>().declarations());
+		std::span<ASTNode> declarations = node.as<NamespaceDeclarationNode>().declarations();
 		for (auto& decl : declarations) {
 			resolveRemainingAutoReturnsInNode(decl);
 		}
@@ -2245,7 +2245,7 @@ void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
 
 // --- Declaration handlers ---
 
-void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& parameter_nodes) {
+void SemanticAnalysis::registerParametersInScope(std::span<const ASTNode> parameter_nodes) {
 	for (const auto& param_node : parameter_nodes) {
 		if (param_node.is<DeclarationNode>()) {
 			const auto& decl = param_node.as<DeclarationNode>();
@@ -2263,7 +2263,7 @@ void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& par
 }
 
 void SemanticAnalysis::normalizeParameterExpressionsInScope(
-	const std::vector<ASTNode>& parameter_nodes, const SemanticContext& ctx) {
+	std::span<const ASTNode> parameter_nodes, const SemanticContext& ctx) {
 	for (const auto& param : parameter_nodes) {
 		if (!param.is<DeclarationNode>()) {
 			continue;
@@ -2745,7 +2745,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	object_type_arg.type_index = initializer_type.type_index();
 	object_type_arg.setType(initializer_type.category());
 
-	auto resolve_struct_specialization = [&](std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) -> const StructDeclarationNode* {
+	auto resolve_struct_specialization = [&](std::string_view template_name, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
 		auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
 		if (!specialization.has_value()) {
 			specialization = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);

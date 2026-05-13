@@ -1339,7 +1339,7 @@ public:
 		return instructions.back();
 	}
 
-	const std::vector<IrInstruction>& getInstructions() const {
+	std::span<const IrInstruction> getInstructions() const {
 		return instructions;
 	}
 

@@ -843,7 +843,7 @@ std::string_view ElfFileWriter::generateMangledName(std::string_view name, const
  * Returns std::string_view to stable storage in function_signatures_ map
  */
 std::string_view ElfFileWriter::addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
-													 const std::vector<TypeSpecifierNode>& parameter_types,
+													 std::span<const TypeSpecifierNode> parameter_types,
 													 Linkage linkage, bool is_variadic) {
 	FunctionSignature sig(return_type, parameter_types);
 	sig.linkage = linkage;

@@ -100,7 +100,7 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 }
 
 // Phase 5: Helper to register function parameters in the symbol table
-void Parser::register_parameters_in_scope(const std::vector<ASTNode>& params) {
+void Parser::register_parameters_in_scope(std::span<const ASTNode> params) {
 	for (const auto& param : params) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
@@ -132,22 +132,20 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	// Determine function node and parameters before constructing the guard,
 	// so we can pass current_function to the guard constructor.
 	FunctionDeclarationNode* func_node = nullptr;
-	const std::vector<ASTNode>* params_ptr = nullptr;
+	std::span<const ASTNode> params;
 	if (delayed.is_constructor && delayed.ctor_node) {
-		params_ptr = &delayed.ctor_node->parameter_nodes();
+		params = delayed.ctor_node->parameter_nodes();
 	} else if (delayed.func_node && !delayed.is_destructor) {
 		func_node = delayed.func_node;
-		params_ptr = &func_node->parameter_nodes();
+		params = func_node->parameter_nodes();
 	}
 
 	// FunctionParsingScopeGuard owns scope, current_function_ save/restore,
 	// member-context push/pop, 'this' injection, and parameter registration.
-	// s_empty_params is used for destructors (no parameters) and as a fallback.
-	static const std::vector<ASTNode> s_empty_params;
 	bool inject_this = has_member_ctx && (!func_node || !func_node->is_static());
 	FlashCpp::FunctionParsingScopeGuard func_guard(*this, has_member_ctx, inject_this,
 												   delayed.struct_node, delayed.struct_name, delayed.struct_type_index,
-												   params_ptr ? *params_ptr : s_empty_params, func_node);
+												   params, func_node);
 
 	// Parse constructor initializer list if present (for constructors with delayed parsing)
 	if (delayed.is_constructor && delayed.has_initializer_list && delayed.ctor_node) {

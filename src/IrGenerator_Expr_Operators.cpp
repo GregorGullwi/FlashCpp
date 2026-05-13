@@ -389,7 +389,7 @@ const TypeSpecifierNode* AstToIr::CallParamView::type() const {
 }
 
 AstToIr::CallParamView AstToIr::resolveCallParamView(
-	const std::vector<ASTNode>& param_nodes,
+	std::span<const ASTNode> param_nodes,
 	size_t arg_index,
 	const std::vector<TypeSpecifierNode>* deduced_param_types,
 	const std::vector<CachedParamInfo>* cached_params) const {
@@ -803,7 +803,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 	return value;
 }
 
-void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx) {
+void AstToIr::fillInDefaultArguments(CallOp& call_op, std::span<const ASTNode> param_nodes, size_t arg_idx) {
 	for (size_t i = arg_idx; i < param_nodes.size(); ++i) {
 		if (!param_nodes[i].is<DeclarationNode>())
 			continue;
@@ -1004,7 +1004,7 @@ void AstToIr::finalizeConstructorCallOp(
 	}
 }
 
-void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx) {
+void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, std::span<const CachedParamInfo> cached_params, size_t arg_idx) {
 	for (size_t i = arg_idx; i < cached_params.size(); ++i) {
 		const auto& param = cached_params[i];
 		if (param.is_parameter_pack) {
@@ -3760,11 +3760,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	}
 }
 
-std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
+std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> param_types, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
 	return NameMangling::generateMangledName(name, return_type, param_types, is_variadic, struct_name, namespace_handle, Linkage::CPlusPlus, is_const_method).view();
 }
 
-std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
+std::string_view AstToIr::generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, std::span<const ASTNode> param_nodes, bool is_variadic, StringHandle struct_name, NamespaceHandle namespace_handle, bool is_const_method) {
 	return NameMangling::generateMangledName(name, return_type, param_nodes, is_variadic, struct_name, namespace_handle, Linkage::CPlusPlus, is_const_method).view();
 }
 

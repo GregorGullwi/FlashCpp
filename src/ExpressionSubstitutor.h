@@ -66,7 +66,7 @@ public:
 	ExpressionSubstitutor(
 		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 		Parser& parser,
-		const std::vector<std::string_view>& template_param_order);
+		std::span<const std::string_view> template_param_order);
 
 	/// Construct a substitutor with both scalar and pack parameter mappings
 	/// @param param_map Maps scalar template parameter names to concrete template arguments
@@ -82,7 +82,7 @@ public:
 		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 		const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
 		Parser& parser,
-		const std::vector<std::string_view>& template_param_order);
+		std::span<const std::string_view> template_param_order);
 
 	ExpressionSubstitutor(
 		const TemplateEnvironment& environment,
@@ -132,7 +132,7 @@ private:
 
 	// Helper: expand pack parameters in template arguments
 	std::vector<TemplateTypeArg> expandPacksInArguments(
-		const std::vector<ASTNode>& template_arg_nodes);
+		std::span<const ASTNode> template_arg_nodes);
 	std::vector<TemplateTypeArg> collectCurrentBoundTemplateArgs(std::string_view use_site) const;
 	MaterializedStoredTemplateArgs materializeStoredTemplateArgs(
 		const TypeInfo& template_instantiation_info,

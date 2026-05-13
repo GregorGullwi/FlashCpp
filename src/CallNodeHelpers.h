@@ -35,7 +35,7 @@ struct CallInfo {
 	// Optional metadata — empty/invalid when the source node does not carry them.
 	StringHandle mangled_name;
 	StringHandle qualified_name;
-	const std::vector<ASTNode>* template_arguments;  // null when absent
+	std::span<const ASTNode> template_arguments;
 	bool is_indirect;
 
 	// --- Factory helpers ---------------------------------------------------
@@ -50,7 +50,7 @@ struct CallInfo {
 		info.has_receiver          = node.has_receiver();
 		info.mangled_name          = node.mangled_name_handle();
 		info.qualified_name        = node.qualified_name_handle();
-		info.template_arguments    = &node.template_arguments();
+		info.template_arguments    = node.template_arguments();
 		info.is_indirect           = node.callee().is_indirect();
 		return info;
 	}
@@ -82,11 +82,10 @@ inline void copyCallMetadataFromInfo(
 		target.set_qualified_name(source.qualified_name.view());
 	}
 	if (options.copy_template_arguments &&
-		source.template_arguments &&
-		!source.template_arguments->empty()) {
+		!source.template_arguments.empty()) {
 		std::vector<ASTNode> copied_template_args;
-		copied_template_args.reserve(source.template_arguments->size());
-		for (const auto& template_arg : *source.template_arguments) {
+		copied_template_args.reserve(source.template_arguments.size());
+		for (const auto& template_arg : source.template_arguments) {
 			copied_template_args.push_back(template_arg);
 		}
 		target.set_template_arguments(std::move(copied_template_args));
@@ -107,12 +106,12 @@ inline std::vector<ASTNode> transformCallTemplateArguments(
 	TransformFn&& transform_template_arg) {
 	const CallInfo source_info = CallInfo::from(source);
 	std::vector<ASTNode> transformed_template_args;
-	if (!source_info.template_arguments || source_info.template_arguments->empty()) {
+	if (source_info.template_arguments.empty()) {
 		return transformed_template_args;
 	}
 
-	transformed_template_args.reserve(source_info.template_arguments->size());
-	for (const auto& template_arg : *source_info.template_arguments) {
+	transformed_template_args.reserve(source_info.template_arguments.size());
+	for (const auto& template_arg : source_info.template_arguments) {
 		transformed_template_args.push_back(transform_template_arg(template_arg));
 	}
 	return transformed_template_args;

@@ -2713,7 +2713,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	size_t member_index = 0;
 	size_t next_union_idx = 0;
-	const std::vector<AnonymousUnionInfo>& anon_unions = struct_ref.anonymous_unions();
+	std::span<const AnonymousUnionInfo> anon_unions = struct_ref.anonymous_unions();
 
 	for (const auto& member_decl : struct_ref.members()) {
 		// Check if we should process an anonymous union before this member

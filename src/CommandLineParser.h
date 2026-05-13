@@ -160,7 +160,7 @@ public:
 		return std::monostate{};
 	}
 
-	const std::vector<std::string_view>& inputFileArgs() const {
+	std::span<const std::string_view> inputFileArgs() const {
 		return inputFileArgs_;
 	}
 

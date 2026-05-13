@@ -599,7 +599,7 @@ private:
 inline void populateSubstitutionsFromClassContext(
 	ItaniumManglingCtx& ctx,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path) {
+	std::span<const std::string_view> namespace_path) {
 	std::string accumulated;
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 
@@ -843,10 +843,10 @@ inline void generateItaniumMangledName(
 	OutputType& output,
 	std::string_view func_name,
 	[[maybe_unused]] const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
+	std::span<const TypeSpecifierNode> param_types,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	bool is_const_method,
 	ConstructorVariant constructor_variant) {
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
@@ -975,7 +975,7 @@ inline void generateItaniumMangledName(
 template <typename OutputType>
 inline void appendItaniumTemplateArgs(
 	OutputType& output,
-	const std::vector<int64_t>& non_type_args) {
+	std::span<const int64_t> non_type_args) {
 	if (non_type_args.empty())
 		return;
 
@@ -997,7 +997,7 @@ inline void appendItaniumTemplateArgs(
 template <typename OutputType>
 inline void appendItaniumTypeTemplateArgs(
 	OutputType& output,
-	const std::vector<TemplateTypeArg>& type_args) {
+	std::span<const TemplateTypeArg> type_args) {
 	if (type_args.empty())
 		return;
 
@@ -1183,11 +1183,11 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	OutputType& output,
 	std::string_view func_name,
 	[[maybe_unused]] const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<TemplateTypeArg>& type_template_args,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const TemplateTypeArg> type_template_args,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	bool is_const_method) {
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
@@ -1277,11 +1277,11 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	OutputType& output,
 	std::string_view func_name,
 	[[maybe_unused]] const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<int64_t>& non_type_template_args,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const int64_t> non_type_template_args,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	bool is_const_method) {
 	std::string_view struct_name_sv = StringTable::getStringView(struct_name);
 	// Start with _Z prefix
@@ -1370,10 +1370,10 @@ inline void generateItaniumMangledName(
 	OutputType& output,
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<ASTNode>& param_nodes,
+	std::span<const ASTNode> param_nodes,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	bool is_const_method,
 	ConstructorVariant constructor_variant) {
 	// Extract parameter types from param_nodes
@@ -1402,10 +1402,10 @@ inline void generateItaniumMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
+	std::span<const TypeSpecifierNode> param_types,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
@@ -1414,10 +1414,10 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<ASTNode>& param_nodes,
+	std::span<const ASTNode> param_nodes,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
@@ -1426,10 +1426,10 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
+	std::span<const TypeSpecifierNode> param_types,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	Linkage linkage,
 	bool is_const_method) {
 	return generateMangledName(
@@ -1448,10 +1448,10 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
+	std::span<const TypeSpecifierNode> param_types,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
@@ -1564,10 +1564,10 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<ASTNode>& param_nodes,
+	std::span<const ASTNode> param_nodes,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	Linkage linkage,
 	bool is_const_method) {
 	return generateMangledName(
@@ -1586,10 +1586,10 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<ASTNode>& param_nodes,
+	std::span<const ASTNode> param_nodes,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	Linkage linkage,
 	bool is_const_method,
 	bool is_static_member,
@@ -1693,11 +1693,11 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledNameWithTemplateArgs(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<int64_t>& non_type_template_args,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const int64_t> non_type_template_args,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	bool is_const_method) {
 	if (func_name == "main") {
 		StringBuilder builder;
@@ -1738,8 +1738,8 @@ inline MangledName generateMangledNameWithTemplateArgs(
 inline MangledName generateMangledNameWithTemplateArgs(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<int64_t>& non_type_template_args,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const int64_t> non_type_template_args,
 	bool is_variadic,
 	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
@@ -1754,11 +1754,11 @@ inline MangledName generateMangledNameWithTemplateArgs(
 inline MangledName generateMangledNameWithTypeTemplateArgs(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<TemplateTypeArg>& type_template_args,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const TemplateTypeArg> type_template_args,
 	bool is_variadic,
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	bool is_const_method) {
 	if (func_name == "main") {
 		StringBuilder builder;
@@ -1808,8 +1808,8 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 inline MangledName generateMangledNameWithTypeTemplateArgs(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<TemplateTypeArg>& type_template_args,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const TemplateTypeArg> type_template_args,
 	bool is_variadic,
 	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
@@ -1828,7 +1828,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
+	std::span<const TypeSpecifierNode> param_types,
 	bool is_variadic,
 	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
@@ -1850,7 +1850,7 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<TypeSpecifierNode>& param_types,
+	std::span<const TypeSpecifierNode> param_types,
 	bool is_variadic,
 	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
@@ -1873,7 +1873,7 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<ASTNode>& param_nodes,
+	std::span<const ASTNode> param_nodes,
 	bool is_variadic,
 	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
@@ -1895,7 +1895,7 @@ inline MangledName generateMangledName(
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,
-	const std::vector<ASTNode>& param_nodes,
+	std::span<const ASTNode> param_nodes,
 	bool is_variadic,
 	StringHandle struct_name,
 	NamespaceHandle namespace_handle,
@@ -1919,7 +1919,7 @@ inline MangledName generateMangledName(
 // The function extracts all necessary information from the AST node
 inline MangledName generateMangledNameFromNode(
 	const FunctionDeclarationNode& func_node,
-	const std::vector<std::string_view>& namespace_path = {}) {
+	std::span<const std::string_view> namespace_path = {}) {
 	const DeclarationNode& decl_node = func_node.decl_node();
 	const TypeSpecifierNode& return_type = decl_node.type_specifier_node();
 	std::string_view func_name = decl_node.identifier_token().value();
@@ -1955,8 +1955,8 @@ inline MangledName generateMangledNameFromNode(
 // g_mangling_style == ManglingStyle::MSVC
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const std::string_view> namespace_path,
 	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 
@@ -1997,8 +1997,8 @@ inline MangledName generateMangledNameForConstructor(
 // Overload that accepts parameter nodes directly to avoid creating a temporary vector
 inline MangledName generateMangledNameForConstructor(
 	std::string_view struct_name,
-	const std::vector<ASTNode>& param_nodes,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const ASTNode> param_nodes,
+	std::span<const std::string_view> namespace_path,
 	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 
@@ -2043,7 +2043,7 @@ inline MangledName generateMangledNameForConstructor(
 // g_mangling_style == ManglingStyle::MSVC
 inline MangledName generateMangledNameForDestructor(
 	StringHandle struct_name,
-	const std::vector<std::string_view>& namespace_path = {}) {
+	std::span<const std::string_view> namespace_path = {}) {
 	StringBuilder builder;
 
 	builder.append("??1");  // Destructor marker in MSVC mangling
@@ -2075,7 +2075,7 @@ inline MangledName generateMangledNameForDestructor(
 // Generate mangled name from a ConstructorDeclarationNode
 inline MangledName generateMangledNameFromNode(
 	const ConstructorDeclarationNode& ctor_node,
-	const std::vector<std::string_view>& namespace_path,
+	std::span<const std::string_view> namespace_path,
 	ConstructorVariant constructor_variant) {
 	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
@@ -2106,7 +2106,7 @@ inline MangledName generateMangledNameFromNode(
 // Generate mangled name from a DestructorDeclarationNode
 inline MangledName generateMangledNameFromNode(
 	const DestructorDeclarationNode& dtor_node,
-	const std::vector<std::string_view>& namespace_path = {}) {
+	std::span<const std::string_view> namespace_path = {}) {
 	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// For Itanium mangling, destructors are regular functions with D1/D2 markers

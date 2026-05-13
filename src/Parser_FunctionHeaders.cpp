@@ -218,23 +218,23 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 	// We have arguments, so allocate storage
 	ChunkedVector<ASTNode> args;
 	std::vector<TypeSpecifierNode> arg_types;
-	const std::vector<ASTNode>* callee_params = nullptr;
+	std::span<const ASTNode> callee_params;
 	if (ctx.callee_decl) {
-		callee_params = &ctx.callee_decl->parameter_nodes();
+		callee_params = ctx.callee_decl->parameter_nodes();
 	} else if (!ctx.callee_name.empty()) {
 		auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
 		if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
-			callee_params = &func_lookup->as<FunctionDeclarationNode>().parameter_nodes();
+			callee_params = func_lookup->as<FunctionDeclarationNode>().parameter_nodes();
 		}
 	}
 
 	while (true) {
 		// Handle brace-init-list argument: func({.x=1}) -> func(ParamType{.x=1})
 		// When a '{' is encountered as an argument, infer the parameter type from the function signature
-		if (peek() == "{"_tok && callee_params) {
+		if (peek() == "{"_tok && !callee_params.empty()) {
 			size_t arg_index = args.size();
-			if (arg_index < callee_params->size() && (*callee_params)[arg_index].is<DeclarationNode>()) {
-				const auto& param_decl = (*callee_params)[arg_index].as<DeclarationNode>();
+			if (arg_index < callee_params.size() && callee_params[arg_index].is<DeclarationNode>()) {
+				const auto& param_decl = callee_params[arg_index].as<DeclarationNode>();
 				{
 					const auto& param_type = param_decl.type_specifier_node();
 						// Only handle struct/user-defined types
@@ -433,7 +433,7 @@ arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, get_type_size_bit
 // In perfect forwarding (T&&), lvalues should deduce to T& while rvalues deduce to T.
 std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 	const ChunkedVector<ASTNode>& args,
-	const std::vector<TypeSpecifierNode>& arg_types) {
+	std::span<const TypeSpecifierNode> arg_types) {
 	std::vector<TypeSpecifierNode> result;
 	result.reserve(arg_types.size());
 
@@ -573,7 +573,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 ParseResult Parser::parse_function_trailing_specifiers(
 	FlashCpp::MemberQualifiers& out_quals,
 	FlashCpp::FunctionSpecifiers& out_specs,
-	const std::vector<ASTNode>& params) {
+	std::span<const ASTNode> params) {
 	// Initialize output structures
 	out_quals = FlashCpp::MemberQualifiers{};
 	out_specs = FlashCpp::FunctionSpecifiers{};
@@ -924,7 +924,7 @@ ParseResult Parser::parse_function_header(
 // Expects '->' as the next token. Registers params in a temporary SymbolTableScope so that
 // decltype(param_name) resolves correctly (C++11/C++20 trailing-return-type rule).
 // Uses RAII (SymbolTableScope) to ensure the temporary scope is always popped, even on exceptions.
-ParseResult Parser::parse_trailing_return_type_with_params(const std::vector<ASTNode>& params) {
+ParseResult Parser::parse_trailing_return_type_with_params(std::span<const ASTNode> params) {
 	if (peek() != "->"_tok)
 		return ParseResult::error("Expected '->' for trailing return type", peek_info());
 	advance();  // consume '->'

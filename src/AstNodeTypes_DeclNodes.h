@@ -620,7 +620,7 @@ struct StructTypeInfo {
 		nested_enum_indices_.push_back(enum_type_index);
 	}
 
-	const std::vector<TypeIndex>& getNestedEnumIndices() const {
+	std::span<const TypeIndex> getNestedEnumIndices() const {
 		return nested_enum_indices_;
 	}
 
@@ -632,7 +632,7 @@ struct StructTypeInfo {
 		return enclosing_class_;
 	}
 
-	const std::vector<StructTypeInfo*>& getNestedClasses() const {
+	std::span<StructTypeInfo* const> getNestedClasses() const {
 		return nested_classes_;
 	}
 
@@ -1455,7 +1455,7 @@ public:
 	// Pointer support
 	bool is_pointer() const { return !pointer_levels_.empty(); }
 	size_t pointer_depth() const { return pointer_levels_.empty() ? 0 : pointer_levels_.size(); }
-	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
+	std::span<const PointerLevel> pointer_levels() const { return pointer_levels_; }
 	void limit_pointer_depth(size_t max_depth) { pointer_levels_.resize(std::min(max_depth, pointer_levels_.size())); }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
 	void add_pointer_levels(int pointer_depth) {
@@ -1522,7 +1522,7 @@ public:
 		return array_dimensions_[0];
 	}
 	// Returns all array dimensions (e.g., [2][3][4] returns {2, 3, 4})
-	const std::vector<size_t>& array_dimensions() const { return array_dimensions_; }
+	std::span<const size_t> array_dimensions() const { return array_dimensions_; }
 	size_t array_dimension_count() const { return array_dimensions_.size(); }
 
 	// Pack expansion support (for variadic templates like Args...)
@@ -1614,7 +1614,7 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		return resolved;
 	}
 
-	auto appendArrayDimensions = [](std::vector<size_t>& dims, const std::vector<size_t>& suffix) {
+	auto appendArrayDimensions = [](std::vector<size_t>& dims, std::span<const size_t> suffix) {
 		if (suffix.empty()) {
 			return;
 		}
@@ -1969,7 +1969,7 @@ public:
 		return array_dimensions_[0];
 	}
 	// Multidimensional array support
-	const std::vector<ASTNode>& array_dimensions() const { return array_dimensions_; }
+	std::span<const ASTNode> array_dimensions() const { return array_dimensions_; }
 	size_t array_dimension_count() const { return array_dimensions_.size(); }
 	void add_array_dimension(ASTNode dim) { array_dimensions_.push_back(dim); }
 	void set_array_dimensions(std::vector<ASTNode> dims) { array_dimensions_ = std::move(dims); }
@@ -2368,7 +2368,7 @@ public:
 	// Namespace this function was declared in
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	void set_namespace_handle(NamespaceHandle ns) { namespace_handle_ = ns; }
-	const std::vector<ASTNode>& parameter_nodes() const {
+	std::span<const ASTNode> parameter_nodes() const {
 		return parameter_nodes_;
 	}
 	void add_parameter_node(ASTNode parameter_node) {
@@ -2376,11 +2376,11 @@ public:
 	}
 	// Update parameter nodes from the definition (to use definition's parameter names)
 	// C++ allows declaration and definition to have different parameter names
-	void update_parameter_nodes_from_definition(const std::vector<ASTNode>& definition_params) {
+	void update_parameter_nodes_from_definition(std::span<const ASTNode> definition_params) {
 		if (definition_params.size() != parameter_nodes_.size()) {
 			return; // Signature mismatch - shouldn't happen after validation
 		}
-		parameter_nodes_ = definition_params;
+		parameter_nodes_.assign(definition_params.begin(), definition_params.end());
 	}
 	const std::optional<ASTNode>& get_definition() const {
 		return definition_block_;
@@ -2551,7 +2551,7 @@ public:
 	// Non-type template argument support for template specializations
 	// Used to generate correct mangled names for get<0>, get<1>, etc.
 	void set_non_type_template_args(std::vector<int64_t> args) { non_type_template_args_ = std::move(args); }
-	const std::vector<int64_t>& non_type_template_args() const { return non_type_template_args_; }
+	std::span<const int64_t> non_type_template_args() const { return non_type_template_args_; }
 	bool has_non_type_template_args() const { return !non_type_template_args_.empty(); }
 
 	template <typename NameContainer, typename ArgContainer>
@@ -2740,7 +2740,7 @@ public:
 	void set_template_arguments(std::vector<ASTNode>&& template_args) {
 		template_arguments_ = std::move(template_args);
 	}
-	const std::vector<ASTNode>& template_arguments() const { return template_arguments_; }
+	std::span<const ASTNode> template_arguments() const { return template_arguments_; }
 	bool has_template_arguments() const { return !template_arguments_.empty(); }
 
 private:

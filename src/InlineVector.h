@@ -49,7 +49,7 @@ public:
 	}
 
 	// Construct from std::vector (enables seamless migration)
-	InlineVector(const std::vector<T>& vec) {
+	InlineVector(std::span<const T> vec) {
 		assignFromVector(vec);
 	}
 
@@ -59,7 +59,7 @@ public:
 	}
 
 	// Assignment from std::vector
-	InlineVector& operator=(const std::vector<T>& vec) {
+	InlineVector& operator=(std::span<const T> vec) {
 		assignFromVector(vec);
 		return *this;
 	}
@@ -390,11 +390,11 @@ private:
 		other.resetInlineStorage();
 	}
 
-	void assignFromVector(const std::vector<T>& vec) {
+	void assignFromVector(std::span<const T> vec) {
 		resetStorage();
 		using_inline_storage_ = vec.size() <= N;
 		if (!using_inline_storage_) {
-			heap_data_ = vec;
+			heap_data_.assign(vec.begin(), vec.end());
 			return;
 		}
 		assert(vec.size() <= inline_data_.size() && "InlineVector inline storage overflow");

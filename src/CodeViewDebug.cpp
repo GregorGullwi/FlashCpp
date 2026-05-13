@@ -16,14 +16,14 @@ namespace {
 	// SHA-256 implementation
 class SHA256 {
 public:
-	std::array<uint8_t, 32> hash(const std::vector<uint8_t>& data) {
+	std::array<uint8_t, 32> hash(std::span<const uint8_t> data) {
 			// Initialize hash values
 		uint32_t h[8] = {
 			0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
 			0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
 
 			// Pre-processing: adding a single 1 bit
-		std::vector<uint8_t> msg = data;
+		std::vector<uint8_t> msg(data.begin(), data.end());
 		msg.push_back(0x80);
 
 			// Pre-processing: padding with zeros
@@ -220,7 +220,7 @@ void DebugInfoBuilder::addLineMapping(uint32_t code_offset, uint32_t line_number
 }
 
 void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_index, uint16_t flags,
-										const std::vector<VariableLocation>& locations) {
+										std::span<const VariableLocation> locations) {
 	if (!current_function_name_.empty()) {
 		for (auto& func : functions_) {
 			if (func.name == current_function_name_ || func.mangled_name == current_function_name_) {
@@ -228,7 +228,7 @@ void DebugInfoBuilder::addLocalVariable(const std::string& name, uint32_t type_i
 				var_info.name = name;
 				var_info.type_index = type_index;
 				var_info.flags = flags;
-				var_info.locations = locations;
+				var_info.locations.assign(locations.begin(), locations.end());
 				func.local_variables.push_back(var_info);
 				break;
 			}
@@ -375,7 +375,7 @@ void DebugInfoBuilder::addDebugRelocation(uint32_t offset, const std::string& sy
 				  << " for symbol " << symbol_name << std::endl;
 }
 
-void DebugInfoBuilder::writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data) {
+void DebugInfoBuilder::writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, std::span<const uint8_t> record_data) {
 	SymbolRecordHeader header;
 	// Length field contains the number of bytes that follow the length field
 	// This includes: kind field (2 bytes) + record data
@@ -393,7 +393,7 @@ void DebugInfoBuilder::writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind 
 	// Individual symbol records should be packed without padding
 }
 
-void DebugInfoBuilder::writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data) {
+void DebugInfoBuilder::writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, std::span<const uint8_t> subsection_data) {
 	// LLVM DISCOVERY: For object files, length field does NOT include padding!
 	// alignOf(CodeViewContainer::ObjectFile) = 1, so no alignment padding in header
 	size_t unpadded_size = subsection_data.size();
@@ -448,7 +448,7 @@ void DebugInfoBuilder::alignTo4Bytes(std::vector<uint8_t>& data) {
 }
 
 // Helper function to add a type record with proper padding and length calculation
-void DebugInfoBuilder::addTypeRecordWithPadding(std::vector<uint8_t>& debug_t_data, TypeRecordKind kind, const std::vector<uint8_t>& record_data) {
+void DebugInfoBuilder::addTypeRecordWithPadding(std::vector<uint8_t>& debug_t_data, TypeRecordKind kind, std::span<const uint8_t> record_data) {
 	// Calculate the total size including header and padding
 	size_t data_size = record_data.size() + sizeof(TypeRecordKind);
 	size_t padded_size = (data_size + 3) & ~3; // Round up to 4-byte boundary

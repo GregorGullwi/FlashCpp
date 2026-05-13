@@ -79,7 +79,7 @@ public:
 	}
 
 	// Get the list of registered types (for iteration if needed)
-	const std::vector<TypeInfo*>& registeredTypes() const {
+	std::span<TypeInfo* const> registeredTypes() const {
 		return registered_types_;
 	}
 
@@ -209,7 +209,7 @@ public:
 		StructDeclarationNode* struct_node,
 		StringHandle struct_name,
 		TypeIndex struct_type_index,
-		const std::vector<ASTNode>& params,
+		std::span<const ASTNode> params,
 		const FunctionDeclarationNode* current_function);
 	~FunctionParsingScopeGuard();
 

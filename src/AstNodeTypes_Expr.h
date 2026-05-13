@@ -9,7 +9,8 @@ public:
 		: name_(name) {}
 
 	std::string_view name() const { return name_; }
-	const std::vector<ASTNode>& declarations() const { return declarations_; }
+	std::span<const ASTNode> declarations() const { return declarations_; }
+	std::span<ASTNode> declarations() { return declarations_; }
 	bool is_anonymous() const { return name_.empty(); }
 
 	void add_declaration(ASTNode decl) {
@@ -109,7 +110,7 @@ public:
 	bool is_forward_declaration() const { return is_forward_declaration_; }
 	bool has_underlying_type() const { return underlying_type_.has_value(); }
 	const std::optional<TypeSpecifierNode>& underlying_type() const { return underlying_type_; }
-	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
+	std::span<const ASTNode> enumerators() const { return enumerators_; }
 	// Direct index into gTypeInfo for this enum's TypeInfo.  Set during parsing
 	// so codegen can look up the exact TypeInfo without any name-based search
 	// (name-based lookups via getTypesByNameMap() only store the first enum with a given
@@ -311,7 +312,7 @@ public:
 	const TypeSpecifierNode& type_node() const { return type_node_; }
 	TypeSpecifierNode& type_specifier_node() { return type_node_; }
 	const TypeSpecifierNode& type_specifier_node() const { return type_node_; }
-	const std::vector<Token>& member_path() const { return member_path_; }
+	std::span<const Token> member_path() const { return member_path_; }
 	const Token& offsetof_token() const { return offsetof_token_; }
 
 private:
@@ -411,7 +412,7 @@ public:
 	bool has_type() const { return type_node_.is<TypeSpecifierNode>(); }
 	bool has_second_type() const { return second_type_node_.has_value(); }
 	ASTNode second_type_node() const { return second_type_node_.value_or(ASTNode()); }
-	const std::vector<ASTNode>& additional_type_nodes() const { return additional_type_nodes_; }
+	std::span<const ASTNode> additional_type_nodes() const { return additional_type_nodes_; }
 	const Token& trait_token() const { return trait_token_; }
 
 	// Check if this is a binary trait (takes exactly 2 types)
@@ -788,14 +789,14 @@ public:
 		  is_constexpr_(is_constexpr),
 		  is_consteval_(is_consteval) {}
 
-	const std::vector<LambdaCaptureNode>& captures() const { return captures_; }
-	const std::vector<ASTNode>& parameters() const { return parameters_; }
+	std::span<const LambdaCaptureNode> captures() const { return captures_; }
+	std::span<const ASTNode> parameters() const { return parameters_; }
 	const ASTNode& body() const { return body_; }
 	const std::optional<ASTNode>& return_type() const { return return_type_; }
 	const Token& lambda_token() const { return lambda_token_; }
 	size_t lambda_id() const { return lambda_id_; }
 	bool is_mutable() const { return is_mutable_; }
-	const std::vector<std::string_view>& template_params() const { return template_params_; }
+	std::span<const std::string_view> template_params() const { return template_params_; }
 	bool has_template_params() const { return !template_params_.empty(); }
 	bool is_noexcept() const { return is_noexcept_; }
 	bool is_constexpr() const { return is_constexpr_; }
@@ -894,7 +895,7 @@ public:
 
 	const ASTNode& element_type() const { return element_type_; }
 	const ASTNode& target_type() const { return target_type_; }
-	const std::vector<ASTNode>& elements() const { return elements_; }
+	std::span<const ASTNode> elements() const { return elements_; }
 	size_t size() const { return elements_.size(); }
 	const Token& called_from() const { return called_from_; }
 
@@ -957,7 +958,7 @@ public:
 		: requirements_(std::move(requirements)),
 		  requires_token_(requires_token) {}
 
-	const std::vector<ASTNode>& requirements() const { return requirements_; }
+	std::span<const ASTNode> requirements() const { return requirements_; }
 	const Token& requires_token() const { return requires_token_; }
 
 private:

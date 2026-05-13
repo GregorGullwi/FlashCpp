@@ -790,15 +790,14 @@ ParseResult Parser::parse_variable_declaration() {
 				// Parse trailing specifiers
 				FlashCpp::MemberQualifiers member_quals;
 				FlashCpp::FunctionSpecifiers func_specs;
-				const std::vector<ASTNode>* function_params = nullptr;
+				std::span<const ASTNode> function_params;
 				if (auto func_node_ptr = function_result.node()) {
-					function_params = &func_node_ptr->as<FunctionDeclarationNode>().parameter_nodes();
+					function_params = func_node_ptr->as<FunctionDeclarationNode>().parameter_nodes();
 				}
-				static const std::vector<ASTNode> no_params;
 				auto specs_result = parse_function_trailing_specifiers(
 					member_quals,
 					func_specs,
-					function_params ? *function_params : no_params);
+					function_params);
 				if (specs_result.is_error()) {
 					return specs_result;
 				}
@@ -1180,7 +1179,7 @@ void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_no
 			return;
 		}
 
-		const std::vector<size_t> trailing_dims = type_specifier.array_dimensions();
+		const std::span<const size_t> trailing_dims = type_specifier.array_dimensions();
 		if (trailing_dims.empty()) {
 			outer_size = init_list.initializers().size();
 		} else {
@@ -1232,7 +1231,7 @@ void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_no
 		return;
 	}
 
-	const std::vector<size_t> trailing_dims = type_specifier.array_dimensions();
+	const std::span<const size_t> trailing_dims = type_specifier.array_dimensions();
 	std::vector<size_t> inferred_dims;
 	inferred_dims.reserve(trailing_dims.size() + 1);
 	inferred_dims.push_back(outer_size);
@@ -1518,26 +1517,26 @@ Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) con
 		}
 
 		// Constructors can be stored as ConstructorDeclarationNode or FunctionDeclarationNode
-		const std::vector<ASTNode>* params = nullptr;
+		std::span<const ASTNode> params;
 
 		if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-			params = &ctor_decl.parameter_nodes();
-			FLASH_LOG(Parser, Debug, "    is ConstructorDeclarationNode with ", params->size(), " parameters");
+			params = ctor_decl.parameter_nodes();
+			FLASH_LOG(Parser, Debug, "    is ConstructorDeclarationNode with ", params.size(), " parameters");
 		} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			params = &func_decl.parameter_nodes();
-			FLASH_LOG(Parser, Debug, "    is FunctionDeclarationNode with ", params->size(), " parameters");
+			params = func_decl.parameter_nodes();
+			FLASH_LOG(Parser, Debug, "    is FunctionDeclarationNode with ", params.size(), " parameters");
 		} else {
 			FLASH_LOG(Parser, Debug, "    unknown node type");
 			continue;
 		}
 
 		// Look for constructor taking exactly one initializer_list parameter
-		if (params->size() != 1)
+		if (params.size() != 1)
 			continue;
 
-		const ASTNode& param_node = (*params)[0];
+		const ASTNode& param_node = params[0];
 		if (!param_node.is<DeclarationNode>()) {
 			FLASH_LOG(Parser, Debug, "    param is not DeclarationNode");
 			continue;
@@ -1962,21 +1961,21 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				continue;
 
 			// Get parameters from constructor
-			const std::vector<ASTNode>* params = nullptr;
+			std::span<const ASTNode> params;
 			if (member_func->function_decl.is<ConstructorDeclarationNode>()) {
-				params = &member_func->function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
+				params = member_func->function_decl.as<ConstructorDeclarationNode>().parameter_nodes();
 			} else if (member_func->function_decl.is<FunctionDeclarationNode>()) {
-				params = &member_func->function_decl.as<FunctionDeclarationNode>().parameter_nodes();
+				params = member_func->function_decl.as<FunctionDeclarationNode>().parameter_nodes();
 			}
 
-			if (!params || params->size() != elements.size()) {
+			if (params.size() != elements.size()) {
 				continue;
 			}
 
 			// Match parameter types with argument types
 			bool types_match = true;
-			for (size_t i = 0; i < params->size() && types_match; ++i) {
-				const ASTNode& param_node = (*params)[i];
+			for (size_t i = 0; i < params.size() && types_match; ++i) {
+				const ASTNode& param_node = params[i];
 				const ASTNode& arg_node = elements[i];
 
 				// Get parameter type
@@ -2443,15 +2442,14 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 			continue;
 
 		// Get parameter nodes from either ConstructorDeclarationNode or FunctionDeclarationNode
-		const std::vector<ASTNode>* params_ptr = nullptr;
+		std::span<const ASTNode> params;
 		if (member_func.function_declaration.is<ConstructorDeclarationNode>()) {
-			params_ptr = &member_func.function_declaration.as<ConstructorDeclarationNode>().parameter_nodes();
+			params = member_func.function_declaration.as<ConstructorDeclarationNode>().parameter_nodes();
 		} else if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-			params_ptr = &member_func.function_declaration.as<FunctionDeclarationNode>().parameter_nodes();
+			params = member_func.function_declaration.as<FunctionDeclarationNode>().parameter_nodes();
 		} else {
 			continue;
 		}
-		const auto& params = *params_ptr;
 
 		if (params.size() != argument_types.size())
 			continue;
@@ -2524,7 +2522,7 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 }
 
 bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
-												  const std::vector<TypeSpecifierNode>& argument_types,
+												  std::span<const TypeSpecifierNode> argument_types,
 												  std::vector<TemplateTypeArg>& out_template_args) const {
 	if (guide.guide_parameters().size() != argument_types.size()) {
 		return false;

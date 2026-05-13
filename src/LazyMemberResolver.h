@@ -374,7 +374,7 @@ struct OffsetofPathResult {
 // accumulating offsets.  Used by both constexpr evaluation and IR generation.
 inline OffsetofPathResult resolveOffsetofMemberPath(
 	TypeIndex root_type_index,
-	const std::vector<Token>& member_path) {
+	std::span<const Token> member_path) {
 	if (member_path.empty()) {
 		return {0, "offsetof requires a member name"};
 	}

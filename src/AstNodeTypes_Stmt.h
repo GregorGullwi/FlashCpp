@@ -80,7 +80,7 @@ public:
 		member_names_.push_back(member_name);
 	}
 
-	const std::vector<ASTNode>& initializers() const {
+	std::span<const ASTNode> initializers() const {
 		return initializers_;
 	}
 
@@ -451,7 +451,7 @@ public:
 		  try_token_(try_token) {}
 
 	const ASTNode& try_block() const { return try_block_; }
-	const std::vector<ASTNode>& catch_clauses() const { return catch_clauses_; }
+	std::span<const ASTNode> catch_clauses() const { return catch_clauses_; }
 	const Token& try_token() const { return try_token_; }
 
 	// C++20 [except.handle]/15: in a constructor/destructor function-try-block,

@@ -155,7 +155,7 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	std::string_view struct_name,
 	std::string_view member_name,
-	const std::vector<TypeSpecifierNode>& arg_types) {
+	std::span<const TypeSpecifierNode> arg_types) {
 
 	// Build the qualified template name
 	StringBuilder qualified_name_sb;
@@ -441,7 +441,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	StringHandle instantiated_struct_name,
 	const ConstructorDeclarationNode& ctor_decl,
-	const std::vector<TypeSpecifierNode>& arg_types) {
+	std::span<const TypeSpecifierNode> arg_types) {
 	const auto& template_params = ctor_decl.template_parameters();
 	if (template_params.empty()) {
 		return std::nullopt;
@@ -506,7 +506,7 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate(
 	StringHandle instantiated_struct_name,
 	const StructTypeInfo& struct_info,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	const ConstructorDeclarationNode* preferred_ctor,
 	bool& is_ambiguous) {
 	is_ambiguous = false;
@@ -796,7 +796,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				inst_func_ref.add_parameter_node(param);
 			}
 			if (spec_func.has_non_type_template_args()) {
-				inst_func_ref.set_non_type_template_args(spec_func.non_type_template_args());
+				const std::span<const int64_t> non_type_args = spec_func.non_type_template_args();
+				inst_func_ref.set_non_type_template_args(std::vector<int64_t>(non_type_args.begin(), non_type_args.end()));
 			}
 			if (spec_func.is_materialized()) {
 				inst_func_ref.set_definition(*spec_func.get_definition());
@@ -921,7 +922,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 
 		const std::vector<TypeSpecifierNode> empty_call_arg_types;
-		const std::vector<TypeSpecifierNode>& call_arg_types =
+		std::span<const TypeSpecifierNode> call_arg_types =
 			current_explicit_call_arg_types_ != nullptr
 				? *current_explicit_call_arg_types_
 				: empty_call_arg_types;
@@ -951,7 +952,8 @@ static TemplateParameterNode cloneNonVariadicTemplateParam(const TemplateParamet
 		clone.set_concept_constraint(param.concept_constraint());
 	}
 	if (param.has_concept_args()) {
-		clone.set_concept_args(param.concept_args());
+		const std::span<const ASTNode> concept_args = param.concept_args();
+		clone.set_concept_args(std::vector<ASTNode>(concept_args.begin(), concept_args.end()));
 	}
 	if (param.has_default()) {
 		clone.set_default_value(param.default_value());
@@ -1106,7 +1108,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const ASTNode& template_node,
 	std::span<const TemplateTypeArg> template_args,
 	const FlashCpp::TemplateInstantiationKey& key,
-	const std::vector<TypeSpecifierNode>& call_arg_types) {
+	std::span<const TypeSpecifierNode> call_arg_types) {
 
 	// Depth guard: instantiating a member function template replays its body,
 	// and body expressions can recursively trigger further member-function

@@ -99,7 +99,7 @@ inline bool isSameTypeIgnoringTopLevelCvAndRef(
 		lhs_resolved != rhs_resolved ||
 		lhs.pointer_depth() != rhs.pointer_depth() ||
 		lhs.pointer_levels().size() != rhs.pointer_levels().size() ||
-		lhs.array_dimensions() != rhs.array_dimensions() ||
+		!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions()) ||
 		lhs.has_member_class() != rhs.has_member_class() ||
 		lhs.has_function_signature() != rhs.has_function_signature()) {
 		return false;
@@ -191,9 +191,9 @@ struct ConversionInfoComparison {
 };
 
 inline ConversionInfoComparison compareConversionInfoLists(
-	const std::vector<TypeSpecifierNode>& argument_types,
-	const std::vector<ArgumentConversionInfo>& lhs_infos,
-	const std::vector<ArgumentConversionInfo>& rhs_infos) {
+	std::span<const TypeSpecifierNode> argument_types,
+	std::span<const ArgumentConversionInfo> lhs_infos,
+	std::span<const ArgumentConversionInfo> rhs_infos) {
 	ConversionInfoComparison comparison;
 	const size_t count = std::min(argument_types.size(), std::min(lhs_infos.size(), rhs_infos.size()));
 	for (size_t i = 0; i < count; ++i) {
@@ -457,7 +457,7 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	const StructTypeInfo* target = target_type->getStructInfo();
 	if (!target)
 		return false;
-	auto count_min_required_params = [](const std::vector<ASTNode>& params) {
+	auto count_min_required_params = [](std::span<const ASTNode> params) {
 		size_t min_required = params.size();
 		size_t i = params.size();
 		while (i > 0) {
@@ -478,22 +478,22 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	for (const auto& mf : target->member_functions) {
 		if (!mf.is_constructor)
 			continue;
-		const std::vector<ASTNode>* params_ptr = nullptr;
+		std::span<const ASTNode> params;
 		size_t min_required = 0;
 		if (mf.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
-			params_ptr = &ctor_decl.parameter_nodes();
-			min_required = count_min_required_params(*params_ptr);
+			params = ctor_decl.parameter_nodes();
+			min_required = count_min_required_params(params);
 		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
 			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
-			params_ptr = &ctor_decl.parameter_nodes();
-			min_required = count_min_required_params(*params_ptr);
+			params = ctor_decl.parameter_nodes();
+			min_required = count_min_required_params(params);
 		}
-		if (!params_ptr || params_ptr->empty() || min_required > 1)
+		if (params.empty() || min_required > 1)
 			continue;
-		if (!(*params_ptr)[0].is<DeclarationNode>())
+		if (!params[0].is<DeclarationNode>())
 			continue;
-		const auto& param_type = (*params_ptr)[0].as<DeclarationNode>().type_node();
+		const auto& param_type = params[0].as<DeclarationNode>().type_node();
 		if (!param_type.is<TypeSpecifierNode>())
 			continue;
 		TypeIndex param_idx = param_type.as<TypeSpecifierNode>().type_index();
@@ -1042,7 +1042,7 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 	const StructTypeInfo& struct_info,
-	const std::vector<TypeSpecifierNode>& argument_types,
+	std::span<const TypeSpecifierNode> argument_types,
 	bool skip_implicit = false) {
 	const ConstructorDeclarationNode* best_match = nullptr;
 	std::vector<ArgumentConversionInfo> best_infos;
@@ -1282,8 +1282,8 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 // Perform overload resolution for a function call
 // Returns the best matching overload, or nullptr if no match or ambiguous
 inline OverloadResolutionResult resolve_overload(
-	const std::vector<ASTNode>& overloads,
-	const std::vector<TypeSpecifierNode>& argument_types) {
+	std::span<const ASTNode> overloads,
+	std::span<const TypeSpecifierNode> argument_types) {
 	if (overloads.empty()) {
 		return OverloadResolutionResult::no_match();
 	}
@@ -2184,7 +2184,7 @@ inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& 
  */
 inline FlashCpp::FunctionSignatureKey makeFunctionSignatureKey(
 	StringHandle function_name,
-	const std::vector<TypeSpecifierNode>& argument_types) {
+	std::span<const TypeSpecifierNode> argument_types) {
 
 	FlashCpp::FunctionSignatureKey key(function_name);
 	key.param_types.reserve(argument_types.size());
@@ -2237,8 +2237,8 @@ inline void clearFunctionResolutionCache() {
  */
 inline OverloadResolutionResult resolve_overload_cached(
 	StringHandle function_name,
-	const std::vector<ASTNode>& overloads,
-	const std::vector<TypeSpecifierNode>& argument_types) {
+	std::span<const ASTNode> overloads,
+	std::span<const TypeSpecifierNode> argument_types) {
 	// Build signature key for cache lookup
 	auto key = makeFunctionSignatureKey(function_name, argument_types);
 

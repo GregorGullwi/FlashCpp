@@ -166,7 +166,7 @@ private:
 
 	// Encode call site table with per-region action offsets
 	void encode_call_site_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info,
-								const std::vector<uint32_t>& region_action_offsets) {
+								std::span<const uint32_t> region_action_offsets) {
 		size_t handler_region_idx = 0;
 		for (const auto& try_region : info.try_regions) {
 			// Call site entry:
@@ -353,7 +353,7 @@ private:
 	}
 
 	// Helper: find index of type_info symbol in type table
-	int find_type_index(const std::vector<std::string>& type_table,
+	int find_type_index(std::span<const std::string> type_table,
 						const std::string& typeinfo_symbol) const {
 		for (size_t i = 0; i < type_table.size(); ++i) {
 			if (type_table[i] == typeinfo_symbol) {

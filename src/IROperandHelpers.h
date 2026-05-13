@@ -199,10 +199,6 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	return result;
 }
 
-inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
-	return toTypedValue(std::span<const IrOperand>(operands));
-}
-
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
 	tv.ir_type = result.ir_type;

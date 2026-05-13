@@ -2150,7 +2150,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	const auto& template_params = var_template.template_parameters();
 
 	auto fill_missing_variable_template_args =
-		[&](const std::vector<TemplateTypeArg>& input_args) -> std::optional<std::vector<TemplateTypeArg>> {
+		[&](std::span<const TemplateTypeArg> input_args) -> std::optional<std::vector<TemplateTypeArg>> {
 		bool has_parameter_pack = false;
 		size_t non_variadic_param_count = 0;
 		for (const auto& param_node : template_params) {
@@ -2190,7 +2190,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		}
 
 		auto materialize_default_arg =
-			[&](const TemplateParameterNode& param, const std::vector<TemplateTypeArg>& bound_args) -> std::optional<TemplateTypeArg> {
+			[&](const TemplateParameterNode& param, std::span<const TemplateTypeArg> bound_args) -> std::optional<TemplateTypeArg> {
 			if (!param.has_default()) {
 				return std::nullopt;
 			}
@@ -2286,7 +2286,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	if (!filled_args_opt.has_value()) {
 		return std::nullopt;
 	}
-	const std::vector<TemplateTypeArg>& filled_args = *filled_args_opt;
+	std::span<const TemplateTypeArg> filled_args = *filled_args_opt;
 
 	// Structural pattern matching: find the best matching partial specialization
 	// Uses TemplatePattern::matches() which handles qualifier matching, multi-arg,
