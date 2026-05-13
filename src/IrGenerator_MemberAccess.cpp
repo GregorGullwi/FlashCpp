@@ -113,12 +113,14 @@ static int deriveElementStrideBitsFromType(
 	TypeIndex element_type_index,
 	int aggregate_fallback_bits) {
 	int element_stride_bits = get_type_size_bits(element_type);
-	if (element_stride_bits == 0 && element_type == TypeCategory::Struct && element_type_index.is_valid()) {
-		if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
-			if (const StructTypeInfo* element_struct_info = element_type_info->getStructInfo()) {
-				element_stride_bits = static_cast<int>(element_struct_info->sizeInBits().value);
-			}
-		}
+	if (element_stride_bits == 0 && element_type_index.is_valid()) {
+		TypeSpecifierNode element_type_spec(
+			element_type_index.withCategory(element_type),
+			SizeInBits{0},
+			Token{},
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		element_stride_bits = queryConcreteAliasResolvedTypeSizeBits(element_type_spec).size_bits;
 	}
 
 	// Element type provided no usable stride — trust the carry-through verbatim.
@@ -457,13 +459,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			int element_size_bits = static_cast<int>(type_node.size_in_bits());
 			TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
 
-			// Get element size for struct types
-			if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
-				const TypeInfo& type_info = getTypeInfo(element_type_index);
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info) {
-					element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
-				}
+			if (element_size_bits == 0) {
+				element_size_bits = queryConcreteAliasResolvedTypeSizeBits(type_node).size_bits;
 			}
 
 			// Get all dimension sizes
@@ -837,12 +834,14 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						element_size_bits = element_pointer_depth > 0
 												? POINTER_SIZE_BITS
 												: get_type_size_bits(element_type);
-						if (element_size_bits == 0 && element_type == TypeCategory::Struct && element_type_index.is_valid()) {
-							if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index)) {
-								if (const StructTypeInfo* element_struct_info = element_type_info->getStructInfo()) {
-									element_size_bits = static_cast<int>(element_struct_info->sizeInBits().value);
-								}
-							}
+						if (element_size_bits == 0 && element_type_index.is_valid()) {
+							TypeSpecifierNode element_spec(
+								element_type_index.withCategory(element_type),
+								SizeInBits{0},
+								Token{},
+								CVQualifier::None,
+								ReferenceQualifier::None);
+							element_size_bits = queryConcreteAliasResolvedTypeSizeBits(element_spec).size_bits;
 						}
 						is_pointer_to_array = true;
 						applied_subscript_pointer_conversion = true;
@@ -878,13 +877,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				} else {
 					// Get the element size from type_node
 					element_size_bits = static_cast<int>(type_node.size_in_bits());
-					// If still 0, compute from type info for struct types
-					if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
-						const TypeInfo& type_info = getTypeInfo(element_type_index);
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
-						}
+					if (element_size_bits == 0) {
+						element_size_bits = queryConcreteAliasResolvedTypeSizeBits(type_node).size_bits;
 					}
 				}
 			}
@@ -910,12 +904,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				} else {
 					// Single-level pointer/reference indexing yields the base object.
 					element_size_bits = static_cast<int>(type_node.size_in_bits());
-					if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
-						const TypeInfo& type_info = getTypeInfo(element_type_index);
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
-						if (struct_info) {
-							element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
-						}
+					if (element_size_bits == 0) {
+						element_size_bits = queryConcreteAliasResolvedTypeSizeBits(type_node).size_bits;
 					}
 					if (element_size_bits == 0) {
 						element_size_bits = get_type_size_bits(type_node.category());
@@ -1299,16 +1289,19 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	};
 
 	auto getStructObjectSizeBits = [&](TypeIndex object_type_index) -> int {
-		int size_bits = 0;
-		if (const TypeInfo* type_info = tryGetTypeInfo(object_type_index)) {
-			size_bits = type_info->sizeInBits().value;
-			if (size_bits == 0) {
-				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-					size_bits = struct_info->sizeInBits().value;
-				}
+		if (object_type_index.is_valid()) {
+			TypeSpecifierNode object_type(
+				object_type_index.withCategory(object_type_index.category()),
+				SizeInBits{0},
+				Token{},
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			const int size_bits = queryConcreteAliasResolvedTypeSizeBits(object_type).size_bits;
+			if (size_bits > 0) {
+				return size_bits;
 			}
 		}
-		return size_bits == 0 ? 64 : size_bits;
+		return 64;
 	};
 
 	// OPERATOR-> OVERLOAD RESOLUTION
@@ -1698,11 +1691,8 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		TempVar result_var = var_counter.next();
 
 		int sm_size_bits = static_cast<int>(static_member->size * 8);
-		// If size is 0 for struct types, look up from type info
-		if (sm_size_bits == 0 && static_member->type_index.is_valid()) {
-			if (const StructTypeInfo* sm_si = tryGetStructTypeInfo(static_member->type_index)) {
-				sm_size_bits = static_cast<int>(sm_si->sizeInBits().value);
-			}
+		if (sm_size_bits == 0) {
+			sm_size_bits = queryConcreteAliasResolvedStaticMemberSizeBits(*static_member);
 		}
 
 		// Build GlobalLoadOp for the static member
@@ -1896,13 +1886,11 @@ std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
 	}
 
 	const TypeSpecifierNode& type_spec = decl.type_specifier_node();
-	size_t element_size = type_spec.size_in_bits() / 8;
-
-	// For struct types, get size from gTypeInfo instead of size_in_bits()
-	if (element_size == 0 && type_spec.category() == TypeCategory::Struct) {
-		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-			element_size = toSizeT(struct_info->sizeInBytes());
-		}
+	TypeSpecifierNode element_type = type_spec;
+	element_type.set_array_dimensions({});
+	size_t element_size = 0;
+	if (std::optional<size_t> resolved_element_size = tryGetTypeSizeForSizeof(element_type)) {
+		element_size = *resolved_element_size;
 	}
 
 	if (element_size == 0) {
@@ -1965,12 +1953,8 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				if (static_member) {
 					// sizeof on a reference yields the size of the referenced type
 					if (static_member->is_reference()) {
-						size_t ref_size = get_type_size_bits(static_member->memberType()) / 8;
-						if (ref_size == 0 && static_member->memberType() == TypeCategory::Struct && static_member->type_index.is_valid()) {
-							if (const StructTypeInfo* si = tryGetStructTypeInfo(static_member->type_index)) {
-								ref_size = toSizeT(si->sizeInBytes());
-							}
-						}
+						const int ref_size_bits = queryConcreteAliasResolvedStaticMemberSizeBits(*static_member);
+						size_t ref_size = static_cast<size_t>(ref_size_bits) / 8;
 						FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static ref member, referenced type size=", ref_size);
 						return ref_size;
 					}
@@ -2089,29 +2073,8 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 
 				// For regular variables, get the type size from the declaration
 				const TypeSpecifierNode& var_type = decl->type_specifier_node();
-				if (var_type.category() == TypeCategory::Struct) {
-					if (const TypeInfo* type_info = tryGetTypeInfo(var_type.type_index())) {
-						if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-							if (struct_info->sizeInBytes().is_set()) {
-								return makeSizeTExprResult(toSizeT(struct_info->sizeInBytes()));
-							}
-						}
-						// Fallback: use fallback_size_bits_ from TypeInfo (works for template instantiations at global scope)
-						if (type_info->hasStoredSize()) {
-							return makeSizeTExprResult(static_cast<size_t>(type_info->sizeInBits().value) / 8);
-						}
-					}
-					// Fallback: use size_in_bits from the type specifier node
-					if (var_type.size_in_bits() > 0) {
-						return makeSizeTExprResult(var_type.size_in_bits() / 8);
-					}
-				} else {
-					// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
-					int size_bits = var_type.size_in_bits();
-					if (size_bits == 0) {
-						size_bits = get_type_size_bits(var_type.category());
-					}
-					size_in_bytes = size_bits / 8;
+				if (std::optional<size_t> resolved_size = tryGetTypeSizeForSizeof(var_type)) {
+					size_in_bytes = *resolved_size;
 					return makeSizeTExprResult(size_in_bytes);
 				}
 			}
@@ -2222,16 +2185,11 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 						const TypeSpecifierNode& var_type = decl->type_specifier_node();
 
 						// Get the base element type size
-						size_t element_size = var_type.size_in_bits() / 8;
-						if (element_size == 0) {
-							element_size = get_type_size_bits(var_type.category()) / 8;
-						}
-
-						// Handle struct element types
-						if (element_size == 0 && var_type.category() == TypeCategory::Struct) {
-							if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(var_type.type_index())) {
-								element_size = toSizeT(struct_info->sizeInBytes());
-							}
+						size_t element_size = 0;
+						TypeSpecifierNode element_type = var_type;
+						element_type.set_array_dimensions({});
+						if (std::optional<size_t> resolved_element_size = tryGetTypeSizeForSizeof(element_type)) {
+							element_size = *resolved_element_size;
 						}
 
 						// For multidimensional arrays, arr[0] should return size of the sub-array

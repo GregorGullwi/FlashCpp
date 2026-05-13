@@ -2232,11 +2232,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				if (bits > 0) {
 					return bits;
 				}
-				if (type_node.category() == TypeCategory::Struct) {
-					if (const StructTypeInfo* si = tryGetStructTypeInfo(type_node.type_index())) {
-						return static_cast<int>(si->sizeInBits().value);
-					}
-				}
 				return get_type_size_bits(type_node.category());
 			};
 

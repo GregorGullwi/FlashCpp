@@ -342,39 +342,8 @@ ExprResult AstToIr::generatePointerToMemberAccessIr(const PointerToMemberAccessN
 	return makeExprResult(member_type_index.withCategory(member_type), SizeInBits{static_cast<int>(member_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-static void requireResolvedCodegenType(TypeCategory type, std::string_view context) {
-	if (isPlaceholderAutoType(type)) {
-		throw InternalError(std::string(StringBuilder()
-											.append("Unresolved placeholder type reached codegen in ")
-											.append(context)
-											.append(" (type=")
-											.append(static_cast<int64_t>(type))
-											.append(")")
-											.commit()));
-	}
-}
-
 static TypeCategory resolveCodegenTypeCategory(const TypeSpecifierNode& type_node, std::string_view context) {
-	TypeCategory type = type_node.type();
-	if (!isPlaceholderAutoType(type)) {
-		return type;
-	}
-	if (type_node.type_index().is_valid()) {
-		if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
-			TypeCategory resolved_type = type_info->typeEnum();
-			if (!isPlaceholderAutoType(resolved_type) && resolved_type != TypeCategory::Invalid) {
-				return resolved_type;
-			}
-		}
-	}
-	requireResolvedCodegenType(type, context);
-	return type;
-}
-
-static int resolveCodegenSizeBits(const TypeSpecifierNode& type_node, std::string_view context) {
-	TypeSpecifierNode resolved_type_node = type_node;
-	resolved_type_node.set_category(resolveCodegenTypeCategory(type_node, context));
-	return requireConcreteAliasResolvedTypeSizeBits(resolved_type_node, context);
+	return requireConcreteAliasResolvedCodegenTypeCategory(type_node, context);
 }
 
 int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name) {
@@ -391,11 +360,9 @@ int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, boo
 			// Fallback: if size_bits is 0, calculate from type. Placeholder types must
 			// be resolved before codegen reaches identifier lowering.
 		if (size_bits == 0) {
-			TypeSpecifierNode resolved_type_node = type_node;
-			resolved_type_node.set_category(resolveCodegenTypeCategory(type_node, "identifier size calculation"));
-			const int fallback_size = requireConcreteAliasResolvedTypeSizeBits(resolved_type_node, "identifier size calculation");
+			const int fallback_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "identifier size calculation");
 			FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
-					  "' (type=", static_cast<int>(resolved_type_node.type()), ") - using fallback calculation (fallback_size=",
+					  "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation (fallback_size=",
 					  fallback_size, ")");
 			size_bits = fallback_size;
 		}
@@ -978,13 +945,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(current_struct_name_).append("::"sv).append(var_name_str));
 
 					int member_size_bits = static_cast<int>(static_member->size * 8);
-						// If size is 0 for struct types, look up from type info
 					if (member_size_bits == 0) {
-						const TypeInfo* member_type_info = tryGetTypeInfo(static_member->type_index);
-						const StructTypeInfo* member_si = member_type_info ? member_type_info->getStructInfo() : nullptr;
-						if (member_si) {
-							member_size_bits = static_cast<int>(member_si->sizeInBits().value);
-						}
+						member_size_bits = queryConcreteAliasResolvedStaticMemberSizeBits(*static_member);
 					}
 
 					if (context == ExpressionContext::LValueAddress && !static_member->is_reference()) {
@@ -1102,14 +1064,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						.commit());
 				int member_size_bits = static_cast<int>(unique_match->static_member->size * 8);
 				if (member_size_bits == 0) {
-					if (const TypeInfo* member_type_info = tryGetTypeInfo(unique_match->static_member->type_index)) {
-						if (member_type_info->hasStoredSize()) {
-							member_size_bits = static_cast<int>(member_type_info->sizeInBits().value);
-						}
-					}
-					if (member_size_bits == 0) {
-						member_size_bits = get_type_size_bits(resolve_type_alias(unique_match->static_member->type_index));
-					}
+					member_size_bits = queryConcreteAliasResolvedStaticMemberSizeBits(*unique_match->static_member);
 				}
 
 				if (context == ExpressionContext::LValueAddress && !unique_match->static_member->is_reference()) {
@@ -1231,7 +1186,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// For simple assignments and function calls, we can return the reference directly
 			if (context == ExpressionContext::LValueAddress) {
 				TypeCategory pointee_type = type_node.type();
-				int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier lvalue lowering");
+				int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference identifier lvalue lowering");
 
 				TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 
@@ -1267,7 +1222,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// For non-array references in Load context, we need to dereference to get the value
 
 			TypeCategory pointee_type = type_node.category();
-			int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier load lowering");
+			int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference identifier load lowering");
 
 			TypeCategory semantic_pointee_type = type_node.type();
 
@@ -1406,7 +1361,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				if (context == ExpressionContext::LValueAddress) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': Creating addr_temp for LValueAddress", identifierNode.name());
 					TypeCategory pointee_type = type_node.type();
-					int pointee_size = resolveCodegenSizeBits(type_node, "reference variable lvalue lowering");
+					int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference variable lvalue lowering");
 
 						// The reference variable holds a pointer address
 						// We need to load it into a temp and mark it with Indirect LValue metadata
@@ -1438,7 +1393,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					// For Load context (reading the value), dereference to get the value
 
 				TypeCategory pointee_type = type_node.type();
-				int pointee_size = resolveCodegenSizeBits(type_node, "reference variable load lowering");
+				int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference variable load lowering");
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
@@ -1847,13 +1802,8 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						// This is a static member access - generate GlobalLoad
 					FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 					int qsm_size_bits = static_cast<int>(static_member->size * 8);
-						// If size is 0 for struct types, look up from type info
 					if (qsm_size_bits == 0) {
-						const TypeInfo* qsm_type_info = tryGetTypeInfo(static_member->type_index);
-						const StructTypeInfo* qsm_si = qsm_type_info ? qsm_type_info->getStructInfo() : nullptr;
-						if (qsm_si) {
-							qsm_size_bits = static_cast<int>(qsm_si->sizeInBits().value);
-						}
+						qsm_size_bits = queryConcreteAliasResolvedStaticMemberSizeBits(*static_member);
 					}
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
