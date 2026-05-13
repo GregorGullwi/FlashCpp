@@ -1756,7 +1756,17 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		}
 		auto direct_param_it = tparam_nodes_by_name.find(direct_fp_type_name);
 		if (direct_param_it != tparam_nodes_by_name.end() &&
-			direct_param_it->second->kind() == TemplateParameterKind::Type) {
+			direct_param_it->second->kind() == TemplateParameterKind::Type &&
+			direct_fp_type.pointer_depth() == 0) {
+			// Only mark a template type parameter as positionally deducible when the
+			// function-parameter type is NOT pointer-qualified (i.e. T, T&, const T& etc.).
+			// For pointer patterns like U* or U**, the base name U is the underlying type
+			// but cannot be deduced positionally without first stripping the extra pointer
+			// levels from the call argument.  Positional deduction for these cases would
+			// incorrectly bind U=int for a plain-int argument to pick(U*).
+			// The legacy pointer-stripping deduction path in tryDeduceCandidate handles
+			// these cases correctly, and deduceTemplateCandidateViability will fall back
+			// to std::nullopt (SFINAE) when the call arg lacks sufficient pointer depth.
 			deduction_info.positional_deducible_param_names.insert(direct_fp_type_name);
 		}
 		// Detect whether this function parameter is a pack.  The explicit

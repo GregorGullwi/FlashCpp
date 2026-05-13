@@ -38,12 +38,7 @@ public:
 	TemplateParameterScope() = default;
 
 	~TemplateParameterScope() {
-		// Remove all registered template parameter types from the global type map
-		for (const auto* type_info : registered_types_) {
-			if (type_info) {
-				getTypesByNameMap().erase(type_info->name());
-			}
-		}
+		restoreBindings();
 	}
 
 	// Prevent copying (scope is unique)
@@ -58,13 +53,11 @@ public:
 	TemplateParameterScope& operator=(TemplateParameterScope&& other) noexcept {
 		if (this != &other) {
 			// Clean up current registrations first
-			for (const auto* type_info : registered_types_) {
-				if (type_info) {
-					getTypesByNameMap().erase(type_info->name());
-				}
-			}
+			restoreBindings();
 			registered_types_ = std::move(other.registered_types_);
+			previous_bindings_ = std::move(other.previous_bindings_);
 			other.registered_types_.clear();
+			other.previous_bindings_.clear();
 		}
 		return *this;
 	}
@@ -72,7 +65,16 @@ public:
 	// Register a template parameter type for automatic cleanup
 	void addParameter(TypeInfo* type_info) {
 		if (type_info) {
+			auto& types_by_name = getTypesByNameMap();
+			auto existing = types_by_name.find(type_info->name());
+			PreviousBinding previous;
+			if (existing != types_by_name.end() && existing->second != type_info) {
+				previous.had_binding = true;
+				previous.type_info = existing->second;
+			}
+			types_by_name.insert_or_assign(type_info->name(), type_info);
 			registered_types_.push_back(type_info);
+			previous_bindings_.push_back(previous);
 		}
 	}
 
@@ -85,10 +87,41 @@ public:
 	bool empty() const { return registered_types_.empty(); }
 
 	// Dismiss the guard (don't clean up - caller takes responsibility)
-	void dismiss() { registered_types_.clear(); }
+	void dismiss() {
+		registered_types_.clear();
+		previous_bindings_.clear();
+	}
 
 private:
+	struct PreviousBinding {
+		bool had_binding = false;
+		TypeInfo* type_info = nullptr;
+	};
+
+	void restoreBindings() {
+		auto& types_by_name = getTypesByNameMap();
+		for (size_t i = registered_types_.size(); i > 0; --i) {
+			TypeInfo* type_info = registered_types_[i - 1];
+			if (!type_info) {
+				continue;
+			}
+			auto current = types_by_name.find(type_info->name());
+			if (current != types_by_name.end() && current->second != type_info) {
+				continue;
+			}
+			const PreviousBinding& previous = previous_bindings_[i - 1];
+			if (previous.had_binding) {
+				types_by_name.insert_or_assign(type_info->name(), previous.type_info);
+			} else {
+				types_by_name.erase(type_info->name());
+			}
+		}
+		registered_types_.clear();
+		previous_bindings_.clear();
+	}
+
 	std::vector<TypeInfo*> registered_types_;
+	std::vector<PreviousBinding> previous_bindings_;
 };
 
 // =============================================================================

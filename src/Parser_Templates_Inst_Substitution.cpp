@@ -753,6 +753,24 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 		if (materialized_target.resolved_type_info == nullptr &&
 			materialized_target.instantiated_name.empty()) {
+			const size_t alias_owner_sep = alias_template_name.rfind("::");
+			const std::string_view target_base_name =
+				StringTable::getStringView(target_type_info->baseTemplateName());
+			if (alias_owner_sep != std::string_view::npos &&
+				target_base_name.find("::") == std::string_view::npos) {
+				const std::string_view owner_member_template_name =
+					StringBuilder()
+						.append(alias_template_name.substr(0, alias_owner_sep))
+						.append("::")
+						.append(target_base_name)
+						.commit();
+				materialized_target = materializeTemplateInstantiationForLookup(
+					owner_member_template_name,
+					concrete_target_args);
+			}
+		}
+		if (materialized_target.resolved_type_info == nullptr &&
+			materialized_target.instantiated_name.empty()) {
 			return false;
 		}
 
@@ -807,6 +825,24 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					materialized_target = materializeTemplateInstantiationForLookup(
 						StringTable::getStringView(alias_target_info->baseTemplateName()),
 						concrete_target_args);
+				}
+				if (materialized_target.resolved_type_info == nullptr &&
+					materialized_target.instantiated_name.empty()) {
+					const size_t alias_owner_sep = alias_template_name.rfind("::");
+					const std::string_view target_base_name =
+						StringTable::getStringView(alias_target_info->baseTemplateName());
+					if (alias_owner_sep != std::string_view::npos &&
+						target_base_name.find("::") == std::string_view::npos) {
+						const std::string_view owner_member_template_name =
+							StringBuilder()
+								.append(alias_template_name.substr(0, alias_owner_sep))
+								.append("::")
+								.append(target_base_name)
+								.commit();
+						materialized_target = materializeTemplateInstantiationForLookup(
+							owner_member_template_name,
+							concrete_target_args);
+					}
 				}
 				if (!materialized_target.instantiated_name.empty() ||
 					materialized_target.resolved_type_info != nullptr) {

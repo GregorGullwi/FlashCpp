@@ -2182,8 +2182,22 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			auto rhs_value = evaluateConstraintExpression(binop.get_rhs(), template_args, template_param_names);
 
 			if (!lhs_value.has_value() || !rhs_value.has_value()) {
-				// Can't evaluate as constants - assume satisfied for unknown expressions
-				return ConstraintEvaluationResult::success();
+				// At least one side of the comparison constraint could not be evaluated
+				// to a constant.  This occurs e.g. for `sizeof(typename Op<Args...>::type) < 1`
+				// when the sizeof operand cannot be resolved yet.
+				//
+				// We must NOT default to "satisfied" here: a comparison constraint that
+				// can't be evaluated is not provably true, and treating it as satisfied
+				// would allow ill-formed programs to compile (the bug that made
+				// test_requires_requires_fail.cpp incorrectly succeed).
+				//
+				// Returning failure is the conservatively correct choice: if the constraint
+				// is genuinely un-evaluable it means the template can't be instantiated
+				// in this context anyway (SFINAE).
+				return ConstraintEvaluationResult::failure(
+					"constraint not satisfied: comparison constraint could not be evaluated to a constant",
+					"unevaluable comparison expression",
+					"ensure the types used in the constraint expression are fully resolved");
 			}
 
 			bool result = false;

@@ -1582,16 +1582,27 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						decl.identifier_token());
 				}
 
-				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				eval_ctx.struct_info = struct_info.get();
-				eval_ctx.storage_duration = ConstExpr::StorageDuration::Automatic;
-				auto validation = ConstExpr::Evaluator::evaluate(*init_expr_opt, eval_ctx);
-				if (!validation.success() &&
-					validation.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
-					return ParseResult::error(
-						"constexpr static data member initializer must be a constant expression: " +
-							validation.error_message,
-						decl.identifier_token());
+				// Skip eager constexpr validation when inside a dependent template body.
+				// At template-definition time the initializer may reference dependent types
+				// (e.g. `static constexpr bool value = !B::value` where B is a type
+				// parameter), so any evaluation attempt will fail spuriously.  The
+				// initializer is re-evaluated at instantiation time when all template
+				// arguments are concrete.  isDependentTemplateContext() returns true when
+				// parsing_template_class_ is set or any template-parameter-tracking scope
+				// is active (parsing_template_depth_ > 0 / active substitutions), which
+				// covers both primary templates and partial specialisations.
+				if (!isDependentTemplateContext()) {
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					eval_ctx.struct_info = struct_info.get();
+					eval_ctx.storage_duration = ConstExpr::StorageDuration::Automatic;
+					auto validation = ConstExpr::Evaluator::evaluate(*init_expr_opt, eval_ctx);
+					if (!validation.success() &&
+						validation.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
+						return ParseResult::error(
+							"constexpr static data member initializer must be a constant expression: " +
+								validation.error_message,
+							decl.identifier_token());
+					}
 				}
 			}
 
