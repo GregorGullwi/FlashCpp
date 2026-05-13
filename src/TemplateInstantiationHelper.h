@@ -131,8 +131,8 @@ public:
 	/// @param arg_types The actual argument types from the call
 	/// @return A vector of deduced template type arguments, empty if deduction fails
 	static std::vector<TemplateTypeArg> deduceTemplateArgsFromParamTypes(
-		const std::vector<TypeSpecifierNode>& param_types,
-		const std::vector<TypeSpecifierNode>& arg_types);
+		std::span<const TypeSpecifierNode> param_types,
+		std::span<const TypeSpecifierNode> arg_types);
 
 	/// Try to instantiate a template function with deduced or explicit arguments
 	///
@@ -151,7 +151,7 @@ public:
 		Parser& parser,
 		std::string_view qualified_name,
 		std::string_view simple_name,
-		const std::vector<TemplateTypeArg>& template_args);
+		std::span<const TemplateTypeArg> template_args);
 
 	/// Try to instantiate with detailed error reporting (Phase 3)
 	///
@@ -168,7 +168,7 @@ public:
 		Parser& parser,
 		std::string_view qualified_name,
 		std::string_view simple_name,
-		const std::vector<TemplateTypeArg>& template_args,
+		std::span<const TemplateTypeArg> template_args,
 		TemplateInstantiationError* error_out);
 
 	/// Check if a type represents a template template parameter (Phase 3)
@@ -220,7 +220,7 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateTemplat
 	Parser& parser,
 	std::string_view qualified_name,
 	std::string_view simple_name,
-	const std::vector<TemplateTypeArg>& template_args) {
+	std::span<const TemplateTypeArg> template_args) {
 
 	// Delegate to the error-reporting version but ignore the error details
 	return tryInstantiateWithErrorInfo(parser, qualified_name, simple_name, template_args, nullptr);
@@ -230,7 +230,7 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 	Parser& parser,
 	std::string_view qualified_name,
 	std::string_view simple_name,
-	const std::vector<TemplateTypeArg>& template_args,
+	std::span<const TemplateTypeArg> template_args,
 	TemplateInstantiationError* error_out) {
 
 	if (template_args.empty()) {
@@ -281,8 +281,8 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 }
 
 inline std::vector<TemplateTypeArg> TemplateInstantiationHelper::deduceTemplateArgsFromParamTypes(
-	const std::vector<TypeSpecifierNode>& param_types,
-	const std::vector<TypeSpecifierNode>& arg_types) {
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const TypeSpecifierNode> arg_types) {
 
 	std::vector<TemplateTypeArg> deduced_args;
 
@@ -358,8 +358,8 @@ inline bool TemplateInstantiationHelper::isTemplateTemplateParameter(const TypeS
  * @return Map from parameter name to TemplateTypeArg
  */
 inline std::unordered_map<std::string_view, TemplateTypeArg> buildTemplateParamMap(
-	const std::vector<ASTNode>& params,
-	const std::vector<TemplateTypeArg>& args) {
+	std::span<const ASTNode> params,
+	std::span<const TemplateTypeArg> args) {
 	std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 
 	for (size_t i = 0; i < params.size() && i < args.size(); ++i) {

@@ -57,7 +57,8 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 	}
 
 	info.lambda_body = lambda.body();
-	info.captures = lambda.captures();
+	const std::span<const LambdaCaptureNode> captures = lambda.captures();
+	info.captures.assign(captures.begin(), captures.end());
 	info.is_mutable = lambda.is_mutable();
 	if (lambda.has_outer_template_bindings()) {
 		info.outer_template_environment_snapshot = lambda.outer_template_environment_snapshot();
@@ -867,8 +868,8 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	symbol_table.exit_scope();
 }
 
-void AstToIr::addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
-												const std::vector<ASTNode>& captured_var_decls) {
+void AstToIr::addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNode> captures,
+												std::span<const ASTNode> captured_var_decls) {
 		// Add captured variables to the symbol table
 		// We use the stored declarations from when the lambda was created
 	size_t capture_index = 0;

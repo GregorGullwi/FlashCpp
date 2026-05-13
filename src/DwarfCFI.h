@@ -207,8 +207,8 @@ inline std::vector<uint8_t> encodePointer(uint64_t value, uint8_t encoding) {
 }
 
 // Helper to append a vector to another
-template <typename T>
-inline void appendVector(std::vector<T>& dest, const std::vector<T>& src) {
+template <typename T, typename Range>
+inline void appendVector(std::vector<T>& dest, const Range& src) {
 	dest.insert(dest.end(), src.begin(), src.end());
 }
 

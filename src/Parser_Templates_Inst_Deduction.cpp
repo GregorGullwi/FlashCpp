@@ -301,7 +301,7 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
 	};
 	auto instantiate_base_and_get_name = [&](std::string_view base_template_name,
-										   const std::vector<TemplateTypeArg>& args_to_use) -> std::string_view {
+										   std::span<const TemplateTypeArg> args_to_use) -> std::string_view {
 		auto instantiation = try_instantiate_class_template(base_template_name, args_to_use);
 		if (instantiation.has_value() && instantiation->is<StructDeclarationNode>()) {
 			return StringTable::getStringView(instantiation->as<StructDeclarationNode>().name());
@@ -485,7 +485,7 @@ static bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpeci
 			return false;
 		}
 	}
-	if (lhs.array_dimensions() != rhs.array_dimensions()) {
+	if (!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions())) {
 		return false;
 	}
 	if (lhs.has_function_signature() != rhs.has_function_signature()) {
@@ -597,7 +597,7 @@ static bool functionDeclarationsHaveMatchingShape(
 }
 
 static bool hasLaterUsableTemplateDefinitionWithMatchingShape(
-	const std::vector<ASTNode>& overloads,
+	std::span<const ASTNode> overloads,
 	size_t current_index) {
 	if (current_index >= overloads.size() ||
 		!overloads[current_index].is<TemplateFunctionDeclarationNode>()) {
@@ -1634,8 +1634,8 @@ std::optional<bool> Parser::preDeduceTemplateArgsFromMatchingTypes(
 
 std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const std::vector<ASTNode>& func_params,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const ASTNode> func_params,
+	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth,
 	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args) {
 	CallArgDeductionInfo deduction_info;
@@ -2052,7 +2052,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArgs(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const FunctionDeclarationNode& func_decl,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth,
 	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args) {
 	return buildDeductionMapFromCallArgs(
@@ -2095,9 +2095,9 @@ bool Parser::materializeTemplateFunctionParameters(
 	const FunctionDeclarationNode& func_decl = instantiation_context.func_decl;
 	std::span<const TemplateParameterNode> template_params = instantiation_context.template_params;
 	std::span<const TemplateTypeArg> template_args = instantiation_context.template_args;
-	const std::vector<TypeSpecifierNode>* arg_types = binding_data.arg_types;
-	const std::vector<size_t>* template_param_arg_starts = binding_data.template_param_arg_starts;
-	const std::vector<size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
+	const std::span<const TypeSpecifierNode>* arg_types = binding_data.arg_types;
+	const std::span<const size_t>* template_param_arg_starts = binding_data.template_param_arg_starts;
+	const std::span<const size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
 	const std::optional<CallArgDeductionInfo>* deduction_info = binding_data.deduction_info;
 	const int recursion_depth = instantiation_context.recursion_depth;
 	const bool use_explicit_materialization =
@@ -2140,7 +2140,8 @@ bool Parser::materializeTemplateFunctionParameters(
 				clone.set_concept_constraint(param.concept_constraint());
 			}
 			if (param.has_concept_args()) {
-				clone.set_concept_args(param.concept_args());
+				const std::span<const ASTNode> concept_args = param.concept_args();
+				clone.set_concept_args(std::vector<ASTNode>(concept_args.begin(), concept_args.end()));
 			}
 			if (param.has_default()) {
 				clone.set_default_value(param.default_value());
@@ -2614,8 +2615,8 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	std::span<const TemplateTypeArg> template_args = instantiation_context.template_args;
 	const FlashCpp::TemplateInstantiationKey& key = instantiation_context.key;
 	const uintptr_t overload_id = instantiation_context.overload_id;
-	const std::vector<size_t>* template_param_arg_starts = binding_data.template_param_arg_starts;
-	const std::vector<size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
+	const std::span<const size_t>* template_param_arg_starts = binding_data.template_param_arg_starts;
+	const std::span<const size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
 	const std::optional<CallArgDeductionInfo>* deduction_info = binding_data.deduction_info;
 	const std::optional<TypeSpecifierNode>* reparsed_trailing_return_type = binding_data.reparsed_trailing_return_type;
 	const bool preserve_ref_qualifier =
@@ -3408,10 +3409,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			key,
 			0,
 			recursion_depth};
+		std::span<const size_t> template_param_arg_starts_view(template_param_arg_starts);
+		std::span<const size_t> template_param_arg_counts_view(template_param_arg_counts);
 		FunctionTemplateBindingData binding_data{
 			nullptr,
-			&template_param_arg_starts,
-			&template_param_arg_counts,
+			&template_param_arg_starts_view,
+			&template_param_arg_counts_view,
 			&helper_deduction_info,
 			&reparsed_trailing_return_type};
 		FunctionTemplateInstantiationFlags instantiation_flags = mergeInstantiationFlags(
@@ -3439,7 +3442,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(
 	std::string_view template_name,
 	std::span<const TemplateTypeArg> explicit_types,
-	const std::vector<TypeSpecifierNode>& arg_types) {
+	std::span<const TypeSpecifierNode> arg_types) {
 	FlashCpp::ScopedState guard_explicit_call_arg_types(current_explicit_call_arg_types_);
 	current_explicit_call_arg_types_ = &arg_types;
 	return try_instantiate_template_explicit(template_name, explicit_types, arg_types.size());
@@ -3447,7 +3450,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(
 
 // Try to instantiate a function template with the given argument types
 // Returns the instantiated function declaration node if successful
-std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types) {
+std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, std::span<const TypeSpecifierNode> arg_types) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name) + "_func");
 
 	static int recursion_depth = 0;
@@ -3666,7 +3669,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCall(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	const CallArgDeductionInfo& deduction_info,
 	size_t function_pack_arg_start,
 	int recursion_depth,
@@ -3828,8 +3831,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 
 std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const std::vector<ASTNode>& func_params,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const ASTNode> func_params,
+	std::span<const TypeSpecifierNode> arg_types,
 	NamespaceHandle source_namespace,
 	int recursion_depth) {
 	bool all_variadic = true;
@@ -3929,7 +3932,7 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const FunctionDeclarationNode& func_decl,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth) {
 	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
 		size_t required_params = countMinRequiredArgs(func_decl);
@@ -3955,7 +3958,7 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const ConstructorDeclarationNode& ctor_decl,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth) {
 	return deduceTemplateCandidateViability(
 		template_params,
@@ -3971,7 +3974,7 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 std::optional<ASTNode> Parser::try_instantiate_single_template(
 	const ASTNode& template_node,
 	std::string_view template_name,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	int& recursion_depth) {
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const auto& template_params = template_func.template_parameters();
@@ -4072,7 +4075,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			template_func.requires_clause()->as<RequiresClauseNode>();
 
 		// Get template parameter names for evaluation
-		std::vector<std::string_view> eval_param_names;
+		InlineVector<std::string_view, 4> eval_param_names;
 		for (const auto& tparam_node : template_params) {
 			eval_param_names.push_back(tparam_node.name());
 		}

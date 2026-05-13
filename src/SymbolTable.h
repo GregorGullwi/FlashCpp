@@ -75,7 +75,7 @@ inline std::vector<TypeIndex> extractParameterTypes(const ASTNode& node) {
 }
 
 // Helper function to check if two function signatures match
-inline bool signaturesMatch(const std::vector<TypeIndex>& sig1, const std::vector<TypeIndex>& sig2) {
+inline bool signaturesMatch(std::span<const TypeIndex> sig1, std::span<const TypeIndex> sig2) {
 	if (sig1.size() != sig2.size()) {
 		return false;
 	}
@@ -582,7 +582,7 @@ public:
 	// has already collected namespace_symbols_ candidates via lookup_all().
 	// This avoids duplicate candidates that would cause false ambiguity.
 	std::vector<ASTNode> lookup_adl_only(std::string_view func_name,
-										 const std::vector<TypeSpecifierNode>& arg_types) const {
+										 std::span<const TypeSpecifierNode> arg_types) const {
 		std::vector<ASTNode> result;
 		std::unordered_set<NamespaceHandle> visited;
 		StringHandle key = StringTable::getOrInternStringHandle(func_name);
@@ -633,7 +633,7 @@ public:
 	// e.g. std::rel_ops is not associated with std::pair, so operator templates defined
 	// there must not be found when the operands are of type pair<X,Y>.
 	std::unordered_set<NamespaceHandle> get_adl_eligible_namespaces(
-		const std::vector<TypeSpecifierNode>& arg_types) const {
+		std::span<const TypeSpecifierNode> arg_types) const {
 		std::unordered_set<NamespaceHandle> result;
 		// 1. Global namespace is always eligible.
 		result.insert(NamespaceRegistry::GLOBAL_NAMESPACE);
@@ -681,7 +681,7 @@ public:
 	// Also searches adl_only_symbols_ so that hidden friends defined inside class bodies
 	// are reachable via ADL but not via ordinary unqualified lookup.
 	std::vector<ASTNode> lookup_adl(std::string_view func_name,
-									const std::vector<TypeSpecifierNode>& arg_types) const {
+									std::span<const TypeSpecifierNode> arg_types) const {
 		std::vector<ASTNode> result;
 		std::unordered_set<NamespaceHandle> visited;
 		// Intern once; reused by both lookup_qualified_all and the adl_only_symbols_ search.
@@ -737,7 +737,7 @@ public:
 
 	// Resolve function overload based on argument types (full type info)
 	// Returns the best matching function declaration, or nullopt if no match or ambiguous
-	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<TypeSpecifierNode>& arg_types) const {
+	std::optional<ASTNode> lookup_function(std::string_view identifier, std::span<const TypeSpecifierNode> arg_types) const {
 		return lookup_function(identifier, arg_types, get_current_scope_handle());
 	}
 
@@ -765,7 +765,7 @@ public:
 		return true;
 	}
 
-	std::optional<ASTNode> lookup_function(std::string_view identifier, const std::vector<TypeSpecifierNode>& arg_types, ScopeHandle scope_limit_handle) const {
+	std::optional<ASTNode> lookup_function(std::string_view identifier, std::span<const TypeSpecifierNode> arg_types, ScopeHandle scope_limit_handle) const {
 		// Get all overloads
 		auto overloads = lookup_all(identifier, scope_limit_handle);
 		if (overloads.empty()) {
@@ -894,7 +894,7 @@ public:
 	}
 
 	// Add a using directive to the current scope
-	void add_using_directive(const std::vector<StringType<>>& namespace_path) {
+	void add_using_directive(std::span<const StringType<>> namespace_path) {
 		if (symbol_table_stack_.empty())
 			return;
 
@@ -916,7 +916,7 @@ public:
 	}
 
 	// Add a using declaration to the current scope
-	void add_using_declaration(std::string_view local_name, const std::vector<StringType<>>& namespace_path, std::string_view original_name) {
+	void add_using_declaration(std::string_view local_name, std::span<const StringType<>> namespace_path, std::string_view original_name) {
 		if (symbol_table_stack_.empty())
 			return;
 
@@ -953,7 +953,7 @@ public:
 	}
 
 	// Add a namespace alias to the current scope
-	void add_namespace_alias(std::string_view alias, const std::vector<StringType<>>& target_namespace) {
+	void add_namespace_alias(std::string_view alias, std::span<const StringType<>> target_namespace) {
 		if (symbol_table_stack_.empty())
 			return;
 
@@ -1267,13 +1267,13 @@ private:
 		}
 	}
 
-	static bool is_pure_function_set(const std::vector<ASTNode>& nodes) {
+	static bool is_pure_function_set(std::span<const ASTNode> nodes) {
 		return !nodes.empty() && std::all_of(nodes.begin(), nodes.end(), [](const ASTNode& node) {
 			return is_function_or_template_function(node);
 		});
 	}
 
-	static bool contains_same_function_decl(const std::vector<ASTNode>& nodes, const ASTNode& candidate) {
+	static bool contains_same_function_decl(std::span<const ASTNode> nodes, const ASTNode& candidate) {
 		const FunctionDeclarationNode* candidate_func = get_function_decl_node(candidate);
 		if (!candidate_func) {
 			return false;
@@ -1286,7 +1286,7 @@ private:
 		return false;
 	}
 
-	static void append_unique_function_overloads(std::vector<ASTNode>& existing_nodes, const std::vector<ASTNode>& new_nodes) {
+	static void append_unique_function_overloads(std::vector<ASTNode>& existing_nodes, std::span<const ASTNode> new_nodes) {
 		for (const auto& node : new_nodes) {
 			if (!contains_same_function_decl(existing_nodes, node)) {
 				existing_nodes.push_back(node);
@@ -1368,13 +1368,6 @@ public:
 	// Exposed for parser namespace-handle resolution while preserving SymbolTable alias rules.
 	// Set force_global=true for explicitly global-qualified names (e.g., ::ns::identifier).
 	NamespaceHandle resolve_namespace_handle(std::span<const StringType<>> namespaces, bool force_global = false) const {
-		if (namespaces.empty()) {
-			return NamespaceRegistry::GLOBAL_NAMESPACE;
-		}
-		return resolve_namespace_handle_impl(namespaces, force_global);
-	}
-
-	NamespaceHandle resolve_namespace_handle(const std::vector<StringType<>>& namespaces, bool force_global = false) const {
 		if (namespaces.empty()) {
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}

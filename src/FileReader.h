@@ -516,7 +516,7 @@ public:
 	static constexpr size_t default_result_size = 1024 * 1024;
 	FileReader(CompileContext& settings, FileTree& tree);
 
-	const std::vector<SourceLineMapping>& get_line_map() const { return line_map_; }
+	std::span<const SourceLineMapping> get_line_map() const { return line_map_; }
 	const std::deque<std::string>& get_file_paths() const { return file_paths_; }
 
 	size_t find_first_non_whitespace_after_hash(std::string_view str);

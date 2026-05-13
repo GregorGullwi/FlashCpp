@@ -6,6 +6,7 @@
 #include <string_view>
 #include <cstdint>
 #include <functional>
+#include <span>
 
 // Shared structures between ObjectFileWriter and ElfFileWriter
 // This avoids duplication while maintaining compatibility
@@ -36,6 +37,8 @@ struct FunctionSignature {
 	FunctionSignature() = default;
 	FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
 		: return_type(ret_type), parameter_types(std::move(params)) {}
+	FunctionSignature(const TypeSpecifierNode& ret_type, std::span<const TypeSpecifierNode> params)
+		: return_type(ret_type), parameter_types(params.begin(), params.end()) {}
 };
 
 	// Exception handling information for a catch handler
@@ -126,9 +129,9 @@ concept FileWriter = requires(T writer,
 							  uint64_t reloc_offset,
 							  uint32_t reloc_type,
 							  Linkage linkage,
-							  const std::vector<TryBlockInfo>& try_blocks,
-							  const std::vector<UnwindMapEntryInfo>& unwind_map,
-							  const std::vector<SehTryBlockInfo>& seh_try_blocks) {
+							  std::span<const TryBlockInfo> try_blocks,
+							  std::span<const UnwindMapEntryInfo> unwind_map,
+							  std::span<const SehTryBlockInfo> seh_try_blocks) {
 		// Core function management
 	writer.add_function_symbol(name, offset, size, linkage);
 	writer.finalize_current_function();

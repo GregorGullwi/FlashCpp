@@ -68,7 +68,7 @@ public:
 	const TypeContext& typeContext() const { return type_context_; }
 
 	// Access cast info side table.
-	const std::vector<ImplicitCastInfo>& castInfoTable() const { return cast_info_table_; }
+	std::span<const ImplicitCastInfo> castInfoTable() const { return cast_info_table_; }
 
 	// Look up the semantic slot for an expression node.
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
@@ -187,8 +187,8 @@ public:
 
 	// Instantiation-time semantic hook for generic lambda parameter normalization.
 	std::vector<ASTNode> normalizeGenericLambdaParams(
-		const std::vector<ASTNode>& parameter_nodes,
-		const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const;
+		std::span<const ASTNode> parameter_nodes,
+		std::span<const std::pair<size_t, TypeSpecifierNode>> deduced_types) const;
 	void normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info);
 
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
@@ -264,8 +264,8 @@ private:
 	SemanticExprInfo normalizeExpression(ASTNode node, const SemanticContext& ctx);
 
 	// Helpers
-	void registerParametersInScope(const std::vector<ASTNode>& parameter_nodes);
-	void normalizeParameterExpressionsInScope(const std::vector<ASTNode>& parameter_nodes, const SemanticContext& ctx);
+	void registerParametersInScope(std::span<const ASTNode> parameter_nodes);
+	void normalizeParameterExpressionsInScope(std::span<const ASTNode> parameter_nodes, const SemanticContext& ctx);
 	// Registers outer template bindings, parameters, and normalizes parameter
 	// expressions for any callable node that has parameter_nodes(). Used by
 	// normalizeFunctionDeclaration and normalizeConstructorDeclaration.

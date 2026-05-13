@@ -17,6 +17,7 @@
 #include <variant>
 #include <map>
 #include <vector>
+#include <span>
 #include <filesystem>
 #include <chrono>
 #include <algorithm>

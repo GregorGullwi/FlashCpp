@@ -135,7 +135,8 @@ inline void applyResolvedAliasShapeForSizeQuery(TypeSpecifierNode& target, const
 		target.set_reference_qualifier(ReferenceQualifier::RValueReference);
 	}
 	if (!alias_info.array_dimensions.empty()) {
-		std::vector<size_t> array_dimensions = target.array_dimensions();
+		const std::span<const size_t> target_dimensions = target.array_dimensions();
+		std::vector<size_t> array_dimensions(target_dimensions.begin(), target_dimensions.end());
 		array_dimensions.insert(
 			array_dimensions.end(),
 			alias_info.array_dimensions.begin(),

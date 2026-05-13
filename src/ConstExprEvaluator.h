@@ -746,7 +746,7 @@ private:
 	// ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
 	static const ConstructorCallNode* extract_constructor_call(const std::optional<ASTNode>& initializer);
 	static EvalResult evaluate_lambda_captures(
-		const std::vector<LambdaCaptureNode>& captures,
+		std::span<const LambdaCaptureNode> captures,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
@@ -801,7 +801,7 @@ private:
 		EvaluationContext& context,
 		std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings);
 	static EvalResult bind_evaluated_arguments(
-		const std::vector<ASTNode>& parameters,
+		std::span<const ASTNode> parameters,
 		const ChunkedVector<ASTNode>& arguments,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
@@ -809,8 +809,8 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr,
 		bool skip_invalid_params = false);
 	static EvalResult bind_pre_evaluated_arguments(
-		const std::vector<ASTNode>& parameters,
-		const std::vector<EvalResult>& evaluated_arguments,
+		std::span<const ASTNode> parameters,
+		std::span<const EvalResult> evaluated_arguments,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
 		std::string_view invalid_parameter_error,
@@ -1001,12 +1001,12 @@ private:
 	// For struct types, populates object_member_bindings with scalar member values
 	// extracted from the byte buffer.
 	static EvalResult materializeFromConstantBytes(
-		const std::vector<char>& bytes,
+		std::span<const char> bytes,
 		TypeIndex type_index);
 	static EvalResult materializeFromConstantBytes(
-		const std::vector<char>& bytes,
+		std::span<const char> bytes,
 		TypeIndex type_index,
-		const std::vector<size_t>& array_dimensions);
+		std::span<const size_t> array_dimensions);
 
 	// Try to obtain the source expression's type from an already-evaluated
 	// result (exact_type) or by asking the parser for the AST node's type.
@@ -1030,7 +1030,7 @@ private:
 // Returns the evaluated result, or nullopt if evaluation fails (e.g., unsupported operator)
 // Note: For empty packs, C++17 defines identity values for &&, ||, + and * only.
 //       For &, |, ^ with empty packs, this returns nullopt (ill-formed per C++17).
-inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, const std::vector<int64_t>& pack_values) {
+inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, std::span<const int64_t> pack_values) {
 	// Handle empty packs according to C++17 fold expression semantics
 	// Empty packs have identity values for some operators:
 	// - (... && pack) with empty pack -> true (1)

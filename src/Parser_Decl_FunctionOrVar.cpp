@@ -680,15 +680,14 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to parse_function_trailing_specifiers. current_token={}, peek={}",
 						 std::string(current_token_.value()),
 						 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-		const std::vector<ASTNode>* free_function_params = nullptr;
+		std::span<const ASTNode> free_function_params;
 		if (auto func_node_ptr = function_definition_result.node()) {
-			free_function_params = &func_node_ptr->as<FunctionDeclarationNode>().parameter_nodes();
+			free_function_params = func_node_ptr->as<FunctionDeclarationNode>().parameter_nodes();
 		}
-		static const std::vector<ASTNode> no_params;
 		auto specs_result = parse_function_trailing_specifiers(
 			member_quals,
 			func_specs,
-			free_function_params ? *free_function_params : no_params);
+			free_function_params);
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_trailing_specifiers returned. is_error={}, current_token={}, peek={}",
 						 specs_result.is_error(),
 						 std::string(current_token_.value()),
@@ -719,13 +718,12 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			const bool is_trailing_return_type = (peek() == "->"_tok);
 			if (is_trailing_return_type) {
 				// Build param list for the helper
-				const std::vector<ASTNode>* param_nodes = nullptr;
+				std::span<const ASTNode> param_nodes;
 				if (auto func_node_ptr2 = function_definition_result.node()) {
-					param_nodes = &func_node_ptr2->as<FunctionDeclarationNode>().parameter_nodes();
+					param_nodes = func_node_ptr2->as<FunctionDeclarationNode>().parameter_nodes();
 				}
-				const std::vector<ASTNode> empty_params;
 				auto trailing_result = parse_trailing_return_type_with_params(
-					param_nodes ? *param_nodes : empty_params);
+					param_nodes);
 				if (trailing_result.is_error())
 					return trailing_result;
 

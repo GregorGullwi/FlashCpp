@@ -4501,7 +4501,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Check if this specialization has non-type template arguments (like get<0>, get<1>)
 			if (func_for_mangling.has_non_type_template_args()) {
 				// Use the version that includes non-type template arguments in the mangled name
-				const std::vector<int64_t>& spec_non_type_args = func_for_mangling.non_type_template_args();
+				std::span<const int64_t> spec_non_type_args = func_for_mangling.non_type_template_args();
 				const DeclarationNode& decl = func_for_mangling.decl_node();
 				const TypeSpecifierNode& return_type = decl.type_specifier_node();
 

@@ -79,7 +79,7 @@ public:
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 
 	// For concept template arguments (e.g., Concept<U> T stores {U})
-	const std::vector<ASTNode>& concept_args() const { return concept_args_; }
+	std::span<const ASTNode> concept_args() const { return concept_args_; }
 	void set_concept_args(std::vector<ASTNode> args) { concept_args_ = std::move(args); }
 	bool has_concept_args() const { return !concept_args_.empty(); }
 
@@ -259,7 +259,7 @@ public:
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	std::string_view class_name() const { return class_name_; }
 	const InlineVector<TypeSpecifierNode, 4>& guide_parameters() const { return guide_parameters_; }
-	const std::vector<ASTNode>& deduced_template_args() const { return deduced_template_args_; }
+	std::span<const ASTNode> deduced_template_args() const { return deduced_template_args_; }
 
 private:
 	InlineVector<TemplateParameterNode, 4> template_parameters_;
@@ -384,7 +384,7 @@ public:
 						  ReferenceQualifier ref_qualifier)
 		: identifiers_(std::move(identifiers)), initializer_(initializer), cv_qualifiers_(cv_qualifiers), ref_qualifier_(ref_qualifier) {}
 
-	const std::vector<StringHandle>& identifiers() const { return identifiers_; }
+	std::span<const StringHandle> identifiers() const { return identifiers_; }
 	const ASTNode& initializer() const { return initializer_; }
 	CVQualifier cv_qualifiers() const { return cv_qualifiers_; }
 	ReferenceQualifier ref_qualifier() const { return ref_qualifier_; }
@@ -449,9 +449,9 @@ public:
 	StringHandle name() const { return name_; }
 	TypeIndex owning_type_index() const { return owning_type_index_; }
 	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }	// Create token on demand
-	const std::vector<ASTNode>& parameter_nodes() const { return parameter_nodes_; }
-	const std::vector<MemberInitializer>& member_initializers() const { return member_initializers_; }
-	const std::vector<BaseInitializer>& base_initializers() const { return base_initializers_; }
+	std::span<const ASTNode> parameter_nodes() const { return parameter_nodes_; }
+	std::span<const MemberInitializer> member_initializers() const { return member_initializers_; }
+	std::span<const BaseInitializer> base_initializers() const { return base_initializers_; }
 	const std::optional<DelegatingInitializer>& delegating_initializer() const { return delegating_initializer_; }
 	bool is_implicit() const { return is_implicit_; }
 	bool is_explicitly_defaulted() const { return is_explicitly_defaulted_; }
@@ -462,11 +462,11 @@ public:
 
 	// Update parameter nodes from the definition (to use definition's parameter names)
 	// C++ allows declaration and definition to have different parameter names
-	void update_parameter_nodes_from_definition(const std::vector<ASTNode>& definition_params) {
+	void update_parameter_nodes_from_definition(std::span<const ASTNode> definition_params) {
 		if (definition_params.size() != parameter_nodes_.size()) {
 			return; // Signature mismatch - shouldn't happen after validation
 		}
-		parameter_nodes_ = definition_params;
+		parameter_nodes_.assign(definition_params.begin(), definition_params.end());
 	}
 
 	void add_member_initializer(std::string_view member_name, ASTNode initializer_expr) {
@@ -1182,7 +1182,7 @@ public:
 		// The parser should always call add_anonymous_union_marker() before adding members
 	}
 
-	const std::vector<AnonymousUnionInfo>& anonymous_unions() const {
+	std::span<const AnonymousUnionInfo> anonymous_unions() const {
 		return anonymous_unions_;
 	}
 
@@ -1220,7 +1220,7 @@ public:
 		deferred_static_asserts_.emplace_back(condition_expr, message);
 	}
 
-	const std::vector<DeferredStaticAssert>& deferred_static_asserts() const {
+	std::span<const DeferredStaticAssert> deferred_static_asserts() const {
 		return deferred_static_asserts_;
 	}
 

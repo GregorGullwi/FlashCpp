@@ -479,7 +479,7 @@ bool typeRefersToCurrentTemplateParam(
 }
 
 bool argTypesAreDeferredTemplateDependent(
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	const InlineVector<StringHandle, 4>& current_template_param_names) {
 	return std::any_of(
 		arg_types.begin(),
@@ -490,7 +490,7 @@ bool argTypesAreDeferredTemplateDependent(
 }
 
 bool callTemplateArgumentsAreDependent(
-	const std::vector<ASTNode>& template_args,
+	std::span<const ASTNode> template_args,
 	const InlineVector<StringHandle, 4>& current_template_param_names) {
 	for (const ASTNode& template_arg : template_args) {
 		if (astNodeHasDeferredTemplateDependency(template_arg, current_template_param_names)) {
@@ -507,7 +507,7 @@ bool optionalAstNodeHasDeferredTemplateDependency(
 }
 
 bool astNodesHaveDeferredTemplateDependency(
-	const std::vector<ASTNode>& nodes,
+	std::span<const ASTNode> nodes,
 	const InlineVector<StringHandle, 4>& current_template_param_names) {
 	return std::any_of(
 		nodes.begin(),
@@ -801,7 +801,7 @@ std::optional<std::pair<TypeIndex, SizeInBits>> tryResolveConstructibleClassAlia
 
 std::optional<ASTNode> Parser::try_synthesize_atomic_builtin_overload(
 	std::string_view builtin_name,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	const Token& call_token) {
 	if (!isSupportedAtomicBuiltin(builtin_name)) {
 		return std::nullopt;
@@ -1014,7 +1014,7 @@ std::optional<ParseResult> Parser::parse_operator_name(const Token& operator_key
 // consumed.  Builds the operator name (e.g. "operator=", "operator()"), parses arguments
 // if followed by '(', and returns a CallExprNode.  `context_token` is used for
 // location information in the generated AST nodes.
-ParseResult Parser::parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces) {
+ParseResult Parser::parse_qualified_operator_call(const Token& context_token, std::span<const StringType<32>> namespaces) {
 	// Build operator name using the shared helper
 	std::string_view op_name;
 	if (auto err = parse_operator_name(context_token, op_name)) {

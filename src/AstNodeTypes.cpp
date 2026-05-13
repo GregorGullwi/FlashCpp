@@ -1196,7 +1196,7 @@ struct BasePlacementDecision {
 BasePlacementDecision decideBasePlacement(const BaseClassSpecifier& base,
 										  const StructTypeInfo& base_info,
 										  size_t current_offset,
-										  const std::vector<const BaseClassSpecifier*>& placed_bases) {
+										  std::span<const BaseClassSpecifier* const> placed_bases) {
 	size_t base_alignment = base_info.alignment;
 	size_t candidate_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
 	bool may_use_ebo = base_info.isEmptyLayoutLike() && !base.is_virtual;
@@ -1334,7 +1334,7 @@ void initializeBaseAwareLayout(bool has_virtual_members,
 	}
 }
 
-void placeBaseSubobjects(const std::vector<BaseClassSpecifier*>& bases,
+void placeBaseSubobjects(std::span<BaseClassSpecifier* const> bases,
 						 size_t& current_offset,
 						 size_t& max_alignment) {
 	std::vector<const BaseClassSpecifier*> placed_bases;
@@ -1374,7 +1374,7 @@ void placeBaseSubobjects(std::vector<BaseClassSpecifier>& bases,
 	}
 }
 
-void syncDirectVirtualBaseOffsets(const std::vector<BaseClassSpecifier>& virtual_bases,
+void syncDirectVirtualBaseOffsets(std::span<const BaseClassSpecifier> virtual_bases,
 								  std::vector<BaseClassSpecifier>& base_classes) {
 	std::unordered_map<TypeIndex, size_t> virtual_base_offsets;
 	virtual_base_offsets.reserve(virtual_bases.size());

@@ -203,7 +203,7 @@ public:
 
 		// Format error message with file:line:column information and include stack
 	std::string format_error(const std::deque<std::string>& file_paths,
-							 const std::vector<SourceLineMapping>& line_map = {},
+							 std::span<const SourceLineMapping> line_map = {},
 							 const Lexer* lexer = nullptr) const {
 		if (!is_error())
 			return "";
@@ -317,12 +317,12 @@ struct QualifiedIdParseResult {
 	std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
 	bool has_template_arguments;
 
-	QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id)
-		: namespaces(ns), final_identifier(id), has_template_arguments(false) {}
+	QualifiedIdParseResult(std::span<const StringHandle> ns, const Token& id)
+		: namespaces(ns.begin(), ns.end()), final_identifier(id), has_template_arguments(false) {}
 
-	QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id,
+	QualifiedIdParseResult(std::span<const StringHandle> ns, const Token& id,
 						   const InlineVector<TemplateTypeArg, 4>& args)
-		: namespaces(ns), final_identifier(id), template_args(args), has_template_arguments(true) {}
+		: namespaces(ns.begin(), ns.end()), final_identifier(id), template_args(args), has_template_arguments(true) {}
 };
 
 // Result of consuming ::member type access and ... pack expansion after template arguments
@@ -686,7 +686,7 @@ private:
 	// This allows template arguments parsed in one function (e.g., parse_primary_expression)
 	// to be accessible in another function (e.g., parse_postfix_expression) for template instantiation
 	std::optional<InlineVector<TemplateTypeArg, 4>> pending_explicit_template_args_;
-	const std::vector<TypeSpecifierNode>* current_explicit_call_arg_types_ = nullptr;
+	const std::span<const TypeSpecifierNode>* current_explicit_call_arg_types_ = nullptr;
 
 	// Handle-based save/restore to avoid cursor position collisions
 	// Each save gets a unique handle from a static incrementing counter
@@ -1455,19 +1455,19 @@ private:
 	ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
 	ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);	// Phase 1: Unified parameter list parsing
 	FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
-	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, const std::vector<TypeSpecifierNode>& arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
+	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, std::span<const TypeSpecifierNode> arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
 	struct CppAttributeInfo {
 		bool has_no_unique_address = false;
 	};
 	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
 	CppAttributeInfo consume_cpp_attribute_blocks();	 // Consume consecutive [[...]] blocks and return detected flags
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
-	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, const std::vector<ASTNode>& params);
+	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
 	void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index, bool inject_this);  // Phase 5: Helper for member function scope setup
 	void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
-	void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
+	void register_parameters_in_scope(std::span<const ASTNode> params);  // Phase 5: Register function parameters in symbol table
 	StructMemberFunction* find_member_function_by_signature(StructTypeInfo& struct_info, StringHandle name, const FlashCpp::MemberQualifiers& quals, size_t param_count);  // Priority 4: Lookup regular member function by name, cv-qualifiers, and parameter count
 	StructMemberFunction* find_ctor_dtor_for_definition(StructTypeInfo& struct_info, bool is_destructor, const FlashCpp::ParsedParameterList& params);  // Priority 4: Lookup constructor/destructor matching the given parameter list
 	ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);	 // Phase 5: Unified delayed body parsing
@@ -1615,11 +1615,11 @@ private:
 	std::optional<QualifiedIdParseResult> parse_qualified_identifier_with_templates();  // NEW: Unified parser for all qualified identifier contexts
 
 	std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);	 // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
-	std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
-	std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);	 // Helper: Try to instantiate a specific template node (for SFINAE)
+	std::optional<ASTNode> try_instantiate_template(std::string_view template_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Try to instantiate a template
+	std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, std::span<const TypeSpecifierNode> arg_types, int& recursion_depth);	 // Helper: Try to instantiate a specific template node (for SFINAE)
 	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec);
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
-	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, const std::vector<TypeSpecifierNode>& arg_types);
+	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, std::span<const TypeSpecifierNode> arg_types);
 	
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
@@ -1693,7 +1693,7 @@ private:
 		std::span<const std::string_view> template_param_names);
 	std::optional<InlineVector<TemplateTypeArg, 4>> deduceTemplateArgsFromCall(
 		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const std::vector<TypeSpecifierNode>& arg_types,
+		std::span<const TypeSpecifierNode> arg_types,
 		const CallArgDeductionInfo& deduction_info,
 		size_t function_pack_arg_start,
 		int recursion_depth,
@@ -1705,33 +1705,33 @@ private:
 	};
 	std::optional<TemplateDeductionCandidate> deduceTemplateCandidateViability(
 		const InlineVector<TemplateParameterNode, 4>& template_params,
-		const std::vector<ASTNode>& func_params,
-		const std::vector<TypeSpecifierNode>& arg_types,
+		std::span<const ASTNode> func_params,
+		std::span<const TypeSpecifierNode> arg_types,
 		NamespaceHandle source_namespace,
 		int recursion_depth);
 	std::optional<TemplateDeductionCandidate> deduceTemplateCandidateViability(
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const FunctionDeclarationNode& func_decl,
-		const std::vector<TypeSpecifierNode>& arg_types,
+		std::span<const TypeSpecifierNode> arg_types,
 		int recursion_depth);
 	std::optional<TemplateDeductionCandidate> deduceTemplateCandidateViability(
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const ConstructorDeclarationNode& ctor_decl,
-		const std::vector<TypeSpecifierNode>& arg_types,
+		std::span<const TypeSpecifierNode> arg_types,
 		int recursion_depth);
 	// Shared pre-deduction helper for matching function-parameter slots to call-argument
 	// types. The returned metadata also carries the canonical function-param → call-arg
 	// mapping so deduction sites can reuse one pack-aware view of the call shape.
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
-	const std::vector<ASTNode>& func_params,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const ASTNode> func_params,
+	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth,
 	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args);
 std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const FunctionDeclarationNode& func_decl,
-	const std::vector<TypeSpecifierNode>& arg_types,
+	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth,
 	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args);
 	bool isTemplateFunctionParameterPack(
@@ -1776,9 +1776,9 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		int recursion_depth;
 	};
 	struct FunctionTemplateBindingData {
-		const std::vector<TypeSpecifierNode>* arg_types;
-		const std::vector<size_t>* template_param_arg_starts;
-		const std::vector<size_t>* template_param_arg_counts;
+		const std::span<const TypeSpecifierNode>* arg_types;
+		const std::span<const size_t>* template_param_arg_starts;
+		const std::span<const size_t>* template_param_arg_counts;
 		const std::optional<CallArgDeductionInfo>* deduction_info;
 		const std::optional<TypeSpecifierNode>* reparsed_trailing_return_type;
 	};
@@ -1935,7 +1935,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
 		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
 	void substituteAndCopyMemberFunctionParameters(
-		const std::vector<ASTNode>& original_params,
+		std::span<const ASTNode> original_params,
 		FunctionDeclarationNode& target_node,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
@@ -2375,7 +2375,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ASTNode& dependent_expr,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
-	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
+	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Instantiate member function template
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, std::span<const TemplateTypeArg> template_type_args);  // NEW: Instantiate member function template with explicit args
 		// Core logic shared by both try_instantiate_member_function_template and _explicit.
 		// Given a resolved template node and template arguments, performs type substitution,
@@ -2387,7 +2387,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ASTNode& template_node,
 		std::span<const TemplateTypeArg> template_args,
 		const FlashCpp::TemplateInstantiationKey& key,
-		const std::vector<TypeSpecifierNode>& call_arg_types);
+		std::span<const TypeSpecifierNode> call_arg_types);
 	bool buildSubstitutionForPackElement(
 		StringHandle pack_param_name,
 		size_t pack_element_offset,
@@ -2481,7 +2481,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		};
 
 		const auto find_nested_struct = [](const ASTNode& root,
-											 const std::vector<std::string_view>& components,
+											 std::span<const std::string_view> components,
 											 size_t start_index) -> std::optional<ASTNode> {
 			ASTNode current = root;
 			for (size_t i = start_index; i < components.size(); ++i) {
@@ -2702,11 +2702,11 @@ public:
 	}
 	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
 	std::optional<ASTNode> instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key);
-	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, const std::vector<TypeSpecifierNode>& arg_types);
+	std::optional<ASTNode> try_instantiate_constructor_template(StringHandle instantiated_struct_name, const ConstructorDeclarationNode& ctor_decl, std::span<const TypeSpecifierNode> arg_types);
 	const ConstructorDeclarationNode* materializeMatchingConstructorTemplate(
 		StringHandle instantiated_struct_name,
 		const StructTypeInfo& struct_info,
-		const std::vector<TypeSpecifierNode>& arg_types,
+		std::span<const TypeSpecifierNode> arg_types,
 		const ConstructorDeclarationNode* preferred_ctor,
 		bool& is_ambiguous);
 	bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
@@ -2797,7 +2797,7 @@ private:
 	std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<TemplateParameterNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<TemplateParameterNode, 4>& inner_template_params, const InlineVector<StringHandle, 4>& inner_template_param_names);	 // NEW: Parse out-of-line template member function
 	bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
 	bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
-											  const std::vector<TypeSpecifierNode>& argument_types,
+											  std::span<const TypeSpecifierNode> argument_types,
 											  std::vector<TemplateTypeArg>& out_template_args) const;
 	bool match_template_parameter_type(TypeSpecifierNode param_type,
 									   TypeSpecifierNode argument_type,
@@ -2814,8 +2814,8 @@ public:	// Public methods for template instantiation
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
-		const InlineVector<std::string_view, 4>& template_param_names,
-		const std::vector<TypeCategory>& concrete_types,
+		std::span<const std::string_view> template_param_names,
+		std::span<const TypeCategory> concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
 		TypeIndex struct_type_index = TypeIndex{}	  // Optional: for member functions
 	);
@@ -2998,22 +2998,22 @@ private:	 // Resume private methods
 	ParseResult parse_primary_expression(ExpressionContext context);
 	ParseResult parse_postfix_expression(ExpressionContext context);	 // Phase 3: New postfix operator layer
 	ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
-	std::optional<ASTNode> try_synthesize_atomic_builtin_overload(std::string_view builtin_name, const std::vector<TypeSpecifierNode>& arg_types, const Token& call_token);
+	std::optional<ASTNode> try_synthesize_atomic_builtin_overload(std::string_view builtin_name, std::span<const TypeSpecifierNode> arg_types, const Token& call_token);
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
-															const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
+															const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args, std::span<const TypeSpecifierNode> arg_types);
 	// Shared member-template call dispatch once the caller knows whether arguments were
 	// syntactically present and whether any of them stayed dependent while collecting types.
 	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(
 		std::string_view struct_name,
 		std::string_view member_name,
 		const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
-		const std::vector<TypeSpecifierNode>& call_arg_types,
+		std::span<const TypeSpecifierNode> call_arg_types,
 		bool has_call_args,
 		bool has_dependent_call_args);
 	ParseResult parse_member_postfix(std::optional<ASTNode>& result, const Token& operator_start_token);
 	ParseResult parse_unary_expression(ExpressionContext context);
-	ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
+	ParseResult parse_qualified_operator_call(const Token& context_token, std::span<const StringType<32>> namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
 	// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
 	// Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined literals, and conversion operators.
 	// On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult with the error.
@@ -3076,7 +3076,7 @@ private:	 // Resume private methods
 	// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
 	// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
 	// Returns ParseResult::error on failure, or success with a TypeSpecifierNode.
-	ParseResult parse_trailing_return_type_with_params(const std::vector<ASTNode>& params);
+	ParseResult parse_trailing_return_type_with_params(std::span<const ASTNode> params);
 	ParseResult parse_member_trailing_return_type(FunctionDeclarationNode& func_decl);
 
 	// Helper to parse static member functions (reduces code duplication)
@@ -3139,7 +3139,7 @@ private:	 // Resume private methods
 	// Shared across all base class deferral sites.
 	static std::vector<TemplateArgumentNodeInfo> build_template_arg_infos(
 		std::span<const TemplateTypeArg> template_args,
-		const std::vector<ASTNode>& template_arg_nodes);
+		std::span<const ASTNode> template_arg_nodes);
 
 	// Helper: Parse base class list for a member struct template (already consumed ':').
 	// All base classes are stored as deferred entries since the struct is inside a template body.
@@ -3365,8 +3365,8 @@ private:	 // Resume private methods
 	// Create a QualifiedIdentifierNode for a TTP-qualified expression like W<int>::id
 	ParseResult buildTTPQualifiedIdentifier(StringHandle ttp_placeholder_name);
 
-	// Overload for qualified lookups with vector of strings
-	std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
+	// Overload for qualified lookups with namespace path strings
+	std::optional<ASTNode> lookup_symbol_qualified(std::span<const StringType<>> namespaces, std::string_view identifier) const {
 		if (isTemplateBodyWithActiveParameters()) {
 				// For qualified lookups, we still need template params for the base lookup
 				// But qualified lookups are less common in template bodies
@@ -3707,7 +3707,7 @@ inline FlashCpp::FunctionParsingScopeGuard::FunctionParsingScopeGuard(
 	StructDeclarationNode* struct_node,
 	StringHandle struct_name,
 	TypeIndex struct_type_index,
-	const std::vector<ASTNode>& params,
+	std::span<const ASTNode> params,
 	const FunctionDeclarationNode* current_function)
 	: parser_(parser), scope_(ScopeType::Function), pop_member_ctx_(has_member_context), saved_function_(parser.current_function_) {
 	parser_.current_function_ = current_function;

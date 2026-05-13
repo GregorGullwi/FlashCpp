@@ -147,10 +147,6 @@ public:
 		return current;
 	}
 
-	NamespaceHandle getOrCreatePath(NamespaceHandle start, const std::vector<StringHandle>& components) {
-		return getOrCreatePath(start, std::span<const StringHandle>{components});
-	}
-
 	const NamespaceEntry& getEntry(NamespaceHandle handle) const {
 		assert(handle.isValid() && handle.index < entries_.size());
 		return entries_[handle.index];
@@ -207,10 +203,6 @@ public:
 	}
 
 	StringHandle buildQualifiedIdentifier(std::initializer_list<StringHandle> components) const {
-		return buildQualifiedIdentifier(std::span<const StringHandle>{components});
-	}
-
-	StringHandle buildQualifiedIdentifier(const std::vector<StringHandle>& components) const {
 		return buildQualifiedIdentifier(std::span<const StringHandle>{components});
 	}
 
@@ -303,7 +295,7 @@ public:
 	}
 
 	// Returns the direct inline children of a namespace.
-	const std::vector<NamespaceHandle>& getInlineChildren(NamespaceHandle parent) const {
+	std::span<const NamespaceHandle> getInlineChildren(NamespaceHandle parent) const {
 		static const std::vector<NamespaceHandle> empty;
 		if (!parent.isValid())
 			return empty;

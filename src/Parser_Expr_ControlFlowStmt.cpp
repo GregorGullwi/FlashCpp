@@ -1338,7 +1338,7 @@ ParseResult Parser::parse_lambda_expression() {
 				is_ref_capture ? ReferenceQualifier::LValueReference : ReferenceQualifier::None,
 				referenced_size_bits,
 				var_type.is_array(),
-				var_type.array_dimensions(),
+				std::vector<size_t>(var_type.array_dimensions().begin(), var_type.array_dimensions().end()),
 				static_cast<int>(var_type.pointer_depth()),
 				std::nullopt,
 				var_type.has_function_signature() ? std::optional(var_type.function_signature()) : std::nullopt,
@@ -1788,4 +1788,3 @@ ParseResult Parser::parse_default_label_statement() {
 
 	return ParseResult::success(emplace_node<DefaultLabelNode>(body.node()));
 }
-

@@ -212,7 +212,8 @@ static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) 
 		return_type.set_function_signature(*resolved_alias.function_signature);
 	}
 	if (!resolved_alias.array_dimensions.empty()) {
-		std::vector<size_t> array_dimensions = return_type.array_dimensions();
+		const std::span<const size_t> return_dimensions = return_type.array_dimensions();
+		std::vector<size_t> array_dimensions(return_dimensions.begin(), return_dimensions.end());
 		array_dimensions.insert(array_dimensions.end(),
 								resolved_alias.array_dimensions.begin(),
 								resolved_alias.array_dimensions.end());
@@ -1412,14 +1413,16 @@ ambiguous_qualified_static_member:
 	// Get parameters from the function declaration
 	std::vector<ASTNode> param_nodes;
 	if (matched_func_decl) {
-		param_nodes = matched_func_decl->parameter_nodes();
+		const std::span<const ASTNode> matched_params = matched_func_decl->parameter_nodes();
+		param_nodes.assign(matched_params.begin(), matched_params.end());
 	} else if (!has_precomputed_mangled) {
 		// Try to get it from the function declaration stored in the call expression
 		// Look up the function in symbol table to get full declaration with parameters
 		auto local_func_symbol = lookupSymbol(func_decl_node.identifier_token().value());
 		if (local_func_symbol.has_value() && local_func_symbol->is<FunctionDeclarationNode>()) {
 			const auto& resolved_func_decl = local_func_symbol->as<FunctionDeclarationNode>();
-			param_nodes = resolved_func_decl.parameter_nodes();
+			const std::span<const ASTNode> resolved_params = resolved_func_decl.parameter_nodes();
+			param_nodes.assign(resolved_params.begin(), resolved_params.end());
 		}
 	}
 

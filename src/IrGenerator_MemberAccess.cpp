@@ -152,7 +152,8 @@ static std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const Declarati
 	{
 		const TypeSpecifierNode& type_node = decl.type_specifier_node();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
-			return type_node.array_dimensions();
+			const std::span<const size_t> dimensions = type_node.array_dimensions();
+			return std::vector<size_t>(dimensions.begin(), dimensions.end());
 		}
 	}
 
@@ -354,7 +355,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			int base_element_size = get_type_size_bits(element_type);
 
 			// Get all dimension sizes
-			const std::vector<size_t>& dim_sizes = member->array_dimensions;
+			std::span<const size_t> dim_sizes = member->array_dimensions;
 
 			// Compute strides: stride[k] = product of dimensions after k
 			std::vector<size_t> strides(dim_sizes.size());

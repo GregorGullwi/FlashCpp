@@ -17,10 +17,10 @@ constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
 constexpr std::string_view kNestedTypeAliasName = "type";
 
-TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, const std::vector<size_t>& array_dimensions);
+TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, std::span<const size_t> array_dimensions);
 EvalResult materializeArrayInitializer(
 	TypeIndex type_index,
-	const std::vector<size_t>& array_dimensions,
+	std::span<const size_t> array_dimensions,
 	const InitializerListNode& init_list,
 	ConstExpr::EvaluationContext& context);
 std::optional<EvalResult> tryMaterializeMultidimArrayRow(
@@ -441,7 +441,7 @@ TypeSpecifierNode makeTypeSpecForDefaultInit(TypeIndex type_index) {
 
 EvalResult makeConstructorDefaultInitFromType(const TypeSpecifierNode& type_spec, EvaluationContext& context) {
 	if (type_spec.is_array()) {
-		const std::vector<size_t>& dims = type_spec.array_dimensions();
+		std::span<const size_t> dims = type_spec.array_dimensions();
 		if (dims.empty()) {
 			return EvalResult::error("Missing dimensions for default-initialized array member");
 		}
@@ -2513,7 +2513,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverl
 				return false;
 			}
 		}
-		if (lhs.array_dimensions() != rhs.array_dimensions()) {
+		if (!std::ranges::equal(lhs.array_dimensions(), rhs.array_dimensions())) {
 			return false;
 		}
 		if (lhs.has_function_signature() != rhs.has_function_signature()) {
@@ -6331,7 +6331,8 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			}
 
 			const InitializerListNode& init_list = initializer->as<InitializerListNode>();
-			return init_list.initializers();
+			const std::span<const ASTNode> initializers = init_list.initializers();
+			return std::vector<ASTNode>(initializers.begin(), initializers.end());
 		};
 
 		if (auto static_member_result = resolve_current_struct_static_member(
@@ -7382,7 +7383,7 @@ namespace {
 // Create a zero-initialized EvalResult for the given dimensions and element type.
 // When dims is empty, returns a type-correct scalar zero (0.0 for float, 0u for unsigned, 0 for signed).
 // For non-empty dims, returns a nested is_array EvalResult of the appropriate depth.
-EvalResult make_zero_array_for_dims(const std::vector<size_t>& dims, TypeCategory element_type) {
+EvalResult make_zero_array_for_dims(std::span<const size_t> dims, TypeCategory element_type) {
 	if (dims.empty()) {
 		if (isFloatingPointType(element_type)) {
 			return EvalResult::from_double(0.0);
@@ -7568,7 +7569,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 }
 
 namespace {
-TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, const std::vector<size_t>& array_dimensions) {
+TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, std::span<const size_t> array_dimensions) {
 	TypeSpecifierNode type_spec;
 	type_spec.set_type_index(type_index);
 	type_spec.set_array_dimensions(array_dimensions);
@@ -7577,7 +7578,7 @@ TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, const std::vector<size
 
 EvalResult materializeArrayInitializer(
 	TypeIndex type_index,
-	const std::vector<size_t>& array_dimensions,
+	std::span<const size_t> array_dimensions,
 	const InitializerListNode& init_list,
 	ConstExpr::EvaluationContext& context) {
 	if (array_dimensions.size() > 1) {

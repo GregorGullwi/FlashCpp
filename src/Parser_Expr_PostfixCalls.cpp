@@ -12,7 +12,7 @@
 std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const std::optional<ASTNode>& object_expr, std::string_view member_name,
 	const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
-	const std::vector<TypeSpecifierNode>& arg_types) {
+	std::span<const TypeSpecifierNode> arg_types) {
 	if (!object_expr.has_value())
 		return std::nullopt;
 	auto type_opt = get_expression_type(*object_expr);
@@ -111,7 +111,7 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 	std::string_view struct_name,
 	std::string_view member_name,
 	const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args,
-	const std::vector<TypeSpecifierNode>& call_arg_types,
+	std::span<const TypeSpecifierNode> call_arg_types,
 	bool has_call_args,
 	bool has_dependent_call_args) {
 	// `has_call_args` tracks whether the parser saw any call arguments syntactically,

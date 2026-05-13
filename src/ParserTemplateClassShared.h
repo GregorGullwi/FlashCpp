@@ -20,7 +20,8 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 		type_spec.set_function_signature(*resolved_alias.function_signature);
 	}
 	if (!resolved_alias.array_dimensions.empty()) {
-		std::vector<size_t> array_dimensions = type_spec.array_dimensions();
+		const std::span<const size_t> type_dimensions = type_spec.array_dimensions();
+		std::vector<size_t> array_dimensions(type_dimensions.begin(), type_dimensions.end());
 		array_dimensions.insert(array_dimensions.end(),
 								resolved_alias.array_dimensions.begin(),
 								resolved_alias.array_dimensions.end());

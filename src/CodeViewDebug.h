@@ -428,7 +428,7 @@ public:
 
 	// Add a local variable to the current function
 	void addLocalVariable(const std::string& name, uint32_t type_index, uint16_t flags,
-						  const std::vector<VariableLocation>& locations);
+						  std::span<const VariableLocation> locations);
 
 	// Add a function parameter to the current function
 	void addFunctionParameter(const std::string& name, uint32_t type_index, int32_t stack_offset);
@@ -449,7 +449,7 @@ public:
 	std::vector<uint8_t> generateDebugS();
 
 	// Get debug relocations that need to be added
-	const std::vector<DebugRelocation>& getDebugRelocations() const { return debug_relocations_; }
+	std::span<const DebugRelocation> getDebugRelocations() const { return debug_relocations_; }
 
 	// Add a debug relocation
 	void addDebugRelocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type);
@@ -458,7 +458,7 @@ public:
 	std::vector<uint8_t> generateDebugT();
 
 	// Get function information for dynamic symbol generation
-	const std::vector<FunctionInfo>& getFunctions() const { return functions_; }
+	std::span<const FunctionInfo> getFunctions() const { return functions_; }
 
 	// Set the source file for debug info (adds to source_files_ if not already present)
 	// Returns the file ID that can be used with setCurrentFunction
@@ -493,10 +493,10 @@ private:
 	// Helper methods
 	uint32_t addString(const std::string& str);
 	void initializeFunctionIdMap();
-	void writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, const std::vector<uint8_t>& record_data);
-	void writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, const std::vector<uint8_t>& subsection_data);
+	void writeSymbolRecord(std::vector<uint8_t>& data, SymbolKind kind, std::span<const uint8_t> record_data);
+	void writeSubsection(std::vector<uint8_t>& data, DebugSubsectionKind kind, std::span<const uint8_t> subsection_data);
 	void alignTo4Bytes(std::vector<uint8_t>& data);
-	void addTypeRecordWithPadding(std::vector<uint8_t>& debug_t_data, TypeRecordKind kind, const std::vector<uint8_t>& record_data);
+	void addTypeRecordWithPadding(std::vector<uint8_t>& debug_t_data, TypeRecordKind kind, std::span<const uint8_t> record_data);
 	void writeLittleEndian32(std::vector<uint8_t>& data, uint32_t value);
 	void writeLittleEndian16(std::vector<uint8_t>& data, uint16_t value);
 

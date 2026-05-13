@@ -110,7 +110,7 @@ uint32_t getMsvcClassHierarchyAttributes(std::string_view class_name) {
 }
 } // namespace
 
-void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, const std::vector<SehTryBlockInfo>& seh_try_blocks, uint32_t stack_frame_size) {
+void ObjectFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks, std::span<const UnwindMapEntryInfo> unwind_map, std::span<const SehTryBlockInfo> seh_try_blocks, uint32_t stack_frame_size) {
 	// Check if exception info has already been added for this function
 	for (const auto& existing : added_exception_functions_) {
 		if (existing == mangled_name) {

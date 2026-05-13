@@ -6,7 +6,7 @@
 
 // Overload that accepts pre-computed mangled name (without class_name)
 void ElfFileWriter::addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type,
-										 const std::vector<TypeSpecifierNode>& parameter_types,
+										 std::span<const TypeSpecifierNode> parameter_types,
 										 Linkage linkage, bool is_variadic,
 										 std::string_view mangled_name, bool is_inline) {
 	FunctionSignature sig(return_type, parameter_types);
@@ -18,7 +18,7 @@ void ElfFileWriter::addFunctionSignature([[maybe_unused]] std::string_view name,
 
 // Overloads for member functions (compatibility with ObjectFileWriter)
 std::string_view ElfFileWriter::addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type,
-													 const std::vector<TypeSpecifierNode>& parameter_types,
+													 std::span<const TypeSpecifierNode> parameter_types,
 													 std::string_view class_name, Linkage linkage,
 													 bool is_variadic) {
 	FunctionSignature sig(return_type, parameter_types);
@@ -30,7 +30,7 @@ std::string_view ElfFileWriter::addFunctionSignature(std::string_view name, cons
 
 // Overload that accepts pre-computed mangled name (for function definitions from IR)
 void ElfFileWriter::addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type,
-										 const std::vector<TypeSpecifierNode>& parameter_types,
+										 std::span<const TypeSpecifierNode> parameter_types,
 										 std::string_view class_name, Linkage linkage, bool is_variadic,
 										 std::string_view mangled_name, bool is_inline) {
 	FunctionSignature sig(return_type, parameter_types);
@@ -62,7 +62,7 @@ void ElfFileWriter::add_line_mapping(uint32_t code_offset, uint32_t line_number)
 }
 
 void ElfFileWriter::add_local_variable(const std::string& name, uint32_t type_index, [[maybe_unused]] uint16_t flags,
-									   const std::vector<CodeView::VariableLocation>& locations) {
+									   std::span<const CodeView::VariableLocation> locations) {
 	if (!debug_has_current_ || locations.empty())
 		return;
 	DebugVarInfo v;

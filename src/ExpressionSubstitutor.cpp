@@ -148,17 +148,19 @@ int checkedPointerDepthToInt(size_t pointer_depth) {
 	return static_cast<int>(pointer_depth);
 }
 
-std::vector<size_t> concatenateArrayDimensions(std::vector<size_t> prefix_dimensions, const std::vector<size_t>& suffix_dimensions) {
+std::vector<size_t> concatenateArrayDimensions(std::vector<size_t> prefix_dimensions, std::span<const size_t> suffix_dimensions) {
 	prefix_dimensions.reserve(prefix_dimensions.size() + suffix_dimensions.size());
 	prefix_dimensions.insert(prefix_dimensions.end(), suffix_dimensions.begin(), suffix_dimensions.end());
 	return prefix_dimensions;
 }
 
-void appendArrayDimensions(TypeSpecifierNode& target, std::vector<size_t> prefix_dimensions) {
+void appendArrayDimensions(TypeSpecifierNode& target, std::span<const size_t> prefix_dimensions) {
 	if (prefix_dimensions.empty()) {
 		return;
 	}
-	target.set_array_dimensions(concatenateArrayDimensions(std::move(prefix_dimensions), target.array_dimensions()));
+	target.set_array_dimensions(concatenateArrayDimensions(
+		std::vector<size_t>(prefix_dimensions.begin(), prefix_dimensions.end()),
+		target.array_dimensions()));
 }
 
 void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasTypeInfo& resolved_alias) {
@@ -206,8 +208,8 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 ExpressionSubstitutor::ExpressionSubstitutor(
 	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 	Parser& parser,
-	const std::vector<std::string_view>& template_param_order)
-	: param_map_(param_map), parser_(parser), template_param_order_(template_param_order) {
+	std::span<const std::string_view> template_param_order)
+	: param_map_(param_map), parser_(parser), template_param_order_(template_param_order.begin(), template_param_order.end()) {
 	rebuildEnvironmentFromCurrentBindings();
 }
 
@@ -223,8 +225,8 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 	const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
 	Parser& parser,
-	const std::vector<std::string_view>& template_param_order)
-	: param_map_(param_map), pack_map_(pack_map), parser_(parser), template_param_order_(template_param_order) {
+	std::span<const std::string_view> template_param_order)
+	: param_map_(param_map), pack_map_(pack_map), parser_(parser), template_param_order_(template_param_order.begin(), template_param_order.end()) {
 	rebuildEnvironmentFromCurrentBindings();
 }
 
@@ -735,7 +737,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
 	if (call.has_template_arguments()) {
-		explicit_template_arg_nodes = call.template_arguments();
+		const std::span<const ASTNode> template_arguments = call.template_arguments();
+		explicit_template_arg_nodes.assign(template_arguments.begin(), template_arguments.end());
 		FLASH_LOG(Templates, Debug, "  Found ", explicit_template_arg_nodes.size(), " template argument nodes");
 
 		FLASH_LOG(Templates, Debug, "  Function name: ", func_name);
@@ -1861,7 +1864,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	auto ns_name_handle = StringTable::getOrInternStringHandle(ns_name);
 	auto type_it = getTypesByNameMap().find(ns_name_handle);
-	auto template_args_still_dependent = [&](const std::vector<TemplateTypeArg>& args) {
+	auto template_args_still_dependent = [&](std::span<const TemplateTypeArg> args) {
 		for (const TemplateTypeArg& arg : args) {
 			if (arg.is_dependent) {
 				return true;
@@ -2404,7 +2407,7 @@ bool ExpressionSubstitutor::isPackExpansion(const ASTNode& arg_node, std::string
 
 // Helper: Expand pack parameters in template arguments
 std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
-	const std::vector<ASTNode>& template_arg_nodes) {
+	std::span<const ASTNode> template_arg_nodes) {
 
 	std::vector<TemplateTypeArg> expanded_args;
 
