@@ -335,7 +335,7 @@ function Invoke-TestOneFile {
 	# Use result directory for artifacts to avoid polluting system temp
 	$uniqueSuffix = [guid]::NewGuid().ToString('N')
 	$objFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.obj"
-	$exeFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.exe"
+	$exeFile = Join-Path $resultDir "run_$uniqueSuffix.exe"
 	$ilkFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.ilk"
 	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
 	$helperObjFiles = @()
