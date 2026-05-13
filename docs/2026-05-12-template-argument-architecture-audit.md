@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-13 (post PR #1502)
+**Last updated:** 2026-05-13 (template infrastructure refactor completed)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -32,6 +32,30 @@ omits it; and enum functional casts are now consistently categorized as
 `TypeCategory::Enum` across parser, overload-resolution, and sema type-inference
 layers. These improvements reduce regressions but do not yet provide a fully
 semantic C++20 template pipeline.
+
+## Refactor completion status
+
+The 2026-05-13 template infrastructure refactor completed the planned first
+architecture pass while preserving the behavior described in this audit. The
+branch now includes:
+
+- centralized static `constexpr` member reads through one semantic service;
+- ordered and typed deferred NTTP identity preservation;
+- shared alias/type-size query infrastructure;
+- parameter-context-driven explicit template argument classification;
+- `TemplateInstantiationContext` plumbing for template lookup and substitution;
+- shape-only template deduction viability checks used before materialization;
+- dependent alias-size, nested pack/materialization, and dependent constexpr
+  regression fixes;
+- explicit-template SFINAE repair so explicitly supplied template arguments are
+  substituted before remaining call-argument deduction.
+
+Validation after these changes passed the Windows sharded build and the full
+PowerShell test suite: 2333 regular tests compiled, linked, and ran with the
+expected return values, and all 174 `_fail.cpp` tests failed as expected.
+
+The remaining non-conforming areas below are therefore forward-looking
+architecture gaps, not known regressions from the refactor.
 
 ## Current representations
 
