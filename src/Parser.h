@@ -1792,7 +1792,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		CommitInstantiation = 1u << 3,
 		RegisterInstantiation = 1u << 4,
 		MemoizeBodyReparseFailure = 1u << 5,
-		RunInlineHeuristic = 1u << 6
+		RunInlineHeuristic = 1u << 6,
+		SkipBodyMaterialization = 1u << 7
 	};
 	static constexpr FunctionTemplateInstantiationFlags mergeInstantiationFlags(
 		FunctionTemplateInstantiationFlags lhs,
@@ -2399,7 +2400,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ASTNode& template_node,
 		std::span<const TemplateTypeArg> template_args,
 		const FlashCpp::TemplateInstantiationKey& key,
-		std::span<const TypeSpecifierNode> call_arg_types);
+		std::span<const TypeSpecifierNode> call_arg_types,
+		bool materialize_body);
 	bool buildSubstitutionForPackElement(
 		StringHandle pack_param_name,
 		size_t pack_element_offset,

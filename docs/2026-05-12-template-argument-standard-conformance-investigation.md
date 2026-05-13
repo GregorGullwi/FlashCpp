@@ -120,6 +120,11 @@ small PRs and larger architecture tracks that need focused design.
    Continue extracting candidate viability, deduction, constraints, partial
    ordering, and overload ranking so normal selection paths do not instantiate
    function or class bodies incidentally.
+   The 2026-05-13 follow-up slice routes overloaded free function templates
+   and implicit member function templates through signature-only candidate
+   materialization for overload conversion ranking before instantiating the
+   selected body.  It deliberately keeps the older full-instantiation fallback
+   for cases the shape path cannot rank safely.
 
 4. **First-class dependent-name/current-instantiation model.**
    Replace string-like placeholders with semantic dependent entities for

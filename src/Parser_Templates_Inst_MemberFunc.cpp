@@ -410,6 +410,58 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		return std::nullopt;
 	}
 
+	if (viable.size() > 1) {
+		std::vector<ASTNode> shape_overloads;
+		std::vector<size_t> shape_candidate_indices;
+		shape_overloads.reserve(viable.size());
+		shape_candidate_indices.reserve(viable.size());
+		for (size_t i = 0; i < viable.size(); ++i) {
+			const CandidateResult& candidate = viable[i];
+			StringHandle shape_key_qualified_name = qualified_name;
+			if (all_templates->size() > 1) {
+				StringBuilder discriminated_sb;
+				discriminated_sb.append(qualified_name.view())
+					.append("$ol")
+					.append(static_cast<uint64_t>(candidate.overload_index));
+				shape_key_qualified_name = StringTable::getOrInternStringHandle(discriminated_sb);
+			}
+			auto shape_key = FlashCpp::makeInstantiationKey(shape_key_qualified_name, candidate.template_args);
+			if (auto existing_inst = gTemplateRegistry.getInstantiation(shape_key);
+				existing_inst.has_value() && existing_inst->is<FunctionDeclarationNode>()) {
+				shape_overloads.push_back(*existing_inst);
+				shape_candidate_indices.push_back(i);
+				continue;
+			}
+			auto shape_node = instantiate_member_function_template_core(
+				struct_name,
+				member_name,
+				requested_qualified_name,
+				qualified_name,
+				*candidate.template_node,
+				candidate.template_args,
+				shape_key,
+				arg_types,
+				false);
+			if (shape_node.has_value() && shape_node->is<FunctionDeclarationNode>()) {
+				shape_overloads.push_back(*shape_node);
+				shape_candidate_indices.push_back(i);
+			}
+		}
+		if (shape_overloads.size() > 1) {
+			auto resolution = resolve_overload(shape_overloads, arg_types);
+			if (resolution.has_match &&
+				!resolution.is_ambiguous &&
+				resolution.selected_overload != nullptr) {
+				for (size_t i = 0; i < shape_overloads.size(); ++i) {
+					if (resolution.selected_overload == &shape_overloads[i]) {
+						best_idx = shape_candidate_indices[i];
+						break;
+					}
+				}
+			}
+		}
+	}
+
 	const CandidateResult& best = viable[best_idx];
 
 	// Build the instantiation key.
@@ -435,7 +487,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 	return instantiate_member_function_template_core(
 		struct_name, member_name, requested_qualified_name, qualified_name,
-		*best.template_node, best.template_args, key, arg_types);
+		*best.template_node, best.template_args, key, arg_types, true);
 }
 
 std::optional<ASTNode> Parser::try_instantiate_constructor_template(
@@ -927,7 +979,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				? *current_explicit_call_arg_types_
 				: empty_call_arg_types;
 		auto result = instantiate_member_function_template_core(
-			struct_name, member_name, requested_qualified_name, qualified_name, template_node, template_args, key, call_arg_types);
+			struct_name, member_name, requested_qualified_name, qualified_name, template_node, template_args, key, call_arg_types, true);
 		if (result.has_value()) {
 			return result;
 		}
@@ -1108,7 +1160,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const ASTNode& template_node,
 	std::span<const TemplateTypeArg> template_args,
 	const FlashCpp::TemplateInstantiationKey& key,
-	std::span<const TypeSpecifierNode> call_arg_types) {
+	std::span<const TypeSpecifierNode> call_arg_types,
+	bool materialize_body) {
 
 	// Depth guard: instantiating a member function template replays its body,
 	// and body expressions can recursively trigger further member-function
@@ -1639,6 +1692,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	copy_function_properties(new_func_ref, func_decl);
 	auto orig_body = func_decl.get_definition();
+	if (!materialize_body) {
+		compute_and_set_mangled_name(new_func_ref);
+		return new_func_node;
+	}
 
 	// Check if the template has a body position stored
 	if (!func_decl.has_template_body_position()) {
