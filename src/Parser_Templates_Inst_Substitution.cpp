@@ -7,6 +7,33 @@
 #include "TypeTraitEvaluator.h"
 
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
+	TypeIndex value_type_index = eval_result.exact_type.has_value()
+		? eval_result.exact_type->type_index().withCategory(eval_result.exact_type->category())
+		: TypeIndex{};
+	if (eval_result.exact_type.has_value() && eval_result.exact_type->category() == TypeCategory::Nullptr) {
+		return TemplateTypeArg::makeValueIdentity(
+			FlashCpp::NonTypeValueIdentity::makeNullptr(nativeTypeIndex(TypeCategory::Nullptr)));
+	}
+	if (eval_result.pointer_to_var.isValid()) {
+		if (!value_type_index.is_valid()) {
+			value_type_index = nativeTypeIndex(TypeCategory::Int);
+		}
+		return TemplateTypeArg::makeValueIdentity(
+			FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+				value_type_index,
+				eval_result.pointer_to_var,
+				eval_result.pointer_offset));
+	}
+	if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
+		if (!value_type_index.is_valid()) {
+			value_type_index = nativeTypeIndex(TypeCategory::MemberObjectPointer);
+		}
+		return TemplateTypeArg::makeValueIdentity(
+			FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+				value_type_index,
+				eval_result.member_pointer_member,
+				eval_result.as_int()));
+	}
 	if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
 		return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
 	}

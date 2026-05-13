@@ -1528,6 +1528,7 @@ private:
 		int64_t value;
 		TypeCategory type;
 		TypeIndex type_index{};
+		FlashCpp::NonTypeValueIdentity identity{};
 	};
 
 	enum TokenDestroyPattern {

@@ -1013,7 +1013,8 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 	auto makeConstantValue = [](int64_t value, TypeCategory category, TypeIndex type_index) {
-		return ConstantValue{value, category, makeConstantValueTypeIndex(category, type_index)};
+		TypeIndex identity_type_index = makeConstantValueTypeIndex(category, type_index);
+		return ConstantValue{value, category, identity_type_index, FlashCpp::NonTypeValueIdentity::makeConcrete(value, identity_type_index)};
 	};
 	auto makeConstantValueFromCategory = [&](int64_t value, TypeCategory category) {
 		return makeConstantValue(value, category, TypeIndex{});
@@ -1031,7 +1032,28 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		} else if (std::holds_alternative<double>(eval_result.value)) {
 			category = TypeCategory::Double;
 		}
-		return makeConstantValue(eval_result.as_int(), category, type_index);
+		ConstantValue value = makeConstantValue(eval_result.as_int(), category, type_index);
+		if (category == TypeCategory::Nullptr) {
+			value.identity = FlashCpp::NonTypeValueIdentity::makeNullptr(value.type_index);
+		} else if (eval_result.pointer_to_var.isValid()) {
+			value.identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+				value.type_index,
+				eval_result.pointer_to_var,
+				eval_result.pointer_offset);
+		} else if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
+			if (eval_result.member_pointer_member.isValid()) {
+				value.identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+					value.type_index,
+					eval_result.member_pointer_member,
+					eval_result.as_int());
+			} else {
+				value.identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+					value.type_index,
+					StringHandle{},
+					eval_result.as_int());
+			}
+		}
+		return value;
 	};
 	auto retargetConstantValueToDeclaredType = [&](ConstantValue value, TypeIndex declared_type_index) {
 		TypeCategory declared_category = declared_type_index.category();
@@ -1049,6 +1071,13 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		value.type = declared_category;
 		value.type_index = makeConstantValueTypeIndex(declared_category, declared_type_index);
+		value.identity.value_type_index = value.type_index;
+		if (declared_category == TypeCategory::FunctionPointer ||
+				   declared_category == TypeCategory::MemberFunctionPointer) {
+			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
+		} else if (declared_category == TypeCategory::MemberObjectPointer) {
+			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
+		}
 		return value;
 	};
 

@@ -444,6 +444,20 @@ ParseResult Parser::parse_template_parameter() {
 	if (!type_result.node().has_value()) {
 		return ParseResult::error("Expected type specifier for non-type template parameter", current_token_);
 	}
+	const TypeSpecifierNode& nttp_type = type_result.node()->as<TypeSpecifierNode>();
+	if ((nttp_type.type() == TypeCategory::Struct ||
+		 nttp_type.type() == TypeCategory::UserDefined ||
+		 nttp_type.type() == TypeCategory::TypeAlias) &&
+		nttp_type.type_index().is_valid()) {
+		const TypeInfo* nttp_type_info = tryGetTypeInfo(nttp_type.type_index());
+		if (nttp_type_info != nullptr &&
+			!nttp_type_info->isDependentPlaceholder() &&
+			nttp_type_info->getStructInfo() != nullptr) {
+			return ParseResult::error(
+				"Structural class-type non-type template parameters are not supported yet",
+				type_result.node()->as<TypeSpecifierNode>().token());
+		}
+	}
 
 	// Check for ellipsis (parameter pack): int... Ns
 	bool is_variadic = false;
@@ -1085,6 +1099,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				TemplateTypeArg num_arg;
 				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
 					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type);
+					if (literal_type == TypeCategory::Nullptr) {
+						num_arg.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeNullptr(nativeTypeIndex(TypeCategory::Nullptr)));
+					}
 					discard_saved_token(arg_saved_pos);
 					// Successfully parsed a non-type template argument, continue to check for ',' or '>' or '...'
 				} else if (const auto* d_val = std::get_if<double>(&val)) {
@@ -2534,11 +2551,23 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		if (syntax_node != nullptr && syntax_node->is<ExpressionNode>()) {
 			const ASTNode& expr_node = *syntax_node;
 			if (auto const_value = try_evaluate_constant_expression(expr_node)) {
-				TemplateTypeArg result = TemplateTypeArg::makeValue(
-					const_value->value,
-					const_value->type_index.category() != TypeCategory::Invalid
-						? const_value->type_index.category()
-						: const_value->type);
+				FlashCpp::NonTypeValueIdentity identity = const_value->identity;
+				TypeIndex declared_type_index = param.has_type()
+					? param.type_specifier_node().type_index().withCategory(param.type_specifier_node().type())
+					: TypeIndex{};
+				if (declared_type_index.category() != TypeCategory::Invalid) {
+					identity.value_type_index = declared_type_index.is_valid()
+						? declared_type_index
+						: nativeTypeIndex(declared_type_index.category());
+					if (param.type_specifier_node().is_reference() &&
+						identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer) {
+						identity.kind = FlashCpp::NonTypeValueIdentityKind::Reference;
+					} else if (param.type_specifier_node().pointer_depth() > 0 &&
+							   identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
+						identity.kind = FlashCpp::NonTypeValueIdentityKind::ObjectPointer;
+					}
+				}
+				TemplateTypeArg result = TemplateTypeArg::makeValueIdentity(identity);
 				return result;
 			}
 			const ExpressionNode& expr = syntax_node->as<ExpressionNode>();
@@ -2561,7 +2590,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				const VariableDeclarationNode& variable_decl = symbol_lookup->as<VariableDeclarationNode>();
 				if (variable_decl.initializer().has_value()) {
 					if (auto const_value = try_evaluate_constant_expression(*variable_decl.initializer())) {
-						return TemplateTypeArg::makeValue(const_value->value, const_value->type);
+						return TemplateTypeArg::makeValueIdentity(const_value->identity);
 					}
 				}
 			}

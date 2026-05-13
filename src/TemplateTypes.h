@@ -199,9 +199,25 @@ struct TypeIndexArg {
  * 
  * The goal is one canonical representation that TemplateInstantiationKey consumes directly.
  */
+enum class NonTypeValueIdentityKind : uint8_t {
+	Integral,
+	Nullptr,
+	ObjectPointer,
+	Reference,
+	FunctionPointer,
+	MemberPointer,
+	Floating,
+	StructuralClass,
+	Unsupported
+};
+
 struct NonTypeValueIdentity {
-	int64_t value = 0;              // The concrete value (meaningful when !is_dependent)
+	NonTypeValueIdentityKind kind = NonTypeValueIdentityKind::Integral;
+	int64_t value = 0;              // Integral value or ABI offset/sentinel for pointer-to-member
 	TypeIndex value_type_index = nativeTypeIndex(TypeCategory::Int);  // The full type identity of the value
+	StringHandle entity_name{};     // Named object/function for pointer/reference/function-pointer identities
+	StringHandle member_name{};     // Class member for pointer-to-member identities
+	int64_t pointer_offset = 0;     // Array-element offset for object pointer identities
 	StringHandle dependent_name{};  // Name when dependent (e.g., "N" for template<int N>)
 	bool is_dependent = false;      // True if this is a dependent (not yet substituted) value
 
@@ -216,8 +232,59 @@ struct NonTypeValueIdentity {
 
 	static NonTypeValueIdentity makeConcrete(int64_t val, TypeIndex type_index) {
 		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::Integral;
 		id.value = val;
 		id.value_type_index = type_index;
+		id.is_dependent = false;
+		id.dependent_name = {};
+		return id;
+	}
+
+	static NonTypeValueIdentity makeNullptr(TypeIndex type_index) {
+		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::Nullptr;
+		id.value = 0;
+		id.value_type_index = type_index;
+		id.is_dependent = false;
+		id.dependent_name = {};
+		return id;
+	}
+
+	static NonTypeValueIdentity makeObjectPointer(TypeIndex type_index, StringHandle target_name, int64_t offset) {
+		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::ObjectPointer;
+		id.value = 0;
+		id.value_type_index = type_index;
+		id.entity_name = target_name;
+		id.pointer_offset = offset;
+		id.is_dependent = false;
+		id.dependent_name = {};
+		return id;
+	}
+
+	static NonTypeValueIdentity makeReference(TypeIndex type_index, StringHandle target_name) {
+		NonTypeValueIdentity id = makeObjectPointer(type_index, target_name, 0);
+		id.kind = NonTypeValueIdentityKind::Reference;
+		return id;
+	}
+
+	static NonTypeValueIdentity makeFunctionPointer(TypeIndex type_index, StringHandle function_name) {
+		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::FunctionPointer;
+		id.value = 0;
+		id.value_type_index = type_index;
+		id.entity_name = function_name;
+		id.is_dependent = false;
+		id.dependent_name = {};
+		return id;
+	}
+
+	static NonTypeValueIdentity makeMemberPointer(TypeIndex type_index, StringHandle target_member, int64_t offset) {
+		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::MemberPointer;
+		id.value = offset;
+		id.value_type_index = type_index;
+		id.member_name = target_member;
 		id.is_dependent = false;
 		id.dependent_name = {};
 		return id;
@@ -229,6 +296,7 @@ struct NonTypeValueIdentity {
 
 	static NonTypeValueIdentity makeDependent(StringHandle name, TypeIndex type_index) {
 		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::Integral;
 		id.value = 0;
 		id.value_type_index = type_index;
 		id.is_dependent = true;
@@ -242,6 +310,7 @@ struct NonTypeValueIdentity {
 
 	static NonTypeValueIdentity makeDependentWithPlaceholder(StringHandle name, int64_t placeholder_value, TypeIndex type_index) {
 		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::Integral;
 		id.value = placeholder_value;
 		id.value_type_index = type_index;
 		id.is_dependent = true;
@@ -289,9 +358,29 @@ struct NonTypeValueIdentity {
 			// Dependent args: identity is the name only
 			return dependent_name == other.dependent_name;
 		}
-		// Concrete args: identity is value + exact type.
-		return value == other.value &&
-			   equalValueTypeIdentity(value_type_index, other.value_type_index);
+		if (kind != other.kind ||
+			!equalValueTypeIdentity(value_type_index, other.value_type_index)) {
+			return false;
+		}
+		switch (kind) {
+		case NonTypeValueIdentityKind::Integral:
+		case NonTypeValueIdentityKind::Floating:
+		case NonTypeValueIdentityKind::StructuralClass:
+		case NonTypeValueIdentityKind::Unsupported:
+			return value == other.value;
+		case NonTypeValueIdentityKind::Nullptr:
+			return true;
+		case NonTypeValueIdentityKind::ObjectPointer:
+			return entity_name == other.entity_name &&
+				   pointer_offset == other.pointer_offset;
+		case NonTypeValueIdentityKind::Reference:
+		case NonTypeValueIdentityKind::FunctionPointer:
+			return entity_name == other.entity_name;
+		case NonTypeValueIdentityKind::MemberPointer:
+			return member_name == other.member_name &&
+				   value == other.value;
+		}
+		return false;
 	}
 
 	size_t hash() const {
@@ -302,7 +391,17 @@ struct NonTypeValueIdentity {
 			}
 			return h;
 		}
+		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (entity_name.isValid()) {
+			h ^= std::hash<StringHandle>{}(entity_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		if (member_name.isValid()) {
+			h ^= std::hash<StringHandle>{}(member_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		if (kind == NonTypeValueIdentityKind::ObjectPointer) {
+			h ^= std::hash<int64_t>{}(pointer_offset) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		return h;
 	}
@@ -315,6 +414,27 @@ struct NonTypeValueIdentity {
 		// For boolean values, use "true" or "false" instead of "1" or "0"
 		if (valueTypeCategory() == TypeCategory::Bool) {
 			return value != 0 ? "true" : "false";
+		}
+		if (kind == NonTypeValueIdentityKind::Nullptr) {
+			return "nullptr";
+		}
+		if (entity_name.isValid()) {
+			std::string result;
+			if (kind == NonTypeValueIdentityKind::ObjectPointer ||
+				kind == NonTypeValueIdentityKind::FunctionPointer) {
+				result += "&";
+			}
+			result += StringTable::getStringView(entity_name);
+			if (pointer_offset != 0) {
+				result += "+";
+				result += std::to_string(pointer_offset);
+			}
+			return result;
+		}
+		if (member_name.isValid()) {
+			std::string result = "&";
+			result += StringTable::getStringView(member_name);
+			return result;
 		}
 		return std::to_string(value);
 	}
@@ -661,14 +781,18 @@ inline std::string_view generateInstantiatedName(std::string_view template_name,
 												 const TemplateInstantiationKey& key) {
 	// Compute the hash of the template arguments
 	size_t h = 0;
-	for (const auto& arg : key.type_args) {
-		h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
-	}
-	for (const auto& arg : key.value_args) {
-		h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
-	}
-	for (const auto& arg : key.template_template_args) {
-		h ^= std::hash<uint32_t>{}(arg.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	if (!key.ordered_identity.empty()) {
+		h = key.ordered_identity.hash();
+	} else {
+		for (const auto& arg : key.type_args) {
+			h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		for (const auto& arg : key.value_args) {
+			h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		for (const auto& arg : key.template_template_args) {
+			h ^= std::hash<uint32_t>{}(arg.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 	}
 
 	// Build the name: template_name$hash (using $ as unambiguous separator)
