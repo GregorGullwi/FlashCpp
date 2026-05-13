@@ -1823,9 +1823,10 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 								}
 								return false;
 							};
+							constexpr unsigned MAX_RECURSIVE_STATIC_EVAL_DEPTH = 64;
 							auto evaluate_recursive_static =
 								[&](const auto& self, const StructTypeInfo* current_struct, const StructStaticMember& member, unsigned depth, unsigned long long& value) -> bool {
-								if (depth > 64) {
+								if (depth > MAX_RECURSIVE_STATIC_EVAL_DEPTH) {
 									return false;
 								}
 								if (read_constant_bytes(member, value)) {
