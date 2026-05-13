@@ -349,7 +349,11 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	// evaluated before template parameter substitution: the placeholder type held
 	// inside them does not carry flags like is_final/is_empty, so an early
 	// unsubstituted evaluation would silently return the wrong value (false) and
-	// prevent the correct substituted evaluation below from running.
+	// prevent the correct substituted evaluation below from running.  The same
+	// rule applies to all dependent NTTP expressions: bind alias parameters first,
+	// then perform exactly one substitute/evaluate pass below.  Do not add a
+	// context-free evaluation fallback here, because it can bind hidden outer names
+	// before alias-parameter substitution and produce a different value.
 	const bool is_type_trait_expr = std::get_if<TypeTraitExprNode>(&arg_expr) != nullptr;
 	if (is_type_trait_expr) {
 		FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: skipping early eval for TypeTraitExprNode");
@@ -392,12 +396,6 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 				return TemplateTypeArg::makeDependentValue(dependent_anchor, TypeCategory::Bool, 0, pre_substituted);
 			}
-		}
-	} else {
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
-		if (eval_result.success()) {
-			return templateTypeArgFromEvalResult(eval_result);
 		}
 	}
 
