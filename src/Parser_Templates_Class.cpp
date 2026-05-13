@@ -45,6 +45,7 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 
 		struct_ref.add_static_member(
 			enumerator_name,
+			/* declaration */ std::nullopt,
 			enum_type_index,
 			enum_size,
 			enum_alignment,
@@ -52,7 +53,11 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 			initializer,
 			CVQualifier::None,
 			ReferenceQualifier::None,
-			0);
+			/* ptr_depth */ 0,
+			/* is_array */ false,
+			/* array_dimensions */ std::span<const size_t>{},
+			/* initializer_position */ std::nullopt,
+			/* is_constexpr */ true);
 		if (struct_info != nullptr) {
 			struct_info->addStaticMember(
 				enumerator_name,
@@ -63,7 +68,12 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 				initializer,
 				CVQualifier::None,
 				ReferenceQualifier::None,
-				0);
+				/* ptr_depth */ 0,
+				/* is_array */ false,
+				/* array_dimensions */ std::span<const size_t>{},
+				/* declaration */ std::nullopt,
+				/* initializer_position */ std::nullopt,
+				/* is_constexpr */ true);
 		}
 	}
 }
@@ -5249,7 +5259,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
 						member_struct_ref.add_static_member(
 							static_member_name_handle,
-							*type_and_name_result.node(),
+							/* declaration */ *type_and_name_result.node(),
 							type_spec.type_index(),
 							static_member_size,
 							static_member_alignment,
@@ -5259,7 +5269,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							ref_qual,
 							ptr_depth,
 							is_array,
-							std::move(array_dimensions),
+							array_dimensions,
 							initializer_position,
 							is_constexpr);
 					}
@@ -5667,7 +5677,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 					member_struct_ref.add_static_member(
 						decl.identifier_token().handle(),
-						*type_and_name_result.node(),
+						/* declaration */ *type_and_name_result.node(),
 						type_spec.type_index(),
 						static_member_size,
 						static_member_alignment,
@@ -5675,9 +5685,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						init_expr_opt,
 						cv_qual,
 						type_spec.reference_qualifier(),
-						static_cast<int>(type_spec.pointer_depth()),
+						/* ptr_depth */ static_cast<int>(type_spec.pointer_depth()),
 						is_array,
-						std::move(array_dimensions),
+						array_dimensions,
 						initializer_position,
 						is_static_constexpr);
 				}

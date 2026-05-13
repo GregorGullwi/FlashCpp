@@ -1128,50 +1128,7 @@ public:
 	}
 
 	// Static member support (for template/partial specialization AST storage)
-	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth) {
-		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
-	}
-
-	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions) {
-		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
-		static_members_.back().setArrayInfo(is_array, std::move(array_dimensions));
-	}
-
-	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions,
-						   std::optional<SaveHandle> initializer_position) {
-		add_static_member(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth, is_array, std::move(array_dimensions));
-		if (initializer_position.has_value()) {
-			static_members_.back().setInitializerPosition(*initializer_position);
-		}
-	}
-
-	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
-						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {
-		addStaticMemberImpl(name, std::nullopt, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
-							is_array, array_dimensions, initializer_position, is_constexpr);
-	}
-
-	void add_static_member(StringHandle name, ASTNode declaration, TypeIndex type_index, size_t size, size_t alignment,
-						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions,
-						   std::optional<SaveHandle> initializer_position) {
-		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
-		static_members_.back().setDeclaration(std::move(declaration));
-		static_members_.back().setArrayInfo(is_array, std::move(array_dimensions));
-		if (initializer_position.has_value()) {
-			static_members_.back().setInitializerPosition(*initializer_position);
-		}
-	}
-
-	void add_static_member(StringHandle name, ASTNode declaration, TypeIndex type_index, size_t size, size_t alignment,
+	void add_static_member(StringHandle name, std::optional<ASTNode> declaration, TypeIndex type_index, size_t size, size_t alignment,
 						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
 						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {

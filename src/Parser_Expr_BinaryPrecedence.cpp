@@ -1973,34 +1973,34 @@ ParseResult Parser::parse_static_member_block(
 				type_spec.type_index(),
 				member_size,
 				member_alignment,
-				AccessSpecifier::Public,	 // Full specializations use Public
+				AccessSpecifier::Public,
 				init_expr_opt,
 				cv_qual,
 				ref_qual,
 				ptr_depth,
 				is_array,
 				array_dimensions,
-				*type_and_name.node(),
+				/* declaration */ *type_and_name.node(),
 				initializer_position,
 				is_static_constexpr);
 		}
 	} else {
 		// Normal case - use provided struct_info directly
-			struct_info->addStaticMember(
-				static_member_name_handle,
-				type_spec.type_index(),
+		struct_info->addStaticMember(
+			static_member_name_handle,
+			type_spec.type_index(),
 			member_size,
 			member_alignment,
 			access,
 			init_expr_opt,
 			cv_qual,
-				ref_qual,
-				ptr_depth,
-				is_array,
-				std::move(array_dimensions),
-				*type_and_name.node(),
-				initializer_position,
-				is_static_constexpr);
+			ref_qual,
+			ptr_depth,
+			is_array,
+			array_dimensions,
+			/* declaration */ *type_and_name.node(),
+			initializer_position,
+			is_static_constexpr);
 	}
 
 	return ParseResult::success();  // Signal caller to continue
