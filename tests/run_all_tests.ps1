@@ -411,10 +411,13 @@ function Invoke-TestOneFile {
 				$linkOutput = & $linkerPath $linkArgs 2>&1 | Out-String
 
 					if ($LASTEXITCODE -eq 0 -and (Test-Path $exeFile)) {
+						$exePath = (Get-Item $exeFile).FullName
+						$cmdArgs = '/d /c ""' + $exePath + '""'
 						$proc = New-Object System.Diagnostics.Process
-						$proc.StartInfo = New-Object System.Diagnostics.ProcessStartInfo($exeFile)
+						$proc.StartInfo = New-Object System.Diagnostics.ProcessStartInfo("cmd.exe", $cmdArgs)
 						$proc.StartInfo.UseShellExecute = $false
 						$proc.StartInfo.CreateNoWindow = $true
+						$proc.StartInfo.WorkingDirectory = $repoRoot
 						$proc.Start() | Out-Null
 						$proc.WaitForExit()
 						$returnValue = $proc.ExitCode
