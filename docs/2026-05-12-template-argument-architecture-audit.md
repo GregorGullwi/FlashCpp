@@ -1,6 +1,6 @@
 # Template Argument Architecture Audit
 
-**Date:** 2026-05-12  
+**Date:** 2026-05-12
 **Last updated:** 2026-05-13 (template infrastructure refactor completed)
 
 This document describes the current FlashCpp template-argument architecture for
@@ -56,6 +56,59 @@ expected return values, and all 174 `_fail.cpp` tests failed as expected.
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
+
+## What is left / next
+
+The remaining work is not another broad parser cleanup. The next useful passes
+should target the places where FlashCpp still lacks standard-owned semantic
+state.
+
+### Short-term cleanup targets
+
+1. **Typed NTTP identity completion.**
+   Preserve exact integral categories in deferred evaluation and remove the
+   exact-lookup linear fallback that scans specializations for integral
+   mismatches.
+
+2. **Static `constexpr` correctness cleanup.**
+   Treat namespace-qualified constexpr owners as valid lookup owners, and reject
+   invalid non-dependent `static constexpr` initializers instead of recovering
+   through zero-like fallback behavior.
+
+3. **Dependent NTTP concretization simplification.**
+   Reduce dependent value materialization to a deterministic bind/substitute/
+   evaluate pass.
+
+4. **Constructor annotation coverage.**
+   Extend sema constructor-call inference until well-formed code no longer
+   falls back to codegen-time overload resolution.
+
+5. **Alias-size query ownership.**
+   Move the concrete alias-size fallback chain into a shared sema helper instead
+   of keeping it as codegen-local recovery logic.
+
+### Highest-impact architecture targets
+
+1. **Two-phase lookup and semantic lookup records.**
+   This is the largest conformance lever. Non-dependent names in templates need
+   definition-context lookup records, while dependent names need explicit
+   point-of-instantiation completion records. This also gives qualified lookup,
+   ADL, static initializers, and member-template calls a shared source of truth.
+
+2. **Structural NTTP value model.**
+   The current concrete value identity remains too integral-centric for C++20.
+   Pointer, reference, member-pointer, `nullptr`, floating-point, enum, and
+   structural class-type arguments need typed equivalence and hashing.
+
+3. **Deduction and constraint pipeline separation.**
+   Candidate construction, deduction, constraint checking, partial ordering,
+   overload ranking, substitution, and instantiation should keep moving into
+   separate sema-owned phases.
+
+4. **Dependent-name and current-instantiation model.**
+   Replace dependent strings/placeholders with first-class entities for current
+   instantiation, unknown specialization, dependent bases, dependent
+   qualified-names, and dependent template-ids.
 
 ## Current representations
 
@@ -457,40 +510,40 @@ single parser bug; it is the absence of one semantic template system that owns:
 
 ## Implementation plan
 
-1. **Unify static constexpr evaluation entry points**  
+1. **Unify static constexpr evaluation entry points**
    Extract one semantic helper for "read static member as constant if legal",
    and make both qualified-id and member-access lowering call that helper.
 
-2. **Centralize recursive static evaluation policy**  
+2. **Centralize recursive static evaluation policy**
    Move recursive `base::value + c` evaluation into shared constexpr/sema logic
    so codegen and declaration-time normalization do not duplicate pattern logic.
 
-3. **Replace pattern-specific recursion with expression-driven evaluation**  
+3. **Replace pattern-specific recursion with expression-driven evaluation**
    Preserve current behavior as compatibility, then extend to a general
    expression evaluator for dependent static initializers (not just binary `+`).
 
-4. **Promote normalized initializer ownership to sema context**  
+4. **Promote normalized initializer ownership to sema context**
    Keep `normalized_init` as artifact, but make semantic evaluation result the
    source of truth and write back normalized bytes only after semantic success.
 
-5. **Strengthen substitution ordering invariants**  
+5. **Strengthen substitution ordering invariants**
    Keep the "template-parameter substitution before expression substitution"
    ordering as invariant and apply it consistently across class/member/alias
    static initializer normalization paths.
 
-6. **Widen sema constructor annotation coverage to eliminate codegen fallback**  
+6. **Widen sema constructor annotation coverage to eliminate codegen fallback**
    The current soft fallback (sema omits annotation → codegen-time resolution)
    is a safety net for unhandled ConstructorCallNode forms. Extend sema coverage
    in `inferExpressionType` and `tryAnnotateConstructorCallArgConversions` until
    the fallback warning is never emitted for well-formed code. The hard failure
    for mismatched annotations is already correct and should be preserved.
 
-7. **Extend alias size resolution to cover all concrete alias targets**  
+7. **Extend alias size resolution to cover all concrete alias targets**
    The alias-size fallback chain (TypeInfo size → TypeSpecifier size → struct
    size) should be generalized and shared so any path that needs a concrete byte
    size for an alias-derived type uses the same resolution order.
 
-8. **Add regression coverage focused on the new behavior envelope**  
+8. **Add regression coverage focused on the new behavior envelope**
    Include:
    - recursive base static constexpr chains;
    - scalar-vs-aggregate fold boundaries;
@@ -502,7 +555,7 @@ single parser bug; it is the absence of one semantic template system that owns:
      consistently chosen over TypeCategory::Struct or Int);
    - qualified enum constant type inference via `enum_owner_type_index` fast path.
 
-9. **Introduce semantic invariants and remove repair paths in stages**  
+9. **Introduce semantic invariants and remove repair paths in stages**
    After each phase, convert one class of codegen fallback into an invariant
    check (or hard error in internal paths) so non-semantic backdoors do not
    silently reappear.
