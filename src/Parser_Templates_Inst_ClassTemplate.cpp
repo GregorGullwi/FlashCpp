@@ -4550,7 +4550,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																	 : std::nullopt;
 				instantiated_struct_ref.add_static_member(
 					static_member.name,
-					/* declaration */ std::nullopt,
 					substituted_type_index,
 					substituted_size,
 					static_member.alignment,
@@ -4561,6 +4560,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.pointer_depth,
 					static_member.is_array,
 					static_member.array_dimensions,
+					/* declaration */ std::nullopt,
 					/* initializer_position */ std::nullopt,
 					static_member.is_constexpr);
 			}
@@ -7358,7 +7358,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.is_constexpr);
 					instantiated_nested_struct_ref.add_static_member(
 						static_member.getName(),
-						static_member.declaration,
 						substituted_type_index,
 						substituted_size,
 						static_member.alignment,
@@ -7369,6 +7368,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.pointer_depth,
 						static_member.is_array,
 						static_member.array_dimensions,
+						static_member.declaration,
 						static_member.initializer_position,
 						static_member.is_constexpr);
 				}
@@ -7949,7 +7949,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& static_member : struct_info_ptr->static_members) {
 		instantiated_struct_ref.add_static_member(
 			static_member.name,
-			static_member.declaration,
 			static_member.type_index,
 			static_member.size,
 			static_member.alignment,
@@ -7960,6 +7959,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.pointer_depth,
 			static_member.is_array,
 			static_member.array_dimensions,
+			static_member.declaration,
 			static_member.initializer_position,
 			static_member.is_constexpr);
 	}

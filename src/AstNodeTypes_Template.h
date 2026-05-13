@@ -1127,9 +1127,10 @@ public:
 	}
 
 	// Static member support (for template/partial specialization AST storage)
-	void add_static_member(StringHandle name, std::optional<ASTNode> declaration, TypeIndex type_index, size_t size, size_t alignment,
+	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
 						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+						   std::optional<ASTNode> declaration,
 						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {
 		addStaticMemberImpl(name, std::move(declaration), type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
 							is_array, array_dimensions, initializer_position, is_constexpr);

@@ -1973,7 +1973,7 @@ ParseResult Parser::parse_static_member_block(
 				type_spec.type_index(),
 				member_size,
 				member_alignment,
-				AccessSpecifier::Public,
+				AccessSpecifier::Public, // Full specializations use Public
 				init_expr_opt,
 				cv_qual,
 				ref_qual,
