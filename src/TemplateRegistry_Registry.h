@@ -742,23 +742,6 @@ public:
 			return it->second;
 		}
 
-		// Fallback: some deferred instantiation paths can evaluate NTTP integral expressions
-		// using a wider integral carrier than the original parameter declaration (for example
-		// `int` parameter evaluated as `long long`).  For exact specialization lookup of the
-		// same primary template, treat concrete integral value args with the same value as
-		// equivalent regardless of signed integral category.
-		for (const auto& [spec_key, spec_node] : specializations_) {
-			if (spec_key.template_name != template_name) {
-				continue;
-			}
-			if (spec_key.template_args.size() != key.template_args.size()) {
-				continue;
-			}
-			if (relaxedExactSpecializationArgsMatch(spec_key.template_args, key.template_args)) {
-				FLASH_LOG(Templates, Debug, "lookupExactSpecialization: matched via integral NTTP fallback");
-				return spec_node;
-			}
-		}
 		return std::nullopt;
 	}
 
@@ -948,37 +931,6 @@ public:
 	}
 
 private:
-	static bool isIntegralValueArgCategory(TypeCategory category) {
-		return category == TypeCategory::Bool || is_integer_type(category);
-	}
-
-	static bool relaxedExactSpecializationArgMatch(const TemplateTypeArg& lhs, const TemplateTypeArg& rhs) {
-		if (lhs == rhs) {
-			return true;
-		}
-		if (!(lhs.is_value && rhs.is_value) || lhs.is_dependent || rhs.is_dependent) {
-			return false;
-		}
-		if (!isIntegralValueArgCategory(lhs.category()) || !isIntegralValueArgCategory(rhs.category())) {
-			return false;
-		}
-		return lhs.value == rhs.value;
-	}
-
-	static bool relaxedExactSpecializationArgsMatch(
-		std::span<const TemplateTypeArg> lhs_args,
-		std::span<const TemplateTypeArg> rhs_args) {
-		if (lhs_args.size() != rhs_args.size()) {
-			return false;
-		}
-		for (size_t i = 0; i < lhs_args.size(); ++i) {
-			if (!relaxedExactSpecializationArgMatch(lhs_args[i], rhs_args[i])) {
-				return false;
-			}
-		}
-		return true;
-	}
-
 	// Canonicalize exact-specialization keys so alias-shaped arguments (for example
 	// a typedef that resolves to `int`) hit the same specialization entry as the
 	// underlying concrete type. Exact specializations are keyed structurally, not by

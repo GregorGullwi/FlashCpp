@@ -74,9 +74,7 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 	}
 
 	if (parsed_arg.is_value) {
-		TypeCategory parsed_category = FlashCpp::NonTypeValueIdentity::normalizedTypeForComparison(parsed_arg.category());
-		TypeCategory concrete_category = FlashCpp::NonTypeValueIdentity::normalizedTypeForComparison(concrete_arg->category());
-		if (parsed_category != concrete_category) {
+		if (parsed_arg.category() != concrete_arg->category()) {
 			return false;
 		}
 		if (std::holds_alternative<int64_t>(concrete_arg->value)) {

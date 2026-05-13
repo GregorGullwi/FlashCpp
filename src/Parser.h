@@ -1526,6 +1526,7 @@ private:
 	struct ConstantValue {
 		int64_t value;
 		TypeCategory type;
+		TypeIndex type_index{};
 	};
 
 	enum TokenDestroyPattern {

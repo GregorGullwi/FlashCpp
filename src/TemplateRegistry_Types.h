@@ -331,8 +331,8 @@ struct TemplateTypeArg {
 
 	// Hash for use in maps (used by InstantiationQueue and SpecializationKey)
 	size_t hash() const {
-		// Normalize Bool/Int to Int to match operator== which treats them as interchangeable
-		// for value parameters. This maintains the invariant: a == b → hash(a) == hash(b).
+		// Value parameters keep exact type identity; hash the effective category
+		// consistently with operator== and valueIdentity().
 		TypeCategory effective_cat = normalizedValueCategory();
 		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
 		if (type_index.needsTypeIndex()) {
@@ -381,15 +381,7 @@ struct TemplateTypeArg {
 		// from a pack expansion ns::sum<Args...> where Args=int, the lookup arg
 		// has is_pack=true but should still match the specialization which has is_pack=false.
 
-		// For non-type value parameters, Bool and Int are interchangeable (C++ allows bool as non-type template parameter)
 		bool category_match = (category() == other.category());
-		if (!category_match && is_value && other.is_value) {
-			bool this_is_bool_or_int = (category() == TypeCategory::Bool || category() == TypeCategory::Int);
-			bool other_is_bool_or_int = (other.category() == TypeCategory::Bool || other.category() == TypeCategory::Int);
-			if (this_is_bool_or_int && other_is_bool_or_int) {
-				category_match = true;
-			}
-		}
 
 		if (!(category_match &&
 			  type_index_match &&
@@ -740,6 +732,12 @@ inline bool hasConcreteTemplateIdentity(TypeIndex type_index) {
 	return type_index.is_valid() || is_builtin_type(type_index.category());
 }
 
+inline NonTypeValueIdentity makeTemplateValueIdentity(const TemplateTypeArg& arg) {
+	NonTypeValueIdentity identity = arg.valueIdentity();
+	identity.value_type_index = canonicalizeTemplateIdentityTypeIndex(identity.value_type_index);
+	return identity;
+}
+
 /**
  * Create a TypeIndexArg from a TemplateTypeArg
  * 
@@ -781,11 +779,12 @@ inline TemplateInstantiationKey makeInstantiationKey(
 	for (const auto& arg : args) {
 		if (arg.is_value) {
 			// Non-type template argument - use the canonical valueIdentity() accessor
-			key.value_args.push_back(arg.valueIdentity());
+			NonTypeValueIdentity value_identity = makeTemplateValueIdentity(arg);
+			key.value_args.push_back(value_identity);
 			
 			// Add to ordered identity
 			key.ordered_identity.args.push_back(
-				TemplateArgIdentity::makeValue(arg.valueIdentity()));
+				TemplateArgIdentity::makeValue(value_identity));
 		} else if (arg.is_template_template_arg) {
 			// Template template argument
 			key.template_template_args.push_back(arg.template_name_handle);

@@ -769,6 +769,20 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 		if (std::optional<ASTNode> symbol_lookup = lookup_symbol_with_template_check(name_handle);
 			symbol_lookup.has_value()) {
+			if (symbol_lookup->is<VariableDeclarationNode>()) {
+				const VariableDeclarationNode& variable_decl = symbol_lookup->as<VariableDeclarationNode>();
+				if (variable_decl.initializer().has_value()) {
+					if (auto const_value = try_evaluate_constant_expression(*variable_decl.initializer())) {
+						TemplateTypeArg value_arg;
+						value_arg.is_value = true;
+						value_arg.value = const_value->value;
+						value_arg.type_index = const_value->type_index.category() != TypeCategory::Invalid
+							? const_value->type_index
+							: nativeTypeIndex(const_value->type).withCategory(const_value->type);
+						return { SimpleTemplateArgKind::ValueLike, value_arg };
+					}
+				}
+			}
 			if (symbol_lookup->is<ExpressionNode>()) {
 				const ExpressionNode& lookup_expr = symbol_lookup->as<ExpressionNode>();
 				if (std::holds_alternative<TemplateParameterReferenceNode>(lookup_expr) &&
