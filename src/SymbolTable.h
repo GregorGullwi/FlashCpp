@@ -1026,6 +1026,13 @@ public:
 		return result[0];
 	}
 
+	bool has_namespace_symbols(NamespaceHandle namespace_handle) const {
+		if (!namespace_handle.isValid()) {
+			return false;
+		}
+		return namespace_symbols_.find(namespace_handle) != namespace_symbols_.end();
+	}
+
 	// Look up a symbol using QualifiedIdentifier.
 	// If the QualifiedIdentifier has a namespace, uses lookup_qualified.
 	// Otherwise, falls back to regular unqualified lookup.

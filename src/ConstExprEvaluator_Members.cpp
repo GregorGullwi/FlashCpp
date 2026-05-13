@@ -4610,6 +4610,10 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		// Also handles type aliases like `using my_true = integral_constant<bool, true>; my_true::value`
 		NamespaceHandle ns_handle = qualified_id.namespace_handle();
 		StringHandle struct_handle;
+		const bool qualifier_is_known_namespace =
+			ns_handle.isValid() &&
+			!ns_handle.isGlobal() &&
+			context.symbols->has_namespace_symbols(ns_handle);
 
 		if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 			FLASH_LOG(ConstExpr, Debug, "ns_handle.isGlobal()=", ns_handle.isGlobal(),
@@ -5089,11 +5093,13 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 					}
 
-					// If not constexpr or no initializer, return default value based on type
-					FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->memberType()));
-					return evaluate_static_member_initializer_or_default(*static_member, context);
+					return tryReadStaticMemberConstant(*static_member, context);
 				}
 			}
+		}
+
+		if (qualifier_is_known_namespace) {
+			return EvalResult::error("Undefined qualified identifier in constant expression: " + qualified_id.full_name());
 		}
 
 		// Not found in symbol table or as struct static member
@@ -6556,10 +6562,89 @@ EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 		return result;
 	}
 
+	if (static_member.is_constexpr) {
+		return EvalResult::error(
+			"constexpr static data member has no initializer",
+			EvalErrorType::NotConstantExpression);
+	}
+
 	if (static_member.type_index.category() == TypeCategory::Bool) {
 		return EvalResult::from_bool(false);
 	}
 	return EvalResult::from_int(0);
+}
+
+EvalResult Evaluator::tryReadStaticMemberConstant(
+	const StructStaticMember& static_member,
+	EvaluationContext& context,
+	bool scalar_only) {
+	if (!static_member.is_constexpr) {
+		return EvalResult::error(
+			"static data member is not constexpr",
+			EvalErrorType::NotConstantExpression);
+	}
+
+	auto attach_exact_static_type = [&static_member](EvalResult result) -> EvalResult {
+		if (!result.success()) {
+			return result;
+		}
+		TypeIndex type_index = static_member.type_index.is_valid()
+			? static_member.type_index
+			: nativeTypeIndex(static_member.memberType());
+		const int size_bits = static_member.size != 0
+			? static_cast<int>(static_member.size * 8)
+			: get_type_size_bits(static_member.memberType());
+		TypeSpecifierNode exact_type(
+			type_index.withCategory(static_member.memberType()),
+			TypeQualifier::None,
+			size_bits,
+			Token{},
+			static_member.cv_qualifier);
+		if (static_member.pointer_depth > 0) {
+			exact_type.add_pointer_levels(static_member.pointer_depth);
+		}
+		if (static_member.reference_qualifier != ReferenceQualifier::None) {
+			exact_type.set_reference_qualifier(static_member.reference_qualifier);
+		}
+		if (static_member.is_array) {
+			exact_type.set_array_dimensions(static_member.array_dimensions);
+		}
+		result.set_exact_type(exact_type);
+		return result;
+	};
+
+	if (static_member.normalized_init.has_value() &&
+		static_member.normalized_init->isConstant()) {
+		EvalResult materialized = materializeFromConstantBytes(
+			static_member.normalized_init->constant_bytes,
+			static_member.type_index,
+			static_member.array_dimensions);
+		if (materialized.success()) {
+			if (scalar_only &&
+				(materialized.is_array || materialized.object_type_index.is_valid())) {
+				return EvalResult::error(
+					"constexpr static data member is not a scalar constant",
+					EvalErrorType::NotConstantExpression);
+			}
+			return attach_exact_static_type(std::move(materialized));
+		}
+	}
+
+	const size_t saved_max_depth = context.max_recursion_depth;
+	const ConstExpr::StorageDuration saved_storage_duration = context.storage_duration;
+	context.max_recursion_depth = std::min<size_t>(context.max_recursion_depth, 64);
+	context.storage_duration = ConstExpr::StorageDuration::Automatic;
+	EvalResult result = evaluate_static_member_initializer_or_default(static_member, context);
+	context.storage_duration = saved_storage_duration;
+	context.max_recursion_depth = saved_max_depth;
+
+	if (result.success() && scalar_only &&
+		(result.is_array || result.object_type_index.is_valid())) {
+		return EvalResult::error(
+			"constexpr static data member is not a scalar constant",
+			EvalErrorType::NotConstantExpression);
+	}
+	return attach_exact_static_type(std::move(result));
 }
 
 // Helper function to look up and evaluate static member from struct info

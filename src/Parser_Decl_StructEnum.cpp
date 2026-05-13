@@ -1575,6 +1575,26 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 			int ptr_depth = static_cast<int>(type_spec.pointer_depth());
 
+			if (is_static_constexpr) {
+				if (!init_expr_opt.has_value()) {
+					return ParseResult::error(
+						"constexpr static data member must have an initializer",
+						decl.identifier_token());
+				}
+
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				eval_ctx.struct_info = struct_info.get();
+				eval_ctx.storage_duration = ConstExpr::StorageDuration::Automatic;
+				auto validation = ConstExpr::Evaluator::evaluate(*init_expr_opt, eval_ctx);
+				if (!validation.success() &&
+					validation.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
+					return ParseResult::error(
+						"constexpr static data member initializer must be a constant expression: " +
+							validation.error_message,
+						decl.identifier_token());
+				}
+			}
+
 			// Add to struct's static members
 			StringHandle static_member_name_handle = decl.identifier_token().handle();
 			struct_info->addStaticMember(
