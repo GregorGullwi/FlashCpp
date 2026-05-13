@@ -83,7 +83,7 @@ public:
 		if (!using_inline_storage_) {
 			return heap_data_;
 		}
-		return std::vector<T>(begin(), end());
+		return std::vector<T>(cbegin(), cend());
 	}
 
 	InlineVector(const InlineVector& other) {
@@ -249,11 +249,11 @@ public:
 	using const_iterator = const T*;
 
 	iterator begin() noexcept { return data(); }
-	iterator end() noexcept { return size() == 0 ? begin() : begin() + static_cast<std::ptrdiff_t>(size()); }
+	iterator end() noexcept { return data() + static_cast<std::ptrdiff_t>(size()); }
 	const_iterator begin() const noexcept { return data(); }
-	const_iterator end() const noexcept { return size() == 0 ? begin() : begin() + static_cast<std::ptrdiff_t>(size()); }
+	const_iterator end() const noexcept { return data() + static_cast<std::ptrdiff_t>(size()); }
 	const_iterator cbegin() const noexcept { return data(); }
-	const_iterator cend() const noexcept { return size() == 0 ? cbegin() : cbegin() + static_cast<std::ptrdiff_t>(size()); }
+	const_iterator cend() const noexcept { return data() + static_cast<std::ptrdiff_t>(size()); }
 
 	iterator insert_at(size_t idx, const T& value) {
 		assert(idx <= size() && "Insert position out of bounds in InlineVector::insert_at");

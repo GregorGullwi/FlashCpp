@@ -3510,7 +3510,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		}
 	}
 
-	const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
+	std::span<const ASTNode> ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::span<const ASTNode>{};
 
 	// Generate IR for constructor arguments and add them to ctor_op.arguments
 	size_t arg_index = 0;

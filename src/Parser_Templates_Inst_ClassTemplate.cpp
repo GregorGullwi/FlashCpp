@@ -230,10 +230,6 @@ static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeIndex type_in
 	return TemplateTypeArg::makeValue(value, type_index);
 }
 
-static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type) {
-	return makeDeferredBaseValueArg(value, makeDeferredBaseValueTypeIndex(type, TypeIndex{}));
-}
-
 // Resolve a deferred-base type argument through the ordinary substitution map,
 // then apply the use-site cv/ref/pointer modifiers carried by the original type
 // specifier. This keeps the pattern/member-chain paths on their historical

@@ -982,21 +982,74 @@ struct TypeInfo {
 	// For type arguments: stores TypeIndex (index into gTypeInfo)
 	// For non-type arguments: stores the value directly (supports int64_t, double, StringHandle)
 	struct TemplateArgInfo {
-		TypeIndex type_index{};		// Carries both gTypeInfo slot and TypeCategory
+		TypeIndex type_index;		// Carries both gTypeInfo slot and TypeCategory
 		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
-		size_t pointer_depth = 0;		  // Pointer indirection level
-		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument
-		ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
-		std::variant<int64_t, double, StringHandle> value = int64_t{0};	// For non-type arguments
-		bool is_value = false;		   // true if this is a non-type argument
-		bool is_array = false;
+		size_t pointer_depth;		  // Pointer indirection level
+		CVQualifier cv_qualifier;  // cv-qualifiers on the argument
+		ReferenceQualifier ref_qualifier;
+		std::variant<int64_t, double, StringHandle> value;	// For non-type arguments
+		bool is_value;		   // true if this is a non-type argument
+		bool is_array;
 		InlineVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
 		std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
-		bool is_template_template_arg = false;  // true if this is a template template argument
+		bool is_template_template_arg;  // true if this is a template template argument
 		StringHandle template_name;  // Name of the template for template-template arguments
-		MemberPointerKind member_pointer_kind = MemberPointerKind::None;  // Distinguish member function vs data pointers
+		MemberPointerKind member_pointer_kind;  // Distinguish member function vs data pointers
+
+		TemplateArgInfo()
+			: type_index(),
+			  pointer_depth(0),
+			  cv_qualifier(CVQualifier::None),
+			  ref_qualifier(ReferenceQualifier::None),
+			  value(int64_t{0}),
+			  is_value(false),
+			  is_array(false),
+			  is_template_template_arg(false),
+			  member_pointer_kind(MemberPointerKind::None) {}
+
+		TemplateArgInfo(const TemplateArgInfo& other)
+			: type_index(other.type_index),
+			  pointer_cv_qualifiers(other.pointer_cv_qualifiers),
+			  pointer_depth(other.pointer_depth),
+			  cv_qualifier(other.cv_qualifier),
+			  ref_qualifier(other.ref_qualifier),
+			  value(other.value),
+			  is_value(other.is_value),
+			  is_array(other.is_array),
+			  array_dimensions(other.array_dimensions),
+			  dependent_name(other.dependent_name),
+			  function_signature(other.function_signature),
+			  dependent_expr(other.dependent_expr),
+			  is_template_template_arg(other.is_template_template_arg),
+			  template_name(other.template_name),
+			  member_pointer_kind(other.member_pointer_kind) {}
+
+		TemplateArgInfo(TemplateArgInfo&&) noexcept = default;
+
+		TemplateArgInfo& operator=(const TemplateArgInfo& other) {
+			if (this != &other) {
+				type_index = other.type_index;
+				pointer_cv_qualifiers = other.pointer_cv_qualifiers;
+				pointer_depth = other.pointer_depth;
+				cv_qualifier = other.cv_qualifier;
+				ref_qualifier = other.ref_qualifier;
+				value = other.value;
+				is_value = other.is_value;
+				is_array = other.is_array;
+				array_dimensions = other.array_dimensions;
+				dependent_name = other.dependent_name;
+				function_signature = other.function_signature;
+				dependent_expr = other.dependent_expr;
+				is_template_template_arg = other.is_template_template_arg;
+				template_name = other.template_name;
+				member_pointer_kind = other.member_pointer_kind;
+			}
+			return *this;
+		}
+
+		TemplateArgInfo& operator=(TemplateArgInfo&&) noexcept = default;
 
 		// Backward-compatible accessor: returns the first (outermost) array dimension if the type
 		// is a 1-D or multi-dimensional array, or nullopt if it is not an array.
@@ -1028,16 +1081,34 @@ struct TypeInfo {
 		struct Member {
 			StringHandle name;
 			InlineVector<TemplateArgInfo, 4> template_arguments;
-			bool has_template_arguments = false;
-			bool has_template_keyword = false;
+			bool has_template_arguments;
+			bool has_template_keyword;
+
+			Member()
+				: has_template_arguments(false),
+				  has_template_keyword(false) {}
+
+			Member(const Member&) = default;
+			Member(Member&&) noexcept = default;
+			Member& operator=(const Member&) = default;
+			Member& operator=(Member&&) noexcept = default;
 		};
 
-		OwnerKind owner_kind = OwnerKind::UnknownSpecialization;
+		OwnerKind owner_kind;
 		StringHandle owner_name;
 		TypeIndex owner_type;
 		InlineVector<TemplateArgInfo, 4> owner_template_arguments;
 		InlineVector<Member, 4> member_chain;
-		bool names_current_instantiation = false;
+		bool names_current_instantiation;
+
+		DependentQualifiedNameRecord()
+			: owner_kind(OwnerKind::UnknownSpecialization),
+			  names_current_instantiation(false) {}
+
+		DependentQualifiedNameRecord(const DependentQualifiedNameRecord&) = default;
+		DependentQualifiedNameRecord(DependentQualifiedNameRecord&&) noexcept = default;
+		DependentQualifiedNameRecord& operator=(const DependentQualifiedNameRecord&) = default;
+		DependentQualifiedNameRecord& operator=(DependentQualifiedNameRecord&&) noexcept = default;
 	};
 
  // Canonical template environment owned by instantiated types.

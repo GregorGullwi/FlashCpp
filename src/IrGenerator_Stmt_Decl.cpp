@@ -1652,7 +1652,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								ctor_op.resolved_constructor = matching_ctor;
 
 								// Get constructor parameter types for reference handling
-								const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
+								std::span<const ASTNode> ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::span<const ASTNode>{};
 
 								// Add each initializer as a constructor parameter
 								size_t arg_index = 0;
@@ -2548,7 +2548,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							ctor_op.resolved_constructor = matching_ctor;
 
 							// Get constructor parameter types for reference handling
-							const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
+							std::span<const ASTNode> ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::span<const ASTNode>{};
 
 							// Process constructor arguments with reference parameter handling
 							size_t arg_index = 0;
