@@ -2456,6 +2456,21 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		if (params.size() != argument_types.size())
 			continue;
 
+		// Use the shared deduction service for implicit CTAD constructor
+		// candidates.  It computes viability and template arguments only; class
+		// materialization remains below in instantiate_deduced_template after a
+		// candidate succeeds.
+		if (auto deduction_candidate = deduceTemplateCandidateViability(
+				template_params,
+				params,
+				argument_types,
+				NamespaceHandle{},
+				0)) {
+			if (instantiate_deduced_template(class_name, deduction_candidate->template_args, type_specifier)) {
+				return true;
+			}
+		}
+
 		// Try to deduce template arguments from constructor parameter types
 		std::vector<TemplateTypeArg> deduced_args(template_params.size());
 		std::vector<bool> deduced(template_params.size(), false);
@@ -2549,6 +2564,23 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 		}
 
 		out_template_args.emplace_back(rhs_type);
+	}
+
+	if (!out_template_args.empty()) {
+		// Shape-only context: deduction guides participate in overload/candidate
+		// formation and must not materialize the class until the caller commits to
+		// the selected guide.
+		InlineVector<TemplateTypeArg, 4> context_args;
+		context_args.reserve(out_template_args.size());
+		for (const TemplateTypeArg& arg : out_template_args) {
+			context_args.push_back(arg);
+		}
+		TemplateInstantiationContext guide_context = buildTemplateInstantiationContext(
+			guide.template_parameters(),
+			std::span<const TemplateTypeArg>(context_args.data(), context_args.size()),
+			nullptr,
+			TemplateSubstitutionFailurePolicy::ShapeOnly);
+		(void)guide_context;
 	}
 
 	return !out_template_args.empty();

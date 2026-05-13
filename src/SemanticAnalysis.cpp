@@ -6969,8 +6969,6 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const CallExprNode& call_no
 void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node) {
 	// Get the type being constructed.
 	const TypeSpecifierNode& type_spec = call_node.type_node();
-	if (type_spec.category() != TypeCategory::Struct)
-		return;
 	TypeSpecifierNode resolved_type_spec = type_spec;
 	if (const MemberContext* member_context = getCurrentMemberContext();
 		member_context &&
@@ -6978,6 +6976,19 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		resolved_type_spec = resolveTypeSpecifierForSelfReference(type_spec, member_context->type_index);
 	}
 	const TypeInfo* type_info = tryGetTypeInfo(resolved_type_spec.type_index());
+	if (!type_info && resolved_type_spec.token().handle().isValid()) {
+		auto type_it = getTypesByNameMap().find(resolved_type_spec.token().handle());
+		if (type_it != getTypesByNameMap().end()) {
+			type_info = type_it->second;
+		}
+	}
+	if (type_info && type_info->aliasTypeSpecifier()) {
+		const TypeSpecifierNode& alias_spec = *type_info->aliasTypeSpecifier();
+		if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_spec.type_index())) {
+			type_info = alias_target_info;
+			resolved_type_spec = alias_spec;
+		}
+	}
 	if (const MemberContext* member_context = getCurrentMemberContext();
 		member_context &&
 		member_context->type_index.is_valid()) {

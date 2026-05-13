@@ -3734,6 +3734,144 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 	return template_args;
 }
 
+std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const std::vector<ASTNode>& func_params,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	NamespaceHandle source_namespace,
+	int recursion_depth) {
+	bool all_variadic = true;
+	for (const TemplateParameterNode& template_param : template_params) {
+		if (!template_param.is_variadic()) {
+			all_variadic = false;
+			break;
+		}
+	}
+	if (arg_types.empty() && !all_variadic) {
+		return std::nullopt;
+	}
+
+	size_t min_required_args = 0;
+	size_t non_pack_params = 0;
+	bool has_function_parameter_pack = false;
+	for (const ASTNode& param_node : func_params) {
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		if (isTemplateFunctionParameterPack(template_params, param_decl)) {
+			has_function_parameter_pack = true;
+			continue;
+		}
+		++non_pack_params;
+		if (!param_decl.has_default_value()) {
+			++min_required_args;
+		}
+	}
+	if (arg_types.size() < min_required_args ||
+		(!has_function_parameter_pack && arg_types.size() > non_pack_params)) {
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"[depth={}]: SFINAE: argument count {} is not viable for template candidate "
+			"(required={}, fixed_params={}, has_pack={})",
+			recursion_depth,
+			arg_types.size(),
+			min_required_args,
+			non_pack_params,
+			has_function_parameter_pack);
+		return std::nullopt;
+	}
+
+	size_t function_pack_arg_start = SIZE_MAX;
+	if (has_function_parameter_pack) {
+		size_t params_before_pack = 0;
+		for (const ASTNode& param_node : func_params) {
+			if (param_node.is<DeclarationNode>() &&
+				isTemplateFunctionParameterPack(template_params, param_node.as<DeclarationNode>())) {
+				break;
+			}
+			if (param_node.is<DeclarationNode>()) {
+				++params_before_pack;
+			}
+		}
+		function_pack_arg_start = std::min(arg_types.size(), params_before_pack);
+	}
+
+	auto deduction_info = buildDeductionMapFromCallArgs(
+		template_params,
+		func_params,
+		arg_types,
+		recursion_depth);
+	if (!deduction_info.has_value()) {
+		return std::nullopt;
+	}
+
+	auto template_args = deduceTemplateArgsFromCall(
+		template_params,
+		arg_types,
+		*deduction_info,
+		function_pack_arg_start,
+		recursion_depth,
+		source_namespace);
+	if (!template_args.has_value()) {
+		return std::nullopt;
+	}
+
+	// This shape-only context is deliberately not used to materialize anything.
+	// It makes the candidate viability/deduction boundary explicit and gives
+	// later substitution checks a single TemplateInstantiationContext seed.
+	TemplateInstantiationContext deduction_context = buildTemplateInstantiationContext(
+		template_params,
+		std::span<const TemplateTypeArg>(template_args->data(), template_args->size()),
+		nullptr,
+		TemplateSubstitutionFailurePolicy::ShapeOnly);
+	(void)deduction_context;
+
+	TemplateDeductionCandidate candidate;
+	candidate.template_args = std::move(*template_args);
+	candidate.deduction_info = std::move(*deduction_info);
+	candidate.function_pack_arg_start = function_pack_arg_start;
+	return candidate;
+}
+
+std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const FunctionDeclarationNode& func_decl,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth) {
+	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
+		size_t required_params = countMinRequiredArgs(func_decl);
+		if (arg_types.size() < required_params) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"[depth={}]: SFINAE: argument count {} < required parameter count {}",
+				recursion_depth, arg_types.size(), required_params);
+		} else {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"[depth={}]: SFINAE: argument count {} > parameter count {}",
+				recursion_depth, arg_types.size(), func_decl.parameter_nodes().size());
+		}
+		return std::nullopt;
+	}
+	return deduceTemplateCandidateViability(
+		template_params,
+		func_decl.parameter_nodes(),
+		arg_types,
+		func_decl.namespace_handle(),
+		recursion_depth);
+}
+
+std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidateViability(
+	const InlineVector<TemplateParameterNode, 4>& template_params,
+	const ConstructorDeclarationNode& ctor_decl,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	int recursion_depth) {
+	return deduceTemplateCandidateViability(
+		template_params,
+		ctor_decl.parameter_nodes(),
+		arg_types,
+		NamespaceHandle{},
+		recursion_depth);
+}
+
 // Helper function: Try to instantiate a specific template node
 // This contains the core instantiation logic extracted from try_instantiate_template
 // Returns nullopt if instantiation fails (for SFINAE)
@@ -3754,72 +3892,16 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	// More complex deduction (partial ordering, template-template params) is still
 	// limited; see Phase 6 audit in docs/2026-04-21-phase5-slice-g-analysis.md.
 
-	// Check if we have only variadic parameters - they can be empty
-	bool all_variadic = true;
-	for (const auto& template_param_node : template_params) {
-		const TemplateParameterNode& param = template_param_node;
-		if (!param.is_variadic()) {
-			all_variadic = false;
-		}
-	}
-
-	if (arg_types.empty() && !all_variadic) {
-		return std::nullopt;	 // No arguments to deduce from
-	}
-
-	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
-		size_t required_params = countMinRequiredArgs(func_decl);
-		if (arg_types.size() < required_params) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} < required parameter count {} for template '{}'",
-							 recursion_depth, arg_types.size(), required_params, template_name);
-		} else {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: SFINAE: argument count {} > parameter count {} for template '{}'",
-							 recursion_depth, arg_types.size(), func_decl.parameter_nodes().size(), template_name);
-		}
-		return std::nullopt;
-	}
-
-	bool has_function_parameter_pack = false;
-	for (const auto& param : func_decl.parameter_nodes()) {
-		if (param.is<DeclarationNode>() &&
-			isTemplateFunctionParameterPack(template_params, param.as<DeclarationNode>())) {
-			has_function_parameter_pack = true;
-			break;
-		}
-	}
-
-	// Build template argument list
-	size_t function_pack_arg_start = SIZE_MAX;
-	if (has_function_parameter_pack) {
-		size_t params_before_pack = 0;
-		for (const auto& param : func_decl.parameter_nodes()) {
-			if (param.is<DeclarationNode>() && param.as<DeclarationNode>().is_parameter_pack()) {
-				break;
-			}
-			++params_before_pack;
-		}
-		function_pack_arg_start = std::min(arg_types.size(), params_before_pack);
-	}
-
-	auto deduction_info = buildDeductionMapFromCallArgs(
+	auto deduction_candidate = deduceTemplateCandidateViability(
 		template_params,
 		func_decl,
 		arg_types,
 		recursion_depth);
-	if (!deduction_info.has_value()) {
+	if (!deduction_candidate.has_value()) {
 		return std::nullopt;
 	}
-	auto deduced_template_args = deduceTemplateArgsFromCall(
-		template_params,
-		arg_types,
-		*deduction_info,
-		function_pack_arg_start,
-		recursion_depth,
-		func_decl.namespace_handle());
-	if (!deduced_template_args.has_value()) {
-		return std::nullopt;
-	}
-	InlineVector<TemplateTypeArg, 4> template_args = std::move(*deduced_template_args);
+	InlineVector<TemplateTypeArg, 4> template_args = std::move(deduction_candidate->template_args);
+	std::optional<CallArgDeductionInfo> deduction_info = std::move(deduction_candidate->deduction_info);
 	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
 	const auto has_structurally_dependent_template_args = [](std::span<const TemplateTypeArg> args) {
 		return std::any_of(

@@ -1698,6 +1698,27 @@ private:
 		size_t function_pack_arg_start,
 		int recursion_depth,
 		NamespaceHandle source_namespace);
+	struct TemplateDeductionCandidate {
+		InlineVector<TemplateTypeArg, 4> template_args;
+		CallArgDeductionInfo deduction_info;
+		size_t function_pack_arg_start = SIZE_MAX;
+	};
+	std::optional<TemplateDeductionCandidate> deduceTemplateCandidateViability(
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const std::vector<ASTNode>& func_params,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		NamespaceHandle source_namespace,
+		int recursion_depth);
+	std::optional<TemplateDeductionCandidate> deduceTemplateCandidateViability(
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const FunctionDeclarationNode& func_decl,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		int recursion_depth);
+	std::optional<TemplateDeductionCandidate> deduceTemplateCandidateViability(
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		const ConstructorDeclarationNode& ctor_decl,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		int recursion_depth);
 	// Shared pre-deduction helper for matching function-parameter slots to call-argument
 	// types. The returned metadata also carries the canonical function-param → call-arg
 	// mapping so deduction sites can reuse one pack-aware view of the call shape.

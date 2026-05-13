@@ -219,6 +219,24 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		}
 
+		// First run the shared shape-only deduction/viability service.  It does not
+		// materialize the member template; it only computes the candidate's template
+		// argument list.  If an older member-specific corner (notably an outer-binding
+		// default) is not covered, keep the legacy local deduction path below as the
+		// compatibility fallback.
+		if (auto shared_deduction = deduceTemplateCandidateViability(
+				template_params,
+				func_decl,
+				arg_types,
+				0)) {
+			return CandidateResult{
+				&template_node_cand,
+				std::vector<TemplateTypeArg>(
+					shared_deduction->template_args.begin(),
+					shared_deduction->template_args.end()),
+				computeFunctionTemplateSpecificity(template_func)};
+		}
+
 		// Build set of template parameter names for O(1) lookup.
 		std::unordered_set<StringHandle, StringHash> tparam_names;
 		for (const auto& tp : template_params) {
@@ -429,42 +447,16 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		return std::nullopt;
 	}
 
-	auto deduction_info = buildDeductionMapFromCallArgs(
+	auto deduction_candidate = deduceTemplateCandidateViability(
 		template_params,
-		ctor_decl.parameter_nodes(),
+		ctor_decl,
 		arg_types,
 		0);
-	if (!deduction_info.has_value()) {
+	if (!deduction_candidate.has_value()) {
 		return std::nullopt;
 	}
-
-	InlineVector<TemplateTypeArg, 4> ctor_template_args;
-	size_t arg_index = 0;
-	for (const auto& template_param_node : template_params) {
-		const auto& param = template_param_node;
-		auto deduced_it = deduction_info->param_name_to_arg.find(param.nameHandle());
-		if (deduced_it != deduction_info->param_name_to_arg.end()) {
-			ctor_template_args.push_back(deduced_it->second);
-			continue;
-		}
-
-		while (arg_index < arg_types.size() &&
-			   deduction_info->pre_deduced_arg_indices.count(arg_index)) {
-			++arg_index;
-		}
-
-		if (param.kind() == TemplateParameterKind::Type && arg_index < arg_types.size()) {
-			ctor_template_args.push_back(TemplateTypeArg::makeType(
-				arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
-			++arg_index;
-			continue;
-		}
-
-		// Constructor templates don't have a separate namespace context
-		if (!tryAppendDefaultTemplateArg(param, template_params, ctor_template_args, NamespaceHandle{})) {
-			return std::nullopt;
-		}
-	}
+	InlineVector<TemplateTypeArg, 4> ctor_template_args =
+		std::move(deduction_candidate->template_args);
 
 	LazyMemberFunctionInfo lazy_info;
 	lazy_info.identity.original_member_node = emplace_node<ConstructorDeclarationNode>(ctor_decl);
