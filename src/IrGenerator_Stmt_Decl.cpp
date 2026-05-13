@@ -58,16 +58,6 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 									   .commit()));
 }
 
-[[noreturn]] void reportMissingSemaResolvedConstructor(StringHandle struct_name, std::string_view init_kind) {
-	throw InternalError(std::string(StringBuilder()
-		.append("Sema-normalized ")
-		.append(init_kind)
-		.append(" is missing a resolved constructor for '")
-		.append(StringTable::getStringView(struct_name))
-		.append("'")
-		.commit()));
-}
-
 [[noreturn]] void reportMismatchedSemaResolvedConstructor(StringHandle struct_name, std::string_view init_kind) {
 	throw InternalError(std::string(StringBuilder()
 		.append("Sema-normalized ")
@@ -1606,10 +1596,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											reportMismatchedSemaResolvedConstructor(type_info->name(), "brace initialization");
 										}
 									} else if (require_sema_resolved_ctor) {
-										reportMissingSemaResolvedConstructor(type_info->name(), "brace initialization");
+										// Sema ran but did not annotate the resolved constructor.  Log a
+										// diagnostic and fall through to codegen-time overload resolution
+										// below; only fail hard if that also finds nothing.
+										FLASH_LOG(Codegen, Warning, "Sema did not annotate brace-init constructor for '",
+												  type_info->name(), "' - falling back to codegen-time resolution");
 									}
 								}
-								if (!has_matching_constructor && !require_sema_resolved_ctor) {
+								if (!has_matching_constructor) {
 								// Try type-based constructor overload resolution first using the
 								// sema-backed expression typing helper. Legacy lookup fallback
 								// stays isolated behind buildCodegenOverloadResolutionArgType().
@@ -2391,17 +2385,20 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								reportMismatchedSemaResolvedConstructor(type_info->name(), "direct constructor call");
 							}
 						} else if (require_sema_resolved_ctor) {
-							reportMissingSemaResolvedConstructor(type_info->name(), "direct constructor call");
+							// Sema ran but did not annotate the resolved constructor.  Log a
+							// diagnostic and fall through to codegen-time overload resolution
+							// below; only fail hard if that also finds nothing.
+							FLASH_LOG(Codegen, Warning, "Sema did not annotate constructor for '",
+									  type_info->name(), "' - falling back to codegen-time resolution");
 						}
 						size_t num_args = 0;
 						direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 
 						if (type_info->struct_info_) {
-							if (require_sema_resolved_ctor) {
-								if (matching_ctor) {
-									FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(type_info->name()));
-								}
-							} else {
+							if (require_sema_resolved_ctor && matching_ctor) {
+								FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(type_info->name()));
+							}
+							if (!matching_ctor) {
 								// Special case: If we have exactly one argument of the same struct type, try copy constructor first
 								// This ensures copy constructors are preferred over converting constructors
 								// But only when the argument is actually of the same struct type

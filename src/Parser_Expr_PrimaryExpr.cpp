@@ -3706,7 +3706,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (type_info.struct_info_) {
 								type_size = type_info.struct_info_->sizeInBits();
 							}
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(type_info.category()), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 
 							// Create ConstructorCallNode
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
@@ -3921,10 +3921,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error("Expected ')' after constructor arguments", current_token_);
 				}
 
-				// Create TypeSpecifierNode for the class
-				TypeIndex type_index = type_it->second->type_index_;
-				const SizeInBits type_size{getStructTypeSizeBits(type_index)};
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
+				// Create TypeSpecifierNode for the target type
+				const TypeInfo& type_info = *type_it->second;
+				TypeIndex type_index = type_info.type_index_;
+				SizeInBits type_size = type_info.sizeInBits();
+				if (type_info.struct_info_) {
+					type_size = type_info.struct_info_->sizeInBits();
+				}
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(type_info.category()), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 
 				// Create ConstructorCallNode
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));

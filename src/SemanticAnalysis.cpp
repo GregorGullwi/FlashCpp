@@ -3860,6 +3860,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 					resolved.constant_type = enum_info->underlying_type;
 					resolved.constant_size = enum_info->underlying_size;
 					resolved.constant_value = static_cast<unsigned long long>(enum_info->getEnumeratorValue(name_handle));
+					resolved.enum_owner_type_index = owner_type_info->type_index_;
 					return resolved;
 				}
 			}
@@ -4661,7 +4662,35 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					ctor_member_ctx && ctor_member_ctx->type_index.is_valid()) {
 					resolved_type = resolveTypeSpecifierForSelfReference(resolved_type, ctor_member_ctx->type_index);
 				}
-				return canonicalizeType(resolved_type);
+				if (const CanonicalTypeId id = canonicalizeType(resolved_type))
+					return id;
+				// Fallback: the TypeSpecifierNode may carry an unresolved type name
+				// (e.g. a functional enum cast like `__cmp_cat::_Ord(value)` where the
+				// TypeIndex was not baked in at parse time).  Try looking up the type by
+				// the token name so constructor overload resolution can find the right overload.
+				{
+					StringHandle name_handle = resolved_type.token().handle();
+					FLASH_LOG(Types, Trace, "inferExpressionType ConstructorCallNode fallback: token=",
+							  name_handle.isValid() ? StringTable::getStringView(name_handle) : "(invalid)",
+							  " type_index.valid=", resolved_type.type_index().is_valid(),
+							  " category=", static_cast<int>(resolved_type.type_index().category()));
+					if (name_handle.isValid()) {
+						auto it = getTypesByNameMap().find(name_handle);
+						if (it == getTypesByNameMap().end() && resolved_type.type_index().is_valid()) {
+							// The TypeIndex carries the category/index; derive the registered name
+							// from it as an alternative lookup key.
+							if (const TypeInfo* ti = tryGetTypeInfo(resolved_type.type_index())) {
+								it = getTypesByNameMap().find(ti->name());
+							}
+						}
+						if (it != getTypesByNameMap().end() && it->second) {
+							CanonicalTypeDesc desc;
+							desc.type_index = it->second->type_index_;
+							return type_context_.intern(desc);
+						}
+					}
+				}
+				return {};
 			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				const ASTNode& target_type_node = e.target_type();
 				if (target_type_node.has_value() && target_type_node.template is<TypeSpecifierNode>())
@@ -4692,6 +4721,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						case ResolvedQualifiedIdentifierInfo::Kind::StaticMember:
 							return canonicalizeType(resolved->type);
 						case ResolvedQualifiedIdentifierInfo::Kind::EnumConstant: {
+							// Fast path: use the stored enum owner TypeIndex if available.
+							if (resolved->enum_owner_type_index.is_valid()) {
+								CanonicalTypeDesc desc;
+								desc.type_index = resolved->enum_owner_type_index;
+								return type_context_.intern(desc);
+							}
 							NamespaceHandle ns_handle = e.namespace_handle();
 							if (!ns_handle.isGlobal()) {
 								std::string_view owner_name = gNamespaceRegistry.getName(ns_handle);
@@ -4869,15 +4904,41 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				throw InternalError("Unexpected expression value category for overload-resolution argument");
 		}
 	};
+	auto storeArgType = [this, &arg](const TypeSpecifierNode& type) {
+		if (arg.is<ExpressionNode>()) {
+			overload_resolution_arg_types_[getExpressionKey(arg)] = type;
+		}
+	};
+
+	if (arg.is<ExpressionNode>()) {
+		const auto& expr = arg.as<ExpressionNode>();
+		if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
+			const TypeSpecifierNode& ctor_type = ctor_call->type_node();
+			if (ctor_type.type_index().is_valid()) {
+				if (const TypeInfo* ctor_type_info = tryGetTypeInfo(ctor_type.type_index());
+					ctor_type_info && ctor_type_info->isEnum()) {
+					TypeSpecifierNode enum_arg_type(
+						ctor_type_info->type_index_.withCategory(TypeCategory::Enum),
+						ctor_type_info->sizeInBits(),
+						ctor_type.token(),
+						ctor_type.cv_qualifier(),
+						ReferenceQualifier::None);
+					applyExpressionValueCategory(enum_arg_type);
+					storeArgType(enum_arg_type);
+					if (inferred_type_id) {
+						CanonicalTypeDesc desc;
+						desc.type_index = ctor_type_info->type_index_.withCategory(TypeCategory::Enum);
+						*inferred_type_id = type_context_.intern(desc);
+					}
+					return enum_arg_type;
+				}
+			}
+		}
+	}
 	if (const CanonicalTypeId inferred_id = inferExpressionType(arg)) {
 		if (inferred_type_id)
 			*inferred_type_id = inferred_id;
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
-		auto storeArgType = [this, &arg](const TypeSpecifierNode& type) {
-			if (arg.is<ExpressionNode>()) {
-				overload_resolution_arg_types_[getExpressionKey(arg)] = type;
-			}
-		};
 		applyExpressionValueCategory(arg_type);
 		storeArgType(arg_type);
 		return arg_type;
@@ -6970,6 +7031,10 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		// that sema does not yet mirror locally.
 		CanonicalTypeId inferred_arg_type_id{};
 		auto arg_type_opt = buildOverloadResolutionArgType(arg, &inferred_arg_type_id);
+		FLASH_LOG_FORMAT(Types, Trace, "tryAnnotateCtorArgConversion: ctor='{}' arg_type={} arg_cat={}",
+			StringTable::getStringView(type_info->name()),
+			arg_type_opt.has_value() ? "ok" : "nullopt",
+			arg_type_opt.has_value() ? static_cast<int>(arg_type_opt->category()) : -1);
 		if (!arg_type_opt.has_value()) {
 			arg_types.clear();
 			inferred_arg_type_ids.clear();

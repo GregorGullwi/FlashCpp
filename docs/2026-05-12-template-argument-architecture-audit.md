@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-13
+**Last updated:** 2026-05-13 (post PR #1502)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -22,12 +22,16 @@ C++20 requires template argument interpretation to be driven by declaration
 context, name lookup, dependency, the current instantiation, two-phase lookup,
 deduction rules, constraints, and overload resolution. FlashCpp often decides
 the type/value/template-template category before the target template parameter
-is authoritative, then repairs or reinterprets the argument later. Static
-`constexpr` behavior is more stable than before: scalar static-member folding
-is explicit, normalized constant bytes are preferred when available, recursive
-base-member evaluation is bounded, and static-member substitution ordering is
-better defined. Those improvements reduce regressions but do not yet provide a
-fully semantic C++20 template pipeline.
+is authoritative, then repairs or reinterprets the argument later. Several
+recent improvements reduce regressions: scalar static-member folding is
+explicit with normalized bytes preferred and bounded recursion; struct member
+function codegen has per-function IR snapshots that roll back only the failing
+member's IR while preserving earlier members; sema constructor annotation is
+advisory and codegen falls through to runtime overload resolution when sema
+omits it; and enum functional casts are now consistently categorized as
+`TypeCategory::Enum` across parser, overload-resolution, and sema type-inference
+layers. These improvements reduce regressions but do not yet provide a fully
+semantic C++20 template pipeline.
 
 ## Current representations
 
@@ -207,11 +211,55 @@ Current behavior in this area is:
   (no struct/array static-member folding in that path);
 - normalized bytes are used as the preferred folded source when present;
 - recursive base-member patterns such as `value = base::value + c` are handled
-  with a bounded recursion policy;
+  with a bounded recursion policy (depth limit `MAX_RECURSIVE_STATIC_EVAL_DEPTH = 64`);
 - template static-member early normalization applies template-parameter
-  substitution before expression-level substitution.
+  substitution before expression-level substitution;
+- struct member function codegen takes a per-function IR snapshot before each
+  member and rolls back only the failing member's partial IR on exception,
+  preserving successfully emitted earlier members;
+- the `sema_normalized_current_function_` flag is saved and restored across
+  struct codegen frames to prevent stale state from bleeding into nested struct
+  member processing;
+- alias types that resolve to non-struct concrete types (e.g. type-trait
+  results like `remove_reference<T>::type`) now participate in codegen size
+  resolution through a TypeInfo-first/TypeSpecifier fallback chain before the
+  struct-size path.
 
-## Name lookup architecture
+### Constructor resolution and sema annotation
+
+The codegen layer resolves constructor calls in two tiers. `SemanticAnalysis`
+runs first and attempts to annotate the winning constructor directly onto the
+AST node (`sema_normalized_current_function_` flag marks the function as
+sema-processed). When sema annotation is present codegen uses it directly;
+a mismatch is a hard internal error. When sema annotation is absent codegen
+logs a warning and falls through to runtime overload resolution, failing hard
+only if that also finds no match. This soft-fallback design allows the
+compiler to proceed in cases where sema's type-inference pipeline does not yet
+cover the full range of constructor call forms. The goal is to widen sema
+coverage until the fallback is never exercised for well-formed code.
+
+`inferExpressionType` for `ConstructorCallNode` has a name-based fallback when
+`canonicalizeType` returns an invalid id: it looks up the type by token name
+in the type-by-name map (or via the TypeIndex-derived registered name) and
+synthesizes a `CanonicalTypeId` from the found `TypeInfo`. This handles
+functional enum casts such as `__cmp_cat::_Ord(value)` where the TypeIndex was
+not baked in at parse time.
+
+`buildOverloadResolutionArgType` detects enum functional casts at the
+call-site argument level: when a constructor-call argument targets an enum
+type, it returns a `TypeCategory::Enum` TypeSpecifierNode regardless of the
+TypeIndex category stored on the node. `buildConversionPlan` additionally
+normalizes stale TypeIndex categories by consulting the TypeInfo table for
+both the from-type and to-type before comparison. Parser constructor-call sites
+now use `type_info.category()` rather than unconditionally hardcoding
+`TypeCategory::Struct`, so enum and other non-struct types get the correct
+category tag at parse time.
+
+`ResolvedQualifiedIdentifierInfo` carries an `enum_owner_type_index` field
+populated during qualified identifier lookup when an enumerator is resolved.
+The type-inference fast path for `Kind::EnumConstant` uses this stored
+TypeIndex directly, avoiding the O(N) namespace-name-map lookup that the
+fallback path requires.
 
 ### Ordinary and qualified lookup
 
@@ -286,6 +334,16 @@ The architecture is not yet the C++20 deduction model. Important gaps include:
   work.
 - Static constexpr scalar-member folding is now narrower and more deterministic,
   preferring normalized bytes and bounded recursive base evaluation.
+- Struct member function codegen uses per-function IR snapshots; a codegen
+  failure in one member rolls back only that member's partial IR, preserving
+  successfully emitted earlier members.
+- Sema constructor annotation is soft: absent annotation triggers a logged
+  warning and a codegen-time overload resolution fallback rather than an
+  internal error, failing hard only if codegen resolution also fails.
+- Enum functional casts are normalized to `TypeCategory::Enum` at parser
+  construction, overload-resolution conversion matching, and sema type-inference
+  layers; `ResolvedQualifiedIdentifierInfo` carries a stored `enum_owner_type_index`
+  for a direct fast-path type inference on enum constants.
 
 ### Non-conforming or structurally risky areas
 
@@ -392,18 +450,35 @@ single parser bug; it is the absence of one semantic template system that owns:
    source of truth and write back normalized bytes only after semantic success.
 
 5. **Strengthen substitution ordering invariants**  
-   Keep the new "template-parameter substitution before expression substitution"
+   Keep the "template-parameter substitution before expression substitution"
    ordering as invariant and apply it consistently across class/member/alias
    static initializer normalization paths.
 
-6. **Add regression coverage focused on the new behavior envelope**  
+6. **Widen sema constructor annotation coverage to eliminate codegen fallback**  
+   The current soft fallback (sema omits annotation → codegen-time resolution)
+   is a safety net for unhandled ConstructorCallNode forms. Extend sema coverage
+   in `inferExpressionType` and `tryAnnotateConstructorCallArgConversions` until
+   the fallback warning is never emitted for well-formed code. The hard failure
+   for mismatched annotations is already correct and should be preserved.
+
+7. **Extend alias size resolution to cover all concrete alias targets**  
+   The alias-size fallback chain (TypeInfo size → TypeSpecifier size → struct
+   size) should be generalized and shared so any path that needs a concrete byte
+   size for an alias-derived type uses the same resolution order.
+
+8. **Add regression coverage focused on the new behavior envelope**  
    Include:
    - recursive base static constexpr chains;
    - scalar-vs-aggregate fold boundaries;
    - template static members that depend on substituted alias/non-type args;
-   - recursion-depth boundary diagnostics/failure mode.
+   - recursion-depth boundary diagnostics/failure mode;
+   - struct with multiple member functions, one of which fails codegen (verify
+     IR rollback preserves already-emitted members);
+   - enum functional cast overload resolution (verify TypeCategory::Enum is
+     consistently chosen over TypeCategory::Struct or Int);
+   - qualified enum constant type inference via `enum_owner_type_index` fast path.
 
-7. **Introduce semantic invariants and remove repair paths in stages**  
+9. **Introduce semantic invariants and remove repair paths in stages**  
    After each phase, convert one class of codegen fallback into an invariant
    check (or hard error in internal paths) so non-semantic backdoors do not
    silently reappear.
