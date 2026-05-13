@@ -985,7 +985,20 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (should_parse_as_template) {
-				template_args = parse_explicit_template_arguments();
+				std::vector<ASTNode> template_arg_syntax_nodes;
+				if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(type_name);
+					alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
+					template_args = parse_explicit_template_arguments(
+						alias_template_opt->as<TemplateAliasNode>().template_parameters(),
+						&template_arg_syntax_nodes);
+				} else if (auto class_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+						   class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+					template_args = parse_explicit_template_arguments(
+						class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+						&template_arg_syntax_nodes);
+				} else {
+					template_args = parse_explicit_template_arguments();
+				}
 			}
 			if (template_args.has_value()) {
 				if (auto template_opt = gTemplateRegistry.lookupTemplate(type_name);

@@ -1597,6 +1597,16 @@ private:
 	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments();	// NEW: Parse explicit template arguments like <int, float>
 	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes);
 	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes);
+	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(
+		std::span<const TemplateParameterNode> target_template_params,
+		std::vector<ASTNode>* out_type_nodes);
+	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(
+		std::span<const TemplateParameterNode> target_template_params,
+		InlineVector<ASTNode, 4>* out_type_nodes);
+	void classifyExplicitTemplateArgumentsAgainstParameters(
+		std::span<const TemplateParameterNode> target_template_params,
+		InlineVector<TemplateTypeArg, 4>& template_args,
+		const std::vector<ASTNode>* argument_syntax_nodes);
 	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
 	ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)
 	ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);	 // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
@@ -2797,6 +2807,9 @@ public:	// Public methods for template instantiation
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
 		StringHandle current_owner_type_name);
+	ASTNode substituteTemplateParameters(
+		const ASTNode& node,
+		const TemplateInstantiationContext& context);
 
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
@@ -3179,6 +3192,38 @@ private:	 // Resume private methods
 
 	// Lookup symbol with template parameter checking
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
+
+	void filterPhase1OrdinaryFunctionOverloads(std::vector<ASTNode>& overloads) {
+		if (phase1_cutoff_line_ == 0) {
+			return;
+		}
+		auto declaration_is_after_definition = [&](const Token& decl_tok) {
+			if (decl_tok.file_index() != phase1_cutoff_file_idx_) {
+				return false;
+			}
+			size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
+			size_t cutoff_src_line = lexer_.getSourceLine(phase1_cutoff_line_);
+			return (decl_src_line > 0 && cutoff_src_line > 0)
+				? decl_src_line > cutoff_src_line
+				: decl_tok.line() > phase1_cutoff_line_;
+		};
+		overloads.erase(
+			std::remove_if(
+				overloads.begin(),
+				overloads.end(),
+				[&](const ASTNode& overload) {
+					if (overload.is<FunctionDeclarationNode>()) {
+						return declaration_is_after_definition(
+							overload.as<FunctionDeclarationNode>().decl_node().identifier_token());
+					}
+					if (overload.is<TemplateFunctionDeclarationNode>()) {
+						return declaration_is_after_definition(
+							overload.as<TemplateFunctionDeclarationNode>().function_decl_node().decl_node().identifier_token());
+					}
+					return false;
+				}),
+			overloads.end());
+	}
 
 	bool hasActiveTemplateParameters() const {
 		return !current_template_params_.empty();

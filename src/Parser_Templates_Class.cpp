@@ -1315,7 +1315,16 @@ ParseResult Parser::parse_template_declaration() {
 			advance();
 
 			// Parse template arguments: <int>, <float>, etc.
-			auto template_args_opt = parse_explicit_template_arguments();
+			std::optional<InlineVector<TemplateTypeArg, 4>> template_args_opt;
+			std::vector<ASTNode> template_arg_syntax_nodes;
+			if (auto class_template_opt = gTemplateRegistry.lookupTemplate(template_name);
+				class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>()) {
+				template_args_opt = parse_explicit_template_arguments(
+					class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+					&template_arg_syntax_nodes);
+			} else {
+				template_args_opt = parse_explicit_template_arguments();
+			}
 			if (!template_args_opt.has_value()) {
 				return ParseResult::error("Expected template arguments in specialization", current_token_);
 			}

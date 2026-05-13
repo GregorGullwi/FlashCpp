@@ -4218,6 +4218,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				auto all_overloads = gSymbolTable.lookup_all(identifier_token.value());
+				filterPhase1OrdinaryFunctionOverloads(all_overloads);
 				all_overloads.erase(
 					std::remove_if(
 						all_overloads.begin(),
@@ -4593,6 +4594,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				};
 
 				auto all_overloads = gSymbolTable.lookup_all(identifier_token.value());
+				filterPhase1OrdinaryFunctionOverloads(all_overloads);
 
 				std::vector<TypeSpecifierNode> arg_types;
 				bool all_arg_types_known = true;
@@ -5072,7 +5074,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (should_try_template && peek() == "<"_tok) {
 					// Try to parse as template instantiation with member access
-					auto explicit_template_args = parse_explicit_template_arguments();
+					std::optional<InlineVector<TemplateTypeArg, 4>> explicit_template_args;
+					std::vector<ASTNode> explicit_template_arg_nodes;
+					if (identifierType.has_value() && identifierType->is<TemplateFunctionDeclarationNode>()) {
+						explicit_template_args = parse_explicit_template_arguments(
+							identifierType->as<TemplateFunctionDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					} else if (auto template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
+							   template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+						explicit_template_args = parse_explicit_template_arguments(
+							template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					} else if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(identifier_token.value());
+							   alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
+						explicit_template_args = parse_explicit_template_arguments(
+							alias_template_opt->as<TemplateAliasNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					} else if (auto variable_template_opt = gTemplateRegistry.lookupVariableTemplate(identifier_token.value());
+							   variable_template_opt.has_value() &&
+							   variable_template_opt->is<TemplateVariableDeclarationNode>()) {
+						explicit_template_args = parse_explicit_template_arguments(
+							variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					} else {
+						explicit_template_args = parse_explicit_template_arguments();
+					}
 
 					if (explicit_template_args.has_value()) {
 						// Store parsed template args in member variable for cross-function access
@@ -5938,7 +5964,46 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// If identifierType is null (not found), default to true (might be a template)
 
 			if (should_try_template_args && peek() == "<"_tok) {
-				explicit_template_args = parse_explicit_template_arguments(&explicit_template_arg_nodes);
+				auto parse_contextual_template_args = [&]() -> std::optional<InlineVector<TemplateTypeArg, 4>> {
+					if (identifierType.has_value() && identifierType->is<TemplateFunctionDeclarationNode>()) {
+						return parse_explicit_template_arguments(
+							identifierType->as<TemplateFunctionDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					}
+					if (identifierType.has_value() && identifierType->is<TemplateVariableDeclarationNode>()) {
+						return parse_explicit_template_arguments(
+							identifierType->as<TemplateVariableDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					}
+					if (auto template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
+						template_opt.has_value()) {
+						if (template_opt->is<TemplateFunctionDeclarationNode>()) {
+							return parse_explicit_template_arguments(
+								template_opt->as<TemplateFunctionDeclarationNode>().template_parameters(),
+								&explicit_template_arg_nodes);
+						}
+						if (template_opt->is<TemplateClassDeclarationNode>()) {
+							return parse_explicit_template_arguments(
+								template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+								&explicit_template_arg_nodes);
+						}
+					}
+					if (auto alias_template_opt = gTemplateRegistry.lookup_alias_template(identifier_token.value());
+						alias_template_opt.has_value() && alias_template_opt->is<TemplateAliasNode>()) {
+						return parse_explicit_template_arguments(
+							alias_template_opt->as<TemplateAliasNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					}
+					if (auto variable_template_opt = gTemplateRegistry.lookupVariableTemplate(identifier_token.value());
+						variable_template_opt.has_value() &&
+						variable_template_opt->is<TemplateVariableDeclarationNode>()) {
+						return parse_explicit_template_arguments(
+							variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					}
+					return parse_explicit_template_arguments(&explicit_template_arg_nodes);
+				};
+				explicit_template_args = parse_contextual_template_args();
 				// If parsing failed, it might be a less-than operator, so continue normally
 
 				// After template arguments, check for :: to handle Template<T>::member syntax
@@ -6638,6 +6703,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							// Perform overload resolution for regular functions
 							// First, get all overloads of this function
 							auto all_overloads = gSymbolTable.lookup_all(identifier_token.value());
+							filterPhase1OrdinaryFunctionOverloads(all_overloads);
 
 							// Extract argument types
 							std::vector<TypeSpecifierNode> arg_types;

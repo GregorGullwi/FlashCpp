@@ -793,7 +793,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
-		if (gTemplateRegistry.lookupVariableTemplate(name_handle).has_value()) {
+		TemplateNameLookupRequest ordinary_template_lookup_request;
+		ordinary_template_lookup_request.name = name_handle;
+		ordinary_template_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
+		ordinary_template_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+		TemplateNameLookupResult ordinary_template_lookup =
+			gTemplateRegistry.lookupTemplateName(ordinary_template_lookup_request);
+
+		if (ordinary_template_lookup.hasVariableTemplate()) {
 			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
@@ -854,8 +861,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
-		if (gTemplateRegistry.lookup_alias_template(name_handle).has_value() ||
-			gTemplateRegistry.isClassTemplate(name_handle) ||
+		if (ordinary_template_lookup.hasAliasTemplate() ||
+			ordinary_template_lookup.hasClassTemplate() ||
 			findTypeByName(name_handle) != nullptr) {
 			return { SimpleTemplateArgKind::TypeLike, std::nullopt };
 		}
@@ -1485,14 +1492,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									if (candidate_name.empty()) {
 										return false;
 									}
-									if (gTemplateRegistry.lookup_alias_template(candidate_name).has_value()) {
-										return true;
-									}
-									if (gTemplateRegistry.lookupTemplate(candidate_name).has_value()) {
-										return true;
-									}
-									return gTemplateRegistry.isClassTemplate(
-										StringTable::getOrInternStringHandle(candidate_name));
+									TemplateNameLookupRequest request;
+									request.name = StringTable::getOrInternStringHandle(candidate_name);
+									request.lookup_kind = TemplateNameLookupKind::Qualified;
+									request.timing = TemplateNameLookupTiming::PointOfDefinition;
+									TemplateNameLookupResult lookup = gTemplateRegistry.lookupTemplateName(request);
+									return lookup.hasAliasTemplate() ||
+										   lookup.hasClassTemplate() ||
+										   lookup.hasFunctionTemplate();
 								};
 
 								std::string_view qualifier_name =
@@ -1686,7 +1693,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								} else {
 							// Check if this identifier is a template alias (like void_t)
 							// Template aliases may resolve to concrete types even when used with dependent arguments
-									auto alias_opt = gTemplateRegistry.lookup_alias_template(id.name());
+									TemplateNameLookupRequest alias_lookup_request;
+									alias_lookup_request.name = StringTable::getOrInternStringHandle(id.name());
+									alias_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
+									alias_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+									TemplateNameLookupResult alias_lookup =
+										gTemplateRegistry.lookupTemplateName(alias_lookup_request);
+									auto alias_opt = alias_lookup.firstDeclarationOfKind(
+										TemplateDeclarationKind::AliasTemplate);
 									if (alias_opt.has_value()) {
 										const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 										TypeCategory target_type = alias_node.target_type_node().type();
@@ -2311,7 +2325,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			if (const TypeInfo* type_info = tryGetTypeInfo(idx)) {
 				std::string_view type_name = StringTable::getStringView(type_info->name());
 				// Check if this is a template primary (not an instantiation which would have underscores)
-				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+				TemplateNameLookupRequest primary_lookup_request;
+				primary_lookup_request.name = StringTable::getOrInternStringHandle(type_name);
+				primary_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
+				primary_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+				TemplateNameLookupResult primary_lookup =
+					gTemplateRegistry.lookupTemplateName(primary_lookup_request);
+				auto template_opt = primary_lookup.firstDeclarationOfKind(
+					TemplateDeclarationKind::ClassTemplate);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					// This struct type is a template primary
 					// Check if type_name contains any current template parameters
@@ -2390,6 +2411,239 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 	std::vector<ASTNode> parsed_type_nodes;
 	auto parsed_args = parse_explicit_template_arguments(&parsed_type_nodes);
+	if (!parsed_args.has_value()) {
+		return std::nullopt;
+	}
+
+	*out_type_nodes = std::move(parsed_type_nodes);
+	return parsed_args;
+}
+
+void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
+	std::span<const TemplateParameterNode> target_template_params,
+	InlineVector<TemplateTypeArg, 4>& template_args,
+	const std::vector<ASTNode>* argument_syntax_nodes) {
+	if (target_template_params.empty() || template_args.empty()) {
+		return;
+	}
+
+	auto syntaxNodeForArg = [&](size_t index) -> const ASTNode* {
+		if (argument_syntax_nodes == nullptr || index >= argument_syntax_nodes->size()) {
+			return nullptr;
+		}
+		return &(*argument_syntax_nodes)[index];
+	};
+
+	auto nameFromExpression = [](const ExpressionNode& expr) -> StringHandle {
+		if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
+			return StringTable::getOrInternStringHandle(id->name());
+		}
+		if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+			return tparam_ref->param_name();
+		}
+		if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
+			return StringTable::getOrInternStringHandle(qual_id->full_name());
+		}
+		return StringHandle{};
+	};
+
+	auto nameFromSyntaxOrArg = [&](const ASTNode* syntax_node, const TemplateTypeArg& arg) -> StringHandle {
+		if (syntax_node != nullptr) {
+			if (syntax_node->is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& type_spec = syntax_node->as<TypeSpecifierNode>();
+				if (!type_spec.token().value().empty()) {
+					return StringTable::getOrInternStringHandle(type_spec.token().value());
+				}
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+					return type_info->name();
+				}
+			} else if (syntax_node->is<ExpressionNode>()) {
+				StringHandle expr_name = nameFromExpression(syntax_node->as<ExpressionNode>());
+				if (expr_name.isValid()) {
+					return expr_name;
+				}
+			}
+		}
+		if (arg.is_template_template_arg && arg.template_name_handle.isValid()) {
+			return arg.template_name_handle;
+		}
+		if (arg.dependent_name.isValid()) {
+			return arg.dependent_name;
+		}
+		if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+			return type_info->name();
+		}
+		return StringHandle{};
+	};
+
+	auto makeTypeArgForName = [&](StringHandle name) -> std::optional<TemplateTypeArg> {
+		if (!name.isValid()) {
+			return std::nullopt;
+		}
+		if (const TypeInfo* type_info = findTypeByName(name)) {
+			TemplateTypeArg result = TemplateTypeArg::makeType(
+				type_info->type_index_.withCategory(TypeCategory::UserDefined));
+			if (type_info->isDependentPlaceholder() || type_info->is_incomplete_instantiation_) {
+				result.is_dependent = true;
+				result.dependent_name = name;
+			}
+			return result;
+		}
+		if (auto param_kind = currentTemplateParamKind(name);
+			param_kind.has_value() && *param_kind != TemplateParameterKind::NonType) {
+			TemplateTypeArg result;
+			result.type_index = nativeTypeIndex(TypeCategory::UserDefined);
+			result.is_dependent = true;
+			result.dependent_name = name;
+			return result;
+		}
+		if (gTemplateRegistry.lookup_alias_template(name).has_value() ||
+			gTemplateRegistry.isClassTemplate(name)) {
+			TemplateTypeArg result;
+			result.type_index = nativeTypeIndex(TypeCategory::UserDefined);
+			result.is_dependent = true;
+			result.dependent_name = name;
+			return result;
+		}
+		return std::nullopt;
+	};
+
+	auto makeValueArgForSyntax = [&](const ASTNode* syntax_node,
+									 const TemplateTypeArg& existing_arg,
+									 const TemplateParameterNode& param)
+		-> std::optional<TemplateTypeArg> {
+		if (syntax_node != nullptr && syntax_node->is<ExpressionNode>()) {
+			const ASTNode& expr_node = *syntax_node;
+			if (auto const_value = try_evaluate_constant_expression(expr_node)) {
+				TemplateTypeArg result = TemplateTypeArg::makeValue(
+					const_value->value,
+					const_value->type_index.category() != TypeCategory::Invalid
+						? const_value->type_index.category()
+						: const_value->type);
+				return result;
+			}
+			const ExpressionNode& expr = syntax_node->as<ExpressionNode>();
+			StringHandle name = nameFromExpression(expr);
+			TypeCategory category = param.has_type()
+				? param.type_specifier_node().type()
+				: TypeCategory::Int;
+			return TemplateTypeArg::makeDependentValue(name, category, 0, expr_node);
+		}
+
+		StringHandle name = nameFromSyntaxOrArg(syntax_node, existing_arg);
+		if (name.isValid()) {
+			for (const auto& subst : template_param_substitutions_) {
+				if (subst.param_name == name && subst.is_value_param) {
+					return TemplateTypeArg::makeValue(subst.value, subst.value_type);
+				}
+			}
+			if (auto symbol_lookup = lookup_symbol_with_template_check(name);
+				symbol_lookup.has_value() && symbol_lookup->is<VariableDeclarationNode>()) {
+				const VariableDeclarationNode& variable_decl = symbol_lookup->as<VariableDeclarationNode>();
+				if (variable_decl.initializer().has_value()) {
+					if (auto const_value = try_evaluate_constant_expression(*variable_decl.initializer())) {
+						return TemplateTypeArg::makeValue(const_value->value, const_value->type);
+					}
+				}
+			}
+			TypeCategory category = param.has_type()
+				? param.type_specifier_node().type()
+				: TypeCategory::Int;
+			return TemplateTypeArg::makeDependentValue(name, category);
+		}
+		return std::nullopt;
+	};
+
+	auto makeTemplateTemplateArgForName = [&](StringHandle name) -> std::optional<TemplateTypeArg> {
+		if (!name.isValid()) {
+			return std::nullopt;
+		}
+		if (gTemplateRegistry.lookup_alias_template(name).has_value() ||
+			gTemplateRegistry.lookupTemplate(name).has_value() ||
+			gTemplateRegistry.isClassTemplate(name) ||
+			(currentTemplateParamKind(name).has_value() &&
+			 *currentTemplateParamKind(name) == TemplateParameterKind::Template)) {
+			return TemplateTypeArg::makeTemplate(name);
+		}
+		return std::nullopt;
+	};
+
+	size_t arg_index = 0;
+	for (size_t param_index = 0;
+		 param_index < target_template_params.size() && arg_index < template_args.size();
+		 ++param_index) {
+		const TemplateParameterNode& param = target_template_params[param_index];
+		if (param.is_variadic()) {
+			while (arg_index < template_args.size()) {
+				const ASTNode* syntax_node = syntaxNodeForArg(arg_index);
+				TemplateTypeArg& arg = template_args[arg_index];
+				const bool was_pack = arg.is_pack;
+				StringHandle arg_name = nameFromSyntaxOrArg(syntax_node, arg);
+				std::optional<TemplateTypeArg> reclassified;
+				if (param.kind() == TemplateParameterKind::Type && arg.is_value) {
+					reclassified = makeTypeArgForName(arg_name);
+				} else if (param.kind() == TemplateParameterKind::NonType && !arg.is_value) {
+					reclassified = makeValueArgForSyntax(syntax_node, arg, param);
+				} else if (param.kind() == TemplateParameterKind::Template &&
+						   !arg.is_template_template_arg) {
+					reclassified = makeTemplateTemplateArgForName(arg_name);
+				}
+				if (reclassified.has_value()) {
+					reclassified->is_pack = was_pack;
+					arg = *reclassified;
+				}
+				++arg_index;
+			}
+			break;
+		}
+
+		const ASTNode* syntax_node = syntaxNodeForArg(arg_index);
+		TemplateTypeArg& arg = template_args[arg_index];
+		const bool was_pack = arg.is_pack;
+		StringHandle arg_name = nameFromSyntaxOrArg(syntax_node, arg);
+		std::optional<TemplateTypeArg> reclassified;
+		if (param.kind() == TemplateParameterKind::Type && arg.is_value) {
+			reclassified = makeTypeArgForName(arg_name);
+		} else if (param.kind() == TemplateParameterKind::NonType && !arg.is_value) {
+			reclassified = makeValueArgForSyntax(syntax_node, arg, param);
+		} else if (param.kind() == TemplateParameterKind::Template &&
+				   !arg.is_template_template_arg) {
+			reclassified = makeTemplateTemplateArgForName(arg_name);
+		}
+		if (reclassified.has_value()) {
+			reclassified->is_pack = was_pack;
+			arg = *reclassified;
+		}
+		++arg_index;
+	}
+}
+
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
+	std::span<const TemplateParameterNode> target_template_params,
+	std::vector<ASTNode>* out_type_nodes) {
+	auto parsed_args = parse_explicit_template_arguments(out_type_nodes);
+	if (parsed_args.has_value()) {
+		classifyExplicitTemplateArgumentsAgainstParameters(
+			target_template_params,
+			*parsed_args,
+			out_type_nodes);
+	}
+	return parsed_args;
+}
+
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
+	std::span<const TemplateParameterNode> target_template_params,
+	InlineVector<ASTNode, 4>* out_type_nodes) {
+	if (out_type_nodes == nullptr) {
+		auto parsed_args = parse_explicit_template_arguments();
+		if (parsed_args.has_value()) {
+			classifyExplicitTemplateArgumentsAgainstParameters(target_template_params, *parsed_args, nullptr);
+		}
+		return parsed_args;
+	}
+
+	std::vector<ASTNode> parsed_type_nodes;
+	auto parsed_args = parse_explicit_template_arguments(target_template_params, &parsed_type_nodes);
 	if (!parsed_args.has_value()) {
 		return std::nullopt;
 	}
