@@ -4915,10 +4915,18 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
 			const TypeSpecifierNode& ctor_type = ctor_call->type_node();
 			if (ctor_type.type_index().is_valid()) {
-				if (const TypeInfo* ctor_type_info = tryGetTypeInfo(ctor_type.type_index());
-					ctor_type_info && ctor_type_info->isEnum()) {
+				const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(ctor_type.type_index());
+				const TypeInfo* ctor_type_info = alias_info.terminal_type_info;
+				if (!ctor_type_info) {
+					ctor_type_info = tryGetTypeInfo(ctor_type.type_index());
+				}
+				if (ctor_type_info && ctor_type_info->isEnum()) {
+					TypeIndex enum_type_index = alias_info.type_index.is_valid()
+						? alias_info.type_index
+						: ctor_type_info->type_index_;
+					enum_type_index = enum_type_index.withCategory(TypeCategory::Enum);
 					TypeSpecifierNode enum_arg_type(
-						ctor_type_info->type_index_.withCategory(TypeCategory::Enum),
+						enum_type_index,
 						ctor_type_info->sizeInBits(),
 						ctor_type.token(),
 						ctor_type.cv_qualifier(),
@@ -4927,7 +4935,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 					storeArgType(enum_arg_type);
 					if (inferred_type_id) {
 						CanonicalTypeDesc desc;
-						desc.type_index = ctor_type_info->type_index_.withCategory(TypeCategory::Enum);
+						desc.type_index = enum_type_index;
 						*inferred_type_id = type_context_.intern(desc);
 					}
 					return enum_arg_type;
@@ -6982,11 +6990,20 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 			type_info = type_it->second;
 		}
 	}
-	if (type_info && type_info->aliasTypeSpecifier()) {
-		const TypeSpecifierNode& alias_spec = *type_info->aliasTypeSpecifier();
-		if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_spec.type_index())) {
-			type_info = alias_target_info;
-			resolved_type_spec = alias_spec;
+	const StringHandle spelled_constructed_name = resolved_type_spec.token().handle();
+	if (type_info) {
+		TypeIndex alias_source_index = type_info->registeredTypeIndex().withCategory(type_info->typeEnum());
+		if (!alias_source_index.is_valid()) {
+			alias_source_index = type_info->type_index_.withCategory(type_info->typeEnum());
+		}
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(alias_source_index);
+		if (resolved_alias.terminal_type_info) {
+			type_info = resolved_alias.terminal_type_info;
+			if (resolved_alias.type_index.is_valid()) {
+				resolved_type_spec.set_type_index(resolved_alias.type_index);
+			} else {
+				resolved_type_spec.set_type_index(type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+			}
 		}
 	}
 	if (const MemberContext* member_context = getCurrentMemberContext();
@@ -6998,9 +7015,15 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 			StringHandle constructed_name = type_info ? type_info->name() : resolved_type_spec.token().handle();
 			const std::string_view current_base_template_name =
 				StringTable::getStringView(member_type_info->baseTemplateName());
-			if (constructed_name.isValid() &&
+			const bool terminal_name_matches =
+				constructed_name.isValid() &&
 				!current_base_template_name.empty() &&
-				current_base_template_name == StringTable::getStringView(constructed_name)) {
+				current_base_template_name == StringTable::getStringView(constructed_name);
+			const bool spelled_name_matches =
+				spelled_constructed_name.isValid() &&
+				!current_base_template_name.empty() &&
+				current_base_template_name == StringTable::getStringView(spelled_constructed_name);
+			if (terminal_name_matches || spelled_name_matches) {
 				type_info = member_type_info;
 			}
 		}
