@@ -427,6 +427,37 @@ behavior as compatibility constraints.
    Structural NTTP identity and definition-vs-POI lookup behavior are both
    enabled and covered by regression tests.
 
+### Targeted TODOs to close known conformance gaps
+
+1. **TODO: Preserve exact integral NTTP category during deferred evaluation**  
+   Never collapse evaluated integral NTTPs to a generic `int` category in
+   deferred-base/dependent evaluation paths. Keep original signedness/width/type
+   category so specialization identity, matching, and mangling remain C++20
+   correct.
+
+2. **TODO: Remove linear specialization fallback for integral mismatches**  
+   Replace O(N) "scan all specializations" fallback behavior in exact template
+   lookup with canonical argument normalization that preserves type identity and
+   allows stable hash/key lookup. This keeps behavior deterministic and avoids
+   lookup policy that can diverge from proper template-argument equivalence.
+
+3. **TODO: Treat namespace-qualified names as valid owners in constexpr paths**  
+   In static-member constexpr normalization/evaluation, distinguish namespace
+   owners from missing type/template owners. Namespace-qualified references must
+   participate in normal lookup/evaluation instead of being classified as
+   missing-owner deferrals.
+
+4. **TODO: Reject invalid `static constexpr` initializers instead of zero-fallback**  
+   Remove broad recoverable fallback that can zero-initialize non-constant
+   `static constexpr` members. Only defer where a precise dependent/missing-owner
+   condition is proven; otherwise produce the required hard diagnostic.
+
+5. **TODO: Simplify dependent NTTP concretization to a single evaluation pass**  
+   Ensure dependent-argument concretization does not perform duplicate
+   substitute/evaluate cycles that can diverge or hide lookup-order bugs.
+   Prefer deterministic order: name binding first, then one expression
+   substitution/evaluation attempt.
+
 ### Exit criteria
 
 - template argument kind is no longer decided by parser heuristics for ambiguous
@@ -450,3 +481,9 @@ behavior as compatibility constraints.
   recursive base-member chains, and depth-limit boundary behavior;
 - NTTP identity/equivalence coverage for enum, pointer/reference/member-pointer,
   `nullptr`, floating-point, and structural class-type arguments.
+- deferred-base NTTP cases proving no category collapse (`unsigned`, `long`,
+  `size_t`, fixed-width types) and stable specialization key selection;
+- static constexpr initializer diagnostics proving no silent zero-initialization
+  for non-constant expressions in non-dependent contexts;
+- namespace-qualified constexpr initializer references (`ns::value`) proving
+  owner resolution does not misclassify namespaces as missing owners.
