@@ -36,6 +36,7 @@ struct CallInfo {
 	StringHandle mangled_name;
 	StringHandle qualified_name;
 	std::span<const ASTNode> template_arguments;
+	const std::optional<FunctionCallDefinitionLookupRecord>* definition_lookup_record;
 	bool is_indirect;
 
 	// --- Factory helpers ---------------------------------------------------
@@ -51,6 +52,7 @@ struct CallInfo {
 		info.mangled_name          = node.mangled_name_handle();
 		info.qualified_name        = node.qualified_name_handle();
 		info.template_arguments    = node.template_arguments();
+		info.definition_lookup_record = &node.definition_lookup_record();
 		info.is_indirect           = node.callee().is_indirect();
 		return info;
 	}
@@ -68,6 +70,7 @@ struct CallMetadataCopyOptions {
 	bool copy_mangled_name = true;
 	bool copy_qualified_name = true;
 	bool copy_template_arguments = true;
+	bool copy_definition_lookup_record = true;
 };
 
 template <typename CallNodeT>
@@ -89,6 +92,11 @@ inline void copyCallMetadataFromInfo(
 			copied_template_args.push_back(template_arg);
 		}
 		target.set_template_arguments(std::move(copied_template_args));
+	}
+	if (options.copy_definition_lookup_record &&
+		source.definition_lookup_record != nullptr &&
+		source.definition_lookup_record->has_value()) {
+		target.set_definition_lookup_record(**source.definition_lookup_record);
 	}
 }
 
@@ -212,6 +220,16 @@ inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_template_arguments(std::move(template_args));
 	}
+}
+
+inline void setCallDefinitionLookupRecord(ExpressionNode& expr, const FunctionCallDefinitionLookupRecord& record) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_definition_lookup_record(record);
+	}
+}
+
+inline void setCallDefinitionLookupRecord(CallExprNode& call_expr, const FunctionCallDefinitionLookupRecord& record) {
+	call_expr.set_definition_lookup_record(record);
 }
 
 inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNode>&& template_args) {

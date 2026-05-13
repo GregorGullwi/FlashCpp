@@ -1062,6 +1062,7 @@ private:
 	size_t phase1_cutoff_line_ = 0;
 	size_t phase1_cutoff_file_idx_ = SIZE_MAX;
 	std::optional<Token> phase1_violation_token_;
+	const TemplateDefinitionLookupContext* current_template_definition_lookup_context_ = nullptr;
 
 	// Add parsing depth counter to detect infinite loops
 	// This is incremented/decremented in critical parsing functions
@@ -3227,18 +3228,28 @@ private:	 // Resume private methods
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
 
 	void filterPhase1OrdinaryFunctionOverloads(std::vector<ASTNode>& overloads) {
-		if (phase1_cutoff_line_ == 0) {
+		const TemplateDefinitionLookupContext* definition_context =
+			current_template_definition_lookup_context_;
+		const size_t cutoff_line =
+			definition_context != nullptr && definition_context->is_valid()
+			? definition_context->definition_line
+			: phase1_cutoff_line_;
+		const size_t cutoff_file_idx =
+			definition_context != nullptr && definition_context->is_valid()
+			? definition_context->definition_file_index
+			: phase1_cutoff_file_idx_;
+		if (cutoff_line == 0) {
 			return;
 		}
 		auto declaration_is_after_definition = [&](const Token& decl_tok) {
-			if (decl_tok.file_index() != phase1_cutoff_file_idx_) {
+			if (decl_tok.file_index() != cutoff_file_idx) {
 				return false;
 			}
 			size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
-			size_t cutoff_src_line = lexer_.getSourceLine(phase1_cutoff_line_);
+			size_t cutoff_src_line = lexer_.getSourceLine(cutoff_line);
 			return (decl_src_line > 0 && cutoff_src_line > 0)
 				? decl_src_line > cutoff_src_line
-				: decl_tok.line() > phase1_cutoff_line_;
+				: decl_tok.line() > cutoff_line;
 		};
 		overloads.erase(
 			std::remove_if(

@@ -1385,6 +1385,23 @@ void Parser::reparse_template_function_body(
 				phase1_violation_token_.reset();
 			}
 		}
+		TemplateDefinitionLookupContext definition_lookup_context;
+		definition_lookup_context.definition_line = phase1_cutoff_line_;
+		definition_lookup_context.definition_file_index = phase1_cutoff_file_idx_;
+		definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
+		if (current_function_ != nullptr && !current_function_->parent_struct_name().empty()) {
+			definition_lookup_context.current_instantiation_name =
+				StringTable::getOrInternStringHandle(current_function_->parent_struct_name());
+		}
+		substitution_context.definition_lookup_context = definition_lookup_context.is_valid()
+			? &definition_lookup_context
+			: nullptr;
+		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
+			current_template_definition_lookup_context_;
+		current_template_definition_lookup_context_ = substitution_context.definition_lookup_context;
+		auto restore_definition_lookup_context = ScopeGuard([&]() {
+			current_template_definition_lookup_context_ = previous_definition_lookup_context;
+		});
 
 		// Parse the body, substitute template parameters, then install as definition.
 		{

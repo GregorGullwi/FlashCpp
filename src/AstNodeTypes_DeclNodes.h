@@ -2635,6 +2635,36 @@ private:
 // Unified call-expression node (consolidation plan step 1)
 // ============================================================================
 
+// Definition-context lookup state used by the first two-phase lookup record.
+// This is intentionally small: it snapshots the lexical point and namespace in
+// which a template definition was parsed.  Consumers may re-run ordinary lookup
+// and ADL against the current symbol table only after filtering candidates to
+// declarations whose source token was visible at this definition point.
+struct TemplateDefinitionLookupContext {
+	size_t definition_line = 0;
+	size_t definition_file_index = SIZE_MAX;
+	NamespaceHandle definition_namespace{};
+	StringHandle current_instantiation_name{};
+
+	bool is_valid() const {
+		return definition_line != 0 && definition_file_index != SIZE_MAX;
+	}
+};
+
+// Per-call semantic record for non-dependent unqualified function calls whose
+// lookup was completed in the template definition context.  The callee pointer
+// follows the same stable FunctionDeclarationNode identity already stored by
+// CalleeDescriptor; the definition context documents the lookup boundary used
+// to exclude later point-of-instantiation declarations.
+struct FunctionCallDefinitionLookupRecord {
+	TemplateDefinitionLookupContext definition_context;
+	StringHandle callee_name{};
+	const FunctionDeclarationNode* resolved_function = nullptr;
+	StringHandle resolved_mangled_name{};
+	bool ordinary_lookup_included = true;
+	bool argument_dependent_lookup_included = true;
+};
+
 // Describes what kind of call site this is.
 enum class CalleeKind : uint8_t {
 	FreeFunction,           // Direct call to a free/namespace-scoped function
@@ -2743,6 +2773,15 @@ public:
 	std::span<const ASTNode> template_arguments() const { return template_arguments_; }
 	bool has_template_arguments() const { return !template_arguments_.empty(); }
 
+// --- Definition-context lookup record ---
+void set_definition_lookup_record(const FunctionCallDefinitionLookupRecord& record) {
+	definition_lookup_record_ = record;
+}
+const std::optional<FunctionCallDefinitionLookupRecord>& definition_lookup_record() const {
+	return definition_lookup_record_;
+}
+bool has_definition_lookup_record() const { return definition_lookup_record_.has_value(); }
+
 private:
 	CalleeDescriptor callee_;
 	ASTNode receiver_;                   // Object for member-style calls (empty when absent)
@@ -2751,6 +2790,7 @@ private:
 	StringHandle mangled_name_;          // Pre-computed mangled name
 	StringHandle qualified_name_;        // Source-level qualified name (e.g., "ns::func")
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments
+	std::optional<FunctionCallDefinitionLookupRecord> definition_lookup_record_;
 };
 
 // Constructor call node - represents constructor calls like T(args)
