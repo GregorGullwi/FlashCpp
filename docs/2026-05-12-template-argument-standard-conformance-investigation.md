@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-13
+**Last updated:** 2026-05-13 (post PR #1502)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -10,14 +10,30 @@ separate them.
 
 ## Baseline behavior to preserve during migration
 
-The current implementation already depends on a few static-`constexpr` behaviors
-that should be preserved through refactoring:
+The current implementation already depends on several behaviors that must be
+preserved through refactoring:
 
 1. expression-lowering fold attempts for static members are scalar-only;
 2. folded reads prefer normalized constant bytes when available;
-3. recursive base-member static-evaluation paths are bounded;
+3. recursive base-member static-evaluation paths are bounded (depth limit
+   `MAX_RECURSIVE_STATIC_EVAL_DEPTH = 64`);
 4. template static-member normalization applies template-parameter substitution
-   before expression-level substitution.
+   before expression-level substitution;
+5. struct member function codegen takes a per-function IR snapshot before each
+   member; on exception only the failing member's partial IR is rolled back
+   (`InstructionList::truncateTo`), earlier members are preserved;
+6. when sema omits a constructor annotation (`require_sema_resolved_ctor` is
+   set but no annotation is present) codegen logs a warning and falls through to
+   runtime overload resolution, failing hard only if that also finds no match —
+   this fallback must remain until sema coverage is complete;
+7. enum functional casts (`Enum(value)` constructor-call syntax) are
+   categorized as `TypeCategory::Enum`, not `TypeCategory::Struct`, across
+   the parser, overload-resolution conversion matching, and sema type-inference
+   layers; `ResolvedQualifiedIdentifierInfo::enum_owner_type_index` provides a
+   direct fast path for qualified enum-constant type inference;
+8. alias types that resolve to non-struct concrete types participate in codegen
+   size resolution through a TypeInfo-size → TypeSpecifier-size → struct-size
+   fallback chain.
 
 These rules are compatibility constraints while migrating ownership to semantic
 lookup, deduction, and instantiation services.
@@ -208,6 +224,13 @@ The target behavior:
 - ODR-use and immediate-constant contexts trigger materialization at the right
   time;
 - normalized bytes are a post-sema/codegen artifact, not the source of truth.
+
+Constructor resolution inside instantiated member functions should evolve from
+the current two-tier model (sema annotation preferred, codegen-time fallback
+when absent) to fully sema-owned overload resolution. The fallback path should
+be narrowed and eventually removed as sema type-inference coverage expands.
+Until then, the warning log from a missing annotation is the observable
+diagnostic signal for coverage gaps.
 
 ## Migration strategy
 
@@ -433,7 +456,11 @@ behavior as compatibility constraints.
    Never collapse evaluated integral NTTPs to a generic `int` category in
    deferred-base/dependent evaluation paths. Keep original signedness/width/type
    category so specialization identity, matching, and mangling remain C++20
-   correct.
+   correct. Enum functional casts already carry `TypeCategory::Enum` at parse
+   time and through overload resolution; the remaining gap is in
+   `makeEvaluatedDeferredBaseValueArg`, which can collapse any non-bool integer
+   NTTP to `TypeCategory::Int`. Apply the same TypeInfo-backed category lookup
+   that parser and overload-resolution layers now use.
 
 2. **TODO: Remove linear specialization fallback for integral mismatches**  
    Replace O(N) "scan all specializations" fallback behavior in exact template
@@ -458,6 +485,21 @@ behavior as compatibility constraints.
    Prefer deterministic order: name binding first, then one expression
    substitution/evaluation attempt.
 
+6. **TODO: Eliminate sema constructor annotation fallback for well-formed code**  
+   The current soft fallback (sema omits annotation → codegen-time overload
+   resolution with warning) is intentional while sema type-inference coverage is
+   incomplete. Extend `inferExpressionType` and
+   `tryAnnotateConstructorCallArgConversions` coverage in `SemanticAnalysis.cpp`
+   until the warning log is never emitted for valid C++20 code. Once coverage is
+   complete, convert the fallback to a hard `CompileError`.
+
+7. **TODO: Consolidate alias size resolution into a shared sema helper**  
+   The TypeInfo-size → TypeSpecifier-size → struct-size fallback chain in
+   `resolveCodegenSizeBits` should be extracted into a shared size-query service
+   used by all codegen paths that need a concrete byte/bit count for an
+   alias-resolved type, avoiding duplication across independent codegen call
+   sites.
+
 ### Exit criteria
 
 - template argument kind is no longer decided by parser heuristics for ambiguous
@@ -480,10 +522,20 @@ behavior as compatibility constraints.
 - static-member constexpr cases covering scalar gating, normalized-byte reads,
   recursive base-member chains, and depth-limit boundary behavior;
 - NTTP identity/equivalence coverage for enum, pointer/reference/member-pointer,
-  `nullptr`, floating-point, and structural class-type arguments.
+  `nullptr`, floating-point, and structural class-type arguments;
 - deferred-base NTTP cases proving no category collapse (`unsigned`, `long`,
   `size_t`, fixed-width types) and stable specialization key selection;
 - static constexpr initializer diagnostics proving no silent zero-initialization
   for non-constant expressions in non-dependent contexts;
 - namespace-qualified constexpr initializer references (`ns::value`) proving
-  owner resolution does not misclassify namespaces as missing owners.
+  owner resolution does not misclassify namespaces as missing owners;
+- struct with multiple member functions where one fails codegen, verifying that
+  the IR rollback preserves the already-emitted earlier members;
+- enum functional cast overload resolution, verifying `TypeCategory::Enum` is
+  consistently selected over `TypeCategory::Struct` at parser, overload, and
+  sema type-inference layers;
+- qualified enum constant expressions verifying `enum_owner_type_index` fast
+  path produces correct `CanonicalTypeId` without namespace-name-map traversal;
+- sema constructor annotation fallback: a ConstructorCallNode form not yet
+  covered by sema inference should compile successfully through codegen
+  resolution and emit the warning log, not crash.
