@@ -1636,9 +1636,13 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const std::vector<ASTNode>& func_params,
 	const std::vector<TypeSpecifierNode>& arg_types,
-	int recursion_depth) {
+	int recursion_depth,
+	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args) {
 	CallArgDeductionInfo deduction_info;
 	auto& param_name_to_arg = deduction_info.param_name_to_arg;
+	if (prebound_template_args != nullptr) {
+		param_name_to_arg = *prebound_template_args;
+	}
 	auto& pre_deduced_arg_indices = deduction_info.pre_deduced_arg_indices;
 	auto& func_param_to_call_arg_index = deduction_info.func_param_to_call_arg_index;
 
@@ -2049,12 +2053,14 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 	const InlineVector<TemplateParameterNode, 4>& template_params,
 	const FunctionDeclarationNode& func_decl,
 	const std::vector<TypeSpecifierNode>& arg_types,
-	int recursion_depth) {
+	int recursion_depth,
+	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args) {
 	return buildDeductionMapFromCallArgs(
 		template_params,
 		func_decl.parameter_nodes(),
 		arg_types,
-		recursion_depth);
+		recursion_depth,
+		prebound_template_args);
 }
 
 bool Parser::functionTemplateAcceptsCallArgumentCount(
@@ -3093,11 +3099,33 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		// so non-pack template params (T, U in template<T, U, ...Rest>) are pre-deduced
 		// from the corresponding call argument positions.
 		if (current_explicit_call_arg_types_ != nullptr) {
+			// C++20 [temp.arg.explicit]/3: explicitly specified template arguments
+			// are substituted before any remaining deduction is performed.  Seed the
+			// deduction map with those bindings so call-argument pre-deduction does
+			// not incorrectly reject an already-bound parameter pattern such as U*
+			// when the call argument is a null pointer constant.
+			std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> explicitly_bound_args;
+			size_t explicit_seed_idx = 0;
+			for (size_t param_idx = 0;
+				 param_idx < template_params.size() && explicit_seed_idx < explicit_types.size();
+				 ++param_idx) {
+				const TemplateParameterNode& param = template_params[param_idx];
+				if (param.is_variadic()) {
+					size_t remaining_args = explicit_types.size() - explicit_seed_idx;
+					size_t required_after = countRequiredTemplateArgsAfter(template_params, param_idx + 1);
+					size_t pack_size = remaining_args > required_after ? remaining_args - required_after : 0;
+					explicit_seed_idx += pack_size;
+					continue;
+				}
+				explicitly_bound_args.emplace(param.nameHandle(), explicit_types[explicit_seed_idx]);
+				++explicit_seed_idx;
+			}
 			deduction_info = buildDeductionMapFromCallArgs(
 				template_params,
 				func_decl,
 				*current_explicit_call_arg_types_,
-				recursion_depth);
+				recursion_depth,
+				&explicitly_bound_args);
 			if (!deduction_info.has_value()) {
 				continue;
 			}

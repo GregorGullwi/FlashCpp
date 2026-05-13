@@ -1726,12 +1726,14 @@ private:
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const std::vector<ASTNode>& func_params,
 		const std::vector<TypeSpecifierNode>& arg_types,
-		int recursion_depth);
+		int recursion_depth,
+		const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args = nullptr);
 	std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		const FunctionDeclarationNode& func_decl,
 		const std::vector<TypeSpecifierNode>& arg_types,
-		int recursion_depth);
+		int recursion_depth,
+		const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args = nullptr);
 	bool isTemplateFunctionParameterPack(
 		std::span<const TemplateParameterNode> template_params,
 		const DeclarationNode& func_param_decl);
