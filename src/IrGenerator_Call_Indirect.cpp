@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
+#include "TypeSizeQuery.h"
 
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
@@ -867,7 +868,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			func_decl_node.type_specifier_node();
 		const TypeCategory ret_type = ret_spec.type();
 		const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
-		const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
+		const SizeInBits ret_size{
+			ret_bits_raw != 0
+				? ret_bits_raw
+				: (ret_type == TypeCategory::Void
+					   ? 0
+					   : requireConcreteAliasResolvedTypeSizeBits(ret_spec, "consteval member call return size"))};
 
 		if (ret_type == TypeCategory::Float) {
 			float fval = static_cast<float>(eval_result.as_double());
