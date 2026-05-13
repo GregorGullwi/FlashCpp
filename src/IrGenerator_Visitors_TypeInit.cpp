@@ -1481,6 +1481,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 										  qualified_name, "' = ", evaluated_value);
 								append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 							} else {
+								// Handle recursive constexpr members such as `Nest<N>::value =
+								// Nest<N - 1>::value + 1` after the qualified base lookup has
+								// already failed to evaluate through the generic constexpr path.
 								if (std::holds_alternative<BinaryOperatorNode>(init_expr) && struct_info != nullptr) {
 									const BinaryOperatorNode& binary_init = std::get<BinaryOperatorNode>(init_expr);
 									if (binary_init.op() == "+" && !struct_info->base_classes.empty()) {
