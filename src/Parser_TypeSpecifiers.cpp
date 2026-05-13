@@ -1848,7 +1848,14 @@ ParseResult Parser::parse_type_specifier() {
 					}
 				}
 				// Also check if the instantiated name itself contains dependent template arguments
-				// (e.g., remove_cv<remove_reference<T>::type> where the arg is a dependent placeholder)
+				// (e.g., remove_cv<remove_reference<T>::type> where the arg is a dependent placeholder).
+				//
+				// A UserDefined/Struct template argument is not inherently dependent: it may be a
+				// fully materialized class-template specialization such as Pair<int, double>.
+				// Treating every UserDefined argument as dependent causes nested concrete
+				// template-ids (Wrap<Pair<int, double>>) to bypass the concrete struct result and
+				// later fail aggregate/member layout.  Ask the type graph whether the argument
+				// still contains an actual dependent placeholder instead.
 				if (!has_dependent_args) {
 					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 					if (type_it != getTypesByNameMap().end()) {
@@ -1857,8 +1864,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (type_info->isTemplateInstantiation()) {
 							const auto& template_arg_infos = type_info->templateArgs();
 							for (const auto& arg_info : template_arg_infos) {
-								// Check if argument is a UserDefined type (dependent placeholder)
-								if (arg_info.category() == TypeCategory::UserDefined) {
+								if (templateArgInfoContainsDependentPlaceholder(arg_info)) {
 									has_dependent_args = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Instantiated name '{}' has dependent template arguments", instantiated_name);
 									break;

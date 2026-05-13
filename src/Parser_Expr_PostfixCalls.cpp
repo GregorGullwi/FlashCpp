@@ -92,6 +92,18 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 		match = &candidate;
 	}
 
+	if (!match) {
+		auto [base_member_func, owner_struct] = struct_info->findMemberFunctionRecursive(member_name_handle);
+		if (base_member_func != nullptr && owner_struct != nullptr && owner_struct != struct_info &&
+			!base_member_func->is_constructor && !base_member_func->is_destructor &&
+			base_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			const auto& candidate = base_member_func->function_decl.as<FunctionDeclarationNode>();
+			if (!candidate.failed_substitution()) {
+				match = &candidate;
+			}
+		}
+	}
+
 	return match;
 }
 

@@ -1668,10 +1668,16 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			const TemplateTypeArg& concrete_type = param_it->second;
 			FLASH_LOG(Templates, Debug, "  Namespace '", ns_name, "' is a template parameter, substituting with concrete type");
 
-			// The concrete type should be a struct type - get its instantiated name
-			if (const TypeInfo* type_info = (is_struct_type(concrete_type.category()))
-												? tryGetTypeInfo(concrete_type.type_index)
-												: nullptr) {
+			// The concrete type should be a class type - get its instantiated name.
+			//
+			// Do not gate this solely on TemplateTypeArg::category().  Several dependent
+			// substitution paths preserve the correct TypeIndex slot but leave the
+			// embedded category as Invalid/UserDefined until the TypeInfo is consulted.
+			// For a qualified-id such as A::value in a default NTTP, failing to look
+			// through the TypeIndex keeps the name as the dependent spelling "A::value"
+			// and the constexpr evaluator quite correctly diagnoses it as undefined.
+			const TypeInfo* type_info = tryGetTypeInfo(concrete_type.type_index);
+			if (type_info != nullptr && (type_info->isStruct() || type_info->getStructInfo() != nullptr)) {
 				StringHandle type_name_handle = type_info->name();
 
 				if (type_info->isTemplateInstantiation()) {

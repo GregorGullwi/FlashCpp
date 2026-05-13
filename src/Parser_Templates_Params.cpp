@@ -2133,7 +2133,13 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		arg.member_pointer_kind = member_pointer_kind;
 		if (!arg.is_template_template_arg && !arg.is_value) {
 			StringHandle template_name_handle = type_node.token().handle();
+			const TypeInfo* parsed_type_info = type_node.type_index().is_valid()
+				? tryGetTypeInfo(type_node.type_index())
+				: nullptr;
+			const bool parsed_type_is_template_id =
+				parsed_type_info != nullptr && parsed_type_info->isTemplateInstantiation();
 			if (template_name_handle.isValid() &&
+				!parsed_type_is_template_id &&
 				(gTemplateRegistry.lookup_alias_template(template_name_handle).has_value() ||
 				 gTemplateRegistry.lookupTemplate(template_name_handle).has_value() ||
 				 gTemplateRegistry.isClassTemplate(template_name_handle))) {
