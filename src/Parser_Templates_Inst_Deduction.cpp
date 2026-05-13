@@ -1946,6 +1946,47 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		const TypeSpecifierNode& fp_type = fp_decl.type_specifier_node();
 		const TypeSpecifierNode& ca_type = arg_types[concrete_arg_index];
 
+		// Deduce through pointer-qualified parameters such as P = T* and A = int*.
+		if (fp_type.pointer_depth() > 0 && !fp_type.is_array() && !fp_decl.is_array()) {
+			TypeIndex fp_idx = fp_type.type_index();
+			const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
+			StringHandle fp_name = fp_type_info != nullptr ? fp_type_info->name() : StringHandle{};
+			if (!fp_name.isValid()) {
+				fp_name = fp_type.token().handle();
+			}
+			auto param_it = tparam_nodes_by_name.find(fp_name);
+			if (param_it != tparam_nodes_by_name.end() &&
+				param_it->second->kind() == TemplateParameterKind::Type &&
+				!param_name_to_arg.count(fp_name)) {
+				if (ca_type.pointer_depth() < fp_type.pointer_depth()) {
+					return std::nullopt;
+				}
+				TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(ca_type);
+				new_arg.pointer_depth =
+					static_cast<uint8_t>(new_arg.pointer_depth - fp_type.pointer_depth());
+				if (!new_arg.pointer_cv_qualifiers.empty()) {
+					std::vector<CVQualifier> remaining_pointer_cv;
+					const size_t remove_count = std::min<size_t>(
+						fp_type.pointer_depth(),
+						new_arg.pointer_cv_qualifiers.size());
+					for (size_t cv_index = remove_count;
+						 cv_index < new_arg.pointer_cv_qualifiers.size();
+						 ++cv_index) {
+						remaining_pointer_cv.push_back(new_arg.pointer_cv_qualifiers[cv_index]);
+					}
+					new_arg.pointer_cv_qualifiers = std::move(remaining_pointer_cv);
+				}
+				if (fp_type.reference_qualifier() == ReferenceQualifier::None) {
+					new_arg.ref_qualifier = ReferenceQualifier::None;
+				}
+				if (!recordPreDeducedArg(fp_name, new_arg, "type", new_arg.toString())) {
+					return std::nullopt;
+				}
+				pre_deduced_arg_indices.insert(concrete_arg_index);
+				continue;
+			}
+		}
+
 		// Only handle directly-typed params (pointer_depth 0 covers T, T&, const T&).
 		// Pointer-to-template (T*) cases are handled via substitution elsewhere.
 		// Array declarators use a separate deduction path so T in T(&)[N] binds to the

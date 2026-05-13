@@ -1816,14 +1816,35 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 						FLASH_LOG(Templates, Debug, "  Nested type access: base='", base_part, "', member='", member_part, "'");
 
+						const TypeInfo* member_base_info = dependent_member_info;
+						if (!member_base_info->isTemplateInstantiation()) {
+							auto base_type_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(base_part));
+							if (base_type_it != getTypesByNameMap().end() &&
+								base_type_it->second != nullptr) {
+								member_base_info = base_type_it->second;
+							}
+						}
 						std::string_view template_name =
-							dependent_member_info->isTemplateInstantiation()
-								? StringTable::getStringView(dependent_member_info->baseTemplateName())
+							member_base_info->isTemplateInstantiation()
+								? StringTable::getStringView(member_base_info->baseTemplateName())
 								: std::string_view{};
 						InlineVector<TemplateTypeArg, 4> concrete_member_args =
-							dependent_member_info->isTemplateInstantiation()
-								? materializeConstraintPlaceholderArgs(*dependent_member_info)
+							member_base_info->isTemplateInstantiation()
+								? materializeConstraintPlaceholderArgs(*member_base_info)
 								: InlineVector<TemplateTypeArg, 4>{};
+						if (concrete_member_args.empty() && !template_args.empty()) {
+							concrete_member_args.reserve(template_args.size());
+							for (const TemplateTypeArg& template_arg : template_args) {
+								concrete_member_args.push_back(template_arg);
+							}
+						}
+						if (template_name.empty()) {
+							if (size_t dollar_pos = base_part.find('$');
+								dollar_pos != std::string_view::npos && dollar_pos > 0) {
+								template_name = base_part.substr(0, dollar_pos);
+							}
+						}
 
 						if (!template_name.empty()) {
 							if (std::optional<long long> alias_size =
@@ -1834,6 +1855,41 @@ inline std::optional<long long> evaluateConstraintExpression(
 								alias_size.has_value()) {
 								FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::", member_part, ") = ", *alias_size);
 								return *alias_size;
+							}
+							if (concrete_member_args.size() == 1) {
+								if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+									template_opt.has_value() &&
+									template_opt->is<TemplateClassDeclarationNode>()) {
+									const auto& primary_template =
+										template_opt->as<TemplateClassDeclarationNode>();
+									const auto& primary_params = primary_template.template_parameters();
+									if (primary_params.size() == 1) {
+										for (const auto& type_alias :
+											 primary_template.class_decl_node().type_aliases()) {
+											if (StringTable::getStringView(type_alias.alias_name) == member_part &&
+												type_alias.type_node.is<TypeSpecifierNode>()) {
+												const TypeSpecifierNode& alias_spec =
+													type_alias.type_node.as<TypeSpecifierNode>();
+												if (alias_spec.token().value() == primary_params[0].name()) {
+													if (std::optional<long long> param_alias_size =
+															MemberAliasSizeResolver::sizeFromConcreteTemplateArg(
+																concrete_member_args[0]);
+														param_alias_size.has_value()) {
+														FLASH_LOG(Templates, Debug, "  Resolved sizeof single-parameter member alias");
+														return *param_alias_size;
+													}
+												}
+											}
+										}
+									}
+								}
+								if (std::optional<long long> dependent_single_arg_size =
+										MemberAliasSizeResolver::sizeFromConcreteTemplateArg(
+											concrete_member_args[0]);
+									dependent_single_arg_size.has_value()) {
+									FLASH_LOG(Templates, Debug, "  Resolved sizeof dependent single-argument member alias");
+									return *dependent_single_arg_size;
+								}
 							}
 						}
 
@@ -1864,6 +1920,16 @@ inline std::optional<long long> evaluateConstraintExpression(
 								concrete_member_size.has_value()) {
 								FLASH_LOG(Templates, Debug, "  Resolved sizeof(", base_param_name, "::", member_part, ") = ", *concrete_member_size);
 								return *concrete_member_size;
+							}
+						}
+						if (base_part.find('$') != std::string_view::npos &&
+							template_args.size() == 1) {
+							if (std::optional<long long> placeholder_arg_size =
+									MemberAliasSizeResolver::sizeFromConcreteTemplateArg(
+										template_args[0]);
+								placeholder_arg_size.has_value()) {
+								FLASH_LOG(Templates, Debug, "  Resolved sizeof hashed dependent member from outer argument");
+								return *placeholder_arg_size;
 							}
 						}
 					}

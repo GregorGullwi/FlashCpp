@@ -2588,10 +2588,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with template arguments (qualified lookup)", qualified_name.view());
 
 						// Evaluate the concept constraint with the provided template arguments
+						const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+						InlineVector<std::string_view, 4> concept_param_names;
+						concept_param_names.reserve(concept_node.template_params().size());
+						for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
+							concept_param_names.push_back(concept_param.name());
+						}
 						auto constraint_result = evaluateConstraint(
-							concept_opt->as<ConceptDeclarationNode>().constraint_expr(),
+							concept_node.constraint_expr(),
 							*template_args,
-							{}  // No template param names needed for concrete types
+							concept_param_names
 						);
 
 						// Create a BoolLiteralNode with the result
@@ -5583,10 +5589,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with concrete template arguments", identifier_token.value());
 
 								// Evaluate the concept constraint with the provided template arguments
+								const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+								InlineVector<std::string_view, 4> concept_param_names;
+								concept_param_names.reserve(concept_node.template_params().size());
+								for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
+									concept_param_names.push_back(concept_param.name());
+								}
 								auto constraint_result = evaluateConstraint(
-									concept_opt->as<ConceptDeclarationNode>().constraint_expr(),
+									concept_node.constraint_expr(),
 									*explicit_template_args,
-									{}  // No template param names needed for concrete types
+									concept_param_names
 								);
 
 								// Create a BoolLiteralNode with the result
