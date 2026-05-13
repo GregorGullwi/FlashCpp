@@ -1,11 +1,26 @@
 # Template Argument Standard-Conformance Investigation
 
-**Date:** 2026-05-12
+**Date:** 2026-05-12  
+**Last updated:** 2026-05-13
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
 compiler layers that should own each responsibility and the order in which to
 separate them.
+
+## Baseline behavior to preserve during migration
+
+The current implementation already depends on a few static-`constexpr` behaviors
+that should be preserved through refactoring:
+
+1. expression-lowering fold attempts for static members are scalar-only;
+2. folded reads prefer normalized constant bytes when available;
+3. recursive base-member static-evaluation paths are bounded;
+4. template static-member normalization applies template-parameter substitution
+   before expression-level substitution.
+
+These rules are compatibility constraints while migrating ownership to semantic
+lookup, deduction, and instantiation services.
 
 ## Target architecture
 
@@ -317,3 +332,121 @@ Start with parameter-context-driven template argument classification. It is the
 smallest structural change that directly reduces the largest class of current
 non-conformance: deciding whether an argument is a type, value, or template
 without first knowing the target parameter.
+
+## Implementation plan
+
+### Goal
+
+Converge from parser/codegen repair paths to a sema-owned, declaration-context
+template system while preserving the newly stabilized static `constexpr`
+behavior as compatibility constraints.
+
+### Work plan (phased delivery)
+
+1. **Stabilize current static-constexpr semantics as explicit contracts**  
+   Document and test the current scalar-only folding gate, normalized-bytes
+   preference, recursive base-chain behavior, and depth-limit behavior so later
+   refactors preserve expected outcomes.
+
+2. **Introduce one semantic static-member constant-evaluation service**  
+   Build a sema service that answers: "Can this static member be read as a
+   constant here?" Move recursive/base-chain policy and normalized-init
+   interpretation into this service; make IR callers consume only the service.
+
+3. **Complete parameter-context argument classification first**  
+   Keep this as top priority architecture work:
+   parse argument syntax first, resolve template declaration, match parameters,
+   then classify each argument by parameter kind.
+
+4. **Unify declaration lookup for template names**  
+   Route class/function/alias/variable template candidate discovery through one
+   semantic lookup result so template-id classification and deduction use the
+   same declaration identity model.
+
+5. **Consolidate substitution context ownership**  
+   Replace ad-hoc name/vector substitution channels with a single
+   `TemplateInstantiationContext` carrying bindings, pack state, definition/POI
+   lookup context, and constexpr/sema context.
+
+6. **Separate deduction from instantiation/materialization**  
+   Ensure candidate viability, deduction, constraints, and partial ordering run
+   without body materialization. Instantiate only after winner selection.
+
+7. **Advance two-phase lookup records**  
+   Persist non-dependent lookup at definition time and defer only dependent
+   completion to instantiation time, including static initializer paths.
+
+8. **Expand NTTP identity beyond integral-centric representation**  
+   Implement structural constant-value identity (pointers/references/member
+   pointers/nullptr/fp/structural class values), then migrate keys and mangling.
+
+### Concrete artifacts to implement
+
+1. **Semantic lookup result object**  
+   A single lookup result type carrying declaration identity, lookup kind
+   (ordinary/qualified/member/ADL), dependency flags, and definition-vs-POI
+   timing metadata.
+
+2. **Template-id syntax node plus semantic classification record**  
+   Keep parse-time argument syntax unclassified; attach a semantic
+   parameter-matching result that records final kind (type/non-type/template),
+   conversions, defaults, and pack ownership.
+
+3. **TemplateInstantiationContext**  
+   Replace ad-hoc maps/vectors with one context object containing scalar
+   bindings, pack bindings, current-instantiation identity, lookup context,
+   constexpr context, and failure policy.
+
+4. **Static member constexpr semantic service**  
+   Centralize "can read as constant" decisions and recursive base-member
+   evaluation in sema/constexpr logic; IR should consume service outputs only.
+
+5. **Structural NTTP value representation**  
+   Introduce typed value variants and equivalence/hashing rules that match C++20
+   template-argument equivalence requirements.
+
+### Phase gates and dependency order
+
+1. **Gate A (classification)**  
+   Parameter-context classification is on by default for explicit template-ids
+   in class/function/alias/variable template use sites.
+
+2. **Gate B (lookup unification)**  
+   Template candidate discovery is sourced from semantic lookup results instead
+   of direct registry-by-name calls on hot paths.
+
+3. **Gate C (instantiation context)**  
+   Core substitution and pack expansion paths use `TemplateInstantiationContext`
+   as the authoritative source of bindings.
+
+4. **Gate D (deduction split)**  
+   Overload viability and deduction run without body materialization in normal
+   selection paths.
+
+5. **Gate E (NTTP and two-phase lookup)**  
+   Structural NTTP identity and definition-vs-POI lookup behavior are both
+   enabled and covered by regression tests.
+
+### Exit criteria
+
+- template argument kind is no longer decided by parser heuristics for ambiguous
+  identifiers;
+- static-member constexpr reads use one sema service (no duplicated ad-hoc
+  recursive evaluators in IR paths);
+- deduction and overload ordering run without incidental instantiation;
+- two-phase lookup behavior is test-covered for non-dependent vs dependent
+  names;
+- NTTP equivalence is type-accurate and structural where C++20 requires it.
+
+### Minimum regression suite required before declaring completion
+
+- argument classification ambiguities (`X`, `N`, qualified ids, dependent ids)
+  resolved by parameter kind, not parser heuristics;
+- dependent and non-dependent lookup timing cases that distinguish definition
+  context from POI context;
+- function-template deduction cases for non-deduced contexts, forwarding refs,
+  packs, overload sets, template-template parameters, CTAD, and guides;
+- static-member constexpr cases covering scalar gating, normalized-byte reads,
+  recursive base-member chains, and depth-limit boundary behavior;
+- NTTP identity/equivalence coverage for enum, pointer/reference/member-pointer,
+  `nullptr`, floating-point, and structural class-type arguments.

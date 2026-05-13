@@ -1,6 +1,7 @@
 # Template Argument Architecture Audit
 
-**Date:** 2026-05-12
+**Date:** 2026-05-12  
+**Last updated:** 2026-05-13
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -21,7 +22,12 @@ C++20 requires template argument interpretation to be driven by declaration
 context, name lookup, dependency, the current instantiation, two-phase lookup,
 deduction rules, constraints, and overload resolution. FlashCpp often decides
 the type/value/template-template category before the target template parameter
-is authoritative, then repairs or reinterprets the argument later.
+is authoritative, then repairs or reinterprets the argument later. Static
+`constexpr` behavior is more stable than before: scalar static-member folding
+is explicit, normalized constant bytes are preferred when available, recursive
+base-member evaluation is bounded, and static-member substitution ordering is
+better defined. Those improvements reduce regressions but do not yet provide a
+fully semantic C++20 template pipeline.
 
 ## Current representations
 
@@ -195,6 +201,16 @@ driven. C++20 requires static member declarations, definitions, initialization,
 constant evaluation, odr-use, and template instantiation to observe precise
 lookup and point-of-instantiation rules.
 
+Current behavior in this area is:
+
+- constexpr read folding in IR has a strict scalar gate
+  (no struct/array static-member folding in that path);
+- normalized bytes are used as the preferred folded source when present;
+- recursive base-member patterns such as `value = base::value + c` are handled
+  with a bounded recursion policy;
+- template static-member early normalization applies template-parameter
+  substitution before expression-level substitution.
+
 ## Name lookup architecture
 
 ### Ordinary and qualified lookup
@@ -268,6 +284,8 @@ The architecture is not yet the C++20 deduction model. Important gaps include:
 - ADL and hidden-friend infrastructure exists for ordinary calls.
 - Lazy materialization has moved toward sema-owned ODR-use handling in recent
   work.
+- Static constexpr scalar-member folding is now narrower and more deterministic,
+  preferring normalized bytes and bounded recursive base evaluation.
 
 ### Non-conforming or structurally risky areas
 
@@ -331,6 +349,10 @@ constant-evaluated inside class-template instantiation. This can work for traits
 but C++20 requires precise instantiation timing, constant-evaluation context,
 definition availability, and odr-use behavior.
 
+The current recursive and normalized constant paths are still tactical repairs
+in codegen/parser-owned flows rather than a fully sema-owned materialization
+model.
+
 #### 9. Current-instantiation identity is incomplete
 
 Outer bindings and owner reconstruction support many member-template cases, but
@@ -350,3 +372,38 @@ single parser bug; it is the absence of one semantic template system that owns:
 4. deduction and constraints;
 5. substitution and point-of-instantiation materialization;
 6. constant evaluation under an instantiated semantic context.
+
+## Implementation plan
+
+1. **Unify static constexpr evaluation entry points**  
+   Extract one semantic helper for "read static member as constant if legal",
+   and make both qualified-id and member-access lowering call that helper.
+
+2. **Centralize recursive static evaluation policy**  
+   Move recursive `base::value + c` evaluation into shared constexpr/sema logic
+   so codegen and declaration-time normalization do not duplicate pattern logic.
+
+3. **Replace pattern-specific recursion with expression-driven evaluation**  
+   Preserve current behavior as compatibility, then extend to a general
+   expression evaluator for dependent static initializers (not just binary `+`).
+
+4. **Promote normalized initializer ownership to sema context**  
+   Keep `normalized_init` as artifact, but make semantic evaluation result the
+   source of truth and write back normalized bytes only after semantic success.
+
+5. **Strengthen substitution ordering invariants**  
+   Keep the new "template-parameter substitution before expression substitution"
+   ordering as invariant and apply it consistently across class/member/alias
+   static initializer normalization paths.
+
+6. **Add regression coverage focused on the new behavior envelope**  
+   Include:
+   - recursive base static constexpr chains;
+   - scalar-vs-aggregate fold boundaries;
+   - template static members that depend on substituted alias/non-type args;
+   - recursion-depth boundary diagnostics/failure mode.
+
+7. **Introduce semantic invariants and remove repair paths in stages**  
+   After each phase, convert one class of codegen fallback into an invariant
+   check (or hard error in internal paths) so non-semantic backdoors do not
+   silently reappear.
