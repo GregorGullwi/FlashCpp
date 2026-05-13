@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-13 (template infrastructure refactor completed)
+**Last updated:** 2026-05-13 (dependent-name record slice added)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -130,6 +130,14 @@ small PRs and larger architecture tracks that need focused design.
    Replace string-like placeholders with semantic dependent entities for
    current instantiation, unknown specialization, dependent bases, dependent
    qualified names, and dependent template-ids.
+   The 2026-05-13 follow-up slice added a narrow
+   `TypeInfo::DependentQualifiedNameRecord` for dependent member-type
+   placeholders and taught type substitution/member declaration copying to
+   prefer that record for `typename T::type` and dependent member-template
+   chains such as `Traits<T>::template rebind<U>::type`.  It intentionally
+   leaves full current-instantiation alias ordering, expression qualified-id
+   records, and dependent base/unknown-specialization lookup classification as
+   later `[temp.dep]` work.
 
 ## Target architecture
 

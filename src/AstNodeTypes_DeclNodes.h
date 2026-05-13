@@ -1017,6 +1017,29 @@ struct TypeInfo {
 		StringHandle stringValue() const { return FlashCpp::get_if<StringHandle>(value); }
 	};
 
+	struct DependentQualifiedNameRecord {
+		enum class OwnerKind : uint8_t {
+			TemplateParameter,
+			DependentInstantiation,
+			CurrentInstantiation,
+			UnknownSpecialization
+		};
+
+		struct Member {
+			StringHandle name;
+			InlineVector<TemplateArgInfo, 4> template_arguments;
+			bool has_template_arguments = false;
+			bool has_template_keyword = false;
+		};
+
+		OwnerKind owner_kind = OwnerKind::UnknownSpecialization;
+		StringHandle owner_name;
+		TypeIndex owner_type;
+		InlineVector<TemplateArgInfo, 4> owner_template_arguments;
+		InlineVector<Member, 4> member_chain;
+		bool names_current_instantiation = false;
+	};
+
  // Canonical template environment owned by instantiated types.
  // Stores both parameter names and concrete arguments so that later phases
  // (codegen, constexpr evaluation) can resolve template bindings without
@@ -1044,6 +1067,8 @@ struct TypeInfo {
 
 	InlineVector<TemplateArgInfo, 4> template_args_;
 
+	std::optional<DependentQualifiedNameRecord> dependent_qualified_name_;
+
  // Type-owned instantiation context (non-null for template instantiations
  // and for types nested inside a template instantiation).
 	std::unique_ptr<InstantiationContext> instantiation_context_;
@@ -1061,6 +1086,8 @@ struct TypeInfo {
 	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
 	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
+	bool hasDependentQualifiedName() const { return dependent_qualified_name_.has_value(); }
+	const DependentQualifiedNameRecord* dependentQualifiedName() const { return dependent_qualified_name_ ? &*dependent_qualified_name_ : nullptr; }
 
  // Access the type-owned instantiation context (may be null).
 	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
@@ -1075,6 +1102,9 @@ struct TypeInfo {
 
 	void clearAliasTypeSpecifier();
 	void setAliasTypeSpecifier(const TypeSpecifierNode& type_spec);
+	void setDependentQualifiedName(DependentQualifiedNameRecord record) {
+		dependent_qualified_name_ = std::move(record);
+	}
 
  // Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,

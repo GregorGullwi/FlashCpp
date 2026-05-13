@@ -641,6 +641,136 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 		return nullptr;
 	}
 
+	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
+			type_info.dependentQualifiedName()) {
+		auto materialize_record_args =
+			[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) {
+			std::vector<TemplateTypeArg> materialized_args;
+			materialized_args.reserve(stored_args.size());
+			for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
+				TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+				if (arg.dependent_name.isValid()) {
+					std::string_view dependent_arg_name =
+						StringTable::getStringView(arg.dependent_name);
+					if (auto subst_it = param_map_.find(dependent_arg_name);
+						subst_it != param_map_.end()) {
+						arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
+					} else if (auto context_binding =
+							resolveContextBinding(arg.dependent_name, environment_);
+						context_binding.has_value()) {
+						arg = rebindDependentTemplateTypeArg(*context_binding, arg);
+					}
+				} else if (!arg.is_value && arg.type_index.is_valid()) {
+					if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+						std::string_view arg_type_name =
+							StringTable::getStringView(arg_type_info->name());
+						if (auto subst_it = param_map_.find(arg_type_name);
+							subst_it != param_map_.end()) {
+							arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
+						}
+					}
+				}
+				materialized_args.push_back(std::move(arg));
+			}
+			return materialized_args;
+		};
+
+		std::string_view owner_name =
+			StringTable::getStringView(dependent_name->owner_name);
+		std::string_view materialized_owner_name;
+		if (dependent_name->owner_kind ==
+				TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter &&
+			dependent_name->owner_template_arguments.empty()) {
+			if (auto owner_subst_it = param_map_.find(owner_name);
+				owner_subst_it != param_map_.end()) {
+				const TypeInfo* owner_type_info =
+					tryGetTypeInfo(owner_subst_it->second.type_index);
+				if (owner_type_info != nullptr) {
+					materialized_owner_name =
+						StringTable::getStringView(owner_type_info->name());
+				}
+			}
+		} else {
+			std::vector<TemplateTypeArg> owner_args =
+				materialize_record_args(dependent_name->owner_template_arguments);
+			bool owner_args_still_dependent = false;
+			for (const TemplateTypeArg& arg : owner_args) {
+				if (arg.is_dependent) {
+					owner_args_still_dependent = true;
+					break;
+				}
+			}
+			if (!owner_args.empty() && !owner_args_still_dependent) {
+				if (auto owner_template_subst_it = param_map_.find(owner_name);
+					owner_template_subst_it != param_map_.end() &&
+					owner_template_subst_it->second.is_template_template_arg) {
+					owner_name = StringTable::getStringView(
+						owner_template_subst_it->second.template_name_handle);
+				}
+				Parser::AliasTemplateMaterializationResult materialized_owner =
+					parser_.materializeTemplateInstantiationForLookup(
+						owner_name,
+						owner_args);
+				if (!materialized_owner.instantiated_name.empty()) {
+					materialized_owner_name = materialized_owner.instantiated_name;
+				} else if (materialized_owner.resolved_type_info != nullptr) {
+					materialized_owner_name =
+						StringTable::getStringView(
+							materialized_owner.resolved_type_info->name());
+				}
+			}
+		}
+
+		if (!materialized_owner_name.empty()) {
+			std::vector<QualifiedTypeMemberAccess> member_chain;
+			member_chain.reserve(dependent_name->member_chain.size());
+			for (const auto& member_record : dependent_name->member_chain) {
+				QualifiedTypeMemberAccess member_access;
+				member_access.member_name = member_record.name;
+				if (member_record.has_template_arguments) {
+					std::vector<TemplateTypeArg> member_args =
+						materialize_record_args(member_record.template_arguments);
+					bool member_args_still_dependent = false;
+					for (const TemplateTypeArg& arg : member_args) {
+						if (arg.is_dependent) {
+							member_args_still_dependent = true;
+							break;
+						}
+					}
+					if (member_args_still_dependent) {
+						return nullptr;
+					}
+					member_access.has_template_arguments = true;
+					member_access.template_arguments =
+						std::make_shared<std::vector<TemplateTypeArg>>(
+							std::move(member_args));
+				}
+				member_chain.push_back(std::move(member_access));
+			}
+
+			const TypeInfo* resolved_type =
+				parser_.resolveBaseClassMemberTypeChain(
+					materialized_owner_name,
+					member_chain);
+			if (resolved_type != nullptr) {
+				const TypeInfo* next_dependent_type = nullptr;
+				if (const TypeInfo* alias_target =
+						tryGetTypeInfo(resolved_type->type_index_);
+					alias_target != nullptr &&
+					alias_target != resolved_type &&
+					alias_target->isDependentMemberType()) {
+					next_dependent_type = alias_target;
+				} else if (resolved_type->isDependentMemberType()) {
+					next_dependent_type = resolved_type;
+				}
+				if (next_dependent_type != nullptr) {
+					return resolveDependentMemberType(*next_dependent_type, depth + 1);
+				}
+				return resolved_type;
+			}
+		}
+	}
+
 	std::string_view type_name = StringTable::getStringView(type_info.name());
 	size_t member_sep = type_name.rfind("::");
 	if (member_sep == std::string_view::npos) {
@@ -700,6 +830,10 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 	}
 
 	return resolved_type;
+}
+
+const TypeInfo* ExpressionSubstitutor::resolveDependentMemberTypeForSubstitution(const TypeInfo& type_info) {
+	return resolveDependentMemberType(type_info, kInitialDependentMemberTypeResolutionDepth);
 }
 
 ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {

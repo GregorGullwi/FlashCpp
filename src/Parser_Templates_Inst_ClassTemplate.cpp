@@ -3523,6 +3523,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Debug, "Copying member: ", decl.identifier_token().value(),
 						  " has_initializer=", member_decl.default_initializer.has_value());
 				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+				TypeSpecifierNode resolved_dependent_member_type_spec = type_spec;
+				const TypeSpecifierNode* effective_type_spec = &type_spec;
+				if (type_spec.type_index().is_valid()) {
+					if (const TypeInfo* member_type_info = tryGetTypeInfo(type_spec.type_index());
+						member_type_info != nullptr &&
+						member_type_info->isDependentMemberType() &&
+						member_type_info->hasDependentQualifiedName()) {
+						ASTNode substituted_type_node = substituteTemplateParameters(
+							ASTNode::emplace_node<TypeSpecifierNode>(type_spec),
+							template_params,
+							template_args_for_member_copy,
+							struct_info->getName());
+						if (substituted_type_node.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& substituted_type =
+								substituted_type_node.as<TypeSpecifierNode>();
+							bool substituted_still_dependent = false;
+							if (substituted_type.type_index().is_valid()) {
+								if (const TypeInfo* substituted_type_info =
+										tryGetTypeInfo(substituted_type.type_index())) {
+									substituted_still_dependent =
+										substituted_type_info->isDependentPlaceholder();
+								}
+							}
+							if (!substituted_still_dependent) {
+								resolved_dependent_member_type_spec = substituted_type;
+								effective_type_spec = &resolved_dependent_member_type_spec;
+							}
+						}
+					}
+				}
 
 				// For pattern specializations, member types need substitution!
 				// The pattern has T* (Type::UserDefined with ptr_depth=1)
@@ -3531,8 +3561,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// For pattern specializations, member types need substitution!
 				// Use substitute_template_parameter to properly match template parameters by name
 				TypeIndex member_type_index = substitute_template_parameter(
-					type_spec, template_params, template_args_for_member_copy);
-				size_t ptr_depth = type_spec.pointer_depth();
+					*effective_type_spec, template_params, template_args_for_member_copy);
+				size_t ptr_depth = effective_type_spec->pointer_depth();
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_for_member_copy);
@@ -3545,7 +3575,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Calculate member size accounting for pointer depth
 				TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 				size_t member_size = get_substituted_type_size_bytes(member_size_type_index);
-				if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				if (ptr_depth > 0 || effective_type_spec->is_reference() || effective_type_spec->is_rvalue_reference()) {
 					// Pointers and references are always 8 bytes (64-bit)
 					member_size = 8;
 				}
@@ -3555,13 +3585,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Calculate member alignment
 				// For pointers and references, use 8-byte alignment (pointer alignment on x64)
 				size_t member_alignment = get_type_alignment(member_type_index.category(), member_size);
-				if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				if (ptr_depth > 0 || effective_type_spec->is_reference() || effective_type_spec->is_rvalue_reference()) {
 					member_alignment = 8; // Pointer/reference alignment on x64
 				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
 					member_alignment = member_struct_info->alignment;
 				}
 
-				ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+				ReferenceQualifier ref_qual = effective_type_spec->reference_qualifier();
 
 				// Substitute template parameters in default member initializers
 				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
@@ -3586,7 +3616,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
 					resolveTemplateFunctionPointerSignature(
-						type_spec,
+						*effective_type_spec,
 						member_type_index,
 						template_params,
 						template_args_for_member_copy),
