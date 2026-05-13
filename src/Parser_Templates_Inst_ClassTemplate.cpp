@@ -203,12 +203,35 @@ static TemplateArgSubstitutionMap makeDeferredBaseExpansionSubstitutionMap(
 	return subst_map;
 }
 
+static TypeIndex makeDeferredBaseValueTypeIndex(TypeCategory category, TypeIndex type_index) {
+	TypeCategory resolved_category = category;
+	if (type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			if (type_info->typeEnum() != TypeCategory::Invalid) {
+				resolved_category = type_info->typeEnum();
+			}
+		}
+		return type_index.withCategory(resolved_category);
+	}
+	if (TypeIndex native_index = nativeTypeIndex(resolved_category); native_index.is_valid()) {
+		return native_index.withCategory(resolved_category);
+	}
+	return TypeIndex{0, resolved_category};
+}
+
+static bool isPlaceholderNttpTypeIndex(TypeIndex type_index) {
+	TypeCategory category = type_index.category();
+	return category == TypeCategory::Invalid ||
+		   category == TypeCategory::Auto ||
+		   category == TypeCategory::DeclTypeAuto;
+}
+
+static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeIndex type_index) {
+	return TemplateTypeArg::makeValue(value, type_index);
+}
+
 static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type) {
-	TemplateTypeArg arg;
-	arg.is_value = true;
-	arg.value = value;
-	arg.type_index = nativeTypeIndex(type);
-	return arg;
+	return makeDeferredBaseValueArg(value, makeDeferredBaseValueTypeIndex(type, TypeIndex{}));
 }
 
 // Resolve a deferred-base type argument through the ordinary substitution map,
@@ -616,7 +639,7 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 						const ASTNode substituted_expr = substitute_expression(member_arg_info.node);
 						if (auto evaluated_value = evaluate_constant_expression(substituted_expr)) {
 							resolved_member.template_arguments->push_back(
-								makeDeferredBaseValueArg(evaluated_value->value, evaluated_value->type));
+								makeDeferredBaseValueArg(evaluated_value->value, evaluated_value->type_index));
 							member_arg_resolved = true;
 						}
 					}
@@ -3384,12 +3407,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 							if (!resolved) {
 								// Helper: build a non-type value TemplateTypeArg
-								auto makeValueArg = [](int64_t value, TypeCategory type) {
-									TemplateTypeArg va;
-									va.is_value = true;
-									va.value = value;
-									va.type_index = nativeTypeIndex(type);
-									return va;
+								auto makeValueArg = [](int64_t value, TypeIndex type_index) {
+									return makeDeferredBaseValueArg(value, type_index);
 								};
 
 								// Non-type value argument - try to convert to TemplateTypeArg
@@ -3399,10 +3418,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									int64_t int_val = std::holds_alternative<unsigned long long>(nv)
 														   ? static_cast<int64_t>(std::get<unsigned long long>(nv))
 														   : static_cast<int64_t>(std::get<double>(nv));
-									resolved_args.push_back(makeValueArg(int_val, num_lit.type()));
+									resolved_args.push_back(makeValueArg(
+										int_val,
+										makeDeferredBaseValueTypeIndex(num_lit.type(), TypeIndex{})));
 									resolved = true;
 								} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
-									resolved_args.push_back(makeValueArg(bool_literal->value() ? 1 : 0, TypeCategory::Bool));
+									resolved_args.push_back(makeValueArg(
+										bool_literal->value() ? 1 : 0,
+										makeDeferredBaseValueTypeIndex(TypeCategory::Bool, TypeIndex{})));
 									resolved = true;
 								} else {
 									ASTNode substituted_expr = substituteTemplateParameters(
@@ -3411,7 +3434,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										template_args);
 									auto evaluated_value = try_evaluate_constant_expression(substituted_expr);
 									if (evaluated_value.has_value()) {
-										resolved_args.push_back(makeValueArg(evaluated_value->value, evaluated_value->type));
+										resolved_args.push_back(makeValueArg(evaluated_value->value, evaluated_value->type_index));
 										resolved = true;
 									} else {
 										// Unresolvable expression argument - cannot safely instantiate
@@ -6112,21 +6135,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						auto makeEvaluatedDeferredBaseValueArg = [&](const auto& constant_value) {
 							TypeIndex target_index = makeTypeIndexForDeferredBaseNttp(deferred_arg_index, resolved_args);
-							if (target_index.category() == TypeCategory::Invalid) {
-								TypeCategory target_category = constant_value.type;
-								target_index = constant_value.type_index;
-								if (target_index.is_valid()) {
-									if (const TypeInfo* target_type_info = tryGetTypeInfo(target_index)) {
-										if (target_type_info->typeEnum() != TypeCategory::Invalid) {
-											target_category = target_type_info->typeEnum();
-										}
-									}
-									target_index = target_index.withCategory(target_category);
-								} else if (TypeIndex native_index = nativeTypeIndex(target_category); native_index.is_valid()) {
-									target_index = native_index.withCategory(target_category);
-								} else {
-									target_index = TypeIndex{0, target_category};
-								}
+							if (isPlaceholderNttpTypeIndex(target_index)) {
+								target_index = makeDeferredBaseValueTypeIndex(
+									constant_value.type,
+									constant_value.type_index);
 							}
 							TemplateTypeArg val_arg;
 							val_arg.is_value = true;

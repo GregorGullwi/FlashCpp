@@ -292,6 +292,12 @@ struct TemplateTypeArg {
 		return TemplateTypeArg(v, cat);
 	}
 
+	static TemplateTypeArg makeValue(int64_t v, TypeIndex idx) {
+		TemplateTypeArg arg(v, idx.category());
+		arg.type_index = makeTypeIndex(idx);
+		return arg;
+	}
+
 	static TemplateTypeArg makeDependentValue(StringHandle name, TypeCategory category) {
 		return makeDependentValue(name, category, 0, std::nullopt);
 	}

@@ -1033,6 +1033,24 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		}
 		return makeConstantValue(eval_result.as_int(), category, type_index);
 	};
+	auto retargetConstantValueToDeclaredType = [&](ConstantValue value, TypeIndex declared_type_index) {
+		TypeCategory declared_category = declared_type_index.category();
+		if (declared_type_index.is_valid()) {
+			if (const TypeInfo* declared_type_info = tryGetTypeInfo(declared_type_index)) {
+				if (declared_type_info->typeEnum() != TypeCategory::Invalid) {
+					declared_category = declared_type_info->typeEnum();
+				}
+			}
+		}
+		if (declared_category == TypeCategory::Invalid ||
+			declared_category == TypeCategory::Auto ||
+			declared_category == TypeCategory::DeclTypeAuto) {
+			return value;
+		}
+		value.type = declared_category;
+		value.type_index = makeConstantValueTypeIndex(declared_category, declared_type_index);
+		return value;
+	};
 
 	// Handle boolean literals directly
 	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
@@ -1103,7 +1121,11 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				!static_member_decl.initializer.has_value()) {
 				continue;
 			}
-			return try_evaluate_constant_expression(*static_member_decl.initializer);
+			auto value = try_evaluate_constant_expression(*static_member_decl.initializer);
+			if (!value.has_value()) {
+				return std::nullopt;
+			}
+			return retargetConstantValueToDeclaredType(*value, static_member_decl.type_index);
 		}
 
 		return std::nullopt;
@@ -1221,7 +1243,11 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// For type traits, this is typically a bool literal (true/false)
 		const ASTNode& init_node = *static_member->initializer;
 		// Recursively evaluate the initializer
-		return try_evaluate_constant_expression(init_node);
+		auto value = try_evaluate_constant_expression(init_node);
+		if (!value.has_value()) {
+			return std::nullopt;
+		}
+		return retargetConstantValueToDeclaredType(*value, static_member->type_index);
 	}
 
 	// Handle member access expressions (e.g., obj.member or obj->member)

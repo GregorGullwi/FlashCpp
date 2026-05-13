@@ -276,7 +276,7 @@ struct NonTypeValueIdentity {
 	static size_t hashValueTypeIdentity(TypeIndex type_index) {
 		TypeCategory normalized_category = normalizedTypeForComparison(type_index.category());
 		size_t h = std::hash<uint8_t>{}(static_cast<uint8_t>(normalized_category));
-		if (normalized_category != TypeCategory::Int && type_index.needsTypeIndex()) {
+		if (type_index.needsTypeIndex()) {
 			h ^= hashTypeIndexIdentity(type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		return h;

@@ -2162,7 +2162,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};
-				concrete_arg.type_index = nativeTypeIndex(value->type);
+				concrete_arg.type_index = value->type_index;
 				concrete_arg.value = value->value;
 				continue;
 			}
@@ -2212,7 +2212,12 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 								concrete_arg.is_value = true;
 								concrete_arg.is_dependent = false;
 								concrete_arg.dependent_name = {};
-								concrete_arg.type_index = nativeTypeIndex(value->type);
+								concrete_arg.type_index = static_member_decl.type_index;
+								if (concrete_arg.type_index.category() == TypeCategory::Invalid ||
+									concrete_arg.type_index.category() == TypeCategory::Auto ||
+									concrete_arg.type_index.category() == TypeCategory::DeclTypeAuto) {
+									concrete_arg.type_index = value->type_index;
+								}
 								concrete_arg.value = value->value;
 								break;
 							}
@@ -2238,7 +2243,12 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};
-				concrete_arg.type_index = nativeTypeIndex(value->type);
+				concrete_arg.type_index = static_member->type_index;
+				if (concrete_arg.type_index.category() == TypeCategory::Invalid ||
+					concrete_arg.type_index.category() == TypeCategory::Auto ||
+					concrete_arg.type_index.category() == TypeCategory::DeclTypeAuto) {
+					concrete_arg.type_index = value->type_index;
+				}
 				concrete_arg.value = value->value;
 			}
 		}
