@@ -2745,58 +2745,163 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	object_type_arg.type_index = initializer_type.type_index();
 	object_type_arg.setType(initializer_type.category());
 
-	auto push_unique_template_name = [](std::vector<StringHandle>& names, StringHandle name) {
-		if (!name.isValid()) {
-			return;
+	struct StructuredBindingTupleProtocolLookup {
+		explicit StructuredBindingTupleProtocolLookup(const Parser& parser_ref, NamespaceHandle owner_ns)
+			: parser(parser_ref),
+			  owner_namespace(owner_ns),
+			  tuple_size_name(tupleSizeNameHandle()),
+			  tuple_element_name(tupleElementNameHandle()),
+			  get_name(getNameHandle()),
+			  type_alias_name(typeAliasNameHandle()),
+			  std_name(stdNamespaceNameHandle()),
+			  std_namespace(gNamespaceRegistry.getOrCreateNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, std_name)) {
 		}
-		if (std::find(names.begin(), names.end(), name) == names.end()) {
-			names.push_back(name);
+
+		std::vector<StringHandle> resolveTemplateCandidates(
+			StringHandle protocol_name,
+			TemplateDeclarationKind expected_kind) const {
+			std::vector<StringHandle> names;
+			appendNamespaceAwareLookupCandidates(protocol_name, expected_kind, names);
+			appendNamespaceAwareFallbackCandidates(protocol_name, names);
+			return names;
 		}
-	};
 
-	auto append_template_lookup_names = [&](std::string_view requested_name,
-											TemplateDeclarationKind expected_kind,
-											std::vector<StringHandle>& names) {
-		StringHandle requested_handle = StringTable::getOrInternStringHandle(requested_name);
-		TemplateNameLookupKind lookup_kind =
-			requested_name.find("::") != std::string_view::npos
-				? TemplateNameLookupKind::Qualified
-				: TemplateNameLookupKind::Ordinary;
+		const Parser& parser;
+		NamespaceHandle owner_namespace;
+		const StringHandle tuple_size_name;
+		const StringHandle tuple_element_name;
+		const StringHandle get_name;
+		const StringHandle type_alias_name;
 
-		// Use parser-built semantic lookup requests so lookup timing/context stays
-		// consistent with template instantiation rules.
-		TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(
-			parser_.makeTemplateNameLookupRequest(requested_handle, lookup_kind, false));
-		for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
-			if (candidate.identity.kind != expected_kind) {
-				continue;
+	private:
+		static StringHandle tupleSizeNameHandle() {
+			static const StringHandle handle = StringTable::getOrInternStringHandle("tuple_size");
+			return handle;
+		}
+
+		static StringHandle tupleElementNameHandle() {
+			static const StringHandle handle = StringTable::getOrInternStringHandle("tuple_element");
+			return handle;
+		}
+
+		static StringHandle getNameHandle() {
+			static const StringHandle handle = StringTable::getOrInternStringHandle("get");
+			return handle;
+		}
+
+		static StringHandle typeAliasNameHandle() {
+			static const StringHandle handle = StringTable::getOrInternStringHandle("type");
+			return handle;
+		}
+
+		static StringHandle stdNamespaceNameHandle() {
+			static const StringHandle handle = StringTable::getOrInternStringHandle("std");
+			return handle;
+		}
+
+		static void pushUniqueName(std::vector<StringHandle>& names, StringHandle name) {
+			if (!name.isValid()) {
+				return;
 			}
-			push_unique_template_name(names, candidate.identity.lookup_name);
+			if (std::find(names.begin(), names.end(), name) == names.end()) {
+				names.push_back(name);
+			}
 		}
+
+		void appendLookupResultCandidates(
+			StringHandle requested_name,
+			TemplateNameLookupKind lookup_kind,
+			TemplateDeclarationKind expected_kind,
+			NamespaceHandle definition_namespace,
+			std::vector<StringHandle>& names) const {
+			TemplateNameLookupRequest lookup_request = parser.makeTemplateNameLookupRequest(
+				requested_name,
+				lookup_kind,
+				false);
+			if (definition_namespace.isValid()) {
+				lookup_request.definition_namespace = definition_namespace;
+			}
+			TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(lookup_request);
+			for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
+				if (candidate.identity.kind != expected_kind) {
+					continue;
+				}
+				pushUniqueName(names, candidate.identity.lookup_name);
+			}
+		}
+
+		void appendOwnerNamespaceLookupCandidates(
+			StringHandle protocol_name,
+			TemplateDeclarationKind expected_kind,
+			std::vector<StringHandle>& names) const {
+			NamespaceHandle current_owner = owner_namespace;
+			while (current_owner.isValid() && !current_owner.isGlobal()) {
+				StringHandle qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(current_owner, protocol_name);
+				appendLookupResultCandidates(
+					qualified_name,
+					TemplateNameLookupKind::Qualified,
+					expected_kind,
+					current_owner,
+					names);
+				current_owner = gNamespaceRegistry.getParent(current_owner);
+			}
+		}
+
+		void appendNamespaceAwareLookupCandidates(
+			StringHandle protocol_name,
+			TemplateDeclarationKind expected_kind,
+			std::vector<StringHandle>& names) const {
+			appendOwnerNamespaceLookupCandidates(protocol_name, expected_kind, names);
+			appendLookupResultCandidates(
+				protocol_name,
+				TemplateNameLookupKind::Ordinary,
+				expected_kind,
+				NamespaceHandle{},
+				names);
+			if (std_namespace.isValid() && !std_namespace.isGlobal()) {
+				StringHandle std_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(std_namespace, protocol_name);
+				appendLookupResultCandidates(
+					std_qualified_name,
+					TemplateNameLookupKind::Qualified,
+					expected_kind,
+					std_namespace,
+					names);
+			}
+		}
+
+		void appendOwnerNamespaceFallbackCandidates(StringHandle protocol_name, std::vector<StringHandle>& names) const {
+			NamespaceHandle current_owner = owner_namespace;
+			while (current_owner.isValid() && !current_owner.isGlobal()) {
+				pushUniqueName(names, gNamespaceRegistry.buildQualifiedIdentifier(current_owner, protocol_name));
+				current_owner = gNamespaceRegistry.getParent(current_owner);
+			}
+		}
+
+		void appendNamespaceAwareFallbackCandidates(StringHandle protocol_name, std::vector<StringHandle>& names) const {
+			appendOwnerNamespaceFallbackCandidates(protocol_name, names);
+			pushUniqueName(names, protocol_name);
+			if (std_namespace.isValid() && !std_namespace.isGlobal()) {
+				pushUniqueName(names, gNamespaceRegistry.buildQualifiedIdentifier(std_namespace, protocol_name));
+			}
+		}
+
+		const StringHandle std_name;
+		NamespaceHandle std_namespace;
 	};
 
-	auto append_fallback_template_names = [&](std::vector<StringHandle>& names, std::initializer_list<std::string_view> fallback_names) {
-		for (std::string_view fallback_name : fallback_names) {
-			push_unique_template_name(names, StringTable::getOrInternStringHandle(fallback_name));
-		}
-	};
+	const StructuredBindingTupleProtocolLookup protocol_lookup(parser_, init_type_info->namespaceHandle());
 
-	std::vector<StringHandle> tuple_size_template_names;
-	append_template_lookup_names("tuple_size", TemplateDeclarationKind::ClassTemplate, tuple_size_template_names);
-	append_template_lookup_names("std::tuple_size", TemplateDeclarationKind::ClassTemplate, tuple_size_template_names);
-	append_fallback_template_names(tuple_size_template_names, {"tuple_size", "std::tuple_size"});
+	std::vector<StringHandle> tuple_size_template_names = protocol_lookup.resolveTemplateCandidates(
+		protocol_lookup.tuple_size_name,
+		TemplateDeclarationKind::ClassTemplate);
+	std::vector<StringHandle> tuple_element_template_names = protocol_lookup.resolveTemplateCandidates(
+		protocol_lookup.tuple_element_name,
+		TemplateDeclarationKind::ClassTemplate);
+	std::vector<StringHandle> get_template_names = protocol_lookup.resolveTemplateCandidates(
+		protocol_lookup.get_name,
+		TemplateDeclarationKind::FunctionTemplate);
 
-	std::vector<StringHandle> tuple_element_template_names;
-	append_template_lookup_names("tuple_element", TemplateDeclarationKind::ClassTemplate, tuple_element_template_names);
-	append_template_lookup_names("std::tuple_element", TemplateDeclarationKind::ClassTemplate, tuple_element_template_names);
-	append_fallback_template_names(tuple_element_template_names, {"tuple_element", "std::tuple_element"});
-
-	std::vector<StringHandle> get_template_names;
-	append_template_lookup_names("get", TemplateDeclarationKind::FunctionTemplate, get_template_names);
-	append_template_lookup_names("std::get", TemplateDeclarationKind::FunctionTemplate, get_template_names);
-	append_fallback_template_names(get_template_names, {"get", "std::get"});
-
-	auto resolve_struct_specialization = [&](std::span<const StringHandle> template_names, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
+	auto resolve_struct_specialization = [](std::span<const StringHandle> template_names, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
 		for (StringHandle template_name : template_names) {
 			if (!template_name.isValid()) {
 				continue;
@@ -2880,7 +2985,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		TypeCategory::Int
 	};
 
-	StringHandle type_alias_name = StringTable::getOrInternStringHandle("type");
+	StringHandle type_alias_name = protocol_lookup.type_alias_name;
 
 	StructuredBindingPlan plan;
 	plan.decomposition_kind = StructuredBindingDecompositionKind::TupleLike;
