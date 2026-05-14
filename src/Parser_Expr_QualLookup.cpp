@@ -527,11 +527,20 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				struct_type_info->sourceNamespace(),
 				struct_type_info->baseTemplateName());
-			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
-			if (!alias_template_entry.has_value()) {
-				alias_template_entry = gTemplateRegistry.lookup_alias_template(
-					struct_type_info->baseTemplateName());
+			TemplateNameLookupResult alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+				buildTemplateNameLookupRequest(
+					alias_template_name,
+					TemplateNameLookupKind::Qualified,
+					false));
+			if (!alias_template_lookup.hasAliasTemplate()) {
+				alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+					buildTemplateNameLookupRequest(
+						struct_type_info->baseTemplateName(),
+						TemplateNameLookupKind::Ordinary,
+						false));
 			}
+			std::optional<ASTNode> alias_template_entry =
+				alias_template_lookup.firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
 			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
 				std::vector<TemplateTypeArg> concrete_args;
 				concrete_args.reserve(struct_type_info->templateArgs().size());
@@ -1255,11 +1264,20 @@ TypeIndex Parser::substitute_template_parameter(
 			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				arg_type_info->sourceNamespace(),
 				arg_type_info->baseTemplateName());
-			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
-			if (!alias_template_entry.has_value()) {
-				alias_template_entry = gTemplateRegistry.lookup_alias_template(
-					arg_type_info->baseTemplateName());
+			TemplateNameLookupResult alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+				buildTemplateNameLookupRequest(
+					alias_template_name,
+					TemplateNameLookupKind::Qualified,
+					false));
+			if (!alias_template_lookup.hasAliasTemplate()) {
+				alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+					buildTemplateNameLookupRequest(
+						arg_type_info->baseTemplateName(),
+						TemplateNameLookupKind::Ordinary,
+						false));
 			}
+			std::optional<ASTNode> alias_template_entry =
+				alias_template_lookup.firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
 			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_template_entry->as<TemplateAliasNode>();
 				if (std::optional<TemplateTypeArg> rebound_arg =

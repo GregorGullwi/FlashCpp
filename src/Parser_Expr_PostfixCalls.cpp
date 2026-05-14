@@ -1158,10 +1158,30 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 				FLASH_LOG(Templates, Info, "Checking for qualified template: ", qualified_name, ", peek='", peek_info().value(), "'");
 
-				auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
-				if (var_template_opt.has_value()) {
-					FLASH_LOG(Templates, Info, "Found variable template: ", qualified_name);
-					auto instantiated_var = try_instantiate_variable_template(qualified_name, *template_args);
+				TemplateNameLookupResult qualified_var_lookup = gTemplateRegistry.lookupTemplateName(
+					buildTemplateNameLookupRequest(
+						StringTable::getOrInternStringHandle(qualified_name),
+						TemplateNameLookupKind::Qualified,
+						false));
+				TemplateNameLookupResult unqualified_var_lookup;
+				std::string_view variable_template_lookup_name = qualified_name;
+				if (!qualified_var_lookup.hasVariableTemplate()) {
+					unqualified_var_lookup = gTemplateRegistry.lookupTemplateName(
+						buildTemplateNameLookupRequest(
+							final_identifier.handle(),
+							TemplateNameLookupKind::Ordinary,
+							false));
+					if (unqualified_var_lookup.hasVariableTemplate()) {
+						variable_template_lookup_name = final_identifier.value();
+					}
+				}
+
+				const bool has_variable_template =
+					qualified_var_lookup.hasVariableTemplate() ||
+					unqualified_var_lookup.hasVariableTemplate();
+				if (has_variable_template) {
+					FLASH_LOG(Templates, Info, "Found variable template: ", variable_template_lookup_name);
+					auto instantiated_var = try_instantiate_variable_template(variable_template_lookup_name, *template_args);
 					if (instantiated_var.has_value()) {
 						// Get the instantiated variable name
 						std::string_view inst_name;
@@ -1180,7 +1200,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						Token inst_token(Token::Type::Identifier, inst_name,
 										 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
-						FLASH_LOG(Templates, Debug, "Successfully instantiated qualified variable template: ", qualified_name);
+						FLASH_LOG(Templates, Debug, "Successfully instantiated qualified variable template: ", variable_template_lookup_name);
 						continue; // Check for more postfix operators
 					}
 				}
@@ -1188,7 +1208,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				// Not a variable template - check if it's a class template that needs instantiation
 				// If we have template args, try to instantiate the class template
 				// This handles patterns like: std::is_integral<int>::value
-				if (!var_template_opt.has_value()) {
+				if (!has_variable_template) {
 					FLASH_LOG(Templates, Info, "Attempting class template instantiation for: ", qualified_name);
 					auto instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
 					// Update the type_name to use the fully instantiated name (with defaults filled in)
