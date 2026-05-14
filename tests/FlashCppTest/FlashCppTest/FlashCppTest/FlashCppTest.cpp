@@ -2707,10 +2707,11 @@ TEST_CASE("ConstExpr:InheritedStaticMember") {
 
 TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 	CompileContext test_context;
-	test_context.setInputFile("test_template_inherited_static_struct_member_ret13.cpp");
+	test_context.setInputFile("tests/test_template_inherited_static_struct_member_ret13.cpp");
 
 	FileTree test_file_tree;
 	FileReader file_reader(test_context, test_file_tree);
+	REQUIRE(file_reader.readFile(test_context.getInputFile().value()));
 	const std::string& code = file_reader.get_result();
 
 	gTypeInfo.clear();
@@ -2727,11 +2728,9 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 	auto sema = runSemanticAnalysisForTest(parser, test_context);
 	AstToIr converter(gSymbolTable, test_context, parser);
 	converter.setSemanticData(sema.get());
-	std::printf("[DEBUG-TEST] code.size=%zu, gTypesByName size before visit: %zu\n", code.size(), gTypesByName.size());
 	for (auto& node_handle : parser.get_nodes()) {
 		converter.visit(node_handle);
 	}
-	std::printf("[DEBUG-TEST] IR instruction count: %zu\n", converter.getIr().getInstructions().size());
 
 	int instantiated_owner_count = 0;
 	int derived_alias_count = 0;
@@ -2743,7 +2742,6 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 
 		const auto& op = instruction.getTypedPayload<GlobalVariableDeclOp>();
 		std::string_view global_name = StringTable::getStringView(op.getVarName());
-		std::printf("[DEBUG-TEST] GlobalVarDecl: '%s'\n", std::string(global_name).c_str());
 		if (!global_name.ends_with("::payload")) {
 			continue;
 		}
@@ -3699,9 +3697,43 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	REQUIRE(!parse_result.is_error());
 
 	auto findTypeIndexByName = [](std::string_view wanted) -> TypeIndex {
+		// Exact name match first (handles non-template types)
 		for (TypeIndex i{0}; i.index() < gTypeInfo.size(); ++i) {
 			if (StringTable::getStringView(gTypeInfo[i.index()].name()) == wanted) {
 				return i;
+			}
+		}
+		// For template instantiation patterns like "UDWrap<int>", match by base template name
+		// and single-argument TypeCategory (template instantiations use hash-based names internally)
+		auto lt_pos = wanted.find('<');
+		if (lt_pos == std::string_view::npos) {
+			return TypeIndex{};
+		}
+		std::string_view base_name = wanted.substr(0, lt_pos);
+		std::string_view arg_str = wanted.substr(lt_pos + 1);
+		if (!arg_str.empty() && arg_str.back() == '>') {
+			arg_str.remove_suffix(1);
+		}
+		StringHandle base_handle = StringTable::getOrInternStringHandle(base_name);
+		for (const auto& [name_handle, type_info_ptr] : getTypesByNameMap()) {
+			if (!type_info_ptr || !type_info_ptr->isTemplateInstantiation()) {
+				continue;
+			}
+			if (type_info_ptr->baseTemplateName() != base_handle) {
+				continue;
+			}
+			const auto& args = type_info_ptr->templateArgs();
+			if (args.size() != 1) {
+				continue;
+			}
+			TypeCategory cat = args[0].type_index.category();
+			bool matches = (arg_str == "int" && cat == TypeCategory::Int) ||
+			               (arg_str == "double" && cat == TypeCategory::Double) ||
+			               (arg_str == "float" && cat == TypeCategory::Float) ||
+			               (arg_str == "bool" && cat == TypeCategory::Bool) ||
+			               (arg_str == "char" && cat == TypeCategory::Char);
+			if (matches) {
+				return type_info_ptr->registeredTypeIndex();
 			}
 		}
 		return TypeIndex{};
