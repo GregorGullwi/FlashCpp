@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (template infrastructure pass 3 completed)
+**Last updated:** 2026-05-14 (template infrastructure pass 4 completed)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -64,10 +64,13 @@ infrastructure tracks. The branch now includes:
 - typed NTTP identity for integral/enum/`nullptr`, object pointers, references,
   function pointers, and null member pointers, with unsupported structural-class
   cases still explicit.
+- qualified non-dependent template-body calls now preserve definition-context
+  lookup records on the call expression, including qualified-name metadata;
+- floating-point NTTP identity now flows through constexpr evaluation and Itanium
+  mangling for standard-shaped floating arguments.
 
-Validation after these changes passed the Windows sharded build and the full
-PowerShell test suite: 2375 regular tests compiled, linked, and ran with the
-expected return values, and all 183 `_fail.cpp` tests failed as expected.
+Validation after these changes passed the Windows sharded build and the targeted
+template regression tests for qualified calls and floating NTTP specialization.
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
