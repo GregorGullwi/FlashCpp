@@ -2338,6 +2338,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, eval_ctx);
 		if (!eval_result.success()) {
 			return false;
@@ -2370,6 +2372,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		ASTNode substituted = substitute_template_params_in_expression(
 			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map, StringHandle{});
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 		if (eval_result.success() && eval_result.as_int() >= 0)
 			return static_cast<size_t>(eval_result.as_int());
@@ -2395,6 +2399,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
 		for (const auto& dim_expr : decl.array_dimensions()) {
 			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map, StringHandle{});
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);

@@ -726,6 +726,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					op.element_count = 1;
 					for (const auto& dim_expr : dims) {
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						ctx.parser = parser_;
+						ctx.sema = sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 						if (eval_result.success() && eval_result.as_int() > 0) {
 							op.element_count *= static_cast<size_t>(eval_result.as_int());
@@ -945,6 +947,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					}
 					if (matching_ctor) {
 						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						eval_ctx.parser = parser_;
+						eval_ctx.sema = sema_;
 						std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
 						eval_ctx.local_bindings = &param_bindings;
 						bool args_ok = true;
@@ -1795,6 +1799,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										// Use default member initializer if available, otherwise zero-initialize
 										if (member.default_initializer.has_value()) {
 											ConstExpr::EvaluationContext ctx(gSymbolTable);
+											ctx.parser = parser_;
+											ctx.sema = sema_;
 											auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 											if (eval_result.success()) {
 												if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
@@ -3016,6 +3022,8 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					if (decl.is_array() && decl.array_size().has_value()) {
 							// Evaluate array size
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						ctx.parser = parser_;
+						ctx.sema = sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
 						if (eval_result.success()) {
 							is_array = true;
@@ -3036,6 +3044,8 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					if (decl.is_array() && decl.array_size().has_value()) {
 							// Evaluate array size
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						ctx.parser = parser_;
+						ctx.sema = sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
 						if (eval_result.success()) {
 							is_array = true;

@@ -2250,6 +2250,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				eval_ctx.parser = this;
+				eval_ctx.sema = getActiveSemanticAnalysis();
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
 				if (!eval_result.success()) {
 					FLASH_LOG(Templates, Error, "Failed to evaluate non-type default for variable template parameter '",

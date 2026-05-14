@@ -972,6 +972,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		int result = 0;
 		if (arg_result.node().has_value()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+			eval_ctx.parser = this;
 			auto eval_result = ConstExpr::Evaluator::evaluate(*arg_result.node(), eval_ctx);
 			if (eval_result.success()) {
 				result = 1;

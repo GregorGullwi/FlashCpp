@@ -4444,21 +4444,14 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	if (!symbol_opt.has_value()) {
 		Parser* parser = context.parser;
 		auto lookup_template = [parser](std::string_view lookup_name, TemplateNameLookupKind lookup_kind) -> std::optional<ASTNode> {
+			if (parser == nullptr) {
+				return std::nullopt;
+			}
 			const StringHandle lookup_name_handle = StringTable::getOrInternStringHandle(lookup_name);
-			TemplateNameLookupRequest request = [&]() {
-				if (parser != nullptr) {
-					return parser->buildFunctionTemplateLookupRequest(
-						lookup_name_handle,
-						lookup_kind,
-						false);
-				}
-				TemplateNameLookupRequest fallback_request{};
-				// Fallback when parser semantic context is unavailable: rely on
-				// TemplateNameLookupRequest defaults (point-of-definition timing).
-				fallback_request.name = lookup_name_handle;
-				fallback_request.lookup_kind = lookup_kind;
-				return fallback_request;
-			}();
+			TemplateNameLookupRequest request = parser->buildFunctionTemplateLookupRequest(
+				lookup_name_handle,
+				lookup_kind,
+				false);
 			TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(request);
 			return lookup_result.firstDeclarationOfKind(TemplateDeclarationKind::FunctionTemplate);
 		};

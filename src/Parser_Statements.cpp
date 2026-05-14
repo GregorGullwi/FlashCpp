@@ -1110,6 +1110,7 @@ void Parser::prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_nod
 	}
 
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	eval_ctx.parser = this;
 	const auto& decl_dims = decl_node.array_dimensions();
 	if (decl_node.is_unsized_array()) {
 		if (decl_dims.empty()) {

@@ -1731,6 +1731,8 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		}
 
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
 		eval_ctx.template_environment.bindings.reserve(param_name_to_arg.size());
 		for (const auto& [deduced_name, deduced_arg] : param_name_to_arg) {
 			TemplateBinding binding;
