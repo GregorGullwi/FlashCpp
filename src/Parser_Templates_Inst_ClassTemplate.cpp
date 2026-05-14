@@ -563,17 +563,16 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 		resolved_member.member_name = member_access.member_name;
 		resolved_member.has_template_arguments = member_access.has_template_arguments;
 		if (member_access.has_template_arguments) {
-			resolved_member.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>();
+			resolved_member.template_arguments = std::make_unique<std::vector<TemplateTypeArg>>();
 			resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
 			for (const auto& member_arg_info : member_access.template_argument_infos) {
 				if (member_arg_info.is_pack) {
 					auto try_expand = [&](StringHandle pack_name) -> bool {
 						auto it = pack_substitution_map.find(pack_name);
 						if (it != pack_substitution_map.end()) {
-							resolved_member.template_arguments->insert(
-								resolved_member.template_arguments->end(),
-								it->second.begin(),
-								it->second.end());
+							for (const TemplateTypeArg& pack_arg : it->second) {
+								resolved_member.template_arguments->push_back(pack_arg);
+							}
 							return true;
 						}
 						return false;
