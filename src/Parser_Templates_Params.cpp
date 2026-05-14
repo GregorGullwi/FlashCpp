@@ -1159,12 +1159,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 			// Expression is not a numeric literal - try to evaluate it as a constant expression
 			// This handles cases like is_int<T>::value where the expression needs evaluation
-			// Evaluate constant expressions in two cases:
-			// 1. During SFINAE context (template instantiation with concrete arguments)
-			// 2. When NOT parsing a template body (e.g., global scope type alias like `using X = holder<1 ? 2 : 3>`)
-			// Only skip evaluation during template DECLARATION when template parameters are not yet instantiated
-			bool should_try_constant_eval =
-				template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe || parsing_template_depth_ == 0;
+			// Always attempt constant evaluation first. Non-dependent expressions such as
+			// pointer/function-pointer NTTPs in explicit specializations must materialize to
+			// concrete identities even when parsed inside template declarations. Dependent
+			// expressions naturally fall through when evaluation fails.
+			bool should_try_constant_eval = true;
 			if (should_try_constant_eval) {
 				FLASH_LOG(
 					Templates,
@@ -1176,8 +1175,10 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					")");
 				auto const_value = try_evaluate_constant_expression(*expr_result.node());
 				if (const_value.has_value()) {
-					// Successfully evaluated as a constant expression
-					TemplateTypeArg const_arg(const_value->value, const_value->type);
+					// Successfully evaluated as a constant expression.
+					// Preserve full typed NTTP identity (pointer/reference/member/nullptr/etc)
+					// instead of collapsing to raw integral payload.
+					TemplateTypeArg const_arg = TemplateTypeArg::makeValueIdentity(const_value->identity);
 
 					// Check for pack expansion (...)
 					if (peek() == "..."_tok) {
@@ -1375,8 +1376,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				}
 
 				if (evaluated_static_member && static_member_value.has_value()) {
-					// Successfully evaluated static member - create template argument
-					TemplateTypeArg const_arg(static_member_value->value, static_member_value->type);
+					// Successfully evaluated static member - preserve full typed NTTP identity.
+					TemplateTypeArg const_arg = TemplateTypeArg::makeValueIdentity(static_member_value->identity);
 
 					// Check for pack expansion (...)
 					if (peek() == "..."_tok) {
@@ -2566,8 +2567,20 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 						? declared_type_index
 						: nativeTypeIndex(declared_type_index.category());
 					if (param.type_specifier_node().is_reference() &&
-						identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer) {
+						(identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+						 identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer)) {
 						identity.kind = FlashCpp::NonTypeValueIdentityKind::Reference;
+					} else if (declared_type_index.category() == TypeCategory::FunctionPointer ||
+							   declared_type_index.category() == TypeCategory::MemberFunctionPointer) {
+						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+							identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
+							identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference) {
+							identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
+						}
+					} else if (declared_type_index.category() == TypeCategory::MemberObjectPointer) {
+						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
+							identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
+						}
 					} else if (param.type_specifier_node().pointer_depth() > 0 &&
 							   identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 						identity.kind = FlashCpp::NonTypeValueIdentityKind::ObjectPointer;
