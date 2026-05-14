@@ -3602,13 +3602,41 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			restore_lexer_position_only(func_decl.trailing_return_type_position());
 			advance();  // consume '->'
 
-			// Register function parameters so they're visible in decltype expressions.
-			// Use SymbolTableScope RAII to ensure exit_scope on all paths (including exceptions).
-			FlashCpp::SymbolTableScope sfinae_param_scope(ScopeType::Function);
-			register_parameters_in_scope(func_decl.parameter_nodes());
-
 			FlashCpp::TemplateParameterScope sfinae_scope;
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
+
+			// Register function parameters so they're visible in decltype expressions.
+			// Materialize substituted parameter types first so expressions like
+			// decltype(u->foo(), true) see `u` as `HasFoo*` (or concrete equivalent),
+			// not as an unresolved template-parameter placeholder.
+			FlashCpp::SymbolTableScope sfinae_param_scope(ScopeType::Function);
+			InlineVector<ASTNode, 8> sfinae_params;
+			sfinae_params.reserve(func_decl.parameter_nodes().size());
+			for (const ASTNode& param_node : func_decl.parameter_nodes()) {
+				if (!param_node.is<DeclarationNode>()) {
+					sfinae_params.push_back(param_node);
+					continue;
+				}
+
+				const DeclarationNode& original_param = param_node.as<DeclarationNode>();
+				TypeSpecifierNode substituted_type = original_param.type_specifier_node();
+				TypeIndex substituted_index = substitute_template_parameter(
+					original_param.type_specifier_node(),
+					template_params,
+					template_args);
+				if (substituted_index.is_valid() &&
+					substituted_index.category() != TypeCategory::Invalid) {
+					substituted_type.set_type_index(substituted_index.withCategory(substituted_index.category()));
+					substituted_type.set_category(substituted_index.category());
+				}
+
+				ASTNode substituted_type_node = emplace_node<TypeSpecifierNode>(substituted_type);
+				ASTNode substituted_param = emplace_node<DeclarationNode>(
+					substituted_type_node,
+					original_param.identifier_token());
+				sfinae_params.push_back(substituted_param);
+			}
+			register_parameters_in_scope(sfinae_params);
 
 			auto return_type_result = parse_type_specifier();
 			// Explicitly exit the param scope before restoring the lexer position.
