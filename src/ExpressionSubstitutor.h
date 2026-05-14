@@ -97,6 +97,8 @@ public:
 	/// @return A new expression with template parameters substituted
 	ASTNode substitute(const ASTNode& expr);
 
+	const TypeInfo* resolveDependentMemberTypeForSubstitution(const TypeInfo& type_info);
+
 	void setCurrentOwnerTypeName(StringHandle owner_type_name) {
 		current_owner_type_name_ = owner_type_name;
 	}

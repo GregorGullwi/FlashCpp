@@ -91,6 +91,7 @@ struct TemplateInstantiationContext {
 	StringHandle current_instantiation_name{};
 	TypeIndex current_instantiation_type{};
 	TemplateLookupContext lookup_context;
+	const TemplateDefinitionLookupContext* definition_lookup_context = nullptr;
 	const ConstExpr::EvaluationContext* constexpr_context = nullptr;
 	const SemanticAnalysis* semantic_context = nullptr;
 	TemplateSubstitutionFailurePolicy failure_policy = TemplateSubstitutionFailurePolicy::HardUse;

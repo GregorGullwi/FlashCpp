@@ -1013,7 +1013,8 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 	auto makeConstantValue = [](int64_t value, TypeCategory category, TypeIndex type_index) {
-		return ConstantValue{value, category, makeConstantValueTypeIndex(category, type_index)};
+		TypeIndex identity_type_index = makeConstantValueTypeIndex(category, type_index);
+		return ConstantValue{value, category, identity_type_index, FlashCpp::NonTypeValueIdentity::makeConcrete(value, identity_type_index)};
 	};
 	auto makeConstantValueFromCategory = [&](int64_t value, TypeCategory category) {
 		return makeConstantValue(value, category, TypeIndex{});
@@ -1031,7 +1032,53 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		} else if (std::holds_alternative<double>(eval_result.value)) {
 			category = TypeCategory::Double;
 		}
-		return makeConstantValue(eval_result.as_int(), category, type_index);
+		ConstantValue value = makeConstantValue(eval_result.as_int(), category, type_index);
+		if (category == TypeCategory::Nullptr) {
+			value.identity = FlashCpp::NonTypeValueIdentity::makeNullptr(value.type_index);
+		} else if (eval_result.pointer_to_var.isValid()) {
+			value.identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+				value.type_index,
+				eval_result.pointer_to_var,
+				eval_result.pointer_offset);
+		} else if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
+			if (eval_result.member_pointer_member.isValid()) {
+				value.identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+					value.type_index,
+					eval_result.member_pointer_member,
+					eval_result.as_int());
+			} else {
+				value.identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+					value.type_index,
+					StringHandle{},
+					eval_result.as_int());
+			}
+		}
+		return value;
+	};
+	auto retargetConstantValueToDeclaredType = [&](ConstantValue value, TypeIndex declared_type_index) {
+		TypeCategory declared_category = declared_type_index.category();
+		if (declared_type_index.is_valid()) {
+			if (const TypeInfo* declared_type_info = tryGetTypeInfo(declared_type_index)) {
+				if (declared_type_info->typeEnum() != TypeCategory::Invalid) {
+					declared_category = declared_type_info->typeEnum();
+				}
+			}
+		}
+		if (declared_category == TypeCategory::Invalid ||
+			declared_category == TypeCategory::Auto ||
+			declared_category == TypeCategory::DeclTypeAuto) {
+			return value;
+		}
+		value.type = declared_category;
+		value.type_index = makeConstantValueTypeIndex(declared_category, declared_type_index);
+		value.identity.value_type_index = value.type_index;
+		if (declared_category == TypeCategory::FunctionPointer ||
+				   declared_category == TypeCategory::MemberFunctionPointer) {
+			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
+		} else if (declared_category == TypeCategory::MemberObjectPointer) {
+			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
+		}
+		return value;
 	};
 
 	// Handle boolean literals directly
@@ -1103,16 +1150,40 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				!static_member_decl.initializer.has_value()) {
 				continue;
 			}
-			return try_evaluate_constant_expression(*static_member_decl.initializer);
+			auto value = try_evaluate_constant_expression(*static_member_decl.initializer);
+			if (!value.has_value()) {
+				return std::nullopt;
+			}
+			return retargetConstantValueToDeclaredType(*value, static_member_decl.type_index);
 		}
 
 		return std::nullopt;
+	};
+	// Helper: create a constexpr evaluation context with struct context and parser.
+	// is_speculative = true disables short-circuit && / || so that a truthy LHS of `||`
+	// does not give a false-positive result during template-argument disambiguation.
+	auto makeConstExprContext = [&]() {
+		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		if (!struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			ctx.struct_node = struct_ctx.struct_node;
+			ctx.struct_info = struct_ctx.local_struct_info;
+		}
+		ctx.parser = this;
+		ctx.is_speculative = true;
+		return ctx;
 	};
 
 	// Handle qualified identifier expressions (e.g., is_int<double>::value)
 	// This is the most common case for template member access in C++
 	if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 		const QualifiedIdentifierNode& qualified_id = std::get<QualifiedIdentifierNode>(expr);
+		auto ctx = makeConstExprContext();
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Qualified identifier constexpr evaluation succeeded: {}", eval_result.as_int());
+			return makeConstantValueFromEvalResult(eval_result);
+		}
 
 		// The qualified identifier represents something like "is_int<double>::value"
 		// We need to extract: type_name = "is_int<double>" and member_name = "value"
@@ -1221,7 +1292,11 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// For type traits, this is typically a bool literal (true/false)
 		const ASTNode& init_node = *static_member->initializer;
 		// Recursively evaluate the initializer
-		return try_evaluate_constant_expression(init_node);
+		auto value = try_evaluate_constant_expression(init_node);
+		if (!value.has_value()) {
+			return std::nullopt;
+		}
+		return retargetConstantValueToDeclaredType(*value, static_member->type_index);
 	}
 
 	// Handle member access expressions (e.g., obj.member or obj->member)
@@ -1333,21 +1408,6 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
 		return makeConstantValueFromCategory(eval_result.value ? 1 : 0, TypeCategory::Bool);
 	}
-
-	// Helper: create a constexpr evaluation context with struct context and parser.
-	// is_speculative = true disables short-circuit && / || so that a truthy LHS of `||`
-	// does not give a false-positive result during template-argument disambiguation.
-	auto makeConstExprContext = [&]() {
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		if (!struct_parsing_context_stack_.empty()) {
-			const auto& struct_ctx = struct_parsing_context_stack_.back();
-			ctx.struct_node = struct_ctx.struct_node;
-			ctx.struct_info = struct_ctx.local_struct_info;
-		}
-		ctx.parser = this;
-		ctx.is_speculative = true;
-		return ctx;
-	};
 
 	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {

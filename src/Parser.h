@@ -1062,6 +1062,7 @@ private:
 	size_t phase1_cutoff_line_ = 0;
 	size_t phase1_cutoff_file_idx_ = SIZE_MAX;
 	std::optional<Token> phase1_violation_token_;
+	const TemplateDefinitionLookupContext* current_template_definition_lookup_context_ = nullptr;
 
 	// Add parsing depth counter to detect infinite loops
 	// This is incremented/decremented in critical parsing functions
@@ -1527,6 +1528,7 @@ private:
 		int64_t value;
 		TypeCategory type;
 		TypeIndex type_index{};
+		FlashCpp::NonTypeValueIdentity identity{};
 	};
 
 	enum TokenDestroyPattern {
@@ -1790,7 +1792,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		CommitInstantiation = 1u << 3,
 		RegisterInstantiation = 1u << 4,
 		MemoizeBodyReparseFailure = 1u << 5,
-		RunInlineHeuristic = 1u << 6
+		RunInlineHeuristic = 1u << 6,
+		SkipBodyMaterialization = 1u << 7
 	};
 	static constexpr FunctionTemplateInstantiationFlags mergeInstantiationFlags(
 		FunctionTemplateInstantiationFlags lhs,
@@ -2162,7 +2165,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};
-				concrete_arg.type_index = nativeTypeIndex(value->type);
+				concrete_arg.type_index = value->type_index;
 				concrete_arg.value = value->value;
 				continue;
 			}
@@ -2212,7 +2215,12 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 								concrete_arg.is_value = true;
 								concrete_arg.is_dependent = false;
 								concrete_arg.dependent_name = {};
-								concrete_arg.type_index = nativeTypeIndex(value->type);
+								concrete_arg.type_index = static_member_decl.type_index;
+								if (concrete_arg.type_index.category() == TypeCategory::Invalid ||
+									concrete_arg.type_index.category() == TypeCategory::Auto ||
+									concrete_arg.type_index.category() == TypeCategory::DeclTypeAuto) {
+									concrete_arg.type_index = value->type_index;
+								}
 								concrete_arg.value = value->value;
 								break;
 							}
@@ -2238,7 +2246,12 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 				concrete_arg.is_value = true;
 				concrete_arg.is_dependent = false;
 				concrete_arg.dependent_name = {};
-				concrete_arg.type_index = nativeTypeIndex(value->type);
+				concrete_arg.type_index = static_member->type_index;
+				if (concrete_arg.type_index.category() == TypeCategory::Invalid ||
+					concrete_arg.type_index.category() == TypeCategory::Auto ||
+					concrete_arg.type_index.category() == TypeCategory::DeclTypeAuto) {
+					concrete_arg.type_index = value->type_index;
+				}
 				concrete_arg.value = value->value;
 			}
 		}
@@ -2387,7 +2400,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ASTNode& template_node,
 		std::span<const TemplateTypeArg> template_args,
 		const FlashCpp::TemplateInstantiationKey& key,
-		std::span<const TypeSpecifierNode> call_arg_types);
+		std::span<const TypeSpecifierNode> call_arg_types,
+		bool materialize_body);
 	bool buildSubstitutionForPackElement(
 		StringHandle pack_param_name,
 		size_t pack_element_offset,
@@ -3217,18 +3231,28 @@ private:	 // Resume private methods
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
 
 	void filterPhase1OrdinaryFunctionOverloads(std::vector<ASTNode>& overloads) {
-		if (phase1_cutoff_line_ == 0) {
+		const TemplateDefinitionLookupContext* definition_context =
+			current_template_definition_lookup_context_;
+		const size_t cutoff_line =
+			definition_context != nullptr && definition_context->is_valid()
+			? definition_context->definition_line
+			: phase1_cutoff_line_;
+		const size_t cutoff_file_idx =
+			definition_context != nullptr && definition_context->is_valid()
+			? definition_context->definition_file_index
+			: phase1_cutoff_file_idx_;
+		if (cutoff_line == 0) {
 			return;
 		}
 		auto declaration_is_after_definition = [&](const Token& decl_tok) {
-			if (decl_tok.file_index() != phase1_cutoff_file_idx_) {
+			if (decl_tok.file_index() != cutoff_file_idx) {
 				return false;
 			}
 			size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
-			size_t cutoff_src_line = lexer_.getSourceLine(phase1_cutoff_line_);
+			size_t cutoff_src_line = lexer_.getSourceLine(cutoff_line);
 			return (decl_src_line > 0 && cutoff_src_line > 0)
 				? decl_src_line > cutoff_src_line
-				: decl_tok.line() > phase1_cutoff_line_;
+				: decl_tok.line() > cutoff_line;
 		};
 		overloads.erase(
 			std::remove_if(

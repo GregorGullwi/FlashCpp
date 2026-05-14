@@ -7,6 +7,33 @@
 #include "TypeTraitEvaluator.h"
 
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
+	TypeIndex value_type_index = eval_result.exact_type.has_value()
+		? eval_result.exact_type->type_index().withCategory(eval_result.exact_type->category())
+		: TypeIndex{};
+	if (eval_result.exact_type.has_value() && eval_result.exact_type->category() == TypeCategory::Nullptr) {
+		return TemplateTypeArg::makeValueIdentity(
+			FlashCpp::NonTypeValueIdentity::makeNullptr(nativeTypeIndex(TypeCategory::Nullptr)));
+	}
+	if (eval_result.pointer_to_var.isValid()) {
+		if (!value_type_index.is_valid()) {
+			value_type_index = nativeTypeIndex(TypeCategory::Int);
+		}
+		return TemplateTypeArg::makeValueIdentity(
+			FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+				value_type_index,
+				eval_result.pointer_to_var,
+				eval_result.pointer_offset));
+	}
+	if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
+		if (!value_type_index.is_valid()) {
+			value_type_index = nativeTypeIndex(TypeCategory::MemberObjectPointer);
+		}
+		return TemplateTypeArg::makeValueIdentity(
+			FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+				value_type_index,
+				eval_result.member_pointer_member,
+				eval_result.as_int()));
+	}
 	if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
 		return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
 	}
@@ -349,7 +376,11 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	// evaluated before template parameter substitution: the placeholder type held
 	// inside them does not carry flags like is_final/is_empty, so an early
 	// unsubstituted evaluation would silently return the wrong value (false) and
-	// prevent the correct substituted evaluation below from running.
+	// prevent the correct substituted evaluation below from running.  The same
+	// rule applies to all dependent NTTP expressions: bind alias parameters first,
+	// then perform exactly one substitute/evaluate pass below.  Do not add a
+	// context-free evaluation fallback here, because it can bind hidden outer names
+	// before alias-parameter substitution and produce a different value.
 	const bool is_type_trait_expr = std::get_if<TypeTraitExprNode>(&arg_expr) != nullptr;
 	if (is_type_trait_expr) {
 		FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: skipping early eval for TypeTraitExprNode");
@@ -392,12 +423,6 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 				return TemplateTypeArg::makeDependentValue(dependent_anchor, TypeCategory::Bool, 0, pre_substituted);
 			}
-		}
-	} else {
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
-		if (eval_result.success()) {
-			return templateTypeArgFromEvalResult(eval_result);
 		}
 	}
 

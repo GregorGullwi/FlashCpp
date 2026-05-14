@@ -5,6 +5,62 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+
+struct DependentMemberSegmentInfo {
+	bool has_template_keyword = false;
+	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
+};
+
+TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
+	StringHandle owner_name,
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
+	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	std::string_view member_path,
+	std::span<const DependentMemberSegmentInfo> segment_infos) {
+	TypeInfo::DependentQualifiedNameRecord record;
+	record.owner_kind = owner_kind;
+	record.owner_name = owner_name;
+	record.names_current_instantiation =
+		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+	record.owner_template_arguments = std::move(owner_template_arguments);
+
+	size_t start = 0;
+	size_t member_index = 0;
+	while (start < member_path.size()) {
+		size_t sep = member_path.find("::", start);
+		std::string_view component = sep == std::string_view::npos
+			? member_path.substr(start)
+			: member_path.substr(start, sep - start);
+		if (!component.empty()) {
+			if (size_t template_marker = component.find('<');
+				template_marker != std::string_view::npos) {
+				component = component.substr(0, template_marker);
+			}
+			TypeInfo::DependentQualifiedNameRecord::Member member;
+			member.name = StringTable::getOrInternStringHandle(component);
+			if (member_index < segment_infos.size()) {
+				const DependentMemberSegmentInfo& seg = segment_infos[member_index];
+				if (seg.template_args.has_value()) {
+					member.template_arguments = *seg.template_args;
+					member.has_template_arguments = true;
+				}
+				member.has_template_keyword = seg.has_template_keyword;
+			}
+			record.member_chain.push_back(std::move(member));
+			++member_index;
+		}
+		if (sep == std::string_view::npos) {
+			break;
+		}
+		start = sep + 2;
+	}
+
+	return record;
+}
+
+}
+
 // Helper function to get TypeCategory and size for built-in type keywords
 // Used by both parse_type_specifier and functional-style cast parsing
 std::optional<std::pair<TypeCategory, unsigned char>> Parser::get_builtin_type_info(std::string_view type_name) {
@@ -1146,9 +1202,27 @@ ParseResult Parser::parse_type_specifier() {
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
 					placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+					placeholder_type.setDependentQualifiedName(
+						makeDependentQualifiedNameRecord(
+							StringTable::getOrInternStringHandle(base_part),
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+							InlineVector<TypeInfo::TemplateArgInfo, 4>{},
+							type_name.substr(type_name.find("::") + 2),
+							{}));
 					getTypesByNameMap()[type_handle] = &placeholder_type;
 					type_idx = placeholder_type.type_index_;
 				} else {
+					if (type_it->second != nullptr &&
+						type_it->second->isDependentMemberType() &&
+						!type_it->second->hasDependentQualifiedName()) {
+						type_it->second->setDependentQualifiedName(
+							makeDependentQualifiedNameRecord(
+								StringTable::getOrInternStringHandle(base_part),
+								TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+								InlineVector<TypeInfo::TemplateArgInfo, 4>{},
+								type_name.substr(type_name.find("::") + 2),
+								{}));
+					}
 					type_idx = type_it->second->type_index_;
 				}
 
@@ -1580,13 +1654,22 @@ ParseResult Parser::parse_type_specifier() {
 						dependent_type_builder.append(type_name);
 						dependent_type_builder.append("<...>");
 						Token nested_token = peek_info();
+						TypeInfo::DependentQualifiedNameRecord dependent_name_record;
+						dependent_name_record.owner_kind =
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+						dependent_name_record.owner_name =
+							StringTable::getOrInternStringHandle(type_name);
+						dependent_name_record.owner_template_arguments =
+							convertToTemplateArgInfo(*template_args);
 
 						while (peek() == "::"_tok) {
 							advance(); // consume '::'
 
 							// Handle optional 'template' keyword for dependent contexts
+							bool has_template_keyword = false;
 							if (peek() == "template"_tok) {
 								advance(); // consume 'template'
+								has_template_keyword = true;
 							}
 
 							if (!peek().is_identifier()) {
@@ -1596,16 +1679,23 @@ ParseResult Parser::parse_type_specifier() {
 							nested_token = peek_info();
 							advance(); // consume the identifier
 							dependent_type_builder.append("::").append(nested_token.value());
+							TypeInfo::DependentQualifiedNameRecord::Member member_record;
+							member_record.name = nested_token.handle();
+							member_record.has_template_keyword = has_template_keyword;
 
 							if (peek() == "<"_tok) {
 								auto nested_template_args = parse_explicit_template_arguments();
 								if (!nested_template_args.has_value()) {
 									return ParseResult::error("Failed to parse template arguments for dependent nested type", nested_token);
 								}
+								member_record.template_arguments =
+									convertToTemplateArgInfo(*nested_template_args);
+								member_record.has_template_arguments = true;
 								dependent_type_builder.append("<")
 													.append(nested_template_args->size())
 													.append(" args>");
 							}
+							dependent_name_record.member_chain.push_back(std::move(member_record));
 						}
 						std::string_view dependent_type_name = dependent_type_builder.commit();
 
@@ -1620,6 +1710,7 @@ ParseResult Parser::parse_type_specifier() {
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
 							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							placeholder_type.setDependentQualifiedName(dependent_name_record);
 							placeholder_type.setTemplateInstantiationInfo(
 								QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()),
 								convertToTemplateArgInfo(*template_args));
@@ -1957,13 +2048,16 @@ ParseResult Parser::parse_type_specifier() {
 					// before creating a placeholder
 					std::string_view member_name = qualified_node.identifier_token().value();
 					bool has_template_args = (peek() == "<"_tok);
+					std::vector<DependentMemberSegmentInfo> nested_segment_infos;
 					auto append_nested_qualified_type_chain = [&]() {
 						while (peek() == "::"_tok) {
 							SaveHandle nested_pos = save_token_position();
 							advance(); // consume '::'
 
+							bool nested_has_template_keyword = false;
 							if (peek() == "template"_tok) {
 								advance(); // consume 'template'
+								nested_has_template_keyword = true;
 							}
 
 							if (!peek().is_identifier()) {
@@ -1982,9 +2076,11 @@ ParseResult Parser::parse_type_specifier() {
 													  .commit();
 							discard_saved_token(nested_pos);
 
+							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> nested_seg_args;
 							if (peek() == "<"_tok) {
 								auto nested_tmpl_args = parse_explicit_template_arguments();
 								if (nested_tmpl_args.has_value()) {
+									nested_seg_args = convertToTemplateArgInfo(*nested_tmpl_args);
 									StringBuilder tmpl_builder;
 									qualified_type_name = tmpl_builder
 															  .append(qualified_type_name)
@@ -1994,6 +2090,7 @@ ParseResult Parser::parse_type_specifier() {
 															  .commit();
 								}
 							}
+							nested_segment_infos.push_back({nested_has_template_keyword, std::move(nested_seg_args)});
 						}
 					};
 					auto create_dependent_qualified_type_placeholder =
@@ -2006,6 +2103,41 @@ ParseResult Parser::parse_type_specifier() {
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
 						type_info.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+						TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
+						if (!struct_parsing_context_stack_.empty() &&
+							struct_parsing_context_stack_.back().struct_name == type_name) {
+							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+						} else if (is_dependent_template_param) {
+							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+						}
+						StringBuilder member_path_builder;
+						if (qualified_type_name.starts_with(instantiated_name) &&
+							qualified_type_name.size() > instantiated_name.size() + 2 &&
+							qualified_type_name.substr(instantiated_name.size(), 2) == "::") {
+							member_path_builder.append(qualified_type_name.substr(instantiated_name.size() + 2));
+						} else if (!ns_qualified.empty() && ns_qualified != type_name &&
+							ns_qualified.starts_with(type_name) &&
+							ns_qualified.size() > type_name.size() + 2 &&
+							ns_qualified.substr(type_name.size(), 2) == "::") {
+							member_path_builder.append(ns_qualified.substr(type_name.size() + 2)).append("::");
+							member_path_builder.append(member_name);
+						} else {
+							member_path_builder.append(member_name);
+						}
+						std::string_view dependent_member_path =
+							member_path_builder.commit();
+						InlineVector<DependentMemberSegmentInfo, 4> all_segment_infos;
+						all_segment_infos.push_back({had_template_keyword, dependent_member_template_args});
+						for (const DependentMemberSegmentInfo& seg : nested_segment_infos)
+							all_segment_infos.push_back(seg);
+						type_info.setDependentQualifiedName(
+							makeDependentQualifiedNameRecord(
+								StringTable::getOrInternStringHandle(type_name),
+								owner_kind,
+								convertToTemplateArgInfo(*template_args),
+								dependent_member_path,
+								all_segment_infos));
 						if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
 							type_info.setTemplateInstantiationInfo(
 								QualifiedIdentifier::fromQualifiedName(

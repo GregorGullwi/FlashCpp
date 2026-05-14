@@ -960,9 +960,31 @@ struct TemplateArgumentNodeInfo {
 
 struct QualifiedTypeMemberAccess {
 	StringHandle member_name;
-	std::shared_ptr<std::vector<TemplateTypeArg>> template_arguments;
+	std::unique_ptr<std::vector<TemplateTypeArg>> template_arguments;
 	std::vector<TemplateArgumentNodeInfo> template_argument_infos;
 	bool has_template_arguments = false;
+
+	QualifiedTypeMemberAccess() = default;
+	QualifiedTypeMemberAccess(QualifiedTypeMemberAccess&&) = default;
+	QualifiedTypeMemberAccess& operator=(QualifiedTypeMemberAccess&&) = default;
+	QualifiedTypeMemberAccess(const QualifiedTypeMemberAccess& o)
+		: member_name(o.member_name)
+		, template_arguments(o.template_arguments
+			? std::make_unique<std::vector<TemplateTypeArg>>(*o.template_arguments)
+			: nullptr)
+		, template_argument_infos(o.template_argument_infos)
+		, has_template_arguments(o.has_template_arguments) {}
+	QualifiedTypeMemberAccess& operator=(const QualifiedTypeMemberAccess& o) {
+		if (this != &o) {
+			member_name = o.member_name;
+			template_arguments = o.template_arguments
+				? std::make_unique<std::vector<TemplateTypeArg>>(*o.template_arguments)
+				: nullptr;
+			template_argument_infos = o.template_argument_infos;
+			has_template_arguments = o.has_template_arguments;
+		}
+		return *this;
+	}
 };
 
 struct DeferredTemplateBaseClassSpecifier {

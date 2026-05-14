@@ -258,6 +258,29 @@ inline ConcreteTypeSizeQueryResult queryConcreteAliasResolvedTypeSizeBits(const 
 	return queryConcreteAliasResolvedTypeSizeBitsImpl(type_spec, 64);
 }
 
+inline TypeSpecifierNode makeStaticMemberSizeQueryTypeSpecifier(const StructStaticMember& member) {
+	TypeSpecifierNode member_type(
+		member.type_index.withCategory(member.memberType()),
+		SizeInBits{static_cast<int>(member.size * 8)},
+		Token{},
+		member.cv_qualifier,
+		member.reference_qualifier);
+	member_type.add_pointer_levels(member.pointer_depth);
+	if (member.is_array) {
+		member_type.set_array_dimensions(member.array_dimensions);
+	}
+	return member_type;
+}
+
+inline int queryConcreteAliasResolvedStaticMemberSizeBits(const StructStaticMember& member) {
+	TypeSpecifierNode member_type = makeStaticMemberSizeQueryTypeSpecifier(member);
+	const int size_bits = queryConcreteAliasResolvedTypeSizeBits(member_type).size_bits;
+	if (size_bits > 0) {
+		return size_bits;
+	}
+	return get_type_size_bits(resolve_type_alias(member.type_index));
+}
+
 inline int requireConcreteAliasResolvedTypeSizeBits(const TypeSpecifierNode& type_spec, std::string_view context) {
 	const ConcreteTypeSizeQueryResult query = queryConcreteAliasResolvedTypeSizeBits(type_spec);
 	if (query.hasSize()) {
@@ -313,4 +336,37 @@ inline int requireConcreteAliasResolvedTypeSizeBits(const TypeSpecifierNode& typ
 										.append(static_cast<int64_t>(type_spec.pointer_depth()))
 										.append(")")
 										.commit()));*/
+}
+
+inline TypeCategory requireConcreteAliasResolvedCodegenTypeCategory(const TypeSpecifierNode& type_spec, std::string_view context) {
+	TypeCategory type = type_spec.type();
+	if (!isPlaceholderAutoType(type)) {
+		return type;
+	}
+	if (type_spec.type_index().is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+			TypeCategory resolved_type = type_info->typeEnum();
+			if (!isPlaceholderAutoType(resolved_type) && resolved_type != TypeCategory::Invalid) {
+				return resolved_type;
+			}
+		}
+	}
+	throw InternalError(std::string(StringBuilder()
+										.append("Unresolved placeholder type reached codegen in ")
+										.append(context)
+										.append(" (type=")
+										.append(static_cast<int64_t>(type))
+										.append(")")
+										.commit()));
+}
+
+inline TypeSpecifierNode makeConcreteAliasResolvedCodegenSizeQueryType(const TypeSpecifierNode& type_spec, std::string_view context) {
+	TypeSpecifierNode resolved_type_spec = type_spec;
+	resolved_type_spec.set_category(requireConcreteAliasResolvedCodegenTypeCategory(type_spec, context));
+	return resolved_type_spec;
+}
+
+inline int requireConcreteAliasResolvedCodegenSizeBits(const TypeSpecifierNode& type_spec, std::string_view context) {
+	TypeSpecifierNode resolved_type_spec = makeConcreteAliasResolvedCodegenSizeQueryType(type_spec, context);
+	return requireConcreteAliasResolvedTypeSizeBits(resolved_type_spec, context);
 }

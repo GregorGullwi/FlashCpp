@@ -1385,6 +1385,23 @@ void Parser::reparse_template_function_body(
 				phase1_violation_token_.reset();
 			}
 		}
+		TemplateDefinitionLookupContext definition_lookup_context;
+		definition_lookup_context.definition_line = phase1_cutoff_line_;
+		definition_lookup_context.definition_file_index = phase1_cutoff_file_idx_;
+		definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
+		if (current_function_ != nullptr && !current_function_->parent_struct_name().empty()) {
+			definition_lookup_context.current_instantiation_name =
+				StringTable::getOrInternStringHandle(current_function_->parent_struct_name());
+		}
+		substitution_context.definition_lookup_context = definition_lookup_context.is_valid()
+			? &definition_lookup_context
+			: nullptr;
+		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
+			current_template_definition_lookup_context_;
+		current_template_definition_lookup_context_ = substitution_context.definition_lookup_context;
+		auto restore_definition_lookup_context = ScopeGuard([&]() {
+			current_template_definition_lookup_context_ = previous_definition_lookup_context;
+		});
 
 		// Parse the body, substitute template parameters, then install as definition.
 		{
@@ -2629,6 +2646,8 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::CommitInstantiation);
 	const bool register_instantiation =
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RegisterInstantiation);
+	const bool skip_body_materialization =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::SkipBodyMaterialization);
 	const DeclarationNode& orig_decl = func_decl.decl_node();
 	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
 
@@ -2931,7 +2950,11 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	}
 
 	bool body_reparse_failed = false;
-	if (func_decl.has_template_body_position()) {
+	if (skip_body_materialization) {
+		// Shape-only overload selection needs a concrete function signature for
+		// conversion ranking, but it must not parse or substitute the body of
+		// candidates that may not be selected.
+	} else if (func_decl.has_template_body_position()) {
 		if (use_explicit_materialization) {
 			static thread_local std::unordered_set<StringHandle> body_parse_in_progress;
 			StringHandle cycle_key = StringTable::getOrInternStringHandle(mangled_name);
@@ -3455,10 +3478,13 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	static int recursion_depth = 0;
 	recursion_depth++;
+	struct DepthGuard {
+		int& depth;
+		~DepthGuard() { depth--; }
+	} depth_guard{recursion_depth};
 
 	if (recursion_depth > 64) {
 		FLASH_LOG(Templates, Error, "try_instantiate_template recursion depth exceeded 64! Possible infinite loop for template '", template_name, "'");
-		recursion_depth--;
 		return std::nullopt;
 	}
 
@@ -3510,7 +3536,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		// This is expected for regular (non-template) functions - the caller will fall back
 		// to creating a forward declaration. Only log at Debug level to avoid noise.
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
-		recursion_depth--;
 		return std::nullopt;
 	}
 
@@ -3549,6 +3574,250 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			[&](size_t lhs_idx, size_t rhs_idx) {
 				return scores[lhs_idx] > scores[rhs_idx];
 			});
+	}
+
+	if (!outer_sfinae_context && all_templates->size() > 1) {
+		struct ShapeCandidate {
+			size_t overload_idx;
+			InlineVector<TemplateTypeArg, 4> template_args;
+			FlashCpp::TemplateInstantiationKey key;
+			uintptr_t overload_id;
+			std::optional<CallArgDeductionInfo> deduction_info;
+		};
+		std::vector<ShapeCandidate> shape_candidates;
+		std::vector<ASTNode> shape_overloads;
+		shape_candidates.reserve(all_templates->size());
+		shape_overloads.reserve(all_templates->size());
+		StringHandle template_name_handle = StringTable::getOrInternStringHandle(template_name);
+
+		for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
+			size_t overload_idx = overload_iteration_order[sorted_idx];
+			const ASTNode& template_node = (*all_templates)[overload_idx];
+			if (!template_node.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const TemplateFunctionDeclarationNode& template_func =
+				template_node.as<TemplateFunctionDeclarationNode>();
+			const auto& template_params = template_func.template_parameters();
+			const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+
+			auto deduction_candidate = deduceTemplateCandidateViability(
+				template_params,
+				func_decl,
+				arg_types,
+				recursion_depth);
+			if (!deduction_candidate.has_value()) {
+				continue;
+			}
+
+			InlineVector<TemplateTypeArg, 4> template_args = deduction_candidate->template_args;
+			const bool has_structurally_dependent_template_args = std::any_of(
+				template_args.begin(),
+				template_args.end(),
+				[](const TemplateTypeArg& arg) {
+					return arg.is_dependent ||
+						   arg.dependent_name.isValid() ||
+						   arg.category() == TypeCategory::Auto ||
+						   arg.category() == TypeCategory::DeclTypeAuto;
+				});
+			if (has_structurally_dependent_template_args) {
+				continue;
+			}
+
+			auto key = FlashCpp::makeInstantiationKey(
+				template_name_handle,
+				template_args);
+			const uintptr_t overload_id = reinterpret_cast<uintptr_t>(&func_decl);
+			if (gTemplateRegistry.isFailedInstantiation(key, overload_id)) {
+				continue;
+			}
+
+			std::optional<CallArgDeductionInfo> helper_deduction_info =
+				std::move(deduction_candidate->deduction_info);
+			FunctionTemplateInstantiationContext instantiation_context{
+				template_name,
+				template_func,
+				func_decl,
+				template_params,
+				template_args,
+				key,
+				overload_id,
+				recursion_depth};
+			FunctionTemplateBindingData binding_data{
+				&arg_types,
+				nullptr,
+				nullptr,
+				&helper_deduction_info,
+				nullptr};
+			FunctionTemplateInstantiationFlags instantiation_flags =
+				FunctionTemplateInstantiationFlags::SkipBodyMaterialization;
+
+			ScopedParserInstantiationContext shape_guard(
+				*this,
+				TemplateInstantiationMode::HardUseCandidateProbe,
+				StringHandle{});
+			std::optional<ASTNode> signature_node = instantiateBoundFunctionTemplate(
+				instantiation_context,
+				binding_data,
+				instantiation_flags);
+			if (!signature_node.has_value() ||
+				!signature_node->is<FunctionDeclarationNode>() ||
+				signature_node->as<FunctionDeclarationNode>().failed_substitution()) {
+				continue;
+			}
+			shape_candidates.push_back(ShapeCandidate{
+				overload_idx,
+				std::move(template_args),
+				std::move(key),
+				overload_id,
+				std::move(helper_deduction_info)});
+			shape_overloads.push_back(*signature_node);
+		}
+
+		if (shape_overloads.size() > 1) {
+			auto resolution = resolve_overload(shape_overloads, arg_types);
+			if (resolution.has_match &&
+				!resolution.is_ambiguous &&
+				resolution.selected_overload != nullptr) {
+				for (size_t i = 0; i < shape_overloads.size(); ++i) {
+					if (resolution.selected_overload == &shape_overloads[i]) {
+						// Reuse the precomputed template_args from the shape probe to skip
+						// redundant argument deduction for the winning candidate.
+						ShapeCandidate& winner = shape_candidates[i];
+						const ASTNode& winner_template_node = (*all_templates)[winner.overload_idx];
+						const TemplateFunctionDeclarationNode& winner_template_func =
+							winner_template_node.as<TemplateFunctionDeclarationNode>();
+						const FunctionDeclarationNode& winner_func_decl =
+							winner_template_func.function_decl_node();
+						const auto& winner_template_params =
+							winner_template_func.template_parameters();
+
+						// Check explicit specializations before body instantiation.
+						auto specialization_opt = gTemplateRegistry.lookupSpecialization(
+							template_name, winner.template_args);
+						if (specialization_opt.has_value()) {
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"[depth={}]: Shape-winner: found explicit specialization for '{}'",
+								recursion_depth, template_name);
+							return *specialization_opt;
+						}
+
+						// Evaluate requires clause and concept constraints.
+						if (winner_template_func.has_requires_clause()) {
+							const RequiresClauseNode& rc =
+								winner_template_func.requires_clause()->as<RequiresClauseNode>();
+							InlineVector<std::string_view, 4> param_names;
+							for (const auto& tp : winner_template_params)
+								param_names.push_back(tp.name());
+							auto cr = evaluateConstraint(rc.constraint_expr(), winner.template_args, param_names);
+							if (!cr.satisfied) {
+								failTemplateInstantiation(
+									StringBuilder()
+										.append("constraint not satisfied for template function '")
+										.append(template_name)
+										.append("'")
+										.commit(),
+									&winner.key,
+									winner.overload_id);
+								break;
+							}
+						}
+						{
+							bool concept_failed = false;
+							forEachNonPackTemplateParamArgBinding(
+								winner_template_params,
+								winner.template_args,
+								[&](const TemplateParameterNode& param, const TemplateTypeArg& bound_arg, size_t) {
+									if (!param.has_concept_constraint() || concept_failed)
+										return;
+									auto concept_opt = gConceptRegistry.lookupConcept(param.concept_constraint());
+									if (!concept_opt.has_value())
+										return;
+									const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+									TemplateTypeArg concept_arg = bound_arg;
+									concept_arg.ref_qualifier = ReferenceQualifier::None;
+									InlineVector<TemplateTypeArg, 4> concept_args;
+									concept_args.push_back(concept_arg);
+									auto cr = evaluateConstraint(concept_node, concept_args);
+									if (!cr.satisfied) {
+										concept_failed = true;
+									}
+								});
+							if (concept_failed) {
+								failTemplateInstantiation(
+									StringBuilder()
+										.append("concept constraint not satisfied for template function '")
+										.append(template_name)
+										.append("'")
+										.commit(),
+									&winner.key,
+									winner.overload_id);
+								break;
+							}
+						}
+
+						const bool cacheable = hasUsableTemplateFunctionDefinition(winner_func_decl);
+						const bool commit = shouldCommitTemplateInstantiationArtifacts();
+						FunctionTemplateInstantiationContext winner_ctx{
+							template_name,
+							winner_template_func,
+							winner_func_decl,
+							winner_template_params,
+							winner.template_args,
+							winner.key,
+							winner.overload_id,
+							recursion_depth};
+						FunctionTemplateBindingData winner_binding{
+							&arg_types,
+							nullptr,
+							nullptr,
+							&winner.deduction_info,
+							nullptr};
+						FunctionTemplateInstantiationFlags winner_flags =
+							FunctionTemplateInstantiationFlags::None;
+						if (cacheable) {
+							winner_flags = mergeInstantiationFlags(
+								winner_flags,
+								FunctionTemplateInstantiationFlags::CacheableInstantiation);
+						}
+						if (commit) {
+							winner_flags = mergeInstantiationFlags(
+								winner_flags,
+								FunctionTemplateInstantiationFlags::CommitInstantiation);
+						}
+						winner_flags = mergeInstantiationFlags(
+							winner_flags,
+							FunctionTemplateInstantiationFlags::RegisterInstantiation);
+						winner_flags = mergeInstantiationFlags(
+							winner_flags,
+							FunctionTemplateInstantiationFlags::MemoizeBodyReparseFailure);
+						winner_flags = mergeInstantiationFlags(
+							winner_flags,
+							FunctionTemplateInstantiationFlags::RunInlineHeuristic);
+						ScopedParserInstantiationContext guard_instantiation_mode(
+							*this,
+							selectTemplateCandidateProbeMode(),
+							StringHandle{});
+						std::optional<ASTNode> result = instantiateBoundFunctionTemplate(
+							winner_ctx,
+							winner_binding,
+							winner_flags);
+						if (result.has_value()) {
+							FLASH_LOG_FORMAT(
+								Templates,
+								Debug,
+								"[depth={}]: Shape-selected template overload {} for '{}'",
+								recursion_depth,
+								winner.overload_idx,
+								template_name);
+							return result;
+						}
+						break;
+					}
+				}
+			}
+		}
 	}
 
 	std::optional<ASTNode> deferred_forward_declaration_result;
@@ -3603,7 +3872,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				// Non-SFINAE: success — return first good match.
 				FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Successfully instantiated overload {} for '{}'",
 								 recursion_depth, overload_idx, template_name);
-				recursion_depth--;
 				return result;
 			}
 		} else {
@@ -3639,13 +3907,11 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"[depth={}]: SFINAE failure for '{}': all best-specificity candidates are = delete (specificity={})",
 				recursion_depth, template_name, best_specificity);
-			recursion_depth--;
 			return std::nullopt;
 		}
 		FLASH_LOG_FORMAT(Templates, Debug,
 			"[depth={}]: SFINAE best match for '{}' is overload {} specificity={} deleted=false",
 			recursion_depth, template_name, best_non_deleted->overload_idx, best_specificity);
-		recursion_depth--;
 		return best_non_deleted->result;
 	}
 
@@ -3656,14 +3922,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			"[depth={}]: Falling back to deferred bodyless overload for '{}'",
 			recursion_depth,
 			template_name);
-		recursion_depth--;
 		return deferred_forward_declaration_result;
 	}
 
 	// All overloads failed
 	FLASH_LOG_FORMAT(Templates, Error, "[depth={}]: All {} template overload(s) failed for '{}'",
 					 recursion_depth, all_templates->size(), template_name);
-	recursion_depth--;
 	return std::nullopt;
 }
 

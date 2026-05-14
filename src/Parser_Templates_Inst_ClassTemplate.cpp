@@ -203,12 +203,42 @@ static TemplateArgSubstitutionMap makeDeferredBaseExpansionSubstitutionMap(
 	return subst_map;
 }
 
-static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeCategory type) {
-	TemplateTypeArg arg;
-	arg.is_value = true;
-	arg.value = value;
-	arg.type_index = nativeTypeIndex(type);
-	return arg;
+static TypeIndex makeDeferredBaseValueTypeIndex(TypeCategory category, TypeIndex type_index) {
+	TypeCategory resolved_category = category;
+	if (type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			if (type_info->typeEnum() != TypeCategory::Invalid) {
+				resolved_category = type_info->typeEnum();
+			}
+		}
+		return type_index.withCategory(resolved_category);
+	}
+	if (TypeIndex native_index = nativeTypeIndex(resolved_category); native_index.is_valid()) {
+		return native_index.withCategory(resolved_category);
+	}
+	return TypeIndex{0, resolved_category};
+}
+
+static bool isPlaceholderNttpTypeIndex(TypeIndex type_index) {
+	// An invalid TypeIndex represents an unevaluated/unresolved type and must be
+	// treated as a placeholder so the caller falls back to the concrete evaluated type.
+	if (!type_index.is_valid()) {
+		return true;
+	}
+	TypeCategory category = type_index.category();
+	if (category == TypeCategory::Invalid ||
+		category == TypeCategory::Auto ||
+		category == TypeCategory::DeclTypeAuto) {
+		return true;
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+		return type_info->isDependentPlaceholder();
+	}
+	return false;
+}
+
+static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeIndex type_index) {
+	return TemplateTypeArg::makeValue(value, type_index);
 }
 
 // Resolve a deferred-base type argument through the ordinary substitution map,
@@ -533,17 +563,16 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 		resolved_member.member_name = member_access.member_name;
 		resolved_member.has_template_arguments = member_access.has_template_arguments;
 		if (member_access.has_template_arguments) {
-			resolved_member.template_arguments = std::make_shared<std::vector<TemplateTypeArg>>();
+			resolved_member.template_arguments = std::make_unique<std::vector<TemplateTypeArg>>();
 			resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
 			for (const auto& member_arg_info : member_access.template_argument_infos) {
 				if (member_arg_info.is_pack) {
 					auto try_expand = [&](StringHandle pack_name) -> bool {
 						auto it = pack_substitution_map.find(pack_name);
 						if (it != pack_substitution_map.end()) {
-							resolved_member.template_arguments->insert(
-								resolved_member.template_arguments->end(),
-								it->second.begin(),
-								it->second.end());
+							for (const TemplateTypeArg& pack_arg : it->second) {
+								resolved_member.template_arguments->push_back(pack_arg);
+							}
 							return true;
 						}
 						return false;
@@ -616,7 +645,7 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 						const ASTNode substituted_expr = substitute_expression(member_arg_info.node);
 						if (auto evaluated_value = evaluate_constant_expression(substituted_expr)) {
 							resolved_member.template_arguments->push_back(
-								makeDeferredBaseValueArg(evaluated_value->value, evaluated_value->type));
+								makeDeferredBaseValueArg(evaluated_value->value, evaluated_value->type_index));
 							member_arg_resolved = true;
 						}
 					}
@@ -1016,6 +1045,37 @@ static InlineVector<StringHandle, 4> collectParamNameHandles(
 	return names;
 }
 
+template <typename ParamContainer>
+static InlineVector<TypeInfo::TemplateArgInfo, 4> collectEnrichedTemplateArgInfos(
+	const ParamContainer& template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
+	result.reserve(template_args.size());
+	size_t param_index = 0;
+	const TemplateParameterNode* active_param = nullptr;
+	for (size_t i = 0; i < template_args.size(); ++i) {
+		// Advance to the next non-null parameter, unless the current active_param is variadic
+		while (active_param == nullptr && param_index < template_params.size()) {
+			active_param = tryGetTemplateParameterNode(template_params[param_index]);
+			if (active_param == nullptr) {
+				++param_index;
+			}
+		}
+
+		TemplateTypeArg arg = template_args[i];
+		if (active_param != nullptr) {
+			arg = enrichTemplateArgForParameter(*active_param, arg);
+			// Advance past non-variadic params; hold variadic ones across remaining args
+			if (!active_param->is_variadic()) {
+				++param_index;
+				active_param = nullptr;
+			}
+		}
+		result.push_back(toTemplateArgInfo(arg));
+	}
+	return result;
+}
+
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info,
@@ -1315,9 +1375,12 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	}
 
 	if (initializer->is<ExpressionNode>()) {
-		auto sub_map = buildSubstitutionParamMap(template_params, template_args);
-		if (!sub_map.empty()) {
-			ExpressionSubstitutor substitutor(sub_map.param_map, *parser, sub_map.param_order);
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+			template_args,
+			nullptr);
+		if (!substitution_environment.bindings.empty()) {
+			ExpressionSubstitutor substitutor(substitution_environment, *parser);
 			substitutor.setCurrentOwnerTypeName(struct_info->getName());
 			initializer = substitutor.substitute(initializer.value());
 		}
@@ -3384,12 +3447,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 							if (!resolved) {
 								// Helper: build a non-type value TemplateTypeArg
-								auto makeValueArg = [](int64_t value, TypeCategory type) {
-									TemplateTypeArg va;
-									va.is_value = true;
-									va.value = value;
-									va.type_index = nativeTypeIndex(type);
-									return va;
+								auto makeValueArg = [](int64_t value, TypeIndex type_index) {
+									return makeDeferredBaseValueArg(value, type_index);
 								};
 
 								// Non-type value argument - try to convert to TemplateTypeArg
@@ -3399,10 +3458,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									int64_t int_val = std::holds_alternative<unsigned long long>(nv)
 														   ? static_cast<int64_t>(std::get<unsigned long long>(nv))
 														   : static_cast<int64_t>(std::get<double>(nv));
-									resolved_args.push_back(makeValueArg(int_val, num_lit.type()));
+									resolved_args.push_back(makeValueArg(
+										int_val,
+										makeDeferredBaseValueTypeIndex(num_lit.type(), TypeIndex{})));
 									resolved = true;
 								} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
-									resolved_args.push_back(makeValueArg(bool_literal->value() ? 1 : 0, TypeCategory::Bool));
+									resolved_args.push_back(makeValueArg(
+										bool_literal->value() ? 1 : 0,
+										makeDeferredBaseValueTypeIndex(TypeCategory::Bool, TypeIndex{})));
 									resolved = true;
 								} else {
 									ASTNode substituted_expr = substituteTemplateParameters(
@@ -3411,7 +3474,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										template_args);
 									auto evaluated_value = try_evaluate_constant_expression(substituted_expr);
 									if (evaluated_value.has_value()) {
-										resolved_args.push_back(makeValueArg(evaluated_value->value, evaluated_value->type));
+										resolved_args.push_back(makeValueArg(evaluated_value->value, evaluated_value->type_index));
 										resolved = true;
 									} else {
 										// Unresolvable expression argument - cannot safely instantiate
@@ -3500,6 +3563,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Debug, "Copying member: ", decl.identifier_token().value(),
 						  " has_initializer=", member_decl.default_initializer.has_value());
 				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+				TypeSpecifierNode resolved_dependent_member_type_spec = type_spec;
+				const TypeSpecifierNode* effective_type_spec = &type_spec;
+				if (type_spec.type_index().is_valid()) {
+					if (const TypeInfo* member_type_info = tryGetTypeInfo(type_spec.type_index());
+						member_type_info != nullptr &&
+						member_type_info->isDependentMemberType() &&
+						member_type_info->hasDependentQualifiedName()) {
+						ASTNode substituted_type_node = substituteTemplateParameters(
+							ASTNode::emplace_node<TypeSpecifierNode>(type_spec),
+							template_params,
+							template_args_for_member_copy,
+							struct_info->getName());
+						if (substituted_type_node.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& substituted_type =
+								substituted_type_node.as<TypeSpecifierNode>();
+							bool substituted_still_dependent = false;
+							if (substituted_type.type_index().is_valid()) {
+								if (const TypeInfo* substituted_type_info =
+										tryGetTypeInfo(substituted_type.type_index())) {
+									substituted_still_dependent =
+										substituted_type_info->isDependentPlaceholder();
+								}
+							}
+							if (!substituted_still_dependent) {
+								resolved_dependent_member_type_spec = substituted_type;
+								effective_type_spec = &resolved_dependent_member_type_spec;
+							}
+						}
+					}
+				}
 
 				// For pattern specializations, member types need substitution!
 				// The pattern has T* (Type::UserDefined with ptr_depth=1)
@@ -3508,8 +3601,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// For pattern specializations, member types need substitution!
 				// Use substitute_template_parameter to properly match template parameters by name
 				TypeIndex member_type_index = substitute_template_parameter(
-					type_spec, template_params, template_args_for_member_copy);
-				size_t ptr_depth = type_spec.pointer_depth();
+					*effective_type_spec, template_params, template_args_for_member_copy);
+				size_t ptr_depth = effective_type_spec->pointer_depth();
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_for_member_copy);
@@ -3522,7 +3615,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Calculate member size accounting for pointer depth
 				TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 				size_t member_size = get_substituted_type_size_bytes(member_size_type_index);
-				if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				if (ptr_depth > 0 || effective_type_spec->is_reference() || effective_type_spec->is_rvalue_reference()) {
 					// Pointers and references are always 8 bytes (64-bit)
 					member_size = 8;
 				}
@@ -3532,13 +3625,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Calculate member alignment
 				// For pointers and references, use 8-byte alignment (pointer alignment on x64)
 				size_t member_alignment = get_type_alignment(member_type_index.category(), member_size);
-				if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+				if (ptr_depth > 0 || effective_type_spec->is_reference() || effective_type_spec->is_rvalue_reference()) {
 					member_alignment = 8; // Pointer/reference alignment on x64
 				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
 					member_alignment = member_struct_info->alignment;
 				}
 
-				ReferenceQualifier ref_qual = type_spec.reference_qualifier();
+				ReferenceQualifier ref_qual = effective_type_spec->reference_qualifier();
 
 				// Substitute template parameters in default member initializers
 				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
@@ -3563,7 +3656,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
 					resolveTemplateFunctionPointerSignature(
-						type_spec,
+						*effective_type_spec,
 						member_type_index,
 						template_params,
 						template_args_for_member_copy),
@@ -4153,12 +4246,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Use ExpressionSubstitutor to handle all types of template-dependent expressions
 					std::optional<ASTNode> substituted_initializer = static_member.initializer;
 					if (static_member.initializer.has_value()) {
-						// Build parameter substitution map and preserve parameter order
-						auto sub_map = buildSubstitutionParamMap(template_params, template_args);
+						TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+							std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+							template_args,
+							nullptr);
 
 						// Use ExpressionSubstitutor to substitute template parameters in the initializer
-						if (!sub_map.empty()) {
-							ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+						if (!substitution_environment.bindings.empty()) {
+							ExpressionSubstitutor substitutor(substitution_environment, *this);
 							substitutor.setCurrentOwnerTypeName(struct_info->getName());
 							substituted_initializer = substitutor.substitute(static_member.initializer.value());
 							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member initializer");
@@ -5540,7 +5635,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
 	// QualifiedIdentifier captures both the namespace and unqualified name.
-	auto template_args_info = toTemplateArgInfoList(template_args_to_use);
+	auto template_args_info = collectEnrichedTemplateArgInfos(template_params, template_args_to_use);
 	struct_type_info.setTemplateInstantiationInfo(
 		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
 		template_args_info);
@@ -6112,21 +6207,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						auto makeEvaluatedDeferredBaseValueArg = [&](const auto& constant_value) {
 							TypeIndex target_index = makeTypeIndexForDeferredBaseNttp(deferred_arg_index, resolved_args);
-							if (target_index.category() == TypeCategory::Invalid) {
-								TypeCategory target_category = constant_value.type;
-								target_index = constant_value.type_index;
-								if (target_index.is_valid()) {
-									if (const TypeInfo* target_type_info = tryGetTypeInfo(target_index)) {
-										if (target_type_info->typeEnum() != TypeCategory::Invalid) {
-											target_category = target_type_info->typeEnum();
-										}
-									}
-									target_index = target_index.withCategory(target_category);
-								} else if (TypeIndex native_index = nativeTypeIndex(target_category); native_index.is_valid()) {
-									target_index = native_index.withCategory(target_category);
-								} else {
-									target_index = TypeIndex{0, target_category};
-								}
+							if (isPlaceholderNttpTypeIndex(target_index)) {
+								target_index = makeDeferredBaseValueTypeIndex(
+									constant_value.type,
+									constant_value.type_index);
 							}
 							TemplateTypeArg val_arg;
 							val_arg.is_value = true;
@@ -7479,7 +7563,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // one and needs the enclosing template's bindings for constexpr evaluation.
 			nested_type_info.setInstantiationContext(
 				collectParamNameHandles(template_params, template_args_to_use.size()),
-				toTemplateArgInfoList(template_args_to_use),
+				collectEnrichedTemplateArgInfos(template_params, template_args_to_use),
 				struct_type_info.instantiationContext());
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());

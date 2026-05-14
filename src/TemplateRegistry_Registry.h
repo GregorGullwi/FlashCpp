@@ -34,6 +34,29 @@ public:
 				}
 			}
 		}
+		if (template_node.is<TemplateFunctionDeclarationNode>()) {
+			auto& entries = templates_[name];
+			const auto& new_template = template_node.as<TemplateFunctionDeclarationNode>();
+			const FunctionDeclarationNode& new_function = new_template.function_decl_node();
+			if (new_function.has_any_body_source()) {
+				for (ASTNode& entry : entries) {
+					if (!entry.is<TemplateFunctionDeclarationNode>()) {
+						continue;
+					}
+					const auto& old_template = entry.as<TemplateFunctionDeclarationNode>();
+					const FunctionDeclarationNode& old_function = old_template.function_decl_node();
+					if (old_function.has_any_body_source()) {
+						continue;
+					}
+					if (old_template.template_parameters().size() != new_template.template_parameters().size() ||
+						old_function.parameter_nodes().size() != new_function.parameter_nodes().size()) {
+						continue;
+					}
+					entry = template_node;
+					return;
+				}
+			}
+		}
 		templates_[name].push_back(template_node);
 	}
 

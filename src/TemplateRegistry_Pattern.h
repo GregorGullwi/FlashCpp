@@ -516,7 +516,7 @@ struct TemplatePattern {
 				}
 				// For non-type template parameters, also check the value matches
 				if (pattern_arg.is_value && concrete_arg.is_value) {
-					if (pattern_arg.value != concrete_arg.value) {
+					if (!(pattern_arg.valueIdentity() == concrete_arg.valueIdentity())) {
 						FLASH_LOG(Templates, Trace, "    FAILED: values don't match");
 						return false; // Different values - no match
 					}

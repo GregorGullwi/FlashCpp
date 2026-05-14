@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-13 (template infrastructure refactor completed)
+**Last updated:** 2026-05-13 (follow-up architecture slices completed)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -49,59 +49,123 @@ Completed work:
 
 1. centralized static `constexpr` member reads and recursive base-member
    evaluation policy behind a shared semantic service;
-2. preserved ordered, typed deferred NTTP identities in instantiation keys;
+2. preserved ordered, typed NTTP identities in instantiation keys, including
+   exact integral/enum identity and typed `nullptr` identity;
 3. consolidated alias-aware concrete size queries;
 4. added parameter-context-driven classification for explicit template
    arguments across function, class, alias, and variable template use sites;
 5. introduced and threaded `TemplateInstantiationContext` through lookup and
    substitution paths;
-6. extracted shape-only template deduction viability so candidate filtering can
-   run before materializing definitions;
+6. extracted shape-only template deduction viability so selected free/member
+   function-template overload paths rank signatures before materializing bodies;
 7. fixed regressions found during full-suite validation in dependent alias size
    fallback, template-template leftovers, nested pack/materialization, dependent
-   constexpr evaluation, and explicit-template SFINAE deduction.
+   constexpr evaluation, and explicit-template SFINAE deduction;
+8. added conservative definition-context lookup records for non-dependent
+   template-body calls while preserving dependent POI/ADL completion;
+9. added dependent qualified-name records for high-value member-type placeholder
+   paths such as `typename T::type` and
+   `Traits<T>::template rebind<U>::type`.
 
 The final validation run passed `.\build_flashcpp.bat` and
 `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`:
-2333 regular tests compiled, linked, and returned expected values, and all 174
+2352 regular tests compiled, linked, and returned expected values, and all 181
 expected-failure tests failed as expected.
 
 The remaining target architecture sections are retained as the next conformance
-roadmap, especially full two-phase lookup records, structural NTTP values, and
-constraint normalization/subsumption.
+roadmap, especially full semantic lookup, complete structural NTTP values,
+current-instantiation/dependent-base modeling, and constraint
+normalization/subsumption.
 
 ## What is left / next
 
 The completed refactor should be treated as the foundation, not the finish line.
-The next work is split into immediate cleanup items that can be attacked in
-small PRs and larger architecture tracks that need focused design.
+The immediate cleanup items from the first follow-up pass are closed. The
+remaining work is now mostly architecture work plus a few hardening passes that
+should be split into focused investigations.
 
-### Immediate follow-up items
+### Open next steps
+
+1. **Unify semantic lookup for template candidate discovery.**
+   Template lookup still has direct registry-by-name paths. The next pass should
+   route class/function/alias/variable template candidate discovery through one
+   semantic lookup result that records declaration identity, lookup kind,
+   dependency, and definition-vs-POI timing.
+
+2. **Broaden two-phase lookup records beyond non-dependent function calls.**
+   Definition-context records now protect selected non-dependent unqualified
+   calls, but qualified names, static initializers, member templates, dependent
+   bases, unknown specializations, and broader ADL still need explicit
+   definition/POI records.
+
+3. **Implement real structural NTTP values.**
+   Typed integral/enum/`nullptr` identity is implemented. Pointer, reference,
+   function-pointer, member-pointer, floating-point, and structural class-type
+   NTTPs are still unsupported or placeholder categories until parser and
+   constexpr evaluation can produce standard semantic values.
+
+4. **Expand shape-only deduction and ranking.**
+   Selected overloaded free/member function-template paths can rank
+   signature-only candidates before body materialization. The older
+   full-instantiation fallback remains for unhandled cases; keep moving
+   candidate construction, deduction, constraints, partial ordering, and ranking
+   into sema-owned phases.
+
+5. **Complete dependent-name and current-instantiation modeling.**
+   `TypeInfo::DependentQualifiedNameRecord` covers high-value member-type
+   placeholders, but full `[temp.dep]` support still needs current-instantiation
+   identity, dependent base lookup, unknown specialization classification,
+   expression qualified-id records, and alias ordering.
+
+6. **Harden constructor annotation fallback into an invariant.**
+   Current valid coverage no longer needs the fallback in tested cases, but
+   codegen still intentionally keeps a soft fallback for uncovered/invalid
+   paths. Keep widening sema coverage until the fallback can be converted into a
+   hard diagnostic or invariant without losing valid code.
+
+7. **Replace `std::unique_ptr` with a raw pointer with an entry created from a gChunkedVector for `template_arguments` in
+   `ExpressionSubstitutor.cpp`.**
+   Each segment of a dependent member chain creates a `std::make_shared<std::vector<TemplateTypeArg>>`
+   at the substitution call site (`ExpressionSubstitutor.cpp`, around the
+   `member_chain.push_back` loop). Since we will keep the pointer the whole lifetime of the. ompiler, the allocation could be sped up by using a ChunkedVector backed pointer, switching
+   to a raw pointer (or storing the vector by value if the `DependentMemberAccess`
+   ownership model permits) would reduce the two heap allocations per segment
+   to one and improve cache locality on the hot template substitution path.
+   This requires auditing all consumers of the `template_arguments` shared_ptr
+   field on `DependentMemberAccess` (or equivalent) to confirm none alias the
+   pointer after the vector is moved.
+
+
+### Recently closed follow-up items
 
 1. **Close the remaining typed-NTTP identity holes.**
    `makeEvaluatedDeferredBaseValueArg` can still collapse non-bool integer
    values to `TypeCategory::Int`, and exact-template lookup still has a linear
    fallback for integral mismatches. These should be fixed first because they
-   directly affect specialization identity, matching, and mangling.
+   directly affect specialization identity, matching, and mangling. **Completed**
+   with expression/static-member type preservation and typed key hashing.
 
 2. **Finish static `constexpr` owner/error cleanup.**
    Namespace-qualified constexpr references should be distinguished from
    missing type/template owners, and invalid non-dependent `static constexpr`
    initializers should hard-fail instead of reaching any zero-value recovery
-   path.
+   path. **Completed** while preserving precise dependent deferral.
 
 3. **Simplify dependent NTTP concretization.**
    Concretization should bind names once, substitute once, and evaluate once.
    Duplicate substitute/evaluate attempts make lookup-order bugs hard to see.
+   **Completed** for dependent alias/default NTTP evaluation.
 
 4. **Remove the constructor-annotation safety net for valid code.**
    Widen `SemanticAnalysis.cpp` constructor inference until valid programs no
    longer need the codegen-time overload-resolution fallback. Only then should
-   the fallback become a hard diagnostic/invariant.
+   the fallback become a hard diagnostic/invariant. **Completed for current
+   valid coverage**; the fallback remains soft for uncovered/invalid paths.
 
 5. **Move alias-size fallback into shared sema-owned querying.**
    The current TypeInfo-size -> TypeSpecifier-size -> struct-size chain works
    but should become one shared helper used by every concrete-size consumer.
+   **Completed** with shared alias-aware size query helpers.
 
 ### Highest-impact architecture tracks
 
@@ -110,21 +174,42 @@ small PRs and larger architecture tracks that need focused design.
    dependent lookup to the point of instantiation. This is the highest-impact
    standard-conformance gap because it affects template bodies, static
    initializers, dependent calls, ADL, and qualified lookup.
+   The 2026-05-13 follow-up added a conservative definition-context record for
+   non-dependent unqualified function calls. Later point-of-instantiation
+   overloads are filtered out, while dependent calls still complete ADL at POI.
 
 2. **Structural NTTP value identity.**
    Replace the integral-centric `int64_t` model with typed template-argument
    equivalence for enums, `nullptr`, pointers/references/member pointers,
    floating-point values, and structural class-type values.
+   The 2026-05-13 follow-up introduced typed NTTP identity categories and wired
+   equality/hashing/mangling through them for currently supported cases. Pointer,
+   reference, function-pointer, member-pointer, floating-point, and structural
+   class-type NTTPs remain explicit unsupported/placeholder categories until the
+   parser and constant evaluator can produce standard semantic values for them.
 
 3. **Deduction/constraints split before materialization.**
    Continue extracting candidate viability, deduction, constraints, partial
    ordering, and overload ranking so normal selection paths do not instantiate
    function or class bodies incidentally.
+   The 2026-05-13 follow-up slice routes overloaded free function templates
+   and implicit member function templates through signature-only candidate
+   materialization for overload conversion ranking before instantiating the
+   selected body.  It deliberately keeps the older full-instantiation fallback
+   for cases the shape path cannot rank safely.
 
 4. **First-class dependent-name/current-instantiation model.**
    Replace string-like placeholders with semantic dependent entities for
    current instantiation, unknown specialization, dependent bases, dependent
    qualified names, and dependent template-ids.
+   The 2026-05-13 follow-up slice added a narrow
+   `TypeInfo::DependentQualifiedNameRecord` for dependent member-type
+   placeholders and taught type substitution/member declaration copying to
+   prefer that record for `typename T::type` and dependent member-template
+   chains such as `Traits<T>::template rebind<U>::type`.  It intentionally
+   leaves full current-instantiation alias ordering, expression qualified-id
+   records, and dependent base/unknown-specialization lookup classification as
+   later `[temp.dep]` work.
 
 ## Target architecture
 
@@ -452,44 +537,40 @@ Converge from parser/codegen repair paths to a sema-owned, declaration-context
 template system while preserving the newly stabilized static `constexpr`
 behavior as compatibility constraints.
 
-### Work plan (phased delivery)
+### Work plan (remaining phased delivery)
 
-1. **Stabilize current static-constexpr semantics as explicit contracts**
-   Document and test the current scalar-only folding gate, normalized-bytes
-   preference, recursive base-chain behavior, and depth-limit behavior so later
-   refactors preserve expected outcomes.
-
-2. **Introduce one semantic static-member constant-evaluation service**
-   Build a sema service that answers: "Can this static member be read as a
-   constant here?" Move recursive/base-chain policy and normalized-init
-   interpretation into this service; make IR callers consume only the service.
-
-3. **Complete parameter-context argument classification first**
-   Keep this as top priority architecture work:
-   parse argument syntax first, resolve template declaration, match parameters,
-   then classify each argument by parameter kind.
-
-4. **Unify declaration lookup for template names**
+1. **Unify declaration lookup for template names**
    Route class/function/alias/variable template candidate discovery through one
    semantic lookup result so template-id classification and deduction use the
    same declaration identity model.
 
-5. **Consolidate substitution context ownership**
-   Replace ad-hoc name/vector substitution channels with a single
-   `TemplateInstantiationContext` carrying bindings, pack state, definition/POI
-   lookup context, and constexpr/sema context.
-
-6. **Separate deduction from instantiation/materialization**
-   Ensure candidate viability, deduction, constraints, and partial ordering run
-   without body materialization. Instantiate only after winner selection.
-
-7. **Advance two-phase lookup records**
+2. **Advance two-phase lookup records**
    Persist non-dependent lookup at definition time and defer only dependent
-   completion to instantiation time, including static initializer paths.
+   completion to instantiation time. Extend the current function-call record
+   slice to qualified names, member templates, static initializer paths,
+   dependent bases, unknown specializations, and ADL-sensitive dependent calls.
 
-8. **Expand NTTP identity beyond integral-centric representation**
-   Implement structural constant-value identity (pointers/references/member
-   pointers/nullptr/fp/structural class values), then migrate keys and mangling.
+3. **Consolidate substitution context ownership**
+   Continue replacing ad-hoc name/vector substitution channels with
+   `TemplateInstantiationContext` as the authoritative owner of scalar
+   bindings, pack bindings, current-instantiation identity, lookup context,
+   constexpr context, and failure policy.
+
+4. **Separate deduction from instantiation/materialization**
+   Expand shape-only candidate viability until deduction, constraints, partial
+   ordering, and overload ranking can run without body materialization in normal
+   selection paths. Instantiate only after winner selection.
+
+5. **Expand structural NTTP identity beyond supported scalar cases**
+   Typed integral/enum/`nullptr` identities are implemented. Add standard
+   semantic values and equivalence for pointer, reference, function-pointer,
+   member-pointer, floating-point, and structural class-type NTTPs, then migrate
+   keys and mangling for those categories.
+
+6. **Complete dependent-name/current-instantiation modeling**
+   Build on `DependentQualifiedNameRecord` with semantic records for expression
+   qualified-ids, dependent bases, unknown specialization, injected-class-name,
+   and current-instantiation member lookup.
 
 ### Concrete artifacts to implement
 
@@ -508,13 +589,15 @@ behavior as compatibility constraints.
    bindings, pack bindings, current-instantiation identity, lookup context,
    constexpr context, and failure policy.
 
-4. **Static member constexpr semantic service**
-   Centralize "can read as constant" decisions and recursive base-member
-   evaluation in sema/constexpr logic; IR should consume service outputs only.
+4. **Structural NTTP value representation**
+   Extend the current typed scalar identity into value variants and
+   equivalence/hashing rules for pointer, reference, function-pointer,
+   member-pointer, floating-point, and structural class-type NTTPs.
 
-5. **Structural NTTP value representation**
-   Introduce typed value variants and equivalence/hashing rules that match C++20
-   template-argument equivalence requirements.
+5. **Dependent-name/current-instantiation records**
+   Preserve current-instantiation, dependent base, unknown specialization,
+   dependent qualified-name, and dependent template-id identity without falling
+   back to string-only placeholders.
 
 ### Phase gates and dependency order
 
@@ -524,8 +607,9 @@ behavior as compatibility constraints.
    class/function/alias/variable template use sites.
 
 2. **Gate B (lookup unification)**
-   **Status: partial.** `TemplateInstantiationContext` now carries more lookup
-   context, but template candidate discovery is not yet sourced from one
+   **Status: partial, advanced.** `TemplateInstantiationContext` carries lookup
+   context and non-dependent function calls now preserve a definition-context
+   record, but template candidate discovery is not yet sourced from one
    authoritative semantic lookup result everywhere.
 
 3. **Gate C (instantiation context)**
@@ -534,15 +618,18 @@ behavior as compatibility constraints.
    vectors/maps in places.
 
 4. **Gate D (deduction split)**
-   **Status: partial.** Shape-only viability exists and should be expanded until
-   overload viability and deduction run without body materialization in normal
-   selection paths.
+   **Status: partial, advanced.** Shape-only viability now covers selected
+   overloaded free/member function-template paths and should continue expanding
+   until all normal overload viability and deduction run without body
+   materialization.
 
 5. **Gate E (NTTP and two-phase lookup)**
-   **Status: open.** Structural NTTP identity and definition-vs-POI lookup
-   behavior still need implementation and regression coverage.
+   **Status: partial.** Typed NTTP identities and definition-vs-POI function
+   lookup are implemented for supported cases. Pointer/reference/member-pointer,
+   floating-point, structural class NTTP values, full semantic lookup, and full
+   dependent-base/current-instantiation behavior remain open.
 
-### Targeted TODOs to close known conformance gaps
+### Targeted TODOs closed by follow-up work
 
 1. **TODO: Preserve exact integral NTTP category during deferred evaluation**
    Never collapse evaluated integral NTTPs to a generic `int` category in
@@ -552,30 +639,32 @@ behavior as compatibility constraints.
    time and through overload resolution; the remaining gap is in
    `makeEvaluatedDeferredBaseValueArg`, which can collapse any non-bool integer
    NTTP to `TypeCategory::Int`. Apply the same TypeInfo-backed category lookup
-   that parser and overload-resolution layers now use.
+   that parser and overload-resolution layers now use. **Closed.**
 
 2. **TODO: Remove linear specialization fallback for integral mismatches**
    Replace O(N) "scan all specializations" fallback behavior in exact template
    lookup with canonical argument normalization that preserves type identity and
    allows stable hash/key lookup. This keeps behavior deterministic and avoids
    lookup policy that can diverge from proper template-argument equivalence.
+   **Closed.**
 
 3. **TODO: Treat namespace-qualified names as valid owners in constexpr paths**
    In static-member constexpr normalization/evaluation, distinguish namespace
    owners from missing type/template owners. Namespace-qualified references must
    participate in normal lookup/evaluation instead of being classified as
-   missing-owner deferrals.
+   missing-owner deferrals. **Closed.**
 
 4. **TODO: Reject invalid `static constexpr` initializers instead of zero-fallback**
    Remove broad recoverable fallback that can zero-initialize non-constant
    `static constexpr` members. Only defer where a precise dependent/missing-owner
    condition is proven; otherwise produce the required hard diagnostic.
+   **Closed.**
 
 5. **TODO: Simplify dependent NTTP concretization to a single evaluation pass**
    Ensure dependent-argument concretization does not perform duplicate
    substitute/evaluate cycles that can diverge or hide lookup-order bugs.
    Prefer deterministic order: name binding first, then one expression
-   substitution/evaluation attempt.
+   substitution/evaluation attempt. **Closed.**
 
 6. **TODO: Eliminate sema constructor annotation fallback for well-formed code**
    The current soft fallback (sema omits annotation → codegen-time overload
@@ -583,14 +672,16 @@ behavior as compatibility constraints.
    incomplete. Extend `inferExpressionType` and
    `tryAnnotateConstructorCallArgConversions` coverage in `SemanticAnalysis.cpp`
    until the warning log is never emitted for valid C++20 code. Once coverage is
-   complete, convert the fallback to a hard `CompileError`.
+   complete, convert the fallback to a hard `CompileError`. **Closed for current
+   valid coverage; fallback intentionally remains soft for uncovered/invalid
+   paths.**
 
 7. **TODO: Consolidate alias size resolution into a shared sema helper**
    The TypeInfo-size → TypeSpecifier-size → struct-size fallback chain in
    `resolveCodegenSizeBits` should be extracted into a shared size-query service
    used by all codegen paths that need a concrete byte/bit count for an
    alias-resolved type, avoiding duplication across independent codegen call
-   sites.
+   sites. **Closed.**
 
 ### Exit criteria
 
@@ -598,10 +689,13 @@ behavior as compatibility constraints.
   identifiers;
 - static-member constexpr reads use one sema service (no duplicated ad-hoc
   recursive evaluators in IR paths);
-- deduction and overload ordering run without incidental instantiation;
-- two-phase lookup behavior is test-covered for non-dependent vs dependent
-  names;
-- NTTP equivalence is type-accurate and structural where C++20 requires it.
+- selected deduction and overload-ordering paths run without incidental body
+  instantiation;
+- two-phase lookup behavior is test-covered for non-dependent function calls vs
+  dependent POI/ADL calls;
+- NTTP equivalence is type-accurate for supported integral/enum/`nullptr` cases,
+  while unsupported structural categories diagnose instead of collapsing to
+  scalar identities.
 
 ### Minimum regression suite required before declaring completion
 

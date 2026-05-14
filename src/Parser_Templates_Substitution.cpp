@@ -1418,6 +1418,27 @@ ASTNode Parser::substituteTemplateParameters(
 			return emplace_node<TypeSpecifierNode>(substituted_spec);
 		};
 
+		if (type_spec.type_index().is_valid()) {
+			if (const TypeInfo* dependent_type_info = tryGetTypeInfo(type_spec.type_index());
+				dependent_type_info != nullptr &&
+				dependent_type_info->isDependentMemberType() &&
+				dependent_type_info->hasDependentQualifiedName()) {
+				auto sub_map = buildSubstitutionParamMap(template_params, template_args);
+				ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+				if (current_owner_type_name.isValid()) {
+					substitutor.setCurrentOwnerTypeName(current_owner_type_name);
+				}
+				if (const TypeInfo* resolved_dependent_type =
+						substitutor.resolveDependentMemberTypeForSubstitution(*dependent_type_info)) {
+					TypeSpecifierNode substituted_spec =
+						makeTypeSpecifierFromTemplateTypeArg(
+							resolveTypeInfoToTemplateArg(*resolved_dependent_type, type_spec),
+							type_spec.token());
+					return emplace_node<TypeSpecifierNode>(substituted_spec);
+				}
+			}
+		}
+
 		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.category() == TypeCategory::UserDefined ||
 			type_spec.category() == TypeCategory::Struct ||
