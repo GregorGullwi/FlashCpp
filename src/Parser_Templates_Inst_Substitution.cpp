@@ -1616,10 +1616,11 @@ std::string_view Parser::instantiate_and_register_base_template(
 	// routes explicit function-template names through this helper, so non-class
 	// templates must report "not a class instantiation" instead of falling into
 	// the base-class-only internal error below.
-	TemplateNameLookupRequest base_template_lookup_request;
-	base_template_lookup_request.name = StringTable::getOrInternStringHandle(base_class_name);
-	base_template_lookup_request.lookup_kind = TemplateNameLookupKind::Qualified;
-	base_template_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+	TemplateNameLookupRequest base_template_lookup_request =
+		buildTemplateNameLookupRequest(
+			StringTable::getOrInternStringHandle(base_class_name),
+			TemplateNameLookupKind::Qualified,
+			false);
 	TemplateNameLookupResult base_template_lookup =
 		gTemplateRegistry.lookupTemplateName(base_template_lookup_request);
 	auto template_entry = base_template_lookup.firstDeclarationOfKind(
@@ -2249,6 +2250,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				eval_ctx.parser = this;
+				eval_ctx.sema = getActiveSemanticAnalysis();
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
 				if (!eval_result.success()) {
 					FLASH_LOG(Templates, Error, "Failed to evaluate non-type default for variable template parameter '",

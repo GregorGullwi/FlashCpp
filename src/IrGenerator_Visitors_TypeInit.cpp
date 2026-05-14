@@ -2050,6 +2050,8 @@ void AstToIr::generateTrivialDefaultConstructors() {
 						bitfield_offsets.insert(member.offset);
 						unsigned long long val = 0;
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						ctx.parser = parser_;
+						ctx.sema = sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 						if (eval_result.success()) {
 							if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {

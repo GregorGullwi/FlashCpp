@@ -530,6 +530,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 					if (width_result.node().has_value()) {
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						ctx.parser = this;
+						ctx.sema = getActiveSemanticAnalysis();
 						auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 						if (!eval_result.success() || eval_result.as_int() < 0) {
 							return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
@@ -558,6 +560,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						}
 						if (width_result.node().has_value()) {
 							ConstExpr::EvaluationContext ctx(gSymbolTable);
+							ctx.parser = this;
+							ctx.sema = getActiveSemanticAnalysis();
 							auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 							if (!eval_result.success() || eval_result.as_int() < 0) {
 								return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
@@ -768,6 +772,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						// Fallback: use ConstExprEvaluator for complex expressions
 						if (!value_extracted) {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+							eval_ctx.parser = this;
+							eval_ctx.sema = getActiveSemanticAnalysis();
 							auto eval_result = ConstExpr::Evaluator::evaluate(*value_node, eval_ctx);
 							if (eval_result.success()) {
 								value = eval_result.as_int();
@@ -1245,6 +1251,8 @@ ParseResult Parser::parse_typedef_declaration() {
 					// Fallback: use ConstExprEvaluator for complex expressions
 					if (!value_extracted) {
 						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						eval_ctx.parser = this;
+						eval_ctx.sema = getActiveSemanticAnalysis();
 						auto eval_result = ConstExpr::Evaluator::evaluate(*value_node, eval_ctx);
 						if (eval_result.success()) {
 							value = eval_result.as_int();
@@ -1738,6 +1746,8 @@ ParseResult Parser::parse_typedef_declaration() {
 				}
 				if (width_result.node().has_value()) {
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
+					ctx.parser = this;
+					ctx.sema = getActiveSemanticAnalysis();
 					auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 					if (!eval_result.success() || eval_result.as_int() < 0) {
 						// Defer evaluation for template non-type parameters
@@ -1779,6 +1789,8 @@ ParseResult Parser::parse_typedef_declaration() {
 					}
 					if (width_result.node().has_value()) {
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
+						ctx.parser = this;
+						ctx.sema = getActiveSemanticAnalysis();
 						auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 						if (!eval_result.success() || eval_result.as_int() < 0) {
 							// Defer evaluation for template non-type parameters
@@ -2047,6 +2059,8 @@ ParseResult Parser::parse_typedef_declaration() {
 			size_t array_size = 0;
 			if (size_result.node().has_value()) {
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
+				ctx.parser = this;
+				ctx.sema = getActiveSemanticAnalysis();
 				auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), ctx);
 				if (eval_result.success() && eval_result.as_int() > 0) {
 					array_size = static_cast<size_t>(eval_result.as_int());

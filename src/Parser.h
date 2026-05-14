@@ -2877,6 +2877,21 @@ public:	// Public methods for template instantiation
 	// The chain is linked via ParserInstantiationContext::parent for backtrace traversal.
 	const ParserInstantiationContext* currentInstantiationContext() const { return current_instantiation_ctx_; }
 
+	// Public wrapper around the private buildTemplateNameLookupRequest so that
+	// non-friend, non-parser code (e.g. free functions in ConstExprEvaluator_Members)
+	// can build semantically-correct lookup requests.  Unlike the convenience
+	// wrappers in TemplateRegistry (which always use PointOfDefinition timing),
+	// this method propagates PointOfInstantiation timing, the current namespace
+	// context via gSymbolTable, and the definition-namespace from any active
+	// current_template_definition_lookup_context_, ensuring name lookup during
+	// template instantiation respects the correct scope.
+	TemplateNameLookupRequest makeTemplateNameLookupRequest(
+		StringHandle template_name,
+		TemplateNameLookupKind lookup_kind,
+		bool is_dependent) const {
+		return buildTemplateNameLookupRequest(template_name, lookup_kind, is_dependent);
+	}
+
 private:	 // Resume private methods
 
 

@@ -192,10 +192,10 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 				target_member_template_arg_nodes,
 				false) &&
 			[&]() {
-				TemplateNameLookupRequest request;
-				request.name = target_template_name;
-				request.lookup_kind = TemplateNameLookupKind::Qualified;
-				request.timing = TemplateNameLookupTiming::PointOfDefinition;
+				TemplateNameLookupRequest request = buildTemplateNameLookupRequest(
+					target_template_name,
+					TemplateNameLookupKind::Qualified,
+					false);
 				return gTemplateRegistry.lookupTemplateName(request).hasAliasTemplate();
 			}()) {
 			has_deferred_target = true;

@@ -2062,20 +2062,14 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						return qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value()).commit();
 					};
-					auto tryResolveQualifiedType = [&](std::string_view candidate_qualified_type_name) -> std::optional<ASTNode> {
-						auto candidate_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(candidate_qualified_type_name));
-						if (candidate_type_it == getTypesByNameMap().end()) {
-							return std::nullopt;
-						}
-
-						const TypeInfo* resolved_type_info = candidate_type_it->second;
-						if (resolved_type_info->isStruct()) {
-							const StructTypeInfo* struct_info = resolved_type_info->getStructInfo();
+					auto buildResolvedTypeNode = [&](const TypeInfo& resolved_type_info) -> ASTNode {
+						if (resolved_type_info.isStruct()) {
+							const StructTypeInfo* struct_info = resolved_type_info.getStructInfo();
 							int resolved_type_size = struct_info
 								? static_cast<int>(struct_info->sizeInBits().value)
 								: 0;
 							return emplace_node<TypeSpecifierNode>(
-								resolved_type_info->type_index_.withCategory(TypeCategory::Struct),
+								resolved_type_info.type_index_.withCategory(TypeCategory::Struct),
 								resolved_type_size,
 								type_name_token,
 								cv_qualifier,
@@ -2083,8 +2077,8 @@ ParseResult Parser::parse_type_specifier() {
 						}
 
 						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum()));
-						int resolved_type_size = static_cast<int>(resolved_type_info->sizeInBits().value);
+							resolved_type_info.registeredTypeIndex().withCategory(resolved_type_info.typeEnum()));
+						int resolved_type_size = static_cast<int>(resolved_type_info.sizeInBits().value);
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							resolved_alias.type_index,
 							resolved_type_size,
@@ -2102,6 +2096,14 @@ ParseResult Parser::parse_type_specifier() {
 							type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
 						}
 						return type_spec_node;
+					};
+					auto tryResolveQualifiedType = [&](std::string_view candidate_qualified_type_name) -> std::optional<ASTNode> {
+						auto candidate_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(candidate_qualified_type_name));
+						if (candidate_type_it == getTypesByNameMap().end()) {
+							return std::nullopt;
+						}
+
+						return buildResolvedTypeNode(*candidate_type_it->second);
 					};
 					std::string_view qualified_type_name = buildQualifiedTypeName(instantiated_name);
 
@@ -2425,7 +2427,15 @@ ParseResult Parser::parse_type_specifier() {
 						if (LazyTypeAliasRegistry::getInstance().needsEvaluation(parent_handle, member_handle)) {
 							evaluateLazyTypeAlias(parent_handle, member_handle);
 						}
-						return tryResolveQualifiedType(buildQualifiedTypeName(parent_name));
+						if (std::optional<ASTNode> direct_type = tryResolveQualifiedType(buildQualifiedTypeName(parent_name));
+							direct_type.has_value()) {
+							return direct_type;
+						}
+						if (const TypeInfo* inherited_type = lookup_inherited_type_alias(parent_handle, member_handle);
+							inherited_type != nullptr) {
+							return buildResolvedTypeNode(*inherited_type);
+						}
+						return std::nullopt;
 					};
 
 					std::string_view user_provided_instantiation = get_instantiated_class_name(type_name, *template_args);

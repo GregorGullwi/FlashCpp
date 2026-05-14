@@ -2356,6 +2356,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									unsigned long long val = 0;
 									if (member.default_initializer.has_value()) {
 										ConstExpr::EvaluationContext ctx(gSymbolTable);
+										ctx.parser = parser_;
+										ctx.sema = sema_;
 										auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 										if (eval_result.success()) {
 											if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {

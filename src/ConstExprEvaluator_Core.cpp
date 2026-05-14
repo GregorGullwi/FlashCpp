@@ -4441,12 +4441,17 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated
-	if (!symbol_opt.has_value() && context.parser) {
-		auto lookup_template = [](std::string_view lookup_name, TemplateNameLookupKind lookup_kind) -> std::optional<ASTNode> {
-			TemplateNameLookupRequest request;
-			request.name = StringTable::getOrInternStringHandle(lookup_name);
-			request.lookup_kind = lookup_kind;
-			request.timing = TemplateNameLookupTiming::PointOfDefinition;
+	if (!symbol_opt.has_value()) {
+		Parser* parser = context.parser;
+		auto lookup_template = [parser](std::string_view lookup_name, TemplateNameLookupKind lookup_kind) -> std::optional<ASTNode> {
+			if (parser == nullptr) {
+				return std::nullopt;
+			}
+			const StringHandle lookup_name_handle = StringTable::getOrInternStringHandle(lookup_name);
+			TemplateNameLookupRequest request = parser->buildFunctionTemplateLookupRequest(
+				lookup_name_handle,
+				lookup_kind,
+				false);
 			TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(request);
 			return lookup_result.firstDeclarationOfKind(TemplateDeclarationKind::FunctionTemplate);
 		};

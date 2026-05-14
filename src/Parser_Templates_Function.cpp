@@ -1177,6 +1177,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
 		ctx.parser = this;
+		ctx.sema = getActiveSemanticAnalysis();
 		ctx.is_speculative = true;
 		return ctx;
 	};
@@ -1226,10 +1227,11 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				// instantiated already if it's used correctly
 
 				// Check if this is a known template
-				TemplateNameLookupRequest template_lookup_request;
-				template_lookup_request.name = StringTable::getOrInternStringHandle(template_name);
-				template_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
-				template_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+				TemplateNameLookupRequest template_lookup_request =
+					buildTemplateNameLookupRequest(
+						StringTable::getOrInternStringHandle(template_name),
+						TemplateNameLookupKind::Ordinary,
+						false);
 				TemplateNameLookupResult template_lookup =
 					gTemplateRegistry.lookupTemplateName(template_lookup_request);
 				auto template_entry = template_lookup.firstDeclarationOfKind(

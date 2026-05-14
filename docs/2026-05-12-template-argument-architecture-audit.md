@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (template infrastructure pass 4 completed)
+**Last updated:** 2026-05-14 (semantic lookup unification complete)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -68,9 +68,20 @@ infrastructure tracks. The branch now includes:
   lookup records on the call expression, including qualified-name metadata;
 - floating-point NTTP identity now flows through constexpr evaluation and Itanium
   mangling for standard-shaped floating arguments.
+- remaining low-frequency parser template probes and the constexpr
+  static-initializer template probe now use parser-built semantic lookup
+  requests instead of hardcoded point-of-definition requests.
+- `lookup_inherited_template` and `lookup_inherited_type_alias` now follow the
+  `type_index` on a deferred base (including one alias-chain level) to find a
+  concrete struct and recurse into it rather than always skipping deferred bases.
+- `getTemplateParametersForTypeInfo` in `ConstExprEvaluator_Members.cpp` now
+  uses `makeTemplateNameLookupRequest` when a parser context is available,
+  propagating POI timing and definition-namespace correctly.
+- `ExpressionSubstitutor.cpp` existence-check registry calls are documented as
+  intentionally direct (simple name-presence check, no instantiation context).
 
-Validation after these changes passed the Windows sharded build and the targeted
-template regression tests for qualified calls and floating NTTP specialization.
+Validation after all changes passed the Linux sharded build and the full test
+suite (2351 regular tests + 183 expected-fail tests).
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
@@ -83,10 +94,11 @@ state.
 
 ### Open next steps
 
-1. **Complete semantic lookup unification.**
-   The main template candidate discovery hot paths now use semantic lookup
-   records. Continue moving lower-frequency registry probes and static
-   initializer lookup paths onto the same declaration-owned result model.
+1. **ADL-sensitive dependent completion and broader two-phase lookup records.**
+   All non-dependent and low-frequency lookup paths now use semantic requests.
+   The remaining gap is dependent-name ADL completion (ADL from dependent
+   argument types, hidden-friend lookup at POI) and definition-context records
+   for template-body calls that reach hidden friends or dependent ADL namespaces.
 
 2. **Two-phase lookup expansion.**
    Definition-context records now cover selected non-dependent calls and the main
@@ -170,15 +182,17 @@ state.
   parameter-name and argument vectors.
 
 Parameter-context classification is now in place for the main explicit
-template-id use sites. Remaining classification risk is in lower-frequency paths
-that still probe registries or static-initializer state before semantic lookup
-has produced an authoritative declaration result.
+template-id use sites. Remaining classification risk is now concentrated in
+dependent and deep-chain paths rather than low-frequency ordinary probes.
 
-Main function, member, qualified, variable, alias, probe, and operator template
-lookup paths now use semantic lookup requests/records. Remaining low-frequency
-registry probes, static-initializer lookup, dependent-base lookup, hidden-friend
-ADL, and deeper member-template chains should move behind the same declaration
-result and definition-vs-POI timing model.
+All main and low-frequency template lookup paths (function, member, qualified,
+variable, alias, probe, operator, parser/static-initializer, constexpr member
+template parameter resolution) now use parser-built semantic lookup
+requests/records. Deferred-base-class lookup in `lookup_inherited_template` and
+`lookup_inherited_type_alias` now follows the stored `type_index` to a concrete
+struct when available. Remaining dependent-base lookup (plain template-parameter
+bases), hidden-friend ADL at POI, and deeper member-template chains should still
+move behind the same declaration-result and definition-vs-POI timing model.
 
 Static `constexpr` reads are centralized, invalid non-dependent initializers now
 hard-fail instead of using broad zero-like recovery, and constructor annotation

@@ -1153,6 +1153,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						const ExpressionNode& substituted_expr = substituted_arg_node.as<ExpressionNode>();
 						if (const auto* identifier = std::get_if<IdentifierNode>(&substituted_expr)) {
 							StringHandle type_name = StringTable::getOrInternStringHandle(identifier->name());
+							// Direct registry convenience wrappers are intentionally used here.
+							// ExpressionSubstitutor stores parser_ (a Parser&) but not a
+							// TemplateLookupContext with instantiation-time namespace/timing data.
+							// The convenience wrappers use PointOfDefinition/Ordinary timing,
+							// which is appropriate for this simple "is this name a template?"
+							// existence check during substitution.
 							if (gTemplateRegistry.lookup_alias_template(type_name).has_value() ||
 								gTemplateRegistry.lookupTemplate(type_name).has_value() ||
 								gTemplateRegistry.isClassTemplate(type_name)) {
