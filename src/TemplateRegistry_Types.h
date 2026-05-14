@@ -635,13 +635,21 @@ struct TemplateDeclarationIdentity {
 struct TemplateNameLookupCandidate {
 	TemplateDeclarationIdentity identity;
 	ASTNode declaration;
+	TemplateNameLookupKind lookup_kind = TemplateNameLookupKind::Ordinary;
+	StringHandle lookup_owner_name{};
+	StringHandle declaring_owner_name{};
+	size_t declaration_line = 0;
+	size_t declaration_file_index = SIZE_MAX;
+	size_t inherited_depth = 0;
 };
 
 struct TemplateNameLookupRequest {
 	StringHandle name{};
+	StringHandle owner_name{};
 	TemplateNameLookupKind lookup_kind = TemplateNameLookupKind::Ordinary;
 	TemplateNameLookupTiming timing = TemplateNameLookupTiming::PointOfDefinition;
 	bool is_dependent = false;
+	bool include_base_classes = false;
 	NamespaceHandle definition_namespace{};
 	NamespaceHandle point_of_instantiation_namespace{};
 	StringHandle current_instantiation_name{};

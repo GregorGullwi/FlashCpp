@@ -608,16 +608,18 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_template: looking for '{}::{}' ",
 					 StringTable::getStringView(struct_name), template_name);
 
-	// First try direct lookup with qualified name (ClassName::functionName)
-	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(StringTable::getStringView(struct_name))
-		.append("::")
-		.append(template_name);
-	std::string_view qualified_name = qualified_name_builder.commit();
-
-	const std::vector<ASTNode>* direct_templates = gTemplateRegistry.lookupAllTemplates(qualified_name);
+	// First try direct lookup through the semantic member-template lookup service.
+	TemplateNameLookupRequest request = buildMemberFunctionTemplateLookupRequest(
+		struct_name,
+		StringTable::getOrInternStringHandle(template_name),
+		false);
+	TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(request);
+	const std::vector<ASTNode>* direct_templates = nullptr;
+	if (lookup_result.hasFunctionTemplate()) {
+		direct_templates = gTemplateRegistry.lookupAllTemplates(lookup_result.resolved_name);
+	}
 	if (direct_templates != nullptr && !direct_templates->empty()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Found direct template function '{}'", qualified_name);
+		FLASH_LOG_FORMAT(Templates, Debug, "Found direct template function '{}'", lookup_result.resolved_name.view());
 		return direct_templates;
 	}
 

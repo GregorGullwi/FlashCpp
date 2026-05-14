@@ -317,7 +317,17 @@ public:
 	TemplateNameLookupResult lookupTemplateName(const TemplateNameLookupRequest& request) const {
 		TemplateNameLookupResult result;
 		result.request = request;
-		result.resolved_name = request.name;
+		StringHandle lookup_name = request.name;
+		if (request.lookup_kind == TemplateNameLookupKind::Member &&
+			request.owner_name.isValid() &&
+			request.name.isValid()) {
+			StringBuilder lookup_name_builder;
+			lookup_name_builder.append(request.owner_name.view())
+				.append("::")
+				.append(request.name.view());
+			lookup_name = StringTable::getOrInternStringHandle(lookup_name_builder);
+		}
+		result.resolved_name = lookup_name;
 		result.used_definition_context =
 			request.timing == TemplateNameLookupTiming::PointOfDefinition ||
 			(!request.is_dependent && request.timing == TemplateNameLookupTiming::Immediate);
@@ -329,24 +339,32 @@ public:
 			TemplateNameLookupCandidate candidate;
 			candidate.declaration = node;
 			candidate.identity.kind = kind;
-			candidate.identity.lookup_name = request.name;
+			candidate.identity.lookup_name = lookup_name;
 			candidate.identity.declared_name = request.name;
 			candidate.identity.declaration_address = node.raw_pointer();
 			candidate.identity.overload_ordinal = ordinal;
+			candidate.lookup_kind = request.lookup_kind;
+			candidate.lookup_owner_name = request.owner_name;
+			candidate.declaring_owner_name = request.owner_name;
+			if (const FunctionDeclarationNode* function_decl = get_function_decl_node(node)) {
+				candidate.identity.declared_name = function_decl->decl_node().identifier_token().handle();
+				candidate.declaration_line = function_decl->decl_node().identifier_token().line();
+				candidate.declaration_file_index = function_decl->decl_node().identifier_token().file_index();
+			}
 			result.candidates.push_back(candidate);
 		};
 
-		if (auto alias_it = alias_templates_.find(request.name);
+		if (auto alias_it = alias_templates_.find(lookup_name);
 			alias_it != alias_templates_.end()) {
 			appendCandidate(TemplateDeclarationKind::AliasTemplate, alias_it->second, 0);
 		}
 
-		if (auto variable_it = variable_templates_.find(request.name);
+		if (auto variable_it = variable_templates_.find(lookup_name);
 			variable_it != variable_templates_.end()) {
 			appendCandidate(TemplateDeclarationKind::VariableTemplate, variable_it->second, 0);
 		}
 
-		if (auto template_it = templates_.find(request.name);
+		if (auto template_it = templates_.find(lookup_name);
 			template_it != templates_.end()) {
 			size_t ordinal = 0;
 			for (const ASTNode& template_node : template_it->second) {

@@ -1629,6 +1629,13 @@ private:
 	std::vector<TemplateNameLookupCandidate> lookupFunctionTemplateCandidatesForInstantiation(
 		std::string_view template_name,
 		int recursion_depth);
+	TemplateNameLookupRequest buildMemberFunctionTemplateLookupRequest(
+		StringHandle owner_name,
+		StringHandle member_name,
+		bool is_dependent) const;
+	std::vector<TemplateNameLookupCandidate> lookupMemberFunctionTemplateCandidatesForInstantiation(
+		std::string_view struct_name,
+		std::string_view member_name);
 	std::vector<ASTNode> materializeFunctionTemplateCandidateDeclarations(
 		std::span<const TemplateNameLookupCandidate> candidates) const;
 	
