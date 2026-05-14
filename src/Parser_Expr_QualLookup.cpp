@@ -207,22 +207,33 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		// Before parsing < as template arguments, check if the member is actually a template
 		// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
 
-		// Check if the member is a known template (class or variable template)
-		auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
-		auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-
-		// Also check with the qualified name (instantiated_class_name::member_name)
+		const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		const StringHandle owner_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
+		TemplateNameLookupResult member_lookup_result = gTemplateRegistry.lookupTemplateName(
+			buildMemberFunctionTemplateLookupRequest(
+				owner_name_handle,
+				member_name_handle,
+				false));
+		TemplateNameLookupResult unqualified_lookup_result = gTemplateRegistry.lookupTemplateName(
+			buildTemplateNameLookupRequest(
+				member_name_handle,
+				TemplateNameLookupKind::Ordinary,
+				false));
 		StringBuilder qualified_member_builder;
-		qualified_member_builder.append(instantiated_class_name).append("::").append(member_name);
-		std::string_view qualified_member_name = qualified_member_builder.preview();
+		qualified_member_builder
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_name);
+		TemplateNameLookupResult qualified_lookup_result = gTemplateRegistry.lookupTemplateName(
+			buildTemplateNameLookupRequest(
+				StringTable::getOrInternStringHandle(qualified_member_builder.commit()),
+				TemplateNameLookupKind::Qualified,
+				false));
 
-		auto qual_template_opt = gTemplateRegistry.lookupTemplate(qualified_member_name);
-		auto qual_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_member_name);
-
-		bool is_known_template = member_template_opt.has_value() || member_var_template_opt.has_value() ||
-								 qual_template_opt.has_value() || qual_var_template_opt.has_value();
-
-		qualified_member_builder.reset();
+		const bool is_known_template =
+			member_lookup_result.hasFunctionTemplate() ||
+			!unqualified_lookup_result.empty() ||
+			!qualified_lookup_result.empty();
 
 		if (is_known_template) {
 			member_template_args = parse_explicit_template_arguments();
@@ -516,11 +527,20 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				struct_type_info->sourceNamespace(),
 				struct_type_info->baseTemplateName());
-			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
-			if (!alias_template_entry.has_value()) {
-				alias_template_entry = gTemplateRegistry.lookup_alias_template(
-					struct_type_info->baseTemplateName());
+			TemplateNameLookupResult alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+				buildTemplateNameLookupRequest(
+					alias_template_name,
+					TemplateNameLookupKind::Qualified,
+					false));
+			if (!alias_template_lookup.hasAliasTemplate()) {
+				alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+					buildTemplateNameLookupRequest(
+						struct_type_info->baseTemplateName(),
+						TemplateNameLookupKind::Ordinary,
+						false));
 			}
+			std::optional<ASTNode> alias_template_entry =
+				alias_template_lookup.firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
 			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
 				std::vector<TemplateTypeArg> concrete_args;
 				concrete_args.reserve(struct_type_info->templateArgs().size());
@@ -608,16 +628,18 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	FLASH_LOG_FORMAT(Templates, Debug, "lookup_inherited_template: looking for '{}::{}' ",
 					 StringTable::getStringView(struct_name), template_name);
 
-	// First try direct lookup with qualified name (ClassName::functionName)
-	StringBuilder qualified_name_builder;
-	qualified_name_builder.append(StringTable::getStringView(struct_name))
-		.append("::")
-		.append(template_name);
-	std::string_view qualified_name = qualified_name_builder.commit();
-
-	const std::vector<ASTNode>* direct_templates = gTemplateRegistry.lookupAllTemplates(qualified_name);
+	// First try direct lookup through the semantic member-template lookup service.
+	TemplateNameLookupRequest request = buildMemberFunctionTemplateLookupRequest(
+		struct_name,
+		StringTable::getOrInternStringHandle(template_name),
+		false);
+	TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(request);
+	const std::vector<ASTNode>* direct_templates = nullptr;
+	if (lookup_result.hasFunctionTemplate()) {
+		direct_templates = gTemplateRegistry.lookupAllTemplates(lookup_result.resolved_name);
+	}
 	if (direct_templates != nullptr && !direct_templates->empty()) {
-		FLASH_LOG_FORMAT(Templates, Debug, "Found direct template function '{}'", qualified_name);
+		FLASH_LOG_FORMAT(Templates, Debug, "Found direct template function '{}'", lookup_result.resolved_name.view());
 		return direct_templates;
 	}
 
@@ -730,9 +752,14 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 		return findTypeByName(StringTable::getOrInternStringHandle(base_class_name));
 	}
 
-	auto hasRegisteredMemberTemplate = [](std::string_view qualified_name) {
-		return gTemplateRegistry.lookup_alias_template(qualified_name).has_value() ||
-			   gTemplateRegistry.lookupTemplate(qualified_name).has_value();
+	auto hasRegisteredMemberTemplate = [&](std::string_view qualified_name) {
+		TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(
+			buildTemplateNameLookupRequest(
+				StringTable::getOrInternStringHandle(qualified_name),
+				TemplateNameLookupKind::Qualified,
+				false));
+		return lookup_result.hasAliasTemplate() ||
+			   lookup_result.hasClassTemplate();
 	};
 	auto buildQualifiedMemberName = [](std::string_view owner_name, StringHandle member_name_handle) {
 		return StringBuilder()
@@ -1237,11 +1264,20 @@ TypeIndex Parser::substitute_template_parameter(
 			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				arg_type_info->sourceNamespace(),
 				arg_type_info->baseTemplateName());
-			auto alias_template_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
-			if (!alias_template_entry.has_value()) {
-				alias_template_entry = gTemplateRegistry.lookup_alias_template(
-					arg_type_info->baseTemplateName());
+			TemplateNameLookupResult alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+				buildTemplateNameLookupRequest(
+					alias_template_name,
+					TemplateNameLookupKind::Qualified,
+					false));
+			if (!alias_template_lookup.hasAliasTemplate()) {
+				alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+					buildTemplateNameLookupRequest(
+						arg_type_info->baseTemplateName(),
+						TemplateNameLookupKind::Ordinary,
+						false));
 			}
+			std::optional<ASTNode> alias_template_entry =
+				alias_template_lookup.firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
 			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_template_entry->as<TemplateAliasNode>();
 				if (std::optional<TemplateTypeArg> rebound_arg =
@@ -1352,21 +1388,32 @@ TypeIndex Parser::substitute_template_parameter(
 		};
 		std::string_view owner_name = StringTable::getStringView(dependent_name->owner_name);
 		std::string_view materialized_owner_name;
-		if (dependent_name->owner_kind ==
-				TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter &&
-			dependent_name->owner_template_arguments.empty()) {
-			forEachNonPackTemplateParamArgBinding(
-				template_params,
-				template_args,
-				[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
-					if (!materialized_owner_name.empty() || template_param.name() != owner_name) {
-						return;
-					}
-					if (const TypeInfo* owner_type_info = tryGetTypeInfo(template_arg.type_index)) {
-						materialized_owner_name = StringTable::getStringView(owner_type_info->name());
-					}
-				});
-		} else {
+		switch (dependent_name->owner_kind) {
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+			if (dependent_name->owner_type.is_valid()) {
+				if (const TypeInfo* owner_type_info = tryGetTypeInfo(dependent_name->owner_type)) {
+					materialized_owner_name = StringTable::getStringView(owner_type_info->name());
+				}
+			}
+			break;
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+			if (dependent_name->owner_template_arguments.empty()) {
+				forEachNonPackTemplateParamArgBinding(
+					template_params,
+					template_args,
+					[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
+						if (!materialized_owner_name.empty() || template_param.name() != owner_name) {
+							return;
+						}
+						if (const TypeInfo* owner_type_info = tryGetTypeInfo(template_arg.type_index)) {
+							materialized_owner_name = StringTable::getStringView(owner_type_info->name());
+						}
+					});
+				break;
+			}
+			[[fallthrough]];
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
 			std::vector<TemplateTypeArg> owner_args =
 				materializeRecordArgs(dependent_name->owner_template_arguments);
 			if (areTemplateArgsConcrete(owner_args)) {
@@ -1375,6 +1422,8 @@ TypeIndex Parser::substitute_template_parameter(
 					materialized_owner_name = StringTable::getStringView(owner_type->name());
 				}
 			}
+			break;
+		}
 		}
 		if (!materialized_owner_name.empty()) {
 			std::vector<QualifiedTypeMemberAccess> member_type_chain;

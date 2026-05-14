@@ -26,7 +26,8 @@ enum class ConversionRank {
 	Promotion = 2, // Integral or floating-point promotion
 	Conversion = 3, // Standard conversion (int to double, etc.)
 	UserDefined = 4, // User-defined conversion via conversion operator
-	NoMatch = 5 // No valid conversion
+	Ellipsis = 5, // Ellipsis conversion sequence (worst viable conversion)
+	NoMatch = 6 // No valid conversion
 };
 
 // Result of checking if one type can convert to another
@@ -82,8 +83,8 @@ struct ArgumentConversionInfo {
 		return {ConversionRank::NoMatch, nullptr, false};
 	}
 
-	static ArgumentConversionInfo exact_match_variadic() {
-		return {ConversionRank::ExactMatch, nullptr, true};
+	static ArgumentConversionInfo ellipsis_match_variadic() {
+		return {ConversionRank::Ellipsis, nullptr, true};
 	}
 };
 
@@ -1342,11 +1343,12 @@ inline OverloadResolutionResult resolve_overload(
 			conversion_infos.push_back(conversion);
 		}
 
-		// For variadic functions, the extra arguments beyond named parameters
-		// are considered to have "exact match" rank (they're accepted as-is)
+		// For variadic functions, arguments consumed by "..." use an ellipsis
+		// conversion sequence [over.ics.ellipsis], which is always worse than
+		// standard and user-defined conversion sequences [over.ics.rank].
 		if (is_variadic) {
 			for (size_t i = params_to_check; i < argument_types.size(); ++i) {
-				conversion_infos.push_back(ArgumentConversionInfo::exact_match_variadic());
+				conversion_infos.push_back(ArgumentConversionInfo::ellipsis_match_variadic());
 			}
 		}
 
@@ -1400,7 +1402,7 @@ inline OverloadResolutionResult resolve_overload(
 					}
 					if (prev_func->is_variadic()) {
 						for (size_t k = prev_params_to_check; k < argument_types.size(); ++k)
-							prev_infos.push_back(ArgumentConversionInfo::exact_match_variadic());
+							prev_infos.push_back(ArgumentConversionInfo::ellipsis_match_variadic());
 					}
 					if (!prev_valid)
 						continue;

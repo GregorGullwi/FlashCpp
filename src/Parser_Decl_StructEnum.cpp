@@ -2120,8 +2120,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Regular member (data or function)
 			member_result = parse_type_and_name();
 			if (member_result.is_error()) {
+				const bool missing_dependent_typename =
+					member_result.error_message().find(
+						"Missing 'typename' before dependent qualified type name") !=
+					std::string::npos;
 				// In template body, recover from member parse errors by skipping to next ';' or '}'
-				if ((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty()) {
+				if (!missing_dependent_typename &&
+					((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 					FLASH_LOG(Parser, Warning, "Template struct body (", StringTable::getStringView(struct_name), "): skipping unparseable member declaration at ", peek_info().value(), " line=", peek_info().line());
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						if (peek() == ";"_tok) {

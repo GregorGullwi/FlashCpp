@@ -18,11 +18,19 @@ TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_
 		if (!value_type_index.is_valid()) {
 			value_type_index = nativeTypeIndex(TypeCategory::Int);
 		}
-		return TemplateTypeArg::makeValueIdentity(
-			FlashCpp::NonTypeValueIdentity::makeObjectPointer(
-				value_type_index,
-				eval_result.pointer_to_var,
-				eval_result.pointer_offset));
+		FlashCpp::NonTypeValueIdentity identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(
+			value_type_index,
+			eval_result.pointer_to_var,
+			eval_result.pointer_offset);
+		TypeCategory value_category = value_type_index.category();
+		if (eval_result.exact_type.has_value() &&
+			eval_result.exact_type->is_reference()) {
+			identity.kind = FlashCpp::NonTypeValueIdentityKind::Reference;
+		} else if (value_category == TypeCategory::FunctionPointer ||
+				   value_category == TypeCategory::MemberFunctionPointer) {
+			identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
+		}
+		return TemplateTypeArg::makeValueIdentity(identity);
 	}
 	if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
 		if (!value_type_index.is_valid()) {

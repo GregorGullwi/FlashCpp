@@ -2532,6 +2532,8 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RunInlineHeuristic);
 	const bool use_explicit_materialization =
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+	const bool skip_body_materialization =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::SkipBodyMaterialization);
 	copy_function_properties(new_func_ref, func_decl);
 
 	if (run_inline_heuristic) {
@@ -2596,7 +2598,8 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 		}
 	}
 
-	if (commit_instantiation || use_explicit_materialization) {
+	if ((commit_instantiation || use_explicit_materialization) &&
+		!skip_body_materialization) {
 		gSymbolTable.insertGlobal(mangled_name, new_func_node);
 	}
 
@@ -3045,6 +3048,170 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		instantiation_flags);
 }
 
+TemplateNameLookupRequest Parser::buildTemplateNameLookupRequest(
+	StringHandle template_name,
+	TemplateNameLookupKind lookup_kind,
+	bool is_dependent) const {
+	TemplateNameLookupRequest request;
+	request.name = template_name;
+	request.lookup_kind = lookup_kind;
+	request.is_dependent = is_dependent;
+	request.timing = TemplateNameLookupTiming::PointOfInstantiation;
+	request.point_of_instantiation_namespace = gSymbolTable.get_current_namespace_handle();
+	request.definition_namespace = request.point_of_instantiation_namespace;
+	if (current_template_definition_lookup_context_ != nullptr &&
+		current_template_definition_lookup_context_->is_valid()) {
+		request.timing = TemplateNameLookupTiming::Immediate;
+		request.definition_namespace =
+			current_template_definition_lookup_context_->definition_namespace;
+		request.current_instantiation_name =
+			current_template_definition_lookup_context_->current_instantiation_name;
+	}
+	return request;
+}
+
+TemplateNameLookupRequest Parser::buildFunctionTemplateLookupRequest(
+	StringHandle template_name,
+	TemplateNameLookupKind lookup_kind,
+	bool is_dependent) const {
+	return buildTemplateNameLookupRequest(
+		template_name,
+		lookup_kind,
+		is_dependent);
+}
+
+std::vector<ASTNode> Parser::materializeFunctionTemplateCandidateDeclarations(
+	std::span<const TemplateNameLookupCandidate> candidates) const {
+	std::vector<ASTNode> declarations;
+	declarations.reserve(candidates.size());
+	for (const TemplateNameLookupCandidate& candidate : candidates) {
+		declarations.push_back(candidate.declaration);
+	}
+	return declarations;
+}
+
+std::vector<TemplateNameLookupCandidate> Parser::lookupFunctionTemplateCandidatesForInstantiation(
+	std::string_view template_name,
+	int recursion_depth) {
+	std::vector<TemplateNameLookupCandidate> candidates;
+	std::unordered_set<const void*> seen_declarations;
+	const StringHandle template_name_handle =
+		StringTable::getOrInternStringHandle(template_name);
+	const bool name_is_qualified = template_name.find("::") != std::string_view::npos;
+
+	auto append_candidates = [&](const TemplateNameLookupResult& lookup_result) {
+		for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
+			if (candidate.identity.kind != TemplateDeclarationKind::FunctionTemplate) {
+				continue;
+			}
+			const void* declaration_address = candidate.declaration.raw_pointer();
+			if (declaration_address == nullptr) {
+				continue;
+			}
+			if (!seen_declarations.insert(declaration_address).second) {
+				continue;
+			}
+			candidates.push_back(candidate);
+		}
+	};
+
+	TemplateNameLookupRequest primary_request = buildFunctionTemplateLookupRequest(
+		template_name_handle,
+		name_is_qualified ? TemplateNameLookupKind::Qualified : TemplateNameLookupKind::Ordinary,
+		false);
+	append_candidates(gTemplateRegistry.lookupTemplateName(primary_request));
+
+	if (candidates.empty() && !name_is_qualified) {
+		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
+		while (!current_handle.isGlobal() && candidates.empty()) {
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+				current_handle,
+				template_name_handle);
+			TemplateNameLookupRequest qualified_request = buildFunctionTemplateLookupRequest(
+				qualified_handle,
+				TemplateNameLookupKind::Qualified,
+				false);
+			append_candidates(gTemplateRegistry.lookupTemplateName(qualified_request));
+			if (candidates.empty()) {
+				FLASH_LOG_FORMAT(
+					Templates,
+					Debug,
+					"[depth={}]: Template '{}' not found, trying qualified name '{}'",
+					recursion_depth,
+					template_name,
+					StringTable::getStringView(qualified_handle));
+			}
+			current_handle = gNamespaceRegistry.getParent(current_handle);
+		}
+	}
+
+	if (candidates.empty() && !struct_parsing_context_stack_.empty()) {
+		const auto& current_struct_context = struct_parsing_context_stack_.back();
+		StringHandle current_struct_name =
+			StringTable::getOrInternStringHandle(current_struct_context.struct_name);
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"[depth={}]: Template '{}' not found, checking inherited templates from struct '{}'",
+			recursion_depth,
+			template_name,
+			current_struct_context.struct_name);
+		const std::vector<ASTNode>* inherited_templates =
+			lookup_inherited_template(current_struct_name, template_name);
+		if (inherited_templates != nullptr) {
+			size_t overload_ordinal = 0;
+			for (const ASTNode& inherited_node : *inherited_templates) {
+				if (!inherited_node.is<TemplateFunctionDeclarationNode>()) {
+					continue;
+				}
+				const void* declaration_address = inherited_node.raw_pointer();
+				if (declaration_address == nullptr ||
+					!seen_declarations.insert(declaration_address).second) {
+					continue;
+				}
+				TemplateNameLookupCandidate candidate;
+				candidate.declaration = inherited_node;
+				candidate.identity.kind = TemplateDeclarationKind::FunctionTemplate;
+				candidate.identity.lookup_name = template_name_handle;
+				candidate.identity.declared_name =
+					inherited_node
+						.as<TemplateFunctionDeclarationNode>()
+						.function_decl_node()
+						.decl_node()
+						.identifier_token()
+						.handle();
+				candidate.identity.declaration_address = declaration_address;
+				candidate.identity.overload_ordinal = overload_ordinal++;
+				candidates.push_back(candidate);
+			}
+		}
+	}
+
+	if (!candidates.empty() && !name_is_qualified) {
+		std::vector<ASTNode> declarations =
+			materializeFunctionTemplateCandidateDeclarations(candidates);
+		filterPhase1OrdinaryFunctionOverloads(declarations);
+		if (declarations.size() != candidates.size()) {
+			std::unordered_set<const void*> kept_declarations;
+			kept_declarations.reserve(declarations.size());
+			for (const ASTNode& declaration : declarations) {
+				kept_declarations.insert(declaration.raw_pointer());
+			}
+			candidates.erase(
+				std::remove_if(
+					candidates.begin(),
+					candidates.end(),
+					[&](const TemplateNameLookupCandidate& candidate) {
+						return kept_declarations.count(
+								   candidate.declaration.raw_pointer()) == 0;
+					}),
+				candidates.end());
+		}
+	}
+
+	return candidates;
+}
+
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count) {
 	static int recursion_depth = 0;
 	recursion_depth++;
@@ -3062,14 +3229,57 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		return *specialization_opt;
 	}
 
-	// Look up ALL templates with this name (for SFINAE overload resolution)
-	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(template_name);
-	if (!all_templates || all_templates->empty()) {
+	std::vector<ASTNode> all_templates =
+		materializeFunctionTemplateCandidateDeclarations(
+			lookupFunctionTemplateCandidatesForInstantiation(template_name, recursion_depth));
+	if (all_templates.empty()) {
 		return std::nullopt;	 // No template with this name
 	}
+	const bool outer_sfinae_context =
+		template_instantiation_mode_ == TemplateInstantiationMode::SoftProbe;
+	std::vector<size_t> overload_iteration_order;
+	overload_iteration_order.resize(all_templates.size());
+	std::iota(overload_iteration_order.begin(), overload_iteration_order.end(), size_t{0});
+	if (!outer_sfinae_context) {
+		constexpr int kNonFunctionTemplateScore = -1;
+		std::vector<int> scores;
+		scores.reserve(all_templates.size());
+		for (const auto& node : all_templates) {
+			scores.push_back(node.is<TemplateFunctionDeclarationNode>()
+				? computeTemplateFunctionSpecificity(node.as<TemplateFunctionDeclarationNode>())
+				: kNonFunctionTemplateScore);
+		}
+		std::stable_sort(
+			overload_iteration_order.begin(),
+			overload_iteration_order.end(),
+			[&](size_t lhs_idx, size_t rhs_idx) {
+				return scores[lhs_idx] > scores[rhs_idx];
+			});
+	}
+
+	struct ExplicitOverloadCandidate {
+		size_t overload_idx = 0;
+		const TemplateFunctionDeclarationNode* template_func = nullptr;
+		InlineVector<TemplateTypeArg, 4> template_args;
+		std::vector<size_t> template_param_arg_starts;
+		std::vector<size_t> template_param_arg_counts;
+		std::optional<CallArgDeductionInfo> deduction_info;
+		std::optional<TypeSpecifierNode> reparsed_trailing_return_type;
+		FlashCpp::TemplateInstantiationKey key;
+		uintptr_t overload_id = 0;
+	};
+	std::vector<ExplicitOverloadCandidate> viable_candidates;
+	viable_candidates.reserve(all_templates.size());
+	const bool use_shape_preselection =
+		!outer_sfinae_context &&
+		current_explicit_call_arg_types_ != nullptr &&
+		all_templates.size() > 1;
+	const bool use_overload_discriminated_key = all_templates.size() > 1;
 
 	// Loop over all overloads for SFINAE support
-	for (const auto& template_node : *all_templates) {
+	for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
+		size_t overload_idx = overload_iteration_order[sorted_idx];
+		const ASTNode& template_node = all_templates[overload_idx];
 		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
 			continue;  // Not a function template, try next overload
 		}
@@ -3392,13 +3602,41 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			restore_lexer_position_only(func_decl.trailing_return_type_position());
 			advance();  // consume '->'
 
-			// Register function parameters so they're visible in decltype expressions.
-			// Use SymbolTableScope RAII to ensure exit_scope on all paths (including exceptions).
-			FlashCpp::SymbolTableScope sfinae_param_scope(ScopeType::Function);
-			register_parameters_in_scope(func_decl.parameter_nodes());
-
 			FlashCpp::TemplateParameterScope sfinae_scope;
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
+
+			// Register function parameters so they're visible in decltype expressions.
+			// Materialize substituted parameter types first so expressions like
+			// decltype(u->foo(), true) see `u` as `HasFoo*` (or concrete equivalent),
+			// not as an unresolved template-parameter placeholder.
+			FlashCpp::SymbolTableScope sfinae_param_scope(ScopeType::Function);
+			InlineVector<ASTNode, 8> sfinae_params;
+			sfinae_params.reserve(func_decl.parameter_nodes().size());
+			for (const ASTNode& param_node : func_decl.parameter_nodes()) {
+				if (!param_node.is<DeclarationNode>()) {
+					sfinae_params.push_back(param_node);
+					continue;
+				}
+
+				const DeclarationNode& original_param = param_node.as<DeclarationNode>();
+				TypeSpecifierNode substituted_type = original_param.type_specifier_node();
+				TypeIndex substituted_index = substitute_template_parameter(
+					original_param.type_specifier_node(),
+					template_params,
+					template_args);
+				if (substituted_index.is_valid() &&
+					substituted_index.category() != TypeCategory::Invalid) {
+					substituted_type.set_type_index(substituted_index.withCategory(substituted_index.category()));
+					substituted_type.set_category(substituted_index.category());
+				}
+
+				ASTNode substituted_type_node = emplace_node<TypeSpecifierNode>(substituted_type);
+				ASTNode substituted_param = emplace_node<DeclarationNode>(
+					substituted_type_node,
+					original_param.identifier_token());
+				sfinae_params.push_back(substituted_param);
+			}
+			register_parameters_in_scope(sfinae_params);
 
 			auto return_type_result = parse_type_specifier();
 			// Explicitly exit the param scope before restoring the lexer position.
@@ -3416,24 +3654,61 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			reparsed_trailing_return_type = return_type_result.node()->as<TypeSpecifierNode>();
 		}
 
-		auto key = FlashCpp::makeInstantiationKey(
-			StringTable::getOrInternStringHandle(template_name), template_args);
-		auto existing_inst = gTemplateRegistry.getInstantiation(key);
+		StringHandle key_name_handle = StringTable::getOrInternStringHandle(template_name);
+		if (use_overload_discriminated_key) {
+			StringBuilder discriminated_name_builder;
+			key_name_handle = StringTable::getOrInternStringHandle(
+				discriminated_name_builder
+					.append(template_name)
+					.append("$ol")
+					.append(static_cast<uint64_t>(overload_idx))
+					.commit());
+		}
+		auto key = FlashCpp::makeInstantiationKey(key_name_handle, template_args);
+		if (!use_shape_preselection) {
+			auto existing_inst = gTemplateRegistry.getInstantiation(key);
+			if (existing_inst.has_value()) {
+				return *existing_inst;
+			}
+		}
+
+		viable_candidates.push_back(ExplicitOverloadCandidate{
+			overload_idx,
+			&template_func,
+			std::move(template_args),
+			std::move(template_param_arg_starts),
+			std::move(template_param_arg_counts),
+			std::move(deduction_info),
+			std::move(reparsed_trailing_return_type),
+			std::move(key),
+			reinterpret_cast<uintptr_t>(&func_decl)});
+	} // end of overload loop
+
+	auto instantiate_explicit_candidate =
+		[&](const ExplicitOverloadCandidate& candidate) -> std::optional<ASTNode> {
+		if (candidate.template_func == nullptr) {
+			return std::nullopt;
+		}
+		auto existing_inst = gTemplateRegistry.getInstantiation(candidate.key);
 		if (existing_inst.has_value()) {
 			return *existing_inst;
 		}
-		std::optional<CallArgDeductionInfo> helper_deduction_info = deduction_info;
+		const TemplateFunctionDeclarationNode& template_func = *candidate.template_func;
+		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+		const auto& template_params = template_func.template_parameters();
+		std::optional<CallArgDeductionInfo> helper_deduction_info = candidate.deduction_info;
+		std::optional<TypeSpecifierNode> reparsed_trailing_return_type = candidate.reparsed_trailing_return_type;
+		std::span<const size_t> template_param_arg_starts_view(candidate.template_param_arg_starts);
+		std::span<const size_t> template_param_arg_counts_view(candidate.template_param_arg_counts);
 		FunctionTemplateInstantiationContext instantiation_context{
 			template_name,
 			template_func,
 			func_decl,
 			template_params,
-			template_args,
-			key,
-			0,
+			candidate.template_args,
+			candidate.key,
+			candidate.overload_id,
 			recursion_depth};
-		std::span<const size_t> template_param_arg_starts_view(template_param_arg_starts);
-		std::span<const size_t> template_param_arg_counts_view(template_param_arg_counts);
 		FunctionTemplateBindingData binding_data{
 			nullptr,
 			&template_param_arg_starts_view,
@@ -3449,15 +3724,113 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		instantiation_flags = mergeInstantiationFlags(
 			instantiation_flags,
 			FunctionTemplateInstantiationFlags::RegisterInstantiation);
-		std::optional<ASTNode> instantiated = instantiateBoundFunctionTemplate(
+		return instantiateBoundFunctionTemplate(
 			instantiation_context,
 			binding_data,
 			instantiation_flags);
+	};
+
+	std::optional<size_t> preferred_candidate_index;
+	if (use_shape_preselection) {
+		std::vector<ASTNode> shape_overloads;
+		std::vector<size_t> shape_candidate_indices;
+		shape_overloads.reserve(viable_candidates.size());
+		shape_candidate_indices.reserve(viable_candidates.size());
+		for (size_t i = 0; i < viable_candidates.size(); ++i) {
+			const ExplicitOverloadCandidate& candidate = viable_candidates[i];
+			if (candidate.template_func == nullptr) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& template_func = *candidate.template_func;
+			const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+			const auto& template_params = template_func.template_parameters();
+			std::optional<CallArgDeductionInfo> helper_deduction_info = candidate.deduction_info;
+			std::optional<TypeSpecifierNode> reparsed_trailing_return_type = candidate.reparsed_trailing_return_type;
+			std::span<const size_t> template_param_arg_starts_view(candidate.template_param_arg_starts);
+			std::span<const size_t> template_param_arg_counts_view(candidate.template_param_arg_counts);
+			StringBuilder shape_name_builder;
+			StringHandle shape_name_handle = StringTable::getOrInternStringHandle(
+				shape_name_builder
+					.append(template_name)
+					.append("$explicit_shape_ol")
+					.append(static_cast<uint64_t>(candidate.overload_idx))
+					.commit());
+			FlashCpp::TemplateInstantiationKey shape_key = FlashCpp::makeInstantiationKey(
+				shape_name_handle,
+				candidate.template_args);
+			FunctionTemplateInstantiationContext instantiation_context{
+				template_name,
+				template_func,
+				func_decl,
+				template_params,
+				candidate.template_args,
+				shape_key,
+				candidate.overload_id,
+				recursion_depth};
+			FunctionTemplateBindingData binding_data{
+				nullptr,
+				&template_param_arg_starts_view,
+				&template_param_arg_counts_view,
+				&helper_deduction_info,
+				&reparsed_trailing_return_type};
+			FunctionTemplateInstantiationFlags shape_flags = mergeInstantiationFlags(
+				FunctionTemplateInstantiationFlags::SkipBodyMaterialization,
+				FunctionTemplateInstantiationFlags::PreserveRefQualifier);
+			shape_flags = mergeInstantiationFlags(
+				shape_flags,
+				FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+			ScopedParserInstantiationContext shape_guard(
+				*this,
+				TemplateInstantiationMode::HardUseCandidateProbe,
+				StringHandle{});
+			std::optional<ASTNode> shape_node = instantiateBoundFunctionTemplate(
+				instantiation_context,
+				binding_data,
+				shape_flags);
+			if (!shape_node.has_value() ||
+				!shape_node->is<FunctionDeclarationNode>() ||
+				shape_node->as<FunctionDeclarationNode>().failed_substitution()) {
+				continue;
+			}
+			shape_overloads.push_back(*shape_node);
+			shape_candidate_indices.push_back(i);
+		}
+		if (shape_overloads.size() == 1) {
+			preferred_candidate_index = shape_candidate_indices[0];
+		} else if (shape_overloads.size() > 1) {
+			auto resolution = resolve_overload(shape_overloads, *current_explicit_call_arg_types_);
+			if (resolution.has_match &&
+				!resolution.is_ambiguous &&
+				resolution.selected_overload != nullptr) {
+				for (size_t i = 0; i < shape_overloads.size(); ++i) {
+					if (resolution.selected_overload == &shape_overloads[i]) {
+						preferred_candidate_index = shape_candidate_indices[i];
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	if (preferred_candidate_index.has_value() &&
+		*preferred_candidate_index < viable_candidates.size()) {
+		std::optional<ASTNode> preferred_instantiation =
+			instantiate_explicit_candidate(viable_candidates[*preferred_candidate_index]);
+		if (preferred_instantiation.has_value()) {
+			return *preferred_instantiation;
+		}
+	}
+
+	for (size_t i = 0; i < viable_candidates.size(); ++i) {
+		if (preferred_candidate_index.has_value() && i == *preferred_candidate_index) {
+			continue;
+		}
+		std::optional<ASTNode> instantiated =
+			instantiate_explicit_candidate(viable_candidates[i]);
 		if (instantiated.has_value()) {
 			return *instantiated;
 		}
-		continue;
-	} // end of overload loop
+	}
 
 	return std::nullopt;	 // No overload matched
 }
@@ -3488,51 +3861,10 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		return std::nullopt;
 	}
 
-	// Look up ALL templates with this name (for SFINAE support with same-name overloads)
-	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(template_name);
-
-	// If not found, try namespace-qualified lookup.
-	// When inside a namespace (e.g., std) and looking up "__detail::__or_fn",
-	// we need to also try "std::__detail::__or_fn" since templates are registered
-	// with their fully-qualified names.
-	// Walk up the namespace hierarchy: e.g., in std::__cxx11, try:
-	//   std::__cxx11::__detail::__or_fn, then std::__detail::__or_fn, then ::__detail::__or_fn
-	if (!all_templates || all_templates->empty()) {
-		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		StringHandle template_handle = StringTable::getOrInternStringHandle(template_name);
-
-		while (!current_handle.isGlobal() && (!all_templates || all_templates->empty())) {
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, template_handle);
-			std::string_view qualified_name_view = StringTable::getStringView(qualified_handle);
-
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, trying qualified name '{}'",
-							 recursion_depth, template_name, qualified_name_view);
-
-			all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name_view);
-
-			// Move to parent namespace for next iteration
-			current_handle = gNamespaceRegistry.getParent(current_handle);
-		}
-	}
-
-	// If still not found, check if we're inside a struct and look for inherited template functions
-	if ((!all_templates || all_templates->empty()) && !struct_parsing_context_stack_.empty()) {
-		// Get the current struct context
-		const auto& current_struct_context = struct_parsing_context_stack_.back();
-		StringHandle current_struct_name = StringTable::getOrInternStringHandle(current_struct_context.struct_name);
-
-		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Template '{}' not found, checking inherited templates from struct '{}'",
-						 recursion_depth, template_name, current_struct_context.struct_name);
-
-		all_templates = lookup_inherited_template(current_struct_name, template_name);
-
-		if (all_templates && !all_templates->empty()) {
-			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Found {} inherited template overload(s) for '{}'",
-							 recursion_depth, all_templates->size(), template_name);
-		}
-	}
-
-	if (!all_templates || all_templates->empty()) {
+	std::vector<ASTNode> all_templates =
+		materializeFunctionTemplateCandidateDeclarations(
+			lookupFunctionTemplateCandidatesForInstantiation(template_name, recursion_depth));
+	if (all_templates.empty()) {
 		// This is expected for regular (non-template) functions - the caller will fall back
 		// to creating a forward declaration. Only log at Debug level to avoid noise.
 		FLASH_LOG(Templates, Debug, "[depth=", recursion_depth, "]: Template '", template_name, "' not found in registry");
@@ -3540,7 +3872,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	}
 
 	FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Found {} template overload(s) for '{}'",
-					 recursion_depth, all_templates->size(), template_name);
+					 recursion_depth, all_templates.size(), template_name);
 
 	// Try each template overload in order.
 	// For SFINAE: collect all viable matches and return the most specific one.
@@ -3556,14 +3888,14 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	std::vector<SfinaeCandidateEntry> sfinae_candidates;
 
 	std::vector<size_t> overload_iteration_order;
-	overload_iteration_order.resize(all_templates->size());
+	overload_iteration_order.resize(all_templates.size());
 	std::iota(overload_iteration_order.begin(), overload_iteration_order.end(), size_t{0});
 	if (!outer_sfinae_context) {
 		constexpr int kNonFunctionTemplateScore = -1;
 
 		std::vector<int> scores;
-		scores.reserve(all_templates->size());
-		for (const auto& node : *all_templates) {
+		scores.reserve(all_templates.size());
+		for (const auto& node : all_templates) {
 			scores.push_back(node.is<TemplateFunctionDeclarationNode>()
 				? computeTemplateFunctionSpecificity(node.as<TemplateFunctionDeclarationNode>())
 				: kNonFunctionTemplateScore);
@@ -3576,7 +3908,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			});
 	}
 
-	if (!outer_sfinae_context && all_templates->size() > 1) {
+	if (!outer_sfinae_context && all_templates.size() > 1) {
 		struct ShapeCandidate {
 			size_t overload_idx;
 			InlineVector<TemplateTypeArg, 4> template_args;
@@ -3586,13 +3918,13 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		};
 		std::vector<ShapeCandidate> shape_candidates;
 		std::vector<ASTNode> shape_overloads;
-		shape_candidates.reserve(all_templates->size());
-		shape_overloads.reserve(all_templates->size());
+		shape_candidates.reserve(all_templates.size());
+		shape_overloads.reserve(all_templates.size());
 		StringHandle template_name_handle = StringTable::getOrInternStringHandle(template_name);
 
 		for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
 			size_t overload_idx = overload_iteration_order[sorted_idx];
-			const ASTNode& template_node = (*all_templates)[overload_idx];
+			const ASTNode& template_node = all_templates[overload_idx];
 			if (!template_node.is<TemplateFunctionDeclarationNode>()) {
 				continue;
 			}
@@ -3685,7 +4017,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 						// Reuse the precomputed template_args from the shape probe to skip
 						// redundant argument deduction for the winning candidate.
 						ShapeCandidate& winner = shape_candidates[i];
-						const ASTNode& winner_template_node = (*all_templates)[winner.overload_idx];
+						const ASTNode& winner_template_node = all_templates[winner.overload_idx];
 						const TemplateFunctionDeclarationNode& winner_template_func =
 							winner_template_node.as<TemplateFunctionDeclarationNode>();
 						const FunctionDeclarationNode& winner_func_decl =
@@ -3823,7 +4155,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	std::optional<ASTNode> deferred_forward_declaration_result;
 	for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
 		size_t overload_idx = overload_iteration_order[sorted_idx];
-		const ASTNode& template_node = (*all_templates)[overload_idx];
+		const ASTNode& template_node = all_templates[overload_idx];
 
 		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: Skipping overload {} - not a function template",
@@ -3856,7 +4188,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				sfinae_candidates.push_back({*result, spec, is_del, overload_idx});
 			} else {
 				if (!hasUsableTemplateFunctionDefinition(func_decl) &&
-					hasLaterUsableTemplateDefinitionWithMatchingShape(*all_templates, overload_idx)) {
+					hasLaterUsableTemplateDefinitionWithMatchingShape(all_templates, overload_idx)) {
 					FLASH_LOG_FORMAT(
 						Templates,
 						Debug,
@@ -3927,7 +4259,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 	// All overloads failed
 	FLASH_LOG_FORMAT(Templates, Error, "[depth={}]: All {} template overload(s) failed for '{}'",
-					 recursion_depth, all_templates->size(), template_name);
+					 recursion_depth, all_templates.size(), template_name);
 	return std::nullopt;
 }
 

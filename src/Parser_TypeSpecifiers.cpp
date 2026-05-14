@@ -12,8 +12,30 @@ struct DependentMemberSegmentInfo {
 	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
 };
 
+bool dependentQualifiedOwnerNeedsTypename(
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind) {
+	return owner_kind !=
+		TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+}
+
+std::string_view dependentQualifiedOwnerKindName(
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind) {
+	switch (owner_kind) {
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+		return "template parameter owner";
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+		return "dependent instantiation owner";
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+		return "current instantiation owner";
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization:
+		return "unknown specialization owner";
+	}
+	return "dependent owner";
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
+	TypeIndex owner_type,
 	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
 	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
 	std::string_view member_path,
@@ -21,6 +43,7 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	TypeInfo::DependentQualifiedNameRecord record;
 	record.owner_kind = owner_kind;
 	record.owner_name = owner_name;
+	record.owner_type = owner_type;
 	record.names_current_instantiation =
 		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
 	record.owner_template_arguments = std::move(owner_template_arguments);
@@ -461,8 +484,10 @@ ParseResult Parser::parse_type_specifier() {
 	// e.g., constexpr typename my_or<...>::type func()
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "constexpr typename" which appear in standard library headers
+	bool saw_typename_keyword = false;
 	if (peek() == "typename"_tok) {
 		advance(); // consume 'typename'
+		saw_typename_keyword = true;
 		// Continue parsing the actual type after typename
 	}
 
@@ -530,8 +555,23 @@ ParseResult Parser::parse_type_specifier() {
 	// where "const" comes before "typename"
 	if (peek() == "typename"_tok) {
 		advance(); // consume 'typename'
+		saw_typename_keyword = true;
 		// Continue parsing the actual type after typename
 	}
+
+	auto diagnoseMissingTypenameForDependentOwner =
+		[&](TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
+			const Token& diagnostic_token) -> std::optional<ParseResult> {
+		if (saw_typename_keyword || !dependentQualifiedOwnerNeedsTypename(owner_kind)) {
+			return std::nullopt;
+		}
+		StringBuilder message_builder;
+		message_builder
+			.append("Missing 'typename' before dependent qualified type name (")
+			.append(dependentQualifiedOwnerKindName(owner_kind))
+			.append(")");
+		return ParseResult::error(std::string(message_builder.commit()), diagnostic_token);
+	};
 
 	// Static type map for most types. "long" and "wchar_t" are handled specially below.
 	static const std::unordered_map<std::string_view, std::tuple<TypeCategory, size_t>>
@@ -1192,22 +1232,37 @@ ParseResult Parser::parse_type_specifier() {
 				}
 			}
 
-			if (is_dependent_qualified_type) {
-				StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-				auto type_it = getTypesByNameMap().find(type_handle);
-				TypeIndex type_idx;
-				if (type_it == getTypesByNameMap().end()) {
+				if (is_dependent_qualified_type) {
+					if (auto typename_error = diagnoseMissingTypenameForDependentOwner(
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+							last_qualified_token);
+						typename_error.has_value()) {
+						return *typename_error;
+					}
+					StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+					StringHandle owner_handle =
+						StringTable::getOrInternStringHandle(base_part);
+					TypeIndex owner_type_index{};
+					if (auto owner_it = getTypesByNameMap().find(owner_handle);
+						owner_it != getTypesByNameMap().end() &&
+						owner_it->second != nullptr) {
+						owner_type_index = owner_it->second->registeredTypeIndex();
+					}
+					auto type_it = getTypesByNameMap().find(type_handle);
+					TypeIndex type_idx;
+					if (type_it == getTypesByNameMap().end()) {
 					TypeInfo& placeholder_type = add_empty_type_entry();
 					placeholder_type.fallback_size_bits_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
 					placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
-					placeholder_type.setDependentQualifiedName(
-						makeDependentQualifiedNameRecord(
-							StringTable::getOrInternStringHandle(base_part),
-							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
-							InlineVector<TypeInfo::TemplateArgInfo, 4>{},
-							type_name.substr(type_name.find("::") + 2),
+						placeholder_type.setDependentQualifiedName(
+							makeDependentQualifiedNameRecord(
+								owner_handle,
+								owner_type_index,
+								TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+								InlineVector<TypeInfo::TemplateArgInfo, 4>{},
+								type_name.substr(type_name.find("::") + 2),
 							{}));
 					getTypesByNameMap()[type_handle] = &placeholder_type;
 					type_idx = placeholder_type.type_index_;
@@ -1217,7 +1272,8 @@ ParseResult Parser::parse_type_specifier() {
 						!type_it->second->hasDependentQualifiedName()) {
 						type_it->second->setDependentQualifiedName(
 							makeDependentQualifiedNameRecord(
-								StringTable::getOrInternStringHandle(base_part),
+								owner_handle,
+								owner_type_index,
 								TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
 								InlineVector<TypeInfo::TemplateArgInfo, 4>{},
 								type_name.substr(type_name.find("::") + 2),
@@ -1654,13 +1710,18 @@ ParseResult Parser::parse_type_specifier() {
 						dependent_type_builder.append(type_name);
 						dependent_type_builder.append("<...>");
 						Token nested_token = peek_info();
-						TypeInfo::DependentQualifiedNameRecord dependent_name_record;
-						dependent_name_record.owner_kind =
-							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
-						dependent_name_record.owner_name =
-							StringTable::getOrInternStringHandle(type_name);
-						dependent_name_record.owner_template_arguments =
-							convertToTemplateArgInfo(*template_args);
+					TypeInfo::DependentQualifiedNameRecord dependent_name_record;
+					dependent_name_record.owner_kind =
+						TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+					dependent_name_record.owner_name =
+						StringTable::getOrInternStringHandle(type_name);
+					if (auto owner_it = getTypesByNameMap().find(dependent_name_record.owner_name);
+						owner_it != getTypesByNameMap().end() &&
+						owner_it->second != nullptr) {
+						dependent_name_record.owner_type = owner_it->second->registeredTypeIndex();
+					}
+					dependent_name_record.owner_template_arguments =
+						convertToTemplateArgInfo(*template_args);
 
 						while (peek() == "::"_tok) {
 							advance(); // consume '::'
@@ -2105,11 +2166,85 @@ ParseResult Parser::parse_type_specifier() {
 						type_info.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
 						TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
 							TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
-						if (!struct_parsing_context_stack_.empty() &&
-							struct_parsing_context_stack_.back().struct_name == type_name) {
+						TypeIndex owner_type_index{};
+						auto owner_matches_current_instantiation =
+							[&](const TypeInfo& owner_type_info, std::string_view owner_spelling) {
+							if (owner_spelling.empty()) {
+								return false;
+							}
+							if (owner_spelling ==
+								StringTable::getStringView(owner_type_info.name())) {
+								return true;
+							}
+							if (!owner_type_info.isTemplateInstantiation()) {
+								return false;
+							}
+							std::string_view base_template_name =
+								StringTable::getStringView(owner_type_info.baseTemplateName());
+							if (owner_spelling == base_template_name) {
+								return true;
+							}
+							StringHandle qualified_base_handle =
+								gNamespaceRegistry.buildQualifiedIdentifier(
+									owner_type_info.sourceNamespace(),
+									owner_type_info.baseTemplateName());
+							std::string_view qualified_base_name =
+								StringTable::getStringView(qualified_base_handle);
+							return !qualified_base_name.empty() &&
+								owner_spelling == qualified_base_name;
+						};
+						auto classify_owner_as_current_instantiation =
+							[&](TypeIndex current_owner_type_index) {
+							if (!current_owner_type_index.is_valid()) {
+								return false;
+							}
+							const TypeInfo* current_owner_type_info =
+								tryGetTypeInfo(current_owner_type_index);
+							if (current_owner_type_info == nullptr) {
+								return false;
+							}
+							if (!owner_matches_current_instantiation(*current_owner_type_info, type_name)) {
+								return false;
+							}
 							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
-						} else if (is_dependent_template_param) {
+							owner_type_index = current_owner_type_info->registeredTypeIndex();
+							return true;
+						};
+						bool classified_current_instantiation = false;
+						if (!member_function_context_stack_.empty()) {
+							const MemberFunctionContext& member_ctx =
+								member_function_context_stack_.back();
+							classified_current_instantiation =
+								classify_owner_as_current_instantiation(
+									member_ctx.struct_type_index);
+						}
+						if (!classified_current_instantiation &&
+							!struct_parsing_context_stack_.empty()) {
+							StringHandle active_struct_handle =
+								StringTable::getOrInternStringHandle(
+									struct_parsing_context_stack_.back().struct_name);
+							if (auto active_struct_it = getTypesByNameMap().find(active_struct_handle);
+								active_struct_it != getTypesByNameMap().end() &&
+								active_struct_it->second != nullptr) {
+								classified_current_instantiation =
+									classify_owner_as_current_instantiation(
+										active_struct_it->second->registeredTypeIndex());
+							}
+						}
+						if (!classified_current_instantiation && is_dependent_template_param) {
 							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+						} else if (!classified_current_instantiation &&
+								   owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation &&
+								   has_dependent_args &&
+								   (!struct_parsing_context_stack_.empty() || !member_function_context_stack_.empty())) {
+							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization;
+						}
+						if (auto typename_error =
+								diagnoseMissingTypenameForDependentOwner(
+									owner_kind,
+									type_name_token);
+							typename_error.has_value()) {
+							return *typename_error;
 						}
 						StringBuilder member_path_builder;
 						if (qualified_type_name.starts_with(instantiated_name) &&
@@ -2134,6 +2269,7 @@ ParseResult Parser::parse_type_specifier() {
 						type_info.setDependentQualifiedName(
 							makeDependentQualifiedNameRecord(
 								StringTable::getOrInternStringHandle(type_name),
+								owner_type_index,
 								owner_kind,
 								convertToTemplateArgInfo(*template_args),
 								dependent_member_path,
@@ -2470,6 +2606,33 @@ ParseResult Parser::parse_type_specifier() {
 						// Create a placeholder UserDefined type for template-dependent nested types
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
 							TypeIndex{}.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+					}
+
+					// During template definition parsing, unresolved nested members of an
+					// instantiated template-id can still participate in deferred validity
+					// checks ([temp.res], IFNDR cases). Preserve them as dependent-member
+					// placeholders instead of producing an eager hard error.
+					if (parsing_template_depth_ > 0 && isTemplateBodyWithActiveParameters()) {
+						StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_type_name);
+						auto existing_it = getTypesByNameMap().find(qualified_handle);
+						TypeIndex placeholder_index{};
+						if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
+							placeholder_index = existing_it->second->registeredTypeIndex();
+						} else {
+							TypeInfo& placeholder_type = add_empty_type_entry();
+							placeholder_type.fallback_size_bits_ = 0;
+							placeholder_type.name_ = qualified_handle;
+							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							getTypesByNameMap()[qualified_handle] = &placeholder_type;
+							placeholder_index = placeholder_type.type_index_;
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							placeholder_index.withCategory(TypeCategory::UserDefined),
+							0,
+							type_name_token,
+							cv_qualifier,
+							ReferenceQualifier::None));
 					}
 
 					// SFINAE: If we're in a substitution context and can't find the nested type,

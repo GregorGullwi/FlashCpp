@@ -2185,6 +2185,13 @@ public:
 	std::string_view name() const { return identifier_.value(); }
 	StringHandle nameHandle() const { return identifier_.handle(); }
 	const Token& identifier_token() const { return identifier_; }
+	bool hasDependentQualifiedName() const { return dependent_qualified_name_.has_value(); }
+	const TypeInfo::DependentQualifiedNameRecord* dependentQualifiedName() const {
+		return dependent_qualified_name_ ? &*dependent_qualified_name_ : nullptr;
+	}
+	void setDependentQualifiedName(TypeInfo::DependentQualifiedNameRecord record) {
+		dependent_qualified_name_ = std::move(record);
+	}
 
 	// Convert to QualifiedIdentifier (Phase 3 bridge)
 	QualifiedIdentifier qualifiedIdentifier() const {
@@ -2206,6 +2213,7 @@ public:
 private:
 	NamespaceHandle namespace_handle_;  // Handle to namespace, e.g., handle for "std" in std::print
 	Token identifier_;				   // The final identifier (e.g., "print", "func")
+	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_name_;
 };
 
 using NumericLiteralValue = std::variant<unsigned long long, double>;
@@ -2474,6 +2482,9 @@ public:
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	void set_namespace_handle(NamespaceHandle ns) { namespace_handle_ = ns; }
 	std::span<const ASTNode> parameter_nodes() const {
+		return parameter_nodes_;
+	}
+	std::span<ASTNode> parameter_nodes() {
 		return parameter_nodes_;
 	}
 	void add_parameter_node(ASTNode parameter_node) {

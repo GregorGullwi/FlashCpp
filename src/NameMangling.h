@@ -1069,6 +1069,10 @@ inline void appendItaniumTypeTemplateArgs(
 				output += std::to_string(entity.size());
 				output += entity;
 				output += "EE";
+			} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
+					   identity.isNullMemberPointer()) {
+				// Null pointer-to-member literal
+				output += "0";
 			} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer ||
 				identity.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer ||
 				identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
@@ -1080,6 +1084,11 @@ inline void appendItaniumTypeTemplateArgs(
 				// hash to ensure uniqueness.
 				const size_t identity_hash = identity.hash();
 				output += "u";
+				if (identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) {
+					output += "fp";
+				} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer) {
+					output += "mp";
+				}
 				output += std::to_string(identity_hash);
 			} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 				output += "0";

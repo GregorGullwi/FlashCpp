@@ -2874,16 +2874,36 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 
 		std::optional<ASTNode> get_spec;
 		{
-			std::vector<TemplateTypeArg> get_template_args = {resolved_index_arg};
-			get_spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
+			auto try_lookup_get_for_index = [&](const TemplateTypeArg& index_arg) -> std::optional<ASTNode> {
+				std::vector<TemplateTypeArg> get_template_args = {index_arg};
+				auto spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
+				if (!spec.has_value()) {
+					spec = gTemplateRegistry.matchSpecializationPattern("get", get_template_args);
+				}
+				if (!spec.has_value()) {
+					spec = gTemplateRegistry.lookupExactSpecialization("std::get", get_template_args);
+				}
+				if (!spec.has_value()) {
+					spec = gTemplateRegistry.matchSpecializationPattern("std::get", get_template_args);
+				}
+				return spec;
+			};
+
+			// First try the same canonicalized index category that matched tuple_element.
+			get_spec = try_lookup_get_for_index(resolved_index_arg);
+
+			// Fallback: explicit specialization arguments for non-type template params are
+			// converted to the parameter type, so `template<unsigned long I> ... get<0>(...)`
+			// may be keyed as a different integral category than the tuple_element path.
+			// Probe all integral index candidates to keep tuple-like lookup robust.
 			if (!get_spec.has_value()) {
-				get_spec = gTemplateRegistry.matchSpecializationPattern("get", get_template_args);
-			}
-			if (!get_spec.has_value()) {
-				get_spec = gTemplateRegistry.lookupExactSpecialization("std::get", get_template_args);
-			}
-			if (!get_spec.has_value()) {
-				get_spec = gTemplateRegistry.matchSpecializationPattern("std::get", get_template_args);
+				for (TypeCategory index_type : index_arg_candidates) {
+					TemplateTypeArg alt_index_arg = make_index_arg(i, index_type);
+					get_spec = try_lookup_get_for_index(alt_index_arg);
+					if (get_spec.has_value()) {
+						break;
+					}
+				}
 			}
 		}
 		if (!get_spec.has_value()) {

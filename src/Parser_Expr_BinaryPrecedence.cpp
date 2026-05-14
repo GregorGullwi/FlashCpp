@@ -26,6 +26,7 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 	StringBuilder op_name_builder;
 	op_name_builder.append("operator").append(op_symbol);
 	std::string_view op_name = op_name_builder.commit();
+	StringHandle op_name_handle = StringTable::getOrInternStringHandle(op_name);
 
 	std::vector<TypeSpecifierNode> arg_types;
 	arg_types.reserve(2);
@@ -143,9 +144,26 @@ const FunctionDeclarationNode* Parser::tryInstantiateOperatorTemplateForBinary(
 
 	{
 		auto eligible_ns = gSymbolTable.get_adl_eligible_namespaces(arg_types);
-		std::vector<ASTNode> phase1_templates_copy;
-		if (const std::vector<ASTNode>* phase1_templates = gTemplateRegistry.lookupAllTemplates(op_name)) {
-			phase1_templates_copy = *phase1_templates;
+		std::vector<TemplateNameLookupCandidate> phase1_template_candidates;
+		TemplateNameLookupRequest phase1_lookup_request = buildFunctionTemplateLookupRequest(
+			op_name_handle,
+			TemplateNameLookupKind::Ordinary,
+			false);
+		TemplateNameLookupResult phase1_lookup_result =
+			gTemplateRegistry.lookupTemplateName(phase1_lookup_request);
+		for (const TemplateNameLookupCandidate& lookup_candidate :
+			phase1_lookup_result.candidates) {
+			if (lookup_candidate.identity.kind !=
+				TemplateDeclarationKind::FunctionTemplate) {
+				continue;
+			}
+			phase1_template_candidates.push_back(lookup_candidate);
+		}
+		std::vector<ASTNode> phase1_templates_copy =
+			materializeFunctionTemplateCandidateDeclarations(
+				phase1_template_candidates);
+		if (phase1_lookup_result.used_definition_context) {
+			filterPhase1OrdinaryFunctionOverloads(phase1_templates_copy);
 		}
 		if (!phase1_templates_copy.empty()) {
 			for (const auto& tmpl : phase1_templates_copy) {

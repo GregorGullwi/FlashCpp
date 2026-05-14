@@ -7914,32 +7914,90 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	auto remapInstantiatedNestedTypeIndex = [&](TypeIndex original_type_index) -> TypeIndex {
+		if (!original_type_index.is_valid()) {
+			return original_type_index;
+		}
+		const TypeInfo* original_type_info = tryGetTypeInfo(original_type_index);
+		if (original_type_info == nullptr) {
+			return original_type_index;
+		}
+
+		std::string_view original_name = StringTable::getStringView(original_type_info->name());
+		std::string_view suffix;
+		if (original_name.starts_with(template_name)) {
+			size_t qualified_sep = original_name.find("::", template_name.size());
+			if (qualified_sep != std::string_view::npos &&
+				(qualified_sep == template_name.size() || original_name[template_name.size()] == '$')) {
+				suffix = original_name.substr(qualified_sep);
+			}
+		}
+		if (suffix.empty()) {
+			return original_type_index;
+		}
+
+		StringHandle remapped_handle = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(StringTable::getStringView(instantiated_name))
+				.append(suffix)
+				.commit());
+		auto remapped_it = getTypesByNameMap().find(remapped_handle);
+		if (remapped_it == getTypesByNameMap().end() || remapped_it->second == nullptr) {
+			return original_type_index;
+		}
+		const TypeInfo* remapped_type_info = remapped_it->second;
+		return remapped_type_info->registeredTypeIndex().withCategory(remapped_type_info->typeEnum());
+	};
+
+	auto fixupNestedTypeInSpecifier = [&](TypeSpecifierNode& type_spec) {
+		TypeIndex remapped_index = remapInstantiatedNestedTypeIndex(type_spec.type_index());
+		if (remapped_index == type_spec.type_index()) {
+			return;
+		}
+		type_spec.set_type_index(remapped_index);
+		if (type_spec.is_pointer() || type_spec.is_function_pointer() ||
+			type_spec.is_member_function_pointer() || type_spec.is_member_object_pointer() ||
+			type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+			type_spec.set_size_in_bits(64);
+			return;
+		}
+		if (const TypeInfo* remapped_info = tryGetTypeInfo(remapped_index)) {
+			if (remapped_info->hasStoredSize()) {
+				type_spec.set_size_in_bits(static_cast<int>(remapped_info->sizeInBits().value));
+				return;
+			}
+		}
+		type_spec.set_size_in_bits(get_type_size_bits(remapped_index.category()));
+	};
+
+	// Phase C fixup: update member-function signatures that still refer to
+	// template-pattern nested types (e.g., Wrapper::Nested or Wrapper$hash::Nested)
+	// after nested classes were materialized as InstantiatedName::Nested.
+	for (auto& mem_func : struct_info->member_functions) {
+		if (!mem_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		FunctionDeclarationNode& func_decl = mem_func.function_decl.as<FunctionDeclarationNode>();
+		fixupNestedTypeInSpecifier(func_decl.decl_node().type_specifier_node());
+		for (ASTNode& param_node : func_decl.parameter_nodes()) {
+			if (param_node.is<DeclarationNode>()) {
+				fixupNestedTypeInSpecifier(param_node.as<DeclarationNode>().type_specifier_node());
+			}
+		}
+	}
+
 	// Finalize the struct layout
- // Phase C fixup: update static members whose type references a nested class that
+	// Phase C fixup: update static members whose type references a nested class that
  // was registered after the static members were initially copied from the pattern.
  // At copy time (line ~1686), nested types hadn't been instantiated yet, so their
  // type_index and size were still from the unfinalized pattern.
 	for (auto& sm : struct_info->static_members) {
 		if (sm.size == 0 && sm.type_index.category() == TypeCategory::Struct) {
-			if (const TypeInfo* orig_ti = tryGetTypeInfo(sm.type_index)) {
-				std::string_view orig_name = StringTable::getStringView(orig_ti->name());
-				std::string_view inst_name_sv = StringTable::getStringView(instantiated_name);
-				if (orig_name.starts_with(template_name) &&
-					orig_name.size() > template_name.size() &&
-					orig_name[template_name.size()] == ':') {
-					std::string_view suffix = orig_name.substr(template_name.size());
-					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-						StringBuilder().append(inst_name_sv).append(suffix).commit());
-					auto type_it = getTypesByNameMap().find(qualified_handle);
-					if (type_it != getTypesByNameMap().end()) {
-						sm.type_index = type_it->second->type_index_;
-						if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
-							sm.size = toSizeT(nested_si->sizeInBytes());
-						}
-						FLASH_LOG(Templates, Debug, "Fixed up static member '", sm.getName(),
-								  "' type to '", StringTable::getStringView(qualified_handle),
-								  "', size=", sm.size);
-					}
+			TypeIndex remapped_index = remapInstantiatedNestedTypeIndex(sm.type_index);
+			if (remapped_index != sm.type_index) {
+				sm.type_index = remapped_index;
+				if (const StructTypeInfo* nested_si = tryGetStructTypeInfo(remapped_index)) {
+					sm.size = toSizeT(nested_si->sizeInBytes());
 				}
 			}
 		}
@@ -8085,6 +8143,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return nullptr;
 	};
 
+	auto remapInstantiatedNestedTypeInSpec = [&](TypeSpecifierNode& type_spec) {
+		if (!type_spec.type_index().is_valid()) {
+			return;
+		}
+		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+		if (type_info == nullptr) {
+			return;
+		}
+		std::string_view type_name_sv = StringTable::getStringView(type_info->name());
+		std::string_view nested_suffix;
+		if (type_name_sv.starts_with(template_name)) {
+			size_t qualified_sep = type_name_sv.find("::", template_name.size());
+			if (qualified_sep != std::string_view::npos &&
+				(qualified_sep == template_name.size() || type_name_sv[template_name.size()] == '$')) {
+				nested_suffix = type_name_sv.substr(qualified_sep);
+			}
+		}
+		if (nested_suffix.empty()) {
+			return;
+		}
+		StringHandle remapped_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(StringTable::getStringView(instantiated_name))
+				.append(nested_suffix)
+				.commit());
+		auto remapped_it = getTypesByNameMap().find(remapped_name);
+		if (remapped_it == getTypesByNameMap().end() || remapped_it->second == nullptr) {
+			return;
+		}
+		const TypeInfo* remapped_info = remapped_it->second;
+		type_spec.set_type_index(remapped_info->registeredTypeIndex().withCategory(remapped_info->typeEnum()));
+		if (!(type_spec.is_pointer() || type_spec.is_function_pointer() ||
+			  type_spec.is_member_function_pointer() || type_spec.is_member_object_pointer() ||
+			  type_spec.is_reference() || type_spec.is_rvalue_reference())) {
+			if (remapped_info->hasStoredSize()) {
+				type_spec.set_size_in_bits(static_cast<int>(remapped_info->sizeInBits().value));
+			}
+		}
+	};
+
 	// Copy member functions from the template
 	for (const StructMemberFunctionDecl& mem_func : class_decl.member_functions()) {
 
@@ -8162,6 +8260,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				ASTNode new_func_node = shell.function_node;
 				FunctionDeclarationNode& new_func_ref = *shell.function;
+				remapInstantiatedNestedTypeInSpec(new_func_ref.decl_node().type_specifier_node());
 				if (lazy_registry_key.isValid()) {
 					new_func_ref.set_lazy_member_registry_key(lazy_registry_key);
 				}
@@ -8250,6 +8349,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				ASTNode new_func_node = shell.function_node;
 				FunctionDeclarationNode& new_func_ref = *shell.function;
 				StringHandle effective_name = shell.effective_name;
+				remapInstantiatedNestedTypeInSpec(new_func_ref.decl_node().type_specifier_node());
 
 				size_t saved_pack_info = pack_param_info_.size();
 				substituteAndCopyMemberFunctionParameters(
@@ -8435,6 +8535,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				ASTNode new_func_node = shell.function_node;
 				FunctionDeclarationNode& new_func_ref = *shell.function;
 				StringHandle effective_name = shell.effective_name;
+				remapInstantiatedNestedTypeInSpec(new_func_ref.decl_node().type_specifier_node());
 
 				size_t saved_pack_info = pack_param_info_.size();
 				substituteAndCopyMemberFunctionParameters(

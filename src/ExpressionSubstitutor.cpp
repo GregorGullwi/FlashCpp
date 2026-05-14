@@ -725,6 +725,80 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	return result;
 }
 
+InlineVector<TemplateTypeArg, 4> ExpressionSubstitutor::materializeDependentRecordTemplateArgs(
+	std::span<const TypeInfo::TemplateArgInfo> stored_args,
+	int depth) {
+	InlineVector<TemplateTypeArg, 4> materialized_args;
+	materialized_args.reserve(stored_args.size());
+	for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
+		TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+		if (arg.is_value && arg.dependent_expr.has_value()) {
+			ASTNode substituted_expr = substitute(*arg.dependent_expr);
+			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+				TemplateTypeArg concrete_arg = TemplateTypeArg::makeValueIdentity(eval_result->identity);
+				concrete_arg.is_pack = arg.is_pack;
+				arg = concrete_arg;
+			} else {
+				arg.dependent_expr = std::move(substituted_expr);
+				arg.is_dependent = true;
+			}
+		}
+		if (arg.dependent_name.isValid()) {
+			std::string_view dependent_arg_name = StringTable::getStringView(arg.dependent_name);
+			if (auto subst_it = param_map_.find(dependent_arg_name);
+				subst_it != param_map_.end()) {
+				arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
+			} else if (auto context_binding = resolveContextBinding(arg.dependent_name, environment_);
+				context_binding.has_value()) {
+				arg = rebindDependentTemplateTypeArg(*context_binding, arg);
+			}
+		} else if (!arg.is_value && arg.type_index.is_valid()) {
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				if (arg_type_info->isDependentMemberType()) {
+					if (const TypeInfo* resolved_member_type =
+							resolveDependentMemberType(*arg_type_info, depth + 1);
+						resolved_member_type != nullptr) {
+						arg.type_index =
+							resolved_member_type->registeredTypeIndex().withCategory(resolved_member_type->typeEnum());
+						arg.setCategory(resolved_member_type->typeEnum());
+						arg.dependent_name = {};
+						arg.is_dependent = false;
+						materialized_args.push_back(std::move(arg));
+						continue;
+					}
+				}
+				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
+				if (auto subst_it = param_map_.find(arg_type_name);
+					subst_it != param_map_.end()) {
+					arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
+				}
+			}
+		}
+		materialized_args.push_back(std::move(arg));
+	}
+	return materialized_args;
+}
+
+bool ExpressionSubstitutor::templateArgsStillDependent(std::span<const TemplateTypeArg> args) const {
+	for (const TemplateTypeArg& arg : args) {
+		if (arg.is_dependent) {
+			return true;
+		}
+		if (arg.dependent_name.isValid()) {
+			return true;
+		}
+		if (!arg.is_value && arg.type_index.is_valid()) {
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				if (param_map_.find(StringTable::getStringView(arg_type_info->name())) !=
+					param_map_.end()) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
 const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo& type_info, int depth) {
 	if (!type_info.isDependentMemberType() || depth >= kMaxDependentMemberTypeResolutionDepth) {
 		return nullptr;
@@ -732,64 +806,43 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 
 	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
 			type_info.dependentQualifiedName()) {
-		auto materialize_record_args =
-			[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) {
-			std::vector<TemplateTypeArg> materialized_args;
-			materialized_args.reserve(stored_args.size());
-			for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
-				TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
-				if (arg.dependent_name.isValid()) {
-					std::string_view dependent_arg_name =
-						StringTable::getStringView(arg.dependent_name);
-					if (auto subst_it = param_map_.find(dependent_arg_name);
-						subst_it != param_map_.end()) {
-						arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
-					} else if (auto context_binding =
-							resolveContextBinding(arg.dependent_name, environment_);
-						context_binding.has_value()) {
-						arg = rebindDependentTemplateTypeArg(*context_binding, arg);
-					}
-				} else if (!arg.is_value && arg.type_index.is_valid()) {
-					if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-						std::string_view arg_type_name =
-							StringTable::getStringView(arg_type_info->name());
-						if (auto subst_it = param_map_.find(arg_type_name);
-							subst_it != param_map_.end()) {
-							arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
-						}
-					}
-				}
-				materialized_args.push_back(std::move(arg));
-			}
-			return materialized_args;
-		};
-
 		std::string_view owner_name =
 			StringTable::getStringView(dependent_name->owner_name);
 		std::string_view materialized_owner_name;
-		if (dependent_name->owner_kind ==
-				TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter &&
-			dependent_name->owner_template_arguments.empty()) {
-			if (auto owner_subst_it = param_map_.find(owner_name);
-				owner_subst_it != param_map_.end()) {
-				const TypeInfo* owner_type_info =
-					tryGetTypeInfo(owner_subst_it->second.type_index);
-				if (owner_type_info != nullptr) {
+		switch (dependent_name->owner_kind) {
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+			if (current_owner_type_name_.isValid()) {
+				materialized_owner_name =
+					StringTable::getStringView(current_owner_type_name_);
+				break;
+			}
+			if (dependent_name->owner_type.is_valid()) {
+				if (const TypeInfo* owner_type_info =
+						tryGetTypeInfo(dependent_name->owner_type)) {
 					materialized_owner_name =
 						StringTable::getStringView(owner_type_info->name());
 				}
 			}
-		} else {
-			std::vector<TemplateTypeArg> owner_args =
-				materialize_record_args(dependent_name->owner_template_arguments);
-			bool owner_args_still_dependent = false;
-			for (const TemplateTypeArg& arg : owner_args) {
-				if (arg.is_dependent) {
-					owner_args_still_dependent = true;
-					break;
+			break;
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+			if (dependent_name->owner_template_arguments.empty()) {
+				if (auto owner_subst_it = param_map_.find(owner_name);
+					owner_subst_it != param_map_.end()) {
+					const TypeInfo* owner_type_info =
+						tryGetTypeInfo(owner_subst_it->second.type_index);
+					if (owner_type_info != nullptr) {
+						materialized_owner_name =
+							StringTable::getStringView(owner_type_info->name());
+					}
 				}
+				break;
 			}
-			if (!owner_args.empty() && !owner_args_still_dependent) {
+			[[fallthrough]];
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
+			InlineVector<TemplateTypeArg, 4> owner_args =
+				materializeDependentRecordTemplateArgs(dependent_name->owner_template_arguments, depth);
+			if (!owner_args.empty() && !templateArgsStillDependent(owner_args)) {
 				if (auto owner_template_subst_it = param_map_.find(owner_name);
 					owner_template_subst_it != param_map_.end() &&
 					owner_template_subst_it->second.is_template_template_arg) {
@@ -808,6 +861,8 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 							materialized_owner.resolved_type_info->name());
 				}
 			}
+			break;
+		}
 		}
 
 		if (!materialized_owner_name.empty()) {
@@ -817,21 +872,14 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 				QualifiedTypeMemberAccess member_access;
 				member_access.member_name = member_record.name;
 				if (member_record.has_template_arguments) {
-					std::vector<TemplateTypeArg> member_args =
-						materialize_record_args(member_record.template_arguments);
-					bool member_args_still_dependent = false;
-					for (const TemplateTypeArg& arg : member_args) {
-						if (arg.is_dependent) {
-							member_args_still_dependent = true;
-							break;
-						}
-					}
-					if (member_args_still_dependent) {
+					InlineVector<TemplateTypeArg, 4> member_args =
+						materializeDependentRecordTemplateArgs(member_record.template_arguments, depth);
+					if (templateArgsStillDependent(member_args)) {
 						return nullptr;
 					}
 					member_access.has_template_arguments = true;
 					member_access.template_arguments =
-						std::make_unique<std::vector<TemplateTypeArg>>(std::move(member_args));
+						std::make_unique<std::vector<TemplateTypeArg>>(member_args.toVector());
 				}
 				member_chain.push_back(std::move(member_access));
 			}
@@ -993,12 +1041,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			for (const ASTNode& arg_node : explicit_template_arg_nodes) {
 				FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
 
-			// Template arguments can be stored as TypeSpecifierNode for type arguments
+				// Template arguments can be stored as TypeSpecifierNode for type arguments
 				if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 					FLASH_LOG(Templates, Debug, "    Template argument is TypeSpecifierNode: type=", (int)type_spec.type(), " type_index=", type_spec.type_index());
 
-				// First, check if type_index points to a template parameter in gTypeInfo
+					// First, check if type_index points to a template parameter in gTypeInfo
 					std::string_view type_name = "";
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 						type_name = StringTable::getStringView(type_info->name());
@@ -1021,23 +1069,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						continue;
 					}
 
-				// Check if this type_name is in our substitution map (indicating it's a template parameter)
+					// Check if this type_name is in our substitution map (indicating it's a template parameter)
 					auto it = param_map_.find(type_name);
 					if (it != param_map_.end()) {
 					// This is a template parameter - substitute it
 						FLASH_LOG(Templates, Debug, "    Substituting template parameter: ", type_name, " -> type_index=", it->second.type_index);
 						substituted_template_args.push_back(it->second);
 					}
-				// Check if this is a template parameter type (Type::Template)
+					// Check if this is a template parameter type (Type::Template)
 					else if (type_spec.category() == TypeCategory::Template) {
-					// This is a template parameter - we need to substitute it
-					// The type_index should point to a template parameter
+						// This is a template parameter - we need to substitute it
+						// The type_index should point to a template parameter
 						FLASH_LOG(Templates, Debug, "    Type is Template, looking up in substitution map");
 
-					// For template parameters, we need to look them up by name
-					// The type_spec.type_index() should tell us which parameter it is
-					// But we need the name to do the substitution
-					// Let's check if we can find it in gTypeInfo
+						// For template parameters, we need to look them up by name
+						// The type_spec.type_index() should tell us which parameter it is
+						// But we need the name to do the substitution
+						// Let's check if we can find it in gTypeInfo
 						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 							std::string_view param_name = StringTable::getStringView(type_info->name());
 							FLASH_LOG(Templates, Debug, "    Template parameter name: ", param_name);
@@ -1059,12 +1107,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							append_resolved_explicit_type_arg(type_spec);
 						}
 					} else {
-					// Non-template type argument - use it directly
+						// Non-template type argument - use it directly
 						FLASH_LOG(Templates, Debug, "    Template argument is concrete type, using directly");
 						append_resolved_explicit_type_arg(type_spec);
 					}
 				}
-			// Check if this is a TemplateParameterReferenceNode that needs substitution
+				// Check if this is a TemplateParameterReferenceNode that needs substitution
 				else if (arg_node.is<ExpressionNode>()) {
 					const ExpressionNode& expr_variant = arg_node.as<ExpressionNode>();
 					bool is_template_param_ref = std::visit([](const auto& inner) -> bool {
@@ -1074,7 +1122,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 															expr_variant);
 
 					if (is_template_param_ref) {
-					// This is a template parameter reference - substitute it
+						// This is a template parameter reference - substitute it
 						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr_variant);
 						std::string_view param_name = tparam_ref.param_name().view();
 						FLASH_LOG(Templates, Debug, "    Template argument is parameter reference: ", param_name);
@@ -1085,11 +1133,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							substituted_template_args.push_back(it->second);
 						} else {
 							FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
-						// Return as-is if we can't substitute
+							// Return as-is if we can't substitute
 							return wrapOriginalCall();
 						}
 					} else {
-					// Non-dependent template argument - substitute/evaluate to a value if possible
+						// Non-dependent template argument - substitute/evaluate to a value if possible
 						FLASH_LOG(Templates, Debug, "    Template argument is non-dependent expression");
 						ASTNode substituted_arg_node = substitute(arg_node);
 						if (substituted_arg_node.is<TypeSpecifierNode>()) {
@@ -1282,27 +1330,27 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					if (instantiated_template.has_value()) {
 						// Current-instantiation member lookup already found the correct owner.
 					} else {
-					std::vector<TemplateTypeArg> current_inst_args =
-						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
-					Parser::AliasTemplateMaterializationResult canonical_owner =
-						parser_.resolveCanonicalInstantiatedOwnerForLookup(
-							owner_name,
-							std::span<const TemplateTypeArg>(
-								current_inst_args.data(),
-								current_inst_args.size()));
-					if (!canonical_owner.instantiated_name.empty()) {
-						owner_name = canonical_owner.instantiated_name;
-					}
-					if (canonical_owner.resolved_type_info != nullptr) {
-						// Only try member-template recovery when the owner resolved to an actual type.
-						instantiated_template = parser_.try_instantiate_member_function_template_explicit(
-							owner_name,
-							member_name,
-							substituted_template_args);
-						if (instantiated_template.has_value()) {
-							normalizePendingSemanticRoots();
+						std::vector<TemplateTypeArg> current_inst_args =
+							collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
+						Parser::AliasTemplateMaterializationResult canonical_owner =
+							parser_.resolveCanonicalInstantiatedOwnerForLookup(
+								owner_name,
+								std::span<const TemplateTypeArg>(
+									current_inst_args.data(),
+									current_inst_args.size()));
+						if (!canonical_owner.instantiated_name.empty()) {
+							owner_name = canonical_owner.instantiated_name;
 						}
-					}
+						if (canonical_owner.resolved_type_info != nullptr) {
+							// Only try member-template recovery when the owner resolved to an actual type.
+							instantiated_template = parser_.try_instantiate_member_function_template_explicit(
+								owner_name,
+								member_name,
+								substituted_template_args);
+							if (instantiated_template.has_value()) {
+								normalizePendingSemanticRoots();
+							}
+						}
 					}
 				}
 				if (!instantiated_template.has_value()) {
@@ -1816,6 +1864,141 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// Get the namespace name (e.g., "R1_T")
 	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
 
+	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
+			qual_id.dependentQualifiedName()) {
+		std::string_view owner_name =
+			StringTable::getStringView(dependent_name->owner_name);
+		std::string_view materialized_owner_name;
+		switch (dependent_name->owner_kind) {
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+			if (current_owner_type_name_.isValid()) {
+				materialized_owner_name =
+					StringTable::getStringView(current_owner_type_name_);
+			} else if (dependent_name->owner_type.is_valid()) {
+				if (const TypeInfo* owner_type_info =
+						tryGetTypeInfo(dependent_name->owner_type)) {
+					materialized_owner_name =
+						StringTable::getStringView(owner_type_info->name());
+				}
+			}
+			break;
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+			if (dependent_name->owner_template_arguments.empty()) {
+				if (auto owner_subst_it = param_map_.find(owner_name);
+					owner_subst_it != param_map_.end()) {
+					if (const TypeInfo* owner_type_info =
+							tryGetTypeInfo(owner_subst_it->second.type_index)) {
+						materialized_owner_name =
+							StringTable::getStringView(owner_type_info->name());
+					}
+				}
+				break;
+			}
+			[[fallthrough]];
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
+			InlineVector<TemplateTypeArg, 4> owner_args =
+				materializeDependentRecordTemplateArgs(
+					dependent_name->owner_template_arguments,
+					kInitialDependentMemberTypeResolutionDepth);
+			if (!owner_args.empty() && !templateArgsStillDependent(owner_args)) {
+				if (auto owner_template_subst_it = param_map_.find(owner_name);
+					owner_template_subst_it != param_map_.end() &&
+					owner_template_subst_it->second.is_template_template_arg) {
+					owner_name = StringTable::getStringView(
+						owner_template_subst_it->second.template_name_handle);
+				}
+				Parser::AliasTemplateMaterializationResult materialized_owner =
+					parser_.materializeTemplateInstantiationForLookup(owner_name, owner_args);
+				if (!materialized_owner.instantiated_name.empty()) {
+					materialized_owner_name = materialized_owner.instantiated_name;
+				} else if (materialized_owner.resolved_type_info != nullptr) {
+					materialized_owner_name =
+						StringTable::getStringView(
+							materialized_owner.resolved_type_info->name());
+				} else {
+					materialized_owner_name =
+						parser_.get_instantiated_class_name(owner_name, owner_args);
+				}
+			}
+			break;
+		}
+		}
+
+		if (!materialized_owner_name.empty() && !dependent_name->member_chain.empty()) {
+			std::string_view materialized_namespace = materialized_owner_name;
+			for (size_t member_index = 0;
+				 member_index + 1 < dependent_name->member_chain.size();
+				 ++member_index) {
+				const auto& member_record = dependent_name->member_chain[member_index];
+				std::string_view member_name =
+					StringTable::getStringView(member_record.name);
+				if (member_record.has_template_arguments) {
+					InlineVector<TemplateTypeArg, 4> member_args =
+						materializeDependentRecordTemplateArgs(
+							member_record.template_arguments,
+							kInitialDependentMemberTypeResolutionDepth);
+					if (templateArgsStillDependent(member_args)) {
+						ExpressionNode& deferred_expr =
+							gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+						return ASTNode(&deferred_expr);
+					}
+					std::string_view member_template_name =
+						StringBuilder()
+							.append(materialized_namespace)
+							.append("::")
+							.append(member_name)
+							.commit();
+					Parser::AliasTemplateMaterializationResult materialized_member =
+						parser_.materializeTemplateInstantiationForLookup(
+							member_template_name,
+							member_args);
+					if (!materialized_member.instantiated_name.empty()) {
+						materialized_namespace = materialized_member.instantiated_name;
+					} else {
+						materialized_namespace =
+							parser_.get_instantiated_class_name(
+								member_template_name,
+								member_args);
+					}
+				} else {
+					materialized_namespace =
+						StringBuilder()
+							.append(materialized_namespace)
+							.append("::")
+							.append(member_name)
+							.commit();
+				}
+			}
+
+			const auto& final_member = dependent_name->member_chain.back();
+			std::string_view final_member_name =
+				StringTable::getStringView(final_member.name);
+			Token final_token = qual_id.identifier_token();
+			if (final_member.name != qual_id.nameHandle()) {
+				final_token = Token(
+					Token::Type::Identifier,
+					final_member_name,
+					qual_id.identifier_token().line(),
+					qual_id.identifier_token().column(),
+					qual_id.identifier_token().file_index());
+			}
+			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE,
+				StringTable::getOrInternStringHandle(materialized_namespace));
+			QualifiedIdentifierNode& new_qual_id =
+				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+					new_ns_handle,
+					final_token);
+			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
+					  qual_id.full_name(), " -> ", materialized_namespace, "::",
+					  final_member_name);
+			ExpressionNode& new_expr =
+				gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+			return ASTNode(&new_expr);
+		}
+	}
+
 	// Check for TTP placeholder names (e.g., "W$0" where W is a template-template parameter
 	// and $0 encodes the template arguments). These are created when parsing expressions
 	// like W<int>::id where W is a TTP. The placeholder name encodes: TTP_name$type_index
@@ -2135,6 +2318,15 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 	}
 	for (TemplateTypeArg& arg : inst_args) {
+		if (!arg.is_value && arg.type_index.is_valid()) {
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
+				auto param_it = param_map_.find(arg_type_name);
+				if (param_it != param_map_.end()) {
+					arg = rebindDependentTemplateTypeArg(param_it->second, arg);
+				}
+			}
+		}
 		if (!arg.is_dependent) {
 			continue;
 		}

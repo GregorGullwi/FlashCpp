@@ -1622,6 +1622,26 @@ private:
 	const FunctionDeclarationNode* tryInstantiateOperatorTemplateForBinary(std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec);
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
 	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, std::span<const TypeSpecifierNode> arg_types);
+	TemplateNameLookupRequest buildTemplateNameLookupRequest(
+		StringHandle template_name,
+		TemplateNameLookupKind lookup_kind,
+		bool is_dependent) const;
+	TemplateNameLookupRequest buildFunctionTemplateLookupRequest(
+		StringHandle template_name,
+		TemplateNameLookupKind lookup_kind,
+		bool is_dependent) const;
+	std::vector<TemplateNameLookupCandidate> lookupFunctionTemplateCandidatesForInstantiation(
+		std::string_view template_name,
+		int recursion_depth);
+	TemplateNameLookupRequest buildMemberFunctionTemplateLookupRequest(
+		StringHandle owner_name,
+		StringHandle member_name,
+		bool is_dependent) const;
+	std::vector<TemplateNameLookupCandidate> lookupMemberFunctionTemplateCandidatesForInstantiation(
+		std::string_view struct_name,
+		std::string_view member_name);
+	std::vector<ASTNode> materializeFunctionTemplateCandidateDeclarations(
+		std::span<const TemplateNameLookupCandidate> candidates) const;
 	
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;

@@ -152,6 +152,98 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 	return false;
 }
 
+TemplateNameLookupRequest Parser::buildMemberFunctionTemplateLookupRequest(
+	StringHandle owner_name,
+	StringHandle member_name,
+	bool is_dependent) const {
+	TemplateNameLookupRequest request;
+	request.name = member_name;
+	request.owner_name = owner_name;
+	request.lookup_kind = TemplateNameLookupKind::Member;
+	request.is_dependent = is_dependent;
+	request.include_base_classes = true;
+	request.timing = TemplateNameLookupTiming::PointOfInstantiation;
+	request.point_of_instantiation_namespace = gSymbolTable.get_current_namespace_handle();
+	request.definition_namespace = request.point_of_instantiation_namespace;
+	if (current_template_definition_lookup_context_ != nullptr &&
+		current_template_definition_lookup_context_->is_valid()) {
+		request.timing = TemplateNameLookupTiming::Immediate;
+		request.definition_namespace =
+			current_template_definition_lookup_context_->definition_namespace;
+		request.current_instantiation_name =
+			current_template_definition_lookup_context_->current_instantiation_name;
+	}
+	return request;
+}
+
+std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
+	std::string_view struct_name,
+	std::string_view member_name) {
+	std::vector<TemplateNameLookupCandidate> candidates;
+	std::unordered_set<const void*> seen_declarations;
+	const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+
+	auto append_candidates = [&](const TemplateNameLookupResult& lookup_result) {
+		for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
+			if (candidate.identity.kind != TemplateDeclarationKind::FunctionTemplate) {
+				continue;
+			}
+			const void* declaration_address = candidate.declaration.raw_pointer();
+			if (declaration_address == nullptr ||
+				!seen_declarations.insert(declaration_address).second) {
+				continue;
+			}
+			candidates.push_back(candidate);
+		}
+	};
+
+	const StringHandle requested_owner = StringTable::getOrInternStringHandle(struct_name);
+	TemplateNameLookupRequest direct_request = buildMemberFunctionTemplateLookupRequest(
+		requested_owner,
+		member_name_handle,
+		false);
+	append_candidates(gTemplateRegistry.lookupTemplateName(direct_request));
+
+	if (candidates.empty()) {
+		if (auto lookup_owner = getTemplateLookupOwnerName(struct_name)) {
+			if (*lookup_owner != requested_owner) {
+				TemplateNameLookupRequest base_request = buildMemberFunctionTemplateLookupRequest(
+					*lookup_owner,
+					member_name_handle,
+					false);
+				append_candidates(gTemplateRegistry.lookupTemplateName(base_request));
+				if (!candidates.empty()) {
+					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", base_request.owner_name.view());
+				}
+			}
+		}
+	}
+
+	if (!candidates.empty()) {
+		std::vector<ASTNode> declarations =
+			materializeFunctionTemplateCandidateDeclarations(candidates);
+		filterPhase1OrdinaryFunctionOverloads(declarations);
+		if (declarations.size() != candidates.size()) {
+			std::unordered_set<const void*> kept_declarations;
+			kept_declarations.reserve(declarations.size());
+			for (const ASTNode& declaration : declarations) {
+				kept_declarations.insert(declaration.raw_pointer());
+			}
+			candidates.erase(
+				std::remove_if(
+					candidates.begin(),
+					candidates.end(),
+					[&](const TemplateNameLookupCandidate& candidate) {
+						return kept_declarations.count(
+								   candidate.declaration.raw_pointer()) == 0;
+					}),
+				candidates.end());
+		}
+	}
+
+	return candidates;
+}
+
 std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	std::string_view struct_name,
 	std::string_view member_name,
@@ -168,28 +260,14 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// Push a parser-level instantiation context for provenance tracking and backtraces.
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
 
-	// Look up ALL template overloads in the registry for partial-ordering support.
-	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name);
+	// Route member template lookup through the semantic two-phase lookup request.
+	std::vector<TemplateNameLookupCandidate> template_candidates =
+		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
-	// If not found, recover the source owner name for instantiated/nested owners
-	// (e.g. Outer$hash::Inner -> Outer::Inner, math::Adder$hash -> math::Adder).
-	if (!all_templates || all_templates->empty()) {
-		if (auto lookup_owner = getTemplateLookupOwnerName(struct_name)) {
-			StringBuilder base_qualified_name_sb;
-			base_qualified_name_sb.append(StringTable::getStringView(*lookup_owner)).append("::").append(member_name);
-			StringHandle base_qualified_name = StringTable::getOrInternStringHandle(base_qualified_name_sb);
-			if (base_qualified_name != qualified_name) {
-				all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name);
-				if (all_templates && !all_templates->empty()) {
-					qualified_name = base_qualified_name;
-				}
-			}
-		}
-	}
-
-	if (!all_templates || all_templates->empty()) {
+	if (template_candidates.empty()) {
 		return std::nullopt;	 // Not a template
 	}
+	qualified_name = template_candidates.front().identity.lookup_name;
 
 	if (arg_types.empty()) {
 		return std::nullopt;	 // Can't deduce without arguments
@@ -200,13 +278,15 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// template kind is not supported by this path.
 	struct CandidateResult {
 		const ASTNode* template_node = nullptr;
+		StringHandle lookup_name{};
 		std::vector<TemplateTypeArg> template_args;
 		int specificity = 0;
-		size_t overload_index = 0;  // assigned externally to *all_templates index; used to build
+		size_t overload_index = 0;  // assigned externally to template_candidates index; used to build
 		                            // discriminated cache keys when multiple overloads exist
 	};
 
-	auto tryDeduceCandidate = [&](const ASTNode& template_node_cand) -> std::optional<CandidateResult> {
+	auto tryDeduceCandidate = [&](const TemplateNameLookupCandidate& lookup_candidate) -> std::optional<CandidateResult> {
+		const ASTNode& template_node_cand = lookup_candidate.declaration;
 		if (!template_node_cand.is<TemplateFunctionDeclarationNode>()) {
 			return std::nullopt;
 		}
@@ -231,6 +311,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				0)) {
 			return CandidateResult{
 				&template_node_cand,
+				lookup_candidate.identity.lookup_name,
 				std::vector<TemplateTypeArg>(
 					shared_deduction->template_args.begin(),
 					shared_deduction->template_args.end()),
@@ -383,6 +464,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 		return CandidateResult{
 			&template_node_cand,
+			lookup_candidate.identity.lookup_name,
 			std::move(template_args),
 			computeFunctionTemplateSpecificity(template_func)};
 	};
@@ -393,8 +475,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	size_t best_idx = std::numeric_limits<size_t>::max();
 	int best_specificity = -1;
 	std::vector<CandidateResult> viable;
-	for (size_t i = 0; i < all_templates->size(); ++i) {
-		auto candidate = tryDeduceCandidate((*all_templates)[i]);
+	for (size_t i = 0; i < template_candidates.size(); ++i) {
+		auto candidate = tryDeduceCandidate(template_candidates[i]);
 		if (!candidate.has_value()) {
 			continue;
 		}
@@ -417,10 +499,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		shape_candidate_indices.reserve(viable.size());
 		for (size_t i = 0; i < viable.size(); ++i) {
 			const CandidateResult& candidate = viable[i];
-			StringHandle shape_key_qualified_name = qualified_name;
-			if (all_templates->size() > 1) {
+			StringHandle shape_key_qualified_name = candidate.lookup_name;
+			if (template_candidates.size() > 1) {
 				StringBuilder discriminated_sb;
-				discriminated_sb.append(qualified_name.view())
+				discriminated_sb.append(candidate.lookup_name.view())
 					.append("$ol")
 					.append(static_cast<uint64_t>(candidate.overload_index));
 				shape_key_qualified_name = StringTable::getOrInternStringHandle(discriminated_sb);
@@ -436,7 +518,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				struct_name,
 				member_name,
 				requested_qualified_name,
-				qualified_name,
+				candidate.lookup_name,
 				*candidate.template_node,
 				candidate.template_args,
 				shape_key,
@@ -473,10 +555,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// To avoid a cache collision where the wrong function body is returned for the second
 	// caller, we discriminate the key by appending the overload index when there is more
 	// than one overload registered under this name.
-	StringHandle key_qualified_name = qualified_name;
-	if (all_templates->size() > 1) {
+	StringHandle key_qualified_name = best.lookup_name;
+	if (template_candidates.size() > 1) {
 		StringBuilder discriminated_sb;
-		discriminated_sb.append(qualified_name.view())
+		discriminated_sb.append(best.lookup_name.view())
 			.append("$ol")
 			.append(static_cast<uint64_t>(best.overload_index));
 		key_qualified_name = StringTable::getOrInternStringHandle(discriminated_sb);
@@ -489,7 +571,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	return instantiate_member_function_template_core(
-		struct_name, member_name, requested_qualified_name, qualified_name,
+		struct_name, member_name, requested_qualified_name, best.lookup_name,
 		*best.template_node, best.template_args, key, arg_types, true);
 }
 
@@ -866,39 +948,18 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 	}
 
-	// Look up ALL template overloads in the registry for SFINAE support
-	const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(qualified_name.view());
+	// Route member template overload discovery through the semantic two-phase lookup request.
+	std::vector<TemplateNameLookupCandidate> template_candidates =
+		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
-	// If not found and struct_name looks like an instantiated template (e.g., has_foo$a1b2c3),
-	// try the base template class name (e.g., has_foo::method)
-	if (!all_templates || all_templates->empty()) {
-		std::string_view qualified_base_class_name;
-		if (struct_type_info && struct_type_info->isTemplateInstantiation()) {
-			qualified_base_class_name = buildQualifiedNameFromHandle(
-				struct_type_info->sourceNamespace(),
-				StringTable::getStringView(struct_type_info->baseTemplateName()));
-		}
-		if (!qualified_base_class_name.empty()) {
-			StringHandle base_qualified_name = build_member_lookup_name(qualified_base_class_name);
-			all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name.view());
-			FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name.view());
-		}
-		if (!all_templates || all_templates->empty()) {
-			std::string_view base_class_name = extractBaseTemplateName(struct_name);
-			if (!base_class_name.empty() && base_class_name != qualified_base_class_name) {
-				StringHandle base_qualified_name = build_member_lookup_name(base_class_name);
-				all_templates = gTemplateRegistry.lookupAllTemplates(base_qualified_name.view());
-				FLASH_LOG(Templates, Debug, "Trying base template class lookup: ", base_qualified_name.view());
-			}
-		}
-	}
-
-	if (!all_templates || all_templates->empty()) {
+	if (template_candidates.empty()) {
 		return std::nullopt;	 // Not a template
 	}
+	qualified_name = template_candidates.front().identity.lookup_name;
 
 	// Loop over all overloads for SFINAE support
-	for (const auto& template_node : *all_templates) {
+	for (const TemplateNameLookupCandidate& lookup_candidate : template_candidates) {
+		const ASTNode& template_node = lookup_candidate.declaration;
 		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
 			continue;  // Not a function template
 		}
@@ -930,7 +991,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			continue;
 		}
 		const auto& template_args = completed_template_args;
-		auto key = FlashCpp::makeInstantiationKey(qualified_name, template_args);
+		const StringHandle candidate_qualified_name = lookup_candidate.identity.lookup_name;
+		auto key = FlashCpp::makeInstantiationKey(candidate_qualified_name, template_args);
 
 		// Check if we already have this instantiation
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
@@ -982,7 +1044,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				? *current_explicit_call_arg_types_
 				: empty_call_arg_types;
 		auto result = instantiate_member_function_template_core(
-			struct_name, member_name, requested_qualified_name, qualified_name, template_node, template_args, key, call_arg_types, true);
+			struct_name, member_name, requested_qualified_name, candidate_qualified_name, template_node, template_args, key, call_arg_types, true);
 		if (result.has_value()) {
 			return result;
 		}
