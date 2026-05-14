@@ -322,26 +322,7 @@ public:
 	const_iterator cend() const noexcept { return size() == 0 ? cbegin() : cbegin() + static_cast<std::ptrdiff_t>(size()); }
 
 	iterator insert_at(size_t idx, const T& value) {
-		assert(idx <= size() && "Insert position out of bounds in InlineVector::insert_at");
-		if (using_inline_storage_ && inline_count_ < N) {
-			T copied_value = value;
-			for (size_t i = inline_count_; i > idx; --i) {
-				inline_data_[i] = std::move(inline_data_[i - 1]);
-			}
-			inline_data_[idx] = std::move(copied_value);
-			++inline_count_;
-			return begin() + idx;
-		}
-
-		if (referencesActiveInlineStorage(value)) {
-			T copied_value = value;
-			ensureHeapStorage(size() + 1);
-			heap_data_.insert(heap_data_.begin() + static_cast<typename std::vector<T>::difference_type>(idx), std::move(copied_value));
-			return begin() + idx;
-		}
-		ensureHeapStorage(size() + 1);
-		heap_data_.insert(heap_data_.begin() + static_cast<typename std::vector<T>::difference_type>(idx), value);
-		return begin() + idx;
+		return insertSingleAt(idx, value);
 	}
 
 	iterator insert(const_iterator pos, const T& value) {
@@ -353,19 +334,7 @@ public:
 	}
 
 	iterator insert_at(size_t idx, T&& value) {
-		assert(idx <= size() && "Insert position out of bounds in InlineVector::insert_at");
-		T moved_value = std::move(value);
-		if (using_inline_storage_ && inline_count_ < N) {
-			for (size_t i = inline_count_; i > idx; --i) {
-				inline_data_[i] = std::move(inline_data_[i - 1]);
-			}
-			inline_data_[idx] = std::move(moved_value);
-			++inline_count_;
-			return begin() + idx;
-		}
-		ensureHeapStorage(size() + 1);
-		heap_data_.insert(heap_data_.begin() + static_cast<typename std::vector<T>::difference_type>(idx), std::move(moved_value));
-		return begin() + idx;
+		return insertSingleAt(idx, std::move(value));
 	}
 
 	iterator insert(const_iterator pos, T&& value) {
@@ -381,8 +350,22 @@ public:
 		if (count == 0) {
 			return begin() + idx;
 		}
-		std::vector<T> tmp(count, value);
-		return insert_range_at(idx, tmp.begin(), tmp.end());
+		if (using_inline_storage_ && inline_count_ + count <= N) {
+			for (size_t i = inline_count_; i > idx; --i) {
+				inline_data_[i + count - 1] = std::move(inline_data_[i - 1]);
+			}
+			for (size_t i = 0; i < count; ++i) {
+				inline_data_[idx + i] = value;
+			}
+			inline_count_ = static_cast<uint8_t>(inline_count_ + count);
+			return begin() + idx;
+		}
+		ensureHeapStorage(size() + count);
+		heap_data_.insert(
+			heap_data_.begin() + static_cast<typename std::vector<T>::difference_type>(idx),
+			count,
+			value);
+		return begin() + idx;
 	}
 
 	iterator insert(iterator pos, size_t count, const T& value) {
@@ -492,6 +475,25 @@ private:
 		const auto inline_begin = reinterpret_cast<std::uintptr_t>(inline_data_.data());
 		const auto inline_end = inline_begin + inline_count_ * sizeof(T);
 		return value_address >= inline_begin && value_address < inline_end;
+	}
+
+	template <typename ValueT>
+	iterator insertSingleAt(size_t idx, ValueT&& value) {
+		assert(idx <= size() && "Insert position out of bounds in InlineVector::insert_at");
+		T inserted_value(std::forward<ValueT>(value));
+		if (using_inline_storage_ && inline_count_ < N) {
+			for (size_t i = inline_count_; i > idx; --i) {
+				inline_data_[i] = std::move(inline_data_[i - 1]);
+			}
+			inline_data_[idx] = std::move(inserted_value);
+			++inline_count_;
+			return begin() + idx;
+		}
+		ensureHeapStorage(size() + 1);
+		heap_data_.insert(
+			heap_data_.begin() + static_cast<typename std::vector<T>::difference_type>(idx),
+			std::move(inserted_value));
+		return begin() + idx;
 	}
 
 	void resetInlineStorage() {
