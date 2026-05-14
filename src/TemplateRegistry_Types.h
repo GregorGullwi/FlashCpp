@@ -898,8 +898,9 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.is_array = arg.is_array;
 	result.array_sizes.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	result.function_signature = arg.function_signature;
-	const bool has_concrete_type_identity = hasConcreteTemplateIdentity(result.type_index);
-	result.is_dependent = arg.is_dependent && !has_concrete_type_identity;
+	result.is_dependent =
+		arg.is_dependent &&
+		(arg.dependent_name.isValid() || typeIndexContainsDependentPlaceholder(result.type_index));
 	result.dependent_name = result.is_dependent ? arg.dependent_name : StringHandle{};
 	return result;
 }

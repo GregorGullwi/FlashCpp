@@ -31,6 +31,13 @@
 static CompileContext compile_context;
 static FileTree file_tree;
 
+std::unique_ptr<SemanticAnalysis> runSemanticAnalysisForTest(Parser& parser, CompileContext& context) {
+	FlashCpp::gLazyMemberResolver.clearCache();
+	auto sema = std::make_unique<SemanticAnalysis>(parser, context, gSymbolTable);
+	sema->run();
+	return sema;
+}
+
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {
 	std::ifstream file("tests/" + filename);
@@ -78,11 +85,9 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 
 	const auto& ast = parser.get_nodes();
 
-	// Match the production pipeline: parser-side speculative member lookups on
-	// incomplete classes must not poison codegen's lazy member-resolution cache.
-	FlashCpp::gLazyMemberResolver.clearCache();
-
-	AstToIr converter(gSymbolTable, compile_context, parser);
+	auto sema = runSemanticAnalysisForTest(parser, test_context);
+	AstToIr converter(gSymbolTable, test_context, parser);
+	converter.setSemanticData(sema.get());
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -814,7 +819,9 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
+		auto sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
+		converter.setSemanticData(sema.get());
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1139,7 +1146,9 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
+		auto sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
+		converter.setSemanticData(sema.get());
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1183,7 +1192,9 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
+		auto sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
+		converter.setSemanticData(sema.get());
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1230,7 +1241,9 @@ CHECK(!parse_result.is_error());
 
 const auto& ast = parser.get_nodes();
 
+auto sema = runSemanticAnalysisForTest(parser, compile_context);
 AstToIr converter(gSymbolTable, compile_context, parser);
+converter.setSemanticData(sema.get());
 for (auto& node_handle : ast) {
 	converter.visit(node_handle);
 }
@@ -1279,7 +1292,9 @@ CHECK(!parse_result.is_error());
 
 const auto& ast = parser.get_nodes();
 
+auto sema = runSemanticAnalysisForTest(parser, compile_context);
 AstToIr converter(gSymbolTable, compile_context, parser);
+converter.setSemanticData(sema.get());
 for (auto& node_handle : ast) {
 	converter.visit(node_handle);
 }
@@ -1339,7 +1354,9 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 
 	const auto& ast = parser.get_nodes();
 
+	auto sema = runSemanticAnalysisForTest(parser, compile_context);
 	AstToIr converter(gSymbolTable, compile_context, parser);
+	converter.setSemanticData(sema.get());
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -1621,7 +1638,9 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 			const auto& ast = parser.get_nodes();
 
 			// Convert to IR to verify the string literals are created correctly
-			AstToIr converter(gSymbolTable, compile_context);
+			auto sema = runSemanticAnalysisForTest(parser, compile_context);
+			AstToIr converter(gSymbolTable, compile_context, parser);
+			converter.setSemanticData(sema.get());
 			for (auto& node_handle : ast) {
 				converter.visit(node_handle);
 			}
@@ -2014,7 +2033,9 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
+		auto sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
+		converter.setSemanticData(sema.get());
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2059,7 +2080,9 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
+		auto sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
+		converter.setSemanticData(sema.get());
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2108,7 +2131,9 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
+		auto sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
+		converter.setSemanticData(sema.get());
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2699,9 +2724,9 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 	auto parse_result = parser.parse();
 	REQUIRE(!parse_result.is_error());
 
-	FlashCpp::gLazyMemberResolver.clearCache();
-
+	auto sema = runSemanticAnalysisForTest(parser, test_context);
 	AstToIr converter(gSymbolTable, test_context, parser);
+	converter.setSemanticData(sema.get());
 	for (auto& node_handle : parser.get_nodes()) {
 		converter.visit(node_handle);
 	}
