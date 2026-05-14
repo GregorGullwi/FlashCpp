@@ -477,10 +477,10 @@ private:
 		return value_address >= inline_begin && value_address < inline_end;
 	}
 
-	template <typename ValueT>
-	iterator insertSingleAt(size_t idx, ValueT&& value) {
+	template <typename ForwardedT>
+	iterator insertSingleAt(size_t idx, ForwardedT&& value) {
 		assert(idx <= size() && "Insert position out of bounds in InlineVector::insert_at");
-		T inserted_value(std::forward<ValueT>(value));
+		T inserted_value(std::forward<ForwardedT>(value));
 		if (using_inline_storage_ && inline_count_ < N) {
 			for (size_t i = inline_count_; i > idx; --i) {
 				inline_data_[i] = std::move(inline_data_[i - 1]);
