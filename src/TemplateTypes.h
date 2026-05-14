@@ -290,6 +290,10 @@ struct NonTypeValueIdentity {
 		return id;
 	}
 
+	bool isNullMemberPointer() const {
+		return kind == NonTypeValueIdentityKind::MemberPointer && !member_name.isValid();
+	}
+
 	static NonTypeValueIdentity makeDependent(StringHandle name) {
 		return makeDependent(name, nativeTypeIndex(TypeCategory::Int));
 	}
@@ -377,6 +381,9 @@ struct NonTypeValueIdentity {
 		case NonTypeValueIdentityKind::FunctionPointer:
 			return entity_name == other.entity_name;
 		case NonTypeValueIdentityKind::MemberPointer:
+			if (isNullMemberPointer() && other.isNullMemberPointer()) {
+				return true;
+			}
 			return member_name == other.member_name &&
 				   value == other.value;
 		}
@@ -392,12 +399,16 @@ struct NonTypeValueIdentity {
 			return h;
 		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-		h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (!(kind == NonTypeValueIdentityKind::MemberPointer && !member_name.isValid())) {
+			h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		if (entity_name.isValid()) {
 			h ^= std::hash<StringHandle>{}(entity_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		if (member_name.isValid()) {
 			h ^= std::hash<StringHandle>{}(member_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		} else if (kind == NonTypeValueIdentityKind::MemberPointer) {
+			h ^= std::hash<uint8_t>{}(0x5a) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		if (kind == NonTypeValueIdentityKind::ObjectPointer) {
 			h ^= std::hash<int64_t>{}(pointer_offset) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -435,6 +446,9 @@ struct NonTypeValueIdentity {
 			std::string result = "&";
 			result += StringTable::getStringView(member_name);
 			return result;
+		}
+		if (isNullMemberPointer()) {
+			return "nullptr";
 		}
 		return std::to_string(value);
 	}

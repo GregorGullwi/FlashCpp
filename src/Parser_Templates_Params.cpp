@@ -444,7 +444,8 @@ ParseResult Parser::parse_template_parameter() {
 	if (!type_result.node().has_value()) {
 		return ParseResult::error("Expected type specifier for non-type template parameter", current_token_);
 	}
-	const TypeSpecifierNode& nttp_type = type_result.node()->as<TypeSpecifierNode>();
+	TypeSpecifierNode nttp_type = type_result.node()->as<TypeSpecifierNode>();
+	consume_pointer_ref_modifiers(nttp_type);
 	if ((nttp_type.type() == TypeCategory::Struct ||
 		 nttp_type.type() == TypeCategory::UserDefined ||
 		 nttp_type.type() == TypeCategory::TypeAlias) &&
@@ -498,7 +499,7 @@ ParseResult Parser::parse_template_parameter() {
 	// Create non-type parameter node
 	auto param_node = emplace_node<TemplateParameterNode>(
 		StringTable::getOrInternStringHandle(param_name),
-		type_result.node()->as<TypeSpecifierNode>(),
+		nttp_type,
 		param_name_token);
 
 	// Set variadic flag if this is a parameter pack
@@ -2562,22 +2563,24 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				TypeIndex declared_type_index = param.has_type()
 					? param.type_specifier_node().type_index().withCategory(param.type_specifier_node().type())
 					: TypeIndex{};
-				if (declared_type_index.category() != TypeCategory::Invalid) {
+				const TypeCategory declared_category = declared_type_index.category();
+				const bool has_declared_concrete_value_type =
+					declared_category != TypeCategory::Invalid &&
+					declared_category != TypeCategory::Auto &&
+					declared_category != TypeCategory::DeclTypeAuto &&
+					!typeIndexContainsDependentPlaceholder(declared_type_index);
+				if (has_declared_concrete_value_type) {
 					identity.value_type_index = declared_type_index.is_valid()
 						? declared_type_index
 						: nativeTypeIndex(declared_type_index.category());
-					if (param.type_specifier_node().is_reference() &&
-						(identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
-						 identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer)) {
-						identity.kind = FlashCpp::NonTypeValueIdentityKind::Reference;
-					} else if (declared_type_index.category() == TypeCategory::FunctionPointer ||
-							   declared_type_index.category() == TypeCategory::MemberFunctionPointer) {
+					if (declared_category == TypeCategory::FunctionPointer ||
+						declared_category == TypeCategory::MemberFunctionPointer) {
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
 							identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
 							identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
 						}
-					} else if (declared_type_index.category() == TypeCategory::MemberObjectPointer) {
+					} else if (declared_category == TypeCategory::MemberObjectPointer) {
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
 						}
@@ -2586,8 +2589,24 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 						identity.kind = FlashCpp::NonTypeValueIdentityKind::ObjectPointer;
 					}
 				}
+				if (param.type_specifier_node().is_reference()) {
+					StringHandle referenced_name = nameFromExpression(expr_node.as<ExpressionNode>());
+					if (referenced_name.isValid()) {
+						identity = FlashCpp::NonTypeValueIdentity::makeReference(
+							identity.value_type_index,
+							referenced_name);
+					} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+							   identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) {
+						identity.kind = FlashCpp::NonTypeValueIdentityKind::Reference;
+					}
+				}
 				TemplateTypeArg result = TemplateTypeArg::makeValueIdentity(identity);
 				return result;
+			}
+			if (existing_arg.is_value &&
+				existing_arg.valueIdentity().kind != FlashCpp::NonTypeValueIdentityKind::Integral &&
+				existing_arg.valueIdentity().kind != FlashCpp::NonTypeValueIdentityKind::Nullptr) {
+				return existing_arg;
 			}
 			const ExpressionNode& expr = syntax_node->as<ExpressionNode>();
 			StringHandle name = nameFromExpression(expr);
@@ -2603,6 +2622,22 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				if (subst.param_name == name && subst.is_value_param) {
 					return TemplateTypeArg::makeValue(subst.value, subst.value_type);
 				}
+			}
+			if (param.type_specifier_node().is_reference()) {
+				TypeIndex reference_identity_type = nativeTypeIndex(TypeCategory::Int);
+				if (param.has_type()) {
+					TypeIndex declared_type_index = param.type_specifier_node().type_index().withCategory(param.type_specifier_node().type());
+					TypeCategory declared_category = declared_type_index.category();
+					if (declared_category != TypeCategory::Invalid &&
+						declared_category != TypeCategory::Auto &&
+						declared_category != TypeCategory::DeclTypeAuto) {
+						reference_identity_type = declared_type_index.is_valid()
+							? declared_type_index
+							: nativeTypeIndex(declared_category);
+					}
+				}
+				return TemplateTypeArg::makeValueIdentity(
+					FlashCpp::NonTypeValueIdentity::makeReference(reference_identity_type, name));
 			}
 			if (auto symbol_lookup = lookup_symbol_with_template_check(name);
 				symbol_lookup.has_value() && symbol_lookup->is<VariableDeclarationNode>()) {
@@ -2649,7 +2684,10 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				std::optional<TemplateTypeArg> reclassified;
 				if (param.kind() == TemplateParameterKind::Type && arg.is_value) {
 					reclassified = makeTypeArgForName(arg_name);
-				} else if (param.kind() == TemplateParameterKind::NonType && !arg.is_value) {
+				} else if (param.kind() == TemplateParameterKind::NonType &&
+						   (!arg.is_value ||
+							arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
+							arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr)) {
 					reclassified = makeValueArgForSyntax(syntax_node, arg, param);
 				} else if (param.kind() == TemplateParameterKind::Template &&
 						   !arg.is_template_template_arg) {
@@ -2671,7 +2709,10 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		std::optional<TemplateTypeArg> reclassified;
 		if (param.kind() == TemplateParameterKind::Type && arg.is_value) {
 			reclassified = makeTypeArgForName(arg_name);
-		} else if (param.kind() == TemplateParameterKind::NonType && !arg.is_value) {
+		} else if (param.kind() == TemplateParameterKind::NonType &&
+				   (!arg.is_value ||
+					arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Integral ||
+					arg.valueIdentity().kind == FlashCpp::NonTypeValueIdentityKind::Nullptr)) {
 			reclassified = makeValueArgForSyntax(syntax_node, arg, param);
 		} else if (param.kind() == TemplateParameterKind::Template &&
 				   !arg.is_template_template_arg) {
