@@ -1053,10 +1053,31 @@ inline void appendItaniumTypeTemplateArgs(
 			default:
 				throw CompileError("Itanium name mangling: unsupported non-type template argument category — cannot generate valid symbol");
 			}
-			if (identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
-				identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
-				identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer ||
-				identity.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer) {
+			if (identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer &&
+				identity.entity_name.isValid()) {
+				// Itanium ABI: address-of external name → X ad L _Z <len><name> E E
+				std::string_view entity = identity.entity_name.view();
+				output += "XadL_Z";
+				output += std::to_string(entity.size());
+				output += entity;
+				output += "EE";
+			} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference &&
+				identity.entity_name.isValid()) {
+				// Itanium ABI: external-name reference → X L _Z <len><name> E E
+				std::string_view entity = identity.entity_name.view();
+				output += "XL_Z";
+				output += std::to_string(entity.size());
+				output += entity;
+				output += "EE";
+			} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer ||
+				identity.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer ||
+				identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+				identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference) {
+				// TODO(item-8): Encode FunctionPointer with full Itanium function-signature
+				// mangling (XadL_Z<mangled-function>EE) once function-pointer NTTP evaluation
+				// is implemented. MemberPointer encoding (Xad<member-external-name>EE) likewise
+				// requires constexpr member-pointer evaluation. Until then use a vendor-extended
+				// hash to ensure uniqueness.
 				const size_t identity_hash = identity.hash();
 				output += "u";
 				output += std::to_string(identity_hash);

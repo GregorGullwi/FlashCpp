@@ -123,6 +123,19 @@ should be split into focused investigations.
    paths. Keep widening sema coverage until the fallback can be converted into a
    hard diagnostic or invariant without losing valid code.
 
+7. **Replace `std::unique_ptr` with a raw pointer with an entry created from a gChunkedVector for `template_arguments` in
+   `ExpressionSubstitutor.cpp`.**
+   Each segment of a dependent member chain creates a `std::make_shared<std::vector<TemplateTypeArg>>`
+   at the substitution call site (`ExpressionSubstitutor.cpp`, around the
+   `member_chain.push_back` loop). Since we will keep the pointer the whole lifetime of the. ompiler, the allocation could be sped up by using a ChunkedVector backed pointer, switching
+   to a raw pointer (or storing the vector by value if the `DependentMemberAccess`
+   ownership model permits) would reduce the two heap allocations per segment
+   to one and improve cache locality on the hot template substitution path.
+   This requires auditing all consumers of the `template_arguments` shared_ptr
+   field on `DependentMemberAccess` (or equivalent) to confirm none alias the
+   pointer after the vector is moved.
+
+
 ### Recently closed follow-up items
 
 1. **Close the remaining typed-NTTP identity holes.**

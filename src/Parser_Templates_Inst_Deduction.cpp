@@ -3577,9 +3577,16 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 	}
 
 	if (!outer_sfinae_context && all_templates->size() > 1) {
-		std::vector<size_t> shape_candidate_indices;
+		struct ShapeCandidate {
+			size_t overload_idx;
+			InlineVector<TemplateTypeArg, 4> template_args;
+			FlashCpp::TemplateInstantiationKey key;
+			uintptr_t overload_id;
+			std::optional<CallArgDeductionInfo> deduction_info;
+		};
+		std::vector<ShapeCandidate> shape_candidates;
 		std::vector<ASTNode> shape_overloads;
-		shape_candidate_indices.reserve(all_templates->size());
+		shape_candidates.reserve(all_templates->size());
 		shape_overloads.reserve(all_templates->size());
 		StringHandle template_name_handle = StringTable::getOrInternStringHandle(template_name);
 
@@ -3659,7 +3666,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				signature_node->as<FunctionDeclarationNode>().failed_substitution()) {
 				continue;
 			}
-			shape_candidate_indices.push_back(overload_idx);
+			shape_candidates.push_back(ShapeCandidate{
+				overload_idx,
+				std::move(template_args),
+				std::move(key),
+				overload_id,
+				std::move(helper_deduction_info)});
 			shape_overloads.push_back(*signature_node);
 		}
 
@@ -3670,24 +3682,134 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				resolution.selected_overload != nullptr) {
 				for (size_t i = 0; i < shape_overloads.size(); ++i) {
 					if (resolution.selected_overload == &shape_overloads[i]) {
-						size_t selected_overload_idx = shape_candidate_indices[i];
-						const ASTNode& template_node = (*all_templates)[selected_overload_idx];
+						// Reuse the precomputed template_args from the shape probe to skip
+						// redundant argument deduction for the winning candidate.
+						ShapeCandidate& winner = shape_candidates[i];
+						const ASTNode& winner_template_node = (*all_templates)[winner.overload_idx];
+						const TemplateFunctionDeclarationNode& winner_template_func =
+							winner_template_node.as<TemplateFunctionDeclarationNode>();
+						const FunctionDeclarationNode& winner_func_decl =
+							winner_template_func.function_decl_node();
+						const auto& winner_template_params =
+							winner_template_func.template_parameters();
+
+						// Check explicit specializations before body instantiation.
+						auto specialization_opt = gTemplateRegistry.lookupSpecialization(
+							template_name, winner.template_args);
+						if (specialization_opt.has_value()) {
+							FLASH_LOG_FORMAT(Templates, Debug,
+								"[depth={}]: Shape-winner: found explicit specialization for '{}'",
+								recursion_depth, template_name);
+							return *specialization_opt;
+						}
+
+						// Evaluate requires clause and concept constraints.
+						if (winner_template_func.has_requires_clause()) {
+							const RequiresClauseNode& rc =
+								winner_template_func.requires_clause()->as<RequiresClauseNode>();
+							InlineVector<std::string_view, 4> param_names;
+							for (const auto& tp : winner_template_params)
+								param_names.push_back(tp.name());
+							auto cr = evaluateConstraint(rc.constraint_expr(), winner.template_args, param_names);
+							if (!cr.satisfied) {
+								failTemplateInstantiation(
+									StringBuilder()
+										.append("constraint not satisfied for template function '")
+										.append(template_name)
+										.append("'")
+										.commit(),
+									&winner.key,
+									winner.overload_id);
+								break;
+							}
+						}
+						{
+							bool concept_failed = false;
+							forEachNonPackTemplateParamArgBinding(
+								winner_template_params,
+								winner.template_args,
+								[&](const TemplateParameterNode& param, const TemplateTypeArg& bound_arg, size_t) {
+									if (!param.has_concept_constraint() || concept_failed)
+										return;
+									auto concept_opt = gConceptRegistry.lookupConcept(param.concept_constraint());
+									if (!concept_opt.has_value())
+										return;
+									const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
+									TemplateTypeArg concept_arg = bound_arg;
+									concept_arg.ref_qualifier = ReferenceQualifier::None;
+									InlineVector<TemplateTypeArg, 4> concept_args;
+									concept_args.push_back(concept_arg);
+									auto cr = evaluateConstraint(concept_node, concept_args);
+									if (!cr.satisfied) {
+										concept_failed = true;
+									}
+								});
+							if (concept_failed) {
+								failTemplateInstantiation(
+									StringBuilder()
+										.append("concept constraint not satisfied for template function '")
+										.append(template_name)
+										.append("'")
+										.commit(),
+									&winner.key,
+									winner.overload_id);
+								break;
+							}
+						}
+
+						const bool cacheable = hasUsableTemplateFunctionDefinition(winner_func_decl);
+						const bool commit = shouldCommitTemplateInstantiationArtifacts();
+						FunctionTemplateInstantiationContext winner_ctx{
+							template_name,
+							winner_template_func,
+							winner_func_decl,
+							winner_template_params,
+							winner.template_args,
+							winner.key,
+							winner.overload_id,
+							recursion_depth};
+						FunctionTemplateBindingData winner_binding{
+							&arg_types,
+							nullptr,
+							nullptr,
+							&winner.deduction_info,
+							nullptr};
+						FunctionTemplateInstantiationFlags winner_flags =
+							FunctionTemplateInstantiationFlags::None;
+						if (cacheable) {
+							winner_flags = mergeInstantiationFlags(
+								winner_flags,
+								FunctionTemplateInstantiationFlags::CacheableInstantiation);
+						}
+						if (commit) {
+							winner_flags = mergeInstantiationFlags(
+								winner_flags,
+								FunctionTemplateInstantiationFlags::CommitInstantiation);
+						}
+						winner_flags = mergeInstantiationFlags(
+							winner_flags,
+							FunctionTemplateInstantiationFlags::RegisterInstantiation);
+						winner_flags = mergeInstantiationFlags(
+							winner_flags,
+							FunctionTemplateInstantiationFlags::MemoizeBodyReparseFailure);
+						winner_flags = mergeInstantiationFlags(
+							winner_flags,
+							FunctionTemplateInstantiationFlags::RunInlineHeuristic);
 						ScopedParserInstantiationContext guard_instantiation_mode(
 							*this,
 							selectTemplateCandidateProbeMode(),
 							StringHandle{});
-						std::optional<ASTNode> result = try_instantiate_single_template(
-							template_node,
-							template_name,
-							arg_types,
-							recursion_depth);
+						std::optional<ASTNode> result = instantiateBoundFunctionTemplate(
+							winner_ctx,
+							winner_binding,
+							winner_flags);
 						if (result.has_value()) {
 							FLASH_LOG_FORMAT(
 								Templates,
 								Debug,
 								"[depth={}]: Shape-selected template overload {} for '{}'",
 								recursion_depth,
-								selected_overload_idx,
+								winner.overload_idx,
 								template_name);
 							return result;
 						}

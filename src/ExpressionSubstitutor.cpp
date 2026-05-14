@@ -831,8 +831,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 					}
 					member_access.has_template_arguments = true;
 					member_access.template_arguments =
-						std::make_shared<std::vector<TemplateTypeArg>>(
-							std::move(member_args));
+						std::make_unique<std::vector<TemplateTypeArg>>(std::move(member_args));
 				}
 				member_chain.push_back(std::move(member_access));
 			}
