@@ -230,6 +230,80 @@ TEST_CASE("InlineVector preserves self-referential values when spilling to heap"
 	CHECK(inline_insert[3] == "C");
 }
 
+TEST_CASE("InlineVector supports vector-like insert and erase overloads") {
+	InlineVector<int, 3> values{1, 3};
+	values.insert(values.begin() + 1, 2);
+	values.insert(values.begin() + 2, 2, 7);
+
+	CHECK(values.size() == 5);
+	CHECK(values[0] == 1);
+	CHECK(values[1] == 2);
+	CHECK(values[2] == 7);
+	CHECK(values[3] == 7);
+	CHECK(values[4] == 3);
+
+	values.erase(values.begin() + 1);
+	CHECK(values.size() == 4);
+	CHECK(values[0] == 1);
+	CHECK(values[1] == 7);
+	CHECK(values[2] == 7);
+	CHECK(values[3] == 3);
+
+	values.erase(values.begin() + 1, values.begin() + 3);
+	CHECK(values.size() == 2);
+	CHECK(values[0] == 1);
+	CHECK(values[1] == 3);
+
+	values.insert(values.end(), {4, 5});
+	CHECK(values.size() == 4);
+	CHECK(values[0] == 1);
+	CHECK(values[1] == 3);
+	CHECK(values[2] == 4);
+	CHECK(values[3] == 5);
+
+	auto it = values.emplace(values.begin() + 1, 9);
+	CHECK(it == values.begin() + 1);
+	CHECK(values.size() == 5);
+	CHECK(values[0] == 1);
+	CHECK(values[1] == 9);
+	CHECK(values[2] == 3);
+	CHECK(values[3] == 4);
+	CHECK(values[4] == 5);
+}
+
+TEST_CASE("InlineVector supports vector-like assign, resize, and capacity helpers") {
+	InlineVector<int, 2> values;
+	CHECK(values.capacity() == 2);
+
+	values.assign(3, 4);
+	CHECK(values.size() == 3);
+	CHECK(values[0] == 4);
+	CHECK(values[1] == 4);
+	CHECK(values[2] == 4);
+	CHECK(values.capacity() >= 3);
+
+	values.resize(5, 8);
+	CHECK(values.size() == 5);
+	CHECK(values[0] == 4);
+	CHECK(values[1] == 4);
+	CHECK(values[2] == 4);
+	CHECK(values[3] == 8);
+	CHECK(values[4] == 8);
+
+	values.resize(2);
+	CHECK(values.size() == 2);
+	CHECK(values[0] == 4);
+	CHECK(values[1] == 4);
+
+	values.assign({9, 10});
+	CHECK(values.size() == 2);
+	CHECK(values.at(0) == 9);
+	CHECK(values.at(1) == 10);
+
+	values.shrink_to_fit();
+	CHECK(values.capacity() >= values.size());
+}
+
 TEST_CASE("Dependent and non-dependent type args produce different hashes") {
 	TemplateTypeArg plain_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
 	TemplateTypeArg dependent_arg = plain_arg;
