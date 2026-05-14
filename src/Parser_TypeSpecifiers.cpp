@@ -2608,6 +2608,33 @@ ParseResult Parser::parse_type_specifier() {
 							TypeIndex{}.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 					}
 
+					// During template definition parsing, unresolved nested members of an
+					// instantiated template-id can still participate in deferred validity
+					// checks ([temp.res], IFNDR cases). Preserve them as dependent-member
+					// placeholders instead of producing an eager hard error.
+					if (parsing_template_depth_ > 0 && isTemplateBodyWithActiveParameters()) {
+						StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_type_name);
+						auto existing_it = getTypesByNameMap().find(qualified_handle);
+						TypeIndex placeholder_index{};
+						if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
+							placeholder_index = existing_it->second->registeredTypeIndex();
+						} else {
+							TypeInfo& placeholder_type = add_empty_type_entry();
+							placeholder_type.fallback_size_bits_ = 0;
+							placeholder_type.name_ = qualified_handle;
+							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							getTypesByNameMap()[qualified_handle] = &placeholder_type;
+							placeholder_index = placeholder_type.type_index_;
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							placeholder_index.withCategory(TypeCategory::UserDefined),
+							0,
+							type_name_token,
+							cv_qualifier,
+							ReferenceQualifier::None));
+					}
+
 					// SFINAE: If we're in a substitution context and can't find the nested type,
 					// this is a substitution failure, not a hard error
 					if (!isHardUseLikeInstantiationMode()) {
