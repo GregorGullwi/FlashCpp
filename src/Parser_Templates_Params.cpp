@@ -815,10 +815,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			return { SimpleTemplateArgKind::ValueLike, std::nullopt };
 		}
 
-		TemplateNameLookupRequest ordinary_template_lookup_request;
-		ordinary_template_lookup_request.name = name_handle;
-		ordinary_template_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
-		ordinary_template_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+		TemplateNameLookupRequest ordinary_template_lookup_request =
+			buildTemplateNameLookupRequest(
+				name_handle,
+				TemplateNameLookupKind::Ordinary,
+				false);
 		TemplateNameLookupResult ordinary_template_lookup =
 			gTemplateRegistry.lookupTemplateName(ordinary_template_lookup_request);
 
@@ -1899,10 +1900,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								} else {
 							// Check if this identifier is a template alias (like void_t)
 							// Template aliases may resolve to concrete types even when used with dependent arguments
-									TemplateNameLookupRequest alias_lookup_request;
-									alias_lookup_request.name = StringTable::getOrInternStringHandle(id.name());
-									alias_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
-									alias_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+									TemplateNameLookupRequest alias_lookup_request =
+										buildTemplateNameLookupRequest(
+											StringTable::getOrInternStringHandle(id.name()),
+											TemplateNameLookupKind::Ordinary,
+											false);
 									TemplateNameLookupResult alias_lookup =
 										gTemplateRegistry.lookupTemplateName(alias_lookup_request);
 									auto alias_opt = alias_lookup.firstDeclarationOfKind(
@@ -2550,10 +2552,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			if (const TypeInfo* type_info = tryGetTypeInfo(idx)) {
 				std::string_view type_name = StringTable::getStringView(type_info->name());
 				// Check if this is a template primary (not an instantiation which would have underscores)
-				TemplateNameLookupRequest primary_lookup_request;
-				primary_lookup_request.name = StringTable::getOrInternStringHandle(type_name);
-				primary_lookup_request.lookup_kind = TemplateNameLookupKind::Ordinary;
-				primary_lookup_request.timing = TemplateNameLookupTiming::PointOfDefinition;
+				TemplateNameLookupRequest primary_lookup_request =
+					buildTemplateNameLookupRequest(
+						StringTable::getOrInternStringHandle(type_name),
+						TemplateNameLookupKind::Ordinary,
+						false);
 				TemplateNameLookupResult primary_lookup =
 					gTemplateRegistry.lookupTemplateName(primary_lookup_request);
 				auto template_opt = primary_lookup.firstDeclarationOfKind(
