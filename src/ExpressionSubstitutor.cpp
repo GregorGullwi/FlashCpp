@@ -1041,12 +1041,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			for (const ASTNode& arg_node : explicit_template_arg_nodes) {
 				FLASH_LOG(Templates, Debug, "  Checking template argument node, has_value: ", arg_node.has_value(), " type: ", arg_node.type_name());
 
-			// Template arguments can be stored as TypeSpecifierNode for type arguments
+				// Template arguments can be stored as TypeSpecifierNode for type arguments
 				if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 					FLASH_LOG(Templates, Debug, "    Template argument is TypeSpecifierNode: type=", (int)type_spec.type(), " type_index=", type_spec.type_index());
 
-				// First, check if type_index points to a template parameter in gTypeInfo
+					// First, check if type_index points to a template parameter in gTypeInfo
 					std::string_view type_name = "";
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 						type_name = StringTable::getStringView(type_info->name());
@@ -1069,23 +1069,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						continue;
 					}
 
-				// Check if this type_name is in our substitution map (indicating it's a template parameter)
+					// Check if this type_name is in our substitution map (indicating it's a template parameter)
 					auto it = param_map_.find(type_name);
 					if (it != param_map_.end()) {
 					// This is a template parameter - substitute it
 						FLASH_LOG(Templates, Debug, "    Substituting template parameter: ", type_name, " -> type_index=", it->second.type_index);
 						substituted_template_args.push_back(it->second);
 					}
-				// Check if this is a template parameter type (Type::Template)
+					// Check if this is a template parameter type (Type::Template)
 					else if (type_spec.category() == TypeCategory::Template) {
-					// This is a template parameter - we need to substitute it
-					// The type_index should point to a template parameter
+						// This is a template parameter - we need to substitute it
+						// The type_index should point to a template parameter
 						FLASH_LOG(Templates, Debug, "    Type is Template, looking up in substitution map");
 
-					// For template parameters, we need to look them up by name
-					// The type_spec.type_index() should tell us which parameter it is
-					// But we need the name to do the substitution
-					// Let's check if we can find it in gTypeInfo
+						// For template parameters, we need to look them up by name
+						// The type_spec.type_index() should tell us which parameter it is
+						// But we need the name to do the substitution
+						// Let's check if we can find it in gTypeInfo
 						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 							std::string_view param_name = StringTable::getStringView(type_info->name());
 							FLASH_LOG(Templates, Debug, "    Template parameter name: ", param_name);
@@ -1107,12 +1107,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							append_resolved_explicit_type_arg(type_spec);
 						}
 					} else {
-					// Non-template type argument - use it directly
+						// Non-template type argument - use it directly
 						FLASH_LOG(Templates, Debug, "    Template argument is concrete type, using directly");
 						append_resolved_explicit_type_arg(type_spec);
 					}
 				}
-			// Check if this is a TemplateParameterReferenceNode that needs substitution
+				// Check if this is a TemplateParameterReferenceNode that needs substitution
 				else if (arg_node.is<ExpressionNode>()) {
 					const ExpressionNode& expr_variant = arg_node.as<ExpressionNode>();
 					bool is_template_param_ref = std::visit([](const auto& inner) -> bool {
@@ -1122,7 +1122,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 															expr_variant);
 
 					if (is_template_param_ref) {
-					// This is a template parameter reference - substitute it
+						// This is a template parameter reference - substitute it
 						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr_variant);
 						std::string_view param_name = tparam_ref.param_name().view();
 						FLASH_LOG(Templates, Debug, "    Template argument is parameter reference: ", param_name);
@@ -1133,11 +1133,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							substituted_template_args.push_back(it->second);
 						} else {
 							FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
-						// Return as-is if we can't substitute
+							// Return as-is if we can't substitute
 							return wrapOriginalCall();
 						}
 					} else {
-					// Non-dependent template argument - substitute/evaluate to a value if possible
+						// Non-dependent template argument - substitute/evaluate to a value if possible
 						FLASH_LOG(Templates, Debug, "    Template argument is non-dependent expression");
 						ASTNode substituted_arg_node = substitute(arg_node);
 						if (substituted_arg_node.is<TypeSpecifierNode>()) {
@@ -1330,27 +1330,27 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					if (instantiated_template.has_value()) {
 						// Current-instantiation member lookup already found the correct owner.
 					} else {
-					std::vector<TemplateTypeArg> current_inst_args =
-						collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
-					Parser::AliasTemplateMaterializationResult canonical_owner =
-						parser_.resolveCanonicalInstantiatedOwnerForLookup(
-							owner_name,
-							std::span<const TemplateTypeArg>(
-								current_inst_args.data(),
-								current_inst_args.size()));
-					if (!canonical_owner.instantiated_name.empty()) {
-						owner_name = canonical_owner.instantiated_name;
-					}
-					if (canonical_owner.resolved_type_info != nullptr) {
-						// Only try member-template recovery when the owner resolved to an actual type.
-						instantiated_template = parser_.try_instantiate_member_function_template_explicit(
-							owner_name,
-							member_name,
-							substituted_template_args);
-						if (instantiated_template.has_value()) {
-							normalizePendingSemanticRoots();
+						std::vector<TemplateTypeArg> current_inst_args =
+							collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteFunctionCallImpl");
+						Parser::AliasTemplateMaterializationResult canonical_owner =
+							parser_.resolveCanonicalInstantiatedOwnerForLookup(
+								owner_name,
+								std::span<const TemplateTypeArg>(
+									current_inst_args.data(),
+									current_inst_args.size()));
+						if (!canonical_owner.instantiated_name.empty()) {
+							owner_name = canonical_owner.instantiated_name;
 						}
-					}
+						if (canonical_owner.resolved_type_info != nullptr) {
+							// Only try member-template recovery when the owner resolved to an actual type.
+							instantiated_template = parser_.try_instantiate_member_function_template_explicit(
+								owner_name,
+								member_name,
+								substituted_template_args);
+							if (instantiated_template.has_value()) {
+								normalizePendingSemanticRoots();
+							}
+						}
 					}
 				}
 				if (!instantiated_template.has_value()) {
