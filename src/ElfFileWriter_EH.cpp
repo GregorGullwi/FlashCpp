@@ -24,7 +24,7 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 	fde_info.function_length = function_size;
 	fde_info.function_symbol = std::move(mangled_name_str);
 	fde_info.has_exception_handling = !try_blocks.empty() || !cleanup_blocks.empty();
-	fde_info.cfi_instructions = cfi_instructions;  // Store CFI instructions
+	fde_info.cfi_instructions.assign(cfi_instructions.begin(), cfi_instructions.end());	// Store CFI instructions
 
 	functions_with_fdes_.push_back(fde_info);
 
@@ -43,7 +43,7 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 		// Landing pads are exception handlers and should not be in the call site table.
 
 		// Sort try blocks by start offset to process them in order
-		std::vector<ObjectFileWriter::TryBlockInfo> sorted_try_blocks = try_blocks;
+		std::vector<ObjectFileWriter::TryBlockInfo> sorted_try_blocks(try_blocks.begin(), try_blocks.end());
 		std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(),
 				  [](const auto& a, const auto& b) { return a.try_start_offset < b.try_start_offset; });
 

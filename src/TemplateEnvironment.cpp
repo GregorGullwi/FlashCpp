@@ -38,6 +38,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
 	info.value = arg.value;
 	info.is_value = arg.is_value;
+	info.is_pack = arg.is_pack;
 	info.dependent_name = arg.dependent_name;
 	info.function_signature = arg.function_signature;
 	info.dependent_expr = arg.dependent_expr;
@@ -51,6 +52,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	TemplateTypeArg ta;
 	ta.type_index = arg.type_index;
 	ta.is_value = arg.is_value;
+	ta.is_pack = arg.is_pack;
 	ta.cv_qualifier = arg.cv_qualifier;
 	ta.ref_qualifier = arg.ref_qualifier;
 	ta.pointer_depth = static_cast<uint8_t>(arg.pointer_depth);
@@ -151,6 +153,7 @@ void appendContextBindings(
 		binding.name = context->param_names[i];
 		TemplateTypeArg arg = toTemplateTypeArg(context->param_args[i]);
 		binding.kind = inferBindingKind(arg);
+		binding.is_pack = arg.is_pack;
 		binding.args.push_back(std::move(arg));
 
 		size_t next_index = i + 1;
@@ -184,6 +187,7 @@ InlineVector<TemplateBindingSnapshot, 4> buildSnapshotBindingsForCurrentScope(
 		TemplateBindingSnapshot binding;
 		binding.name = param_names[i];
 		binding.kind = inferBindingKind(args[i]);
+		binding.is_pack = args[i].is_pack;
 		binding.args.push_back(args[i]);
 		bindings.push_back(std::move(binding));
 	}

@@ -2,6 +2,7 @@
 #include "CallNodeHelpers.h"
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
+#include "AstTraversal.h"
 #include "Log.h"
 #include <charconv>
 #include <limits>
@@ -240,7 +241,10 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 		}
 		self(self, current->parent);
 		for (const TemplateBinding& binding : current->bindings) {
-			if (!binding.name.isValid() || binding.args.empty()) {
+			if (!binding.name.isValid()) {
+				continue;
+			}
+			if (!binding.is_pack && binding.args.empty()) {
 				continue;
 			}
 			std::string_view binding_name = StringTable::getStringView(binding.name);
@@ -521,6 +525,81 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 		active_environment.bindings.empty() && active_environment.parent != nullptr
 		? *active_environment.parent
 		: active_environment;
+	auto expressionReferencesPackBinding = [&](const ASTNode& expr) {
+		bool references_pack = false;
+		AstTraversal::visitAST(expr, [&](const ASTNode& node) {
+			if (references_pack) {
+				return;
+			}
+			StringHandle candidate_name;
+			if (node.is<TemplateParameterReferenceNode>()) {
+				candidate_name = node.as<TemplateParameterReferenceNode>().param_name();
+			} else if (node.is<IdentifierNode>()) {
+				candidate_name = node.as<IdentifierNode>().getOrInternNameHandle();
+			} else if (node.is<QualifiedIdentifierNode>()) {
+				std::string_view ns_name =
+					gNamespaceRegistry.getQualifiedName(node.as<QualifiedIdentifierNode>().namespace_handle());
+				if (!ns_name.empty()) {
+					candidate_name = StringTable::getOrInternStringHandle(ns_name);
+				}
+			}
+			if (candidate_name.isValid() && pack_map_.find(candidate_name) != pack_map_.end()) {
+				references_pack = true;
+			}
+		});
+		return references_pack;
+	};
+	auto expandDependentValuePack =
+		[&](const TemplateTypeArg& pack_arg) -> std::optional<std::vector<TemplateTypeArg>> {
+		if (!pack_arg.is_value || !pack_arg.dependent_expr.has_value()) {
+			return std::nullopt;
+		}
+		if (!pack_arg.is_pack &&
+			!expressionReferencesPackBinding(*pack_arg.dependent_expr)) {
+			return std::nullopt;
+		}
+
+		std::optional<size_t> expansion_count;
+		for (const auto& [pack_name, pack_args] : pack_map_) {
+			(void)pack_name;
+			if (!expansion_count.has_value()) {
+				expansion_count = pack_args.size();
+			} else if (*expansion_count != pack_args.size()) {
+				return std::nullopt;
+			}
+		}
+		if (!expansion_count.has_value()) {
+			return std::nullopt;
+		}
+
+		std::vector<TemplateTypeArg> expanded_args;
+		expanded_args.reserve(*expansion_count);
+		for (size_t expansion_index = 0; expansion_index < *expansion_count; ++expansion_index) {
+			std::unordered_map<std::string_view, TemplateTypeArg> scalar_bindings = param_map_;
+			for (const auto& [pack_name, pack_args] : pack_map_) {
+				if (expansion_index >= pack_args.size()) {
+					return std::nullopt;
+				}
+				scalar_bindings[StringTable::getStringView(pack_name)] = pack_args[expansion_index];
+			}
+
+			ExpressionSubstitutor element_substitutor(scalar_bindings, parser_, template_param_order_);
+			element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+			ASTNode substituted_expr = element_substitutor.substitute(*pack_arg.dependent_expr);
+			if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+				expanded_args.emplace_back(eval_result->value, eval_result->type);
+				continue;
+			}
+
+			TemplateTypeArg unresolved_arg = pack_arg;
+			unresolved_arg.is_pack = false;
+			unresolved_arg.is_dependent = true;
+			unresolved_arg.dependent_expr = std::move(substituted_expr);
+			expanded_args.push_back(std::move(unresolved_arg));
+		}
+
+		return expanded_args;
+	};
 
 	for (const auto& arg : stored_args) {
 		TemplateTypeArg materialized_arg = toTemplateTypeArg(arg);
@@ -534,6 +613,16 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 			result.had_substitution = true;
 			substituted = true;
 		};
+
+		if (std::optional<std::vector<TemplateTypeArg>> expanded_pack_args =
+				expandDependentValuePack(materialized_arg);
+			expanded_pack_args.has_value()) {
+			result.had_substitution = true;
+			for (TemplateTypeArg& expanded_arg : *expanded_pack_args) {
+				result.args.push_back(std::move(expanded_arg));
+			}
+			continue;
+		}
 
 		if (materialized_arg.is_value && materialized_arg.dependent_expr.has_value()) {
 			const ASTNode& stored_expr = *materialized_arg.dependent_expr;
@@ -1995,6 +2084,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// has 1 arg), not the outer template's full param_map_ (e.g., ratio<_Num, _Den> has 2 params).
 	std::vector<TemplateTypeArg> inst_args;
 	bool source_instantiation_is_dependent = false;
+	bool materialized_had_substitution = false;
 
 	auto ns_name_handle = StringTable::getOrInternStringHandle(ns_name);
 	auto type_it = getTypesByNameMap().find(ns_name_handle);
@@ -2026,6 +2116,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 		MaterializedStoredTemplateArgs materialized_args =
 			materializeStoredTemplateArgs(*type_it->second, /*evaluate_dependent_member_values=*/true, kInitialDependentMemberTypeResolutionDepth);
+		materialized_had_substitution = materialized_args.had_substitution;
 		inst_args = std::move(materialized_args.args);
 	}
 
@@ -2084,7 +2175,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	if (!inst_args.empty() &&
 		type_it != getTypesByNameMap().end() &&
 		type_it->second != nullptr &&
-		!source_instantiation_is_dependent) {
+		!source_instantiation_is_dependent &&
+		!materialized_had_substitution) {
 		// Namespace already names a concrete instantiation; keep it stable instead
 		// of rebuilding from reconstructed args, which can lose canonical type indices.
 		ExpressionNode& concrete_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
@@ -2111,6 +2203,26 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			qual_id.identifier_token());
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 		return ASTNode(&new_expr);
+	}
+
+	// Empty pack expansion case: pack expanded to 0 elements, instantiate base template with 0 args
+	if (materialized_had_substitution && inst_args.empty() && !base_template_name.empty()) {
+		FLASH_LOG(Templates, Debug, "  Empty pack expansion for '", base_template_name, "', instantiating with 0 args");
+		Parser::AliasTemplateMaterializationResult materialized_namespace =
+			parser_.materializeTemplateInstantiationForLookup(base_template_name, {});
+		std::string_view instantiated_name = materialized_namespace.instantiated_name;
+		if (!instantiated_name.empty()) {
+			FLASH_LOG(Templates, Debug, "  Empty-pack substituted namespace: ", ns_name, " -> ", instantiated_name);
+			StringHandle instantiated_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE,
+				instantiated_name_handle);
+			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+				new_ns_handle,
+				qual_id.identifier_token());
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+			return ASTNode(&new_expr);
+		}
 	}
 
 	// No template arguments - just return as-is
@@ -2327,6 +2439,30 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 	if (!token_type_name.empty()) {
 		FLASH_LOG(Templates, Debug, "  Type candidate for template substitution: ", token_type_name);
+
+		if (auto builtin_type = parser_.get_builtin_type_info(token_type_name); builtin_type.has_value()) {
+			TypeSpecifierNode builtin_spec(
+				nativeTypeIndex(builtin_type->first),
+				type.size_in_bits(),
+				type.token(),
+				type.cv_qualifier(),
+				type.reference_qualifier());
+			for (const PointerLevel& pointer_level : type.pointer_levels()) {
+				builtin_spec.add_pointer_level(pointer_level.cv_qualifier);
+			}
+			if (type.is_pack_expansion()) {
+				builtin_spec.set_pack_expansion(true);
+			}
+			if (type.is_array()) {
+				for (size_t dim : type.array_dimensions()) {
+					builtin_spec.add_array_dimension(dim);
+				}
+			}
+			if (type.has_function_signature()) {
+				builtin_spec.set_function_signature(type.function_signature());
+			}
+			return builtin_spec;
+		}
 
 		// Look up this template parameter in our substitution map.
 		auto it = param_map_.find(token_type_name);

@@ -989,6 +989,7 @@ struct TypeInfo {
 		ReferenceQualifier ref_qualifier;
 		std::variant<int64_t, double, StringHandle> value;	// For non-type arguments
 		bool is_value;		   // true if this is a non-type argument
+		bool is_pack;
 		bool is_array;
 		InlineVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
@@ -1005,6 +1006,7 @@ struct TypeInfo {
 			  ref_qualifier(ReferenceQualifier::None),
 			  value(int64_t{0}),
 			  is_value(false),
+			  is_pack(false),
 			  is_array(false),
 			  is_template_template_arg(false),
 			  member_pointer_kind(MemberPointerKind::None) {}
@@ -1017,6 +1019,7 @@ struct TypeInfo {
 			  ref_qualifier(other.ref_qualifier),
 			  value(other.value),
 			  is_value(other.is_value),
+			  is_pack(other.is_pack),
 			  is_array(other.is_array),
 			  array_dimensions(other.array_dimensions),
 			  dependent_name(other.dependent_name),
@@ -1037,6 +1040,7 @@ struct TypeInfo {
 				ref_qualifier = other.ref_qualifier;
 				value = other.value;
 				is_value = other.is_value;
+				is_pack = other.is_pack;
 				is_array = other.is_array;
 				array_dimensions = other.array_dimensions;
 				dependent_name = other.dependent_name;
