@@ -66,6 +66,73 @@ bool isEligibleDefinitionLookupCall(
 	}
 	return true;
 }
+
+std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLookupRecord(
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const ASTNode& resolved_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included) {
+	if (!isEligibleDefinitionLookupCall(
+			definition_context,
+			callee_token,
+			arg_types,
+			has_deferred_template_call_args,
+			resolved_decl)) {
+		return std::nullopt;
+	}
+
+	const FunctionDeclarationNode& func_decl = resolved_decl.as<FunctionDeclarationNode>();
+	FunctionCallDefinitionLookupRecord record;
+	record.definition_context = *definition_context;
+	record.callee_name = callee_token.handle();
+	record.resolved_function = &func_decl;
+	if (func_decl.has_mangled_name()) {
+		record.resolved_mangled_name =
+			StringTable::getOrInternStringHandle(func_decl.mangled_name());
+	}
+	record.ordinary_lookup_included = ordinary_lookup_included;
+	record.argument_dependent_lookup_included = argument_dependent_lookup_included;
+	return record;
+}
+}
+
+std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
+	const QualifiedIdentifierNode& qual_id,
+	std::string_view display_name,
+	const std::optional<InlineVector<TemplateTypeArg, 4>>& template_args,
+	bool has_deferred_qualified_call_args,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	std::optional<ASTNode>& identifierType) {
+	if ((!template_args.has_value() || template_args->empty()) &&
+		!has_deferred_qualified_call_args) {
+		std::vector<ASTNode> qualified_overloads =
+			gSymbolTable.lookup_qualified_all(qual_id.namespace_handle(), qual_id.nameHandle());
+		const bool had_qualified_overloads = !qualified_overloads.empty();
+		filterPhase1OrdinaryFunctionOverloads(qualified_overloads);
+		if (!qualified_overloads.empty()) {
+			OverloadResolutionResult resolution =
+				resolve_overload(qualified_overloads, arg_types);
+			if (resolution.is_ambiguous) {
+				return ParseResult::error(
+					"Ambiguous call to qualified function '" +
+						std::string(display_name) + "'",
+					qual_id.identifier_token());
+			}
+			if (resolution.has_match && resolution.selected_overload != nullptr) {
+				identifierType = *resolution.selected_overload;
+			}
+		} else if (had_qualified_overloads &&
+			current_template_definition_lookup_context_ != nullptr &&
+			current_template_definition_lookup_context_->is_valid() &&
+			!phase1_violation_token_.has_value()) {
+			phase1_violation_token_ = qual_id.identifier_token();
+			identifierType.reset();
+		}
+	}
+	return std::nullopt;
 }
 
 // Helper function to check if a template name is a template-template parameter
@@ -2263,17 +2330,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 			ChunkedVector<ASTNode> args = std::move(args_result.args);
+			std::vector<TypeSpecifierNode> arg_types =
+				apply_lvalue_reference_deduction(args, args_result.arg_types);
+			const bool has_deferred_qualified_call_args =
+				argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+				argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
+			if (auto err = tryQualifiedPhase1Lookup(qual_id,
+					buildQualifiedNameFromStrings(namespaces, qual_id.name()),
+					template_args, has_deferred_qualified_call_args, arg_types, identifierType)) {
+				return *err;
+			}
+
 			// If not found (or explicit template arguments were provided) and we're not in extern "C",
 			// try template instantiation. The global-scope `::ns::func<T>(...)` path must support the
 			// same explicit-template parsing as the regular qualified-identifier path.
-			if (current_linkage_ != Linkage::C) {
+			if (current_linkage_ != Linkage::C && !has_deferred_qualified_call_args) {
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
-				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 				if (template_args.has_value() && !template_args->empty()) {
 					auto template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
@@ -2339,6 +2416,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (func_decl.has_mangled_name()) {
 					setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
 					FLASH_LOG(Parser, Debug, "Set mangled name on qualified call expression: {}", func_decl.mangled_name());
+				}
+				if (std::optional<FunctionCallDefinitionLookupRecord> record =
+						makeFunctionCallDefinitionLookupRecord(
+							current_template_definition_lookup_context_,
+							qual_id.identifier_token(),
+							arg_types,
+							has_deferred_qualified_call_args,
+							*identifierType,
+							true,
+							false);
+					record.has_value()) {
+					setCallDefinitionLookupRecord(function_call_node.as<ExpressionNode>(), *record);
 				}
 			}
 			result = function_call_node;
@@ -3045,6 +3134,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				std::vector<TypeSpecifierNode> arg_types =
+					apply_lvalue_reference_deduction(args, args_result.arg_types);
+				const bool has_deferred_qualified_call_args =
+					argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
@@ -3072,15 +3166,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 
-			// If not found OR if it's a template (not an instantiated function), try template instantiation
-			// Also try if explicit template arguments were provided (to handle overload resolution)
-			bool has_dependent_explicit_template_args = false;
+				if (auto err = tryQualifiedPhase1Lookup(qual_id,
+						buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()),
+						template_args, has_deferred_qualified_call_args, arg_types, identifierType)) {
+					return *err;
+				}
+
+				// If not found OR if it's a template (not an instantiated function), try template instantiation
+				// Also try if explicit template arguments were provided (to handle overload resolution)
+				bool has_dependent_explicit_template_args = false;
 				if (((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) ||
 					 (template_args.has_value() && !template_args->empty())) &&
-					current_linkage_ != Linkage::C) {
+					current_linkage_ != Linkage::C &&
+					!has_deferred_qualified_call_args) {
 					// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
-					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 					// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
 					if (template_args.has_value() && !template_args->empty()) {
@@ -3178,6 +3278,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
 						setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+					}
+					if (std::optional<FunctionCallDefinitionLookupRecord> record =
+							makeFunctionCallDefinitionLookupRecord(
+								current_template_definition_lookup_context_,
+								qual_id.identifier_token(),
+								arg_types,
+								has_deferred_qualified_call_args,
+								*identifierType,
+								true,
+								false);
+						record.has_value()) {
+						setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
 					}
 				}
 			} else {
@@ -4747,6 +4859,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// ADL per C++20 [basic.lookup.argdep]: suppressed only by blocking non-function decls
 				// (variables, structs, enums). Plain DeclarationNode stubs do NOT block ADL.
+				bool argumentDependentLookupIncluded = false;
 				if (!arg_types.empty()) {
 					auto is_adl_blocking = [](const ASTNode& n) -> bool {
 						return !n.is<FunctionDeclarationNode>() &&
@@ -4754,6 +4867,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								n.is<EnumDeclarationNode>());
 					};
 					if (!std::any_of(all_overloads.begin(), all_overloads.end(), is_adl_blocking)) {
+						argumentDependentLookupIncluded = true;
 						auto adl_candidates = gSymbolTable.lookup_adl(identifier_token.value(), arg_types);
 						all_overloads.insert(all_overloads.end(), adl_candidates.begin(), adl_candidates.end());
 					}
@@ -4777,21 +4891,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (!func_decl.parent_struct_name().empty()) {
 							setCallQualifiedName(result->as<ExpressionNode>(), StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
 						}
-						if (isEligibleDefinitionLookupCall(
-								current_template_definition_lookup_context_,
-								identifier_token,
-								arg_types,
-								has_deferred_template_call_args,
-								resolved_decl)) {
-							FunctionCallDefinitionLookupRecord record;
-							record.definition_context = *current_template_definition_lookup_context_;
-							record.callee_name = identifier_token.handle();
-							record.resolved_function = &func_decl;
-							if (func_decl.has_mangled_name()) {
-								record.resolved_mangled_name =
-									StringTable::getOrInternStringHandle(func_decl.mangled_name());
-							}
-							setCallDefinitionLookupRecord(result->as<ExpressionNode>(), record);
+						if (std::optional<FunctionCallDefinitionLookupRecord> record =
+								makeFunctionCallDefinitionLookupRecord(
+									current_template_definition_lookup_context_,
+									identifier_token,
+									arg_types,
+									has_deferred_template_call_args,
+									resolved_decl,
+									true,
+									argumentDependentLookupIncluded);
+							record.has_value()) {
+							setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
 						}
 					}
 					return ParseResult::success(*result);

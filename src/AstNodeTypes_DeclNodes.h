@@ -2767,11 +2767,12 @@ struct TemplateDefinitionLookupContext {
 	}
 };
 
-// Per-call semantic record for non-dependent unqualified function calls whose
-// lookup was completed in the template definition context.  The callee pointer
-// follows the same stable FunctionDeclarationNode identity already stored by
+// Per-call semantic record for non-dependent function calls whose lookup was
+// completed in the template definition context.  The callee pointer follows the
+// same stable FunctionDeclarationNode identity already stored by
 // CalleeDescriptor; the definition context documents the lookup boundary used
-// to exclude later point-of-instantiation declarations.
+// to exclude later point-of-instantiation declarations.  For qualified calls,
+// the CallExprNode qualified_name records the qualifier and ADL is disabled.
 struct FunctionCallDefinitionLookupRecord {
 	TemplateDefinitionLookupContext definition_context;
 	StringHandle callee_name{};
@@ -2889,14 +2890,14 @@ public:
 	std::span<const ASTNode> template_arguments() const { return template_arguments_; }
 	bool has_template_arguments() const { return !template_arguments_.empty(); }
 
-// --- Definition-context lookup record ---
-void set_definition_lookup_record(const FunctionCallDefinitionLookupRecord& record) {
-	definition_lookup_record_ = record;
-}
-const std::optional<FunctionCallDefinitionLookupRecord>& definition_lookup_record() const {
-	return definition_lookup_record_;
-}
-bool has_definition_lookup_record() const { return definition_lookup_record_.has_value(); }
+	// --- Definition-context lookup record ---
+	void set_definition_lookup_record(const FunctionCallDefinitionLookupRecord& record) {
+		definition_lookup_record_ = record;
+	}
+	const std::optional<FunctionCallDefinitionLookupRecord>& definition_lookup_record() const {
+		return definition_lookup_record_;
+	}
+	bool has_definition_lookup_record() const { return definition_lookup_record_.has_value(); }
 
 private:
 	CalleeDescriptor callee_;

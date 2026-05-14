@@ -5,7 +5,9 @@
 #include "StringBuilder.h"
 #include "TemplateRegistry.h"
 #include "CompileError.h"
+#include <algorithm>
 #include <array>
+#include <cstdint>
 
 // =============================================================================
 // Name Mangling Utilities - Unified Architecture
@@ -41,6 +43,18 @@
 // =============================================================================
 
 namespace NameMangling {
+
+template<typename OutputType>
+inline void appendHexNttpBits(OutputType& output, uint64_t bits, size_t digits) {
+	static constexpr char hex_digits[] = "0123456789abcdef";
+	const size_t significant_digits = std::min<size_t>(digits, 16);
+	for (size_t i = 0; i < digits - significant_digits; ++i) {
+		output += '0';
+	}
+	for (size_t i = significant_digits; i != 0; --i) {
+		output += hex_digits[(bits >> ((i - 1) * 4)) & 0xf];
+	}
+}
 
 // Mangling style enum for cross-platform support
 enum class ManglingStyle {
@@ -1031,6 +1045,15 @@ inline void appendItaniumTypeTemplateArgs(
 			case TypeCategory::Bool:
 				output += 'b';
 				break;
+			case TypeCategory::Float:
+				output += 'f';
+				break;
+			case TypeCategory::Double:
+				output += 'd';
+				break;
+			case TypeCategory::LongDouble:
+				output += 'e';
+				break;
 			case TypeCategory::Char:
 				output += 'c';
 				break;
@@ -1092,6 +1115,19 @@ inline void appendItaniumTypeTemplateArgs(
 				output += std::to_string(identity_hash);
 			} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 				output += "0";
+			} else if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Floating) {
+				if (identity.valueTypeCategory() == TypeCategory::Float) {
+					appendHexNttpBits(output, static_cast<uint64_t>(identity.value) & 0xffffffffULL, 8);
+				} else if (identity.valueTypeCategory() == TypeCategory::Double ||
+						   identity.valueTypeCategory() == TypeCategory::LongDouble) {
+					const size_t digits =
+						identity.valueTypeCategory() == TypeCategory::LongDouble
+							? std::max<size_t>(1, static_cast<size_t>(get_type_size_bits(TypeCategory::LongDouble) / 4))
+							: 16;
+					appendHexNttpBits(output, static_cast<uint64_t>(identity.value), digits);
+				} else {
+					throw CompileError("Itanium name mangling: floating NTTP identity has non-floating type");
+				}
 			} else {
 				output += std::to_string(identity.value);
 			}

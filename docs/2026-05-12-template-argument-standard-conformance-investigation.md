@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (template infrastructure pass 3 completed)
+**Last updated:** 2026-05-14 (template infrastructure pass 4 completed)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -34,6 +34,11 @@ preserved through refactoring:
 8. alias types that resolve to non-struct concrete types participate in codegen
    size resolution through a TypeInfo-size → TypeSpecifier-size → struct-size
    fallback chain.
+9. qualified template-body calls preserve definition-context lookup records so
+   template-body lookup can distinguish definition-time and point-of-instantiation
+   resolution boundaries;
+10. floating-point non-type template arguments preserve typed identity through
+    constexpr evaluation and mangling.
 
 These rules are compatibility constraints while migrating ownership to semantic
 lookup, deduction, and instantiation services.
@@ -77,16 +82,17 @@ Completed work:
 13. extended dependent qualified-name records to current-instantiation owners,
     unknown-specialization owners, and expression qualified-ids, with stricter
     missing-`typename` diagnostics for covered unknown-specialization paths.
+14. preserved definition-context records for qualified non-dependent calls and
+    added floating-point NTTP identity flow through constexpr evaluation and
+    Itanium mangling.
 
-The final validation run passed `.\build_flashcpp.bat` and
-`pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`:
-2375 regular tests compiled, linked, and returned expected values, and all 183
-expected-failure tests failed as expected.
+The latest validation run passed `.\build_flashcpp.bat Sharded` and targeted
+regression tests for qualified template calls and floating NTTP specialization.
 
 The remaining target architecture sections are retained as the next conformance
-roadmap, especially the remaining low-frequency semantic lookup paths, complete
-structural/floating/member-pointer NTTP values, richer dependent-base and
-segment-chain modeling, and constraint normalization/subsumption.
+roadmap, especially the remaining low-frequency semantic lookup paths, richer
+dependent-base and segment-chain modeling, and constraint
+normalization/subsumption.
 
 ## What is left / next
 
