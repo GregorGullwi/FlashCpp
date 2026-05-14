@@ -3045,7 +3045,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		instantiation_flags);
 }
 
-TemplateNameLookupRequest Parser::buildFunctionTemplateLookupRequest(
+TemplateNameLookupRequest Parser::buildTemplateNameLookupRequest(
 	StringHandle template_name,
 	TemplateNameLookupKind lookup_kind,
 	bool is_dependent) const {
@@ -3065,6 +3065,16 @@ TemplateNameLookupRequest Parser::buildFunctionTemplateLookupRequest(
 			current_template_definition_lookup_context_->current_instantiation_name;
 	}
 	return request;
+}
+
+TemplateNameLookupRequest Parser::buildFunctionTemplateLookupRequest(
+	StringHandle template_name,
+	TemplateNameLookupKind lookup_kind,
+	bool is_dependent) const {
+	return buildTemplateNameLookupRequest(
+		template_name,
+		lookup_kind,
+		is_dependent);
 }
 
 std::vector<ASTNode> Parser::materializeFunctionTemplateCandidateDeclarations(

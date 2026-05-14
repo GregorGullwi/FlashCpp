@@ -4442,12 +4442,25 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	// If not found in symbol table, try the global template registry
 	// This handles cases where a template function is defined but not yet instantiated
 	if (!symbol_opt.has_value() && context.parser) {
+		auto lookup_template = [](std::string_view lookup_name, TemplateNameLookupKind lookup_kind) -> std::optional<ASTNode> {
+			TemplateNameLookupRequest request;
+			request.name = StringTable::getOrInternStringHandle(lookup_name);
+			request.lookup_kind = lookup_kind;
+			request.timing = TemplateNameLookupTiming::PointOfDefinition;
+			TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(request);
+			return lookup_result.firstDeclarationOfKind(TemplateDeclarationKind::FunctionTemplate);
+		};
+
 		// Try to find the template in the global registry with qualified name first
-		auto template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+		auto template_opt = lookup_template(
+			qualified_name,
+			qualified_name.find("::") != std::string_view::npos
+				? TemplateNameLookupKind::Qualified
+				: TemplateNameLookupKind::Ordinary);
 
 		// If not found with qualified name, try with simple name
 		if (!template_opt.has_value() && qualified_name != func_name) {
-			template_opt = gTemplateRegistry.lookupTemplate(func_name);
+			template_opt = lookup_template(func_name, TemplateNameLookupKind::Ordinary);
 		}
 
 		// If still not found with simple name, try with common namespace prefixes
@@ -4457,7 +4470,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			name_candidates.push_back(std::string("__gnu_cxx::") + std::string(func_name));
 
 			for (const auto& candidate_name : name_candidates) {
-				template_opt = gTemplateRegistry.lookupTemplate(candidate_name);
+				template_opt = lookup_template(candidate_name, TemplateNameLookupKind::Qualified);
 				if (template_opt.has_value()) {
 					break;
 				}
