@@ -2745,15 +2745,72 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	object_type_arg.type_index = initializer_type.type_index();
 	object_type_arg.setType(initializer_type.category());
 
-	auto resolve_struct_specialization = [&](std::string_view template_name, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
-		auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name, template_args);
-		if (!specialization.has_value()) {
-			specialization = gTemplateRegistry.matchSpecializationPattern(template_name, template_args);
+	auto push_unique_template_name = [](std::vector<StringHandle>& names, StringHandle name) {
+		if (!name.isValid()) {
+			return;
 		}
-		if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
-			return nullptr;
+		if (std::find(names.begin(), names.end(), name) == names.end()) {
+			names.push_back(name);
 		}
-		return &specialization->as<StructDeclarationNode>();
+	};
+
+	auto append_template_lookup_names = [&](std::string_view requested_name,
+											TemplateDeclarationKind expected_kind,
+											std::vector<StringHandle>& names) {
+		StringHandle requested_handle = StringTable::getOrInternStringHandle(requested_name);
+		TemplateNameLookupKind lookup_kind =
+			requested_name.find("::") != std::string_view::npos
+				? TemplateNameLookupKind::Qualified
+				: TemplateNameLookupKind::Ordinary;
+
+		// Use parser-built semantic lookup requests so lookup timing/context stays
+		// consistent with template instantiation rules.
+		TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(
+			parser_.makeTemplateNameLookupRequest(requested_handle, lookup_kind, false));
+		for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
+			if (candidate.identity.kind != expected_kind) {
+				continue;
+			}
+			push_unique_template_name(names, candidate.identity.lookup_name);
+		}
+	};
+
+	auto append_fallback_template_names = [&](std::vector<StringHandle>& names, std::initializer_list<std::string_view> fallback_names) {
+		for (std::string_view fallback_name : fallback_names) {
+			push_unique_template_name(names, StringTable::getOrInternStringHandle(fallback_name));
+		}
+	};
+
+	std::vector<StringHandle> tuple_size_template_names;
+	append_template_lookup_names("tuple_size", TemplateDeclarationKind::ClassTemplate, tuple_size_template_names);
+	append_template_lookup_names("std::tuple_size", TemplateDeclarationKind::ClassTemplate, tuple_size_template_names);
+	append_fallback_template_names(tuple_size_template_names, {"tuple_size", "std::tuple_size"});
+
+	std::vector<StringHandle> tuple_element_template_names;
+	append_template_lookup_names("tuple_element", TemplateDeclarationKind::ClassTemplate, tuple_element_template_names);
+	append_template_lookup_names("std::tuple_element", TemplateDeclarationKind::ClassTemplate, tuple_element_template_names);
+	append_fallback_template_names(tuple_element_template_names, {"tuple_element", "std::tuple_element"});
+
+	std::vector<StringHandle> get_template_names;
+	append_template_lookup_names("get", TemplateDeclarationKind::FunctionTemplate, get_template_names);
+	append_template_lookup_names("std::get", TemplateDeclarationKind::FunctionTemplate, get_template_names);
+	append_fallback_template_names(get_template_names, {"get", "std::get"});
+
+	auto resolve_struct_specialization = [&](std::span<const StringHandle> template_names, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
+		for (StringHandle template_name : template_names) {
+			if (!template_name.isValid()) {
+				continue;
+			}
+			auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name.view(), template_args);
+			if (!specialization.has_value()) {
+				specialization = gTemplateRegistry.matchSpecializationPattern(template_name.view(), template_args);
+			}
+			if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
+				continue;
+			}
+			return &specialization->as<StructDeclarationNode>();
+		}
+		return nullptr;
 	};
 
 	auto resolve_type_info = [&](const StructDeclarationNode* struct_decl) -> const TypeInfo* {
@@ -2768,10 +2825,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	};
 
 	std::vector<TemplateTypeArg> tuple_size_args = {object_type_arg};
-	const StructDeclarationNode* tuple_size_decl = resolve_struct_specialization("tuple_size", tuple_size_args);
-	if (!tuple_size_decl) {
-		tuple_size_decl = resolve_struct_specialization("std::tuple_size", tuple_size_args);
-	}
+	const StructDeclarationNode* tuple_size_decl = resolve_struct_specialization(tuple_size_template_names, tuple_size_args);
 	if (!tuple_size_decl) {
 		return;	// aggregate decomposition path
 	}
@@ -2838,10 +2892,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		for (TypeCategory index_type : index_arg_candidates) {
 			TemplateTypeArg index_arg = make_index_arg(i, index_type);
 			std::vector<TemplateTypeArg> tuple_element_args = {index_arg, object_type_arg};
-			tuple_element_decl = resolve_struct_specialization("tuple_element", tuple_element_args);
-			if (!tuple_element_decl) {
-				tuple_element_decl = resolve_struct_specialization("std::tuple_element", tuple_element_args);
-			}
+			tuple_element_decl = resolve_struct_specialization(tuple_element_template_names, tuple_element_args);
 			if (tuple_element_decl) {
 				resolved_index_arg = index_arg;
 				break;
@@ -2876,17 +2927,19 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		{
 			auto try_lookup_get_for_index = [&](const TemplateTypeArg& index_arg) -> std::optional<ASTNode> {
 				std::vector<TemplateTypeArg> get_template_args = {index_arg};
-				auto spec = gTemplateRegistry.lookupExactSpecialization("get", get_template_args);
-				if (!spec.has_value()) {
-					spec = gTemplateRegistry.matchSpecializationPattern("get", get_template_args);
+				for (StringHandle get_template_name : get_template_names) {
+					if (!get_template_name.isValid()) {
+						continue;
+					}
+					auto spec = gTemplateRegistry.lookupExactSpecialization(get_template_name.view(), get_template_args);
+					if (!spec.has_value()) {
+						spec = gTemplateRegistry.matchSpecializationPattern(get_template_name.view(), get_template_args);
+					}
+					if (spec.has_value()) {
+						return spec;
+					}
 				}
-				if (!spec.has_value()) {
-					spec = gTemplateRegistry.lookupExactSpecialization("std::get", get_template_args);
-				}
-				if (!spec.has_value()) {
-					spec = gTemplateRegistry.matchSpecializationPattern("std::get", get_template_args);
-				}
-				return spec;
+				return std::nullopt;
 			};
 
 			// First try the same canonicalized index category that matched tuple_element.
