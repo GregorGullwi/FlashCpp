@@ -2532,6 +2532,8 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::RunInlineHeuristic);
 	const bool use_explicit_materialization =
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+	const bool skip_body_materialization =
+		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::SkipBodyMaterialization);
 	copy_function_properties(new_func_ref, func_decl);
 
 	if (run_inline_heuristic) {
@@ -2596,7 +2598,8 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 		}
 	}
 
-	if (commit_instantiation || use_explicit_materialization) {
+	if ((commit_instantiation || use_explicit_materialization) &&
+		!skip_body_materialization) {
 		gSymbolTable.insertGlobal(mangled_name, new_func_node);
 	}
 
@@ -3233,8 +3236,26 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		return std::nullopt;	 // No template with this name
 	}
 
+	struct ExplicitOverloadCandidate {
+		size_t overload_idx = 0;
+		const TemplateFunctionDeclarationNode* template_func = nullptr;
+		InlineVector<TemplateTypeArg, 4> template_args;
+		std::vector<size_t> template_param_arg_starts;
+		std::vector<size_t> template_param_arg_counts;
+		std::optional<CallArgDeductionInfo> deduction_info;
+		std::optional<TypeSpecifierNode> reparsed_trailing_return_type;
+		FlashCpp::TemplateInstantiationKey key;
+		uintptr_t overload_id = 0;
+	};
+	std::vector<ExplicitOverloadCandidate> viable_candidates;
+	viable_candidates.reserve(all_templates.size());
+	const bool use_shape_preselection =
+		current_explicit_call_arg_types_ != nullptr && all_templates.size() > 1;
+	const bool use_overload_discriminated_key = all_templates.size() > 1;
+
 	// Loop over all overloads for SFINAE support
-	for (const auto& template_node : all_templates) {
+	for (size_t overload_idx = 0; overload_idx < all_templates.size(); ++overload_idx) {
+		const ASTNode& template_node = all_templates[overload_idx];
 		if (!template_node.is<TemplateFunctionDeclarationNode>()) {
 			continue;  // Not a function template, try next overload
 		}
@@ -3581,24 +3602,61 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			reparsed_trailing_return_type = return_type_result.node()->as<TypeSpecifierNode>();
 		}
 
-		auto key = FlashCpp::makeInstantiationKey(
-			StringTable::getOrInternStringHandle(template_name), template_args);
-		auto existing_inst = gTemplateRegistry.getInstantiation(key);
+		StringHandle key_name_handle = StringTable::getOrInternStringHandle(template_name);
+		if (use_overload_discriminated_key) {
+			StringBuilder discriminated_name_builder;
+			key_name_handle = StringTable::getOrInternStringHandle(
+				discriminated_name_builder
+					.append(template_name)
+					.append("$ol")
+					.append(static_cast<uint64_t>(overload_idx))
+					.commit());
+		}
+		auto key = FlashCpp::makeInstantiationKey(key_name_handle, template_args);
+		if (!use_shape_preselection) {
+			auto existing_inst = gTemplateRegistry.getInstantiation(key);
+			if (existing_inst.has_value()) {
+				return *existing_inst;
+			}
+		}
+
+		viable_candidates.push_back(ExplicitOverloadCandidate{
+			overload_idx,
+			&template_func,
+			std::move(template_args),
+			std::move(template_param_arg_starts),
+			std::move(template_param_arg_counts),
+			std::move(deduction_info),
+			std::move(reparsed_trailing_return_type),
+			std::move(key),
+			reinterpret_cast<uintptr_t>(&func_decl)});
+	} // end of overload loop
+
+	auto instantiate_explicit_candidate =
+		[&](const ExplicitOverloadCandidate& candidate) -> std::optional<ASTNode> {
+		if (candidate.template_func == nullptr) {
+			return std::nullopt;
+		}
+		auto existing_inst = gTemplateRegistry.getInstantiation(candidate.key);
 		if (existing_inst.has_value()) {
 			return *existing_inst;
 		}
-		std::optional<CallArgDeductionInfo> helper_deduction_info = deduction_info;
+		const TemplateFunctionDeclarationNode& template_func = *candidate.template_func;
+		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+		const auto& template_params = template_func.template_parameters();
+		std::optional<CallArgDeductionInfo> helper_deduction_info = candidate.deduction_info;
+		std::optional<TypeSpecifierNode> reparsed_trailing_return_type = candidate.reparsed_trailing_return_type;
+		std::span<const size_t> template_param_arg_starts_view(candidate.template_param_arg_starts);
+		std::span<const size_t> template_param_arg_counts_view(candidate.template_param_arg_counts);
 		FunctionTemplateInstantiationContext instantiation_context{
 			template_name,
 			template_func,
 			func_decl,
 			template_params,
-			template_args,
-			key,
-			0,
+			candidate.template_args,
+			candidate.key,
+			candidate.overload_id,
 			recursion_depth};
-		std::span<const size_t> template_param_arg_starts_view(template_param_arg_starts);
-		std::span<const size_t> template_param_arg_counts_view(template_param_arg_counts);
 		FunctionTemplateBindingData binding_data{
 			nullptr,
 			&template_param_arg_starts_view,
@@ -3614,15 +3672,113 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		instantiation_flags = mergeInstantiationFlags(
 			instantiation_flags,
 			FunctionTemplateInstantiationFlags::RegisterInstantiation);
-		std::optional<ASTNode> instantiated = instantiateBoundFunctionTemplate(
+		return instantiateBoundFunctionTemplate(
 			instantiation_context,
 			binding_data,
 			instantiation_flags);
+	};
+
+	std::optional<size_t> preferred_candidate_index;
+	if (use_shape_preselection) {
+		std::vector<ASTNode> shape_overloads;
+		std::vector<size_t> shape_candidate_indices;
+		shape_overloads.reserve(viable_candidates.size());
+		shape_candidate_indices.reserve(viable_candidates.size());
+		for (size_t i = 0; i < viable_candidates.size(); ++i) {
+			const ExplicitOverloadCandidate& candidate = viable_candidates[i];
+			if (candidate.template_func == nullptr) {
+				continue;
+			}
+			const TemplateFunctionDeclarationNode& template_func = *candidate.template_func;
+			const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+			const auto& template_params = template_func.template_parameters();
+			std::optional<CallArgDeductionInfo> helper_deduction_info = candidate.deduction_info;
+			std::optional<TypeSpecifierNode> reparsed_trailing_return_type = candidate.reparsed_trailing_return_type;
+			std::span<const size_t> template_param_arg_starts_view(candidate.template_param_arg_starts);
+			std::span<const size_t> template_param_arg_counts_view(candidate.template_param_arg_counts);
+			StringBuilder shape_name_builder;
+			StringHandle shape_name_handle = StringTable::getOrInternStringHandle(
+				shape_name_builder
+					.append(template_name)
+					.append("$explicit_shape_ol")
+					.append(static_cast<uint64_t>(candidate.overload_idx))
+					.commit());
+			FlashCpp::TemplateInstantiationKey shape_key = FlashCpp::makeInstantiationKey(
+				shape_name_handle,
+				candidate.template_args);
+			FunctionTemplateInstantiationContext instantiation_context{
+				template_name,
+				template_func,
+				func_decl,
+				template_params,
+				candidate.template_args,
+				shape_key,
+				candidate.overload_id,
+				recursion_depth};
+			FunctionTemplateBindingData binding_data{
+				nullptr,
+				&template_param_arg_starts_view,
+				&template_param_arg_counts_view,
+				&helper_deduction_info,
+				&reparsed_trailing_return_type};
+			FunctionTemplateInstantiationFlags shape_flags = mergeInstantiationFlags(
+				FunctionTemplateInstantiationFlags::SkipBodyMaterialization,
+				FunctionTemplateInstantiationFlags::PreserveRefQualifier);
+			shape_flags = mergeInstantiationFlags(
+				shape_flags,
+				FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+			ScopedParserInstantiationContext shape_guard(
+				*this,
+				TemplateInstantiationMode::HardUseCandidateProbe,
+				StringHandle{});
+			std::optional<ASTNode> shape_node = instantiateBoundFunctionTemplate(
+				instantiation_context,
+				binding_data,
+				shape_flags);
+			if (!shape_node.has_value() ||
+				!shape_node->is<FunctionDeclarationNode>() ||
+				shape_node->as<FunctionDeclarationNode>().failed_substitution()) {
+				continue;
+			}
+			shape_overloads.push_back(*shape_node);
+			shape_candidate_indices.push_back(i);
+		}
+		if (shape_overloads.size() == 1) {
+			preferred_candidate_index = shape_candidate_indices[0];
+		} else if (shape_overloads.size() > 1) {
+			auto resolution = resolve_overload(shape_overloads, *current_explicit_call_arg_types_);
+			if (resolution.has_match &&
+				!resolution.is_ambiguous &&
+				resolution.selected_overload != nullptr) {
+				for (size_t i = 0; i < shape_overloads.size(); ++i) {
+					if (resolution.selected_overload == &shape_overloads[i]) {
+						preferred_candidate_index = shape_candidate_indices[i];
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	if (preferred_candidate_index.has_value() &&
+		*preferred_candidate_index < viable_candidates.size()) {
+		std::optional<ASTNode> preferred_instantiation =
+			instantiate_explicit_candidate(viable_candidates[*preferred_candidate_index]);
+		if (preferred_instantiation.has_value()) {
+			return *preferred_instantiation;
+		}
+	}
+
+	for (size_t i = 0; i < viable_candidates.size(); ++i) {
+		if (preferred_candidate_index.has_value() && i == *preferred_candidate_index) {
+			continue;
+		}
+		std::optional<ASTNode> instantiated =
+			instantiate_explicit_candidate(viable_candidates[i]);
 		if (instantiated.has_value()) {
 			return *instantiated;
 		}
-		continue;
-	} // end of overload loop
+	}
 
 	return std::nullopt;	 // No overload matched
 }
