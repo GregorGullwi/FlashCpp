@@ -23,6 +23,27 @@ bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<Templat
 		});
 }
 
+TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecord(
+	StringHandle owner_name,
+	TypeIndex owner_type,
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
+	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	std::span<const StringHandle> member_names) {
+	TypeInfo::DependentQualifiedNameRecord record;
+	record.owner_kind = owner_kind;
+	record.owner_name = owner_name;
+	record.owner_type = owner_type;
+	record.owner_template_arguments = std::move(owner_template_arguments);
+	record.names_current_instantiation =
+		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+	for (StringHandle member_name : member_names) {
+		TypeInfo::DependentQualifiedNameRecord::Member member;
+		member.name = member_name;
+		record.member_chain.push_back(std::move(member));
+	}
+	return record;
+}
+
 bool isEligibleDefinitionLookupCall(
 	const TemplateDefinitionLookupContext* definition_context,
 	const Token& callee_token,
@@ -3637,6 +3658,55 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create a QualifiedIdentifierNode with namespace handle (stack-local; copied into ExpressionNode before returning)
 			NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
 			QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
+			if (!namespaces.empty()) {
+				StringHandle owner_handle =
+					StringTable::getOrInternStringHandle(namespaces.front().c_str());
+				TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
+					TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+				TypeIndex owner_type_index{};
+				InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arg_infos;
+				bool owner_is_dependent = false;
+				if (auto param_kind = currentTemplateParamKind(owner_handle);
+					param_kind.has_value() &&
+					*param_kind == TemplateParameterKind::Type) {
+					owner_is_dependent = true;
+				} else {
+					const auto& active_template_params = currentTemplateParamNames();
+					owner_is_dependent =
+						std::find(active_template_params.begin(), active_template_params.end(), owner_handle) !=
+						active_template_params.end();
+				}
+				if (!owner_is_dependent) {
+					auto owner_type_it = getTypesByNameMap().find(owner_handle);
+					if (owner_type_it != getTypesByNameMap().end() &&
+						owner_type_it->second != nullptr &&
+						(owner_type_it->second->isDependentPlaceholder() ||
+						 owner_type_it->second->is_incomplete_instantiation_)) {
+						owner_is_dependent = true;
+						owner_kind = owner_type_it->second->isTemplateInstantiation()
+							? TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation
+							: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization;
+						owner_type_index = owner_type_it->second->registeredTypeIndex();
+						owner_template_arg_infos = owner_type_it->second->templateArgs();
+					}
+				}
+				if (owner_is_dependent) {
+					std::vector<StringHandle> dependent_member_names;
+					dependent_member_names.reserve(namespaces.size());
+					for (size_t ns_index = 1; ns_index < namespaces.size(); ++ns_index) {
+						dependent_member_names.push_back(
+							StringTable::getOrInternStringHandle(namespaces[ns_index].c_str()));
+					}
+					dependent_member_names.push_back(final_identifier.handle());
+					qual_id.setDependentQualifiedName(
+						makeExpressionDependentQualifiedNameRecord(
+							owner_handle,
+							owner_type_index,
+							owner_kind,
+							std::move(owner_template_arg_infos),
+							dependent_member_names));
+				}
+			}
 
 			// Look up the qualified identifier (either the template name or instantiated template)
 			if (template_args.has_value()) {
@@ -5257,6 +5327,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										NamespaceRegistry::GLOBAL_NAMESPACE,
 										dependent_owner_handle);
 									Token final_identifier{};
+									std::vector<StringHandle> dependent_member_names;
 									while (peek() == "::"_tok) {
 										advance(); // consume ::
 										if (peek() == "template"_tok) {
@@ -5266,6 +5337,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											return ParseResult::error("Expected identifier after '::'", peek_info());
 										}
 										final_identifier = peek_info();
+										dependent_member_names.push_back(final_identifier.handle());
 										advance(); // consume member name
 										// Skip template arguments on member if present (e.g., ::member<T>)
 										if (peek() == "<"_tok) {
@@ -5287,8 +5359,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (final_identifier.type() != Token::Type::Identifier) {
 										return ParseResult::error("Expected dependent qualified member name", identifier_token);
 									}
-									result = emplace_node<ExpressionNode>(
-										QualifiedIdentifierNode(ns_handle, final_identifier));
+									QualifiedIdentifierNode dependent_qual_id(ns_handle, final_identifier);
+									dependent_qual_id.setDependentQualifiedName(
+										makeExpressionDependentQualifiedNameRecord(
+											StringTable::getOrInternStringHandle(qualified_template_name),
+											TypeIndex{},
+											TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+											toTemplateArgInfoList(*explicit_template_args),
+											dependent_member_names));
+									result = emplace_node<ExpressionNode>(dependent_qual_id);
 									return ParseResult::success(*result);
 								}
 								pending_explicit_template_args_.reset();
@@ -6149,6 +6228,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								NamespaceRegistry::GLOBAL_NAMESPACE,
 								dependent_owner_handle);
 							Token final_identifier{};
+							std::vector<StringHandle> dependent_member_names;
 							while (peek() == "::"_tok) {
 								advance(); // consume ::
 								if (peek() == "template"_tok) {
@@ -6158,6 +6238,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									return ParseResult::error("Expected identifier after '::'", peek_info());
 								}
 								final_identifier = peek_info();
+								dependent_member_names.push_back(final_identifier.handle());
 								advance(); // consume member name
 								// Skip template arguments on member if present
 								if (peek() == "<"_tok) {
@@ -6179,8 +6260,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (final_identifier.type() != Token::Type::Identifier) {
 								return ParseResult::error("Expected dependent qualified member name", identifier_token);
 							}
-							result = emplace_node<ExpressionNode>(
-								QualifiedIdentifierNode(ns_handle, final_identifier));
+							QualifiedIdentifierNode dependent_qual_id(ns_handle, final_identifier);
+							dependent_qual_id.setDependentQualifiedName(
+								makeExpressionDependentQualifiedNameRecord(
+									StringTable::getOrInternStringHandle(qualified_template_name),
+									TypeIndex{},
+									TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+									toTemplateArgInfoList(*explicit_template_args),
+									dependent_member_names));
+							result = emplace_node<ExpressionNode>(dependent_qual_id);
 							return ParseResult::success(*result);
 						}
 						return ParseResult::error(
