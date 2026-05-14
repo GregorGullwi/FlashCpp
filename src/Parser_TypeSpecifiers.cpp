@@ -2063,13 +2063,13 @@ ParseResult Parser::parse_type_specifier() {
 						return qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value()).commit();
 					};
 					auto buildResolvedTypeNode = [&](const TypeInfo& resolved_type_info) -> ASTNode {
-						if (resolved_type_info->isStruct()) {
-							const StructTypeInfo* struct_info = resolved_type_info->getStructInfo();
+						if (resolved_type_info.isStruct()) {
+							const StructTypeInfo* struct_info = resolved_type_info.getStructInfo();
 							int resolved_type_size = struct_info
 								? static_cast<int>(struct_info->sizeInBits().value)
 								: 0;
 							return emplace_node<TypeSpecifierNode>(
-								resolved_type_info->type_index_.withCategory(TypeCategory::Struct),
+								resolved_type_info.type_index_.withCategory(TypeCategory::Struct),
 								resolved_type_size,
 								type_name_token,
 								cv_qualifier,
@@ -2077,8 +2077,8 @@ ParseResult Parser::parse_type_specifier() {
 						}
 
 						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-							resolved_type_info->registeredTypeIndex().withCategory(resolved_type_info->typeEnum()));
-						int resolved_type_size = static_cast<int>(resolved_type_info->sizeInBits().value);
+							resolved_type_info.registeredTypeIndex().withCategory(resolved_type_info.typeEnum()));
+						int resolved_type_size = static_cast<int>(resolved_type_info.sizeInBits().value);
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
 							resolved_alias.type_index,
 							resolved_type_size,
