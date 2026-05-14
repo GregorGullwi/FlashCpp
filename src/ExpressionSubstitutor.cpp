@@ -741,7 +741,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 				if (arg.is_value && arg.dependent_expr.has_value()) {
 					ASTNode substituted_expr = substitute(*arg.dependent_expr);
 					if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
-						arg = TemplateTypeArg(eval_result->value, eval_result->type);
+						arg = TemplateTypeArg::makeValueIdentity(eval_result->identity);
 					} else {
 						arg.dependent_expr = std::move(substituted_expr);
 					}
@@ -1879,7 +1879,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				} else if (arg.is_value && arg.dependent_expr.has_value()) {
 					ASTNode substituted_expr = substitute(*arg.dependent_expr);
 					if (auto value = parser_.try_evaluate_constant_expression(substituted_expr)) {
-						TemplateTypeArg concrete_arg(value->value, value->type);
+						TemplateTypeArg concrete_arg =
+							TemplateTypeArg::makeValueIdentity(value->identity);
 						concrete_arg.is_pack = arg.is_pack;
 						arg = concrete_arg;
 					} else {

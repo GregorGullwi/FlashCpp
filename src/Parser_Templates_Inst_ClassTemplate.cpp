@@ -7979,6 +7979,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		FunctionDeclarationNode& func_decl = mem_func.function_decl.as<FunctionDeclarationNode>();
 		fixupNestedTypeInSpecifier(func_decl.decl_node().type_specifier_node());
+		for (ASTNode& param_node : func_decl.parameter_nodes()) {
+			if (param_node.is<DeclarationNode>()) {
+				fixupNestedTypeInSpecifier(param_node.as<DeclarationNode>().type_specifier_node());
+			}
+		}
 	}
 
 	// Finalize the struct layout

@@ -2484,6 +2484,9 @@ public:
 	std::span<const ASTNode> parameter_nodes() const {
 		return parameter_nodes_;
 	}
+	std::span<ASTNode> parameter_nodes() {
+		return parameter_nodes_;
+	}
 	void add_parameter_node(ASTNode parameter_node) {
 		parameter_nodes_.push_back(parameter_node);
 	}
