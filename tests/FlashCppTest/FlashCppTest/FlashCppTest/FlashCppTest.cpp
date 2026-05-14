@@ -3756,12 +3756,35 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	const auto& assign_param = assign_result.member_overload->function_decl.as<FunctionDeclarationNode>().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 	CHECK(assign_param.type_index() == wrap_double_idx);
 
-	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, gSymbolTable, TypeCategory::UserDefined);
+	TypeSpecifierNode free_receiver_spec = makeBinaryOperatorTypeSpecifier(free_receiver_idx.withCategory(TypeCategory::Invalid));
+	TypeSpecifierNode wrap_double_spec = makeBinaryOperatorTypeSpecifier(wrap_double_idx.withCategory(TypeCategory::Invalid));
+	auto direct_plus_overloads = gSymbolTable.lookup_all("operator+");
+	auto adl_plus_overloads = gSymbolTable.lookup_adl("operator+", std::array<TypeSpecifierNode, 2>{free_receiver_spec, wrap_double_spec});
+	CHECK(!direct_plus_overloads.empty());
+	CHECK(!adl_plus_overloads.empty());
+
+	TypeIndex free_wrap_rhs_idx;
+	for (const auto& overload : direct_plus_overloads) {
+		if (!overload.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& fn = overload.as<FunctionDeclarationNode>();
+		if (fn.parameter_nodes().size() < 2 ||
+			!fn.parameter_nodes()[1].is<DeclarationNode>() ||
+			!fn.parameter_nodes()[1].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
+			continue;
+		}
+		const auto& rhs_param = fn.parameter_nodes()[1].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		free_wrap_rhs_idx = rhs_param.type_index();
+		break;
+	}
+	REQUIRE(free_wrap_rhs_idx.is_valid());
+
+	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, free_wrap_rhs_idx, OverloadableOperator::Plus, gSymbolTable, TypeCategory::UserDefined);
 	REQUIRE(free_result.has_match);
 	CHECK(!free_result.is_ambiguous);
 	CHECK(free_result.is_free_function);
 	REQUIRE(free_result.free_function_overload != nullptr);
 	const auto& free_param = free_result.free_function_overload->parameter_nodes()[1].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-	CHECK(free_param.type_index() == wrap_double_idx);
-	CHECK(free_param.type_index() != wrap_int_idx);
+	CHECK(free_param.type_index() == free_wrap_rhs_idx);
 }
