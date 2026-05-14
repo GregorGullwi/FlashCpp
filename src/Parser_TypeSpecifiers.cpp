@@ -12,6 +12,27 @@ struct DependentMemberSegmentInfo {
 	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
 };
 
+bool dependentQualifiedOwnerNeedsTypename(
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind) {
+	return owner_kind !=
+		TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+}
+
+std::string_view dependentQualifiedOwnerKindName(
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind) {
+	switch (owner_kind) {
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+		return "template parameter owner";
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+		return "dependent instantiation owner";
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+		return "current instantiation owner";
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization:
+		return "unknown specialization owner";
+	}
+	return "dependent owner";
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -463,8 +484,10 @@ ParseResult Parser::parse_type_specifier() {
 	// e.g., constexpr typename my_or<...>::type func()
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "constexpr typename" which appear in standard library headers
+	bool saw_typename_keyword = false;
 	if (peek() == "typename"_tok) {
 		advance(); // consume 'typename'
+		saw_typename_keyword = true;
 		// Continue parsing the actual type after typename
 	}
 
@@ -532,8 +555,23 @@ ParseResult Parser::parse_type_specifier() {
 	// where "const" comes before "typename"
 	if (peek() == "typename"_tok) {
 		advance(); // consume 'typename'
+		saw_typename_keyword = true;
 		// Continue parsing the actual type after typename
 	}
+
+	auto diagnoseMissingTypenameForDependentOwner =
+		[&](TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
+			const Token& diagnostic_token) -> std::optional<ParseResult> {
+		if (saw_typename_keyword || !dependentQualifiedOwnerNeedsTypename(owner_kind)) {
+			return std::nullopt;
+		}
+		StringBuilder message_builder;
+		message_builder
+			.append("Missing 'typename' before dependent qualified type name (")
+			.append(dependentQualifiedOwnerKindName(owner_kind))
+			.append(")");
+		return ParseResult::error(std::string(message_builder.commit()), diagnostic_token);
+	};
 
 	// Static type map for most types. "long" and "wchar_t" are handled specially below.
 	static const std::unordered_map<std::string_view, std::tuple<TypeCategory, size_t>>
@@ -1195,6 +1233,12 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 				if (is_dependent_qualified_type) {
+					if (auto typename_error = diagnoseMissingTypenameForDependentOwner(
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+							last_qualified_token);
+						typename_error.has_value()) {
+						return *typename_error;
+					}
 					StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
 					StringHandle owner_handle =
 						StringTable::getOrInternStringHandle(base_part);
@@ -2194,6 +2238,13 @@ ParseResult Parser::parse_type_specifier() {
 								   has_dependent_args &&
 								   (!struct_parsing_context_stack_.empty() || !member_function_context_stack_.empty())) {
 							owner_kind = TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization;
+						}
+						if (auto typename_error =
+								diagnoseMissingTypenameForDependentOwner(
+									owner_kind,
+									type_name_token);
+							typename_error.has_value()) {
+							return *typename_error;
 						}
 						StringBuilder member_path_builder;
 						if (qualified_type_name.starts_with(instantiated_name) &&

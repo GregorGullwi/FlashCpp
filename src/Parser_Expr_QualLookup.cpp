@@ -1388,27 +1388,32 @@ TypeIndex Parser::substitute_template_parameter(
 		};
 		std::string_view owner_name = StringTable::getStringView(dependent_name->owner_name);
 		std::string_view materialized_owner_name;
-		if (dependent_name->owner_kind ==
-				TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation &&
-			dependent_name->owner_type.is_valid()) {
-			if (const TypeInfo* owner_type_info = tryGetTypeInfo(dependent_name->owner_type)) {
-				materialized_owner_name = StringTable::getStringView(owner_type_info->name());
+		switch (dependent_name->owner_kind) {
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+			if (dependent_name->owner_type.is_valid()) {
+				if (const TypeInfo* owner_type_info = tryGetTypeInfo(dependent_name->owner_type)) {
+					materialized_owner_name = StringTable::getStringView(owner_type_info->name());
+				}
 			}
-		} else if (dependent_name->owner_kind ==
-				TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter &&
-			dependent_name->owner_template_arguments.empty()) {
-			forEachNonPackTemplateParamArgBinding(
-				template_params,
-				template_args,
-				[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
-					if (!materialized_owner_name.empty() || template_param.name() != owner_name) {
-						return;
-					}
-					if (const TypeInfo* owner_type_info = tryGetTypeInfo(template_arg.type_index)) {
-						materialized_owner_name = StringTable::getStringView(owner_type_info->name());
-					}
-				});
-		} else {
+			break;
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+			if (dependent_name->owner_template_arguments.empty()) {
+				forEachNonPackTemplateParamArgBinding(
+					template_params,
+					template_args,
+					[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
+						if (!materialized_owner_name.empty() || template_param.name() != owner_name) {
+							return;
+						}
+						if (const TypeInfo* owner_type_info = tryGetTypeInfo(template_arg.type_index)) {
+							materialized_owner_name = StringTable::getStringView(owner_type_info->name());
+						}
+					});
+				break;
+			}
+			[[fallthrough]];
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
 			std::vector<TemplateTypeArg> owner_args =
 				materializeRecordArgs(dependent_name->owner_template_arguments);
 			if (areTemplateArgsConcrete(owner_args)) {
@@ -1417,6 +1422,8 @@ TypeIndex Parser::substitute_template_parameter(
 					materialized_owner_name = StringTable::getStringView(owner_type->name());
 				}
 			}
+			break;
+		}
 		}
 		if (!materialized_owner_name.empty()) {
 			std::vector<QualifiedTypeMemberAccess> member_type_chain;
