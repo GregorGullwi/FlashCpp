@@ -220,10 +220,21 @@ static TypeIndex makeDeferredBaseValueTypeIndex(TypeCategory category, TypeIndex
 }
 
 static bool isPlaceholderNttpTypeIndex(TypeIndex type_index) {
+	// An invalid TypeIndex represents an unevaluated/unresolved type and must be
+	// treated as a placeholder so the caller falls back to the concrete evaluated type.
+	if (!type_index.is_valid()) {
+		return true;
+	}
 	TypeCategory category = type_index.category();
-	return category == TypeCategory::Invalid ||
-		   category == TypeCategory::Auto ||
-		   category == TypeCategory::DeclTypeAuto;
+	if (category == TypeCategory::Invalid ||
+		category == TypeCategory::Auto ||
+		category == TypeCategory::DeclTypeAuto) {
+		return true;
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+		return type_info->isDependentPlaceholder();
+	}
+	return false;
 }
 
 static TemplateTypeArg makeDeferredBaseValueArg(int64_t value, TypeIndex type_index) {
@@ -1041,12 +1052,24 @@ static InlineVector<TypeInfo::TemplateArgInfo, 4> collectEnrichedTemplateArgInfo
 	std::span<const TemplateTypeArg> template_args) {
 	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
 	result.reserve(template_args.size());
+	size_t param_index = 0;
+	const TemplateParameterNode* active_param = nullptr;
 	for (size_t i = 0; i < template_args.size(); ++i) {
+		// Advance to the next non-null parameter, unless the current active_param is variadic
+		while (active_param == nullptr && param_index < template_params.size()) {
+			active_param = tryGetTemplateParameterNode(template_params[param_index]);
+			if (active_param == nullptr) {
+				++param_index;
+			}
+		}
+
 		TemplateTypeArg arg = template_args[i];
-		if (i < template_params.size()) {
-			if (const TemplateParameterNode* param = tryGetTemplateParameterNode(template_params[i]);
-				param != nullptr) {
-				arg = enrichTemplateArgForParameter(*param, arg);
+		if (active_param != nullptr) {
+			arg = enrichTemplateArgForParameter(*active_param, arg);
+			// Advance past non-variadic params; hold variadic ones across remaining args
+			if (!active_param->is_variadic()) {
+				++param_index;
+				active_param = nullptr;
 			}
 		}
 		result.push_back(toTemplateArgInfo(arg));

@@ -123,6 +123,50 @@ should be split into focused investigations.
    paths. Keep widening sema coverage until the fallback can be converted into a
    hard diagnostic or invariant without losing valid code.
 
+7. **Replace `std::make_shared` with `std::unique_ptr` for `template_arguments` in
+   `ExpressionSubstitutor.cpp`.**
+   Each segment of a dependent member chain creates a `std::make_shared<std::vector<TemplateTypeArg>>`
+   at the substitution call site (`ExpressionSubstitutor.cpp`, around the
+   `member_chain.push_back` loop). Since sharing is not required here, switching
+   to `std::unique_ptr` (or storing the vector by value if the `DependentMemberAccess`
+   ownership model permits) would reduce the two heap allocations per segment
+   to one and improve cache locality on the hot template substitution path.
+   This requires auditing all consumers of the `template_arguments` shared_ptr
+   field on `DependentMemberAccess` (or equivalent) to confirm none alias the
+   pointer after the vector is moved.
+
+8. **Standardise Itanium NTTP mangling for pointer, reference, and member-pointer
+   arguments.**
+   The current implementation in `NameMangling.h` (around line 1067) uses a
+   vendor-extended `u` prefix with a content-hash to ensure uniqueness for
+   pointer/reference/member-pointer NTTPs. While safe for internal linkage, this
+   deviates from the Itanium C++ ABI, which encodes these as the external name of
+   the entity (e.g. `L_Z2gvE` for a pointer to `gv`). The placeholder must be
+   replaced with standard-compliant encoding once pointer/reference/member-pointer
+   NTTP evaluation (`constexpr` address-of) is implemented; otherwise symbols will
+   be ABI-incompatible with other Itanium-conforming tool-chains.
+
+9. **Eliminate redundant body instantiation after shape-only overload selection.**
+   In `Parser_Templates_Inst_Deduction.cpp` (around line 3684), the winning
+   template overload is passed to `try_instantiate_single_template` for a full
+   body instantiation even though the candidate was already successfully
+   instantiated (signature only) during the shape-only ranking phase (line 3650).
+   The fix is to cache the `signature_node` produced during ranking and pass it
+   into the full-body instantiation so only the body AST is materialized, not the
+   signature a second time. This is a pure performance improvement with no
+   observable semantic effect.
+
+10. **Preserve the `template` keyword flag for all segments of a multi-segment
+    dependent qualified-name record.**
+    `makeDependentQualifiedNameRecord` in `Parser_TypeSpecifiers.cpp` (line 42)
+    only records `has_template_keyword` for the first segment of the chain. In a
+    path such as `T::template A<U>::template B<V>` the second segment (`B`) also
+    carries the `template` disambiguator keyword and this information is currently
+    discarded. Fixing this requires replacing the flat `member_path` string
+    parameter with a structured per-segment descriptor that carries the
+    `has_template_keyword` flag and explicit template-argument list for each
+    intermediate segment, not just the first.
+
 ### Recently closed follow-up items
 
 1. **Close the remaining typed-NTTP identity holes.**
