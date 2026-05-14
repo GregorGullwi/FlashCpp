@@ -2727,9 +2727,11 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 	auto sema = runSemanticAnalysisForTest(parser, test_context);
 	AstToIr converter(gSymbolTable, test_context, parser);
 	converter.setSemanticData(sema.get());
+	std::printf("[DEBUG-TEST] code.size=%zu, gTypesByName size before visit: %zu\n", code.size(), gTypesByName.size());
 	for (auto& node_handle : parser.get_nodes()) {
 		converter.visit(node_handle);
 	}
+	std::printf("[DEBUG-TEST] IR instruction count: %zu\n", converter.getIr().getInstructions().size());
 
 	int instantiated_owner_count = 0;
 	int derived_alias_count = 0;
@@ -2741,6 +2743,7 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 
 		const auto& op = instruction.getTypedPayload<GlobalVariableDeclOp>();
 		std::string_view global_name = StringTable::getStringView(op.getVarName());
+		std::printf("[DEBUG-TEST] GlobalVarDecl: '%s'\n", std::string(global_name).c_str());
 		if (!global_name.ends_with("::payload")) {
 			continue;
 		}
