@@ -113,35 +113,6 @@ state.
    fallback, but uncovered/invalid paths still use a soft fallback. Keep widening
    sema coverage until this can become a diagnostic/invariant.
 
-### Recently closed follow-up cleanup targets
-
-1. **Typed NTTP identity completion.**
-   Preserve exact integral categories in deferred evaluation and remove the
-   exact-lookup linear fallback that scans specializations for integral
-   mismatches. **Completed** by preserving evaluated expression/static-member
-   type identity and stable typed value identities.
-
-2. **Static `constexpr` correctness cleanup.**
-   Treat namespace-qualified constexpr owners as valid lookup owners, and reject
-   invalid non-dependent `static constexpr` initializers instead of recovering
-   through zero-like fallback behavior. **Completed** with precise dependent
-   deferral and hard errors for invalid non-dependent initializers.
-
-3. **Dependent NTTP concretization simplification.**
-   Reduce dependent value materialization to a deterministic bind/substitute/
-   evaluate pass. **Completed** for dependent alias/default NTTP paths.
-
-4. **Constructor annotation coverage.**
-   Extend sema constructor-call inference until well-formed code no longer
-   falls back to codegen-time overload resolution. **Completed for current
-   valid test coverage**; the codegen fallback remains soft for uncovered or
-   invalid expected-failure cases.
-
-5. **Alias-size query ownership.**
-   Move the concrete alias-size fallback chain into a shared sema helper instead
-   of keeping it as codegen-local recovery logic. **Completed** through shared
-   alias-aware size query helpers.
-
 ### Highest-impact architecture targets
 
 1. **Two-phase lookup and semantic lookup records.**
@@ -155,9 +126,9 @@ state.
     probe paths with dependent POI/ADL behavior regression-tested.
 
 2. **Structural NTTP value model.**
-   The current concrete value identity remains too integral-centric for C++20.
-   Pointer, reference, member-pointer, `nullptr`, floating-point, enum, and
-   structural class-type arguments need typed equivalence and hashing.
+   The concrete value identity still has C++20 gaps beyond the supported
+   scalar/entity categories. Non-null member-pointer, floating-point, and
+   structural class-type arguments still need typed equivalence and hashing.
     **Progress:** the value model now distinguishes typed integral/enum,
     `nullptr`, object pointer, reference, function-pointer, and null
     member-pointer identities, and explicitly rejects unsupported structural
@@ -174,300 +145,49 @@ state.
 4. **Dependent-name and current-instantiation model.**
    Replace dependent strings/placeholders with first-class entities for current
    instantiation, unknown specialization, dependent bases, dependent
-    qualified-names, and dependent template-ids. **Progress:** dependent
-    qualified member-type placeholders, current-instantiation owners,
-    unknown-specialization owners, and expression qualified-ids now carry
-    `TypeInfo::DependentQualifiedNameRecord` metadata for the covered paths.
+   qualified-names, and dependent template-ids. **Progress:** dependent
+   qualified member-type placeholders, current-instantiation owners,
+   unknown-specialization owners, and expression qualified-ids now carry
+   `TypeInfo::DependentQualifiedNameRecord` metadata for the covered paths.
 
-## Current representations
+## Current architecture snapshot
 
-### Template parameters
+- `TemplateTypeArg` carries type, non-type, template-template, and pack
+  arguments across parser, sema, registry, and codegen layers.
+- `NonTypeValueIdentity` preserves typed identity for supported integral, enum,
+  `nullptr`, object-pointer, reference, function-pointer, and null
+  member-pointer NTTPs. Non-null member-pointer, floating-point, and structural
+  class-type NTTPs remain open.
+- `TemplateArgIdentity`, `OrderedTemplateInstantiationIdentity`, and
+  `TemplateInstantiationKey` preserve parameter-order-sensitive specialization
+  identity.
+- `TemplateEnvironment`, `TemplateEnvironmentSnapshot`, and
+  `TemplateInstantiationContext` are the intended substitution and
+  current-instantiation owners, but some legacy paths still reconstruct raw
+  parameter-name and argument vectors.
 
-`TemplateParameterNode` stores a parameter `kind()` as one of:
+Parameter-context classification is now in place for the main explicit
+template-id use sites. Remaining classification risk is in lower-frequency paths
+that still probe registries or static-initializer state before semantic lookup
+has produced an authoritative declaration result.
 
-- `TemplateParameterKind::Type`
-- `TemplateParameterKind::NonType`
-- `TemplateParameterKind::Template`
+Main function, member, qualified, variable, alias, probe, and operator template
+lookup paths now use semantic lookup requests/records. Remaining low-frequency
+registry probes, static-initializer lookup, dependent-base lookup, hidden-friend
+ADL, and deeper member-template chains should move behind the same declaration
+result and definition-vs-POI timing model.
 
-It also stores the parameter name, the declared type for non-type parameters,
-nested parameters for template-template parameters, defaults, variadic status,
-concept constraint metadata, and a registered placeholder `TypeIndex`
-(`src/AstNodeTypes_Template.h`).
+Static `constexpr` reads are centralized, invalid non-dependent initializers now
+hard-fail instead of using broad zero-like recovery, and constructor annotation
+coverage is sufficient for current valid tests. The remaining cleanup is to
+turn the constructor/codegen fallback and other compatibility repairs into
+diagnostics or invariants once sema coverage is broad enough.
 
-During parsing, type and template-template parameters are registered as
-dependent placeholder `TypeInfo` entries through
-`ensureTemplateParameterTypeRegistration(...)` and
-`registerTemplateParametersInScope(...)` (`src/Parser_Templates_Params.cpp`).
-This makes many dependent names visible to ordinary type lookup machinery.
-
-### Template arguments
-
-`TemplateTypeArg` is the main cross-layer argument carrier
-(`src/TemplateTypes.h`). Despite the name, it carries:
-
-- type arguments through `type_index`, cv/ref/pointer/array/member-pointer
-  qualifiers, function signatures, and dependency metadata;
-- non-type arguments through `is_value`, `value`, `type_index`,
-  `dependent_name`, and optional `dependent_expr`;
-- template-template arguments through `is_template_template_arg` and
-  `template_name_handle`;
-- pack-related state through `is_pack`.
-
-`NonTypeValueIdentity` provides a canonical identity carrier for current non-type
-arguments. It now preserves typed identity for supported integral, enum, and
-`nullptr` arguments, including ordered identity for instantiation keys and
-mangling. Pointer, reference, function-pointer, member-pointer, floating-point,
-and structural class-type NTTPs are still explicit unsupported or placeholder
-categories until parsing and constant evaluation can produce standard semantic
-values for them.
-
-`TemplateArgIdentity`, `OrderedTemplateInstantiationIdentity`, and
-`TemplateInstantiationKey` preserve ordered identity in addition to legacy
-grouped type/value/template-template vectors (`src/TemplateRegistry_Types.h`).
-This is an important correctness improvement because C++ template identity is
-parameter-order sensitive.
-
-### Template environments
-
-`TemplateEnvironment` is a linked environment of `TemplateBinding` entries. Each
-binding has a name, a kind, pack status, and one or more `TemplateTypeArg`
-values. It supports scalar and pack lookup through `findOne(...)` and
-`findPack(...)` (`src/TemplateEnvironment.h`, `src/TemplateEnvironment.cpp`).
-
-Snapshots (`TemplateEnvironmentSnapshot`) are used to preserve outer template
-bindings on variables and functions, then reconstruct legacy parameter-name and
-argument vectors for older code paths. This gives nested class/member template
-instantiation enough outer context for many cases, but it is not yet a complete
-semantic instantiation context.
-
-## Current parsing and classification flow
-
-### Template parameter parsing
-
-`parse_template_parameter_list(...)` parses parameters and immediately pushes
-their names into the current template parameter state so later defaults can
-refer to earlier parameters. `parse_template_parameter(...)` handles:
-
-- type parameters using `typename` / `class`;
-- non-type parameters through the normal type/declarator machinery;
-- template-template parameters;
-- default arguments;
-- concept-constrained parameters.
-
-This is close to the right layer for syntactic parameter parsing, but semantic
-constraints on parameter forms are still incomplete. The parser registers
-template parameters into global-ish type machinery while parsing, which makes
-later lookup convenient but blurs C++ scope and two-phase lookup boundaries.
-
-### Explicit template argument parsing
-
-`parse_explicit_template_arguments(...)` is expression-first. It tries to parse
-an expression in `ExpressionContext::TemplateTypeArg`, classifies literals and
-constant expressions as non-type arguments, accepts selected dependent
-compile-time expressions, and falls back to `parse_type_specifier(...)` for
-types (`src/Parser_Templates_Params.cpp`).
-
-For simple identifiers it uses `classifySimpleTemplateArgName(...)`, which
-checks:
-
-- current template parameter metadata;
-- current substitution records;
-- symbol-table lookup;
-- variable templates;
-- enclosing class static data members;
-- alias templates, class templates, and known types.
-
-This heuristic allows many ambiguous cases to work, including static member
-values in template bodies, but it is not the C++20 model. C++20 classifies an
-argument against the corresponding template parameter after lookup and template
-parameter matching. A token sequence such as `X` or `N` can only be interpreted
-correctly with the target parameter kind, the point of lookup, dependency state,
-and possible `typename` / `template` disambiguators.
-
-## Current instantiation architecture
-
-### Registry and instantiation keys
-
-`TemplateRegistry` stores class/function templates, alias templates, variable
-templates, deduction guides, partial specializations, instantiation keys, and
-outer bindings (`src/TemplateRegistry_Registry.h`). It registers both
-unqualified and some qualified names for convenience.
-
-The registry lookup model is name-handle based. It does not yet represent
-declaration contexts as first-class lookup scopes equivalent to the C++ model.
-Consequently, namespaces, class scopes, injected-class-names, using-declarations,
-using-directives, hidden friends, and overload sets are partly reconstructed by
-call-site logic instead of flowing through one authoritative lookup result.
-
-### Class templates
-
-Class template instantiation in
-`src/Parser_Templates_Inst_ClassTemplate.cpp` builds substitution maps, expands
-packs, substitutes base classes, members, member functions, aliases, static
-members, and deferred bodies. It also materializes static member initializers
-and retries normalization after deferred member bodies.
-
-This path owns a large amount of semantic work. It is responsible for converting
-dependent placeholder facts into concrete `TypeInfo`, copying and rebinding
-member AST, rebuilding qualified member names, and invoking constexpr
-evaluation for static initializers.
-
-### Function templates and member function templates
-
-Function template instantiation and deduction live mainly in
-`src/Parser_Templates_Inst_Deduction.cpp`. Explicit template arguments are
-merged with deduced call-argument information, defaults, concept checks, trailing
-return SFINAE reparsing, instantiation-key lookup, and overload candidate
-probing.
-
-Member function templates use a similar but separate path in
-`src/Parser_Templates_Inst_MemberFunc.cpp`. That path deduces from member call
-argument types, handles outer class template bindings, and reconstructs owner
-names when the concrete instantiated owner name differs from the source
-template owner.
-
-### Alias templates and variable templates
-
-Alias templates have a deferred-target representation in `TemplateAliasNode`.
-Alias materialization reparses or substitutes stored target argument nodes and
-may classify deferred qualified identifiers against a target template parameter
-(`src/Parser_Templates_Inst_Substitution.cpp`,
-`src/Parser_Templates_Variable.cpp`).
-
-Variable templates are registered separately from class/function/alias
-templates. Their lookup participates in simple argument classification as a
-value-like name.
-
-### Static members
-
-Static data members are represented in class AST and `StructTypeInfo`.
-Class-template instantiation can early-normalize static member initializers by:
-
-- rebinding function calls in the initializer AST;
-- instantiating deferred static initializer call targets;
-- substituting template parameters;
-- evaluating the initializer as a constant expression;
-- storing normalized bytes when possible.
-
-This supports many trait-style patterns, but the timing is implementation
-driven. C++20 requires static member declarations, definitions, initialization,
-constant evaluation, odr-use, and template instantiation to observe precise
-lookup and point-of-instantiation rules.
-
-Current behavior in this area is:
-
-- constexpr read folding in IR has a strict scalar gate
-  (no struct/array static-member folding in that path);
-- normalized bytes are used as the preferred folded source when present;
-- recursive base-member patterns such as `value = base::value + c` are handled
-  with a bounded recursion policy (depth limit `MAX_RECURSIVE_STATIC_EVAL_DEPTH = 64`);
-- template static-member early normalization applies template-parameter
-  substitution before expression-level substitution;
-- struct member function codegen takes a per-function IR snapshot before each
-  member and rolls back only the failing member's partial IR on exception,
-  preserving successfully emitted earlier members;
-- the `sema_normalized_current_function_` flag is saved and restored across
-  struct codegen frames to prevent stale state from bleeding into nested struct
-  member processing;
-- alias types that resolve to non-struct concrete types (e.g. type-trait
-  results like `remove_reference<T>::type`) now participate in codegen size
-  resolution through a TypeInfo-first/TypeSpecifier fallback chain before the
-  struct-size path.
-
-### Constructor resolution and sema annotation
-
-The codegen layer resolves constructor calls in two tiers. `SemanticAnalysis`
-runs first and attempts to annotate the winning constructor directly onto the
-AST node (`sema_normalized_current_function_` flag marks the function as
-sema-processed). When sema annotation is present codegen uses it directly;
-a mismatch is a hard internal error. When sema annotation is absent codegen
-logs a warning and falls through to runtime overload resolution, failing hard
-only if that also finds no match. This soft-fallback design allows the
-compiler to proceed in cases where sema's type-inference pipeline does not yet
-cover the full range of constructor call forms. The goal is to widen sema
-coverage until the fallback is never exercised for well-formed code.
-
-`inferExpressionType` for `ConstructorCallNode` has a name-based fallback when
-`canonicalizeType` returns an invalid id: it looks up the type by token name
-in the type-by-name map (or via the TypeIndex-derived registered name) and
-synthesizes a `CanonicalTypeId` from the found `TypeInfo`. This handles
-functional enum casts such as `__cmp_cat::_Ord(value)` where the TypeIndex was
-not baked in at parse time.
-
-`buildOverloadResolutionArgType` detects enum functional casts at the
-call-site argument level: when a constructor-call argument targets an enum
-type, it returns a `TypeCategory::Enum` TypeSpecifierNode regardless of the
-TypeIndex category stored on the node. `buildConversionPlan` additionally
-normalizes stale TypeIndex categories by consulting the TypeInfo table for
-both the from-type and to-type before comparison. Parser constructor-call sites
-now use `type_info.category()` rather than unconditionally hardcoding
-`TypeCategory::Struct`, so enum and other non-struct types get the correct
-category tag at parse time.
-
-`ResolvedQualifiedIdentifierInfo` carries an `enum_owner_type_index` field
-populated during qualified identifier lookup when an enumerator is resolved.
-The type-inference fast path for `Kind::EnumConstant` uses this stored
-TypeIndex directly, avoiding the O(N) namespace-name-map lookup that the
-fallback path requires.
-
-### Ordinary and qualified lookup
-
-The symbol table supports scoped symbols, namespace symbols, using directives,
-using declarations, namespace aliases, and overload vectors
-(`src/SymbolTable.h`). Qualified lookup support exists in parser expression and
-type paths, and templates are often registered under both unqualified and
-qualified names.
-
-However, template lookup is not unified with ordinary/qualified lookup. Some
-template operations call `gTemplateRegistry.lookupTemplate(...)`,
-`lookup_alias_template(...)`, `lookupVariableTemplate(...)`, or
-`isClassTemplate(...)` directly by name. This bypasses a single declaration
-lookup result and can select a template by spelling rather than by standard
-scope rules.
-
-### ADL
-
-ADL exists for ordinary calls and operators. The symbol table tracks
-namespace-scoped symbols and ADL-only hidden friends, and expression parsing has
-call-resolution paths that combine ordinary lookup, ADL, overload resolution,
-and template fallback (`src/SymbolTable.h`, `src/Parser_Expr_PrimaryExpr.cpp`,
-`src/OverloadResolution.h`).
-
-This is a strong base for call expressions, but template argument parsing,
-template-id classification, alias materialization, member template lookup, and
-static-member initializer rebinding do not consistently consume the same
-ordinary-plus-ADL candidate pipeline. C++20 ADL affects function calls, including
-function template candidates, and must interact with two-phase lookup for
-dependent calls.
-
-## Template argument deduction architecture
-
-Current deduction is parser-owned. It builds maps from template parameter names
-to `TemplateTypeArg` values by matching function parameter types against call
-argument types. It has support for:
-
-- explicit function template arguments;
-- variadic packs and co-packs;
-- nested template argument extraction;
-- array-bound NTTP deduction;
-- defaults;
-- constraints;
-- trailing return SFINAE reparse;
-- SFINAE candidate collection in selected paths.
-
-The architecture is not yet the C++20 deduction model. Important gaps include:
-
-- incomplete non-deduced context handling;
-- incomplete forwarding-reference and cv/ref transformation rules;
-- incomplete overload-set and function-pointer deduction;
-- incomplete template-template parameter matching;
-- incomplete partial ordering of function templates;
-- constraints are checked, but not yet modeled as normalized atomic constraints
-  with subsumption;
-- CTAD and deduction guides are represented, but not as a complete C++20
-  overload-set construction and selection pipeline;
-- deduction and overload viability are still interleaved with instantiation and
-  registry lookup rather than being separate semantic phases.
+Selected free, explicit-free, and member function-template overload paths now
+rank signature-only candidates before materializing bodies. Remaining deduction
+work should focus on moving non-deduced contexts, forwarding references, packs,
+template-template parameters, CTAD/deduction guides, partial ordering, and
+constraint subsumption into sema-owned phases before instantiation.
 
 ## Standard-conformance assessment
 
@@ -508,21 +228,23 @@ ids, dependent expressions, aliases, variable templates, and static members.
 C++20 NTTPs include integral values, enumeration values, pointers, references,
 member pointers, `nullptr`, floating-point values, and structural class-type
 values subject to the C++20 structural-type rules. FlashCpp now has typed
-identity for supported integral, enum, and `nullptr` arguments, but the remaining
-NTTP categories are not yet represented as standard semantic values. Until
-pointer/reference/member-pointer/floating-point/structural class values are
-produced by the parser and constexpr evaluator, full C++20 NTTP equivalence and
-mangling remain incomplete.
+identity for supported integral, enum, `nullptr`, object-pointer, reference,
+function-pointer, and null member-pointer arguments, but the remaining NTTP
+categories are not yet represented as standard semantic values. Until non-null
+member-pointer, floating-point, and structural class values are produced by the
+parser and constexpr evaluator, full C++20 NTTP equivalence and mangling remain
+incomplete.
 
 #### 3. Dependent names are represented as strings/placeholders
 
 Many dependent facts are still stored as `dependent_name`, placeholder
 `TypeInfo`, or optional AST. The follow-up work added
 `TypeInfo::DependentQualifiedNameRecord` for important member-type placeholders,
-but C++20 requires a broader distinction among unknown specialization, member of
-current instantiation, dependent base lookup, dependent qualified name,
-dependent template-id, and dependent expression. String identity is not enough
-to implement these rules reliably.
+current-instantiation owners, unknown-specialization owners, and expression
+qualified-ids, but C++20 requires the same semantic distinction across more
+dependent-base, injected-class-name, dependent template-id, and deeper
+expression/member-template segment paths. String identity is not enough to
+implement these rules reliably.
 
 #### 4. Two-phase lookup is incomplete
 
@@ -602,11 +324,12 @@ single parser bug; it is the absence of one semantic template system that owns:
    member-template calls, static initializers, dependent bases, unknown
    specializations, and expression qualified-ids.
 
-3. **Complete structural NTTP values**
-   Add parser/constexpr support for pointer, reference, function-pointer,
-   member-pointer, floating-point, and structural class-type NTTP values, then
-   wire those categories through identity, hashing, mangling, specialization
-   lookup, and diagnostics.
+3. **Complete remaining structural NTTP values**
+   Add parser/constexpr support for non-null member-pointer, floating-point, and
+   structural class-type NTTP values, then wire those categories through
+   identity, hashing, mangling, specialization lookup, and diagnostics. Replace
+   conservative function/member-pointer mangling fallbacks where standard entity
+   encodings are available.
 
 4. **Broaden signature-only deduction/ranking**
    Move more overload and deduction paths onto shape-only candidate viability so

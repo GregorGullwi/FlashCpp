@@ -150,37 +150,6 @@ should be split into focused investigations.
    pointer after the vector is moved.
 
 
-### Recently closed follow-up items
-
-1. **Close the remaining typed-NTTP identity holes.**
-   `makeEvaluatedDeferredBaseValueArg` can still collapse non-bool integer
-   values to `TypeCategory::Int`, and exact-template lookup still has a linear
-   fallback for integral mismatches. These should be fixed first because they
-   directly affect specialization identity, matching, and mangling. **Completed**
-   with expression/static-member type preservation and typed key hashing.
-
-2. **Finish static `constexpr` owner/error cleanup.**
-   Namespace-qualified constexpr references should be distinguished from
-   missing type/template owners, and invalid non-dependent `static constexpr`
-   initializers should hard-fail instead of reaching any zero-value recovery
-   path. **Completed** while preserving precise dependent deferral.
-
-3. **Simplify dependent NTTP concretization.**
-   Concretization should bind names once, substitute once, and evaluate once.
-   Duplicate substitute/evaluate attempts make lookup-order bugs hard to see.
-   **Completed** for dependent alias/default NTTP evaluation.
-
-4. **Remove the constructor-annotation safety net for valid code.**
-   Widen `SemanticAnalysis.cpp` constructor inference until valid programs no
-   longer need the codegen-time overload-resolution fallback. Only then should
-   the fallback become a hard diagnostic/invariant. **Completed for current
-   valid coverage**; the fallback remains soft for uncovered/invalid paths.
-
-5. **Move alias-size fallback into shared sema-owned querying.**
-   The current TypeInfo-size -> TypeSpecifier-size -> struct-size chain works
-   but should become one shared helper used by every concrete-size consumer.
-   **Completed** with shared alias-aware size query helpers.
-
 ### Highest-impact architecture tracks
 
 1. **Two-phase lookup records.**
@@ -237,267 +206,24 @@ should be split into focused investigations.
 
 ## Target architecture
 
-### 1. Authoritative declaration and lookup model
-
-Create one semantic lookup service used by parser, sema, constexpr evaluation,
-template instantiation, and codegen-facing normalization.
-
-The lookup result should preserve:
-
-- declaration identity, not only spelling;
-- declaring scope and namespace/class context;
-- whether the result is a type, value, namespace, template, overload set, or
-  dependent result;
-- access and using-declaration provenance;
-- whether ordinary lookup, qualified lookup, member lookup, or ADL produced it;
-- point-of-definition versus point-of-instantiation timing.
-
-Template registries should become indexes over declarations, not independent
-name lookup mechanisms. `TemplateRegistry` can still cache templates and
-instantiations, but candidate discovery should start from semantic lookup.
-
-### 2. First-class dependent name model
-
-Replace string-like dependent placeholders with semantic dependent entities.
-
-The compiler should distinguish:
-
-- dependent type name;
-- dependent value expression;
-- dependent template name;
-- member of current instantiation;
-- member of unknown specialization;
-- dependent qualified name;
-- dependent base lookup;
-- dependent template-id;
-- unresolved overload set dependent on argument types.
-
-This allows `typename`, `template`, current-instantiation lookup, dependent
-bases, and unknown specializations to be implemented according to C++20
-`[temp.dep]`, `[temp.res]`, and `[basic.lookup]` instead of by reparsing and
-fallback classification.
-
-### 3. Parameter-context-driven template argument classification
-
-Template arguments should be parsed into syntax first, then semantically
-classified against the corresponding template parameter.
-
-The target flow should be:
-
-1. parse a template-id into argument syntax nodes without forcing type/value
-   classification;
-2. perform template name lookup and select the target template declaration or
-   overload set;
-3. match arguments to parameters, including packs and defaults;
-4. classify each argument by parameter kind:
-   - type parameter: parse/resolve as type-id;
-   - non-type parameter: convert constant expression to the parameter type;
-   - template-template parameter: resolve as template-name and match parameter
-     list;
-5. diagnose mismatches at this layer.
-
-This removes most simple-identifier heuristics from
-`parse_explicit_template_arguments(...)`.
-
-### 4. Complete non-type template argument value model
-
-Replace the concrete `int64_t`-centered NTTP identity with a structural
-constant-value identity.
-
-The model should represent:
-
-- integral and enumeration values with exact type;
-- `bool`, character types, signedness, and width;
-- `nullptr`;
-- pointer values, including object/function pointers and linkage identity;
-- pointer-to-member values;
-- references;
-- floating-point values using exact representation;
-- structural class-type template parameter objects;
-- dependent constant expressions with preserved semantic expression identity.
-
-Equivalence and hashing should implement C++20 template-argument equivalence,
-not general expression equality.
-
-### 5. Two-phase lookup and point-of-instantiation state
-
-Template declarations should store a semantic definition context:
-
-- ordinary unqualified lookup results from the definition point where required;
-- namespace and class scope;
-- using directives/declarations visible at definition;
-- template parameter environment;
-- current-instantiation identity;
-- dependent lookup records to be completed at instantiation.
-
-At instantiation, only dependent lookups should be completed with the
-point-of-instantiation context. Non-dependent names should not be rebound to
-later declarations.
-
-### 6. Separate deduction from instantiation
-
-Function-template calls, member-template calls, CTAD, and deduction guides
-should share a semantic deduction engine.
-
-The engine should produce either:
-
-- a complete template argument list;
-- a substitution failure;
-- a hard diagnostic for non-SFINAE contexts.
-
-It should not materialize a function body or class body while ranking
-candidates. Instantiation should happen only after candidate selection and
-constraint checking.
-
-Required subareas:
-
-- all C++20 non-deduced contexts;
-- forwarding-reference rules;
-- array/function parameter adjustments;
-- cv/ref qualification transformations;
-- template-template parameter deduction;
-- pack deduction and pack consistency;
-- overload-set deduction;
-- conversion function template deduction;
-- partial ordering;
-- constraints and subsumption.
-
-### 7. Constraint normalization and subsumption
-
-Current concept checks should evolve into a C++20 constraints subsystem:
-
-- normalize requires-clauses and constrained parameters into atomic
-  constraints;
-- substitute template arguments into constraints under SFINAE rules;
-- compare atomic constraints for subsumption;
-- use constraints in overload ordering and partial ordering;
-- preserve diagnostics for failed associated constraints.
-
-### 8. Instantiation context and substitution ownership
-
-Substitution should operate on a single `TemplateInstantiationContext` rather
-than many parallel vectors and maps.
-
-The context should include:
-
-- selected template declaration;
-- parameter-to-argument bindings;
-- pack bindings and pack expansion state;
-- enclosing template contexts;
-- current instantiation;
-- point of instantiation;
-- failure policy;
-- lookup context;
-- constexpr/sema context.
-
-`TemplateEnvironment` can be the seed, but it should become declaration- and
-scope-aware instead of only name-to-argument aware.
-
-### 9. Class template and member template materialization
-
-Class-template materialization should be split into phases:
-
-1. create the instantiated type identity and current-instantiation context;
-2. instantiate base-specifiers and member declarations as declarations;
-3. register declarations and injected-class-name;
-4. defer function bodies and static data member definitions until required;
-5. sema-normalize ODR-used entities before codegen;
-6. constant-evaluate only when C++ requires immediate evaluation.
-
-Member function templates should use the same deduction and instantiation
-context as free function templates, with an added object parameter and class
-current-instantiation context.
-
-### 10. Static members and constexpr evaluation
-
-Static data member support should move away from early parser-driven repair.
-
-The target behavior:
-
-- declarations are instantiated with correct type and linkage identity;
-- initializers are stored as semantic AST under the definition context;
-- constant evaluation receives the instantiated semantic context;
-- function calls inside initializers use the unified call-resolution service;
-- ODR-use and immediate-constant contexts trigger materialization at the right
-  time;
-- normalized bytes are a post-sema/codegen artifact, not the source of truth.
-
-Constructor resolution inside instantiated member functions should evolve from
-the current two-tier model (sema annotation preferred, codegen-time fallback
-when absent) to fully sema-owned overload resolution. The fallback path should
-be narrowed and eventually removed as sema type-inference coverage expands.
-Until then, the warning log from a missing annotation is the observable
-diagnostic signal for coverage gaps.
-
-## Migration strategy
-
-### Phase 1: Document and instrument current behavior
-
-- Add targeted tests for current known behavior before refactoring.
-- Add debug assertions that identify when parser heuristics classify an argument
-  without target parameter context.
-- Track all direct `TemplateRegistry` lookups that act as semantic lookup.
-- Track all substitution paths that use raw parameter-name vectors or positional
-  maps instead of `TemplateEnvironment`.
-
-### Phase 2: Introduce semantic template-id nodes
-
-- Preserve template-id syntax without committing to type/value classification.
-- Store argument syntax and source locations.
-- Let semantic resolution classify arguments after template lookup.
-- Keep existing `TemplateTypeArg` lowering as a compatibility output.
-
-### Phase 3: Centralize template declaration lookup
-
-- Route class/function/alias/variable template lookup through one semantic
-  lookup result.
-- Keep `TemplateRegistry` as a cache/index behind lookup.
-- Replace unqualified-plus-qualified duplicate registration with declaration
-  identity and lookup context.
-
-### Phase 4: Build the conformance-oriented argument matcher
-
-- Match parameters to argument syntax using the target template declaration.
-- Fill defaults using the correct prior-parameter context.
-- Expand packs only after parameter matching decides pack ownership.
-- Produce `TemplateTypeArg` only after semantic classification.
-
-### Phase 5: Replace NTTP identity
-
-- Introduce a structural constant value representation.
-- Adapt instantiation keys and mangling to consume it.
-- Keep `int64_t` as a temporary carrier only for legacy integral cases.
-- Add tests for pointers, references, member pointers, `nullptr`, enums,
-  floating-point NTTPs, and structural class NTTPs as support lands.
-
-### Phase 6: Implement two-phase lookup records
-
-- Store definition-context lookup results for non-dependent names.
-- Store dependent lookup records for names to complete at instantiation.
-- Update expression, type, alias, and static-member initializer substitution to
-  consume those records.
-
-### Phase 7: Deduction engine extraction
-
-- Extract deduction from parser instantiation functions into a semantic service.
-- Make it produce candidate viability and complete template argument lists
-  without materializing definitions.
-- Use the same engine for free functions, member functions, constructors, CTAD,
-  deduction guides, and conversion functions.
-
-### Phase 8: Constraint subsystem
-
-- Normalize constraints.
-- Substitute constraints during candidate viability.
-- Implement subsumption for overload and partial ordering.
-- Replace current concept checks with this subsystem.
-
-### Phase 9: Materialization fixpoint
-
-- Make sema own all first materialization for ODR-used template entities.
-- Run a pre-codegen materialization/normalization fixpoint.
-- Convert codegen fallback paths into invariant checks once sema coverage is
-  complete.
+Keep moving toward one sema-owned template system:
+
+- semantic lookup results own declaration identity, lookup kind, dependency
+  state, and definition-vs-POI timing;
+- registries act as indexes/caches behind lookup, not independent lookup
+  authorities;
+- dependent names carry records for current instantiation, unknown
+  specialization, dependent bases, dependent template-ids, and dependent
+  expression/member chains;
+- NTTP identity models C++20 template-argument equivalence for every supported
+  category;
+- candidate construction, deduction, constraints, overload ranking,
+  substitution, and materialization are separate phases;
+- static member and constructor handling become sema-owned, with codegen
+  fallbacks converted to diagnostics or invariants as coverage expands.
+
+The old phase plan is intentionally removed from this document. The actionable
+remaining work is the smaller phased delivery list below.
 
 ## Suggested regression coverage
 
@@ -515,7 +241,8 @@ diagnostic signal for coverage gaps.
 - Exact signedness and width distinctions.
 - Enum NTTPs.
 - `nullptr` NTTPs.
-- Pointer/reference/member-pointer NTTPs.
+- Object-pointer, reference, function-pointer, and null member-pointer NTTPs.
+- Non-null member-pointer NTTPs.
 - Floating-point NTTPs.
 - Structural class NTTPs.
 - Dependent NTTP expressions involving `sizeof`, `alignof`, `noexcept`, and
@@ -548,10 +275,12 @@ diagnostic signal for coverage gaps.
 
 ## Recommended next step
 
-Start with parameter-context-driven template argument classification. It is the
-smallest structural change that directly reduces the largest class of current
-non-conformance: deciding whether an argument is a type, value, or template
-without first knowing the target parameter.
+Start with the remaining semantic lookup unification and two-phase lookup
+records. Parameter-context-driven template argument classification is already in
+place for the main explicit template-id use sites; the highest-impact remaining
+work is to make lower-frequency registry probes, static-initializer lookup,
+dependent-base lookup, and ADL-sensitive dependent calls use the same
+declaration-owned lookup records as the main template paths.
 
 ## Implementation plan
 
@@ -586,10 +315,12 @@ behavior as compatibility constraints.
    selection paths. Instantiate only after winner selection.
 
 5. **Expand structural NTTP identity beyond supported scalar cases**
-   Typed integral/enum/`nullptr` identities are implemented. Add standard
-   semantic values and equivalence for pointer, reference, function-pointer,
-   member-pointer, floating-point, and structural class-type NTTPs, then migrate
-   keys and mangling for those categories.
+   Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
+   and null member-pointer identities are implemented. Add standard semantic
+   values and equivalence for non-null member-pointer, floating-point, and
+   structural class-type NTTPs, then migrate keys and mangling for those
+   categories. Replace conservative function/member-pointer mangling fallbacks
+   where standard entity encodings are available.
 
 6. **Complete dependent-name/current-instantiation modeling**
    Build on `DependentQualifiedNameRecord` with semantic records for expression
@@ -614,9 +345,10 @@ behavior as compatibility constraints.
    constexpr context, and failure policy.
 
 4. **Structural NTTP value representation**
-   Extend the current typed scalar identity into value variants and
-   equivalence/hashing rules for pointer, reference, function-pointer,
-   member-pointer, floating-point, and structural class-type NTTPs.
+   Extend the current typed scalar/entity identity into value variants and
+   equivalence/hashing rules for non-null member-pointer, floating-point, and
+   structural class-type NTTPs. Keep object-pointer, reference, function-pointer,
+   and null member-pointer identity in the supported set.
 
 5. **Dependent-name/current-instantiation records**
    Preserve current-instantiation, dependent base, unknown specialization,
@@ -648,64 +380,12 @@ behavior as compatibility constraints.
    materialization.
 
 5. **Gate E (NTTP and two-phase lookup)**
-   **Status: partial.** Typed NTTP identities and definition-vs-POI function
-   lookup are implemented for supported cases. Pointer/reference/member-pointer,
-   floating-point, structural class NTTP values, full semantic lookup, and full
-   dependent-base/current-instantiation behavior remain open.
-
-### Targeted TODOs closed by follow-up work
-
-1. **TODO: Preserve exact integral NTTP category during deferred evaluation**
-   Never collapse evaluated integral NTTPs to a generic `int` category in
-   deferred-base/dependent evaluation paths. Keep original signedness/width/type
-   category so specialization identity, matching, and mangling remain C++20
-   correct. Enum functional casts already carry `TypeCategory::Enum` at parse
-   time and through overload resolution; the remaining gap is in
-   `makeEvaluatedDeferredBaseValueArg`, which can collapse any non-bool integer
-   NTTP to `TypeCategory::Int`. Apply the same TypeInfo-backed category lookup
-   that parser and overload-resolution layers now use. **Closed.**
-
-2. **TODO: Remove linear specialization fallback for integral mismatches**
-   Replace O(N) "scan all specializations" fallback behavior in exact template
-   lookup with canonical argument normalization that preserves type identity and
-   allows stable hash/key lookup. This keeps behavior deterministic and avoids
-   lookup policy that can diverge from proper template-argument equivalence.
-   **Closed.**
-
-3. **TODO: Treat namespace-qualified names as valid owners in constexpr paths**
-   In static-member constexpr normalization/evaluation, distinguish namespace
-   owners from missing type/template owners. Namespace-qualified references must
-   participate in normal lookup/evaluation instead of being classified as
-   missing-owner deferrals. **Closed.**
-
-4. **TODO: Reject invalid `static constexpr` initializers instead of zero-fallback**
-   Remove broad recoverable fallback that can zero-initialize non-constant
-   `static constexpr` members. Only defer where a precise dependent/missing-owner
-   condition is proven; otherwise produce the required hard diagnostic.
-   **Closed.**
-
-5. **TODO: Simplify dependent NTTP concretization to a single evaluation pass**
-   Ensure dependent-argument concretization does not perform duplicate
-   substitute/evaluate cycles that can diverge or hide lookup-order bugs.
-   Prefer deterministic order: name binding first, then one expression
-   substitution/evaluation attempt. **Closed.**
-
-6. **TODO: Eliminate sema constructor annotation fallback for well-formed code**
-   The current soft fallback (sema omits annotation → codegen-time overload
-   resolution with warning) is intentional while sema type-inference coverage is
-   incomplete. Extend `inferExpressionType` and
-   `tryAnnotateConstructorCallArgConversions` coverage in `SemanticAnalysis.cpp`
-   until the warning log is never emitted for valid C++20 code. Once coverage is
-   complete, convert the fallback to a hard `CompileError`. **Closed for current
-   valid coverage; fallback intentionally remains soft for uncovered/invalid
-   paths.**
-
-7. **TODO: Consolidate alias size resolution into a shared sema helper**
-   The TypeInfo-size → TypeSpecifier-size → struct-size fallback chain in
-   `resolveCodegenSizeBits` should be extracted into a shared size-query service
-   used by all codegen paths that need a concrete byte/bit count for an
-   alias-resolved type, avoiding duplication across independent codegen call
-   sites. **Closed.**
+   **Status: partial, advanced.** Typed NTTP identities and definition-vs-POI
+   lookup are implemented for supported cases, including object pointers,
+   references, function pointers, and null member pointers. Non-null
+   member-pointer, floating-point, and structural class NTTP values remain open,
+   along with full semantic lookup coverage and full dependent-base,
+   injected-class-name, and current-instantiation behavior.
 
 ### Exit criteria
 
@@ -717,7 +397,8 @@ behavior as compatibility constraints.
   instantiation;
 - two-phase lookup behavior is test-covered for non-dependent function calls vs
   dependent POI/ADL calls;
-- NTTP equivalence is type-accurate for supported integral/enum/`nullptr` cases,
+- NTTP equivalence is type-accurate for supported integral/enum/`nullptr`,
+  object-pointer, reference, function-pointer, and null member-pointer cases,
   while unsupported structural categories diagnose instead of collapsing to
   scalar identities.
 
@@ -731,8 +412,9 @@ behavior as compatibility constraints.
   packs, overload sets, template-template parameters, CTAD, and guides;
 - static-member constexpr cases covering scalar gating, normalized-byte reads,
   recursive base-member chains, and depth-limit boundary behavior;
-- NTTP identity/equivalence coverage for enum, pointer/reference/member-pointer,
-  `nullptr`, floating-point, and structural class-type arguments;
+- NTTP identity/equivalence coverage for enum, `nullptr`, object-pointer,
+  reference, function-pointer, null member-pointer, non-null member-pointer,
+  floating-point, and structural class-type arguments;
 - deferred-base NTTP cases proving no category collapse (`unsigned`, `long`,
   `size_t`, fixed-width types) and stable specialization key selection;
 - static constexpr initializer diagnostics proving no silent zero-initialization
