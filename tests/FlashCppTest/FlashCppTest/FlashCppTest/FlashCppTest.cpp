@@ -3696,7 +3696,7 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	const auto& assign_param = assign_result.member_overload->function_decl.as<FunctionDeclarationNode>().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 	CHECK(assign_param.type_index() == wrap_double_idx);
 
-	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, "+", gSymbolTable, TypeCategory::UserDefined);
+	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, gSymbolTable, TypeCategory::UserDefined);
 	REQUIRE(free_result.has_match);
 	CHECK(!free_result.is_ambiguous);
 	CHECK(free_result.is_free_function);

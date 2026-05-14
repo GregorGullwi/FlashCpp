@@ -175,7 +175,7 @@ public:
 		return heap_data_.capacity();
 	}
 
-	template <typename InputIt>
+	template <std::input_iterator InputIt>
 	void assign(InputIt first, InputIt last) {
 		clear();
 		for (InputIt it = first; it != last; ++it)
