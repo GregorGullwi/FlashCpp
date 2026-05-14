@@ -3292,6 +3292,14 @@ private:	 // Resume private methods
 			overloads.end());
 	}
 
+	std::optional<ParseResult> tryQualifiedPhase1Lookup(
+		const QualifiedIdentifierNode& qual_id,
+		std::string_view display_name,
+		const std::optional<InlineVector<TemplateTypeArg, 4>>& template_args,
+		bool has_deferred_qualified_call_args,
+		const std::vector<TypeSpecifierNode>& arg_types,
+		std::optional<ASTNode>& identifierType);
+
 	bool hasActiveTemplateParameters() const {
 		return !current_template_params_.empty();
 	}
