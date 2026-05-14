@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (semantic lookup unification follow-up)
+**Last updated:** 2026-05-14 (semantic lookup unification complete)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -88,29 +88,40 @@ Completed work:
 15. moved remaining low-frequency parser template probes and the static-initializer
     constexpr template probe onto parser-built semantic lookup requests so timing
     follows definition-vs-POI context instead of hardcoded point-of-definition.
+16. improved deferred-base-class lookup: `lookup_inherited_template` and
+    `lookup_inherited_type_alias` now follow the `type_index` of a deferred base
+    (including one level of alias chain) to find a concrete struct and recurse
+    into it, instead of always skipping deferred bases entirely.
+17. threaded parser context into `getTemplateParametersForTypeInfo` in
+    `ConstExprEvaluator_Members.cpp`; when a parser is available the function
+    uses `makeTemplateNameLookupRequest` (which propagates POI timing and
+    definition-namespace context) instead of the registry convenience wrappers
+    that always use `PointOfDefinition` timing.
+18. documented why `ExpressionSubstitutor.cpp` existence checks keep direct
+    registry calls (simple name-presence check at substitution time, no
+    instantiation-context timing needed).
 
-The latest validation run passed `.\build_flashcpp.bat Sharded` and targeted
-regression tests for qualified template calls and floating NTTP specialization.
+The latest validation run passed the Linux sharded build and all 2351 regular
+tests plus 183 expected-fail tests.
 
 The remaining target architecture sections are retained as the next conformance
-roadmap, especially the remaining low-frequency semantic lookup paths, richer
-dependent-base and segment-chain modeling, and constraint
-normalization/subsumption.
+roadmap, especially deeper dependent-base and segment-chain modeling, ADL
+for dependent calls, and constraint normalization/subsumption.
 
 ## What is left / next
 
 The completed refactor should be treated as the foundation, not the finish line.
-The immediate cleanup items from the first follow-up pass are closed. The
-remaining work is now mostly architecture work plus a few hardening passes that
-should be split into focused investigations.
+The immediate semantic lookup unification work is now closed. The remaining
+work is mostly architecture work that should be split into focused investigations.
 
 ### Open next steps
 
-1. **Finish semantic lookup unification (remaining dependent paths).**
-   Main discovery paths and low-frequency parser/static-initializer probes now use
-   parser-built semantic lookup requests. The remaining work is dependent-base
-   lookup, deeper member-template segment chains, and ADL-sensitive dependent
-   completion paths that still rely on partial fallback behavior.
+1. **ADL-sensitive dependent completion and deeper two-phase lookup records.**
+   All non-dependent unqualified/qualified/member-template/operator paths now
+   use semantic lookup requests. The remaining gap is ADL completion for
+   dependent argument types and recording definition-context lookup for calls
+   from inside template bodies that reach hidden friends or dependent ADL
+   namespaces.
 
 2. **Broaden two-phase lookup records further.**
    Definition-context and semantic lookup records now protect selected

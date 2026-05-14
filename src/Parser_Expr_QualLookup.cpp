@@ -484,6 +484,51 @@ bool Parser::is_base_class_template_parameter(std::string_view base_class_name) 
 	return false;
 }
 
+// Helper: Attempt to resolve a deferred base class to a concrete struct TypeInfo.
+// When a base class is marked is_deferred but carries a valid type_index (e.g.
+// is_dependent_type_alias cases from process_base_class), we can still look up
+// the underlying concrete struct rather than blindly skipping the base.
+// Returns nullptr when no concrete struct can be found (conservative: same
+// behavior as before this helper was introduced).
+static const TypeInfo* tryResolveDeferredBaseToConcreteStruct(
+	const BaseClassSpecifier& base_class) {
+	if (!base_class.type_index.is_valid()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "Skipping deferred base class '{}'", base_class.name);
+		return nullptr;
+	}
+	const TypeInfo* deferred_type = tryGetTypeInfo(base_class.type_index);
+	if (deferred_type == nullptr) {
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"Deferred base '{}' has type_index but couldn't resolve, skipping",
+			base_class.name);
+		return nullptr;
+	}
+	if (deferred_type->struct_info_) {
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"Deferred base '{}' has valid type_index, resolved to concrete struct '{}', recursing",
+			base_class.name, StringTable::getStringView(deferred_type->name()));
+		return deferred_type;
+	}
+	// Underlying type is itself an alias — follow one more level.
+	if (deferred_type->type_index_.is_valid()) {
+		const TypeInfo* chained_type = tryGetTypeInfo(deferred_type->type_index_);
+		if (chained_type != nullptr && chained_type->struct_info_) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"Deferred base '{}' resolved via alias chain to '{}', recursing",
+				base_class.name, StringTable::getStringView(chained_type->name()));
+			return chained_type;
+		}
+		FLASH_LOG_FORMAT(Templates, Debug,
+			"Deferred base '{}' has type_index but no concrete struct found via alias chain, skipping",
+			base_class.name);
+		return nullptr;
+	}
+	FLASH_LOG_FORMAT(Templates, Debug,
+		"Deferred base '{}' has type_index but no concrete struct found, skipping",
+		base_class.name);
+	return nullptr;
+}
+
 // Helper: Look up a type alias including inherited ones from base classes
 // Searches struct_name::member_name first, then recursively searches base classes
 // Uses depth limit to prevent infinite recursion in case of malformed input
@@ -595,9 +640,16 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
 	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
 	for (const auto& base_class : struct_info->base_classes) {
-		// Skip deferred base classes (they haven't been resolved yet)
 		if (base_class.is_deferred) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Skipping deferred base class '{}'", base_class.name);
+			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
+			if (resolved != nullptr) {
+				const TypeInfo* base_result = lookup_inherited_type_alias(resolved->name(), member_name, depth + 1);
+				if (base_result != nullptr) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Found inherited type alias '{}::{}' via deferred base '{}'",
+									 StringTable::getStringView(struct_name), StringTable::getStringView(member_name), base_class.name);
+					return base_result;
+				}
+			}
 			continue;
 		}
 
@@ -675,9 +727,16 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
 	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
 	for (const auto& base_class : struct_info->base_classes) {
-		// Skip deferred base classes (they haven't been resolved yet)
 		if (base_class.is_deferred) {
-			FLASH_LOG_FORMAT(Templates, Debug, "Skipping deferred base class '{}'", base_class.name);
+			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
+			if (resolved != nullptr) {
+				const std::vector<ASTNode>* base_result = lookup_inherited_template(resolved->name(), template_name, depth + 1);
+				if (base_result != nullptr && !base_result->empty()) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Found inherited template function '{}::{}' via deferred base '{}'",
+									 StringTable::getStringView(struct_name), template_name, base_class.name);
+					return base_result;
+				}
+			}
 			continue;
 		}
 
