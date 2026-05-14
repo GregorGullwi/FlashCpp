@@ -738,6 +738,14 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 			materialized_args.reserve(stored_args.size());
 			for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
 				TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+				if (arg.is_value && arg.dependent_expr.has_value()) {
+					ASTNode substituted_expr = substitute(*arg.dependent_expr);
+					if (auto eval_result = parser_.try_evaluate_constant_expression(substituted_expr)) {
+						arg = TemplateTypeArg(eval_result->value, eval_result->type);
+					} else {
+						arg.dependent_expr = std::move(substituted_expr);
+					}
+				}
 				if (arg.dependent_name.isValid()) {
 					std::string_view dependent_arg_name =
 						StringTable::getStringView(arg.dependent_name);
@@ -751,6 +759,19 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 					}
 				} else if (!arg.is_value && arg.type_index.is_valid()) {
 					if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+						if (arg_type_info->isDependentMemberType()) {
+							if (const TypeInfo* resolved_member_type =
+									resolveDependentMemberType(*arg_type_info, depth + 1);
+								resolved_member_type != nullptr) {
+								arg.type_index = resolved_member_type->registeredTypeIndex()
+									.withCategory(resolved_member_type->typeEnum());
+								arg.setCategory(resolved_member_type->typeEnum());
+								arg.dependent_name = {};
+								arg.is_dependent = false;
+								materialized_args.push_back(std::move(arg));
+								continue;
+							}
+						}
 						std::string_view arg_type_name =
 							StringTable::getStringView(arg_type_info->name());
 						if (auto subst_it = param_map_.find(arg_type_name);
@@ -2346,6 +2367,15 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 	}
 	for (TemplateTypeArg& arg : inst_args) {
+		if (!arg.is_value && arg.type_index.is_valid()) {
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+				std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
+				auto param_it = param_map_.find(arg_type_name);
+				if (param_it != param_map_.end()) {
+					arg = rebindDependentTemplateTypeArg(param_it->second, arg);
+				}
+			}
+		}
 		if (!arg.is_dependent) {
 			continue;
 		}

@@ -444,11 +444,18 @@ ParseResult Parser::parse_template_parameter() {
 	if (!type_result.node().has_value()) {
 		return ParseResult::error("Expected type specifier for non-type template parameter", current_token_);
 	}
-	TypeSpecifierNode nttp_type = type_result.node()->as<TypeSpecifierNode>();
-	consume_pointer_ref_modifiers(nttp_type);
-	if ((nttp_type.type() == TypeCategory::Struct ||
-		 nttp_type.type() == TypeCategory::UserDefined ||
-		 nttp_type.type() == TypeCategory::TypeAlias) &&
+		TypeSpecifierNode nttp_type = type_result.node()->as<TypeSpecifierNode>();
+		consume_pointer_ref_modifiers(nttp_type);
+		if (nttp_type.is_reference() &&
+			nttp_type.type() != TypeCategory::Auto &&
+			nttp_type.type() != TypeCategory::DeclTypeAuto) {
+			return ParseResult::error(
+				"Reference non-type template parameters are not supported yet",
+				type_result.node()->as<TypeSpecifierNode>().token());
+		}
+		if ((nttp_type.type() == TypeCategory::Struct ||
+			 nttp_type.type() == TypeCategory::UserDefined ||
+			 nttp_type.type() == TypeCategory::TypeAlias) &&
 		nttp_type.type_index().is_valid()) {
 		const TypeInfo* nttp_type_info = tryGetTypeInfo(nttp_type.type_index());
 		if (nttp_type_info != nullptr &&
@@ -972,7 +979,105 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				}
 			}
 
-			return TypeCategory::Int;
+		return TypeCategory::Int;
+	};
+
+	auto hasConcreteSubstitutionForName = [&](StringHandle name) {
+		if (!name.isValid()) {
+			return false;
+		}
+		for (const auto& subst : template_param_substitutions_) {
+			if (subst.param_name == name) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	auto expressionHasUnsubstitutedDependency =
+		[&](const auto& self, const ASTNode& node) -> bool {
+			if (!node.is<ExpressionNode>()) {
+				return false;
+			}
+			const ExpressionNode& dep_expr = node.as<ExpressionNode>();
+			if (const auto* tparam_ref =
+					std::get_if<TemplateParameterReferenceNode>(&dep_expr)) {
+				return !hasConcreteSubstitutionForName(tparam_ref->param_name());
+			}
+			if (const auto* id = std::get_if<IdentifierNode>(&dep_expr)) {
+				StringHandle name = StringTable::getOrInternStringHandle(id->name());
+				return currentTemplateParamKind(name).has_value() &&
+					   !hasConcreteSubstitutionForName(name);
+			}
+			if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&dep_expr)) {
+				auto storedArgsContainUnsubstitutedDependency =
+					[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) {
+					for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
+						TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+						if (arg.dependent_name.isValid() &&
+							!hasConcreteSubstitutionForName(arg.dependent_name)) {
+							return true;
+						}
+						if (arg.dependent_expr.has_value() &&
+							self(self, *arg.dependent_expr)) {
+							return true;
+						}
+						if (arg.is_dependent && !arg.dependent_name.isValid()) {
+							return true;
+						}
+					}
+					return false;
+				};
+				if (const TypeInfo::DependentQualifiedNameRecord* record =
+						qual_id->dependentQualifiedName()) {
+					if (record->owner_name.isValid() &&
+						currentTemplateParamKind(record->owner_name).has_value() &&
+						!hasConcreteSubstitutionForName(record->owner_name)) {
+						return true;
+					}
+					if (storedArgsContainUnsubstitutedDependency(
+							record->owner_template_arguments)) {
+						return true;
+					}
+					for (const auto& member : record->member_chain) {
+						if (storedArgsContainUnsubstitutedDependency(
+								member.template_arguments)) {
+							return true;
+						}
+					}
+				}
+				std::string_view owner_name =
+					gNamespaceRegistry.getQualifiedName(qual_id->namespace_handle());
+				if (!owner_name.empty()) {
+					auto owner_it = getTypesByNameMap().find(
+						StringTable::getOrInternStringHandle(owner_name));
+					if (owner_it != getTypesByNameMap().end() &&
+						owner_it->second != nullptr) {
+						const TypeInfo* owner_info = owner_it->second;
+						if (owner_info->isDependentPlaceholder() ||
+							owner_info->is_incomplete_instantiation_ ||
+							owner_info->hasDependentQualifiedName()) {
+							if (storedArgsContainUnsubstitutedDependency(
+									owner_info->templateArgs())) {
+								return true;
+							}
+						}
+					}
+				}
+				return false;
+			}
+			if (const auto* binary = std::get_if<BinaryOperatorNode>(&dep_expr)) {
+				return self(self, binary->get_lhs()) || self(self, binary->get_rhs());
+			}
+			if (const auto* unary = std::get_if<UnaryOperatorNode>(&dep_expr)) {
+				return self(self, unary->get_operand());
+			}
+			if (const auto* ternary = std::get_if<TernaryOperatorNode>(&dep_expr)) {
+				return self(self, ternary->condition()) ||
+					   self(self, ternary->true_expr()) ||
+					   self(self, ternary->false_expr());
+			}
+			return false;
 		};
 
 	while (true) {
@@ -1164,7 +1269,10 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			// pointer/function-pointer NTTPs in explicit specializations must materialize to
 			// concrete identities even when parsed inside template declarations. Dependent
 			// expressions naturally fall through when evaluation fails.
-			bool should_try_constant_eval = true;
+			bool should_try_constant_eval =
+				!expressionHasUnsubstitutedDependency(
+					expressionHasUnsubstitutedDependency,
+					*expr_result.node());
 			if (should_try_constant_eval) {
 				FLASH_LOG(
 					Templates,
@@ -1189,6 +1297,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					}
 
 					template_args.push_back(const_arg);
+					if (out_type_nodes && expr_result.node().has_value()) {
+						out_type_nodes->push_back(*expr_result.node());
+					}
 					discard_saved_token(arg_saved_pos);
 
 					// Check for ',' or '>' after the expression (or after pack expansion)
@@ -1233,7 +1344,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 											std::holds_alternative<OffsetofExprNode>(expr) ||
 											std::holds_alternative<TypeTraitExprNode>(expr) ||
 											std::holds_alternative<QualifiedIdentifierNode>(expr) ||
-											std::holds_alternative<BinaryOperatorNode>(expr);
+											std::holds_alternative<BinaryOperatorNode>(expr) ||
+											std::holds_alternative<TernaryOperatorNode>(expr);
 
 				if (is_compile_time_expr && !peek().is_eof()) {
 					// Handle >> token splitting for nested templates
@@ -1283,6 +1395,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							std::holds_alternative<NoexceptExprNode>(expr) ||
 							std::holds_alternative<TypeTraitExprNode>(expr) ||
 							std::holds_alternative<BinaryOperatorNode>(expr) ||
+							std::holds_alternative<TernaryOperatorNode>(expr) ||
 							std::holds_alternative<UnaryOperatorNode>(expr) ||
 							std::holds_alternative<StaticCastNode>(expr)) {
 							if (expr_result.node().has_value()) {
@@ -1508,45 +1621,12 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qualified_name, "' is a concrete type, falling through to type parsing");
 								}
 							}
-							if (!is_concrete_type) {
-								auto is_template_like_name = [&](std::string_view candidate_name) {
-									if (candidate_name.empty()) {
-										return false;
-									}
-									TemplateNameLookupRequest request;
-									request.name = StringTable::getOrInternStringHandle(candidate_name);
-									request.lookup_kind = TemplateNameLookupKind::Qualified;
-									request.timing = TemplateNameLookupTiming::PointOfDefinition;
-									TemplateNameLookupResult lookup = gTemplateRegistry.lookupTemplateName(request);
-									return lookup.hasAliasTemplate() ||
-										   lookup.hasClassTemplate() ||
-										   lookup.hasFunctionTemplate();
-								};
-
-								std::string_view qualifier_name =
-									gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
-								std::string_view base_member_name =
-									extractBaseTemplateName(qual_id.name());
-								std::string_view qualified_base_member_name;
-								if (!qualifier_name.empty() && !base_member_name.empty()) {
-									qualified_base_member_name = StringBuilder()
-										.append(qualifier_name)
-										.append("::")
-										.append(base_member_name)
-										.commit();
-								}
-
-								if (is_template_like_name(qual_id.name()) ||
-									is_template_like_name(base_member_name) ||
-									is_template_like_name(qualified_name) ||
-									is_template_like_name(qualified_base_member_name)) {
-									is_concrete_type = true;
-									FLASH_LOG(Templates, Debug,
-											  "QualifiedIdentifierNode '",
-											  qualified_name,
-											  "' names a template/alias target, falling through to type parsing");
-								}
-							}
+							// Keep unresolved qualified-ids value-like by default.
+							// Whether `A::B` is a type-id or a non-type expression is
+							// context-sensitive and must be decided against the target
+							// template-parameter kind instead of template-name heuristics.
+							// Forcing unresolved `A::B` to type-like here regresses
+							// non-type contexts such as ValueSlot<Owner::value>.
 						}
 
 					// If it's a concrete type, restore and let type parsing handle it
@@ -1658,6 +1738,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								std::holds_alternative<OffsetofExprNode>(expr) ||
 								std::holds_alternative<TypeTraitExprNode>(expr) ||
 								std::holds_alternative<BinaryOperatorNode>(expr) ||
+								std::holds_alternative<TernaryOperatorNode>(expr) ||
 								std::holds_alternative<UnaryOperatorNode>(expr) ||
 								std::holds_alternative<StaticCastNode>(expr) ||
 								simple_identifier_kind == SimpleTemplateArgKind::ValueLike;
@@ -1674,6 +1755,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									 std::holds_alternative<NoexceptExprNode>(expr) ||
 									 std::holds_alternative<TypeTraitExprNode>(expr) ||
 									 std::holds_alternative<BinaryOperatorNode>(expr) ||
+									 std::holds_alternative<TernaryOperatorNode>(expr) ||
 									 std::holds_alternative<UnaryOperatorNode>(expr) ||
 									 std::holds_alternative<StaticCastNode>(expr)) &&
 									expr_result.node().has_value()) {
@@ -2552,12 +2634,113 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		return std::nullopt;
 	};
 
+	auto hasConcreteSubstitutionForName = [&](StringHandle name) {
+		if (!name.isValid()) {
+			return false;
+		}
+		for (const auto& subst : template_param_substitutions_) {
+			if (subst.param_name == name) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	auto expressionHasUnsubstitutedDependency =
+		[&](const auto& self, const ASTNode& node) -> bool {
+			if (!node.is<ExpressionNode>()) {
+				return false;
+			}
+			const ExpressionNode& dep_expr = node.as<ExpressionNode>();
+			if (const auto* tparam_ref =
+					std::get_if<TemplateParameterReferenceNode>(&dep_expr)) {
+				return !hasConcreteSubstitutionForName(tparam_ref->param_name());
+			}
+			if (const auto* id = std::get_if<IdentifierNode>(&dep_expr)) {
+				StringHandle name = StringTable::getOrInternStringHandle(id->name());
+				return currentTemplateParamKind(name).has_value() &&
+					   !hasConcreteSubstitutionForName(name);
+			}
+			if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&dep_expr)) {
+				auto storedArgsContainUnsubstitutedDependency =
+					[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) {
+					for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
+						TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+						if (arg.dependent_name.isValid() &&
+							!hasConcreteSubstitutionForName(arg.dependent_name)) {
+							return true;
+						}
+						if (arg.dependent_expr.has_value() &&
+							self(self, *arg.dependent_expr)) {
+							return true;
+						}
+						if (arg.is_dependent && !arg.dependent_name.isValid()) {
+							return true;
+						}
+					}
+					return false;
+				};
+				if (const TypeInfo::DependentQualifiedNameRecord* record =
+						qual_id->dependentQualifiedName()) {
+					if (record->owner_name.isValid() &&
+						currentTemplateParamKind(record->owner_name).has_value() &&
+						!hasConcreteSubstitutionForName(record->owner_name)) {
+						return true;
+					}
+					if (storedArgsContainUnsubstitutedDependency(
+							record->owner_template_arguments)) {
+						return true;
+					}
+					for (const auto& member : record->member_chain) {
+						if (storedArgsContainUnsubstitutedDependency(
+								member.template_arguments)) {
+							return true;
+						}
+					}
+				}
+				std::string_view owner_name =
+					gNamespaceRegistry.getQualifiedName(qual_id->namespace_handle());
+				if (!owner_name.empty()) {
+					auto owner_it = getTypesByNameMap().find(
+						StringTable::getOrInternStringHandle(owner_name));
+					if (owner_it != getTypesByNameMap().end() &&
+						owner_it->second != nullptr) {
+						const TypeInfo* owner_info = owner_it->second;
+						if (owner_info->isDependentPlaceholder() ||
+							owner_info->is_incomplete_instantiation_ ||
+							owner_info->hasDependentQualifiedName()) {
+							if (storedArgsContainUnsubstitutedDependency(
+									owner_info->templateArgs())) {
+								return true;
+							}
+						}
+					}
+				}
+				return false;
+			}
+			if (const auto* binary = std::get_if<BinaryOperatorNode>(&dep_expr)) {
+				return self(self, binary->get_lhs()) || self(self, binary->get_rhs());
+			}
+			if (const auto* unary = std::get_if<UnaryOperatorNode>(&dep_expr)) {
+				return self(self, unary->get_operand());
+			}
+			if (const auto* ternary = std::get_if<TernaryOperatorNode>(&dep_expr)) {
+				return self(self, ternary->condition()) ||
+					   self(self, ternary->true_expr()) ||
+					   self(self, ternary->false_expr());
+			}
+			return false;
+		};
+
 	auto makeValueArgForSyntax = [&](const ASTNode* syntax_node,
 									 const TemplateTypeArg& existing_arg,
 									 const TemplateParameterNode& param)
 		-> std::optional<TemplateTypeArg> {
 		if (syntax_node != nullptr && syntax_node->is<ExpressionNode>()) {
 			const ASTNode& expr_node = *syntax_node;
+			if (!expressionHasUnsubstitutedDependency(
+					expressionHasUnsubstitutedDependency,
+					expr_node)) {
 			if (auto const_value = try_evaluate_constant_expression(expr_node)) {
 				FlashCpp::NonTypeValueIdentity identity = const_value->identity;
 				TypeIndex declared_type_index = param.has_type()
@@ -2602,6 +2785,7 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 				}
 				TemplateTypeArg result = TemplateTypeArg::makeValueIdentity(identity);
 				return result;
+			}
 			}
 			if (existing_arg.is_value &&
 				existing_arg.valueIdentity().kind != FlashCpp::NonTypeValueIdentityKind::Integral &&
