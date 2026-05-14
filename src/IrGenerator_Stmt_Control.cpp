@@ -40,6 +40,7 @@ void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
 			// Evaluate the condition at compile time
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		ctx.parser = parser_;
+		ctx.sema = sema_;
 		auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
 
 		if (!result.success()) {

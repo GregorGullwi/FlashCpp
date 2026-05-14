@@ -367,6 +367,7 @@ ParseResult Parser::parse_static_assert() {
 	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	ctx.parser = this;  // Enable template function instantiation
+	ctx.sema = getActiveSemanticAnalysis();
 
 	// Pass struct context for static member lookup in static_assert within struct body
 	if (!struct_parsing_context_stack_.empty()) {

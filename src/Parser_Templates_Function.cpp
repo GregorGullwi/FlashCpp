@@ -1177,6 +1177,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
 		ctx.parser = this;
+		ctx.sema = getActiveSemanticAnalysis();
 		ctx.is_speculative = true;
 		return ctx;
 	};
