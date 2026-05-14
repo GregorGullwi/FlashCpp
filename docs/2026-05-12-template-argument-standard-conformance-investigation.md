@@ -246,7 +246,9 @@ remaining work is the smaller phased delivery list below.
 - Floating-point NTTPs.
 - Structural class NTTPs.
 - Dependent NTTP expressions involving `sizeof`, `alignof`, `noexcept`, and
-  static data members.
+  static data members. Known failing repro: `Box<sizeof(T)>` and
+  `Box<sizeof(T) + 1>` can collapse during instantiation
+  identity/materialization.
 
 ### Lookup and ADL
 
