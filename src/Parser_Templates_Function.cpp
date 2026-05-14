@@ -1016,6 +1016,11 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		TypeIndex identity_type_index = makeConstantValueTypeIndex(category, type_index);
 		return ConstantValue{value, category, identity_type_index, FlashCpp::NonTypeValueIdentity::makeConcrete(value, identity_type_index)};
 	};
+	auto makeFloatingConstantValue = [](double value, TypeCategory category, TypeIndex type_index) {
+		TypeIndex identity_type_index = makeConstantValueTypeIndex(category, type_index);
+		FlashCpp::NonTypeValueIdentity identity = FlashCpp::NonTypeValueIdentity::makeFloating(value, identity_type_index);
+		return ConstantValue{identity.value, category, identity_type_index, identity};
+	};
 	auto makeConstantValueFromCategory = [&](int64_t value, TypeCategory category) {
 		return makeConstantValue(value, category, TypeIndex{});
 	};
@@ -1032,7 +1037,9 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		} else if (std::holds_alternative<double>(eval_result.value)) {
 			category = TypeCategory::Double;
 		}
-		ConstantValue value = makeConstantValue(eval_result.as_int(), category, type_index);
+		ConstantValue value = std::holds_alternative<double>(eval_result.value)
+			? makeFloatingConstantValue(std::get<double>(eval_result.value), category, type_index)
+			: makeConstantValue(eval_result.as_int(), category, type_index);
 		if (category == TypeCategory::Nullptr) {
 			value.identity = FlashCpp::NonTypeValueIdentity::makeNullptr(value.type_index);
 		} else if (eval_result.pointer_to_var.isValid()) {
@@ -1094,7 +1101,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
 			return makeConstantValueFromCategory(static_cast<int64_t>(*ull_val), lit.type());
 		} else if (const auto* d_val = std::get_if<double>(&val)) {
-			return makeConstantValueFromCategory(static_cast<int64_t>(*d_val), lit.type());
+			return makeFloatingConstantValue(*d_val, lit.type(), TypeIndex{});
 		}
 	}
 

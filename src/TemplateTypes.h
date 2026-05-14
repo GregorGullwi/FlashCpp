@@ -39,6 +39,7 @@
 #include <array>
 #include <vector>
 #include <cstdint>
+#include <cstring>
 #include <functional>  // For std::hash
 #include <variant>
 
@@ -234,6 +235,25 @@ struct NonTypeValueIdentity {
 		NonTypeValueIdentity id;
 		id.kind = NonTypeValueIdentityKind::Integral;
 		id.value = val;
+		id.value_type_index = type_index;
+		id.is_dependent = false;
+		id.dependent_name = {};
+		return id;
+	}
+
+	static NonTypeValueIdentity makeFloating(double val, TypeIndex type_index) {
+		NonTypeValueIdentity id;
+		id.kind = NonTypeValueIdentityKind::Floating;
+		uint64_t bits = 0;
+		if (type_index.category() == TypeCategory::Float) {
+			float float_value = static_cast<float>(val);
+			uint32_t float_bits = 0;
+			std::memcpy(&float_bits, &float_value, sizeof(float_bits));
+			bits = float_bits;
+		} else {
+			std::memcpy(&bits, &val, sizeof(bits));
+		}
+		id.value = static_cast<int64_t>(bits);
 		id.value_type_index = type_index;
 		id.is_dependent = false;
 		id.dependent_name = {};
