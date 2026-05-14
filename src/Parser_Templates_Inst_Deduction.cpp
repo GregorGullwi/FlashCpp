@@ -3684,7 +3684,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 					if (resolution.selected_overload == &shape_overloads[i]) {
 						// Reuse the precomputed template_args from the shape probe to skip
 						// redundant argument deduction for the winning candidate.
-						const ShapeCandidate& winner = shape_candidates[i];
+						ShapeCandidate& winner = shape_candidates[i];
 						const ASTNode& winner_template_node = (*all_templates)[winner.overload_idx];
 						const TemplateFunctionDeclarationNode& winner_template_func =
 							winner_template_node.as<TemplateFunctionDeclarationNode>();
@@ -3759,7 +3759,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 
 						const bool cacheable = hasUsableTemplateFunctionDefinition(winner_func_decl);
 						const bool commit = shouldCommitTemplateInstantiationArtifacts();
-						std::optional<CallArgDeductionInfo> winner_deduction_info = winner.deduction_info;
 						FunctionTemplateInstantiationContext winner_ctx{
 							template_name,
 							winner_template_func,
@@ -3773,7 +3772,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 							&arg_types,
 							nullptr,
 							nullptr,
-							&winner_deduction_info,
+							&winner.deduction_info,
 							nullptr};
 						FunctionTemplateInstantiationFlags winner_flags =
 							FunctionTemplateInstantiationFlags::None;
