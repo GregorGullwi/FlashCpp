@@ -140,6 +140,10 @@ private:
 		const TypeInfo& template_instantiation_info,
 		bool evaluate_dependent_member_values,
 		int depth);
+	InlineVector<TemplateTypeArg, 4> materializeDependentRecordTemplateArgs(
+		std::span<const TypeInfo::TemplateArgInfo> stored_args,
+		int depth);
+	bool templateArgsStillDependent(std::span<const TemplateTypeArg> args) const;
 	const TypeInfo* resolveDependentMemberType(const TypeInfo& type_info, int depth);
 	void rebuildEnvironmentFromCurrentBindings();
 
