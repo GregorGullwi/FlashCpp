@@ -768,6 +768,19 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 			StringTable::getStringView(dependent_name->owner_name);
 		std::string_view materialized_owner_name;
 		if (dependent_name->owner_kind ==
+				TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation &&
+			current_owner_type_name_.isValid()) {
+			materialized_owner_name =
+				StringTable::getStringView(current_owner_type_name_);
+		} else if (dependent_name->owner_kind ==
+				TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation &&
+			dependent_name->owner_type.is_valid()) {
+			if (const TypeInfo* owner_type_info =
+					tryGetTypeInfo(dependent_name->owner_type)) {
+				materialized_owner_name =
+					StringTable::getStringView(owner_type_info->name());
+			}
+		} else if (dependent_name->owner_kind ==
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter &&
 			dependent_name->owner_template_arguments.empty()) {
 			if (auto owner_subst_it = param_map_.find(owner_name);

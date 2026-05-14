@@ -1389,6 +1389,12 @@ TypeIndex Parser::substitute_template_parameter(
 		std::string_view owner_name = StringTable::getStringView(dependent_name->owner_name);
 		std::string_view materialized_owner_name;
 		if (dependent_name->owner_kind ==
+				TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation &&
+			dependent_name->owner_type.is_valid()) {
+			if (const TypeInfo* owner_type_info = tryGetTypeInfo(dependent_name->owner_type)) {
+				materialized_owner_name = StringTable::getStringView(owner_type_info->name());
+			}
+		} else if (dependent_name->owner_kind ==
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter &&
 			dependent_name->owner_template_arguments.empty()) {
 			forEachNonPackTemplateParamArgBinding(
