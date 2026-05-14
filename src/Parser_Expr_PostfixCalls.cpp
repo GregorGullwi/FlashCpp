@@ -384,9 +384,18 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			isHardUseLikeInstantiationMode() &&
 			!known_member_func && !instantiated_func.has_value()) {
 			auto checkHasMemberTemplate = [&]() {
-				StringBuilder qualified_name_sb;
-				qualified_name_sb.append(*object_struct_name).append("::").append(member_name_token.value());
-				if (gTemplateRegistry.lookupTemplate(StringTable::getOrInternStringHandle(qualified_name_sb.commit())).has_value()) {
+				auto hasFunctionTemplateForOwner = [&](StringHandle owner_name_handle) {
+					TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(
+						buildMemberFunctionTemplateLookupRequest(
+							owner_name_handle,
+							member_name_token.handle(),
+							false));
+					return lookup_result.hasFunctionTemplate();
+				};
+
+				const StringHandle owner_name_handle =
+					StringTable::getOrInternStringHandle(*object_struct_name);
+				if (hasFunctionTemplateForOwner(owner_name_handle)) {
 					return true;
 				}
 
@@ -395,10 +404,8 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 					return false;
 				}
 
-				StringBuilder base_qualified_name_sb;
-				base_qualified_name_sb.append(base_name).append("::").append(member_name_token.value());
-				return gTemplateRegistry.lookupTemplate(
-					StringTable::getOrInternStringHandle(base_qualified_name_sb.commit())).has_value();
+				return hasFunctionTemplateForOwner(
+					StringTable::getOrInternStringHandle(base_name));
 			};
 
 			if (checkHasMemberTemplate()) {
@@ -406,6 +413,14 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
 					member_name_token);
 			}
+		}
+		if (explicit_template_args &&
+			object_struct_name.has_value() &&
+			isHardUseLikeInstantiationMode() &&
+			!instantiated_func.has_value()) {
+			return ParseResult::error(
+				"No matching member function template for call to '" + std::string(member_name_token.value()) + "'",
+				member_name_token);
 		}
 		if (known_member_func && !instantiated_func.has_value()) {
 			const size_t min_required = countMinRequiredArgs(*known_member_func);
