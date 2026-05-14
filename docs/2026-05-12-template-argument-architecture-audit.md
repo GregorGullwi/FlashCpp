@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-13 (follow-up architecture slices completed)
+**Last updated:** 2026-05-14 (template infrastructure pass 3 completed)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -37,7 +37,8 @@ semantic C++20 template pipeline.
 
 The 2026-05-13 template infrastructure refactor completed the planned first
 architecture pass while preserving the behavior described in this audit. The
-branch now includes:
+2026-05-14 follow-up pass advanced the highest-impact remaining template
+infrastructure tracks. The branch now includes:
 
 - centralized static `constexpr` member reads through one semantic service;
 - ordered and typed NTTP identity preservation, including exact integral/enum
@@ -45,18 +46,28 @@ branch now includes:
 - shared alias/type-size query infrastructure;
 - parameter-context-driven explicit template argument classification;
 - `TemplateInstantiationContext` plumbing for template lookup and substitution;
-- conservative template definition lookup records for non-dependent calls;
+- semantic template lookup requests/records for function templates, member
+  templates, qualified owners/calls, variable templates, alias templates, member
+  probes, and operator/ADL template lookup;
+- conservative template definition lookup records for non-dependent calls and
+  broader two-phase lookup timing;
 - shape-only template deduction viability checks used before body
-  materialization for selected free and member function-template overload paths;
-- dependent qualified-name records for high-value member-type placeholders;
+  materialization for selected free, explicit free, and member
+  function-template overload paths;
+- dependent qualified-name records for member-type placeholders, current
+  instantiation owners, unknown-specialization owners, and expression
+  qualified-ids;
 - dependent alias-size, nested pack/materialization, and dependent constexpr
   regression fixes;
 - explicit-template SFINAE repair so explicitly supplied template arguments are
-  substituted before remaining call-argument deduction.
+  substituted before remaining call-argument deduction;
+- typed NTTP identity for integral/enum/`nullptr`, object pointers, references,
+  function pointers, and null member pointers, with unsupported structural-class
+  cases still explicit.
 
 Validation after these changes passed the Windows sharded build and the full
-PowerShell test suite: 2352 regular tests compiled, linked, and ran with the
-expected return values, and all 181 `_fail.cpp` tests failed as expected.
+PowerShell test suite: 2375 regular tests compiled, linked, and ran with the
+expected return values, and all 183 `_fail.cpp` tests failed as expected.
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
@@ -69,33 +80,33 @@ state.
 
 ### Open next steps
 
-1. **Semantic lookup unification.**
-   Move template candidate discovery away from direct registry-by-name hot paths
-   and toward one lookup result that records declaration identity, lookup kind,
-   dependency, access/provenance, and definition-vs-POI timing.
+1. **Complete semantic lookup unification.**
+   The main template candidate discovery hot paths now use semantic lookup
+   records. Continue moving lower-frequency registry probes and static
+   initializer lookup paths onto the same declaration-owned result model.
 
 2. **Two-phase lookup expansion.**
-   Conservative definition-context records now cover selected non-dependent
-   unqualified function calls. Extend the model to qualified names, static
-   initializers, member templates, dependent bases, unknown specializations, and
-   ADL-sensitive dependent calls.
+   Definition-context records now cover selected non-dependent calls and the main
+   qualified/member/operator template paths. Extend the model to static
+   initializers, richer dependent-base lookup, deeper member-template segment
+   chains, and broader ADL-sensitive dependent calls.
 
 3. **Structural NTTP implementation.**
-   Typed integral/enum/`nullptr` identity exists. Add real semantic values for
-   pointer, reference, function-pointer, member-pointer, floating-point, and
-   structural class-type NTTPs instead of keeping unsupported/placeholder
-   categories.
+   Typed integral/enum/`nullptr`, pointer, reference, function-pointer, and null
+   member-pointer identity exists. Add real semantic values for non-null
+   member-pointers, floating-point, and structural class-type NTTPs, and replace
+   the remaining vendor-hash mangling fallback where possible.
 
 4. **Deduction and constraint pipeline split.**
-   Expand signature-only candidate ranking beyond the selected free/member
-   function-template paths and replace remaining full-instantiation fallbacks
-   with sema-owned candidate construction, deduction, constraints, partial
-   ordering, and overload ranking.
+   Signature-only candidate ranking now covers selected free, explicit free, and
+   member function-template paths. Continue replacing remaining
+   full-instantiation fallbacks with sema-owned candidate construction,
+   deduction, constraints, partial ordering, and overload ranking.
 
 5. **Dependent-name and current-instantiation model.**
-   Build on `TypeInfo::DependentQualifiedNameRecord` with records for expression
-   qualified-ids, dependent bases, unknown specialization, injected-class-name,
-   current-instantiation identity, and alias ordering.
+   Build on `TypeInfo::DependentQualifiedNameRecord` with richer records for
+   deeper expression/member-template chains, dependent bases,
+   injected-class-name, and alias ordering.
 
 6. **Constructor fallback hardening.**
    Current valid test coverage no longer needs codegen-time constructor
@@ -138,33 +149,35 @@ state.
    definition-context lookup records, while dependent names need explicit
    point-of-instantiation completion records. This also gives qualified lookup,
    ADL, static initializers, and member-template calls a shared source of truth.
-   **Progress:** conservative definition-context records now guard
-   non-dependent unqualified function calls, with dependent POI/ADL behavior
-   regression-tested.
+    **Progress:** conservative definition-context records now guard
+    non-dependent unqualified function calls, and semantic lookup records now
+    cover the main function/member/qualified/operator template discovery and
+    probe paths with dependent POI/ADL behavior regression-tested.
 
 2. **Structural NTTP value model.**
    The current concrete value identity remains too integral-centric for C++20.
    Pointer, reference, member-pointer, `nullptr`, floating-point, enum, and
    structural class-type arguments need typed equivalence and hashing.
-   **Progress:** the value model now distinguishes typed integral/enum,
-   `nullptr`, pointer/reference/member-pointer placeholder categories, and
-   explicitly rejects unsupported structural class-type NTTPs instead of
-   manufacturing scalar identities.
+    **Progress:** the value model now distinguishes typed integral/enum,
+    `nullptr`, object pointer, reference, function-pointer, and null
+    member-pointer identities, and explicitly rejects unsupported structural
+    class-type NTTPs instead of manufacturing scalar identities.
 
 3. **Deduction and constraint pipeline separation.**
    Candidate construction, deduction, constraint checking, partial ordering,
    overload ranking, substitution, and instantiation should keep moving into
-   separate sema-owned phases. **Progress:** overloaded free function templates
-   and implicit member function templates can rank signature-only candidates
-   before instantiating the selected body.
+    separate sema-owned phases. **Progress:** overloaded free function
+    templates, explicit free function-template calls, and implicit member
+    function templates can rank signature-only candidates before instantiating
+    the selected body.
 
 4. **Dependent-name and current-instantiation model.**
    Replace dependent strings/placeholders with first-class entities for current
    instantiation, unknown specialization, dependent bases, dependent
-   qualified-names, and dependent template-ids. **Progress:** dependent
-   qualified member-type placeholders now carry
-   `TypeInfo::DependentQualifiedNameRecord` metadata for `typename T::type` and
-   dependent member-template chains.
+    qualified-names, and dependent template-ids. **Progress:** dependent
+    qualified member-type placeholders, current-instantiation owners,
+    unknown-specialization owners, and expression qualified-ids now carry
+    `TypeInfo::DependentQualifiedNameRecord` metadata for the covered paths.
 
 ## Current representations
 
