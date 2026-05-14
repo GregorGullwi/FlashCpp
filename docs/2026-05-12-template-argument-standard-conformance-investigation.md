@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (template infrastructure pass 4 completed)
+**Last updated:** 2026-05-14 (semantic lookup unification follow-up)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -85,6 +85,9 @@ Completed work:
 14. preserved definition-context records for qualified non-dependent calls and
     added floating-point NTTP identity flow through constexpr evaluation and
     Itanium mangling.
+15. moved remaining low-frequency parser template probes and the static-initializer
+    constexpr template probe onto parser-built semantic lookup requests so timing
+    follows definition-vs-POI context instead of hardcoded point-of-definition.
 
 The latest validation run passed `.\build_flashcpp.bat Sharded` and targeted
 regression tests for qualified template calls and floating NTTP specialization.
@@ -103,12 +106,11 @@ should be split into focused investigations.
 
 ### Open next steps
 
-1. **Finish semantic lookup unification.**
-   The main class/function/alias/variable/member/operator template discovery and
-   probe paths now use semantic lookup records. Continue migrating lower-frequency
-   registry probes and static-initializer lookup paths to one declaration-owned
-   result model that records identity, lookup kind, dependency, and
-   definition-vs-POI timing.
+1. **Finish semantic lookup unification (remaining dependent paths).**
+   Main discovery paths and low-frequency parser/static-initializer probes now use
+   parser-built semantic lookup requests. The remaining work is dependent-base
+   lookup, deeper member-template segment chains, and ADL-sensitive dependent
+   completion paths that still rely on partial fallback behavior.
 
 2. **Broaden two-phase lookup records further.**
    Definition-context and semantic lookup records now protect selected
@@ -283,12 +285,11 @@ remaining work is the smaller phased delivery list below.
 
 ## Recommended next step
 
-Start with the remaining semantic lookup unification and two-phase lookup
-records. Parameter-context-driven template argument classification is already in
-place for the main explicit template-id use sites; the highest-impact remaining
-work is to make lower-frequency registry probes, static-initializer lookup,
-dependent-base lookup, and ADL-sensitive dependent calls use the same
-declaration-owned lookup records as the main template paths.
+Start with dependent-path semantic lookup completion and two-phase lookup
+records. Lower-frequency parser probes and the static-initializer constexpr
+template probe are now on semantic lookup requests; the highest-impact remaining
+work is dependent-base lookup, deeper member-template segment chains, and
+ADL-sensitive dependent calls using the same declaration-owned lookup records.
 
 ## Implementation plan
 

@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (template infrastructure pass 4 completed)
+**Last updated:** 2026-05-14 (semantic lookup unification follow-up)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -68,6 +68,9 @@ infrastructure tracks. The branch now includes:
   lookup records on the call expression, including qualified-name metadata;
 - floating-point NTTP identity now flows through constexpr evaluation and Itanium
   mangling for standard-shaped floating arguments.
+- remaining low-frequency parser template probes and the constexpr
+  static-initializer template probe now use parser-built semantic lookup
+  requests instead of hardcoded point-of-definition requests.
 
 Validation after these changes passed the Windows sharded build and the targeted
 template regression tests for qualified calls and floating NTTP specialization.
@@ -83,10 +86,11 @@ state.
 
 ### Open next steps
 
-1. **Complete semantic lookup unification.**
-   The main template candidate discovery hot paths now use semantic lookup
-   records. Continue moving lower-frequency registry probes and static
-   initializer lookup paths onto the same declaration-owned result model.
+1. **Complete semantic lookup unification (dependent paths).**
+   Main hot paths and low-frequency parser/static-initializer probes now use
+   semantic lookup requests. Continue moving dependent-base lookup, deeper
+   member-template segment chains, and ADL-sensitive dependent completion onto
+   the same declaration-owned result model.
 
 2. **Two-phase lookup expansion.**
    Definition-context records now cover selected non-dependent calls and the main
@@ -170,15 +174,14 @@ state.
   parameter-name and argument vectors.
 
 Parameter-context classification is now in place for the main explicit
-template-id use sites. Remaining classification risk is in lower-frequency paths
-that still probe registries or static-initializer state before semantic lookup
-has produced an authoritative declaration result.
+template-id use sites. Remaining classification risk is now concentrated in
+dependent and deep-chain paths rather than low-frequency ordinary probes.
 
-Main function, member, qualified, variable, alias, probe, and operator template
-lookup paths now use semantic lookup requests/records. Remaining low-frequency
-registry probes, static-initializer lookup, dependent-base lookup, hidden-friend
-ADL, and deeper member-template chains should move behind the same declaration
-result and definition-vs-POI timing model.
+Main function, member, qualified, variable, alias, probe, operator, and
+low-frequency parser/static-initializer template lookup paths now use semantic
+lookup requests/records. Remaining dependent-base lookup, hidden-friend ADL,
+and deeper member-template chains should move behind the same declaration result
+and definition-vs-POI timing model.
 
 Static `constexpr` reads are centralized, invalid non-dependent initializers now
 hard-fail instead of using broad zero-like recovery, and constructor annotation
