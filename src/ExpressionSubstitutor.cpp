@@ -879,7 +879,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 					}
 					member_access.has_template_arguments = true;
 					member_access.template_arguments =
-						std::make_unique<std::vector<TemplateTypeArg>>(member_args.toVector());
+						&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(member_args.toVector());
 				}
 				member_chain.push_back(std::move(member_access));
 			}
