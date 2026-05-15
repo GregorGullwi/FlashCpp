@@ -4932,8 +4932,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_struct.as<StructDeclarationNode>().mark_materialized();
 			}
 
-			// Register in cache for O(1) lookup on future instantiations
-			gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
+			// Register in cache for O(1) lookup on future instantiations			gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
 
 			return instantiated_struct; // Return the struct node for code generation
 		}
@@ -10209,8 +10208,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		instantiated_struct.as<StructDeclarationNode>().mark_materialized();
 	}
 
-	// Register in cache for O(1) lookup on future instantiations
-	gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
+	// Register in cache for O(1) lookup on future instantiations	gTemplateRegistry.registerInstantiation(cache_key, instantiated_struct);
 
 	// Return the instantiated struct node for code generation
 	return instantiated_struct;
