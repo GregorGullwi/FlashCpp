@@ -157,20 +157,18 @@ sema direct lookup probes. The active architecture tracks are therefore:
    dependent-namespace coverage.
 
 2. **Two-phase lookup expansion (member function template bodies ✅ done).**
-   Definition-context records now cover selected non-dependent calls,
-   unresolved dependent unqualified calls, the main qualified/member/operator
-   template paths, lazy static-member replay, and (new) member function
-   template bodies. Remaining gaps:
-   - **Inherited member templates**: `this->template method<T>(args)` fails
-     to find templates declared in a base class.  Root cause: in
-     `tryInstantiateMemberFunctionTemplateCall` / `Parser_Expr_PostfixCalls.cpp`
-     and `lookupMemberFunctionTemplateCandidatesForInstantiation` /
-     `Parser_Templates_Inst_MemberFunc.cpp`, lookup never walks base classes
-     for member templates.  Fix: after direct lookup fails, fall through to
-     `lookup_inherited_template` and retry instantiation on the owner base.
-   - Eager static initializers (constexpr static members whose initializers
-     call constexpr functions at definition time).
-   - Richer dependent-base lookup and deeper member-template segment chains.
+    Definition-context records now cover selected non-dependent calls,
+    unresolved dependent unqualified calls, the main qualified/member/operator
+    template paths, lazy static-member replay, and (new) member function
+    template bodies. Remaining gaps:
+    - **Inherited member templates via `this->template` ✅ done (2026-05-15)**:
+      explicit-arg inherited lookup now falls through base classes and keeps
+      the declaring-owner symbol in lowering/codegen, fixing the previous
+      derived-owner link regressions (`test_inherited_member_template_lookup_ret42.cpp`,
+      `test_inherited_member_template_this_explicit_ret42.cpp`).
+    - Eager static initializers (constexpr static members whose initializers
+      call constexpr functions at definition time).
+    - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
    Typed integral/enum/`nullptr`, pointer, reference, function-pointer, and null

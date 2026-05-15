@@ -189,18 +189,18 @@ focused investigations.
    dependent-namespace coverage.
 
 2. **Broaden two-phase lookup records further (member func template bodies ✅ done).**
-   Definition-context and semantic lookup records now protect selected
-   non-dependent unqualified, unresolved dependent unqualified, qualified,
-   member-template, operator paths, lazy static-member replay, and (new) member
-   function template bodies. Remaining:
-   - **Inherited member templates via `this->template`**: the explicit-arg
-     member template call path (`tryInstantiateMemberFunctionTemplateCall` in
-     `Parser_Expr_PostfixCalls.cpp`, `lookupMemberFunctionTemplateCandidatesForInstantiation`
-     in `Parser_Templates_Inst_MemberFunc.cpp`) never walks the base class
-     hierarchy.  Fix: fall through to `lookup_inherited_template` after direct
-     struct lookup fails, then retry instantiation on the owning base.
-   - Eager static initializers, richer dependent bases, deeper member-template
-     segment chains, and the remaining parser-time ADL-sensitive paths.
+    Definition-context and semantic lookup records now protect selected
+    non-dependent unqualified, unresolved dependent unqualified, qualified,
+    member-template, operator paths, lazy static-member replay, and (new) member
+    function template bodies. Remaining:
+    - **Inherited member templates via `this->template` ✅ done (2026-05-15)**:
+      explicit-arg inherited lookup now walks base classes and preserves the
+      declaring-owner symbol through lowering/codegen, fixing the previous
+      derived-owner link regressions in
+      `test_inherited_member_template_lookup_ret42.cpp` and
+      `test_inherited_member_template_this_explicit_ret42.cpp`.
+    - Eager static initializers, richer dependent bases, deeper member-template
+      segment chains, and the remaining parser-time ADL-sensitive paths.
 
 3. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
@@ -369,24 +369,20 @@ remaining work is the smaller phased delivery list below.
 
 ## Recommended next step
 
-Two-phase lookup for member function template bodies is now complete (2026-05-15).
-The next highest-impact work is:
+Inherited member-template lookup is now complete (2026-05-15), including the
+remaining owner-selection codegen/link regression. The next highest-impact work is:
 
-1. **Inherited member templates**: Fix `this->template method<T>(args)` to find
-   templates in base classes. Root cause: in
-   `lookupMemberFunctionTemplateCandidatesForInstantiation`
-   (`Parser_Templates_Inst_MemberFunc.cpp`), after direct struct lookup fails,
-   fall through to `lookup_inherited_template` (`Parser_Expr_QualLookup.cpp:671`)
-   and retry instantiation on the owning base class. Affects both template and
-   non-template derived classes.
-
-2. **Continue two-phase lookup expansion**: extend definition-context records to
+1. **Continue two-phase lookup expansion**: extend definition-context records to
    eager static initializers, dependent bases, and broader
    hidden-friend/dependent-namespace dependent-call coverage.
 
-3. **Structural NTTP completion** (non-null member-pointers, structural class
+2. **Structural NTTP completion** (non-null member-pointers, structural class
    types, and replacing `TODO(item-8)` mangling fallback) is the other major
    conformance gap.
+
+3. **Expand sema-owned shape/deduction pipeline coverage** so normal overload
+   viability/ranking paths stop relying on full-instantiation fallback in the
+   remaining unhandled call patterns.
 
 ## Implementation plan
 
@@ -406,9 +402,9 @@ behavior as compatibility constraints.
 
 2. **Advance two-phase lookup records (member func template bodies ✅)**
    Persist non-dependent lookup at definition time and defer only dependent
-   completion to instantiation time. Member function template bodies now apply
-   phase-1 cutoff correctly. Remaining: inherited member templates via
-   `this->template`, static initializer paths, dependent bases, unknown
+   completion to instantiation time. Member function template bodies and
+   inherited `this->template` member-template calls now apply the same owner-
+   correct lookup/instantiation path. Remaining: static initializer paths, dependent bases, unknown
    specializations, and ADL-sensitive dependent calls.
 
 3. **Consolidate substitution context ownership**
