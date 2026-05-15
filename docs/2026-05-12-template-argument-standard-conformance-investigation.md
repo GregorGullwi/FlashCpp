@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-15 (semantic analyzer unification slice completed via parser-owned sema lookup interface; QualifiedTypeMemberAccess allocation optimized)
+**Last updated:** 2026-05-15 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -141,8 +141,15 @@ Completed work:
     Copy semantics are a shallow pointer copy (the pointed-to data is immutable
     after creation and lives for the entire compilation). This reduces two heap
     allocations per dependent member chain segment to one.
+25. **dependent unqualified-call POI completion added (2026-05-15):**
+    unresolved dependent unqualified calls now carry a first-class
+    `DependentUnqualifiedCallLookupRecord` on `CallExprNode`. Template
+    substitution, semantic call annotation, constexpr evaluation, and lazy
+    static-member replay can re-run definition-filtered ordinary lookup plus
+    ADL at the point of instantiation, and lazy static replay now restores the
+    recorded definition lookup context while rebuilding initializer AST.
 
-Latest validation passed the full Linux suite: 2356 pass, 183 expected-fail,
+Latest validation passed the full Linux suite: 2358 pass, 183 expected-fail,
 0 regressions.
 
 The remaining target architecture sections are retained as the next conformance
@@ -157,18 +164,20 @@ focused investigations.
 
 ### Open next steps
 
-1. **ADL-sensitive dependent completion and deeper two-phase lookup records.**
-   All non-dependent unqualified/qualified/member-template/operator paths now
-   use semantic lookup requests. The remaining gap is ADL completion for
-   dependent argument types and recording definition-context lookup for calls
-   from inside template bodies that reach hidden friends or dependent ADL
-   namespaces.
+1. **Broaden POI completion beyond the new unresolved-call record.**
+   Unresolved dependent unqualified calls now carry explicit POI-completion
+   metadata and replay correctly through substitution, sema, constexpr, and
+   lazy-static paths. Remaining gaps are parser-time reparses that become
+   concrete before the record is formed, ADL-sensitive template candidates, and
+   broader hidden-friend/dependent-namespace coverage.
 
 2. **Broaden two-phase lookup records further.**
    Definition-context and semantic lookup records now protect selected
-   non-dependent unqualified, qualified, member-template, and operator paths.
-   Static initializers, richer dependent bases, deeper member-template segment
-   chains, and broader ADL still need explicit definition/POI records.
+   non-dependent unqualified, unresolved dependent unqualified, qualified,
+   member-template, and operator paths, plus lazy static-member replay.
+   Eager static initializers, richer dependent bases, deeper member-template
+   segment chains, and the remaining parser-time ADL-sensitive paths still need
+   explicit definition/POI records.
 
 3. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,

@@ -7191,6 +7191,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.declaration = static_member.declaration;
 				lazy_info.initializer = static_member.initializer;
 				lazy_info.initializer_position = static_member.initializer_position;
+				if (current_template_definition_lookup_context_ != nullptr &&
+					current_template_definition_lookup_context_->is_valid()) {
+					lazy_info.definition_lookup_context =
+						*current_template_definition_lookup_context_;
+				} else if (static_member.declaration.has_value() &&
+						   static_member.declaration->is<DeclarationNode>()) {
+					const Token& declaration_token =
+						static_member.declaration->as<DeclarationNode>().identifier_token();
+					lazy_info.definition_lookup_context.definition_line =
+						declaration_token.line();
+					lazy_info.definition_lookup_context.definition_file_index =
+						declaration_token.file_index();
+					lazy_info.definition_lookup_context.definition_namespace =
+						struct_info->getNamespaceHandle();
+				}
+				lazy_info.definition_lookup_context.current_instantiation_name =
+					instantiated_name;
 				lazy_info.cv_qualifier = static_member.cv_qualifier;
 				lazy_info.reference_qualifier = static_member.reference_qualifier;
 				lazy_info.is_array = static_member.is_array;

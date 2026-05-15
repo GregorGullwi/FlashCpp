@@ -1767,6 +1767,10 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	bool tryCollectFunctionCallArgTypes(
 		const ChunkedVector<ASTNode>& arguments,
 		std::vector<TypeSpecifierNode>& arg_types_out);
+	std::optional<ASTNode> resolveDependentUnqualifiedCallAtPointOfInstantiation(
+		const DependentUnqualifiedCallLookupRecord& record,
+		const ChunkedVector<ASTNode>& arguments,
+		std::span<const TypeSpecifierNode> arg_types);
 	std::optional<ASTNode> tryInstantiateTemplateFromCallArguments(
 		std::string_view qualified_name,
 		std::string_view simple_name,
