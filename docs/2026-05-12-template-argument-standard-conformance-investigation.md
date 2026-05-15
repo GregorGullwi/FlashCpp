@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-15 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context)
+**Last updated:** 2026-05-15 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -148,6 +148,12 @@ Completed work:
     static-member replay can re-run definition-filtered ordinary lookup plus
     ADL at the point of instantiation, and lazy static replay now restores the
     recorded definition lookup context while rebuilding initializer AST.
+26. **dependent ADL function-template POI completion broadened (2026-05-15):**
+    unresolved dependent unqualified call completion now also attempts
+    ADL-associated namespace-qualified function-template instantiation at POI
+    when ordinary overload sets are empty. Regression
+    `test_template_two_phase_dependent_adl_function_template_poi_ret0.cpp`
+    now covers this path.
 
 Latest validation passed the full Linux suite: 2358 pass, 183 expected-fail,
 0 regressions.
@@ -168,8 +174,8 @@ focused investigations.
    Unresolved dependent unqualified calls now carry explicit POI-completion
    metadata and replay correctly through substitution, sema, constexpr, and
    lazy-static paths. Remaining gaps are parser-time reparses that become
-   concrete before the record is formed, ADL-sensitive template candidates, and
-   broader hidden-friend/dependent-namespace coverage.
+   concrete before the record is formed and broader hidden-friend/
+   dependent-namespace coverage.
 
 2. **Broaden two-phase lookup records further.**
    Definition-context and semantic lookup records now protect selected
@@ -348,10 +354,11 @@ remaining work is the smaller phased delivery list below.
 
 Semantic analyzer unification is now complete (2026-05-15). The next highest-impact
 work is advancing two-phase lookup records: extend definition-context records to
-static initializers, dependent bases, and ADL-sensitive dependent calls. In parallel,
-richer dependent-base lookup and deeper member-template segment chains should build
-on the existing `DependentQualifiedNameRecord` infrastructure. Structural NTTP
-completion (non-null member-pointers, structural class types, and replacing the
+static initializers, dependent bases, and broader hidden-friend/
+dependent-namespace dependent-call coverage. In parallel, richer dependent-base
+lookup and deeper member-template segment chains should build on the existing
+`DependentQualifiedNameRecord` infrastructure. Structural NTTP completion
+(non-null member-pointers, structural class types, and replacing the
 `TODO(item-8)` mangling fallback) is the other major conformance gap remaining.
 
 ## Implementation plan

@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-15 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context)
+**Last updated:** 2026-05-15 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -112,6 +112,12 @@ infrastructure tracks. The branch now includes:
   member replay can re-run definition-filtered ordinary lookup plus ADL at the
   point of instantiation, and lazy static replay now restores definition lookup
   context while rebuilding initializer AST.
+- **dependent ADL function-template POI completion broadened (2026-05-15):**
+  unresolved dependent unqualified call completion now also attempts
+  ADL-associated namespace-qualified function-template instantiation at POI
+  when ordinary overload sets are empty. Regression
+  `test_template_two_phase_dependent_adl_function_template_poi_ret0.cpp`
+  covers the case.
 
 Validation after all changes passed the Linux sharded build and the full test
 suite (2358 regular tests + 183 expected-fail tests, 0 regressions).
@@ -134,8 +140,8 @@ sema direct lookup probes. The active architecture tracks are therefore:
    Unresolved dependent unqualified calls now carry explicit POI-completion
    metadata and replay correctly through substitution, sema, constexpr, and
    lazy-static paths. Remaining gaps are parser-time reparses that become
-   concrete before the record is formed, ADL-sensitive template candidates, and
-   broader hidden-friend/dependent-namespace coverage.
+   concrete before the record is formed and broader hidden-friend/
+   dependent-namespace coverage.
 
 2. **Two-phase lookup expansion.**
    Definition-context records now cover selected non-dependent calls,
@@ -179,14 +185,16 @@ sema direct lookup probes. The active architecture tracks are therefore:
    no-parser-context fallback paths) remain unchanged.
 
 2. **Two-phase lookup and semantic lookup records.**
-   This remains the largest conformance lever. Non-dependent names in templates
-   need definition-context lookup records, while dependent names need explicit
-   point-of-instantiation completion records. This also gives qualified lookup,
-   ADL, static initializers, and member-template calls a shared source of truth.
-    **Progress:** conservative definition-context records now guard
-    non-dependent unqualified function calls, and semantic lookup records now
-    cover the main function/member/qualified/operator template discovery and
-    probe paths with dependent POI/ADL behavior regression-tested.
+    This remains the largest conformance lever. Non-dependent names in templates
+    need definition-context lookup records, while dependent names need explicit
+    point-of-instantiation completion records. This also gives qualified lookup,
+    ADL, static initializers, and member-template calls a shared source of truth.
+     **Progress:** conservative definition-context records now guard
+     non-dependent unqualified function calls, and semantic lookup records now
+     cover the main function/member/qualified/operator template discovery and
+     probe paths with dependent POI/ADL behavior regression-tested. Dependent
+     unqualified POI completion now also instantiates ADL-associated
+     function-template candidates by namespace-qualified names when needed.
 
 3. **Structural NTTP value model.**
    The concrete value identity still has C++20 gaps beyond the supported
