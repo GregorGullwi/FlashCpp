@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (semantic lookup unification complete)
+**Last updated:** 2026-05-14 (semantic analyzer lookup unification started)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -79,6 +79,10 @@ infrastructure tracks. The branch now includes:
   propagating POI timing and definition-namespace correctly.
 - `ExpressionSubstitutor.cpp` existence-check registry calls are documented as
   intentionally direct (simple name-presence check, no instantiation context).
+- semantic analysis structured-binding tuple-like lookup now resolves
+  `tuple_size`, `tuple_element`, and `get` through parser-built semantic
+  template-name lookup requests before specialization matching, while keeping
+  conservative fallback name probes.
 
 Validation after all changes passed the Linux sharded build and the full test
 suite (2351 regular tests + 183 expected-fail tests).
@@ -90,7 +94,9 @@ architecture gaps, not known regressions from the refactor.
 
 The remaining work is not another broad parser cleanup. The next useful passes
 should target the places where FlashCpp still lacks standard-owned semantic
-state.
+state. The highest-impact active track is semantic analyzer unification for
+template lookup-driven semantic features that still probe registry names
+directly.
 
 ### Open next steps
 
@@ -130,17 +136,27 @@ state.
 
 ### Highest-impact architecture targets
 
-1. **Two-phase lookup and semantic lookup records.**
-   This is the largest conformance lever. Non-dependent names in templates need
-   definition-context lookup records, while dependent names need explicit
-   point-of-instantiation completion records. This also gives qualified lookup,
-   ADL, static initializers, and member-template calls a shared source of truth.
+1. **Semantic analyzer unification on semantic lookup records.**
+   This is the highest-impact active track: sema paths that still issue
+   hardcoded registry probes need to consume parser-built semantic lookup
+   requests/records so declaration identity, lookup kind, and timing are
+   consistent with template definition-vs-POI rules.
+    **Progress:** structured-binding tuple-like sema lookup now resolves
+    `tuple_size`, `tuple_element`, and `get` through semantic lookup requests,
+    with conservative fallback probes retained for compatibility.
+
+2. **Two-phase lookup and semantic lookup records.**
+   This remains the largest conformance lever after the sema-unification start.
+   Non-dependent names in templates need definition-context lookup records,
+   while dependent names need explicit point-of-instantiation completion
+   records. This also gives qualified lookup, ADL, static initializers, and
+   member-template calls a shared source of truth.
     **Progress:** conservative definition-context records now guard
     non-dependent unqualified function calls, and semantic lookup records now
     cover the main function/member/qualified/operator template discovery and
     probe paths with dependent POI/ADL behavior regression-tested.
 
-2. **Structural NTTP value model.**
+3. **Structural NTTP value model.**
    The concrete value identity still has C++20 gaps beyond the supported
    scalar/entity categories. Non-null member-pointer, floating-point, and
    structural class-type arguments still need typed equivalence and hashing.
@@ -149,7 +165,7 @@ state.
     member-pointer identities, and explicitly rejects unsupported structural
     class-type NTTPs instead of manufacturing scalar identities.
 
-3. **Deduction and constraint pipeline separation.**
+4. **Deduction and constraint pipeline separation.**
    Candidate construction, deduction, constraint checking, partial ordering,
    overload ranking, substitution, and instantiation should keep moving into
     separate sema-owned phases. **Progress:** overloaded free function
@@ -157,7 +173,7 @@ state.
     function templates can rank signature-only candidates before instantiating
     the selected body.
 
-4. **Dependent-name and current-instantiation model.**
+5. **Dependent-name and current-instantiation model.**
    Replace dependent strings/placeholders with first-class entities for current
    instantiation, unknown specialization, dependent bases, dependent
    qualified-names, and dependent template-ids. **Progress:** dependent

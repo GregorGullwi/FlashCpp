@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (semantic lookup unification complete)
+**Last updated:** 2026-05-14 (semantic analyzer lookup unification started)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -100,6 +100,10 @@ Completed work:
 18. documented why `ExpressionSubstitutor.cpp` existence checks keep direct
     registry calls (simple name-presence check at substitution time, no
     instantiation-context timing needed).
+19. started semantic-analyzer lookup unification for structured-binding
+    tuple-like protocol resolution: `tuple_size`, `tuple_element`, and `get`
+    now use parser-built semantic template-name lookup requests before
+    specialization matching, with conservative fallback probes preserved.
 
 The latest validation run passed the Linux sharded build and all 2351 regular
 tests plus 183 expected-fail tests.
@@ -111,52 +115,62 @@ for dependent calls, and constraint normalization/subsumption.
 ## What is left / next
 
 The completed refactor should be treated as the foundation, not the finish line.
-The immediate semantic lookup unification work is now closed. The remaining
-work is mostly architecture work that should be split into focused investigations.
+The highest-impact active work is semantic analyzer unification: remove
+remaining sema template infrastructure paths that directly probe registry names
+and move them to parser-built semantic lookup requests/records. The remaining
+work is mostly architecture work that should be split into focused
+investigations.
 
 ### Open next steps
 
-1. **ADL-sensitive dependent completion and deeper two-phase lookup records.**
+1. **Semantic analyzer unification of remaining template lookup paths.**
+   Continue replacing direct sema registry probing with parser-built semantic
+   lookup requests/records so lookup timing (definition vs POI), lookup kind,
+   and declaration identity stay consistent across parser and sema.
+   Structured-binding tuple-like lookup is now on this model; remaining sema
+   hotspots should follow.
+
+2. **ADL-sensitive dependent completion and deeper two-phase lookup records.**
    All non-dependent unqualified/qualified/member-template/operator paths now
    use semantic lookup requests. The remaining gap is ADL completion for
    dependent argument types and recording definition-context lookup for calls
    from inside template bodies that reach hidden friends or dependent ADL
    namespaces.
 
-2. **Broaden two-phase lookup records further.**
+3. **Broaden two-phase lookup records further.**
    Definition-context and semantic lookup records now protect selected
    non-dependent unqualified, qualified, member-template, and operator paths.
    Static initializers, richer dependent bases, deeper member-template segment
    chains, and broader ADL still need explicit definition/POI records.
 
-3. **Implement remaining structural NTTP values.**
+4. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
    and null member-pointer identity is implemented. Non-null member pointers,
    floating-point, and structural class-type NTTPs still need standard semantic
    values, and function/member-pointer mangling still uses a conservative
    fallback for unsupported encodings.
 
-4. **Expand shape-only deduction and ranking.**
+5. **Expand shape-only deduction and ranking.**
    Selected overloaded free, explicit free, and member function-template paths
    can rank signature-only candidates before body materialization. The older
    full-instantiation fallback remains for unhandled cases; keep moving
    candidate construction, deduction, constraints, partial ordering, and ranking
    into sema-owned phases.
 
-5. **Complete dependent-name and current-instantiation modeling.**
+6. **Complete dependent-name and current-instantiation modeling.**
    `TypeInfo::DependentQualifiedNameRecord` covers high-value member-type
    placeholders, current-instantiation owners, unknown-specialization owners, and
    expression qualified-id records for practical paths. Full `[temp.dep]` support
    still needs richer dependent base lookup, deeper member-template segment
    chains, injected-class-name handling, and alias ordering.
 
-6. **Harden constructor annotation fallback into an invariant.**
+7. **Harden constructor annotation fallback into an invariant.**
    Current valid coverage no longer needs the fallback in tested cases, but
    codegen still intentionally keeps a soft fallback for uncovered/invalid
    paths. Keep widening sema coverage until the fallback can be converted into a
    hard diagnostic or invariant without losing valid code.
 
-7. **Replace `std::unique_ptr` with a raw pointer with an entry created from a gChunkedVector for `template_arguments` in
+8. **Replace `std::unique_ptr` with a raw pointer with an entry created from a gChunkedVector for `template_arguments` in
    `ExpressionSubstitutor.cpp`.**
    Each segment of a dependent member chain creates a `std::make_shared<std::vector<TemplateTypeArg>>`
    at the substitution call site (`ExpressionSubstitutor.cpp`, around the
@@ -171,7 +185,13 @@ work is mostly architecture work that should be split into focused investigation
 
 ### Highest-impact architecture tracks
 
-1. **Two-phase lookup records.**
+1. **Semantic analyzer unification on semantic lookup requests.**
+   Keep parser and sema on one declaration-owned lookup model. This reduces
+   category drift and timing mismatches in sema-owned template features.
+    The current slice moved structured-binding tuple-like lookup onto semantic
+    lookup requests and candidate-name records.
+
+2. **Two-phase lookup records.**
    Store definition-context lookup for non-dependent names and defer only
    dependent lookup to the point of instantiation. This is the highest-impact
    standard-conformance gap because it affects template bodies, static
@@ -183,7 +203,7 @@ work is mostly architecture work that should be split into focused investigation
     point-of-instantiation overloads are filtered out where records apply, while
     dependent calls still complete ADL at POI.
 
-2. **Structural NTTP value identity.**
+3. **Structural NTTP value identity.**
    Replace the integral-centric `int64_t` model with typed template-argument
    equivalence for enums, `nullptr`, pointers/references/member pointers,
    floating-point values, and structural class-type values.
@@ -195,7 +215,7 @@ work is mostly architecture work that should be split into focused investigation
     explicit unsupported/placeholder categories until the parser and constant
     evaluator can produce standard semantic values for them.
 
-3. **Deduction/constraints split before materialization.**
+4. **Deduction/constraints split before materialization.**
    Continue extracting candidate viability, deduction, constraints, partial
    ordering, and overload ranking so normal selection paths do not instantiate
    function or class bodies incidentally.
@@ -207,7 +227,7 @@ work is mostly architecture work that should be split into focused investigation
     non-explicit path. It deliberately keeps the older full-instantiation
     fallback for cases the shape path cannot rank safely.
 
-4. **First-class dependent-name/current-instantiation model.**
+5. **First-class dependent-name/current-instantiation model.**
    Replace string-like placeholders with semantic dependent entities for
    current instantiation, unknown specialization, dependent bases, dependent
    qualified names, and dependent template-ids.
@@ -296,11 +316,13 @@ remaining work is the smaller phased delivery list below.
 
 ## Recommended next step
 
-Start with dependent-path semantic lookup completion and two-phase lookup
-records. Lower-frequency parser probes and the static-initializer constexpr
-template probe are now on semantic lookup requests; the highest-impact remaining
-work is dependent-base lookup, deeper member-template segment chains, and
-ADL-sensitive dependent calls using the same declaration-owned lookup records.
+Start with semantic analyzer unification for remaining template lookup hotspots
+that still directly probe registry names, then continue dependent-path semantic
+lookup completion and two-phase lookup records. Lower-frequency parser probes
+and the static-initializer constexpr template probe are already on semantic
+lookup requests; the next highest-impact remaining work is dependent-base
+lookup, deeper member-template segment chains, and ADL-sensitive dependent
+calls using the same declaration-owned lookup records.
 
 ## Implementation plan
 

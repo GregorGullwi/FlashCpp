@@ -756,15 +756,119 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	bool is_specialization = !function_template_args.empty();
 
 	if (is_specialization) {
-		// Register as a template specialization
+		// 1. Set const qualifier for correct mangling and lookup.
+		//    Without this, is_const_member_function() returns false even for `const` specializations,
+		//    leading to a mangled-name mismatch between the call site and the definition.
+		func_ref.set_is_const_member_function(member_quals.is_const());
+
+		// 2. Extract non-type template args (e.g., get<0> → {0}) and store on the function node
+		//    so mangling can include the template argument encoding.
+		{
+			std::vector<int64_t> non_type_args;
+			for (const auto& arg : function_template_args) {
+				if (arg.is_value) {
+					non_type_args.push_back(arg.value);
+				}
+			}
+			if (!non_type_args.empty()) {
+				func_ref.set_non_type_template_args(std::move(non_type_args));
+			}
+		}
+
+		// 3. Build the qualified name for registry lookup (e.g., "Point::get").
 		std::string_view qualified_name = StringBuilder()
 											  .append(qualified_class_name)
 											  .append("::")
 											  .append(function_name_token.value())
 											  .commit();
 
-		// Save the body position for delayed parsing
-		func_ref.set_template_body_position(body_start);
+		// 4. Compute the proper ABI-conforming mangled name for this member function specialization,
+		//    including template argument encoding (e.g., ILm0E for <0>) and const qualifier (K).
+		{
+			NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
+			StringHandle struct_name_handle = StringTable::getOrInternStringHandle(qualified_class_name);
+			const DeclarationNode& decl = func_ref.decl_node();
+			const TypeSpecifierNode& return_type = decl.type_specifier_node();
+			std::vector<TypeSpecifierNode> param_types;
+			for (const auto& param_node : func_ref.parameter_nodes()) {
+				if (param_node.is<DeclarationNode>()) {
+					param_types.push_back(param_node.as<DeclarationNode>().type_specifier_node());
+				}
+			}
+			auto specialization_mangled_name = NameMangling::generateMangledNameForSpecialization(
+				function_name_token.value(), return_type, param_types, function_template_args,
+				func_ref.is_variadic(), struct_name_handle, ns_handle, member_quals.is_const());
+			func_ref.set_mangled_name(specialization_mangled_name.view());
+		}
+
+		// 5. For explicit specializations on non-template classes (no outer template params),
+		//    parse the body immediately and add to the AST so the IrGenerator emits a definition.
+		//    When template_params is non-empty we have an outer template context that requires
+		//    lazy instantiation instead.
+		if (template_params.empty() && !member_is_defaulted && !member_is_deleted) {
+			// Save the current parse position (after the skipped body) to restore later.
+			SaveHandle after_body = save_token_position();
+
+			// Rewind the lexer to just before '{' for immediate body parsing.
+			restore_lexer_position_only(body_start);
+			discard_saved_token(body_start);
+
+			// Helper lambda: parse the body and set the definition on func_ref.
+			// Returns true on success, false on parse error.
+			// Called once, inside either the member-context or the plain-scope path below.
+			auto parse_and_set_body = [&]() -> bool {
+				auto body_result = parse_function_body();
+				if (body_result.is_error()) {
+					FLASH_LOG(Templates, Error,
+						"Failed to parse body of member function template specialization: ",
+						qualified_class_name, "::", function_name_token.value());
+					return false;
+				} else if (body_result.node().has_value()) {
+					func_ref.set_definition(*body_result.node());
+					finalize_function_signature_after_definition(func_ref);
+				}
+				return true;
+			};
+
+			// Parse the body with proper member function scope and implicit `this` injection.
+			StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_class_name);
+			bool body_ok = false;
+			if (auto struct_it = getTypesByNameMap().find(class_name_handle);
+				struct_it != getTypesByNameMap().end()) {
+				FlashCpp::FunctionParsingScopeGuard func_guard(
+					*this, true, !func_ref.is_static(), nullptr,
+					class_name_handle, struct_it->second->type_index_,
+					func_ref.parameter_nodes(), &func_ref);
+				body_ok = parse_and_set_body();
+			} else {
+				throw CompileError(std::string(StringBuilder()
+					.append("member function template specialization '")
+					.append(qualified_class_name)
+					.append("::")
+					.append(function_name_token.value())
+					.append("' references an unknown or forward-declared-only class; "
+							"the class must be fully defined before its member specializations")
+					.commit()));
+			}
+
+			// Restore lexer to after the original body and release the saved handle.
+			restore_lexer_position_only(after_body);
+			discard_saved_token(after_body);
+
+			if (!body_ok) {
+				// Body parse failed: skip registration to avoid polluting later compiler phases.
+				return std::nullopt;
+			}
+
+			// Expose via symbol table so normal call resolution can also find the specialization.
+			gSymbolTable.insert(function_name_token.value(), func_node);
+
+			// Add to AST so the IrGenerator visits this node and emits the function definition.
+			appendUserNode(func_node);
+		} else {
+			// Outer template context: store body position for lazy instantiation.
+			func_ref.set_template_body_position(body_start);
+		}
 
 		gTemplateRegistry.registerSpecialization(
 			QualifiedIdentifier{
