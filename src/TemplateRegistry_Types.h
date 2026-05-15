@@ -24,6 +24,16 @@ using SaveHandle = size_t;
 struct TemplateTypeArg;
 TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg);
 
+inline StringHandle makeDependentExpressionAnchorName(const ASTNode& expr_node) {
+	size_t hash_value = std::hash<const void*>{}(expr_node.raw_pointer());
+	hash_value ^= std::hash<const char*>{}(expr_node.type_name()) + 0x9e3779b9 + (hash_value << 6) + (hash_value >> 2);
+	std::string_view anchor = StringBuilder()
+		.append("__dep_expr_"sv)
+		.append(static_cast<uint64_t>(hash_value))
+		.commit();
+	return StringTable::getOrInternStringHandle(anchor);
+}
+
 // Transparent string hash for heterogeneous lookup (C++20)
 // Allows unordered_map with StringHandle keys to lookup with string_view
 // Use ONLY for maps that need heterogeneous lookup (string_view finding StringHandle keys)
@@ -338,6 +348,9 @@ struct TemplateTypeArg {
 		TemplateTypeArg arg(placeholder_value, category);
 		arg.is_dependent = true;
 		arg.dependent_name = name;
+		if (!arg.dependent_name.isValid() && expr.has_value()) {
+			arg.dependent_name = makeDependentExpressionAnchorName(*expr);
+		}
 		arg.dependent_expr = std::move(expr);
 		return arg;
 	}
