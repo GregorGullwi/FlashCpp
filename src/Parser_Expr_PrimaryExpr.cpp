@@ -154,14 +154,16 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 	filterPhase1OrdinaryFunctionOverloads(all_overloads);
 	if (record.argument_dependent_lookup_included && !arg_types.empty()) {
 		std::vector<ASTNode> adl_candidates =
-			gSymbolTable.lookup_adl(StringTable::getStringView(record.callee_name), arg_types);
+			gSymbolTable.lookup_adl_only(StringTable::getStringView(record.callee_name), arg_types);
 		appendUniqueOverloads(all_overloads, adl_candidates);
 	}
 
 	if (!all_overloads.empty()) {
 		OverloadResolutionResult resolution = resolve_overload(all_overloads, arg_types);
-		if (!resolution.is_ambiguous &&
-			resolution.has_match &&
+		if (resolution.is_ambiguous) {
+			return std::nullopt;
+		}
+		if (resolution.has_match &&
 			resolution.selected_overload != nullptr) {
 			return *resolution.selected_overload;
 		}
@@ -4928,13 +4930,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				const bool has_deferred_template_call_args =
 					argsHaveDeferredTemplateDependency(args_ref, currentTemplateParamNames()) ||
 					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+				const bool has_block_scope_function_lookup_hit =
+					gSymbolTable.get_scope_type_of_symbol(identifier_token.value()) == ScopeType::Block;
 				auto is_adl_blocking = [](const ASTNode& n) -> bool {
-					return !n.is<FunctionDeclarationNode>() &&
-						   (n.is<VariableDeclarationNode>() || n.is<StructDeclarationNode>() ||
+					return (n.is<VariableDeclarationNode>() || n.is<StructDeclarationNode>() ||
 							n.is<EnumDeclarationNode>());
 				};
+				auto is_adl_blocking_with_block_scope_function =
+					[has_block_scope_function_lookup_hit, &is_adl_blocking](const ASTNode& n) -> bool {
+					if (is_adl_blocking(n)) {
+						return true;
+					}
+					return has_block_scope_function_lookup_hit && n.is<FunctionDeclarationNode>();
+				};
 				const bool argumentDependentLookupIncluded =
-					!std::any_of(all_overloads.begin(), all_overloads.end(), is_adl_blocking);
+					!std::any_of(
+						all_overloads.begin(),
+						all_overloads.end(),
+						is_adl_blocking_with_block_scope_function);
 
 				if (!all_arg_types_known) {
 					if (!identifierType.has_value()) {

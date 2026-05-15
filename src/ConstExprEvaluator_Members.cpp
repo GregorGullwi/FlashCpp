@@ -1599,27 +1599,41 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		}
 	}
 
-	if (call_expr.has_dependent_unqualified_lookup_record() && context.parser) {
-		std::vector<TypeSpecifierNode> arg_types;
-		if (context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
-			if (std::optional<ASTNode> resolved_target =
-					context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
-						*call_expr.dependent_unqualified_lookup_record(),
-						call_expr.arguments(),
-						arg_types);
-				resolved_target.has_value()) {
-				if (const FunctionDeclarationNode* resolved_function =
-						get_function_decl_node(*resolved_target);
-					resolved_function != nullptr) {
-					return evaluate_function_call_with_bindings(
-						*resolved_function,
-						call_expr.arguments(),
-						bindings,
-						context,
-						mutable_bindings);
-				}
-			}
+	if (call_expr.has_dependent_unqualified_lookup_record()) {
+		if (!context.parser) {
+			return EvalResult::error(
+				"Cannot resolve dependent unqualified call at point of instantiation",
+				EvalErrorType::TemplateDependentExpression);
 		}
+		std::vector<TypeSpecifierNode> arg_types;
+		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+			return EvalResult::error(
+				"Dependent unqualified call argument types are not available at point of instantiation",
+				EvalErrorType::TemplateDependentExpression);
+		}
+		std::optional<ASTNode> resolved_target =
+			context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
+				*call_expr.dependent_unqualified_lookup_record(),
+				call_expr.arguments(),
+				arg_types);
+		if (!resolved_target.has_value()) {
+			return EvalResult::error(
+				"Dependent unqualified call could not be resolved at point of instantiation",
+				EvalErrorType::TemplateDependentExpression);
+		}
+		if (const FunctionDeclarationNode* resolved_function =
+				get_function_decl_node(*resolved_target);
+			resolved_function != nullptr) {
+			return evaluate_function_call_with_bindings(
+				*resolved_function,
+				call_expr.arguments(),
+				bindings,
+				context,
+				mutable_bindings);
+		}
+		return EvalResult::error(
+			"Dependent unqualified call resolved to a non-function target",
+			EvalErrorType::TemplateDependentExpression);
 	}
 
 	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);

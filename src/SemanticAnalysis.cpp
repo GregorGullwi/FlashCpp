@@ -7042,6 +7042,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				}
 			}
 		}
+		unresolved_call_args_.insert(call_key);
+		return nullptr;
 	}
 
 	const DeclarationNode& decl = *call_info.declaration;
