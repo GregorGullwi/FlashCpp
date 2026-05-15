@@ -2515,6 +2515,108 @@ ParseResult Parser::parse_type_specifier() {
 
 							std::string_view member_instantiated_name = get_instantiated_class_name(StringTable::getStringView(member_template_name_handle), *member_template_args);
 							auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_instantiated_name));
+
+							// Handle multi-level member template chains: Outer<4>::Middle<5>::Inner<6>
+							// After resolving Middle<5>, continue resolving ::Inner<6> if present.
+							while (peek() == "::"_tok) {
+								SaveHandle chain_save = save_token_position();
+								advance(); // consume '::'
+
+								if (peek() == "template"_tok) {
+									advance(); // consume disambiguating 'template'
+								}
+
+								if (!peek().is_identifier()) {
+									restore_token_position(chain_save);
+									break;
+								}
+
+								Token chain_member_tok = peek_info();
+								advance(); // consume the member name
+
+								if (peek() != "<"_tok) {
+									// Not a template instantiation - restore and stop
+									restore_token_position(chain_save);
+									break;
+								}
+
+								// Look up the next member template using the base template name
+								auto chain_parent_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_instantiated_name));
+								if (chain_parent_it == getTypesByNameMap().end() || !chain_parent_it->second->isTemplateInstantiation()) {
+									restore_token_position(chain_save);
+									break;
+								}
+
+								// Reconstruct the full qualified base template name (e.g. "Outer::Middle")
+								// using the namespace handle + identifier_handle from the type info.
+								StringHandle chain_full_base_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+									chain_parent_it->second->sourceNamespace(),
+									chain_parent_it->second->baseTemplateName());
+								StringBuilder chain_template_name_builder;
+								std::string_view chain_template_name = chain_template_name_builder
+									.append(StringTable::getStringView(chain_full_base_handle))
+									.append("::")
+									.append(chain_member_tok.value())
+									.commit();
+
+								auto chain_template_opt = gTemplateRegistry.lookupTemplate(chain_template_name);
+								if (!chain_template_opt.has_value() || !chain_template_opt->is<TemplateClassDeclarationNode>()) {
+									restore_token_position(chain_save);
+									break;
+								}
+
+								discard_saved_token(chain_save);
+
+								// Register outer binding for the next level from the chain parent's accumulated
+								// ancestor bindings plus the chain parent's own template params.
+								// The instantiation context only contains the CURRENT level's params, so we
+								// must also pull in whatever outer binding was used for the chain parent.
+								StringHandle chain_template_handle = StringTable::getOrInternStringHandle(chain_template_name);
+								{
+									OuterTemplateBinding chain_outer_binding;
+									// First: carry over any outer binding that was used when the chain parent was instantiated
+									if (const OuterTemplateBinding* ancestor_binding = gTemplateRegistry.getOuterTemplateBinding(
+											StringTable::getStringView(chain_full_base_handle))) {
+										for (size_t i = 0; i < ancestor_binding->param_names.size() && i < ancestor_binding->param_args.size(); ++i) {
+											chain_outer_binding.param_names.push_back(ancestor_binding->param_names[i]);
+											chain_outer_binding.param_args.push_back(ancestor_binding->param_args[i]);
+										}
+									}
+									// Second: add the chain parent's own template params
+									if (chain_parent_it->second->hasInstantiationContext()) {
+										const TypeInfo::InstantiationContext* chain_ctx = chain_parent_it->second->instantiationContext();
+										for (size_t i = 0; i < chain_ctx->param_names.size() && i < chain_ctx->param_args.size(); ++i) {
+											for (size_t existing_i = 0; existing_i < chain_outer_binding.param_names.size();) {
+												if (chain_outer_binding.param_names[existing_i] == chain_ctx->param_names[i]) {
+													chain_outer_binding.param_names.erase(chain_outer_binding.param_names.begin() + existing_i);
+													chain_outer_binding.param_args.erase(chain_outer_binding.param_args.begin() + existing_i);
+													continue;
+												}
+												++existing_i;
+											}
+											chain_outer_binding.param_names.push_back(chain_ctx->param_names[i]);
+											chain_outer_binding.param_args.push_back(toTemplateTypeArg(chain_ctx->param_args[i]));
+										}
+									}
+									if (!chain_outer_binding.param_names.empty()) {
+										gTemplateRegistry.registerOuterTemplateBinding(chain_template_handle, std::move(chain_outer_binding));
+									}
+								}
+
+								auto chain_template_args = parse_explicit_template_arguments();
+								if (!chain_template_args.has_value()) {
+									return ParseResult::error("Failed to parse template arguments for member class template", chain_member_tok);
+								}
+
+								auto chain_instantiated = try_instantiate_class_template(chain_template_name, *chain_template_args);
+								if (chain_instantiated.has_value() && chain_instantiated->is<StructDeclarationNode>()) {
+									registerAndNormalizeLateMaterializedTopLevelNode(*chain_instantiated);
+								}
+
+								member_instantiated_name = get_instantiated_class_name(chain_template_name, *chain_template_args);
+								member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_instantiated_name));
+							}
+
 							if (member_type_it != getTypesByNameMap().end()) {
 								const TypeInfo* member_type_info = member_type_it->second;
 								int member_type_size = 0;
