@@ -3251,6 +3251,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				if (global_symbol_table_) {
 					ctx.global_symbols = global_symbol_table_;
 				}
+				ctx.parser = parser_;
+				ctx.sema = sema_;
 				if (current_struct_name_.isValid()) {
 					auto struct_type_it = getTypesByNameMap().find(current_struct_name_);
 					if (struct_type_it != getTypesByNameMap().end()) {

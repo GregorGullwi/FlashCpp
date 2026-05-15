@@ -1600,10 +1600,24 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	}
 
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
+		// The sema pass may have already resolved this call during annotation.
+		// Consume that pre-resolved result directly instead of re-running POI lookup.
+		if (context.sema) {
+			if (const FunctionDeclarationNode* sema_resolved = context.sema->getResolvedDirectCall(&call_expr)) {
+				return evaluate_function_call_with_bindings(
+					*sema_resolved,
+					call_expr.arguments(),
+					bindings,
+					context,
+					mutable_bindings);
+			}
+		}
+		// POI resolution requires the parser.  If context.parser is null here it
+		// means the evaluator was invoked without a parser in a context where a
+		// dependent-unqualified call survived template instantiation, which is a
+		// compiler bug.
 		if (!context.parser) {
-			return EvalResult::error(
-				"Cannot resolve dependent unqualified call at point of instantiation",
-				EvalErrorType::TemplateDependentExpression);
+			throw InternalError("evaluate_function_call_with_outer_bindings: parser required for dependent unqualified call POI resolution but is null");
 		}
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
