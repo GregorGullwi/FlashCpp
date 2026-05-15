@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-15 (semantic analyzer lookup unification advanced)
+**Last updated:** 2026-05-15 (semantic analyzer unification confirmed complete; QualifiedTypeMemberAccess allocation optimized)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -116,6 +116,27 @@ Completed work:
     `std::tuple_element<I,E>` findable through normal qualified semantic lookup
     without any synthesized-name fallback. The non-standard `fallback_names`
     mechanism was then removed entirely from `SemanticAnalysis.cpp`.
+23. **semantic analyzer unification confirmed complete (2026-05-15):** a full
+    audit of `SemanticAnalysis.cpp`, `OverloadResolution.h`, and `SemanticTypes.h`
+    found no remaining sema-layer direct template-registry probes. All surviving
+    direct calls are in documented intentional-direct paths:
+    - pattern-identity checks (`get_instantiation_pattern`, `isPatternStructName`)
+      are not name-lookup probes and are correct as direct calls;
+    - `ConstExprEvaluator_Members.cpp` fallback paths guarded by
+      `if (parser_context == nullptr)` are correct intentional fallbacks;
+    - `ExpressionSubstitutor.cpp` existence-only checks are documented as
+      intentionally direct (no instantiation-context timing needed);
+    - `IrGenerator_*` / `TemplateRegistry_Lazy.h` calls are in codegen or
+      registry-internal layers where `makeTemplateNameLookupRequest` does not apply.
+24. **`QualifiedTypeMemberAccess::template_arguments` optimized (2026-05-15):**
+    replaced `std::unique_ptr<std::vector<TemplateTypeArg>>` with a raw
+    `const std::vector<TemplateTypeArg>*` pointing into `gChunkedAnyStorage`.
+    All four creation sites (`ExpressionSubstitutor.cpp`,
+    `Parser_Expr_QualLookup.cpp` ×2, `Parser_Templates_Inst_ClassTemplate.cpp`)
+    now use `&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(…)`.
+    Copy semantics are a shallow pointer copy (the pointed-to data is immutable
+    after creation and lives for the entire compilation). This reduces two heap
+    allocations per dependent member chain segment to one.
 
 Latest validation passed the full Linux suite: 2356 pass, 183 expected-fail,
 0 regressions.
@@ -126,82 +147,63 @@ for dependent calls, and constraint normalization/subsumption.
 
 ## What is left / next
 
-The completed refactor should be treated as the foundation, not the finish line.
-The highest-impact active work is semantic analyzer unification: remove
-remaining sema template infrastructure paths that directly probe registry names
-and move them to parser-built semantic lookup requests/records. The remaining
-work is mostly architecture work that should be split into focused
-investigations.
+The semantic analyzer unification track is now complete. The remaining work
+is architecture work that should be split into focused investigations.
 
 ### Open next steps
 
-1. **Semantic analyzer unification of remaining template lookup paths.**
-   Continue replacing direct sema registry probing with parser-built semantic
-   lookup requests/records so lookup timing (definition vs POI), lookup kind,
-   and declaration identity stay consistent across parser and sema.
-   Structured-binding tuple-like lookup now follows semantic candidate ordering
-   including member-`get` precedence; remaining sema hotspots should follow.
-
-2. **ADL-sensitive dependent completion and deeper two-phase lookup records.**
+1. **ADL-sensitive dependent completion and deeper two-phase lookup records.**
    All non-dependent unqualified/qualified/member-template/operator paths now
    use semantic lookup requests. The remaining gap is ADL completion for
    dependent argument types and recording definition-context lookup for calls
    from inside template bodies that reach hidden friends or dependent ADL
    namespaces.
 
-3. **Broaden two-phase lookup records further.**
+2. **Broaden two-phase lookup records further.**
    Definition-context and semantic lookup records now protect selected
    non-dependent unqualified, qualified, member-template, and operator paths.
    Static initializers, richer dependent bases, deeper member-template segment
    chains, and broader ADL still need explicit definition/POI records.
 
-4. **Implement remaining structural NTTP values.**
+3. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
    and null member-pointer identity is implemented. Non-null member pointers,
    floating-point, and structural class-type NTTPs still need standard semantic
-   values, and function/member-pointer mangling still uses a conservative
-   fallback for unsupported encodings.
+   values. Function-pointer and member-pointer mangling still use a conservative
+   hash fallback (see `TODO(item-8)` in `NameMangling.h` ~line 1103); replace
+   with full Itanium encoding once constexpr evaluation for those categories is
+   implemented.
 
-5. **Expand shape-only deduction and ranking.**
+4. **Expand shape-only deduction and ranking.**
    Selected overloaded free, explicit free, and member function-template paths
    can rank signature-only candidates before body materialization. The older
    full-instantiation fallback remains for unhandled cases; keep moving
    candidate construction, deduction, constraints, partial ordering, and ranking
    into sema-owned phases.
 
-6. **Complete dependent-name and current-instantiation modeling.**
+5. **Complete dependent-name and current-instantiation modeling.**
    `TypeInfo::DependentQualifiedNameRecord` covers high-value member-type
    placeholders, current-instantiation owners, unknown-specialization owners, and
    expression qualified-id records for practical paths. Full `[temp.dep]` support
    still needs richer dependent base lookup, deeper member-template segment
    chains, injected-class-name handling, and alias ordering.
 
-7. **Harden constructor annotation fallback into an invariant.**
+6. **Harden constructor annotation fallback into an invariant.**
    Current valid coverage no longer needs the fallback in tested cases, but
    codegen still intentionally keeps a soft fallback for uncovered/invalid
    paths. Keep widening sema coverage until the fallback can be converted into a
    hard diagnostic or invariant without losing valid code.
 
-8. **Replace `std::unique_ptr` with a raw pointer with an entry created from a gChunkedVector for `template_arguments` in
-   `ExpressionSubstitutor.cpp`.**
-   Each segment of a dependent member chain creates a `std::make_shared<std::vector<TemplateTypeArg>>`
-   at the substitution call site (`ExpressionSubstitutor.cpp`, around the
-   `member_chain.push_back` loop). Since we will keep the pointer the whole lifetime of the. ompiler, the allocation could be sped up by using a ChunkedVector backed pointer, switching
-   to a raw pointer (or storing the vector by value if the `DependentMemberAccess`
-   ownership model permits) would reduce the two heap allocations per segment
-   to one and improve cache locality on the hot template substitution path.
-   This requires auditing all consumers of the `template_arguments` shared_ptr
-   field on `DependentMemberAccess` (or equivalent) to confirm none alias the
-   pointer after the vector is moved.
-
 
 ### Highest-impact architecture tracks
 
-1. **Semantic analyzer unification on semantic lookup requests.**
-   Keep parser and sema on one declaration-owned lookup model. This reduces
-   category drift and timing mismatches in sema-owned template features.
-    The current slice moved structured-binding tuple-like lookup onto semantic
-    lookup requests and candidate-name records.
+1. **Semantic analyzer unification on semantic lookup requests. ✅ COMPLETE**
+   A 2026-05-15 full audit confirmed the sema layer is unified. All
+   `gTemplateRegistry` calls in `SemanticAnalysis.cpp`, `OverloadResolution.h`,
+   and `SemanticTypes.h` route through `makeTemplateNameLookupRequest()` or are
+   documented intentional-direct paths. The `QualifiedTypeMemberAccess::template_arguments`
+   field was optimized from `unique_ptr<vector<TemplateTypeArg>>` to a raw
+   `gChunkedAnyStorage`-backed pointer (one heap allocation per segment instead of two).
 
 2. **Two-phase lookup records.**
    Store definition-context lookup for non-dependent names and defer only
@@ -226,6 +228,8 @@ investigations.
     member-pointer, floating-point, and structural class-type NTTPs remain
     explicit unsupported/placeholder categories until the parser and constant
     evaluator can produce standard semantic values for them.
+    Full Itanium encoding for function-pointer/member-pointer NTTPs is tracked
+    by `TODO(item-8)` in `NameMangling.h` ~line 1103.
 
 4. **Deduction/constraints split before materialization.**
    Continue extracting candidate viability, deduction, constraints, partial
@@ -328,14 +332,13 @@ remaining work is the smaller phased delivery list below.
 
 ## Recommended next step
 
-Start with semantic analyzer unification for remaining template lookup hotspots
-that still directly probe registry names, then continue dependent-path semantic
-lookup completion and two-phase lookup records. Lower-frequency parser probes
-and the static-initializer constexpr template probe are already on semantic
-lookup requests; after the structured-binding semantic-candidate ordering +
-member-precedence slices, the next highest-impact work is dependent-base lookup,
-deeper member-template segment chains, and ADL-sensitive dependent calls on the
-same declaration-owned records.
+Semantic analyzer unification is now complete (2026-05-15). The next highest-impact
+work is advancing two-phase lookup records: extend definition-context records to
+static initializers, dependent bases, and ADL-sensitive dependent calls. In parallel,
+richer dependent-base lookup and deeper member-template segment chains should build
+on the existing `DependentQualifiedNameRecord` infrastructure. Structural NTTP
+completion (non-null member-pointers, structural class types, and replacing the
+`TODO(item-8)` mangling fallback) is the other major conformance gap remaining.
 
 ## Implementation plan
 
@@ -347,10 +350,11 @@ behavior as compatibility constraints.
 
 ### Work plan (remaining phased delivery)
 
-1. **Unify declaration lookup for template names**
-   Route class/function/alias/variable template candidate discovery through one
-   semantic lookup result so template-id classification and deduction use the
-   same declaration identity model.
+1. **Unify declaration lookup for template names. ✅ COMPLETE**
+   All sema-layer template name lookups now route through semantic lookup requests
+   (`makeTemplateNameLookupRequest`). Registry probes in sema are either
+   post-lookup specialization matching, pattern-identity checks, or documented
+   intentional-direct fallbacks (no parser context available).
 
 2. **Advance two-phase lookup records**
    Persist non-dependent lookup at definition time and defer only dependent
@@ -375,7 +379,8 @@ behavior as compatibility constraints.
    values and equivalence for non-null member-pointer, floating-point, and
    structural class-type NTTPs, then migrate keys and mangling for those
    categories. Replace conservative function/member-pointer mangling fallbacks
-   where standard entity encodings are available.
+   where standard entity encodings are available (tracked in `NameMangling.h`
+   `TODO(item-8)` ~line 1103).
 
 6. **Complete dependent-name/current-instantiation modeling**
    Build on `DependentQualifiedNameRecord` with semantic records for expression
@@ -384,10 +389,11 @@ behavior as compatibility constraints.
 
 ### Concrete artifacts to implement
 
-1. **Semantic lookup result object**
-   A single lookup result type carrying declaration identity, lookup kind
-   (ordinary/qualified/member/ADL), dependency flags, and definition-vs-POI
-   timing metadata.
+1. **Semantic lookup result object. ✅ COMPLETE**
+   `TemplateNameLookupRequest` / `TemplateNameLookupResult` / `TemplateNameLookupCandidate`
+   carry declaration identity, lookup kind (ordinary/qualified/member/ADL),
+   dependency flags, and definition-vs-POI timing metadata. All sema-layer
+   lookups now use these types.
 
 2. **Template-id syntax node plus semantic classification record**
    Keep parse-time argument syntax unclassified; attach a semantic

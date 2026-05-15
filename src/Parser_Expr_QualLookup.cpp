@@ -786,7 +786,7 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 				return std::nullopt;
 			}
 			member_access.has_template_arguments = true;
-			member_access.template_arguments = std::make_unique<std::vector<TemplateTypeArg>>(std::move(member_template_args).value().toVector());
+			member_access.template_arguments = &gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(std::move(member_template_args).value().toVector());
 			member_access.template_argument_infos =
 				build_template_arg_infos(*member_access.template_arguments, member_template_arg_nodes);
 		}
@@ -1500,7 +1500,7 @@ TypeIndex Parser::substitute_template_parameter(
 					}
 					member_access.has_template_arguments = true;
 					member_access.template_arguments =
-						std::make_unique<std::vector<TemplateTypeArg>>(std::move(member_args));
+						&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(std::move(member_args));
 				}
 				member_type_chain.push_back(std::move(member_access));
 			}

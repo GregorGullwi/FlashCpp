@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-15 (semantic analyzer lookup unification advanced)
+**Last updated:** 2026-05-15 (semantic analyzer unification confirmed complete; QualifiedTypeMemberAccess allocation optimized)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -94,6 +94,17 @@ infrastructure tracks. The branch now includes:
   namespace-qualified names. `std::tuple_size<E>` etc. are now found through
   normal qualified semantic lookup. The non-standard `fallback_names` mechanism
   has been removed entirely from `SemanticAnalysis.cpp`.
+- **semantic analyzer unification confirmed complete (2026-05-15):** a full audit
+  of all `gTemplateRegistry` calls in `SemanticAnalysis.cpp`, `OverloadResolution.h`,
+  and `SemanticTypes.h` confirmed no remaining sema-layer direct registry probes.
+  The only surviving direct calls are in documented intentional fallback paths
+  (no parser context) or in registry-internal/codegen layers where semantic
+  requests cannot apply.
+- **`QualifiedTypeMemberAccess::template_arguments` allocation optimized (2026-05-15):**
+  the `unique_ptr<vector<TemplateTypeArg>>` field was replaced with a raw pointer
+  into `gChunkedAnyStorage`, reducing two heap allocations per dependent member
+  chain segment to one and improving cache locality on the hot template
+  substitution path.
 
 Validation after all changes passed the Linux sharded build and the full test
 suite (2356 regular tests + 183 expected-fail tests, 0 regressions).
@@ -105,9 +116,9 @@ architecture gaps, not known regressions from the refactor.
 
 The remaining work is not another broad parser cleanup. The next useful passes
 should target the places where FlashCpp still lacks standard-owned semantic
-state. The highest-impact active track is semantic analyzer unification for
-template lookup-driven semantic features that still probe registry names
-directly.
+state. The semantic analyzer unification track is now complete: a full
+2026-05-15 audit confirmed no remaining direct registry probes in the sema
+layer. The active architecture tracks are therefore:
 
 ### Open next steps
 
@@ -127,7 +138,8 @@ directly.
    Typed integral/enum/`nullptr`, pointer, reference, function-pointer, and null
    member-pointer identity exists. Add real semantic values for non-null
    member-pointers, floating-point, and structural class-type NTTPs, and replace
-   the remaining vendor-hash mangling fallback where possible.
+   the remaining vendor-hash mangling fallback (see `TODO(item-8)` in
+   `NameMangling.h`) where possible.
 
 4. **Deduction and constraint pipeline split.**
    Signature-only candidate ranking now covers selected free, explicit free, and
@@ -147,21 +159,20 @@ directly.
 
 ### Highest-impact architecture targets
 
-1. **Semantic analyzer unification on semantic lookup records.**
-   This is the highest-impact active track: sema paths that still issue
-   hardcoded registry probes need to consume parser-built semantic lookup
-   requests/records so declaration identity, lookup kind, and timing are
-   consistent with template definition-vs-POI rules.
-    **Progress:** structured-binding tuple-like sema lookup now resolves
-    `tuple_size`, `tuple_element`, and `get` through semantic lookup requests,
-    with conservative fallback probes retained for compatibility.
+1. **Semantic analyzer unification on semantic lookup records. ✅ COMPLETE**
+   A full audit confirmed the sema layer is unified. All `gTemplateRegistry`
+   calls in `SemanticAnalysis.cpp`, `OverloadResolution.h`, and `SemanticTypes.h`
+   are either already routed through `makeTemplateNameLookupRequest()`, or are
+   in documented intentional-direct paths (pattern-identity checks, no-parser-context
+   fallbacks, existence-only checks). The `QualifiedTypeMemberAccess::template_arguments`
+   allocation was also optimized from `unique_ptr` to a raw `gChunkedAnyStorage`-backed
+   pointer, reducing hot-path heap allocations.
 
 2. **Two-phase lookup and semantic lookup records.**
-   This remains the largest conformance lever after the sema-unification start.
-   Non-dependent names in templates need definition-context lookup records,
-   while dependent names need explicit point-of-instantiation completion
-   records. This also gives qualified lookup, ADL, static initializers, and
-   member-template calls a shared source of truth.
+   This remains the largest conformance lever. Non-dependent names in templates
+   need definition-context lookup records, while dependent names need explicit
+   point-of-instantiation completion records. This also gives qualified lookup,
+   ADL, static initializers, and member-template calls a shared source of truth.
     **Progress:** conservative definition-context records now guard
     non-dependent unqualified function calls, and semantic lookup records now
     cover the main function/member/qualified/operator template discovery and
@@ -175,6 +186,8 @@ directly.
     `nullptr`, object pointer, reference, function-pointer, and null
     member-pointer identities, and explicitly rejects unsupported structural
     class-type NTTPs instead of manufacturing scalar identities.
+    Remaining: full Itanium encoding for function-pointer, member-pointer NTTPs
+    (see `TODO(item-8)` in `NameMangling.h` ~line 1103).
 
 4. **Deduction and constraint pipeline separation.**
    Candidate construction, deduction, constraint checking, partial ordering,

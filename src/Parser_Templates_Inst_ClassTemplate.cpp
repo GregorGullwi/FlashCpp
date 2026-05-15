@@ -563,15 +563,15 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 		resolved_member.member_name = member_access.member_name;
 		resolved_member.has_template_arguments = member_access.has_template_arguments;
 		if (member_access.has_template_arguments) {
-			resolved_member.template_arguments = std::make_unique<std::vector<TemplateTypeArg>>();
-			resolved_member.template_arguments->reserve(member_access.template_argument_infos.size());
+			std::vector<TemplateTypeArg> resolved_args;
+			resolved_args.reserve(member_access.template_argument_infos.size());
 			for (const auto& member_arg_info : member_access.template_argument_infos) {
 				if (member_arg_info.is_pack) {
 					auto try_expand = [&](StringHandle pack_name) -> bool {
 						auto it = pack_substitution_map.find(pack_name);
 						if (it != pack_substitution_map.end()) {
 							for (const TemplateTypeArg& pack_arg : it->second) {
-								resolved_member.template_arguments->push_back(pack_arg);
+								resolved_args.push_back(pack_arg);
 							}
 							return true;
 						}
@@ -607,11 +607,11 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 					if (std::optional<TemplateTypeArg> resolved_type_arg =
 							tryResolveDeferredBaseTypeArgFromMap(ts, name_substitution_map);
 						resolved_type_arg.has_value()) {
-						resolved_member.template_arguments->push_back(*resolved_type_arg);
+						resolved_args.push_back(*resolved_type_arg);
 						member_arg_resolved = true;
 					}
 					if (!member_arg_resolved) {
-						resolved_member.template_arguments->emplace_back(ts);
+						resolved_args.emplace_back(ts);
 						member_arg_resolved = true;
 					}
 				} else if (member_arg_info.node.is<ExpressionNode>()) {
@@ -620,14 +620,14 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 						std::string_view pname = std::get<TemplateParameterReferenceNode>(expr).param_name().view();
 						auto it = name_substitution_map.find(pname);
 						if (it != name_substitution_map.end()) {
-							resolved_member.template_arguments->push_back(it->second);
+							resolved_args.push_back(it->second);
 							member_arg_resolved = true;
 						}
 					} else if (std::holds_alternative<IdentifierNode>(expr)) {
 						std::string_view iname = std::get<IdentifierNode>(expr).name();
 						auto ident_subst_it = name_substitution_map.find(iname);
 						if (ident_subst_it != name_substitution_map.end()) {
-							resolved_member.template_arguments->push_back(ident_subst_it->second);
+							resolved_args.push_back(ident_subst_it->second);
 							member_arg_resolved = true;
 						} else {
 							StringHandle type_name_handle = StringTable::getOrInternStringHandle(iname);
@@ -635,7 +635,7 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 							if (type_it != getTypesByNameMap().end()) {
 								TemplateTypeArg resolved_type_arg;
 								resolved_type_arg.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
-								resolved_member.template_arguments->push_back(resolved_type_arg);
+								resolved_args.push_back(resolved_type_arg);
 								member_arg_resolved = true;
 							}
 						}
@@ -644,7 +644,7 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 					if (!member_arg_resolved) {
 						const ASTNode substituted_expr = substitute_expression(member_arg_info.node);
 						if (auto evaluated_value = evaluate_constant_expression(substituted_expr)) {
-							resolved_member.template_arguments->push_back(
+							resolved_args.push_back(
 								makeDeferredBaseValueArg(evaluated_value->value, evaluated_value->type_index));
 							member_arg_resolved = true;
 						}
@@ -655,6 +655,11 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 					return std::nullopt;
 				}
 			}
+			// Deferred allocation: only emplace into gChunkedAnyStorage once the
+			// entire loop succeeds. Early-return paths above leave template_arguments
+			// as nullptr (relying on the `= nullptr` default member initializer in QualifiedTypeMemberAccess) and avoid touching gChunkedAnyStorage.
+			resolved_member.template_arguments =
+				&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(std::move(resolved_args));
 		}
 
 		resolved_member_chain.push_back(std::move(resolved_member));
