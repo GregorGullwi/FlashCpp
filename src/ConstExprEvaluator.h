@@ -674,6 +674,7 @@ private:
 
 	struct ResolvedMemberFunctionCandidate {
 		const FunctionDeclarationNode* function = nullptr;
+		const StructMemberFunction* member = nullptr;
 		bool ambiguous = false;
 	};
 

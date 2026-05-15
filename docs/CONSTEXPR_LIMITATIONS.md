@@ -36,6 +36,7 @@ FlashCpp implements a custom constexpr evaluator used for `static_assert`, templ
 ### Functions, lambdas, and callables
 - Multi-statement constexpr free functions with local variables, `if`/`else`, `for`, `while`, `switch`, `break`, `continue`, and `return`.
 - Overload resolution reuses sema-resolved call target for both free functions and callable objects.
+- Virtual dispatch through base-class pointer/reference views (`Base*` / `Base&`) resolves to the most-derived constexpr override during constant evaluation.
 - Constexpr lambdas: explicit captures (`[x]`, `[&x]`), default captures (`[=]`, `[&]`), init-captures, `[this]`, `[*this]`.
 - Void lambdas (implicit or explicit `-> void`) with by-reference captures that mutate outer locals, including early `return;` paths.
 - Mutable closure-local state across repeated lambda calls.
@@ -149,23 +150,6 @@ C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot 
 
 ---
 
-### Virtual dispatch in constexpr
-
-```cpp
-struct Base { virtual constexpr int value() const { return 0; } };
-struct Derived : Base { int x; constexpr Derived(int v) : x(v) {}
-    constexpr int value() const override { return x; } };
-constexpr Derived d(42);
-static_assert(d.value() == 42);  // ✅ direct call on concrete type — works
-// But through a Base* / Base& pointer, virtual dispatch is not resolved.
-```
-
-Virtual dispatch through a base-class pointer or reference is not implemented in the evaluator. C++20 does require it to work; FlashCpp does not track vtable information in `EvalResult`.
-
-**What is needed:** The member-function lookup must consult the *dynamic type* (stored in `object_type_index`) when the static type is a base class, and route to the most-derived override.
-
----
-
 ## Implementation Architecture
 
 The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Members`, and header files). Central types:
@@ -199,9 +183,8 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 The most impactful next improvements in rough priority order:
 
 1. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
-2. **Virtual dispatch** — use `object_type_index` as the dynamic type when looking up member functions through a base-class static type.
-3. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
-4. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
+2. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
+3. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
 
 ---
 
@@ -238,3 +221,4 @@ The most impactful next improvements in rough priority order:
 - `tests/test_constexpr_returned_lambda_global_ret0.cpp` — returned lambda values stored in global `constexpr auto` variables
 - `tests/test_constexpr_operator_bracket_struct_ret0.cpp` — `operator[]` subscript syntax on struct types
 - `tests/test_constexpr_delegating_ctor_ret0.cpp` — delegating constructors (`S() : S(42) {}`) in constexpr
+- `tests/test_constexpr_virtual_dispatch_base_view_ret0.cpp` — virtual dispatch through `Base*` / `Base&` in constexpr

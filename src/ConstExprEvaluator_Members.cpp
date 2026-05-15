@@ -86,6 +86,41 @@ TemplateEnvironment buildOuterFunctionTemplateEnvironment(
 	return env;
 }
 
+const StructMemberFunction* find_member_function_metadata_recursive(
+	const StructTypeInfo* struct_info,
+	const FunctionDeclarationNode& target_function) {
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+		if (&candidate == &target_function || &candidate.decl_node() == &target_function.decl_node()) {
+			return &member_func;
+		}
+	}
+
+	for (const auto& base_class : struct_info->base_classes) {
+		const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
+		if (!base_type_info) {
+			continue;
+		}
+		const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+		if (!base_struct_info) {
+			continue;
+		}
+		if (const StructMemberFunction* base_match =
+				find_member_function_metadata_recursive(base_struct_info, target_function)) {
+			return base_match;
+		}
+	}
+
+	return nullptr;
+}
+
 InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
 	const TypeInfo& owner_type_info,
 	Parser& parser_context) {
@@ -2184,6 +2219,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 	}
 
+	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 	const FunctionDeclarationNode* actual_func = [&]() -> const FunctionDeclarationNode* {
 		if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 			return try_get_lowered_constexpr_member_call_target(
@@ -2196,8 +2232,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 		return nullptr;
 	}();
+	const StructMemberFunction* actual_member =
+		actual_func ? find_member_function_metadata_recursive(bound_struct_info, *actual_func) : nullptr;
 	if (!actual_func) {
-		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto member_function_match = receiver_is_this
 										 ? find_current_struct_member_function_candidate(
 											   func_name_handle,
@@ -2219,6 +2256,24 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 
 		actual_func = member_function_match.function;
+		actual_member = member_function_match.member;
+	}
+	if (!receiver_is_this && actual_func && actual_member && actual_member->is_virtual) {
+		auto dynamic_match = find_member_function_candidate(
+			bound_struct_info,
+			func_name_handle,
+			call_info->arguments->size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			true);
+		if (dynamic_match.ambiguous) {
+			return EvalResult::error("Ambiguous member function overload in constant expression");
+		}
+		if (dynamic_match.function) {
+			actual_func = dynamic_match.function;
+			actual_member = dynamic_match.member;
+		}
 	}
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));
@@ -2515,6 +2570,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_call_operator_candida
 		}
 
 		result.function = &func_decl;
+		result.member = &member_func;
 		if (!detect_ambiguity) {
 			break;
 		}
@@ -2562,6 +2618,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 		}
 
 		result.function = &func_decl;
+		result.member = &member_func;
 		if (!detect_ambiguity) {
 			break;
 		}
@@ -7092,6 +7149,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 
 	// Look up the actual member function in the struct's type info
 	const auto& arguments = call_expr.arguments();
+	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 	const FunctionDeclarationNode* actual_func = try_get_lowered_constexpr_member_call_target(
 		call_expr,
 		struct_info,
@@ -7099,8 +7157,9 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		context,
 		MemberFunctionLookupMode::LookupOnly,
 		false);
+	const StructMemberFunction* actual_member =
+		actual_func ? find_member_function_metadata_recursive(struct_info, *actual_func) : nullptr;
 	if (!actual_func) {
-		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto member_function_match = find_member_function_candidate(
 			struct_info,
 			func_name_handle,
@@ -7113,6 +7172,24 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 			return EvalResult::error("Ambiguous member function overload in constant expression");
 		}
 		actual_func = member_function_match.function;
+		actual_member = member_function_match.member;
+	}
+	if (actual_func && actual_member && actual_member->is_virtual) {
+		auto dynamic_match = find_member_function_candidate(
+			struct_info,
+			func_name_handle,
+			arguments.size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			true);
+		if (dynamic_match.ambiguous) {
+			return EvalResult::error("Ambiguous member function overload in constant expression");
+		}
+		if (dynamic_match.function) {
+			actual_func = dynamic_match.function;
+			actual_member = dynamic_match.member;
+		}
 	}
 
 	if (!actual_func) {
