@@ -2586,6 +2586,14 @@ ParseResult Parser::parse_type_specifier() {
 									if (chain_parent_it->second->hasInstantiationContext()) {
 										const TypeInfo::InstantiationContext* chain_ctx = chain_parent_it->second->instantiationContext();
 										for (size_t i = 0; i < chain_ctx->param_names.size() && i < chain_ctx->param_args.size(); ++i) {
+											for (size_t existing_i = 0; existing_i < chain_outer_binding.param_names.size();) {
+												if (chain_outer_binding.param_names[existing_i] == chain_ctx->param_names[i]) {
+													chain_outer_binding.param_names.erase(chain_outer_binding.param_names.begin() + existing_i);
+													chain_outer_binding.param_args.erase(chain_outer_binding.param_args.begin() + existing_i);
+													continue;
+												}
+												++existing_i;
+											}
 											chain_outer_binding.param_names.push_back(chain_ctx->param_names[i]);
 											chain_outer_binding.param_args.push_back(toTemplateTypeArg(chain_ctx->param_args[i]));
 										}
@@ -2597,7 +2605,7 @@ ParseResult Parser::parse_type_specifier() {
 
 								auto chain_template_args = parse_explicit_template_arguments();
 								if (!chain_template_args.has_value()) {
-									break;
+									return ParseResult::error("Failed to parse template arguments for member class template", chain_member_tok);
 								}
 
 								auto chain_instantiated = try_instantiate_class_template(chain_template_name, *chain_template_args);

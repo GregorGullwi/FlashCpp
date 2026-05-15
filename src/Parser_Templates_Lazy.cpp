@@ -739,13 +739,33 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				if (already_present)
 					continue;
 				Token outer_tok(Token::Type::Identifier, StringTable::getStringView(outer_pnames[i]), 0, 0, 0);
-				const TemplateTypeArg outer_arg = toTemplateTypeArg(outer_pargs[i]);
+				const TypeInfo::TemplateArgInfo& outer_arg_info = outer_pargs[i];
+				const TemplateTypeArg outer_arg = toTemplateTypeArg(outer_arg_info);
 				if (outer_arg.is_value) {
 					// Non-type parameter (e.g. int N): TemplateParameterNode(name, TypeSpecifierNode, token)
 					// creates kind = NonType so substituteTemplateParameters correctly matches it.
-					TypeSpecifierNode int_type(outer_arg.type_index.category(), TypeQualifier::None,
-						get_type_size_bits(outer_arg.type_index.category()), outer_tok, CVQualifier::None);
-					substitution_params.push_back(TemplateParameterNode(outer_pnames[i], int_type, outer_tok));
+					TypeSpecifierNode nttp_type(
+						outer_arg.type_index.withCategory(outer_arg.typeEnum()),
+						TypeQualifier::None,
+						get_type_size_bits(outer_arg.typeEnum()),
+						outer_tok,
+						outer_arg.cv_qualifier);
+					nttp_type.set_reference_qualifier(outer_arg.ref_qualifier);
+					for (size_t ptr_i = 0; ptr_i < outer_arg.pointer_depth; ++ptr_i) {
+						CVQualifier ptr_cv = CVQualifier::None;
+						if (ptr_i < outer_arg.pointer_cv_qualifiers.size()) {
+							ptr_cv = outer_arg.pointer_cv_qualifiers[ptr_i];
+						}
+						nttp_type.add_pointer_level(ptr_cv);
+					}
+					if (outer_arg.is_array) {
+						nttp_type.set_array_dimensions(
+							std::span<const size_t>(outer_arg_info.array_dimensions.data(), outer_arg_info.array_dimensions.size()));
+					}
+					if (outer_arg.function_signature.has_value()) {
+						nttp_type.set_function_signature(*outer_arg.function_signature);
+					}
+					substitution_params.push_back(TemplateParameterNode(outer_pnames[i], nttp_type, outer_tok));
 				} else {
 					// Type parameter (e.g. typename T): TemplateParameterNode(name, token) gives kind = Type.
 					substitution_params.push_back(TemplateParameterNode(outer_pnames[i], outer_tok));
