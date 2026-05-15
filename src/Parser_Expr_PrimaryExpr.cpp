@@ -4968,9 +4968,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// ADL per C++20 [basic.lookup.argdep]: suppressed only by blocking non-function decls
 				// (variables, structs, enums). Plain DeclarationNode stubs do NOT block ADL.
+				// argumentDependentLookupIncluded already captured the same check above on the same set.
 				bool argumentDependentLookupIncludedRuntime = false;
 				if (!arg_types.empty()) {
-					if (!std::any_of(all_overloads.begin(), all_overloads.end(), is_adl_blocking)) {
+					if (argumentDependentLookupIncluded) {
 						argumentDependentLookupIncludedRuntime = true;
 						auto adl_candidates = gSymbolTable.lookup_adl(identifier_token.value(), arg_types);
 						all_overloads.insert(all_overloads.end(), adl_candidates.begin(), adl_candidates.end());

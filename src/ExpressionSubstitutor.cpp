@@ -1003,11 +1003,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	auto normalizePendingSemanticRoots = [&]() {
 		parser_.normalizePendingSemanticRootsIfAvailable();
 	};
-	auto materializeSubstitutedUnresolvedCall = [&]() -> ASTNode {
-		ChunkedVector<ASTNode> substituted_args;
-		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			substituted_args.push_back(substitute(call.arguments()[i]));
-		}
+	auto materializeSubstitutedUnresolvedCall = [&](ChunkedVector<ASTNode>&& substituted_args) -> ASTNode {
 		CallExprNode substituted_call(
 			call.callee(),
 			std::move(substituted_args),
@@ -1618,7 +1614,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 			}
 		}
-		return materializeSubstitutedUnresolvedCall();
+		return materializeSubstitutedUnresolvedCall(std::move(substituted_args));
 	}
 
 	// If not a template function call or instantiation failed, check for qualified owners
@@ -1708,7 +1704,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 	// Return with substituted children preserved.
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
-	return materializeSubstitutedUnresolvedCall();
+	ChunkedVector<ASTNode> substituted_fallback_args;
+	for (size_t i = 0; i < call.arguments().size(); ++i) {
+		substituted_fallback_args.push_back(substitute(call.arguments()[i]));
+	}
+	return materializeSubstitutedUnresolvedCall(std::move(substituted_fallback_args));
 }
 
 ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
