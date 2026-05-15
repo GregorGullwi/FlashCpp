@@ -4463,9 +4463,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Register it with the template registry so the signature is known when used later.
 				NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 				StringHandle func_handle = StringTable::getOrInternStringHandle(func_base_name);
-				StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, func_handle);
-				std::string_view qualified_specialization_name = StringTable::getStringView(qualified_handle);
-				gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args.toVector(), *func_result.node());
+				gTemplateRegistry.registerSpecialization(
+					QualifiedIdentifier{current_handle, func_handle},
+					spec_template_args.toVector(),
+					*func_result.node());
 
 				return saved_position.success(*func_result.node());
 			}
@@ -4501,8 +4502,6 @@ ParseResult Parser::parse_template_declaration() {
 			// Build the qualified name including current namespace path
 			NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 			StringHandle func_handle = StringTable::getOrInternStringHandle(func_base_name);
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_handle, func_handle);
-			std::string_view qualified_specialization_name = StringTable::getStringView(qualified_handle);
 
 			ASTNode func_node_copy = *func_result.node();
 
@@ -4527,7 +4526,10 @@ ParseResult Parser::parse_template_declaration() {
 
 			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
 
-			gTemplateRegistry.registerSpecialization(qualified_specialization_name, spec_template_args.toVector(), func_node_copy);
+			gTemplateRegistry.registerSpecialization(
+				QualifiedIdentifier{current_handle, func_handle},
+				spec_template_args.toVector(),
+				func_node_copy);
 
 			// Also add to symbol table so codegen can find it during overload resolution
 			// Use the base function name (without template args) so it can be looked up

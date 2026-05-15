@@ -811,24 +811,10 @@ public:
 		});
 	}
 
-	// Register a template specialization (exact match)
-	void registerSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode specialized_node) {
-		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
-		specializations_[key] = specialized_node;
-		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
-		if (FLASH_LOG_ENABLED(Templates, Debug)) {
-			for (size_t i = 0; i < key.template_args.size(); ++i) {
-				const auto& arg = key.template_args[i];
-				FLASH_LOG(Templates, Debug, "  spec_arg[", i, "] value=", arg.value, ", cat=", static_cast<int>(arg.category()),
-						  ", is_value=", arg.is_value, ", is_dependent=", arg.is_dependent);
-			}
-		}
-	}
-
 	// Register a template specialization using QualifiedIdentifier.
 	void registerSpecialization(QualifiedIdentifier qi, std::span<const TemplateTypeArg> template_args, ASTNode specialized_node) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
-			registerSpecialization(name, template_args, specialized_node);
+			registerSpecializationByName(name, template_args, specialized_node);
 		});
 	}
 
@@ -1040,6 +1026,20 @@ public:
 	}
 
 private:
+	// Register a template specialization under an already-normalized registry key.
+	void registerSpecializationByName(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode specialized_node) {
+		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
+		specializations_[key] = specialized_node;
+		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
+		if (FLASH_LOG_ENABLED(Templates, Debug)) {
+			for (size_t i = 0; i < key.template_args.size(); ++i) {
+				const auto& arg = key.template_args[i];
+				FLASH_LOG(Templates, Debug, "  spec_arg[", i, "] value=", arg.value, ", cat=", static_cast<int>(arg.category()),
+						  ", is_value=", arg.is_value, ", is_dependent=", arg.is_dependent);
+			}
+		}
+	}
+
 	// Canonicalize exact-specialization keys so alias-shaped arguments (for example
 	// a typedef that resolves to `int`) hit the same specialization entry as the
 	// underlying concrete type. Exact specializations are keyed structurally, not by
