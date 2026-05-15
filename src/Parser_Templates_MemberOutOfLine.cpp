@@ -795,19 +795,9 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					param_types.push_back(param_node.as<DeclarationNode>().type_specifier_node());
 				}
 			}
-			NameMangling::MangledName specialization_mangled_name;
-			if (func_ref.has_non_type_template_args()) {
-				// Non-type template args: get<0>, get<1>, etc.
-				std::span<const int64_t> spec_non_type_args = func_ref.non_type_template_args();
-				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
-					function_name_token.value(), return_type, param_types, spec_non_type_args,
-					func_ref.is_variadic(), struct_name_handle, ns_handle, member_quals.is_const());
-			} else {
-				// Type template args: get<SomeType>, etc.
-				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
-					function_name_token.value(), return_type, param_types, function_template_args,
-					func_ref.is_variadic(), struct_name_handle, ns_handle, member_quals.is_const());
-			}
+			auto specialization_mangled_name = NameMangling::generateMangledNameForSpecialization(
+				function_name_token.value(), return_type, param_types, function_template_args,
+				func_ref.is_variadic(), struct_name_handle, ns_handle, member_quals.is_const());
 			func_ref.set_mangled_name(specialization_mangled_name.view());
 		}
 
@@ -824,40 +814,51 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			discard_saved_token(body_start);
 
 			// Helper lambda: parse the body and set the definition on func_ref.
+			// Returns true on success, false on parse error.
 			// Called once, inside either the member-context or the plain-scope path below.
-			auto parse_and_set_body = [&]() {
+			auto parse_and_set_body = [&]() -> bool {
 				auto body_result = parse_function_body();
 				if (body_result.is_error()) {
 					FLASH_LOG(Templates, Error,
 						"Failed to parse body of member function template specialization: ",
 						qualified_class_name, "::", function_name_token.value());
+					return false;
 				} else if (body_result.node().has_value()) {
 					func_ref.set_definition(*body_result.node());
 					finalize_function_signature_after_definition(func_ref);
 				}
+				return true;
 			};
 
 			// Parse the body with proper member function scope and implicit `this` injection.
 			StringHandle class_name_handle = StringTable::getOrInternStringHandle(qualified_class_name);
+			bool body_ok = false;
 			if (auto struct_it = getTypesByNameMap().find(class_name_handle);
 				struct_it != getTypesByNameMap().end()) {
 				FlashCpp::FunctionParsingScopeGuard func_guard(
 					*this, true, !func_ref.is_static(), nullptr,
 					class_name_handle, struct_it->second->type_index_,
 					func_ref.parameter_nodes(), &func_ref);
-				parse_and_set_body();
+				body_ok = parse_and_set_body();
 			} else {
-				// Struct not yet visible (forward-declared only): fall back to plain function scope.
-				FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
-				FlashCpp::ScopedState guard_current_function(current_function_);
-				current_function_ = &func_ref;
-				register_parameters_in_scope(func_ref.parameter_nodes());
-				parse_and_set_body();
+				throw CompileError(std::string(StringBuilder()
+					.append("member function template specialization '")
+					.append(qualified_class_name)
+					.append("::")
+					.append(function_name_token.value())
+					.append("' references an unknown or forward-declared-only class; "
+							"the class must be fully defined before its member specializations")
+					.commit()));
 			}
 
 			// Restore lexer to after the original body and release the saved handle.
 			restore_lexer_position_only(after_body);
 			discard_saved_token(after_body);
+
+			if (!body_ok) {
+				// Body parse failed: skip registration to avoid polluting later compiler phases.
+				return std::nullopt;
+			}
 
 			// Expose via symbol table so normal call resolution can also find the specialization.
 			gSymbolTable.insert(function_name_token.value(), func_node);

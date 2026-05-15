@@ -4502,55 +4502,19 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Generate proper C++ ABI mangled name
 			FunctionDeclarationNode& func_for_mangling = func_node_copy.as<FunctionDeclarationNode>();
-			NameMangling::MangledName specialization_mangled_name;
 
-			// Check if this specialization has non-type template arguments (like get<0>, get<1>)
-			if (func_for_mangling.has_non_type_template_args()) {
-				// Use the version that includes non-type template arguments in the mangled name
-				std::span<const int64_t> spec_non_type_args = func_for_mangling.non_type_template_args();
-				const DeclarationNode& decl = func_for_mangling.decl_node();
-				const TypeSpecifierNode& return_type = decl.type_specifier_node();
-
-				// Build parameter type list
-				std::vector<TypeSpecifierNode> param_types;
-				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
-					if (param_node.is<DeclarationNode>()) {
-						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-						param_types.push_back(param_decl.type_specifier_node());
-					}
+			const DeclarationNode& decl2 = func_for_mangling.decl_node();
+			const TypeSpecifierNode& return_type = decl2.type_specifier_node();
+			std::vector<TypeSpecifierNode> param_types;
+			for (const auto& param_node : func_for_mangling.parameter_nodes()) {
+				if (param_node.is<DeclarationNode>()) {
+					param_types.push_back(param_node.as<DeclarationNode>().type_specifier_node());
 				}
-
-				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
-					func_base_name, return_type, param_types, spec_non_type_args,
-					func_for_mangling.is_variadic(), StringHandle{}, namespace_handle, false);
-			} else if (!spec_template_args.empty()) {
-				// Use the version that includes TYPE template arguments in the mangled name
-				// This handles specializations like sum<int>, sum<int, int>
-				const DeclarationNode& decl = func_for_mangling.decl_node();
-				const TypeSpecifierNode& return_type = decl.type_specifier_node();
-
-				// Build parameter type list
-				std::vector<TypeSpecifierNode> param_types;
-				for (const auto& param_node : func_for_mangling.parameter_nodes()) {
-					if (param_node.is<DeclarationNode>()) {
-						const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-						param_types.push_back(param_decl.type_specifier_node());
-					}
-				}
-
-				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
-					func_base_name, return_type, param_types, spec_template_args.toVector(),
-					func_for_mangling.is_variadic(), StringHandle{}, namespace_handle, false);
-			} else {
-				// Regular specialization without any template args.
-				// Probed 2026-04-29 across the full 2243-test corpus with a hard-fail guard
-				// and never hit: every function-template specialization that reaches this
-				// branch carries either non-type or type template arguments. The previous
-				// "shouldn't happen but fallback" comment is now an explicit invariant.
-				throw InternalError(
-					"Function-template specialization without template arguments: "
-					"specializations must carry either type or non-type template args");
 			}
+			NameMangling::MangledName specialization_mangled_name =
+				NameMangling::generateMangledNameForSpecialization(
+					func_base_name, return_type, param_types, spec_template_args,
+					func_for_mangling.is_variadic(), StringHandle{}, namespace_handle, false);
 
 			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
 

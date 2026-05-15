@@ -2785,7 +2785,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 
 		const Parser& parser;
 		NamespaceHandle owner_namespace;
-		StringHandle struct_type_name;
+		const StringHandle struct_type_name;
 		const StringHandle tuple_size_name;
 		const StringHandle tuple_element_name;
 		const StringHandle get_name;
@@ -2920,14 +2920,23 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		TemplateDeclarationKind::FunctionTemplate);
 
 	auto resolve_struct_specialization = [](std::span<const StringHandle> template_names, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
+		// First pass: exact specialization matches across all candidate names.
 		for (StringHandle template_name : template_names) {
 			if (!template_name.isValid()) {
 				continue;
 			}
 			auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name.view(), template_args);
-			if (!specialization.has_value()) {
-				specialization = gTemplateRegistry.matchSpecializationPattern(template_name.view(), template_args);
+			if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
+				continue;
 			}
+			return &specialization->as<StructDeclarationNode>();
+		}
+		// Second pass: pattern matches, only if no exact specialization was found.
+		for (StringHandle template_name : template_names) {
+			if (!template_name.isValid()) {
+				continue;
+			}
+			auto specialization = gTemplateRegistry.matchSpecializationPattern(template_name.view(), template_args);
 			if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
 				continue;
 			}
@@ -3048,21 +3057,55 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 
 		std::optional<ASTNode> get_spec;
 		{
+			// Per [dcl.struct.bind]/3: e.get<I>() is resolved by overload resolution using
+			// the hidden object's cv-qualification. Prefer a specialization whose
+			// is_const_member_function() matches the binding's const-qualifier; fall back
+			// to any matching specialization if no qualifier-matched overload exists.
+			const bool hidden_object_is_const = binding.is_const();
+
 			auto try_lookup_get_for_index = [&](const TemplateTypeArg& index_arg) -> std::optional<ASTNode> {
 				std::vector<TemplateTypeArg> get_template_args = {index_arg};
+
+				// Collect all candidate specializations (exact pass, then pattern pass).
+				std::vector<ASTNode> exact_matches;
+				std::vector<ASTNode> pattern_matches;
 				for (StringHandle get_template_name : get_template_names) {
 					if (!get_template_name.isValid()) {
 						continue;
 					}
-					auto spec = gTemplateRegistry.lookupExactSpecialization(get_template_name.view(), get_template_args);
-					if (!spec.has_value()) {
-						spec = gTemplateRegistry.matchSpecializationPattern(get_template_name.view(), get_template_args);
+					if (auto spec = gTemplateRegistry.lookupExactSpecialization(get_template_name.view(), get_template_args)) {
+						exact_matches.push_back(std::move(*spec));
 					}
-					if (spec.has_value()) {
-						return spec;
+					if (auto spec = gTemplateRegistry.matchSpecializationPattern(get_template_name.view(), get_template_args)) {
+						pattern_matches.push_back(std::move(*spec));
 					}
 				}
-				return std::nullopt;
+
+				// Helper: pick the best match from a candidate list by cv-qualifier.
+				auto pick_best = [&](std::vector<ASTNode>& candidates) -> std::optional<ASTNode> {
+					ASTNode* fallback = nullptr;
+					for (auto& candidate : candidates) {
+						const FunctionDeclarationNode* fn = get_function_decl_node(candidate);
+						if (!fn) {
+							if (!fallback) { fallback = &candidate; }
+							continue;
+						}
+						if (fn->is_const_member_function() == hidden_object_is_const) {
+							return candidate;	// Exact cv-qualifier match preferred.
+						}
+						if (!fallback) { fallback = &candidate; }
+					}
+					if (fallback) {
+						return *fallback;
+					}
+					return std::nullopt;
+				};
+
+				// Exact specializations take priority over pattern matches.
+				if (auto best = pick_best(exact_matches)) {
+					return best;
+				}
+				return pick_best(pattern_matches);
 			};
 
 			// First try the same canonicalized index category that matched tuple_element.

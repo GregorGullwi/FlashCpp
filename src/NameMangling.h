@@ -1918,6 +1918,58 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 		is_const_method);
 }
 
+// Unified dispatch helper for function-template explicit specializations.
+//
+// Inspects the full explicit-specialization argument list, extracts non-type
+// integral values, detects mixed type/non-type lists (not yet supported), and
+// routes to the appropriate low-level mangler.  Both parser phases that
+// register member and free-function specializations should call this instead of
+// duplicating the dispatch logic.
+//
+// Throws CompileError for mixed type/non-type argument lists, and InternalError
+// if the list is unexpectedly empty.
+inline MangledName generateMangledNameForSpecialization(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	std::span<const TypeSpecifierNode> param_types,
+	std::span<const TemplateTypeArg> all_template_args,
+	bool is_variadic,
+	StringHandle struct_name,
+	NamespaceHandle namespace_handle,
+	bool is_const_method) {
+	std::vector<int64_t> non_type_values;
+	size_t num_type_args = 0;
+	for (const auto& arg : all_template_args) {
+		if (arg.is_value) {
+			non_type_values.push_back(arg.value);
+		} else {
+			++num_type_args;
+		}
+	}
+
+	if (!non_type_values.empty() && num_type_args > 0) {
+		throw CompileError(std::string("mixed type and non-type template arguments in specialization '")
+						   + std::string(func_name)
+						   + "' are not yet supported");
+	}
+
+	if (!non_type_values.empty()) {
+		return generateMangledNameWithTemplateArgs(
+			func_name, return_type, param_types, non_type_values,
+			is_variadic, struct_name, namespace_handle, is_const_method);
+	}
+
+	if (!all_template_args.empty()) {
+		return generateMangledNameWithTypeTemplateArgs(
+			func_name, return_type, param_types, all_template_args,
+			is_variadic, struct_name, namespace_handle, is_const_method);
+	}
+
+	throw InternalError(std::string("function-template specialization '")
+						+ std::string(func_name)
+						+ "' has no template arguments");
+}
+
 inline MangledName generateMangledName(
 	std::string_view func_name,
 	const TypeSpecifierNode& return_type,

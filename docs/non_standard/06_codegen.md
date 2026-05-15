@@ -134,7 +134,7 @@ function template specializations (e.g., `template <> int Point::get<0>() const 
 Because the node was absent from the top-level AST, the IrGenerator never visited it and no
 object-code definition was emitted, producing a linker error:
 
-```
+```text
 undefined reference to `_ZN5Point3getILm0EEEv'
 ```
 
