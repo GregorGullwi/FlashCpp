@@ -103,6 +103,8 @@ inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
 	return h;
 }
 
+std::string buildDependentExpressionIdentityString(const ASTNode& node);
+
 // ============================================================================
 // TypeIndexArg - A template type argument represented by TypeIndex
 // ============================================================================
@@ -220,6 +222,7 @@ struct NonTypeValueIdentity {
 	StringHandle member_name{};     // Class member for pointer-to-member identities
 	int64_t pointer_offset = 0;     // Array-element offset for object pointer identities
 	StringHandle dependent_name{};  // Name when dependent (e.g., "N" for template<int N>)
+	std::optional<ASTNode> dependent_expression{}; // Structural dependent expression identity when no single name represents the argument
 	bool is_dependent = false;      // True if this is a dependent (not yet substituted) value
 
 	TypeCategory valueTypeCategory() const {
@@ -342,6 +345,12 @@ struct NonTypeValueIdentity {
 		return id;
 	}
 
+	static NonTypeValueIdentity makeDependentExpression(std::optional<ASTNode> expr, StringHandle name, int64_t placeholder_value, TypeIndex type_index) {
+		NonTypeValueIdentity id = makeDependentWithPlaceholder(name, placeholder_value, type_index);
+		id.dependent_expression = std::move(expr);
+		return id;
+	}
+
 	// Helper retained for older call sites; value identity is exact, so no category
 	// is normalized away. C++20 template-argument equivalence for converted constant
 	// template arguments must preserve the parameter type, including bool and
@@ -379,7 +388,14 @@ struct NonTypeValueIdentity {
 		if (is_dependent != other.is_dependent)
 			return false;
 		if (is_dependent) {
-			// Dependent args: identity is the name only
+			if (dependent_expression.has_value() || other.dependent_expression.has_value()) {
+				return dependent_expression.has_value() == other.dependent_expression.has_value() &&
+					   equalValueTypeIdentity(value_type_index, other.value_type_index) &&
+					   (!dependent_expression.has_value() ||
+						buildDependentExpressionIdentityString(*dependent_expression) ==
+							buildDependentExpressionIdentityString(*other.dependent_expression));
+			}
+			// Named dependent args use the template-parameter name as identity.
 			return dependent_name == other.dependent_name;
 		}
 		if (kind != other.kind ||
@@ -413,7 +429,11 @@ struct NonTypeValueIdentity {
 	size_t hash() const {
 		size_t h = std::hash<bool>{}(is_dependent);
 		if (is_dependent) {
-			if (dependent_name.isValid()) {
+			if (dependent_expression.has_value()) {
+				h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+				const std::string expr_identity = buildDependentExpressionIdentityString(*dependent_expression);
+				h ^= std::hash<std::string_view>{}(expr_identity) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			} else if (dependent_name.isValid()) {
 				h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
 			}
 			return h;
@@ -439,6 +459,9 @@ struct NonTypeValueIdentity {
 
 	// String representation for debugging and name generation
 	std::string toString() const {
+		if (is_dependent && dependent_expression.has_value()) {
+			return buildDependentExpressionIdentityString(*dependent_expression);
+		}
 		if (is_dependent && dependent_name.isValid()) {
 			return std::string(StringTable::getStringView(dependent_name));
 		}

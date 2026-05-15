@@ -10,6 +10,413 @@
 #include <cstdlib>
 #include <cstring>
 
+namespace FlashCpp {
+
+static void appendIdentityString(StringBuilder& builder, std::string_view value) {
+	builder.append(static_cast<uint64_t>(value.size()));
+	builder.append(':');
+	builder.append(value);
+}
+
+static void appendTypeSpecifierIdentity(StringBuilder& builder, const TypeSpecifierNode& type);
+static void appendDependentExpressionIdentity(StringBuilder& builder, const ASTNode& node);
+
+static void appendFunctionSignatureIdentity(StringBuilder& builder, const FunctionSignature& sig) {
+	builder.append("Fn("sv);
+	builder.append(static_cast<uint64_t>(sig.return_type_index.category()));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(sig.return_type_index.index()));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(sig.return_pointer_depth));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(sig.return_reference_qualifier));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(sig.parameter_type_indices.size()));
+	for (TypeIndex param_type : sig.parameter_type_indices) {
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(param_type.category()));
+		builder.append(',');
+		builder.append(static_cast<uint64_t>(param_type.index()));
+	}
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(sig.linkage));
+	builder.append(';');
+	if (sig.class_name.has_value()) {
+		appendIdentityString(builder, *sig.class_name);
+	}
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(sig.calling_convention));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(sig.is_variadic));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(sig.is_const));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(sig.is_volatile));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(sig.function_reference_qualifier));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(sig.is_noexcept));
+	builder.append(')');
+}
+
+static void appendTypeSpecifierIdentity(StringBuilder& builder, const TypeSpecifierNode& type) {
+	builder.append("Type("sv);
+	builder.append(static_cast<uint64_t>(type.category()));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(type.type_index().index()));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(type.qualifier()));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(type.cv_qualifier()));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(type.reference_qualifier()));
+	builder.append(',');
+	builder.append(static_cast<uint64_t>(type.pointer_depth()));
+	for (const PointerLevel& level : type.pointer_levels()) {
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(level.cv_qualifier));
+	}
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(type.is_array()));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(type.has_unsized_outer_array_dimension()));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(type.array_dimension_count()));
+	for (size_t dim : type.array_dimensions()) {
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(dim));
+	}
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(type.is_pack_expansion()));
+	builder.append(';');
+	if (type.has_member_class()) {
+		appendIdentityString(builder, StringTable::getStringView(type.member_class_name()));
+	}
+	builder.append(';');
+	if (type.has_function_signature()) {
+		appendFunctionSignatureIdentity(builder, type.function_signature());
+	}
+	builder.append(';');
+	if (type.has_concept_constraint()) {
+		appendIdentityString(builder, type.concept_constraint());
+	}
+	builder.append(')');
+}
+
+static void appendDeclarationIdentity(StringBuilder& builder, const DeclarationNode& decl) {
+	builder.append("Decl("sv);
+	appendTypeSpecifierIdentity(builder, decl.type_specifier_node());
+	builder.append(';');
+	appendIdentityString(builder, decl.identifier_token().value());
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(decl.is_parameter_pack()));
+	builder.append(';');
+	builder.append(static_cast<uint64_t>(decl.is_unsized_array()));
+	builder.append(')');
+}
+
+static void appendCalleeDescriptorIdentity(StringBuilder& builder, const CalleeDescriptor& callee) {
+	builder.append("Callee("sv);
+	builder.append(static_cast<uint64_t>(callee.kind()));
+	builder.append(';');
+	appendDeclarationIdentity(builder, callee.declaration());
+	builder.append(')');
+}
+
+std::string buildDependentExpressionIdentityString(const ASTNode& node) {
+	StringBuilder builder;
+	appendDependentExpressionIdentity(builder, node);
+	return std::string(builder.commit());
+}
+
+static void appendDependentExpressionIdentity(StringBuilder& builder, const ASTNode& node) {
+	if (!node.has_value()) {
+		builder.append("Empty"sv);
+		return;
+	}
+	if (node.is<TypeSpecifierNode>()) {
+		appendTypeSpecifierIdentity(builder, node.as<TypeSpecifierNode>());
+		return;
+	}
+	if (const IdentifierNode* identifier = tryGetIdentifier(node)) {
+		builder.append("Id("sv);
+		appendIdentityString(builder, identifier->name());
+		builder.append(')');
+		return;
+	}
+	if (const QualifiedIdentifierNode* qualified_identifier = tryGetNode<QualifiedIdentifierNode>(node)) {
+		builder.append("QId("sv);
+		builder.append(static_cast<uint64_t>(qualified_identifier->namespace_handle().index));
+		builder.append(';');
+		appendIdentityString(builder, qualified_identifier->name());
+		if (qualified_identifier->hasDependentQualifiedName()) {
+			const auto* dependent_name = qualified_identifier->dependentQualifiedName();
+			builder.append(';');
+			builder.append(static_cast<uint64_t>(dependent_name->owner_kind));
+			builder.append(';');
+			if (dependent_name->owner_name.isValid()) {
+				appendIdentityString(builder, StringTable::getStringView(dependent_name->owner_name));
+			}
+			builder.append(';');
+			builder.append(static_cast<uint64_t>(dependent_name->owner_type.category()));
+			builder.append(',');
+			builder.append(static_cast<uint64_t>(dependent_name->owner_type.index()));
+			builder.append(';');
+			builder.append(static_cast<uint64_t>(dependent_name->member_chain.size()));
+			for (const auto& member : dependent_name->member_chain) {
+				builder.append(';');
+				if (member.name.isValid()) {
+					appendIdentityString(builder, StringTable::getStringView(member.name));
+				}
+				builder.append(',');
+				builder.append(static_cast<uint64_t>(member.has_template_arguments));
+				builder.append(',');
+				builder.append(static_cast<uint64_t>(member.has_template_keyword));
+			}
+		}
+		builder.append(')');
+		return;
+	}
+	if (const NumericLiteralNode* numeric = tryGetNode<NumericLiteralNode>(node)) {
+		builder.append("Num("sv);
+		builder.append(static_cast<uint64_t>(numeric->type()));
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(numeric->qualifier()));
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(numeric->sizeInBits()));
+		builder.append(';');
+		if (std::holds_alternative<unsigned long long>(numeric->value())) {
+			builder.append(static_cast<uint64_t>(std::get<unsigned long long>(numeric->value())));
+		} else {
+			double double_value = std::get<double>(numeric->value());
+			uint64_t bits = 0;
+			std::memcpy(&bits, &double_value, sizeof(bits));
+			builder.append(bits);
+		}
+		builder.append(')');
+		return;
+	}
+	if (const BoolLiteralNode* bool_literal = tryGetNode<BoolLiteralNode>(node)) {
+		builder.append("Bool("sv);
+		builder.append(static_cast<uint64_t>(bool_literal->value()));
+		builder.append(')');
+		return;
+	}
+	if (const StringLiteralNode* string_literal = tryGetNode<StringLiteralNode>(node)) {
+		builder.append("Str("sv);
+		appendIdentityString(builder, string_literal->value());
+		builder.append(')');
+		return;
+	}
+	if (const BinaryOperatorNode* binary = tryGetNode<BinaryOperatorNode>(node)) {
+		builder.append("Bin("sv);
+		appendIdentityString(builder, binary->op());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, binary->get_lhs());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, binary->get_rhs());
+		builder.append(')');
+		return;
+	}
+	if (const UnaryOperatorNode* unary = tryGetNode<UnaryOperatorNode>(node)) {
+		builder.append("Unary("sv);
+		appendIdentityString(builder, unary->op());
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(unary->is_prefix()));
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(unary->is_builtin_addressof()));
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, unary->get_operand());
+		builder.append(')');
+		return;
+	}
+	if (const TernaryOperatorNode* ternary = tryGetNode<TernaryOperatorNode>(node)) {
+		builder.append("Ternary("sv);
+		appendDependentExpressionIdentity(builder, ternary->condition());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, ternary->true_expr());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, ternary->false_expr());
+		builder.append(')');
+		return;
+	}
+	if (const MemberAccessNode* member_access = tryGetNode<MemberAccessNode>(node)) {
+		builder.append("Member("sv);
+		builder.append(static_cast<uint64_t>(member_access->is_arrow()));
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, member_access->object());
+		builder.append(';');
+		appendIdentityString(builder, member_access->member_name());
+		builder.append(')');
+		return;
+	}
+	if (const PointerToMemberAccessNode* member_pointer = tryGetNode<PointerToMemberAccessNode>(node)) {
+		builder.append("MemberPtr("sv);
+		builder.append(static_cast<uint64_t>(member_pointer->is_arrow()));
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, member_pointer->object());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, member_pointer->member_pointer());
+		builder.append(')');
+		return;
+	}
+	if (const ArraySubscriptNode* subscript = tryGetNode<ArraySubscriptNode>(node)) {
+		builder.append("Subscript("sv);
+		appendDependentExpressionIdentity(builder, subscript->array_expr());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, subscript->index_expr());
+		builder.append(')');
+		return;
+	}
+	if (const SizeofExprNode* sizeof_expr = tryGetNode<SizeofExprNode>(node)) {
+		builder.append("Sizeof("sv);
+		builder.append(static_cast<uint64_t>(sizeof_expr->is_type()));
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, sizeof_expr->type_or_expr());
+		builder.append(')');
+		return;
+	}
+	if (const SizeofPackNode* sizeof_pack = tryGetNode<SizeofPackNode>(node)) {
+		builder.append("SizeofPack("sv);
+		appendIdentityString(builder, sizeof_pack->pack_name());
+		builder.append(')');
+		return;
+	}
+	if (const AlignofExprNode* alignof_expr = tryGetNode<AlignofExprNode>(node)) {
+		builder.append("Alignof("sv);
+		builder.append(static_cast<uint64_t>(alignof_expr->is_type()));
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, alignof_expr->type_or_expr());
+		builder.append(')');
+		return;
+	}
+	if (const OffsetofExprNode* offsetof_expr = tryGetNode<OffsetofExprNode>(node)) {
+		builder.append("Offsetof("sv);
+		appendTypeSpecifierIdentity(builder, offsetof_expr->type_node());
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(offsetof_expr->member_path().size()));
+		for (const Token& member : offsetof_expr->member_path()) {
+			builder.append(';');
+			appendIdentityString(builder, member.value());
+		}
+		builder.append(')');
+		return;
+	}
+	if (const TypeTraitExprNode* type_trait = tryGetNode<TypeTraitExprNode>(node)) {
+		builder.append("TypeTrait("sv);
+		builder.append(static_cast<uint64_t>(type_trait->kind()));
+		builder.append(';');
+		if (type_trait->has_type()) {
+			appendDependentExpressionIdentity(builder, type_trait->type_node());
+		}
+		builder.append(';');
+		if (type_trait->has_second_type()) {
+			appendDependentExpressionIdentity(builder, type_trait->second_type_node());
+		}
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(type_trait->additional_type_nodes().size()));
+		for (const ASTNode& extra_type : type_trait->additional_type_nodes()) {
+			builder.append(';');
+			appendDependentExpressionIdentity(builder, extra_type);
+		}
+		builder.append(')');
+		return;
+	}
+	if (const NoexceptExprNode* noexcept_expr = tryGetNode<NoexceptExprNode>(node)) {
+		builder.append("Noexcept("sv);
+		appendDependentExpressionIdentity(builder, noexcept_expr->expr());
+		builder.append(')');
+		return;
+	}
+	if (const StaticCastNode* static_cast_expr = tryGetNode<StaticCastNode>(node)) {
+		builder.append("StaticCast("sv);
+		appendTypeSpecifierIdentity(builder, static_cast_expr->target_type());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, static_cast_expr->expr());
+		builder.append(')');
+		return;
+	}
+	if (const DynamicCastNode* dynamic_cast_expr = tryGetNode<DynamicCastNode>(node)) {
+		builder.append("DynamicCast("sv);
+		appendTypeSpecifierIdentity(builder, dynamic_cast_expr->target_type());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, dynamic_cast_expr->expr());
+		builder.append(')');
+		return;
+	}
+	if (const ConstCastNode* const_cast_expr = tryGetNode<ConstCastNode>(node)) {
+		builder.append("ConstCast("sv);
+		appendTypeSpecifierIdentity(builder, const_cast_expr->target_type());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, const_cast_expr->expr());
+		builder.append(')');
+		return;
+	}
+	if (const ReinterpretCastNode* reinterpret_cast_expr = tryGetNode<ReinterpretCastNode>(node)) {
+		builder.append("ReinterpretCast("sv);
+		appendTypeSpecifierIdentity(builder, reinterpret_cast_expr->target_type());
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, reinterpret_cast_expr->expr());
+		builder.append(')');
+		return;
+	}
+	if (const TypeidNode* typeid_expr = tryGetNode<TypeidNode>(node)) {
+		builder.append("Typeid("sv);
+		builder.append(static_cast<uint64_t>(typeid_expr->is_type()));
+		builder.append(';');
+		appendDependentExpressionIdentity(builder, typeid_expr->operand());
+		builder.append(')');
+		return;
+	}
+	if (const TemplateParameterReferenceNode* template_param = tryGetNode<TemplateParameterReferenceNode>(node)) {
+		builder.append("TemplateParam("sv);
+		if (template_param->param_name().isValid()) {
+			appendIdentityString(builder, StringTable::getStringView(template_param->param_name()));
+		}
+		builder.append(')');
+		return;
+	}
+	if (const CallExprNode* call_expr = tryGetNode<CallExprNode>(node)) {
+		builder.append("Call("sv);
+		appendCalleeDescriptorIdentity(builder, call_expr->callee());
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(call_expr->has_receiver()));
+		if (call_expr->has_receiver()) {
+			builder.append(';');
+			appendDependentExpressionIdentity(builder, call_expr->receiver());
+		}
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(call_expr->arguments().size()));
+		for (const ASTNode& argument : call_expr->arguments()) {
+			builder.append(';');
+			appendDependentExpressionIdentity(builder, argument);
+		}
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(call_expr->template_arguments().size()));
+		for (const ASTNode& argument : call_expr->template_arguments()) {
+			builder.append(';');
+			appendDependentExpressionIdentity(builder, argument);
+		}
+		builder.append(')');
+		return;
+	}
+	if (const ConstructorCallNode* constructor_call = tryGetNode<ConstructorCallNode>(node)) {
+		builder.append("Ctor("sv);
+		appendTypeSpecifierIdentity(builder, constructor_call->type_node());
+		builder.append(';');
+		builder.append(static_cast<uint64_t>(constructor_call->arguments().size()));
+		for (const ASTNode& argument : constructor_call->arguments()) {
+			builder.append(';');
+			appendDependentExpressionIdentity(builder, argument);
+		}
+		builder.append(')');
+		return;
+	}
+	throw InternalError(std::string("Unsupported dependent expression identity node: ") + node.type_name());
+}
+
+} // namespace FlashCpp
+
 // Helper class for cycle detection in recursive member lookup
 // Uses RAII to manage the resolution stack
 class RecursionGuard {
