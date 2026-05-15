@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (semantic analyzer lookup unification started)
+**Last updated:** 2026-05-15 (semantic analyzer lookup unification advanced)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -83,9 +83,22 @@ infrastructure tracks. The branch now includes:
   `tuple_size`, `tuple_element`, and `get` through parser-built semantic
   template-name lookup requests before specialization matching, while keeping
   conservative fallback name probes.
+- structured-binding tuple-like specialization matching now uses semantic-lookup
+  candidate ordering first (`tuple_size`, `tuple_element`, `get`) and only
+  falls back to synthesized-name probes when semantic candidates produce no
+  specialization.
+- tuple-like mixed member/free `get` protocol precedence now prefers
+  member `e.get<I>()` over free `get<I>(e)` when both are available.
 
 Validation after all changes passed the Linux sharded build and the full test
 suite (2351 regular tests + 183 expected-fail tests).
+
+Validation for the latest sema-unification slice passed targeted Linux tuple-like
+structured-binding regressions (`test_structured_binding_member_get_ret42.cpp`,
+`test_structured_binding_member_get_complex_ret42.cpp`,
+`test_tuple_full_protocol_ret42.cpp`,
+`test_tuple_size_inherited_value_structured_binding_ret42.cpp`,
+`test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`).
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.

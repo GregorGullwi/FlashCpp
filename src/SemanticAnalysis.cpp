@@ -3016,46 +3016,72 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			return matches;
 		};
 
-		auto pick_best = [&](std::vector<ASTNode>& candidates) -> std::optional<ASTNode> {
-			ASTNode* fallback = nullptr;
-			for (auto& candidate : candidates) {
+		auto pick_best = [&](const std::vector<ASTNode>& candidates) -> std::optional<ASTNode> {
+			std::optional<ASTNode> fallback;
+			for (const auto& candidate : candidates) {
 				const FunctionDeclarationNode* fn = get_function_decl_node(candidate);
 				if (!fn) {
-					if (!fallback) {
-						fallback = &candidate;
+					if (!fallback.has_value()) {
+						fallback = candidate;
 					}
 					continue;
 				}
 				if (fn->is_const_member_function() == hidden_object_is_const) {
 					return candidate;
 				}
-				if (!fallback) {
-					fallback = &candidate;
+				if (!fallback.has_value()) {
+					fallback = candidate;
 				}
 			}
-			if (fallback) {
-				return *fallback;
+			if (fallback.has_value()) {
+				return fallback;
 			}
 			return std::nullopt;
 		};
 
-		// Exact specializations from semantic lookup candidates take priority.
-		std::vector<ASTNode> exact_matches = collect_matches(lookup_set.ordered_lookup_names, true);
-		if (auto best = pick_best(exact_matches)) {
-			return best;
+		auto is_member_get = [](const ASTNode& candidate) -> bool {
+			if (const FunctionDeclarationNode* fn = get_function_decl_node(candidate)) {
+				return fn->is_member_function();
+			}
+			return false;
+		};
+
+		auto pick_best_with_member_filter = [&](const std::vector<ASTNode>& candidates, bool want_member) -> std::optional<ASTNode> {
+			std::vector<ASTNode> filtered;
+			filtered.reserve(candidates.size());
+			for (const auto& candidate : candidates) {
+				if (is_member_get(candidate) == want_member) {
+					filtered.push_back(candidate);
+				}
+			}
+			return pick_best(filtered);
+		};
+
+		auto resolve_for_member_preference = [&](bool want_member) -> std::optional<ASTNode> {
+			// First pass: exact specializations across semantic lookup candidates.
+			std::vector<ASTNode> exact_matches = collect_matches(lookup_set.ordered_lookup_names, true);
+			if (auto best = pick_best_with_member_filter(exact_matches, want_member)) {
+				return best;
+			}
+			// Second pass: pattern specializations across semantic lookup candidates.
+			std::vector<ASTNode> pattern_matches = collect_matches(lookup_set.ordered_lookup_names, false);
+			if (auto best = pick_best_with_member_filter(pattern_matches, want_member)) {
+				return best;
+			}
+			// Fallback: conservative probing over synthesized names.
+			std::vector<ASTNode> exact_fallback_matches = collect_matches(lookup_set.fallback_names, true);
+			if (auto best = pick_best_with_member_filter(exact_fallback_matches, want_member)) {
+				return best;
+			}
+			std::vector<ASTNode> pattern_fallback_matches = collect_matches(lookup_set.fallback_names, false);
+			return pick_best_with_member_filter(pattern_fallback_matches, want_member);
+		};
+
+		// Per [dcl.struct.bind]/3 intent: prefer member get protocol when it is usable.
+		if (auto member = resolve_for_member_preference(true)) {
+			return member;
 		}
-		// Then pattern specializations from semantic lookup candidates.
-		std::vector<ASTNode> pattern_matches = collect_matches(lookup_set.ordered_lookup_names, false);
-		if (auto best = pick_best(pattern_matches)) {
-			return best;
-		}
-		// Finally use conservative fallback names when semantic lookup yielded no usable match.
-		std::vector<ASTNode> exact_fallback_matches = collect_matches(lookup_set.fallback_names, true);
-		if (auto best = pick_best(exact_fallback_matches)) {
-			return best;
-		}
-		std::vector<ASTNode> pattern_fallback_matches = collect_matches(lookup_set.fallback_names, false);
-		return pick_best(pattern_fallback_matches);
+		return resolve_for_member_preference(false);
 	};
 
 	auto resolve_type_info = [&](const StructDeclarationNode* struct_decl) -> const TypeInfo* {
