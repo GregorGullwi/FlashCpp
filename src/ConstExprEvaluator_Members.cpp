@@ -88,92 +88,64 @@ TemplateEnvironment buildOuterFunctionTemplateEnvironment(
 
 InlineVector<TemplateParameterNode, 4> getTemplateParametersForTypeInfo(
 	const TypeInfo& owner_type_info,
-	Parser* parser_context) {
+	Parser& parser_context) {
 	const StringHandle qualified_template_name =
 		gNamespaceRegistry.buildQualifiedIdentifier(
 			owner_type_info.sourceNamespace(),
 			owner_type_info.baseTemplateName());
 
-	if (parser_context != nullptr) {
-		// Use parser-built semantic requests so that PointOfInstantiation timing,
-		// current namespace context, and definition-namespace from any active
-		// template definition lookup context are all taken into account.
-		//
-		const StringHandle base_template_name = owner_type_info.baseTemplateName();
-		TemplateNameLookupResult qualifiedLookup = gTemplateRegistry.lookupTemplateName(
-			parser_context->makeTemplateNameLookupRequest(
-				qualified_template_name,
-				TemplateNameLookupKind::Qualified,
-				false));
-		TemplateNameLookupResult ordinaryLookup = gTemplateRegistry.lookupTemplateName(
-			parser_context->makeTemplateNameLookupRequest(
-				base_template_name,
-				TemplateNameLookupKind::Ordinary,
-				false));
+	// Use parser-built semantic requests so that PointOfInstantiation timing,
+	// current namespace context, and definition-namespace from any active
+	// template definition lookup context are all taken into account.
+	const StringHandle base_template_name = owner_type_info.baseTemplateName();
+	TemplateNameLookupResult qualifiedLookup = gTemplateRegistry.lookupTemplateName(
+		parser_context.makeTemplateNameLookupRequest(
+			qualified_template_name,
+			TemplateNameLookupKind::Qualified,
+			false));
+	TemplateNameLookupResult ordinaryLookup = gTemplateRegistry.lookupTemplateName(
+		parser_context.makeTemplateNameLookupRequest(
+			base_template_name,
+			TemplateNameLookupKind::Ordinary,
+			false));
 
-		// Alias-template and class-template extraction share the same shape:
-		// select the first declaration by kind and return template parameters when
-		// the declaration node type matches.
-		auto tryGetParams = [&](const TemplateNameLookupResult& lookup_result,
-								TemplateDeclarationKind kind,
-								auto paramExtractor)
-			-> std::optional<InlineVector<TemplateParameterNode, 4>> {
-			std::optional<ASTNode> decl = lookup_result.firstDeclarationOfKind(kind);
-			if (decl.has_value()) {
-				return paramExtractor(*decl);
-			}
-			return std::nullopt;
-		};
-		auto aliasAccessor = [](const ASTNode& n) -> std::optional<InlineVector<TemplateParameterNode, 4>> {
-			if (n.is<TemplateAliasNode>()) {
-				return n.as<TemplateAliasNode>().template_parameters();
-			}
-			return std::nullopt;
-		};
-		auto classAccessor = [](const ASTNode& n) -> std::optional<InlineVector<TemplateParameterNode, 4>> {
-			if (n.is<TemplateClassDeclarationNode>()) {
-				return n.as<TemplateClassDeclarationNode>().template_parameters();
-			}
-			return std::nullopt;
-		};
+	// Alias-template and class-template extraction share the same shape:
+	// select the first declaration by kind and return template parameters when
+	// the declaration node type matches.
+	auto tryGetParams = [&](const TemplateNameLookupResult& lookup_result,
+							TemplateDeclarationKind kind,
+							auto paramExtractor)
+		-> std::optional<InlineVector<TemplateParameterNode, 4>> {
+		std::optional<ASTNode> decl = lookup_result.firstDeclarationOfKind(kind);
+		if (decl.has_value()) {
+			return paramExtractor(*decl);
+		}
+		return std::nullopt;
+	};
+	auto aliasAccessor = [](const ASTNode& n) -> std::optional<InlineVector<TemplateParameterNode, 4>> {
+		if (n.is<TemplateAliasNode>()) {
+			return n.as<TemplateAliasNode>().template_parameters();
+		}
+		return std::nullopt;
+	};
+	auto classAccessor = [](const ASTNode& n) -> std::optional<InlineVector<TemplateParameterNode, 4>> {
+		if (n.is<TemplateClassDeclarationNode>()) {
+			return n.as<TemplateClassDeclarationNode>().template_parameters();
+		}
+		return std::nullopt;
+	};
 
-		if (auto params = tryGetParams(qualifiedLookup, TemplateDeclarationKind::AliasTemplate, aliasAccessor)) {
-			return std::move(*params);
-		}
-		if (auto params = tryGetParams(ordinaryLookup, TemplateDeclarationKind::AliasTemplate, aliasAccessor)) {
-			return std::move(*params);
-		}
-		if (auto params = tryGetParams(qualifiedLookup, TemplateDeclarationKind::ClassTemplate, classAccessor)) {
-			return std::move(*params);
-		}
-		if (auto params = tryGetParams(ordinaryLookup, TemplateDeclarationKind::ClassTemplate, classAccessor)) {
-			return std::move(*params);
-		}
-		return {};
+	if (auto params = tryGetParams(qualifiedLookup, TemplateDeclarationKind::AliasTemplate, aliasAccessor)) {
+		return std::move(*params);
 	}
-
-	// Fallback: no parser context — use convenience wrappers (PointOfDefinition timing).
-	if (auto alias_template_opt =
-			gTemplateRegistry.lookup_alias_template(qualified_template_name);
-		alias_template_opt.has_value() &&
-		alias_template_opt->is<TemplateAliasNode>()) {
-		return alias_template_opt->as<TemplateAliasNode>().template_parameters();
+	if (auto params = tryGetParams(ordinaryLookup, TemplateDeclarationKind::AliasTemplate, aliasAccessor)) {
+		return std::move(*params);
 	}
-	if (auto alias_template_opt =
-			gTemplateRegistry.lookup_alias_template(owner_type_info.baseTemplateName());
-		alias_template_opt.has_value() &&
-		alias_template_opt->is<TemplateAliasNode>()) {
-		return alias_template_opt->as<TemplateAliasNode>().template_parameters();
+	if (auto params = tryGetParams(qualifiedLookup, TemplateDeclarationKind::ClassTemplate, classAccessor)) {
+		return std::move(*params);
 	}
-	if (auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
-		template_opt.has_value() &&
-		template_opt->is<TemplateClassDeclarationNode>()) {
-		return template_opt->as<TemplateClassDeclarationNode>().template_parameters();
-	}
-	if (auto template_opt = gTemplateRegistry.lookupTemplate(owner_type_info.baseTemplateName());
-		template_opt.has_value() &&
-		template_opt->is<TemplateClassDeclarationNode>()) {
-		return template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+	if (auto params = tryGetParams(ordinaryLookup, TemplateDeclarationKind::ClassTemplate, classAccessor)) {
+		return std::move(*params);
 	}
 	return {};
 }
@@ -347,7 +319,7 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			owner_type_info != nullptr &&
 			owner_type_info->isTemplateInstantiation()) {
 			InlineVector<TemplateParameterNode, 4> owner_template_params =
-				getTemplateParametersForTypeInfo(*owner_type_info, context.parser);
+				getTemplateParametersForTypeInfo(*owner_type_info, *context.parser);
 			const size_t owner_pair_count = std::min(
 				owner_template_params.size(),
 				owner_type_info->templateArgs().size());
