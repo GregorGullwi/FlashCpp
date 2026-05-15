@@ -2746,9 +2746,10 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	object_type_arg.setType(initializer_type.category());
 
 	struct StructuredBindingTupleProtocolLookup {
-		explicit StructuredBindingTupleProtocolLookup(const Parser& parser_ref, NamespaceHandle owner_ns)
+		explicit StructuredBindingTupleProtocolLookup(const Parser& parser_ref, NamespaceHandle owner_ns, StringHandle struct_type_name)
 			: parser(parser_ref),
 			  owner_namespace(owner_ns),
+			  struct_type_name(struct_type_name),
 			  tuple_size_name(tupleSizeNameHandle()),
 			  tuple_element_name(tupleElementNameHandle()),
 			  get_name(getNameHandle()),
@@ -2761,13 +2762,30 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			StringHandle protocol_name,
 			TemplateDeclarationKind expected_kind) const {
 			std::vector<StringHandle> names;
+			// Per [dcl.struct.bind]/3: member get takes priority over non-member get
+			if (expected_kind == TemplateDeclarationKind::FunctionTemplate) {
+				appendStructMemberTemplateCandidates(protocol_name, names);
+			}
 			appendNamespaceAwareLookupCandidates(protocol_name, expected_kind, names);
 			appendNamespaceAwareFallbackCandidates(protocol_name, names);
 			return names;
 		}
 
+		// Builds "StructName::protocol_name" for member function template lookup
+		void appendStructMemberTemplateCandidates(StringHandle protocol_name, std::vector<StringHandle>& names) const {
+			if (!struct_type_name.isValid()) {
+				return;
+			}
+			StringBuilder sb;
+			sb.append(struct_type_name.view());
+			sb.append("::");
+			sb.append(protocol_name.view());
+			pushUniqueName(names, StringTable::getOrInternStringHandle(sb.commit()));
+		}
+
 		const Parser& parser;
 		NamespaceHandle owner_namespace;
+		StringHandle struct_type_name;
 		const StringHandle tuple_size_name;
 		const StringHandle tuple_element_name;
 		const StringHandle get_name;
@@ -2889,7 +2907,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		NamespaceHandle std_namespace;
 	};
 
-	const StructuredBindingTupleProtocolLookup protocol_lookup(parser_, init_type_info->namespaceHandle());
+	const StructuredBindingTupleProtocolLookup protocol_lookup(parser_, init_type_info->namespaceHandle(), init_type_info->name());
 
 	std::vector<StringHandle> tuple_size_template_names = protocol_lookup.resolveTemplateCandidates(
 		protocol_lookup.tuple_size_name,
@@ -3082,13 +3100,16 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		}
 
 		std::vector<int64_t> template_args = {static_cast<int64_t>(i)};
-		StringHandle namespace_handle{};
-		if (!get_func->namespace_handle().isGlobal()) {
-			namespace_handle = gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
+		StringHandle struct_name_for_mangle{};
+		if (get_func->is_member_function()) {
+			struct_name_for_mangle = StringTable::getOrInternStringHandle(get_func->parent_struct_name());
+		} else if (!get_func->namespace_handle().isGlobal()) {
+			struct_name_for_mangle = gNamespaceRegistry.getQualifiedNameHandle(get_func->namespace_handle());
 		}
+		bool is_const_method = get_func->is_const_member_function();
 		auto mangled = NameMangling::generateMangledNameWithTemplateArgs(
 			decl_node.identifier_token().value(), return_type, param_types, template_args,
-			get_func->is_variadic(), namespace_handle, get_func->namespace_handle(), false);
+			get_func->is_variadic(), struct_name_for_mangle, get_func->namespace_handle(), is_const_method);
 
 		TypeCategory element_type = element_type_spec->type();
 		TypeIndex element_type_index = element_type_spec->type_index();

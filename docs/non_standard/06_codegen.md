@@ -113,3 +113,51 @@ The fallback is better than the earlier scalar-only version because it now deleg
 needs to recover from it late.
 
 **Location:** `src/IrGenerator_Expr_Primitives.cpp:254–262`
+
+
+---
+
+### 8.5 Member `get` Template Specializations Were Never Code-Generated ✅ Fixed
+
+**Standard ([dcl.struct.bind]/3):** When a type satisfies the tuple-like protocol, structured
+bindings must call `std::get<I>(e)` or, if found by name lookup, a member function template
+`e.get<I>()`.  The compiler must emit a definition for every explicit specialization it calls.
+
+**FlashCpp (before fix):** `Parser_Templates_MemberOutOfLine.cpp` handled explicit member
+function template specializations (e.g., `template <> int Point::get<0>() const { … }`) by:
+
+1. Skipping the body with `skip_balanced_braces()`.
+2. Saving the body position for *lazy* instantiation (`set_template_body_position`).
+3. Registering the specialization with the template registry.
+4. **Never** adding the function node to the AST.
+
+Because the node was absent from the top-level AST, the IrGenerator never visited it and no
+object-code definition was emitted, producing a linker error:
+
+```
+undefined reference to `_ZN5Point3getILm0EEEv'
+```
+
+A second bug compounded this: the `const` qualifier captured in `member_quals` was never
+forwarded to `func_ref.set_is_const_member_function(…)`, so the call site (in
+`SemanticAnalysis.cpp`) computed the wrong mangled name (missing `K`).
+
+**Fix (`src/Parser_Templates_MemberOutOfLine.cpp`, `is_specialization` branch):**
+
+* `func_ref.set_is_const_member_function(member_quals.is_const())` — propagate `const`.
+* Non-type template args (e.g., `0` from `<0>`) are extracted and stored on the node via
+  `set_non_type_template_args`, then the correct ABI mangled name is computed using
+  `NameMangling::generateMangledNameWithTemplateArgs` (or `…WithTypeTemplateArgs` for type
+  args) with the struct name and `is_const_method` flag.
+* When there are no outer template parameters (`template_params.empty()`) the body is parsed
+  **immediately**: the lexer is rewound to `body_start`, `parse_function_body()` is called
+  inside a `FunctionParsingScopeGuard` (for correct member context and `this` injection), the
+  definition is set on the node, and the node is appended to the AST via `appendUserNode` and
+  to the symbol table via `gSymbolTable.insert`.
+* When outer template parameters are present (template class member), the original lazy-body
+  path is preserved (`set_template_body_position`).
+
+**Locations:**
+- Fix: `src/Parser_Templates_MemberOutOfLine.cpp:758–870`
+- Call site: `src/SemanticAnalysis.cpp` (`normalizeStructuredBinding`, member-get mangling)
+- Test: `tests/test_structured_binding_member_get_ret42.cpp`
