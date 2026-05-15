@@ -58,6 +58,28 @@ std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_n
 	}
 	return StringTable::getOrInternStringHandle(owner_name_builder.commit());
 }
+
+StringHandle getMemberTemplateOwnerName(StringHandle qualified_lookup_name, const ASTNode* template_node) {
+	if (qualified_lookup_name.isValid()) {
+		std::string_view qualified_name = qualified_lookup_name.view();
+		if (size_t scope_pos = qualified_name.rfind("::");
+			scope_pos != std::string_view::npos) {
+			return StringTable::getOrInternStringHandle(
+				qualified_name.substr(0, scope_pos));
+		}
+	}
+
+	if (template_node != nullptr &&
+		template_node->is<TemplateFunctionDeclarationNode>()) {
+		return StringTable::getOrInternStringHandle(
+			template_node
+				->as<TemplateFunctionDeclarationNode>()
+				.function_decl_node()
+				.parent_struct_name());
+	}
+
+	return {};
+}
 }
 
 bool Parser::tryAppendMemberDefaultTemplateArg(
@@ -182,6 +204,7 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 	std::vector<TemplateNameLookupCandidate> candidates;
 	std::unordered_set<const void*> seen_declarations;
 	const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+	const StringHandle requested_owner = StringTable::getOrInternStringHandle(struct_name);
 
 	auto append_candidates = [&](const TemplateNameLookupResult& lookup_result) {
 		for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
@@ -197,7 +220,6 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 		}
 	};
 
-	const StringHandle requested_owner = StringTable::getOrInternStringHandle(struct_name);
 	TemplateNameLookupRequest direct_request = buildMemberFunctionTemplateLookupRequest(
 		requested_owner,
 		member_name_handle,
@@ -215,6 +237,120 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 				if (!candidates.empty()) {
 					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", base_request.owner_name.view());
 				}
+			}
+		}
+	}
+
+	if (candidates.empty()) {
+		auto find_inherited_owner = [&](const auto& self, StringHandle struct_name_handle, int depth) -> StringHandle {
+			constexpr int kMaxInheritanceDepth = 100;
+			if (depth > kMaxInheritanceDepth) {
+				return {};
+			}
+
+			TemplateNameLookupRequest request = buildMemberFunctionTemplateLookupRequest(
+				struct_name_handle,
+				member_name_handle,
+				false);
+			TemplateNameLookupResult lookup_result =
+				gTemplateRegistry.lookupTemplateName(request);
+			if (lookup_result.hasFunctionTemplate()) {
+				return struct_name_handle;
+			}
+
+			auto struct_it = getTypesByNameMap().find(struct_name_handle);
+			if (struct_it == getTypesByNameMap().end()) {
+				return {};
+			}
+
+			const TypeInfo* struct_type_info = struct_it->second;
+			if (!struct_type_info->struct_info_) {
+				if (const TypeInfo* underlying_type =
+						tryGetTypeInfo(struct_type_info->type_index_);
+					underlying_type != nullptr &&
+					underlying_type != struct_type_info &&
+					underlying_type->struct_info_) {
+					return self(self, underlying_type->name(), depth + 1);
+				}
+				return {};
+			}
+
+			const StructTypeInfo* struct_info =
+				struct_type_info->struct_info_.get();
+			for (const auto& base_class : struct_info->base_classes) {
+				if (base_class.is_deferred) {
+					const TypeInfo* resolved = nullptr;
+					if (base_class.type_index.is_valid()) {
+						resolved = tryGetTypeInfo(base_class.type_index);
+						if (resolved != nullptr && !resolved->struct_info_ &&
+							resolved->type_index_.is_valid()) {
+							const TypeInfo* chained_type =
+								tryGetTypeInfo(resolved->type_index_);
+							if (chained_type != nullptr &&
+								chained_type->struct_info_) {
+								resolved = chained_type;
+							}
+						}
+					}
+					if (resolved != nullptr && resolved->struct_info_) {
+						StringHandle inherited_owner =
+							self(self, resolved->name(), depth + 1);
+						if (inherited_owner.isValid()) {
+							return inherited_owner;
+						}
+					}
+					continue;
+				}
+
+				StringHandle base_name_handle =
+					StringTable::getOrInternStringHandle(base_class.name);
+				StringHandle inherited_owner =
+					self(self, base_name_handle, depth + 1);
+				if (inherited_owner.isValid()) {
+					return inherited_owner;
+				}
+			}
+
+			return {};
+		};
+
+		StringHandle inherited_owner =
+			find_inherited_owner(find_inherited_owner, requested_owner, 0);
+		if (inherited_owner.isValid()) {
+			FLASH_LOG_FORMAT(
+				Templates,
+				Debug,
+				"Inherited member template lookup rebound '{}::{}' to owner '{}'",
+				struct_name,
+				member_name,
+				StringTable::getStringView(inherited_owner));
+			TemplateNameLookupRequest inherited_request =
+				buildMemberFunctionTemplateLookupRequest(
+					inherited_owner,
+					member_name_handle,
+					false);
+			TemplateNameLookupResult inherited_lookup =
+				gTemplateRegistry.lookupTemplateName(inherited_request);
+			for (const TemplateNameLookupCandidate& inherited_candidate :
+				 inherited_lookup.candidates) {
+				if (inherited_candidate.identity.kind !=
+					TemplateDeclarationKind::FunctionTemplate) {
+					continue;
+				}
+
+				const void* declaration_address =
+					inherited_candidate.declaration.raw_pointer();
+				if (declaration_address == nullptr ||
+					!seen_declarations.insert(declaration_address).second) {
+					continue;
+				}
+
+				TemplateNameLookupCandidate rebound_candidate =
+					inherited_candidate;
+				rebound_candidate.lookup_owner_name = requested_owner;
+				rebound_candidate.declaring_owner_name = inherited_owner;
+				rebound_candidate.inherited_depth = 1;
+				candidates.push_back(rebound_candidate);
 			}
 		}
 	}
@@ -240,9 +376,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	StringBuilder qualified_name_sb;
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
-	const StringHandle requested_qualified_name = qualified_name;
-	const OuterTemplateBinding* outer_binding =
-		gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view());
 
 	// Push a parser-level instantiation context for provenance tracking and backtraces.
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
@@ -281,6 +414,9 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			template_node_cand.as<TemplateFunctionDeclarationNode>();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
 		const auto& template_params = template_func.template_parameters();
+		const OuterTemplateBinding* candidate_outer_binding =
+			gTemplateRegistry.getOuterTemplateBinding(
+				lookup_candidate.identity.lookup_name.view());
 
 		if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
 			return std::nullopt;
@@ -442,7 +578,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 					default_args.push_back(existing_arg);
 				}
 				if (!tryAppendMemberDefaultTemplateArg(
-						param, template_params, outer_binding, default_args)) {
+						param, template_params, candidate_outer_binding, default_args)) {
 					return std::nullopt;
 				}
 				template_args.push_back(default_args.back());
@@ -502,9 +638,12 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				continue;
 			}
 			auto shape_node = instantiate_member_function_template_core(
-				struct_name,
+				StringTable::getStringView(
+					getMemberTemplateOwnerName(
+						candidate.lookup_name,
+						candidate.template_node)),
 				member_name,
-				requested_qualified_name,
+				candidate.lookup_name,
 				candidate.lookup_name,
 				*candidate.template_node,
 				candidate.template_args,
@@ -535,6 +674,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	const CandidateResult& best = viable[best_idx];
+	const StringHandle best_owner_name =
+		getMemberTemplateOwnerName(best.lookup_name, best.template_node);
 
 	// Build the instantiation key.
 	// When there are multiple overloads with the same name, two different templates can deduce
@@ -558,7 +699,13 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	return instantiate_member_function_template_core(
-		struct_name, member_name, requested_qualified_name, best.lookup_name,
+		StringTable::getStringView(
+			best_owner_name.isValid()
+				? best_owner_name
+				: StringTable::getOrInternStringHandle(struct_name)),
+		member_name,
+		best.lookup_name,
+		best.lookup_name,
 		*best.template_node, best.template_args, key, arg_types, true);
 }
 
@@ -784,7 +931,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	StringBuilder qualified_name_sb;
 	qualified_name_sb.append(struct_name).append("::").append(member_name);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(qualified_name_sb);
-	const StringHandle requested_qualified_name = qualified_name;
 	StringHandle specialization_lookup_name = qualified_name;
 	StringHandle struct_name_handle = StringTable::getOrInternStringHandle(struct_name);
 	auto requested_key = FlashCpp::makeInstantiationKey(qualified_name, template_type_args);
@@ -959,6 +1105,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 
 		InlineVector<TemplateTypeArg, 4> completed_template_args;
+		const StringHandle candidate_qualified_name = lookup_candidate.identity.lookup_name;
 		for (const auto& arg : template_type_args) {
 			completed_template_args.push_back(arg);
 		}
@@ -968,7 +1115,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			if (!tryAppendMemberDefaultTemplateArg(
 					template_param,
 					template_params,
-					gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view()),
+					gTemplateRegistry.getOuterTemplateBinding(candidate_qualified_name.view()),
 					completed_template_args)) {
 				has_all_template_args = false;
 				break;
@@ -978,7 +1125,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			continue;
 		}
 		const auto& template_args = completed_template_args;
-		const StringHandle candidate_qualified_name = lookup_candidate.identity.lookup_name;
 		auto key = FlashCpp::makeInstantiationKey(candidate_qualified_name, template_args);
 
 		// Check if we already have this instantiation
@@ -1010,7 +1156,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 			// Add outer template params (from enclosing class template, e.g. T→int)
 			if (const OuterTemplateBinding* sfinae_outer_binding =
-					gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view())) {
+					gTemplateRegistry.getOuterTemplateBinding(candidate_qualified_name.view())) {
 				registerOuterBindingInScope(*sfinae_outer_binding, sfinae_scope, &sfinae_type_map_);
 			}
 
@@ -1030,9 +1176,24 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			current_explicit_call_arg_types_ != nullptr
 				? *current_explicit_call_arg_types_
 				: empty_call_arg_types;
+		const StringHandle candidate_owner_name =
+			lookup_candidate.declaring_owner_name.isValid()
+				? lookup_candidate.declaring_owner_name
+				: struct_name_handle;
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"Trying explicit member template instantiation via owner '{}', lookup '{}'",
+			StringTable::getStringView(candidate_owner_name),
+			candidate_qualified_name.view());
 		auto result = instantiate_member_function_template_core(
-			struct_name, member_name, requested_qualified_name, candidate_qualified_name, template_node, template_args, key, call_arg_types, true);
+			StringTable::getStringView(candidate_owner_name), member_name, candidate_qualified_name, candidate_qualified_name, template_node, template_args, key, call_arg_types, true);
 		if (result.has_value()) {
+			FLASH_LOG_FORMAT(
+				Templates,
+				Debug,
+				"Explicit member template instantiation succeeded for '{}'",
+				candidate_qualified_name.view());
 			return result;
 		}
 	}

@@ -1425,9 +1425,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Check if this is an instantiated template function
 		std::string_view func_name = func_decl_node.identifier_token().value();
 		StringHandle function_name;
+		if (callExprNode.has_mangled_name()) {
+			function_name =
+				StringTable::getOrInternStringHandle(callExprNode.mangled_name());
+		}
 
 		// Check if this is a member function - use struct_info to determine
-		if (struct_info) {
+		if (!function_name.isValid() && struct_info) {
 			// For nested classes, we need the fully qualified name from TypeInfo
 			auto struct_name = struct_info->getName();
 			auto type_it = getTypesByNameMap().find(struct_name);

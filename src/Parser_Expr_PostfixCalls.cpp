@@ -494,6 +494,20 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_name_token));
+		if (func_ref_ptr->has_mangled_name()) {
+			setCallMangledName(result->as<ExpressionNode>(), func_ref_ptr->mangled_name());
+		}
+		if (func_ref_ptr->is_member_function() &&
+			!func_ref_ptr->parent_struct_name().empty()) {
+			StringBuilder qualified_name_builder;
+			qualified_name_builder
+				.append(func_ref_ptr->parent_struct_name())
+				.append("::")
+				.append(func_ref_ptr->decl_node().identifier_token().value());
+			setCallQualifiedName(
+				result->as<ExpressionNode>(),
+				qualified_name_builder.commit());
+		}
 		return ParseResult::success(*result);
 	}
 
