@@ -684,122 +684,6 @@ public:
 		return nullptr;
 	}
 
-	// Register a template specialization pattern (StringHandle overload)
-	void registerSpecializationPattern(StringHandle template_name,
-									   const InlineVector<TemplateParameterNode, 4>& template_params,
-									   std::span<const TemplateTypeArg> pattern_args,
-									   ASTNode specialized_node,
-									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-
-		if (FLASH_LOG_ENABLED(Templates, Debug)) {
-			FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name),
-					  "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
-
-			// Debug: log each pattern arg
-			for (size_t i = 0; i < pattern_args.size(); ++i) {
-				const auto& arg = pattern_args[i];
-				std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
-				FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
-						  ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
-						  ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
-			}
-
-			// Debug: log each template param type
-			for (size_t i = 0; i < template_params.size(); ++i) {
-				FLASH_LOG(Templates, Debug, "  template_param[", i, "]: name=", template_params[i].name());
-			}
-		}
-
-		TemplatePattern pattern;
-		pattern.template_params = template_params;
-		pattern.pattern_args = pattern_args;
-		pattern.specialized_node = specialized_node;
-		pattern.sfinae_condition = sfinae_cond;
-
-		// Auto-detect void_t SFINAE patterns if no explicit condition provided.
-		// Heuristic: patterns with 2 args where first is dependent and second is void
-		// indicate void_t<...> usage. The member name to check is extracted from the
-		// first arg's dependent_name if available, otherwise defaults to "type".
-		if (!sfinae_cond.has_value() && pattern_args.size() == 2) {
-			const auto& first_arg = pattern_args[0];
-			const auto& second_arg = pattern_args[1];
-
-			// Check: first arg is dependent (template param), second arg is void (from void_t expansion)
-			if (first_arg.is_dependent && !second_arg.is_dependent &&
-				second_arg.category() == TypeCategory::Void) {
-				// This looks like a void_t SFINAE pattern.
-				// Try to extract the member name from available information.
-				StringHandle member_name;
-
-				// Check if the first arg's dependent_name contains a qualified name like "T::type"
-				if (first_arg.dependent_name.isValid()) {
-					std::string_view dep_name = StringTable::getStringView(first_arg.dependent_name);
-					size_t scope_pos = dep_name.rfind("::");
-					if (scope_pos != std::string_view::npos && scope_pos + 2 < dep_name.size()) {
-						// Extract the member name after "::"
-						std::string_view extracted_member = dep_name.substr(scope_pos + 2);
-						member_name = StringTable::getOrInternStringHandle(extracted_member);
-						FLASH_LOG(Templates, Debug, "Extracted SFINAE member name '", extracted_member, "' from dependent_name '", dep_name, "'");
-					}
-				}
-
-				// If no member name was extracted, check the type name via type_index
-				if (!member_name.isValid()) {
-					if (const TypeInfo* first_arg_ti = tryGetTypeInfo(first_arg.type_index)) {
-						std::string_view type_name = StringTable::getStringView(first_arg_ti->name());
-						size_t scope_pos = type_name.rfind("::");
-						if (scope_pos != std::string_view::npos && scope_pos + 2 < type_name.size()) {
-							std::string_view extracted_member = type_name.substr(scope_pos + 2);
-							member_name = StringTable::getOrInternStringHandle(extracted_member);
-							FLASH_LOG(Templates, Debug, "Extracted SFINAE member name '", extracted_member, "' from type_name '", type_name, "'");
-						}
-					}
-				}
-
-				// Default to "type" if no member name could be extracted
-				// This is the most common pattern (e.g., void_t<typename T::type>)
-				if (!member_name.isValid()) {
-					member_name = StringTable::getOrInternStringHandle("type");
-					FLASH_LOG(Templates, Debug, "Using default SFINAE member name 'type'");
-				}
-
-				pattern.sfinae_condition = SfinaeCondition(0, member_name);
-				FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::",
-						  StringTable::getStringView(member_name), " member");
-			}
-		}
-
-		specialization_patterns_[template_name].push_back(std::move(pattern));
-		const auto& stored_pattern = specialization_patterns_[template_name].back();
-		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
-		if (stored_pattern.sfinae_condition.has_value()) {
-			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index,
-					  "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
-		}
-	}
-	void registerSpecializationPattern(StringHandle template_name,
-									   std::span<const TemplateParameterNode> template_params,
-									   std::span<const TemplateTypeArg> pattern_args,
-									   ASTNode specialized_node,
-									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		InlineVector<TemplateParameterNode, 4> typed_template_params;
-		typed_template_params.reserve(template_params.size());
-		for (const TemplateParameterNode& template_param : template_params) {
-			typed_template_params.push_back(template_param);
-		}
-		registerSpecializationPattern(template_name, typed_template_params, pattern_args, specialized_node, sfinae_cond);
-	}
-
-	// Register a template specialization pattern (string_view overload)
-	void registerSpecializationPattern(std::string_view template_name,
-									   std::span<const TemplateParameterNode> template_params,
-									   std::span<const TemplateTypeArg> pattern_args,
-									   ASTNode specialized_node,
-									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		StringHandle key = StringTable::getOrInternStringHandle(template_name);
-		registerSpecializationPattern(key, template_params, pattern_args, specialized_node, sfinae_cond);
-	}
-
 	// Register a template specialization pattern using QualifiedIdentifier.
 	void registerSpecializationPattern(QualifiedIdentifier qi,
 									   std::span<const TemplateParameterNode> template_params,
@@ -807,7 +691,12 @@ public:
 									   ASTNode specialized_node,
 									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
-			registerSpecializationPattern(name, template_params, pattern_args, specialized_node, sfinae_cond);
+			registerSpecializationPatternByName(
+				StringTable::getOrInternStringHandle(name),
+				template_params,
+				pattern_args,
+				specialized_node,
+				sfinae_cond);
 		});
 	}
 
@@ -1026,6 +915,89 @@ public:
 	}
 
 private:
+	// Register a template specialization pattern under an already-normalized registry key.
+	void registerSpecializationPatternByName(StringHandle template_name,
+											 const InlineVector<TemplateParameterNode, 4>& template_params,
+											 std::span<const TemplateTypeArg> pattern_args,
+											 ASTNode specialized_node,
+											 std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+
+		if (FLASH_LOG_ENABLED(Templates, Debug)) {
+			FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name),
+					  "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
+
+			// Debug: log each pattern arg
+			for (size_t i = 0; i < pattern_args.size(); ++i) {
+				const auto& arg = pattern_args[i];
+				std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
+				FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
+						  ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
+						  ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
+			}
+
+			// Debug: log each template param type
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				FLASH_LOG(Templates, Debug, "  template_param[", i, "]: name=", template_params[i].name());
+			}
+		}
+
+		TemplatePattern pattern;
+		pattern.template_params = template_params;
+		pattern.pattern_args = pattern_args;
+		pattern.specialized_node = specialized_node;
+		pattern.sfinae_condition = sfinae_cond;
+
+		// Auto-detect void_t SFINAE patterns if no explicit condition provided.
+		// Patterns like has_member<T, void_t<typename T::value_type>> register as
+		// [T, void], with the second argument preserving the real dependent probe name.
+		if (!sfinae_cond.has_value() && pattern_args.size() == 2) {
+			const auto& second_arg = pattern_args[1];
+
+			// Check: second arg is void from a void_t-like alias expansion.
+			if (!second_arg.is_dependent &&
+				second_arg.category() == TypeCategory::Void) {
+				if (second_arg.dependent_name.isValid()) {
+					std::string_view dep_name = StringTable::getStringView(second_arg.dependent_name);
+					size_t scope_pos = dep_name.rfind("::");
+					if (scope_pos != std::string_view::npos && scope_pos > 0 && scope_pos + 2 < dep_name.size()) {
+						std::string_view owner_name = dep_name.substr(0, scope_pos);
+						std::string_view member_name_view = dep_name.substr(scope_pos + 2);
+						for (size_t i = 0; i < template_params.size(); ++i) {
+							if (StringTable::getStringView(template_params[i].nameHandle()) == owner_name) {
+								StringHandle member_name = StringTable::getOrInternStringHandle(member_name_view);
+								pattern.sfinae_condition = SfinaeCondition(i, member_name);
+								FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking param[",
+										  i, "]::", member_name_view, " from dependent_name '", dep_name, "'");
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		specialization_patterns_[template_name].push_back(std::move(pattern));
+		const auto& stored_pattern = specialization_patterns_[template_name].back();
+		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
+		if (stored_pattern.sfinae_condition.has_value()) {
+			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index,
+					  "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
+		}
+	}
+
+	void registerSpecializationPatternByName(StringHandle template_name,
+											 std::span<const TemplateParameterNode> template_params,
+											 std::span<const TemplateTypeArg> pattern_args,
+											 ASTNode specialized_node,
+											 std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		InlineVector<TemplateParameterNode, 4> typed_template_params;
+		typed_template_params.reserve(template_params.size());
+		for (const TemplateParameterNode& template_param : template_params) {
+			typed_template_params.push_back(template_param);
+		}
+		registerSpecializationPatternByName(template_name, typed_template_params, pattern_args, specialized_node, sfinae_cond);
+	}
+
 	// Register a template specialization under an already-normalized registry key.
 	void registerSpecializationByName(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode specialized_node) {
 		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};

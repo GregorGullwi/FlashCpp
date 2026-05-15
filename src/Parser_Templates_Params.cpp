@@ -1170,12 +1170,85 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	while (true) {
 		// Save position in case type parsing fails
 		SaveHandle arg_saved_pos = save_token_position();
+		StringHandle dependent_member_probe = extractDependentMemberProbeFromCurrentTemplateArg();
 
 		if (peek().is_identifier()) {
 			const Token identifier_token = current_token_;
 			const StringHandle identifier_handle = identifier_token.handle();
 			SaveHandle identifier_saved_pos = save_token_position();
 			advance();
+
+			if (peek() == "<"_tok) {
+				TemplateNameLookupRequest alias_lookup_request =
+					buildTemplateNameLookupRequest(
+						identifier_handle,
+						TemplateNameLookupKind::Ordinary,
+						false);
+				TemplateNameLookupResult alias_lookup =
+					gTemplateRegistry.lookupTemplateName(alias_lookup_request);
+				auto alias_opt = alias_lookup.firstDeclarationOfKind(
+					TemplateDeclarationKind::AliasTemplate);
+				if (alias_opt.has_value()) {
+					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+					TypeCategory target_type = alias_node.target_type_node().type();
+					if (!is_struct_type(target_type)) {
+						auto alias_args_opt = parse_explicit_template_arguments(
+							alias_node.template_parameters(),
+							out_type_nodes);
+						if (alias_args_opt.has_value()) {
+							TemplateTypeArg alias_arg;
+							alias_arg.setType(target_type);
+							alias_arg.is_dependent = false;
+							for (const TemplateTypeArg& alias_inner_arg : *alias_args_opt) {
+								if (alias_inner_arg.dependent_name.isValid() &&
+									StringTable::getStringView(alias_inner_arg.dependent_name).find("::") != std::string_view::npos) {
+									alias_arg.dependent_name = alias_inner_arg.dependent_name;
+									break;
+								}
+								if (const TypeInfo* alias_inner_type = tryGetTypeInfo(alias_inner_arg.type_index)) {
+									std::string_view alias_inner_name = StringTable::getStringView(alias_inner_type->name());
+									if (alias_inner_name.find("::") != std::string_view::npos) {
+										alias_arg.dependent_name = StringTable::getOrInternStringHandle(alias_inner_name);
+										break;
+									}
+								}
+							}
+							if (!alias_arg.dependent_name.isValid()) {
+								alias_arg.dependent_name = dependent_member_probe;
+							}
+
+							if (peek() == "..."_tok) {
+								advance();
+								alias_arg.is_pack = true;
+								FLASH_LOG(Templates, Debug, "Marked alias template argument as pack expansion");
+							}
+
+							template_args.push_back(alias_arg);
+							discard_saved_token(identifier_saved_pos);
+							discard_saved_token(arg_saved_pos);
+
+							if (peek() == ">>"_tok) {
+								split_right_shift_token();
+							}
+							if (peek() == ">"_tok) {
+								advance();
+								break;
+							}
+							if (peek() == ","_tok) {
+								advance();
+								continue;
+							}
+
+							FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token after alias template argument");
+							restore_token_position(saved_pos);
+							last_failed_template_arg_parse_handle_ = saved_pos;
+							return std::nullopt;
+						}
+					}
+				}
+
+				restore_token_position(identifier_saved_pos);
+			}
 
 			if (peek() == ">>"_tok) {
 				split_right_shift_token();
@@ -2339,6 +2412,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
+		if (dependent_member_probe.isValid()) {
+			arg.dependent_name = dependent_member_probe;
+		}
 		if (!arg.is_template_template_arg && !arg.is_value) {
 			StringHandle template_name_handle = type_node.token().handle();
 			const TypeInfo* parsed_type_info = type_node.type_index().is_valid()
@@ -3096,6 +3172,74 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		}
 		++arg_index;
 	}
+}
+
+StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
+	int angle_depth = 0;
+	int paren_depth = 0;
+	int bracket_depth = 0;
+	for (size_t lookahead = 0; lookahead < 128; ++lookahead) {
+		Token token = peek_info(lookahead);
+		std::string_view value = token.value();
+		if (token.kind().is_eof()) {
+			return {};
+		}
+		if (value == "<") {
+			++angle_depth;
+		} else if (value == ">") {
+			if (angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
+				return {};
+			}
+			if (angle_depth > 0) {
+				--angle_depth;
+			}
+		} else if (value == ">>") {
+			if (angle_depth <= 1 && paren_depth == 0 && bracket_depth == 0) {
+				return {};
+			}
+			angle_depth = angle_depth > 1 ? angle_depth - 2 : 0;
+		} else if (value == "(") {
+			++paren_depth;
+		} else if (value == ")") {
+			if (paren_depth > 0) {
+				--paren_depth;
+			}
+		} else if (value == "[") {
+			++bracket_depth;
+		} else if (value == "]") {
+			if (bracket_depth > 0) {
+				--bracket_depth;
+			}
+		} else if (value == "," && angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
+			return {};
+		}
+
+		if (value == "typename") {
+			Token owner_token = peek_info(lookahead + 1);
+			Token scope_token = peek_info(lookahead + 2);
+			Token member_token = peek_info(lookahead + 3);
+			if (owner_token.type() == Token::Type::Identifier &&
+				scope_token.value() == "::" &&
+				member_token.type() == Token::Type::Identifier) {
+				StringHandle owner_handle = owner_token.handle();
+				const auto& current_param_names = currentTemplateParamNames();
+				bool owner_is_template_param = std::any_of(
+					current_param_names.begin(),
+					current_param_names.end(),
+					[owner_handle](StringHandle param_name) {
+						return param_name == owner_handle;
+					});
+				if (owner_is_template_param) {
+					return StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(owner_token.value())
+							.append("::"sv)
+							.append(member_token.value()));
+				}
+			}
+		}
+	}
+	return {};
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
