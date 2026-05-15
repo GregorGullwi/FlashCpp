@@ -657,7 +657,7 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 			}
 			// Deferred allocation: only emplace into gChunkedAnyStorage once the
 			// entire loop succeeds. Early-return paths above leave template_arguments
-			// as nullptr and avoid touching gChunkedAnyStorage entirely.
+			// as nullptr (relying on the `= nullptr` default member initializer in QualifiedTypeMemberAccess) and avoid touching gChunkedAnyStorage.
 			resolved_member.template_arguments =
 				&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(std::move(resolved_args));
 		}
