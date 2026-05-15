@@ -3180,46 +3180,51 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 	int bracket_depth = 0;
 	for (size_t lookahead = 0; lookahead < 128; ++lookahead) {
 		Token token = peek_info(lookahead);
-		std::string_view value = token.value();
-		if (token.kind().is_eof()) {
+		TokenKind kind = token.kind();
+		if (kind.is_eof()) {
 			return {};
 		}
-		if (value == "<") {
+		if (kind == "<"_tok) {
 			++angle_depth;
-		} else if (value == ">") {
+		} else if (kind == ">"_tok) {
 			if (angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
 				return {};
 			}
 			if (angle_depth > 0) {
 				--angle_depth;
 			}
-		} else if (value == ">>") {
+		} else if (kind == ">>"_tok) {
 			if (angle_depth <= 1 && paren_depth == 0 && bracket_depth == 0) {
 				return {};
 			}
 			angle_depth = angle_depth > 1 ? angle_depth - 2 : 0;
-		} else if (value == "(") {
+		} else if (kind == "("_tok) {
 			++paren_depth;
-		} else if (value == ")") {
+		} else if (kind == ")"_tok) {
 			if (paren_depth > 0) {
 				--paren_depth;
 			}
-		} else if (value == "[") {
+		} else if (kind == "["_tok) {
 			++bracket_depth;
-		} else if (value == "]") {
+		} else if (kind == "]"_tok) {
 			if (bracket_depth > 0) {
 				--bracket_depth;
 			}
-		} else if (value == "," && angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
+		} else if (kind == ","_tok && angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
 			return {};
 		}
 
-		if (value == "typename") {
+		if (kind == "typename"_tok) {
 			Token owner_token = peek_info(lookahead + 1);
 			Token scope_token = peek_info(lookahead + 2);
 			Token member_token = peek_info(lookahead + 3);
+			if (owner_token.kind().is_eof() ||
+				scope_token.kind().is_eof() ||
+				member_token.kind().is_eof()) {
+				return {};
+			}
 			if (owner_token.type() == Token::Type::Identifier &&
-				scope_token.value() == "::" &&
+				scope_token.kind() == "::"_tok &&
 				member_token.type() == Token::Type::Identifier) {
 				StringHandle owner_handle = owner_token.handle();
 				const auto& current_param_names = currentTemplateParamNames();
