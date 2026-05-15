@@ -1617,7 +1617,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		// dependent-unqualified call survived template instantiation, which is a
 		// compiler bug.
 		if (!context.parser) {
-			throw InternalError("evaluate_function_call_with_outer_bindings: parser required for dependent unqualified call POI resolution but is null");
+			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {

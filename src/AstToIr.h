@@ -541,11 +541,6 @@ private:
 		if (global_symbol_table_) {
 			ctx.global_symbols = global_symbol_table_;
 		}
-		// Always provide the parser and sema so dependent calls resolved at
-		// point-of-instantiation (which carry a DependentUnqualifiedCallLookupRecord)
-		// can be handled without a null-parser guard inside the evaluator.
-		ctx.parser = parser_;
-		ctx.sema = sema_;
 
 		// If we're in a member function, set the struct_info in the context
 		// This allows sizeof(T) to resolve template parameters from the struct
