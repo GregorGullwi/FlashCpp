@@ -2892,6 +2892,9 @@ public:	// Public methods for template instantiation
 		bool is_dependent) const {
 		return buildTemplateNameLookupRequest(template_name, lookup_kind, is_dependent);
 	}
+	TemplateNameLookupResult lookupTemplateName(const TemplateNameLookupRequest& request) const {
+		return gTemplateRegistry.lookupTemplateName(request);
+	}
 
 private:	 // Resume private methods
 

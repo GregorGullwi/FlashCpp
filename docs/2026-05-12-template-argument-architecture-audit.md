@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-15 (semantic analyzer unification confirmed complete; QualifiedTypeMemberAccess allocation optimized)
+**Last updated:** 2026-05-15 (semantic analyzer unification slice completed via parser-owned sema lookup interface; QualifiedTypeMemberAccess allocation optimized)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -80,9 +80,9 @@ infrastructure tracks. The branch now includes:
 - `ExpressionSubstitutor.cpp` existence-check registry calls are documented as
   intentionally direct (simple name-presence check, no instantiation context).
 - semantic analysis structured-binding tuple-like lookup now resolves
-  `tuple_size`, `tuple_element`, and `get` through parser-built semantic
-  template-name lookup requests before specialization matching, while keeping
-  conservative fallback name probes.
+  `tuple_size`, `tuple_element`, and `get` through parser-owned semantic
+  template-name lookup (`Parser::lookupTemplateName`) before specialization
+  matching.
 - structured-binding tuple-like specialization matching now uses semantic-lookup
   candidate ordering first (`tuple_size`, `tuple_element`, `get`) with no
   synthesized-name fallback.
@@ -94,12 +94,12 @@ infrastructure tracks. The branch now includes:
   namespace-qualified names. `std::tuple_size<E>` etc. are now found through
   normal qualified semantic lookup. The non-standard `fallback_names` mechanism
   has been removed entirely from `SemanticAnalysis.cpp`.
-- **semantic analyzer unification confirmed complete (2026-05-15):** a full audit
-  of all `gTemplateRegistry` calls in `SemanticAnalysis.cpp`, `OverloadResolution.h`,
-  and `SemanticTypes.h` confirmed no remaining sema-layer direct registry probes.
-  The only surviving direct calls are in documented intentional fallback paths
-  (no parser context) or in registry-internal/codegen layers where semantic
-  requests cannot apply.
+- **semantic analyzer unification completed in this slice (2026-05-15):** the
+  remaining sema-layer direct template-name lookup probe in
+  `SemanticAnalysis.cpp` (structured-binding tuple protocol lookup) now routes
+  through the parser-owned semantic lookup interface. A follow-up audit of
+  `SemanticAnalysis.cpp`, `OverloadResolution.h`, and `SemanticTypes.h`
+  confirms no remaining sema-layer direct template-name lookup probes.
 - **`QualifiedTypeMemberAccess::template_arguments` allocation optimized (2026-05-15):**
   the `unique_ptr<vector<TemplateTypeArg>>` field was replaced with a raw pointer
   into `gChunkedAnyStorage`, reducing two heap allocations per dependent member
@@ -116,9 +116,10 @@ architecture gaps, not known regressions from the refactor.
 
 The remaining work is not another broad parser cleanup. The next useful passes
 should target the places where FlashCpp still lacks standard-owned semantic
-state. The semantic analyzer unification track is now complete: a full
-2026-05-15 audit confirmed no remaining direct registry probes in the sema
-layer. The active architecture tracks are therefore:
+state. The highest-impact semantic analyzer unification track is now addressed
+in this slice: the last sema-layer direct template-name lookup probe was
+rerouted through the parser-owned interface, and audit now shows no remaining
+sema direct lookup probes. The active architecture tracks are therefore:
 
 ### Open next steps
 
@@ -159,14 +160,14 @@ layer. The active architecture tracks are therefore:
 
 ### Highest-impact architecture targets
 
-1. **Semantic analyzer unification on semantic lookup records. ✅ COMPLETE**
-   A full audit confirmed the sema layer is unified. All `gTemplateRegistry`
-   calls in `SemanticAnalysis.cpp`, `OverloadResolution.h`, and `SemanticTypes.h`
-   are either already routed through `makeTemplateNameLookupRequest()`, or are
-   in documented intentional-direct paths (pattern-identity checks, no-parser-context
-   fallbacks, existence-only checks). The `QualifiedTypeMemberAccess::template_arguments`
-   allocation was also optimized from `unique_ptr` to a raw `gChunkedAnyStorage`-backed
-   pointer, reducing hot-path heap allocations.
+1. **Semantic analyzer unification on semantic lookup records. ✅ ADDRESSED IN THIS SLICE**
+   The remaining sema-layer direct template-name lookup probe
+   (`SemanticAnalysis.cpp` structured-binding tuple protocol helper) now routes
+   through `Parser::lookupTemplateName()`. Audit across
+   `SemanticAnalysis.cpp`, `OverloadResolution.h`, and `SemanticTypes.h`
+   confirms no remaining sema direct template-name lookup probes. Intentional
+   direct calls that are not lookup probes (e.g., pattern-identity checks and
+   no-parser-context fallback paths) remain unchanged.
 
 2. **Two-phase lookup and semantic lookup records.**
    This remains the largest conformance lever. Non-dependent names in templates

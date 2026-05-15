@@ -2864,7 +2864,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			const TemplateNameLookupRequest& lookup_request,
 			TemplateDeclarationKind expected_kind,
 			TemplateLookupSet& lookup_set) const {
-			TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(lookup_request);
+			TemplateNameLookupResult lookup_result = parser.lookupTemplateName(lookup_request);
 			for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
 				if (candidate.identity.kind != expected_kind) {
 					continue;
