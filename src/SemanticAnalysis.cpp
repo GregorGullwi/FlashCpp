@@ -7024,6 +7024,26 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (call_info.function_declaration)
 		return call_info.function_declaration;
 
+	if (!call_info.has_receiver &&
+		call_info.dependent_unqualified_lookup_record != nullptr &&
+		call_info.dependent_unqualified_lookup_record->has_value()) {
+		std::vector<TypeSpecifierNode> arg_types;
+		if (parser_.tryCollectFunctionCallArgTypes(arguments, arg_types)) {
+			if (std::optional<ASTNode> resolved_target =
+					parser_.resolveDependentUnqualifiedCallAtPointOfInstantiation(
+						**call_info.dependent_unqualified_lookup_record,
+						arguments,
+						arg_types);
+				resolved_target.has_value()) {
+				if (const FunctionDeclarationNode* resolved_function =
+						get_function_decl_node(*resolved_target);
+					resolved_function != nullptr) {
+					return resolved_function;
+				}
+			}
+		}
+	}
+
 	const DeclarationNode& decl = *call_info.declaration;
 	if (call_info.mangled_name.isValid()) {
 		if (std::optional<ASTNode> mangled_symbol = symbols_.lookup(call_info.mangled_name);

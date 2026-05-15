@@ -2782,6 +2782,15 @@ struct FunctionCallDefinitionLookupRecord {
 	bool argument_dependent_lookup_included = true;
 };
 
+// Per-call semantic record for unresolved dependent unqualified calls whose
+// ordinary lookup must remain definition-bound while ADL completes at the point
+// of instantiation.
+struct DependentUnqualifiedCallLookupRecord {
+	TemplateDefinitionLookupContext definition_context;
+	StringHandle callee_name{};
+	bool argument_dependent_lookup_included = true;
+};
+
 // Describes what kind of call site this is.
 enum class CalleeKind : uint8_t {
 	FreeFunction,           // Direct call to a free/namespace-scoped function
@@ -2899,6 +2908,17 @@ public:
 	}
 	bool has_definition_lookup_record() const { return definition_lookup_record_.has_value(); }
 
+	void set_dependent_unqualified_lookup_record(
+		const DependentUnqualifiedCallLookupRecord& record) {
+		dependent_unqualified_lookup_record_ = record;
+	}
+	const std::optional<DependentUnqualifiedCallLookupRecord>& dependent_unqualified_lookup_record() const {
+		return dependent_unqualified_lookup_record_;
+	}
+	bool has_dependent_unqualified_lookup_record() const {
+		return dependent_unqualified_lookup_record_.has_value();
+	}
+
 private:
 	CalleeDescriptor callee_;
 	ASTNode receiver_;                   // Object for member-style calls (empty when absent)
@@ -2908,6 +2928,7 @@ private:
 	StringHandle qualified_name_;        // Source-level qualified name (e.g., "ns::func")
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments
 	std::optional<FunctionCallDefinitionLookupRecord> definition_lookup_record_;
+	std::optional<DependentUnqualifiedCallLookupRecord> dependent_unqualified_lookup_record_;
 };
 
 // Constructor call node - represents constructor calls like T(args)

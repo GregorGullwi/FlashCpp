@@ -919,6 +919,16 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		// Keep template-context parsing semantics during replay so dependent NTTP
 		// expressions are preserved as AST and can be concretely substituted below.
 		parsing_template_depth_ = 1;
+		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
+			current_template_definition_lookup_context_;
+		current_template_definition_lookup_context_ =
+			lazy_info.definition_lookup_context.is_valid()
+				? &lazy_info.definition_lookup_context
+				: previous_definition_lookup_context;
+		auto restore_definition_lookup_context = ScopeGuard([&]() {
+			current_template_definition_lookup_context_ =
+				previous_definition_lookup_context;
+		});
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());

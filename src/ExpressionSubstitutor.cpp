@@ -1003,6 +1003,26 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	auto normalizePendingSemanticRoots = [&]() {
 		parser_.normalizePendingSemanticRootsIfAvailable();
 	};
+	auto materializeSubstitutedUnresolvedCall = [&]() -> ASTNode {
+		ChunkedVector<ASTNode> substituted_args;
+		for (size_t i = 0; i < call.arguments().size(); ++i) {
+			substituted_args.push_back(substitute(call.arguments()[i]));
+		}
+		CallExprNode substituted_call(
+			call.callee(),
+			std::move(substituted_args),
+			call.called_from());
+		copyCallMetadataWithTransformedTemplateArguments(
+			substituted_call,
+			call,
+			[this](const ASTNode& template_arg) {
+				return substitute(template_arg);
+			},
+			CallMetadataCopyOptions{});
+		ExpressionNode& new_expr =
+			gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(substituted_call));
+		return ASTNode(&new_expr);
+	};
 	std::vector<ASTNode> explicit_template_arg_nodes;
 
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
@@ -1557,6 +1577,50 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		}
 	}
 
+	if (call.has_dependent_unqualified_lookup_record()) {
+		ChunkedVector<ASTNode> substituted_args;
+		for (size_t i = 0; i < call.arguments().size(); ++i) {
+			substituted_args.push_back(substitute(call.arguments()[i]));
+		}
+
+		std::vector<TypeSpecifierNode> substituted_arg_types;
+		if (parser_.tryCollectFunctionCallArgTypes(substituted_args, substituted_arg_types)) {
+			if (std::optional<ASTNode> resolved_target =
+					parser_.resolveDependentUnqualifiedCallAtPointOfInstantiation(
+						*call.dependent_unqualified_lookup_record(),
+						substituted_args,
+						substituted_arg_types);
+				resolved_target.has_value()) {
+				if (const FunctionDeclarationNode* target_func =
+						get_function_decl_node(*resolved_target);
+					target_func != nullptr) {
+					ExpressionNode& new_expr = emplaceDirectCallExpr(
+						target_func->decl_node(),
+						target_func,
+						std::move(substituted_args),
+						call.called_from());
+					CallMetadataCopyOptions copy_options;
+					copy_options.copy_dependent_unqualified_lookup_record = false;
+					copyMetadataToExpr(new_expr, copy_options);
+					if (target_func->has_mangled_name()) {
+						setCallMangledName(new_expr, target_func->mangled_name());
+					}
+					if (!target_func->parent_struct_name().empty()) {
+						setCallQualifiedName(
+							new_expr,
+							StringBuilder()
+								.append(target_func->parent_struct_name())
+								.append("::")
+								.append(target_func->decl_node().identifier_token().value())
+								.commit());
+					}
+					return ASTNode(&new_expr);
+				}
+			}
+		}
+		return materializeSubstitutedUnresolvedCall();
+	}
+
 	// If not a template function call or instantiation failed, check for qualified owners
 	// that became concrete during substitution and need canonical owner identity rebound.
 	size_t scope_pos = func_name.find("::");
@@ -1642,9 +1706,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		}
 	}
 
-	// Return as-is
+	// Return with substituted children preserved.
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
-	return wrapOriginalCall();
+	return materializeSubstitutedUnresolvedCall();
 }
 
 ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {

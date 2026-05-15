@@ -1595,7 +1595,30 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				call_expr.arguments(),
 				bindings,
 				context,
-				mutable_bindings);
+			mutable_bindings);
+		}
+	}
+
+	if (call_expr.has_dependent_unqualified_lookup_record() && context.parser) {
+		std::vector<TypeSpecifierNode> arg_types;
+		if (context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+			if (std::optional<ASTNode> resolved_target =
+					context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
+						*call_expr.dependent_unqualified_lookup_record(),
+						call_expr.arguments(),
+						arg_types);
+				resolved_target.has_value()) {
+				if (const FunctionDeclarationNode* resolved_function =
+						get_function_decl_node(*resolved_target);
+					resolved_function != nullptr) {
+					return evaluate_function_call_with_bindings(
+						*resolved_function,
+						call_expr.arguments(),
+						bindings,
+						context,
+						mutable_bindings);
+				}
+			}
 		}
 	}
 

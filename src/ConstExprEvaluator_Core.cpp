@@ -4431,6 +4431,28 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, nullptr);
 	}
 
+	if (call_expr.has_dependent_unqualified_lookup_record() && context.parser) {
+		std::vector<TypeSpecifierNode> arg_types;
+		if (context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+			if (std::optional<ASTNode> resolved_target =
+					context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
+						*call_expr.dependent_unqualified_lookup_record(),
+						call_expr.arguments(),
+						arg_types);
+				resolved_target.has_value()) {
+				if (const FunctionDeclarationNode* resolved_function =
+						get_function_decl_node(*resolved_target);
+					resolved_function != nullptr) {
+					return evaluate_resolved_function_call(
+						*resolved_function,
+						call_expr.arguments(),
+						context,
+						nullptr);
+				}
+			}
+		}
+	}
+
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
 	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);
 
