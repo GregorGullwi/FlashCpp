@@ -2749,7 +2749,6 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		struct TemplateLookupSet {
 			std::vector<TemplateNameLookupCandidate> candidates;
 			std::vector<StringHandle> ordered_lookup_names;
-			std::vector<StringHandle> fallback_names;
 		};
 
 		explicit StructuredBindingTupleProtocolLookup(const Parser& parser_ref, NamespaceHandle owner_ns, StringHandle struct_type_name)
@@ -2773,7 +2772,6 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 				appendStructMemberTemplateCandidates(protocol_name, expected_kind, lookup_set);
 			}
 			appendNamespaceAwareLookupCandidates(protocol_name, expected_kind, lookup_set);
-			appendNamespaceAwareFallbackCandidates(protocol_name, lookup_set.fallback_names);
 			return lookup_set;
 		}
 
@@ -2803,9 +2801,6 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			pushUniqueName(
 				lookup_set.ordered_lookup_names,
 				StringTable::getOrInternStringHandle(member_name_builder.commit()));
-			pushUniqueName(
-				lookup_set.fallback_names,
-				lookup_set.ordered_lookup_names.back());
 		}
 
 		const Parser& parser;
@@ -2876,7 +2871,6 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 				}
 				pushUniqueCandidate(lookup_set, candidate);
 				pushUniqueName(lookup_set.ordered_lookup_names, candidate.identity.lookup_name);
-				pushUniqueName(lookup_set.fallback_names, candidate.identity.lookup_name);
 			}
 		}
 
@@ -2927,22 +2921,6 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			}
 		}
 
-		void appendOwnerNamespaceFallbackCandidates(StringHandle protocol_name, std::vector<StringHandle>& names) const {
-			NamespaceHandle current_owner = owner_namespace;
-			while (current_owner.isValid() && !current_owner.isGlobal()) {
-				pushUniqueName(names, gNamespaceRegistry.buildQualifiedIdentifier(current_owner, protocol_name));
-				current_owner = gNamespaceRegistry.getParent(current_owner);
-			}
-		}
-
-		void appendNamespaceAwareFallbackCandidates(StringHandle protocol_name, std::vector<StringHandle>& names) const {
-			appendOwnerNamespaceFallbackCandidates(protocol_name, names);
-			pushUniqueName(names, protocol_name);
-			if (std_namespace.isValid() && !std_namespace.isGlobal()) {
-				pushUniqueName(names, gNamespaceRegistry.buildQualifiedIdentifier(std_namespace, protocol_name));
-			}
-		}
-
 		const StringHandle std_name;
 		NamespaceHandle std_namespace;
 	};
@@ -2985,13 +2963,6 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		// Second pass: pattern matches across semantic lookup candidates.
 		if (const StructDeclarationNode* pattern = find_struct_specialization(lookup_set.ordered_lookup_names, false)) {
 			return pattern;
-		}
-		// Fallback: conservative probing over synthesized names for compatibility.
-		if (const StructDeclarationNode* exact_fallback = find_struct_specialization(lookup_set.fallback_names, true)) {
-			return exact_fallback;
-		}
-		if (const StructDeclarationNode* pattern_fallback = find_struct_specialization(lookup_set.fallback_names, false)) {
-			return pattern_fallback;
 		}
 		return nullptr;
 	};
@@ -3065,16 +3036,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			}
 			// Second pass: pattern specializations across semantic lookup candidates.
 			std::vector<ASTNode> pattern_matches = collect_matches(lookup_set.ordered_lookup_names, false);
-			if (auto best = pick_best_with_member_filter(pattern_matches, want_member)) {
-				return best;
-			}
-			// Fallback: conservative probing over synthesized names.
-			std::vector<ASTNode> exact_fallback_matches = collect_matches(lookup_set.fallback_names, true);
-			if (auto best = pick_best_with_member_filter(exact_fallback_matches, want_member)) {
-				return best;
-			}
-			std::vector<ASTNode> pattern_fallback_matches = collect_matches(lookup_set.fallback_names, false);
-			return pick_best_with_member_filter(pattern_fallback_matches, want_member);
+			return pick_best_with_member_filter(pattern_matches, want_member);
 		};
 
 		// Per [dcl.struct.bind]/3 intent: prefer member get protocol when it is usable.

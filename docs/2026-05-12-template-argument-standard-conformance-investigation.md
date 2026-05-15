@@ -103,21 +103,22 @@ Completed work:
 19. started semantic-analyzer lookup unification for structured-binding
     tuple-like protocol resolution: `tuple_size`, `tuple_element`, and `get`
     now use parser-built semantic template-name lookup requests before
-    specialization matching, with conservative fallback probes preserved.
-20. advanced the same structured-binding sema path so specialization matching is
-    semantic-lookup-first (parser-request candidate ordering) for `tuple_size`,
-    `tuple_element`, and `get`, with conservative synthesized-name fallback only
-    after semantic candidates fail.
+    specialization matching.
+20. advanced structured-binding specialization matching to semantic-lookup-first
+    ordering for `tuple_size`, `tuple_element`, and `get`.
 21. fixed tuple-like mixed member/free protocol precedence so `e.get<I>()` is
     selected before free `get<I>(e)` when both are present, matching
     [dcl.struct.bind]/3 intent.
+22. fixed root cause of `fallback_names` workaround: struct template
+    specializations in `Parser_Templates_Class.cpp` are now registered under
+    both simple and namespace-qualified names (via `QualifiedIdentifier`
+    overload of `registerSpecialization`). This makes `std::tuple_size<E>` and
+    `std::tuple_element<I,E>` findable through normal qualified semantic lookup
+    without any synthesized-name fallback. The non-standard `fallback_names`
+    mechanism was then removed entirely from `SemanticAnalysis.cpp`.
 
-Latest validation for this slice passed the Linux build and targeted tuple-like
-structured-binding regressions (`test_structured_binding_member_get_ret42.cpp`,
-`test_structured_binding_member_get_complex_ret42.cpp`,
-`test_tuple_full_protocol_ret42.cpp`,
-`test_tuple_size_inherited_value_structured_binding_ret42.cpp`,
-`test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`).
+Latest validation passed the full Linux suite: 2356 pass, 183 expected-fail,
+0 regressions.
 
 The remaining target architecture sections are retained as the next conformance
 roadmap, especially deeper dependent-base and segment-chain modeling, ADL

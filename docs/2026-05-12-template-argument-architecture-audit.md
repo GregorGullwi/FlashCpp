@@ -84,21 +84,19 @@ infrastructure tracks. The branch now includes:
   template-name lookup requests before specialization matching, while keeping
   conservative fallback name probes.
 - structured-binding tuple-like specialization matching now uses semantic-lookup
-  candidate ordering first (`tuple_size`, `tuple_element`, `get`) and only
-  falls back to synthesized-name probes when semantic candidates produce no
-  specialization.
+  candidate ordering first (`tuple_size`, `tuple_element`, `get`) with no
+  synthesized-name fallback.
 - tuple-like mixed member/free `get` protocol precedence now prefers
   member `e.get<I>()` over free `get<I>(e)` when both are available.
+- fixed root cause of `fallback_names` workaround: `Parser_Templates_Class.cpp`
+  now registers struct specializations via the `QualifiedIdentifier` overload of
+  `registerSpecialization` so they are stored under both simple and fully
+  namespace-qualified names. `std::tuple_size<E>` etc. are now found through
+  normal qualified semantic lookup. The non-standard `fallback_names` mechanism
+  has been removed entirely from `SemanticAnalysis.cpp`.
 
 Validation after all changes passed the Linux sharded build and the full test
-suite (2351 regular tests + 183 expected-fail tests).
-
-Validation for the latest sema-unification slice passed targeted Linux tuple-like
-structured-binding regressions (`test_structured_binding_member_get_ret42.cpp`,
-`test_structured_binding_member_get_complex_ret42.cpp`,
-`test_tuple_full_protocol_ret42.cpp`,
-`test_tuple_size_inherited_value_structured_binding_ret42.cpp`,
-`test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`).
+suite (2356 regular tests + 183 expected-fail tests, 0 regressions).
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
