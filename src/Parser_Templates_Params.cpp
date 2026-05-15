@@ -931,6 +931,16 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		return std::nullopt;
 	};
 
+	auto canonicalAliasTargetCategory = [](const TemplateAliasNode& alias_node) {
+		const ResolvedAliasTypeInfo resolved_target_type =
+			resolveAliasTypeInfo(alias_node.target_type_node().type_index());
+		TypeCategory target_type = resolved_target_type.typeEnum();
+		if (target_type == TypeCategory::Invalid) {
+			target_type = alias_node.target_type_node().type();
+		}
+		return target_type;
+	};
+
 	auto dependentExpressionValueCategory =
 		[&](const ExpressionNode& expr, std::optional<StringHandle> dependent_name = std::nullopt) {
 			if (dependent_name.has_value()) {
@@ -1190,11 +1200,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					TemplateDeclarationKind::AliasTemplate);
 				if (alias_opt.has_value()) {
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-					TypeCategory target_type = alias_node.target_type_node().type();
-					if (!is_struct_type(target_type)) {
+					TypeCategory target_type = canonicalAliasTargetCategory(alias_node);
+					if (target_type == TypeCategory::Void) {
 						auto alias_args_opt = parse_explicit_template_arguments(
 							alias_node.template_parameters(),
-							out_type_nodes);
+							static_cast<std::vector<ASTNode>*>(nullptr));
 						if (alias_args_opt.has_value()) {
 							TemplateTypeArg alias_arg;
 							alias_arg.setType(target_type);
@@ -1984,11 +1994,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										TemplateDeclarationKind::AliasTemplate);
 									if (alias_opt.has_value()) {
 										const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-										TypeCategory target_type = alias_node.target_type_node().type();
+										TypeCategory target_type = canonicalAliasTargetCategory(alias_node);
 
-								// If the alias always resolves to a concrete type (like void_t -> void),
-								// use that concrete type instead of marking as dependent
-										if (!is_struct_type(target_type)) {
+										// If the alias always resolves to a concrete type (like void_t -> void),
+										// use that concrete type instead of marking as dependent
+										if (target_type == TypeCategory::Void) {
 											FLASH_LOG(Templates, Debug, "Template alias '", id.name(),
 													  "' resolves to concrete type ", static_cast<int>(target_type));
 											dependent_arg.setType(target_type);

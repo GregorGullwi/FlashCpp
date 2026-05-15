@@ -689,7 +689,7 @@ public:
 									   std::span<const TemplateParameterNode> template_params,
 									   std::span<const TemplateTypeArg> pattern_args,
 									   ASTNode specialized_node,
-									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+									   std::optional<SfinaeCondition> sfinae_cond) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerSpecializationPatternByName(
 				StringTable::getOrInternStringHandle(name),
@@ -920,7 +920,7 @@ private:
 											 const InlineVector<TemplateParameterNode, 4>& template_params,
 											 std::span<const TemplateTypeArg> pattern_args,
 											 ASTNode specialized_node,
-											 std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+											 std::optional<SfinaeCondition> sfinae_cond) {
 
 		if (FLASH_LOG_ENABLED(Templates, Debug)) {
 			FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name),
@@ -1012,7 +1012,7 @@ private:
 											 std::span<const TemplateParameterNode> template_params,
 											 std::span<const TemplateTypeArg> pattern_args,
 											 ASTNode specialized_node,
-											 std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+											 std::optional<SfinaeCondition> sfinae_cond) {
 		InlineVector<TemplateParameterNode, 4> typed_template_params;
 		typed_template_params.reserve(template_params.size());
 		for (const TemplateParameterNode& template_param : template_params) {

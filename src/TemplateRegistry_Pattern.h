@@ -673,7 +673,13 @@ struct TemplatePattern {
 					}
 					FLASH_LOG(Templates, Debug, "SFINAE condition passed: ",
 							  StringTable::getStringView(type_info->name()), " exists");
+				} else {
+					FLASH_LOG(Templates, Debug, "SFINAE condition failed: concrete argument has no member type scope");
+					return false;
 				}
+			} else {
+				FLASH_LOG(Templates, Debug, "SFINAE condition failed: missing concrete argument for checked template parameter");
+				return false;
 			}
 		}
 
