@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (semantic analyzer lookup unification started)
+**Last updated:** 2026-05-15 (semantic analyzer lookup unification advanced)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -83,9 +83,20 @@ infrastructure tracks. The branch now includes:
   `tuple_size`, `tuple_element`, and `get` through parser-built semantic
   template-name lookup requests before specialization matching, while keeping
   conservative fallback name probes.
+- structured-binding tuple-like specialization matching now uses semantic-lookup
+  candidate ordering first (`tuple_size`, `tuple_element`, `get`) with no
+  synthesized-name fallback.
+- tuple-like mixed member/free `get` protocol precedence now prefers
+  member `e.get<I>()` over free `get<I>(e)` when both are available.
+- fixed root cause of `fallback_names` workaround: `Parser_Templates_Class.cpp`
+  now registers struct specializations via the `QualifiedIdentifier` overload of
+  `registerSpecialization` so they are stored under both simple and fully
+  namespace-qualified names. `std::tuple_size<E>` etc. are now found through
+  normal qualified semantic lookup. The non-standard `fallback_names` mechanism
+  has been removed entirely from `SemanticAnalysis.cpp`.
 
 Validation after all changes passed the Linux sharded build and the full test
-suite (2351 regular tests + 183 expected-fail tests).
+suite (2356 regular tests + 183 expected-fail tests, 0 regressions).
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.

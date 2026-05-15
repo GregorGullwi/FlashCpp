@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-14 (semantic analyzer lookup unification started)
+**Last updated:** 2026-05-15 (semantic analyzer lookup unification advanced)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -103,10 +103,22 @@ Completed work:
 19. started semantic-analyzer lookup unification for structured-binding
     tuple-like protocol resolution: `tuple_size`, `tuple_element`, and `get`
     now use parser-built semantic template-name lookup requests before
-    specialization matching, with conservative fallback probes preserved.
+    specialization matching.
+20. advanced structured-binding specialization matching to semantic-lookup-first
+    ordering for `tuple_size`, `tuple_element`, and `get`.
+21. fixed tuple-like mixed member/free protocol precedence so `e.get<I>()` is
+    selected before free `get<I>(e)` when both are present, matching
+    [dcl.struct.bind]/3 intent.
+22. fixed root cause of `fallback_names` workaround: struct template
+    specializations in `Parser_Templates_Class.cpp` are now registered under
+    both simple and namespace-qualified names (via `QualifiedIdentifier`
+    overload of `registerSpecialization`). This makes `std::tuple_size<E>` and
+    `std::tuple_element<I,E>` findable through normal qualified semantic lookup
+    without any synthesized-name fallback. The non-standard `fallback_names`
+    mechanism was then removed entirely from `SemanticAnalysis.cpp`.
 
-The latest validation run passed the Linux sharded build and all 2351 regular
-tests plus 183 expected-fail tests.
+Latest validation passed the full Linux suite: 2356 pass, 183 expected-fail,
+0 regressions.
 
 The remaining target architecture sections are retained as the next conformance
 roadmap, especially deeper dependent-base and segment-chain modeling, ADL
@@ -127,8 +139,8 @@ investigations.
    Continue replacing direct sema registry probing with parser-built semantic
    lookup requests/records so lookup timing (definition vs POI), lookup kind,
    and declaration identity stay consistent across parser and sema.
-   Structured-binding tuple-like lookup is now on this model; remaining sema
-   hotspots should follow.
+   Structured-binding tuple-like lookup now follows semantic candidate ordering
+   including member-`get` precedence; remaining sema hotspots should follow.
 
 2. **ADL-sensitive dependent completion and deeper two-phase lookup records.**
    All non-dependent unqualified/qualified/member-template/operator paths now
@@ -320,9 +332,10 @@ Start with semantic analyzer unification for remaining template lookup hotspots
 that still directly probe registry names, then continue dependent-path semantic
 lookup completion and two-phase lookup records. Lower-frequency parser probes
 and the static-initializer constexpr template probe are already on semantic
-lookup requests; the next highest-impact remaining work is dependent-base
-lookup, deeper member-template segment chains, and ADL-sensitive dependent
-calls using the same declaration-owned lookup records.
+lookup requests; after the structured-binding semantic-candidate ordering +
+member-precedence slices, the next highest-impact work is dependent-base lookup,
+deeper member-template segment chains, and ADL-sensitive dependent calls on the
+same declaration-owned records.
 
 ## Implementation plan
 

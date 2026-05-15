@@ -1431,7 +1431,7 @@ ParseResult Parser::parse_template_declaration() {
 
 				// Register the specialization with the template registry
 				gTemplateRegistry.registerSpecialization(
-					std::string(template_name),
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
 					template_args.toVector(),
 					struct_node);
 
@@ -2713,7 +2713,10 @@ ParseResult Parser::parse_template_declaration() {
 			//     registerSpecializationPattern().
 			if (template_param_nodes.empty()) {
 				// Full specialization: exact match on concrete arguments
-				gTemplateRegistry.registerSpecialization(template_name, template_args.toVector(), struct_node);
+				gTemplateRegistry.registerSpecialization(
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+					template_args.toVector(),
+					struct_node);
 			} else {
 				// Partial specialization: register as a pattern for matching
 				gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, template_args.toVector(), struct_node);
@@ -3042,7 +3045,10 @@ ParseResult Parser::parse_template_declaration() {
 				}
 				std::string_view pattern_key_view = pattern_key.commit();
 
-				gTemplateRegistry.registerSpecialization(template_name, pattern_args.toVector(), template_class_node);
+				gTemplateRegistry.registerSpecialization(
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+					pattern_args.toVector(),
+					template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization: {} with pattern {}", template_name, pattern_key_view);
 
 				// Clean up template parameter context
@@ -3069,7 +3075,10 @@ ParseResult Parser::parse_template_declaration() {
 					std::move(param_names_view2),
 					struct_node);
 
-				gTemplateRegistry.registerSpecialization(template_name, pattern_args.toVector(), template_class_node);
+				gTemplateRegistry.registerSpecialization(
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+					pattern_args.toVector(),
+					template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization (after extra tokens): {}", template_name);
 
 				clearCurrentTemplateParameters();
