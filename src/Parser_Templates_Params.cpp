@@ -3217,15 +3217,12 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 		if (kind == "typename"_tok) {
 			Token owner_token = peek_info(lookahead + 1);
 			Token scope_token = peek_info(lookahead + 2);
-			Token member_token = peek_info(lookahead + 3);
 			if (owner_token.kind().is_eof() ||
-				scope_token.kind().is_eof() ||
-				member_token.kind().is_eof()) {
+				scope_token.kind().is_eof()) {
 				return {};
 			}
 			if (owner_token.type() == Token::Type::Identifier &&
-				scope_token.kind() == "::"_tok &&
-				member_token.type() == Token::Type::Identifier) {
+				scope_token.kind() == "::"_tok) {
 				StringHandle owner_handle = owner_token.handle();
 				const auto& current_param_names = currentTemplateParamNames();
 				bool owner_is_template_param = std::any_of(
@@ -3235,11 +3232,21 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 						return param_name == owner_handle;
 					});
 				if (owner_is_template_param) {
-					return StringTable::getOrInternStringHandle(
-						StringBuilder()
-							.append(owner_token.value())
-							.append("::"sv)
-							.append(member_token.value()));
+					InlineVector<StringHandle, 4> components;
+					components.push_back(owner_handle);
+					size_t chain_lookahead = lookahead + 2;
+					while (peek_info(chain_lookahead).kind() == "::"_tok) {
+						Token member_token = peek_info(chain_lookahead + 1);
+						if (member_token.kind().is_eof() ||
+							member_token.type() != Token::Type::Identifier) {
+							break;
+						}
+						components.push_back(member_token.handle());
+						chain_lookahead += 2;
+					}
+					if (components.size() > 1) {
+						return gNamespaceRegistry.buildQualifiedIdentifier(components);
+					}
 				}
 			}
 		}

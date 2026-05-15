@@ -63,14 +63,15 @@ struct OutOfLineNestedClass {
 	InlineVector<TemplateTypeArg, 4> specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
 };
 
-// SFINAE condition for void_t patterns
-// Stores information about dependent member type checks like "typename T::type"
+// SFINAE condition for dependent member type probes.
+// Stores information about dependent member type checks like "typename T::traits::value_type"
 struct SfinaeCondition {
 	size_t template_param_index; // Which template parameter (e.g., 0 for T in has_type<T>)
-	StringHandle member_name; // The member type name to check (e.g., "type")
+	InlineVector<StringHandle, 4> member_chain; // The member type chain to check (e.g., traits::value_type)
 
-	SfinaeCondition() : template_param_index(0), member_name() {}
-	SfinaeCondition(size_t idx, StringHandle name) : template_param_index(idx), member_name(name) {}
+	SfinaeCondition() : template_param_index(0) {}
+	SfinaeCondition(size_t idx, InlineVector<StringHandle, 4> chain)
+		: template_param_index(idx), member_chain(std::move(chain)) {}
 };
 
 // Template specialization pattern - represents a pattern like T&, T*, const T, etc.
@@ -651,23 +652,27 @@ struct TemplatePattern {
 
 				// Check if the concrete type has the required member type
 				if (const TypeInfo* type_info = tryGetTypeInfo(concrete_arg.type_index)) {
+					for (StringHandle member_name : cond.member_chain) {
+						const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_info->type_index_);
+						if (resolved_alias.terminal_type_info != nullptr) {
+							type_info = resolved_alias.terminal_type_info;
+						}
 
-					// Build the qualified member name (e.g., "WithType::type")
-					StringBuilder qualified_name;
-					qualified_name.append(type_info->name());
-					qualified_name.append("::");
-					qualified_name.append(cond.member_name);
-					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name.commit());
+						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier({
+							type_info->name(),
+							member_name
+						});
 
-					// Check if this member type exists
-					auto type_it = getTypesByNameMap().find(qualified_handle);
-					if (type_it == getTypesByNameMap().end()) {
-						FLASH_LOG(Templates, Debug, "SFINAE condition failed: ",
-								  StringTable::getStringView(qualified_handle), " does not exist");
-						return false; // SFINAE failure - pattern doesn't match
+						auto type_it = getTypesByNameMap().find(qualified_handle);
+						if (type_it == getTypesByNameMap().end()) {
+							FLASH_LOG(Templates, Debug, "SFINAE condition failed: ",
+									  StringTable::getStringView(qualified_handle), " does not exist");
+							return false; // SFINAE failure - pattern doesn't match
+						}
+						type_info = type_it->second;
 					}
 					FLASH_LOG(Templates, Debug, "SFINAE condition passed: ",
-							  StringTable::getStringView(qualified_handle), " exists");
+							  StringTable::getStringView(type_info->name()), " exists");
 				}
 			}
 		}

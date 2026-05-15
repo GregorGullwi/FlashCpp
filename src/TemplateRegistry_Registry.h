@@ -960,14 +960,27 @@ private:
 					std::string_view dep_name = StringTable::getStringView(second_arg.dependent_name);
 					size_t scope_pos = dep_name.rfind("::");
 					if (scope_pos != std::string_view::npos && scope_pos > 0 && scope_pos + 2 < dep_name.size()) {
-						std::string_view owner_name = dep_name.substr(0, scope_pos);
-						std::string_view member_name_view = dep_name.substr(scope_pos + 2);
+						std::string_view first_component = dep_name.substr(0, dep_name.find("::"));
 						for (size_t i = 0; i < template_params.size(); ++i) {
-							if (StringTable::getStringView(template_params[i].nameHandle()) == owner_name) {
-								StringHandle member_name = StringTable::getOrInternStringHandle(member_name_view);
-								pattern.sfinae_condition = SfinaeCondition(i, member_name);
+							if (StringTable::getStringView(template_params[i].nameHandle()) == first_component) {
+								InlineVector<StringHandle, 4> member_chain;
+								size_t start = first_component.size() + 2;
+								while (start < dep_name.size()) {
+									size_t sep = dep_name.find("::", start);
+									std::string_view component = sep == std::string_view::npos
+										? dep_name.substr(start)
+										: dep_name.substr(start, sep - start);
+									if (!component.empty()) {
+										member_chain.push_back(StringTable::getOrInternStringHandle(component));
+									}
+									if (sep == std::string_view::npos) {
+										break;
+									}
+									start = sep + 2;
+								}
+								pattern.sfinae_condition = SfinaeCondition(i, std::move(member_chain));
 								FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking param[",
-										  i, "]::", member_name_view, " from dependent_name '", dep_name, "'");
+										  i, "]::", dep_name.substr(first_component.size() + 2), " from dependent_name '", dep_name, "'");
 								break;
 							}
 						}
@@ -980,8 +993,18 @@ private:
 		const auto& stored_pattern = specialization_patterns_[template_name].back();
 		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
 		if (stored_pattern.sfinae_condition.has_value()) {
+			StringBuilder member_chain_builder;
+			bool first_member = true;
+			for (StringHandle member_name : stored_pattern.sfinae_condition->member_chain) {
+				if (!first_member) {
+					member_chain_builder.append("::");
+				}
+				first_member = false;
+				member_chain_builder.append(member_name);
+			}
+			std::string_view member_chain_view = member_chain_builder.commit();
 			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index,
-					  "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
+					  "]::", member_chain_view);
 		}
 	}
 
