@@ -8,7 +8,7 @@ Link using clang and run to verify the return output.
 
 ## Build, Test, and Development Commands
 - Use `make sharded CXX=clang++` — builds the compiler, good when using bash as WSL/Linux, to produce `x64\Sharded\FlashCpp`. Run it whenever you change compiler source files.
-- Use `tests/run_all_tests.sh` — invokes all the tests in the tests folder on WSL/Linux. 
+- Use `tests/run_all_tests.sh` — invokes all the tests in the tests folder on WSL/Linux. Never run it after s code review change.
 
 ## Coding Style & Naming Conventions
 Try to reuse as much code as possible. Look in the same PR for similar code patterns and try to extract it into a function or a local lambda.
