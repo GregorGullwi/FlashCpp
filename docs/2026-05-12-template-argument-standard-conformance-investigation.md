@@ -155,7 +155,18 @@ Completed work:
     `test_template_two_phase_dependent_adl_function_template_poi_ret0.cpp`
     now covers this path.
 
-Latest validation passed the full Linux suite: 2358 pass, 183 expected-fail,
+26. **two-phase lookup extended to member function template bodies (2026-05-15):**
+    `instantiate_member_function_template_core` in
+    `Parser_Templates_Inst_MemberFunc.cpp` now sets `phase1_cutoff_line_`,
+    `phase1_cutoff_file_idx_`, and `current_template_definition_lookup_context_`
+    before `parse_function_body()`, mirroring the free function template path.
+    `filterPhase1OrdinaryFunctionOverloads` was removed from
+    `lookupMemberFunctionTemplateCandidatesForInstantiation` (member-lookup
+    visibility is class-scope — mutually visible regardless of textual order).
+    Regression `test_template_two_phase_member_func_template_ret42.cpp`.
+    Full-suite validation: 2361 pass, 184 expected-fail, 0 regressions.
+
+Latest validation passed the full Linux suite: 2361 pass, 184 expected-fail,
 0 regressions.
 
 The remaining target architecture sections are retained as the next conformance
@@ -177,13 +188,19 @@ focused investigations.
    concrete before the record is formed and broader hidden-friend/
    dependent-namespace coverage.
 
-2. **Broaden two-phase lookup records further.**
+2. **Broaden two-phase lookup records further (member func template bodies ✅ done).**
    Definition-context and semantic lookup records now protect selected
    non-dependent unqualified, unresolved dependent unqualified, qualified,
-   member-template, and operator paths, plus lazy static-member replay.
-   Eager static initializers, richer dependent bases, deeper member-template
-   segment chains, and the remaining parser-time ADL-sensitive paths still need
-   explicit definition/POI records.
+   member-template, operator paths, lazy static-member replay, and (new) member
+   function template bodies. Remaining:
+   - **Inherited member templates via `this->template`**: the explicit-arg
+     member template call path (`tryInstantiateMemberFunctionTemplateCall` in
+     `Parser_Expr_PostfixCalls.cpp`, `lookupMemberFunctionTemplateCandidatesForInstantiation`
+     in `Parser_Templates_Inst_MemberFunc.cpp`) never walks the base class
+     hierarchy.  Fix: fall through to `lookup_inherited_template` after direct
+     struct lookup fails, then retry instantiation on the owning base.
+   - Eager static initializers, richer dependent bases, deeper member-template
+     segment chains, and the remaining parser-time ADL-sensitive paths.
 
 3. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
@@ -352,14 +369,24 @@ remaining work is the smaller phased delivery list below.
 
 ## Recommended next step
 
-Semantic analyzer unification is now complete (2026-05-15). The next highest-impact
-work is advancing two-phase lookup records: extend definition-context records to
-static initializers, dependent bases, and broader hidden-friend/
-dependent-namespace dependent-call coverage. In parallel, richer dependent-base
-lookup and deeper member-template segment chains should build on the existing
-`DependentQualifiedNameRecord` infrastructure. Structural NTTP completion
-(non-null member-pointers, structural class types, and replacing the
-`TODO(item-8)` mangling fallback) is the other major conformance gap remaining.
+Two-phase lookup for member function template bodies is now complete (2026-05-15).
+The next highest-impact work is:
+
+1. **Inherited member templates**: Fix `this->template method<T>(args)` to find
+   templates in base classes. Root cause: in
+   `lookupMemberFunctionTemplateCandidatesForInstantiation`
+   (`Parser_Templates_Inst_MemberFunc.cpp`), after direct struct lookup fails,
+   fall through to `lookup_inherited_template` (`Parser_Expr_QualLookup.cpp:671`)
+   and retry instantiation on the owning base class. Affects both template and
+   non-template derived classes.
+
+2. **Continue two-phase lookup expansion**: extend definition-context records to
+   eager static initializers, dependent bases, and broader
+   hidden-friend/dependent-namespace dependent-call coverage.
+
+3. **Structural NTTP completion** (non-null member-pointers, structural class
+   types, and replacing `TODO(item-8)` mangling fallback) is the other major
+   conformance gap.
 
 ## Implementation plan
 
@@ -377,11 +404,12 @@ behavior as compatibility constraints.
    post-lookup specialization matching, pattern-identity checks, or documented
    intentional-direct fallbacks (no parser context available).
 
-2. **Advance two-phase lookup records**
+2. **Advance two-phase lookup records (member func template bodies ✅)**
    Persist non-dependent lookup at definition time and defer only dependent
-   completion to instantiation time. Extend the current function-call record
-   slice to qualified names, member templates, static initializer paths,
-   dependent bases, unknown specializations, and ADL-sensitive dependent calls.
+   completion to instantiation time. Member function template bodies now apply
+   phase-1 cutoff correctly. Remaining: inherited member templates via
+   `this->template`, static initializer paths, dependent bases, unknown
+   specializations, and ADL-sensitive dependent calls.
 
 3. **Consolidate substitution context ownership**
    Continue replacing ad-hoc name/vector substitution channels with
