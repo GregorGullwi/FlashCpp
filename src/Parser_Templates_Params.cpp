@@ -931,6 +931,16 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		return std::nullopt;
 	};
 
+	auto canonicalAliasTargetCategory = [](const TemplateAliasNode& alias_node) {
+		const ResolvedAliasTypeInfo resolved_target_type =
+			resolveAliasTypeInfo(alias_node.target_type_node().type_index());
+		TypeCategory target_type = resolved_target_type.typeEnum();
+		if (target_type == TypeCategory::Invalid) {
+			target_type = alias_node.target_type_node().type();
+		}
+		return target_type;
+	};
+
 	auto dependentExpressionValueCategory =
 		[&](const ExpressionNode& expr, std::optional<StringHandle> dependent_name = std::nullopt) {
 			if (dependent_name.has_value()) {
@@ -1170,12 +1180,85 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	while (true) {
 		// Save position in case type parsing fails
 		SaveHandle arg_saved_pos = save_token_position();
+		StringHandle dependent_member_probe = extractDependentMemberProbeFromCurrentTemplateArg();
 
 		if (peek().is_identifier()) {
 			const Token identifier_token = current_token_;
 			const StringHandle identifier_handle = identifier_token.handle();
 			SaveHandle identifier_saved_pos = save_token_position();
 			advance();
+
+			if (peek() == "<"_tok) {
+				TemplateNameLookupRequest alias_lookup_request =
+					buildTemplateNameLookupRequest(
+						identifier_handle,
+						TemplateNameLookupKind::Ordinary,
+						false);
+				TemplateNameLookupResult alias_lookup =
+					gTemplateRegistry.lookupTemplateName(alias_lookup_request);
+				auto alias_opt = alias_lookup.firstDeclarationOfKind(
+					TemplateDeclarationKind::AliasTemplate);
+				if (alias_opt.has_value()) {
+					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
+					TypeCategory target_type = canonicalAliasTargetCategory(alias_node);
+					if (target_type == TypeCategory::Void) {
+						auto alias_args_opt = parse_explicit_template_arguments(
+							alias_node.template_parameters(),
+							static_cast<std::vector<ASTNode>*>(nullptr));
+						if (alias_args_opt.has_value()) {
+							TemplateTypeArg alias_arg;
+							alias_arg.setType(target_type);
+							alias_arg.is_dependent = false;
+							for (const TemplateTypeArg& alias_inner_arg : *alias_args_opt) {
+								if (alias_inner_arg.dependent_name.isValid() &&
+									StringTable::getStringView(alias_inner_arg.dependent_name).find("::") != std::string_view::npos) {
+									alias_arg.dependent_name = alias_inner_arg.dependent_name;
+									break;
+								}
+								if (const TypeInfo* alias_inner_type = tryGetTypeInfo(alias_inner_arg.type_index)) {
+									std::string_view alias_inner_name = StringTable::getStringView(alias_inner_type->name());
+									if (alias_inner_name.find("::") != std::string_view::npos) {
+										alias_arg.dependent_name = StringTable::getOrInternStringHandle(alias_inner_name);
+										break;
+									}
+								}
+							}
+							if (!alias_arg.dependent_name.isValid()) {
+								alias_arg.dependent_name = dependent_member_probe;
+							}
+
+							if (peek() == "..."_tok) {
+								advance();
+								alias_arg.is_pack = true;
+								FLASH_LOG(Templates, Debug, "Marked alias template argument as pack expansion");
+							}
+
+							template_args.push_back(alias_arg);
+							discard_saved_token(identifier_saved_pos);
+							discard_saved_token(arg_saved_pos);
+
+							if (peek() == ">>"_tok) {
+								split_right_shift_token();
+							}
+							if (peek() == ">"_tok) {
+								advance();
+								break;
+							}
+							if (peek() == ","_tok) {
+								advance();
+								continue;
+							}
+
+							FLASH_LOG(Parser, Debug, "parse_explicit_template_arguments unexpected token after alias template argument");
+							restore_token_position(saved_pos);
+							last_failed_template_arg_parse_handle_ = saved_pos;
+							return std::nullopt;
+						}
+					}
+				}
+
+				restore_token_position(identifier_saved_pos);
+			}
 
 			if (peek() == ">>"_tok) {
 				split_right_shift_token();
@@ -1627,17 +1710,17 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					// Fall through to type parsing below
 				} else {
 
-				// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
-				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
-				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
-				// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
-				//
-				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
-				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
-				//
-				// ALSO: If followed by '[', this is an array type declarator - must parse as type
-				//
-				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
+					// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
+					// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
+					// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
+					// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
+					//
+					// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
+					// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
+					//
+					// ALSO: If followed by '[', this is an array type declarator - must parse as type
+					//
+					// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 					bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) ||
 												std::holds_alternative<TemplateParameterReferenceNode>(expr);
 					SimpleTemplateArgKind simple_identifier_kind = classifySimpleTemplateArg(expr);
@@ -1662,28 +1745,28 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 					if (!should_try_type_parsing && !peek().is_eof() &&
 						(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "..."_tok)) {
-					// Check if this is actually a concrete type (not a template parameter)
-					// If it's a concrete struct or type alias, we should fall through to type parsing instead
+						// Check if this is actually a concrete type (not a template parameter)
+						// If it's a concrete struct or type alias, we should fall through to type parsing instead
 						bool is_concrete_type = false;
 						if (std::holds_alternative<IdentifierNode>(expr)) {
 							const auto& id = std::get<IdentifierNode>(expr);
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(id.name()));
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* type_info = type_it->second;
-							// Check if it's a concrete struct (has struct_info_)
-							// OR if it's a type alias that resolves to a concrete type
-							// Type aliases have type_index pointing to the underlying type
+								// Check if it's a concrete struct (has struct_info_)
+								// OR if it's a type alias that resolves to a concrete type
+								// Type aliases have type_index pointing to the underlying type
 								if (type_info->struct_info_ != nullptr) {
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
 								} else if (const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_)) {
-								// Check if this is a type alias (type_index points to underlying type)
-								// and the underlying type is concrete (not a template parameter)
-								// A type is concrete if:
-								// 1. It has struct_info_ (it's a defined struct/class), OR
-								// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
-								// Template parameters are stored as Type::UserDefined without struct_info_,
-								// so this check correctly excludes them while accepting concrete types.
+									// Check if this is a type alias (type_index points to underlying type)
+									// and the underlying type is concrete (not a template parameter)
+									// A type is concrete if:
+									// 1. It has struct_info_ (it's a defined struct/class), OR
+									// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
+									// Template parameters are stored as Type::UserDefined without struct_info_,
+									// so this check correctly excludes them while accepting concrete types.
 									if (underlying->struct_info_ != nullptr ||
 										underlying->resolvedType() != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
@@ -1693,20 +1776,20 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								}
 							}
 						} else if (CallInfo::tryFrom(expr).has_value()) {
-						// Call expressions represent a function call expression like test_func<T>()
-						// This is NOT a type - it's a non-type template argument (the result of calling a function)
-						// Previously this code incorrectly treated call expressions with template arguments as a type,
-						// but that was wrong. A function call with template arguments (e.g., test_func<T>()) is still
-						// a function call, not a type. The function returns a value, and that value is used as
-						// the non-type template argument.
-						// DO NOT set is_concrete_type = true here - let it be accepted as a dependent expression.
+							// Call expressions represent a function call expression like test_func<T>()
+							// This is NOT a type - it's a non-type template argument (the result of calling a function)
+							// Previously this code incorrectly treated call expressions with template arguments as a type,
+							// but that was wrong. A function call with template arguments (e.g., test_func<T>()) is still
+							// a function call, not a type. The function returns a value, and that value is used as
+							// the non-type template argument.
+							// DO NOT set is_concrete_type = true here - let it be accepted as a dependent expression.
 							FLASH_LOG(Templates, Debug, "Call expression - treating as function call expression, not a type");
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-						// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
-						// or a template instantiation like ns::Inner<int> (when the template has already been
-						// instantiated during expression parsing).
+							// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
+							// or a template instantiation like ns::Inner<int> (when the template has already been
+							// instantiated during expression parsing).
 							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-						// Build the qualified name and check if it exists in getTypesByNameMap()
+							// Build the qualified name and check if it exists in getTypesByNameMap()
 							std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_name));
 							if (type_it != getTypesByNameMap().end()) {
@@ -1724,14 +1807,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							// non-type contexts such as ValueSlot<Owner::value>.
 						}
 
-					// If it's a concrete type, restore and let type parsing handle it
+						// If it's a concrete type, restore and let type parsing handle it
 						if (is_concrete_type) {
 							restore_token_position(arg_saved_pos);
-						// Fall through to type parsing below
+							// Fall through to type parsing below
 						} else {
-						// Check if this is a template parameter that has a type substitution available
-						// This enables variable templates inside function templates to work correctly:
-						// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+							// Check if this is a template parameter that has a type substitution available
+							// This enables variable templates inside function templates to work correctly:
+							// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
 							bool substituted_type_param = false;
 							bool substituted_value_param = false;
 							bool finished_parsing = false;  // Track if we consumed '>' and should break
@@ -1744,16 +1827,16 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							}
 
 							if (!param_name_to_check.empty()) {
-							// Check if we have a type substitution for this parameter
+								// Check if we have a type substitution for this parameter
 								for (const auto& subst : template_param_substitutions_) {
 									if (subst.is_type_param && subst.param_name == param_name_to_check) {
-									// Found a type substitution! Use it instead of creating a dependent arg
+										// Found a type substitution! Use it instead of creating a dependent arg
 										FLASH_LOG(Templates, Debug, "Found type substitution for parameter '",
 												  param_name_to_check, "' -> ", subst.substituted_type.toString());
 
 										TemplateTypeArg substituted_arg = subst.substituted_type;
 
-									// Check for pack expansion (...)
+										// Check for pack expansion (...)
 										if (peek() == "..."_tok) {
 											advance(); // consume '...'
 											substituted_arg.is_pack = true;
@@ -1767,7 +1850,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										discard_saved_token(arg_saved_pos);
 										substituted_type_param = true;
 
-									// Handle next token
+										// Handle next token
 										if (peek() == ">>"_tok) {
 											split_right_shift_token();
 										}
@@ -1818,11 +1901,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							}
 
 							FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
-						// Successfully parsed a dependent expression
-						// Create a dependent template argument
-						// IMPORTANT: Preserve whether this is a type-like placeholder (e.g. T)
-						// or a value-like dependent expression (e.g. Trait<T>::value).
-						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters.
+							// Successfully parsed a dependent expression
+							// Create a dependent template argument
+							// IMPORTANT: Preserve whether this is a type-like placeholder (e.g. T)
+							// or a value-like dependent expression (e.g. Trait<T>::value).
+							// Try to get the type_index for the template parameter so pattern matching can detect reused parameters.
 							TemplateTypeArg dependent_arg;
 							bool is_value_like_dependent_expr =
 								std::holds_alternative<QualifiedIdentifierNode>(expr) ||
@@ -1873,14 +1956,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							}
 							dependent_arg.is_dependent = true;
 
-						// Try to get the type_index for template parameter references
-						// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
+							// Try to get the type_index for template parameter references
+							// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
 							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 								const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 								StringHandle param_name = tparam_ref.param_name();
-						// Store the dependent name for placeholder type generation
+								// Store the dependent name for placeholder type generation
 								dependent_arg.dependent_name = param_name;
-						// Look up the template parameter type in getTypesByNameMap()
+								// Look up the template parameter type in getTypesByNameMap()
 								auto type_it = getTypesByNameMap().find(param_name);
 								if (type_it != getTypesByNameMap().end()) {
 									dependent_arg.type_index = type_it->second->type_index_;
@@ -1889,17 +1972,17 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								}
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const auto& id = std::get<IdentifierNode>(expr);
-						// Store the dependent name for placeholder type generation
+								// Store the dependent name for placeholder type generation
 								dependent_arg.dependent_name = StringTable::getOrInternStringHandle(id.name());
-						// Check if this identifier is a template parameter by looking it up
+								// Check if this identifier is a template parameter by looking it up
 								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(id.name()));
 								if (type_it != getTypesByNameMap().end()) {
 									dependent_arg.type_index = type_it->second->type_index_;
 									FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 											  " for identifier '", id.name(), "'");
 								} else {
-							// Check if this identifier is a template alias (like void_t)
-							// Template aliases may resolve to concrete types even when used with dependent arguments
+									// Check if this identifier is a template alias (like void_t)
+									// Template aliases may resolve to concrete types even when used with dependent arguments
 									TemplateNameLookupRequest alias_lookup_request =
 										buildTemplateNameLookupRequest(
 											StringTable::getOrInternStringHandle(id.name()),
@@ -1911,11 +1994,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										TemplateDeclarationKind::AliasTemplate);
 									if (alias_opt.has_value()) {
 										const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-										TypeCategory target_type = alias_node.target_type_node().type();
+										TypeCategory target_type = canonicalAliasTargetCategory(alias_node);
 
-								// If the alias always resolves to a concrete type (like void_t -> void),
-								// use that concrete type instead of marking as dependent
-										if (!is_struct_type(target_type)) {
+										// If the alias always resolves to a concrete type (like void_t -> void),
+										// use that concrete type instead of marking as dependent
+										if (target_type == TypeCategory::Void) {
 											FLASH_LOG(Templates, Debug, "Template alias '", id.name(),
 													  "' resolves to concrete type ", static_cast<int>(target_type));
 											dependent_arg.setType(target_type);
@@ -1928,7 +2011,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id.full_name());
 							}
 
-						// Check for pack expansion (...)
+							// Check for pack expansion (...)
 							if (peek() == "..."_tok) {
 								advance(); // consume '...'
 								dependent_arg.is_pack = true;
@@ -1937,17 +2020,17 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 							template_args.push_back(dependent_arg);
 
-						// Store the expression node for deferred base class resolution
-						// This is needed so that type trait expressions like __has_trivial_destructor(T)
-						// can be properly substituted and evaluated during template instantiation
+							// Store the expression node for deferred base class resolution
+							// This is needed so that type trait expressions like __has_trivial_destructor(T)
+							// can be properly substituted and evaluated during template instantiation
 							if (out_type_nodes && expr_result.node().has_value()) {
 								out_type_nodes->push_back(*expr_result.node());
 							}
 
 							discard_saved_token(arg_saved_pos);
 
-						// Check for ',' or '>' after the expression (or after pack expansion)
-						// Phase 5: Handle >> token splitting for nested templates
+							// Check for ',' or '>' after the expression (or after pack expansion)
+							// Phase 5: Handle >> token splitting for nested templates
 							if (peek() == ">>"_tok) {
 								split_right_shift_token();
 							}
@@ -2339,6 +2422,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		TemplateTypeArg arg(type_node);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
+		if (dependent_member_probe.isValid()) {
+			arg.dependent_name = dependent_member_probe;
+		}
 		if (!arg.is_template_template_arg && !arg.is_value) {
 			StringHandle template_name_handle = type_node.token().handle();
 			const TypeInfo* parsed_type_info = type_node.type_index().is_valid()
@@ -3096,6 +3182,86 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		}
 		++arg_index;
 	}
+}
+
+StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
+	int angle_depth = 0;
+	int paren_depth = 0;
+	int bracket_depth = 0;
+	for (size_t lookahead = 0; lookahead < 128; ++lookahead) {
+		Token token = peek_info(lookahead);
+		TokenKind kind = token.kind();
+		if (kind.is_eof()) {
+			return {};
+		}
+		if (kind == "<"_tok) {
+			++angle_depth;
+		} else if (kind == ">"_tok) {
+			if (angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
+				return {};
+			}
+			if (angle_depth > 0) {
+				--angle_depth;
+			}
+		} else if (kind == ">>"_tok) {
+			if (angle_depth <= 1 && paren_depth == 0 && bracket_depth == 0) {
+				return {};
+			}
+			angle_depth = angle_depth > 1 ? angle_depth - 2 : 0;
+		} else if (kind == "("_tok) {
+			++paren_depth;
+		} else if (kind == ")"_tok) {
+			if (paren_depth > 0) {
+				--paren_depth;
+			}
+		} else if (kind == "["_tok) {
+			++bracket_depth;
+		} else if (kind == "]"_tok) {
+			if (bracket_depth > 0) {
+				--bracket_depth;
+			}
+		} else if (kind == ","_tok && angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
+			return {};
+		}
+
+		if (kind == "typename"_tok) {
+			Token owner_token = peek_info(lookahead + 1);
+			Token scope_token = peek_info(lookahead + 2);
+			if (owner_token.kind().is_eof() ||
+				scope_token.kind().is_eof()) {
+				return {};
+			}
+			if (owner_token.type() == Token::Type::Identifier &&
+				scope_token.kind() == "::"_tok) {
+				StringHandle owner_handle = owner_token.handle();
+				const auto& current_param_names = currentTemplateParamNames();
+				bool owner_is_template_param = std::any_of(
+					current_param_names.begin(),
+					current_param_names.end(),
+					[owner_handle](StringHandle param_name) {
+						return param_name == owner_handle;
+					});
+				if (owner_is_template_param) {
+					InlineVector<StringHandle, 4> components;
+					components.push_back(owner_handle);
+					size_t chain_lookahead = lookahead + 2;
+					while (peek_info(chain_lookahead).kind() == "::"_tok) {
+						Token member_token = peek_info(chain_lookahead + 1);
+						if (member_token.kind().is_eof() ||
+							member_token.type() != Token::Type::Identifier) {
+							break;
+						}
+						components.push_back(member_token.handle());
+						chain_lookahead += 2;
+					}
+					if (components.size() > 1) {
+						return gNamespaceRegistry.buildQualifiedIdentifier(components);
+					}
+				}
+			}
+		}
+	}
+	return {};
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(

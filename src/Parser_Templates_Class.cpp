@@ -2719,7 +2719,12 @@ ParseResult Parser::parse_template_declaration() {
 					struct_node);
 			} else {
 				// Partial specialization: register as a pattern for matching
-				gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, template_args.toVector(), struct_node);
+				gTemplateRegistry.registerSpecializationPattern(
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+					template_param_nodes,
+					template_args.toVector(),
+					struct_node,
+					std::nullopt);
 			}
 
 			// Reset parsing context flags
@@ -4076,7 +4081,12 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Register the specialization PATTERN (not exact match)
 			// This allows pattern matching during instantiation
-			gTemplateRegistry.registerSpecializationPattern(template_name, template_param_nodes, pattern_args.toVector(), struct_node);
+			gTemplateRegistry.registerSpecializationPattern(
+				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+				template_param_nodes,
+				pattern_args.toVector(),
+				struct_node,
+				std::nullopt);
 
 			// Clean up template parameter context before returning
 			clearCurrentTemplateParameters();
@@ -5474,18 +5484,24 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 		// Register pattern under qualified name (MakeUnsigned::List)
 		gTemplateRegistry.registerSpecializationPattern(
-			StringTable::getStringView(qualified_simple_name),
+			QualifiedIdentifier::fromQualifiedName(
+				StringTable::getStringView(qualified_simple_name),
+				gSymbolTable.get_current_namespace_handle()),
 			template_param_nodes,
 			pattern_args.toVector(),
-			template_struct_node);
+			template_struct_node,
+			std::nullopt);
 
 		// Also register pattern under simple name (List) for consistency with primary template
 		// This ensures patterns are found regardless of whether qualified or simple name is used
 		gTemplateRegistry.registerSpecializationPattern(
-			struct_name,
+			QualifiedIdentifier{
+				gSymbolTable.get_current_namespace_handle(),
+				StringTable::getOrInternStringHandle(struct_name)},
 			template_param_nodes,
 			pattern_args.toVector(),
-			template_struct_node);
+			template_struct_node,
+			std::nullopt);
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template partial specialization: {} with pattern",
 						 StringTable::getStringView(qualified_pattern_name));
