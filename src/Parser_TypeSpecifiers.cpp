@@ -2517,7 +2517,9 @@ ParseResult Parser::parse_type_specifier() {
 							auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_instantiated_name));
 
 							// Handle multi-level member template chains: Outer<4>::Middle<5>::Inner<6>
-							// After resolving Middle<5>, continue resolving ::Inner<6> if present.							while (peek() == "::"_tok) {								SaveHandle chain_save = save_token_position();
+							// After resolving Middle<5>, continue resolving ::Inner<6> if present.
+							while (peek() == "::"_tok) {
+								SaveHandle chain_save = save_token_position();
 								advance(); // consume '::'
 
 								if (peek() == "template"_tok) {
@@ -2572,12 +2574,14 @@ ParseResult Parser::parse_type_specifier() {
 								StringHandle chain_template_handle = StringTable::getOrInternStringHandle(chain_template_name);
 								{
 									OuterTemplateBinding chain_outer_binding;
-									// First: carry over any outer binding that was used when the chain parent was instantiated									if (const OuterTemplateBinding* ancestor_binding = gTemplateRegistry.getOuterTemplateBinding(
-											StringTable::getStringView(chain_full_base_handle))) {										for (size_t i = 0; i < ancestor_binding->param_names.size() && i < ancestor_binding->param_args.size(); ++i) {
+									// First: carry over any outer binding that was used when the chain parent was instantiated
+									if (const OuterTemplateBinding* ancestor_binding = gTemplateRegistry.getOuterTemplateBinding(
+											StringTable::getStringView(chain_full_base_handle))) {
+										for (size_t i = 0; i < ancestor_binding->param_names.size() && i < ancestor_binding->param_args.size(); ++i) {
 											chain_outer_binding.param_names.push_back(ancestor_binding->param_names[i]);
 											chain_outer_binding.param_args.push_back(ancestor_binding->param_args[i]);
 										}
-									} else {									}
+									}
 									// Second: add the chain parent's own template params
 									if (chain_parent_it->second->hasInstantiationContext()) {
 										const TypeInfo::InstantiationContext* chain_ctx = chain_parent_it->second->instantiationContext();

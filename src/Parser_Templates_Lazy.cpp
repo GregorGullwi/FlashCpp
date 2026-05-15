@@ -720,6 +720,39 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		for (const auto& ttype_arg : lazy_info.template_args) {
 			converted_template_args.push_back(ttype_arg);
 		}
+		// Also include outer template parameter bindings so that references to
+		// enclosing-class params (e.g. OuterV, MiddleV) inside the re-parsed body
+		// are substituted with their concrete values.
+		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
+			InlineVector<StringHandle, 4> outer_pnames;
+			InlineVector<TypeInfo::TemplateArgInfo, 4> outer_pargs;
+			populateTemplateEnvironmentLegacyViews(
+				lazy_info.outer_template_environment_snapshot, outer_pnames, outer_pargs);
+			const size_t outer_count = std::min(outer_pnames.size(), outer_pargs.size());
+			for (size_t i = 0; i < outer_count; ++i) {
+				// Template param lists are small (typically ≤ 5 entries per level),
+				// so a linear scan to skip duplicates is fine here.
+				bool already_present = false;
+				for (const auto& ep : substitution_params) {
+					if (ep.nameHandle() == outer_pnames[i]) { already_present = true; break; }
+				}
+				if (already_present)
+					continue;
+				Token outer_tok(Token::Type::Identifier, StringTable::getStringView(outer_pnames[i]), 0, 0, 0);
+				const TemplateTypeArg outer_arg = toTemplateTypeArg(outer_pargs[i]);
+				if (outer_arg.is_value) {
+					// Non-type parameter (e.g. int N): TemplateParameterNode(name, TypeSpecifierNode, token)
+					// creates kind = NonType so substituteTemplateParameters correctly matches it.
+					TypeSpecifierNode int_type(outer_arg.type_index.category(), TypeQualifier::None,
+						get_type_size_bits(outer_arg.type_index.category()), outer_tok, CVQualifier::None);
+					substitution_params.push_back(TemplateParameterNode(outer_pnames[i], int_type, outer_tok));
+				} else {
+					// Type parameter (e.g. typename T): TemplateParameterNode(name, token) gives kind = Type.
+					substitution_params.push_back(TemplateParameterNode(outer_pnames[i], outer_tok));
+				}
+				converted_template_args.push_back(outer_arg);
+			}
+		}
 
 		// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
 		// This is needed for sizeof...(Pack) to work in lazy member function bodies
