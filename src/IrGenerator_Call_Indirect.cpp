@@ -1425,15 +1425,23 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Check if this is an instantiated template function
 		std::string_view func_name = func_decl_node.identifier_token().value();
 		StringHandle function_name;
-		if (callExprNode.has_mangled_name()) {
-			function_name =
-				StringTable::getOrInternStringHandle(callExprNode.mangled_name());
-		}
 
 		// Check if this is a member function - use struct_info to determine
-		if (!function_name.isValid() && struct_info) {
+		if (struct_info) {
+			StringHandle struct_name = struct_info->getName();
+			if (callExprNode.has_qualified_name()) {
+				std::string_view qualified_name = callExprNode.qualified_name();
+				if (size_t scope_pos = qualified_name.rfind("::");
+					scope_pos != std::string_view::npos) {
+					struct_name = StringTable::getOrInternStringHandle(
+						qualified_name.substr(0, scope_pos));
+				}
+			} else if (!member_func_decl.parent_struct_name().empty()) {
+				struct_name = StringTable::getOrInternStringHandle(
+					member_func_decl.parent_struct_name());
+			}
+
 			// For nested classes, we need the fully qualified name from TypeInfo
-			auto struct_name = struct_info->getName();
 			auto type_it = getTypesByNameMap().find(struct_name);
 			if (type_it != getTypesByNameMap().end()) {
 				struct_name = type_it->second->name();
