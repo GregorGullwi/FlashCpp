@@ -1700,17 +1700,17 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					// Fall through to type parsing below
 				} else {
 
-				// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
-				// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
-				// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
-				// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
-				//
-				// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
-				// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
-				//
-				// ALSO: If followed by '[', this is an array type declarator - must parse as type
-				//
-				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
+					// Special case: If out_type_nodes is provided AND the expression is a simple identifier,
+					// we should fall through to type parsing so identifiers get properly converted to TypeSpecifierNode.
+					// This is needed for deduction guides where template parameters must be TypeSpecifierNode.
+					// However, complex expressions like is_int<T>::value should still be accepted as dependent expressions.
+					//
+					// ALSO: If we parsed a simple identifier followed by '<', we should fall through to type parsing
+					// because this is likely a template type (e.g., enable_if_t<...>), not a value expression.
+					//
+					// ALSO: If followed by '[', this is an array type declarator - must parse as type
+					//
+					// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 					bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) ||
 												std::holds_alternative<TemplateParameterReferenceNode>(expr);
 					SimpleTemplateArgKind simple_identifier_kind = classifySimpleTemplateArg(expr);
@@ -1735,28 +1735,28 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 					if (!should_try_type_parsing && !peek().is_eof() &&
 						(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "..."_tok)) {
-					// Check if this is actually a concrete type (not a template parameter)
-					// If it's a concrete struct or type alias, we should fall through to type parsing instead
+						// Check if this is actually a concrete type (not a template parameter)
+						// If it's a concrete struct or type alias, we should fall through to type parsing instead
 						bool is_concrete_type = false;
 						if (std::holds_alternative<IdentifierNode>(expr)) {
 							const auto& id = std::get<IdentifierNode>(expr);
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(id.name()));
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* type_info = type_it->second;
-							// Check if it's a concrete struct (has struct_info_)
-							// OR if it's a type alias that resolves to a concrete type
-							// Type aliases have type_index pointing to the underlying type
+								// Check if it's a concrete struct (has struct_info_)
+								// OR if it's a type alias that resolves to a concrete type
+								// Type aliases have type_index pointing to the underlying type
 								if (type_info->struct_info_ != nullptr) {
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
 								} else if (const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_)) {
-								// Check if this is a type alias (type_index points to underlying type)
-								// and the underlying type is concrete (not a template parameter)
-								// A type is concrete if:
-								// 1. It has struct_info_ (it's a defined struct/class), OR
-								// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
-								// Template parameters are stored as Type::UserDefined without struct_info_,
-								// so this check correctly excludes them while accepting concrete types.
+									// Check if this is a type alias (type_index points to underlying type)
+									// and the underlying type is concrete (not a template parameter)
+									// A type is concrete if:
+									// 1. It has struct_info_ (it's a defined struct/class), OR
+									// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
+									// Template parameters are stored as Type::UserDefined without struct_info_,
+									// so this check correctly excludes them while accepting concrete types.
 									if (underlying->struct_info_ != nullptr ||
 										underlying->resolvedType() != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
@@ -1766,20 +1766,20 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								}
 							}
 						} else if (CallInfo::tryFrom(expr).has_value()) {
-						// Call expressions represent a function call expression like test_func<T>()
-						// This is NOT a type - it's a non-type template argument (the result of calling a function)
-						// Previously this code incorrectly treated call expressions with template arguments as a type,
-						// but that was wrong. A function call with template arguments (e.g., test_func<T>()) is still
-						// a function call, not a type. The function returns a value, and that value is used as
-						// the non-type template argument.
-						// DO NOT set is_concrete_type = true here - let it be accepted as a dependent expression.
+							// Call expressions represent a function call expression like test_func<T>()
+							// This is NOT a type - it's a non-type template argument (the result of calling a function)
+							// Previously this code incorrectly treated call expressions with template arguments as a type,
+							// but that was wrong. A function call with template arguments (e.g., test_func<T>()) is still
+							// a function call, not a type. The function returns a value, and that value is used as
+							// the non-type template argument.
+							// DO NOT set is_concrete_type = true here - let it be accepted as a dependent expression.
 							FLASH_LOG(Templates, Debug, "Call expression - treating as function call expression, not a type");
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
-						// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
-						// or a template instantiation like ns::Inner<int> (when the template has already been
-						// instantiated during expression parsing).
+							// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
+							// or a template instantiation like ns::Inner<int> (when the template has already been
+							// instantiated during expression parsing).
 							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
-						// Build the qualified name and check if it exists in getTypesByNameMap()
+							// Build the qualified name and check if it exists in getTypesByNameMap()
 							std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_name));
 							if (type_it != getTypesByNameMap().end()) {
@@ -1797,14 +1797,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							// non-type contexts such as ValueSlot<Owner::value>.
 						}
 
-					// If it's a concrete type, restore and let type parsing handle it
+						// If it's a concrete type, restore and let type parsing handle it
 						if (is_concrete_type) {
 							restore_token_position(arg_saved_pos);
-						// Fall through to type parsing below
+							// Fall through to type parsing below
 						} else {
-						// Check if this is a template parameter that has a type substitution available
-						// This enables variable templates inside function templates to work correctly:
-						// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+							// Check if this is a template parameter that has a type substitution available
+							// This enables variable templates inside function templates to work correctly:
+							// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
 							bool substituted_type_param = false;
 							bool substituted_value_param = false;
 							bool finished_parsing = false;  // Track if we consumed '>' and should break
@@ -1817,16 +1817,16 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							}
 
 							if (!param_name_to_check.empty()) {
-							// Check if we have a type substitution for this parameter
+								// Check if we have a type substitution for this parameter
 								for (const auto& subst : template_param_substitutions_) {
 									if (subst.is_type_param && subst.param_name == param_name_to_check) {
-									// Found a type substitution! Use it instead of creating a dependent arg
+										// Found a type substitution! Use it instead of creating a dependent arg
 										FLASH_LOG(Templates, Debug, "Found type substitution for parameter '",
 												  param_name_to_check, "' -> ", subst.substituted_type.toString());
 
 										TemplateTypeArg substituted_arg = subst.substituted_type;
 
-									// Check for pack expansion (...)
+										// Check for pack expansion (...)
 										if (peek() == "..."_tok) {
 											advance(); // consume '...'
 											substituted_arg.is_pack = true;
@@ -1840,7 +1840,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 										discard_saved_token(arg_saved_pos);
 										substituted_type_param = true;
 
-									// Handle next token
+										// Handle next token
 										if (peek() == ">>"_tok) {
 											split_right_shift_token();
 										}
@@ -1891,11 +1891,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							}
 
 							FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
-						// Successfully parsed a dependent expression
-						// Create a dependent template argument
-						// IMPORTANT: Preserve whether this is a type-like placeholder (e.g. T)
-						// or a value-like dependent expression (e.g. Trait<T>::value).
-						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters.
+							// Successfully parsed a dependent expression
+							// Create a dependent template argument
+							// IMPORTANT: Preserve whether this is a type-like placeholder (e.g. T)
+							// or a value-like dependent expression (e.g. Trait<T>::value).
+							// Try to get the type_index for the template parameter so pattern matching can detect reused parameters.
 							TemplateTypeArg dependent_arg;
 							bool is_value_like_dependent_expr =
 								std::holds_alternative<QualifiedIdentifierNode>(expr) ||
@@ -1946,14 +1946,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							}
 							dependent_arg.is_dependent = true;
 
-						// Try to get the type_index for template parameter references
-						// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
+							// Try to get the type_index for template parameter references
+							// For TemplateParameterReferenceNode or IdentifierNode that refers to a template parameter
 							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 								const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 								StringHandle param_name = tparam_ref.param_name();
-						// Store the dependent name for placeholder type generation
+								// Store the dependent name for placeholder type generation
 								dependent_arg.dependent_name = param_name;
-						// Look up the template parameter type in getTypesByNameMap()
+								// Look up the template parameter type in getTypesByNameMap()
 								auto type_it = getTypesByNameMap().find(param_name);
 								if (type_it != getTypesByNameMap().end()) {
 									dependent_arg.type_index = type_it->second->type_index_;
@@ -1962,17 +1962,17 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								}
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const auto& id = std::get<IdentifierNode>(expr);
-						// Store the dependent name for placeholder type generation
+								// Store the dependent name for placeholder type generation
 								dependent_arg.dependent_name = StringTable::getOrInternStringHandle(id.name());
-						// Check if this identifier is a template parameter by looking it up
+								// Check if this identifier is a template parameter by looking it up
 								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(id.name()));
 								if (type_it != getTypesByNameMap().end()) {
 									dependent_arg.type_index = type_it->second->type_index_;
 									FLASH_LOG(Templates, Debug, "  Found type_index=", dependent_arg.type_index,
 											  " for identifier '", id.name(), "'");
 								} else {
-							// Check if this identifier is a template alias (like void_t)
-							// Template aliases may resolve to concrete types even when used with dependent arguments
+									// Check if this identifier is a template alias (like void_t)
+									// Template aliases may resolve to concrete types even when used with dependent arguments
 									TemplateNameLookupRequest alias_lookup_request =
 										buildTemplateNameLookupRequest(
 											StringTable::getOrInternStringHandle(id.name()),
@@ -2001,7 +2001,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id.full_name());
 							}
 
-						// Check for pack expansion (...)
+							// Check for pack expansion (...)
 							if (peek() == "..."_tok) {
 								advance(); // consume '...'
 								dependent_arg.is_pack = true;
@@ -2010,17 +2010,17 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 							template_args.push_back(dependent_arg);
 
-						// Store the expression node for deferred base class resolution
-						// This is needed so that type trait expressions like __has_trivial_destructor(T)
-						// can be properly substituted and evaluated during template instantiation
+							// Store the expression node for deferred base class resolution
+							// This is needed so that type trait expressions like __has_trivial_destructor(T)
+							// can be properly substituted and evaluated during template instantiation
 							if (out_type_nodes && expr_result.node().has_value()) {
 								out_type_nodes->push_back(*expr_result.node());
 							}
 
 							discard_saved_token(arg_saved_pos);
 
-						// Check for ',' or '>' after the expression (or after pack expansion)
-						// Phase 5: Handle >> token splitting for nested templates
+							// Check for ',' or '>' after the expression (or after pack expansion)
+							// Phase 5: Handle >> token splitting for nested templates
 							if (peek() == ">>"_tok) {
 								split_right_shift_token();
 							}
