@@ -24,3 +24,13 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
   too rigidly for dependent contexts and does not use a more canonicalized/dependent-aware type equivalence.
 - **Affected path**: `Parser::validate_signature_match`, invoked from out-of-line template member parsing.
 - **Impact**: Noisy diagnostics and increased risk of picking/validating against suboptimal overload candidates.
+
+## 3) Structured-binding tuple-like `get<I>` still prefers non-member specialization when both member and free forms exist
+
+- **Symptom**: In tuple-like structured binding, when a type provides both `e.get<I>()` and `get<I>(e)` protocol forms,
+  decomposition can resolve to the free `get` specialization instead of the member one.
+- **Root cause**: `normalizeStructuredBinding` resolves `get<I>` through specialization-name probing; member and free
+  specializations can collide in registry lookup and selection does not consistently preserve [dcl.struct.bind]/3
+  member preference across all registration shapes.
+- **Affected path**: `SemanticAnalysis::normalizeStructuredBinding` tuple-like protocol specialization resolution.
+- **Impact**: Non-conforming binding semantics for mixed member/non-member tuple protocol definitions.

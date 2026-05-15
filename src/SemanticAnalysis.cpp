@@ -2746,6 +2746,12 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	object_type_arg.setType(initializer_type.category());
 
 	struct StructuredBindingTupleProtocolLookup {
+		struct TemplateLookupSet {
+			std::vector<TemplateNameLookupCandidate> candidates;
+			std::vector<StringHandle> ordered_lookup_names;
+			std::vector<StringHandle> fallback_names;
+		};
+
 		explicit StructuredBindingTupleProtocolLookup(const Parser& parser_ref, NamespaceHandle owner_ns, StringHandle struct_type_name)
 			: parser(parser_ref),
 			  owner_namespace(owner_ns),
@@ -2758,29 +2764,48 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			  std_namespace(gNamespaceRegistry.getOrCreateNamespace(NamespaceRegistry::GLOBAL_NAMESPACE, std_name)) {
 		}
 
-		std::vector<StringHandle> resolveTemplateCandidates(
+		TemplateLookupSet resolveTemplateCandidates(
 			StringHandle protocol_name,
 			TemplateDeclarationKind expected_kind) const {
-			std::vector<StringHandle> names;
+			TemplateLookupSet lookup_set;
 			// Per [dcl.struct.bind]/3: member get takes priority over non-member get
 			if (expected_kind == TemplateDeclarationKind::FunctionTemplate) {
-				appendStructMemberTemplateCandidates(protocol_name, names);
+				appendStructMemberTemplateCandidates(protocol_name, expected_kind, lookup_set);
 			}
-			appendNamespaceAwareLookupCandidates(protocol_name, expected_kind, names);
-			appendNamespaceAwareFallbackCandidates(protocol_name, names);
-			return names;
+			appendNamespaceAwareLookupCandidates(protocol_name, expected_kind, lookup_set);
+			appendNamespaceAwareFallbackCandidates(protocol_name, lookup_set.fallback_names);
+			return lookup_set;
 		}
 
 		// Builds "StructName::protocol_name" for member function template lookup
-		void appendStructMemberTemplateCandidates(StringHandle protocol_name, std::vector<StringHandle>& names) const {
+		void appendStructMemberTemplateCandidates(
+			StringHandle protocol_name,
+			TemplateDeclarationKind expected_kind,
+			TemplateLookupSet& lookup_set) const {
 			if (!struct_type_name.isValid()) {
 				return;
 			}
-			StringBuilder sb;
-			sb.append(struct_type_name.view());
-			sb.append("::");
-			sb.append(protocol_name.view());
-			pushUniqueName(names, StringTable::getOrInternStringHandle(sb.commit()));
+
+			TemplateNameLookupRequest member_request = parser.makeTemplateNameLookupRequest(
+				protocol_name,
+				TemplateNameLookupKind::Member,
+				false);
+			member_request.owner_name = struct_type_name;
+			appendLookupResultCandidates(
+				member_request,
+				expected_kind,
+				lookup_set);
+
+			StringBuilder member_name_builder;
+			member_name_builder.append(struct_type_name.view());
+			member_name_builder.append("::");
+			member_name_builder.append(protocol_name.view());
+			pushUniqueName(
+				lookup_set.ordered_lookup_names,
+				StringTable::getOrInternStringHandle(member_name_builder.commit()));
+			pushUniqueName(
+				lookup_set.fallback_names,
+				lookup_set.ordered_lookup_names.back());
 		}
 
 		const Parser& parser;
@@ -2826,41 +2851,51 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 			}
 		}
 
-		void appendLookupResultCandidates(
-			StringHandle requested_name,
-			TemplateNameLookupKind lookup_kind,
-			TemplateDeclarationKind expected_kind,
-			NamespaceHandle definition_namespace,
-			std::vector<StringHandle>& names) const {
-			TemplateNameLookupRequest lookup_request = parser.makeTemplateNameLookupRequest(
-				requested_name,
-				lookup_kind,
-				false);
-			if (definition_namespace.isValid()) {
-				lookup_request.definition_namespace = definition_namespace;
+		static void pushUniqueCandidate(
+			TemplateLookupSet& lookup_set,
+			const TemplateNameLookupCandidate& candidate) {
+			auto matches_candidate = [&](const TemplateNameLookupCandidate& existing) {
+				return existing.identity.kind == candidate.identity.kind &&
+					   existing.identity.lookup_name == candidate.identity.lookup_name &&
+					   existing.identity.declaration_address == candidate.identity.declaration_address;
+			};
+			if (std::find_if(lookup_set.candidates.begin(), lookup_set.candidates.end(), matches_candidate) ==
+				lookup_set.candidates.end()) {
+				lookup_set.candidates.push_back(candidate);
 			}
+		}
+
+		void appendLookupResultCandidates(
+			const TemplateNameLookupRequest& lookup_request,
+			TemplateDeclarationKind expected_kind,
+			TemplateLookupSet& lookup_set) const {
 			TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(lookup_request);
 			for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
 				if (candidate.identity.kind != expected_kind) {
 					continue;
 				}
-				pushUniqueName(names, candidate.identity.lookup_name);
+				pushUniqueCandidate(lookup_set, candidate);
+				pushUniqueName(lookup_set.ordered_lookup_names, candidate.identity.lookup_name);
+				pushUniqueName(lookup_set.fallback_names, candidate.identity.lookup_name);
 			}
 		}
 
 		void appendOwnerNamespaceLookupCandidates(
 			StringHandle protocol_name,
 			TemplateDeclarationKind expected_kind,
-			std::vector<StringHandle>& names) const {
+			TemplateLookupSet& lookup_set) const {
 			NamespaceHandle current_owner = owner_namespace;
 			while (current_owner.isValid() && !current_owner.isGlobal()) {
 				StringHandle qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(current_owner, protocol_name);
-				appendLookupResultCandidates(
+				TemplateNameLookupRequest lookup_request = parser.makeTemplateNameLookupRequest(
 					qualified_name,
 					TemplateNameLookupKind::Qualified,
+					false);
+				lookup_request.definition_namespace = current_owner;
+				appendLookupResultCandidates(
+					lookup_request,
 					expected_kind,
-					current_owner,
-					names);
+					lookup_set);
 				current_owner = gNamespaceRegistry.getParent(current_owner);
 			}
 		}
@@ -2868,22 +2903,27 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		void appendNamespaceAwareLookupCandidates(
 			StringHandle protocol_name,
 			TemplateDeclarationKind expected_kind,
-			std::vector<StringHandle>& names) const {
-			appendOwnerNamespaceLookupCandidates(protocol_name, expected_kind, names);
-			appendLookupResultCandidates(
+			TemplateLookupSet& lookup_set) const {
+			appendOwnerNamespaceLookupCandidates(protocol_name, expected_kind, lookup_set);
+			TemplateNameLookupRequest ordinary_request = parser.makeTemplateNameLookupRequest(
 				protocol_name,
 				TemplateNameLookupKind::Ordinary,
+				false);
+			appendLookupResultCandidates(
+				ordinary_request,
 				expected_kind,
-				NamespaceHandle{},
-				names);
+				lookup_set);
 			if (std_namespace.isValid() && !std_namespace.isGlobal()) {
 				StringHandle std_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(std_namespace, protocol_name);
-				appendLookupResultCandidates(
+				TemplateNameLookupRequest std_qualified_request = parser.makeTemplateNameLookupRequest(
 					std_qualified_name,
 					TemplateNameLookupKind::Qualified,
+					false);
+				std_qualified_request.definition_namespace = std_namespace;
+				appendLookupResultCandidates(
+					std_qualified_request,
 					expected_kind,
-					std_namespace,
-					names);
+					lookup_set);
 			}
 		}
 
@@ -2909,40 +2949,113 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 
 	const StructuredBindingTupleProtocolLookup protocol_lookup(parser_, init_type_info->namespaceHandle(), init_type_info->name());
 
-	std::vector<StringHandle> tuple_size_template_names = protocol_lookup.resolveTemplateCandidates(
+	StructuredBindingTupleProtocolLookup::TemplateLookupSet tuple_size_lookup_set = protocol_lookup.resolveTemplateCandidates(
 		protocol_lookup.tuple_size_name,
 		TemplateDeclarationKind::ClassTemplate);
-	std::vector<StringHandle> tuple_element_template_names = protocol_lookup.resolveTemplateCandidates(
+	StructuredBindingTupleProtocolLookup::TemplateLookupSet tuple_element_lookup_set = protocol_lookup.resolveTemplateCandidates(
 		protocol_lookup.tuple_element_name,
 		TemplateDeclarationKind::ClassTemplate);
-	std::vector<StringHandle> get_template_names = protocol_lookup.resolveTemplateCandidates(
+	StructuredBindingTupleProtocolLookup::TemplateLookupSet get_lookup_set = protocol_lookup.resolveTemplateCandidates(
 		protocol_lookup.get_name,
 		TemplateDeclarationKind::FunctionTemplate);
 
-	auto resolve_struct_specialization = [](std::span<const StringHandle> template_names, std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
-		// First pass: exact specialization matches across all candidate names.
-		for (StringHandle template_name : template_names) {
-			if (!template_name.isValid()) {
-				continue;
+	auto resolve_struct_specialization = [&](
+		const StructuredBindingTupleProtocolLookup::TemplateLookupSet& lookup_set,
+		std::span<const TemplateTypeArg> template_args) -> const StructDeclarationNode* {
+		auto find_struct_specialization = [&](std::span<const StringHandle> template_names, bool use_exact_match) -> const StructDeclarationNode* {
+			for (StringHandle template_name : template_names) {
+				if (!template_name.isValid()) {
+					continue;
+				}
+				std::optional<ASTNode> specialization = use_exact_match
+					? gTemplateRegistry.lookupExactSpecialization(template_name.view(), template_args)
+					: gTemplateRegistry.matchSpecializationPattern(template_name.view(), template_args);
+				if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
+					continue;
+				}
+				return &specialization->as<StructDeclarationNode>();
 			}
-			auto specialization = gTemplateRegistry.lookupExactSpecialization(template_name.view(), template_args);
-			if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
-				continue;
-			}
-			return &specialization->as<StructDeclarationNode>();
+			return nullptr;
+		};
+
+		// First pass: exact specialization matches across semantic lookup candidates.
+		if (const StructDeclarationNode* exact = find_struct_specialization(lookup_set.ordered_lookup_names, true)) {
+			return exact;
 		}
-		// Second pass: pattern matches, only if no exact specialization was found.
-		for (StringHandle template_name : template_names) {
-			if (!template_name.isValid()) {
-				continue;
-			}
-			auto specialization = gTemplateRegistry.matchSpecializationPattern(template_name.view(), template_args);
-			if (!specialization.has_value() || !specialization->is<StructDeclarationNode>()) {
-				continue;
-			}
-			return &specialization->as<StructDeclarationNode>();
+		// Second pass: pattern matches across semantic lookup candidates.
+		if (const StructDeclarationNode* pattern = find_struct_specialization(lookup_set.ordered_lookup_names, false)) {
+			return pattern;
+		}
+		// Fallback: conservative probing over synthesized names for compatibility.
+		if (const StructDeclarationNode* exact_fallback = find_struct_specialization(lookup_set.fallback_names, true)) {
+			return exact_fallback;
+		}
+		if (const StructDeclarationNode* pattern_fallback = find_struct_specialization(lookup_set.fallback_names, false)) {
+			return pattern_fallback;
 		}
 		return nullptr;
+	};
+
+	auto resolve_get_specialization = [&](
+		const StructuredBindingTupleProtocolLookup::TemplateLookupSet& lookup_set,
+		std::span<const TemplateTypeArg> get_template_args,
+		bool hidden_object_is_const) -> std::optional<ASTNode> {
+		auto collect_matches = [&](std::span<const StringHandle> template_names, bool use_exact_match) {
+			std::vector<ASTNode> matches;
+			for (StringHandle template_name : template_names) {
+				if (!template_name.isValid()) {
+					continue;
+				}
+				std::optional<ASTNode> spec = use_exact_match
+					? gTemplateRegistry.lookupExactSpecialization(template_name.view(), get_template_args)
+					: gTemplateRegistry.matchSpecializationPattern(template_name.view(), get_template_args);
+				if (spec.has_value()) {
+					matches.push_back(std::move(*spec));
+				}
+			}
+			return matches;
+		};
+
+		auto pick_best = [&](std::vector<ASTNode>& candidates) -> std::optional<ASTNode> {
+			ASTNode* fallback = nullptr;
+			for (auto& candidate : candidates) {
+				const FunctionDeclarationNode* fn = get_function_decl_node(candidate);
+				if (!fn) {
+					if (!fallback) {
+						fallback = &candidate;
+					}
+					continue;
+				}
+				if (fn->is_const_member_function() == hidden_object_is_const) {
+					return candidate;
+				}
+				if (!fallback) {
+					fallback = &candidate;
+				}
+			}
+			if (fallback) {
+				return *fallback;
+			}
+			return std::nullopt;
+		};
+
+		// Exact specializations from semantic lookup candidates take priority.
+		std::vector<ASTNode> exact_matches = collect_matches(lookup_set.ordered_lookup_names, true);
+		if (auto best = pick_best(exact_matches)) {
+			return best;
+		}
+		// Then pattern specializations from semantic lookup candidates.
+		std::vector<ASTNode> pattern_matches = collect_matches(lookup_set.ordered_lookup_names, false);
+		if (auto best = pick_best(pattern_matches)) {
+			return best;
+		}
+		// Finally use conservative fallback names when semantic lookup yielded no usable match.
+		std::vector<ASTNode> exact_fallback_matches = collect_matches(lookup_set.fallback_names, true);
+		if (auto best = pick_best(exact_fallback_matches)) {
+			return best;
+		}
+		std::vector<ASTNode> pattern_fallback_matches = collect_matches(lookup_set.fallback_names, false);
+		return pick_best(pattern_fallback_matches);
 	};
 
 	auto resolve_type_info = [&](const StructDeclarationNode* struct_decl) -> const TypeInfo* {
@@ -2957,7 +3070,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	};
 
 	std::vector<TemplateTypeArg> tuple_size_args = {object_type_arg};
-	const StructDeclarationNode* tuple_size_decl = resolve_struct_specialization(tuple_size_template_names, tuple_size_args);
+	const StructDeclarationNode* tuple_size_decl = resolve_struct_specialization(tuple_size_lookup_set, tuple_size_args);
 	if (!tuple_size_decl) {
 		return;	// aggregate decomposition path
 	}
@@ -3024,7 +3137,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		for (TypeCategory index_type : index_arg_candidates) {
 			TemplateTypeArg index_arg = make_index_arg(i, index_type);
 			std::vector<TemplateTypeArg> tuple_element_args = {index_arg, object_type_arg};
-			tuple_element_decl = resolve_struct_specialization(tuple_element_template_names, tuple_element_args);
+			tuple_element_decl = resolve_struct_specialization(tuple_element_lookup_set, tuple_element_args);
 			if (tuple_element_decl) {
 				resolved_index_arg = index_arg;
 				break;
@@ -3065,47 +3178,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 
 			auto try_lookup_get_for_index = [&](const TemplateTypeArg& index_arg) -> std::optional<ASTNode> {
 				std::vector<TemplateTypeArg> get_template_args = {index_arg};
-
-				// Collect all candidate specializations (exact pass, then pattern pass).
-				std::vector<ASTNode> exact_matches;
-				std::vector<ASTNode> pattern_matches;
-				for (StringHandle get_template_name : get_template_names) {
-					if (!get_template_name.isValid()) {
-						continue;
-					}
-					if (auto spec = gTemplateRegistry.lookupExactSpecialization(get_template_name.view(), get_template_args)) {
-						exact_matches.push_back(std::move(*spec));
-					}
-					if (auto spec = gTemplateRegistry.matchSpecializationPattern(get_template_name.view(), get_template_args)) {
-						pattern_matches.push_back(std::move(*spec));
-					}
-				}
-
-				// Helper: pick the best match from a candidate list by cv-qualifier.
-				auto pick_best = [&](std::vector<ASTNode>& candidates) -> std::optional<ASTNode> {
-					ASTNode* fallback = nullptr;
-					for (auto& candidate : candidates) {
-						const FunctionDeclarationNode* fn = get_function_decl_node(candidate);
-						if (!fn) {
-							if (!fallback) { fallback = &candidate; }
-							continue;
-						}
-						if (fn->is_const_member_function() == hidden_object_is_const) {
-							return candidate;	// Exact cv-qualifier match preferred.
-						}
-						if (!fallback) { fallback = &candidate; }
-					}
-					if (fallback) {
-						return *fallback;
-					}
-					return std::nullopt;
-				};
-
-				// Exact specializations take priority over pattern matches.
-				if (auto best = pick_best(exact_matches)) {
-					return best;
-				}
-				return pick_best(pattern_matches);
+				return resolve_get_specialization(get_lookup_set, get_template_args, hidden_object_is_const);
 			};
 
 			// First try the same canonicalized index category that matched tuple_element.
