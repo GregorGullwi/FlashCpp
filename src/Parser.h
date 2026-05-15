@@ -1775,6 +1775,11 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::string_view qualified_name,
 		std::string_view simple_name,
 		const ChunkedVector<ASTNode>& arguments);
+	std::optional<ASTNode> tryInstantiateAdlTemplateCandidates(
+		StringHandle callee_name,
+		bool argument_dependent_lookup_included,
+		std::span<const TypeSpecifierNode> arg_types,
+		std::span<const ASTNode> overload_candidates = {});
 	void appendFunctionCallArgType(const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out);
 	// Shared helper: re-parse a template function body with concrete argument substitution.
 	// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
