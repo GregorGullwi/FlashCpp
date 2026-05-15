@@ -118,9 +118,22 @@ infrastructure tracks. The branch now includes:
   when ordinary overload sets are empty. Regression
   `test_template_two_phase_dependent_adl_function_template_poi_ret0.cpp`
   covers the case.
+- **two-phase lookup extended to member function template bodies (2026-05-15):**
+  `instantiate_member_function_template_core` in
+  `Parser_Templates_Inst_MemberFunc.cpp` now sets `phase1_cutoff_line_`,
+  `phase1_cutoff_file_idx_`, and `current_template_definition_lookup_context_`
+  before `parse_function_body()`, mirroring the identical setup in the free
+  function template path. Non-dependent calls inside
+  `template <typename U> T Wrapper<T>::foo(U)` bodies now resolve against
+  definition-time overload sets. `filterPhase1OrdinaryFunctionOverloads` was
+  removed from `lookupMemberFunctionTemplateCandidatesForInstantiation` because
+  member-lookup visibility is class-scope (mutual, not cutoff by textual order).
+  Regression `test_template_two_phase_member_func_template_ret42.cpp` covers
+  the non-dependent call case. Full-suite validation: 2361 pass, 184
+  expected-fail, 0 regressions.
 
 Validation after all changes passed the Linux sharded build and the full test
-suite (2358 regular tests + 183 expected-fail tests, 0 regressions).
+suite (2361 regular tests + 184 expected-fail tests, 0 regressions).
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
@@ -143,12 +156,21 @@ sema direct lookup probes. The active architecture tracks are therefore:
    concrete before the record is formed and broader hidden-friend/
    dependent-namespace coverage.
 
-2. **Two-phase lookup expansion.**
+2. **Two-phase lookup expansion (member function template bodies ✅ done).**
    Definition-context records now cover selected non-dependent calls,
    unresolved dependent unqualified calls, the main qualified/member/operator
-   template paths, and lazy static-member replay. Extend the model to eager
-   static initializers, richer dependent-base lookup, deeper member-template
-   segment chains, and the remaining parser-time ADL-sensitive call paths.
+   template paths, lazy static-member replay, and (new) member function
+   template bodies. Remaining gaps:
+   - **Inherited member templates**: `this->template method<T>(args)` fails
+     to find templates declared in a base class.  Root cause: in
+     `tryInstantiateMemberFunctionTemplateCall` / `Parser_Expr_PostfixCalls.cpp`
+     and `lookupMemberFunctionTemplateCandidatesForInstantiation` /
+     `Parser_Templates_Inst_MemberFunc.cpp`, lookup never walks base classes
+     for member templates.  Fix: after direct lookup fails, fall through to
+     `lookup_inherited_template` and retry instantiation on the owner base.
+   - Eager static initializers (constexpr static members whose initializers
+     call constexpr functions at definition time).
+   - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
    Typed integral/enum/`nullptr`, pointer, reference, function-pointer, and null

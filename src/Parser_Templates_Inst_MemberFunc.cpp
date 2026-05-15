@@ -219,27 +219,14 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 		}
 	}
 
-	if (!candidates.empty()) {
-		std::vector<ASTNode> declarations =
-			materializeFunctionTemplateCandidateDeclarations(candidates);
-		filterPhase1OrdinaryFunctionOverloads(declarations);
-		if (declarations.size() != candidates.size()) {
-			std::unordered_set<const void*> kept_declarations;
-			kept_declarations.reserve(declarations.size());
-			for (const ASTNode& declaration : declarations) {
-				kept_declarations.insert(declaration.raw_pointer());
-			}
-			candidates.erase(
-				std::remove_if(
-					candidates.begin(),
-					candidates.end(),
-					[&](const TemplateNameLookupCandidate& candidate) {
-						return kept_declarations.count(
-								   candidate.declaration.raw_pointer()) == 0;
-					}),
-				candidates.end());
-		}
-	}
+	// NOTE: filterPhase1OrdinaryFunctionOverloads is intentionally NOT called here.
+	// All members of a class are mutually visible within the class scope regardless
+	// of their textual order -- in particular a member function template body can call
+	// another member declared later in the same class body.  The phase1 cutoff filter
+	// is only meaningful for ordinary (namespace-scope) unqualified lookup of free
+	// functions, not for member lookup.  Applying it here would incorrectly drop
+	// candidates for same-class members declared after the calling member's body.
+	(void)0;
 
 	return candidates;
 }
@@ -1906,6 +1893,43 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			outer_binding ? &outer_default_environment : nullptr);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 
+		// Phase 1 two-phase lookup (C++20 [temp.res]/9): record the template body's
+		// opening-brace line so non-dependent calls inside the body use definition-time
+		// lookup rather than point-of-instantiation lookup.  This mirrors the identical
+		// setup in try_instantiate_single_template (Parser_Templates_Inst_Deduction.cpp).
+		//
+		// Reset unconditionally so stale state from a previous instantiation cannot
+		// leak into this one — even when body_position is invalid or has no saved token.
+		phase1_cutoff_line_ = 0;
+		phase1_cutoff_file_idx_ = SIZE_MAX;
+		phase1_violation_token_.reset();
+		{
+			SaveHandle body_position = func_decl.template_body_position();
+			if (body_position < saved_tokens_.size() && saved_tokens_[body_position].has_value()) {
+				const SavedToken& saved_token = *saved_tokens_[body_position];
+				phase1_cutoff_line_ = saved_token.current_token_.line();
+				phase1_cutoff_file_idx_ = saved_token.current_token_.file_index();
+			}
+			// If body_position is invalid or has no saved token (e.g. the template was
+			// defined in a context where tokens were not saved), phase1_cutoff_line_
+			// remains 0, is_valid() will return false below, and the context will not
+			// be installed -- parsing proceeds without phase-1 cutoff for this body.
+		}
+		TemplateDefinitionLookupContext definition_lookup_context;
+		definition_lookup_context.definition_line = phase1_cutoff_line_;
+		definition_lookup_context.definition_file_index = phase1_cutoff_file_idx_;
+		definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
+		definition_lookup_context.current_instantiation_name =
+			StringTable::getOrInternStringHandle(struct_name);
+		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
+			current_template_definition_lookup_context_;
+		current_template_definition_lookup_context_ = definition_lookup_context.is_valid()
+			? &definition_lookup_context
+			: nullptr;
+		auto restore_definition_lookup_context = ScopeGuard([&]() {
+			current_template_definition_lookup_context_ = previous_definition_lookup_context;
+		});
+
 		// Parse the function body
 		{
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -1923,7 +1947,19 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				new_func_ref.set_definition(substituted_body);
 			}
 		} // current_template_param_names_ restored here
-	} // template_param_substitutions_ restored here
+
+		// Restore phase1 cutoff after body is parsed (same as try_instantiate_single_template).
+		// Check for Phase 1 violations: a non-dependent name in the body that was only
+		// declared after the template definition is ill-formed (C++20 [temp.res]/9).
+		phase1_cutoff_line_ = 0;
+		phase1_cutoff_file_idx_ = SIZE_MAX;
+		if (phase1_violation_token_.has_value()) {
+			auto tok = *phase1_violation_token_;
+			phase1_violation_token_.reset();
+			throw CompileError(
+				std::string("non-dependent name '").append(tok.value()).append("' was not declared before the template definition (C++20 [temp.res]/9)"));
+		}
+	} // template_param_substitutions_ and definition_lookup_context restored here
 
 	// Clean up context
 	current_function_ = nullptr;
