@@ -242,7 +242,13 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 	}
 
 	if (candidates.empty()) {
-		auto find_inherited_owner = [&](const auto& self, StringHandle struct_name_handle, int depth) -> StringHandle {
+		struct InheritedOwnerMatch {
+			StringHandle owner_name{};
+			int depth = 0;
+			TemplateNameLookupResult lookup_result;
+		};
+
+		auto find_inherited_owner = [&](const auto& self, StringHandle struct_name_handle, int depth) -> InheritedOwnerMatch {
 			constexpr int kMaxInheritanceDepth = 100;
 			if (depth > kMaxInheritanceDepth) {
 				return {};
@@ -255,7 +261,7 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 			TemplateNameLookupResult lookup_result =
 				gTemplateRegistry.lookupTemplateName(request);
 			if (lookup_result.hasFunctionTemplate()) {
-				return struct_name_handle;
+				return {struct_name_handle, depth, std::move(lookup_result)};
 			}
 
 			auto struct_it = getTypesByNameMap().find(struct_name_handle);
@@ -293,9 +299,9 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 						}
 					}
 					if (resolved != nullptr && resolved->struct_info_) {
-						StringHandle inherited_owner =
+						InheritedOwnerMatch inherited_owner =
 							self(self, resolved->name(), depth + 1);
-						if (inherited_owner.isValid()) {
+						if (inherited_owner.owner_name.isValid()) {
 							return inherited_owner;
 						}
 					}
@@ -304,9 +310,9 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 
 				StringHandle base_name_handle =
 					StringTable::getOrInternStringHandle(base_class.name);
-				StringHandle inherited_owner =
+				InheritedOwnerMatch inherited_owner =
 					self(self, base_name_handle, depth + 1);
-				if (inherited_owner.isValid()) {
+				if (inherited_owner.owner_name.isValid()) {
 					return inherited_owner;
 				}
 			}
@@ -314,25 +320,18 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 			return {};
 		};
 
-		StringHandle inherited_owner =
+		InheritedOwnerMatch inherited_owner =
 			find_inherited_owner(find_inherited_owner, requested_owner, 0);
-		if (inherited_owner.isValid()) {
+		if (inherited_owner.owner_name.isValid()) {
 			FLASH_LOG_FORMAT(
 				Templates,
 				Debug,
 				"Inherited member template lookup rebound '{}::{}' to owner '{}'",
 				struct_name,
 				member_name,
-				StringTable::getStringView(inherited_owner));
-			TemplateNameLookupRequest inherited_request =
-				buildMemberFunctionTemplateLookupRequest(
-					inherited_owner,
-					member_name_handle,
-					false);
-			TemplateNameLookupResult inherited_lookup =
-				gTemplateRegistry.lookupTemplateName(inherited_request);
+				StringTable::getStringView(inherited_owner.owner_name));
 			for (const TemplateNameLookupCandidate& inherited_candidate :
-				 inherited_lookup.candidates) {
+				 inherited_owner.lookup_result.candidates) {
 				if (inherited_candidate.identity.kind !=
 					TemplateDeclarationKind::FunctionTemplate) {
 					continue;
@@ -348,8 +347,8 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 				TemplateNameLookupCandidate rebound_candidate =
 					inherited_candidate;
 				rebound_candidate.lookup_owner_name = requested_owner;
-				rebound_candidate.declaring_owner_name = inherited_owner;
-				rebound_candidate.inherited_depth = 1;
+				rebound_candidate.declaring_owner_name = inherited_owner.owner_name;
+				rebound_candidate.inherited_depth = inherited_owner.depth;
 				candidates.push_back(rebound_candidate);
 			}
 		}
@@ -699,10 +698,21 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	return instantiate_member_function_template_core(
-		StringTable::getStringView(
-			best_owner_name.isValid()
-				? best_owner_name
-				: StringTable::getOrInternStringHandle(struct_name)),
+		// Prefer the instantiated struct_name over the pattern-level best_owner_name.
+		// best_owner_name is derived from the template's lookup_name which may be the
+		// uninstantiated pattern (e.g. "Outer::Inner") rather than the concrete
+		// instantiation (e.g. "Outer$hash::Inner").  When both refer to the same type
+		// via getTemplateLookupOwnerName, the caller's struct_name is more precise.
+		[&]() -> std::string_view {
+			if (!best_owner_name.isValid()) {
+				return struct_name;
+			}
+			auto pattern_of_struct = getTemplateLookupOwnerName(struct_name);
+			if (pattern_of_struct.has_value() && *pattern_of_struct == best_owner_name) {
+				return struct_name;
+			}
+			return StringTable::getStringView(best_owner_name);
+		}(),
 		member_name,
 		best.lookup_name,
 		best.lookup_name,
@@ -1176,9 +1186,15 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			current_explicit_call_arg_types_ != nullptr
 				? *current_explicit_call_arg_types_
 				: empty_call_arg_types;
+		// Prefer the declaring owner from inheritance lookup; fall back to deriving
+		// the owner from the candidate's qualified name rather than re-using the
+		// requested receiver (which may be a derived type, not the declaring base).
+		StringHandle derived_owner = getMemberTemplateOwnerName(candidate_qualified_name, &template_node);
 		const StringHandle candidate_owner_name =
 			lookup_candidate.declaring_owner_name.isValid()
 				? lookup_candidate.declaring_owner_name
+				: derived_owner.isValid()
+				? derived_owner
 				: struct_name_handle;
 		FLASH_LOG_FORMAT(
 			Templates,

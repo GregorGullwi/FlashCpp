@@ -1460,17 +1460,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 		// Check if this is an instantiated template function
 		std::string_view func_name = func_decl_node.identifier_token().value();
-		auto is_precomputed_mangled_name = [](std::string_view name) {
-			return name.starts_with("_Z"sv) || name.starts_with("?"sv);
-		};
-		StringHandle function_name =
-			(callExprNode.has_mangled_name() &&
-			 is_precomputed_mangled_name(callExprNode.mangled_name()))
-				? StringTable::getOrInternStringHandle(callExprNode.mangled_name())
-				: (member_func_decl.has_mangled_name() &&
-				   is_precomputed_mangled_name(member_func_decl.mangled_name()))
-				? StringTable::getOrInternStringHandle(member_func_decl.mangled_name())
-				: StringHandle{};
+		// Always regenerate the symbol name from struct_info so that template
+		// instantiations produce the correct instantiated owner name (e.g.
+		// Box$hash::method) rather than reusing a stale pattern-level name.
+		StringHandle function_name = StringHandle{};
 
 		// Check if this is a member function - use struct_info to determine
 		if (struct_info && !function_name.isValid()) {
@@ -1492,10 +1485,43 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (type_it != getTypesByNameMap().end()) {
 				struct_name = type_it->second->name();
 			}
+
+			// [temp.inst] When called from within a template instantiation body, a
+			// member call on an object of the same template class must resolve to the
+			// current instantiation rather than the pattern.  E.g. inside Box<int>,
+			// `other.method()` should call Box$hash::method, not Box::method.
+			if (!current_struct_name_sv.empty() &&
+				!base_template_name.empty() &&
+				StringTable::getStringView(struct_name) == base_template_name) {
+				struct_name = current_struct_name_;
+				auto inst_it = getTypesByNameMap().find(current_struct_name_);
+				if (inst_it != getTypesByNameMap().end() && inst_it->second != nullptr) {
+					if (const StructTypeInfo* inst_struct = inst_it->second->getStructInfo()) {
+						struct_info = inst_struct;
+					}
+				}
+			}
 			auto qualified_template_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(func_name));
 
-			// Check if this is a template that has been instantiated
+			// Check if this is a template that has been instantiated.
+			// If the call qualified_name uses the receiver type (e.g. "Derived") but the
+			// template is defined in a base class (e.g. "Base"), the first lookup will
+			// fail.  In that case fall back to member_func_decl.parent_struct_name() which
+			// is the declaring owner set by the instantiator.
 			auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
+			if (!template_opt.has_value() && !member_func_decl.parent_struct_name().empty()) {
+				StringHandle decl_owner = StringTable::getOrInternStringHandle(member_func_decl.parent_struct_name());
+				if (decl_owner != struct_name) {
+					StringHandle alt_name = StringTable::getOrInternStringHandle(
+						StringBuilder().append(decl_owner).append("::"sv).append(func_name));
+					auto alt_opt = gTemplateRegistry.lookupTemplate(alt_name);
+					if (alt_opt.has_value()) {
+						struct_name = decl_owner;
+						qualified_template_name = alt_name;
+						template_opt = std::move(alt_opt);
+					}
+				}
+			}
 			if (template_opt.has_value() && template_opt->is<TemplateFunctionDeclarationNode>()) {
 				// This is a member function template - use the mangled name
 
@@ -1752,7 +1778,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				function_name = StringTable::getOrInternStringHandle(mangled);
 			}
 		} else if (!function_name.isValid()) {
-			// Non-member function or fallback
+			// No struct context: treat as an unqualified call (e.g. free function
+			// forwarded through this code path, or unresolved member without owner info).
 			function_name = StringTable::getOrInternStringHandle(func_name);
 		}
 
