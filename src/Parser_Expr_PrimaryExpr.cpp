@@ -131,6 +131,119 @@ void appendUniqueOverloads(std::vector<ASTNode>& target, std::span<const ASTNode
 		target.push_back(candidate);
 	}
 }
+
+}
+
+std::optional<ASTNode> Parser::tryInstantiateAdlTemplateCandidates(
+	StringHandle callee_name,
+	bool argument_dependent_lookup_included,
+	std::span<const TypeSpecifierNode> arg_types,
+	std::span<const ASTNode> overload_candidates) {
+	if (!argument_dependent_lookup_included ||
+		!callee_name.isValid() ||
+		arg_types.empty()) {
+		return std::nullopt;
+	}
+
+	std::unordered_set<NamespaceHandle> adl_template_namespaces;
+	const std::unordered_set<NamespaceHandle> eligible_namespaces =
+		gSymbolTable.get_adl_eligible_namespaces(arg_types);
+	for (NamespaceHandle ns : eligible_namespaces) {
+		if (!ns.isValid() || ns.isGlobal()) {
+			continue;
+		}
+		adl_template_namespaces.insert(ns);
+	}
+	for (const ASTNode& candidate : overload_candidates) {
+		const FunctionDeclarationNode* candidate_function = get_function_decl_node(candidate);
+		if (candidate_function == nullptr) {
+			continue;
+		}
+		NamespaceHandle ns = candidate_function->namespace_handle();
+		if (!ns.isValid() || ns.isGlobal()) {
+			continue;
+		}
+		adl_template_namespaces.insert(ns);
+	}
+
+	if (adl_template_namespaces.empty()) {
+		return std::nullopt;
+	}
+
+	std::vector<NamespaceHandle> ordered_namespaces(
+		adl_template_namespaces.begin(),
+		adl_template_namespaces.end());
+	std::sort(ordered_namespaces.begin(), ordered_namespaces.end());
+
+	for (NamespaceHandle ns : ordered_namespaces) {
+		StringHandle qualified_name =
+			gNamespaceRegistry.buildQualifiedIdentifier(ns, callee_name);
+		if (!qualified_name.isValid()) {
+			continue;
+		}
+		if (std::optional<ASTNode> instantiated =
+				try_instantiate_template(
+					StringTable::getStringView(qualified_name),
+					arg_types);
+			instantiated.has_value()) {
+			return instantiated;
+		}
+	}
+
+	std::unordered_set<StringHandle> attempted_names;
+	for (NamespaceHandle ns : ordered_namespaces) {
+		StringHandle qualified_name =
+			gNamespaceRegistry.buildQualifiedIdentifier(ns, callee_name);
+		if (qualified_name.isValid()) {
+			attempted_names.insert(qualified_name);
+		}
+	}
+
+	for (const TypeSpecifierNode& arg_type : arg_types) {
+		const TypeInfo* type_info = tryGetTypeInfo(arg_type.type_index());
+		if (type_info == nullptr) {
+			continue;
+		}
+		const NamespaceHandle type_namespace = type_info->namespaceHandle();
+		if (type_namespace.isValid() && !type_namespace.isGlobal()) {
+			StringHandle qualified_name =
+				gNamespaceRegistry.buildQualifiedIdentifier(type_namespace, callee_name);
+			if (qualified_name.isValid() &&
+				attempted_names.insert(qualified_name).second) {
+				if (std::optional<ASTNode> instantiated =
+						try_instantiate_template(
+							StringTable::getStringView(qualified_name),
+							arg_types);
+					instantiated.has_value()) {
+					return instantiated;
+				}
+			}
+		}
+		const std::string_view type_name = StringTable::getStringView(type_info->name());
+		const size_t scope_pos = type_name.rfind("::");
+		if (scope_pos == std::string_view::npos || scope_pos == 0) {
+			continue;
+		}
+		StringHandle qualified_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(type_name.substr(0, scope_pos))
+				.append("::")
+				.append(StringTable::getStringView(callee_name))
+				.commit());
+		if (!qualified_name.isValid() ||
+			!attempted_names.insert(qualified_name).second) {
+			continue;
+		}
+		if (std::optional<ASTNode> instantiated =
+				try_instantiate_template(
+					StringTable::getStringView(qualified_name),
+					arg_types);
+			instantiated.has_value()) {
+			return instantiated;
+		}
+	}
+
+	return std::nullopt;
 }
 
 std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantiation(
@@ -167,6 +280,16 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 			resolution.selected_overload != nullptr) {
 			return *resolution.selected_overload;
 		}
+	}
+
+	if (std::optional<ASTNode> adl_template_instantiated =
+			tryInstantiateAdlTemplateCandidates(
+				record.callee_name,
+				record.argument_dependent_lookup_included,
+				arg_types,
+				all_overloads);
+		adl_template_instantiated.has_value()) {
+		return adl_template_instantiated;
 	}
 
 	if (std::optional<ASTNode> instantiated =
@@ -5042,8 +5165,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (all_overloads.empty()) {
 					std::optional<ASTNode> instantiated_func;
-					if (current_linkage_ != Linkage::C && !has_deferred_template_call_args) {
-						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+					if (current_linkage_ != Linkage::C) {
+						if (!has_deferred_template_call_args) {
+							instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+						}
+						if (!instantiated_func.has_value()) {
+							instantiated_func = tryInstantiateAdlTemplateCandidates(
+								identifier_token.handle(),
+								true,
+								arg_types,
+								all_overloads);
+						}
 					}
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
@@ -5109,8 +5241,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return make_call_result(*synthetic_builtin);
 					}
 					std::optional<ASTNode> instantiated_func;
-					if (current_linkage_ != Linkage::C && !has_deferred_template_call_args) {
-						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+					if (current_linkage_ != Linkage::C) {
+						if (!has_deferred_template_call_args) {
+							instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+						}
+						if (!instantiated_func.has_value()) {
+							instantiated_func = tryInstantiateAdlTemplateCandidates(
+								identifier_token.handle(),
+								true,
+								arg_types,
+								all_overloads);
+						}
 					}
 					if (instantiated_func.has_value()) {
 						const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
@@ -7422,6 +7563,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										std::optional<ASTNode> instantiated_func;
 										if (current_linkage_ != Linkage::C) {
 											instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+											if (!instantiated_func.has_value()) {
+												instantiated_func = tryInstantiateAdlTemplateCandidates(
+													identifier_token.handle(),
+													true,
+													arg_types,
+													all_overloads);
+											}
 										}
 										if (instantiated_func.has_value()) {
 											// Check if the function is deleted
@@ -7493,6 +7641,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											std::optional<ASTNode> instantiated_func;
 											if (current_linkage_ != Linkage::C) {
 												instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
+												if (!instantiated_func.has_value()) {
+													instantiated_func = tryInstantiateAdlTemplateCandidates(
+														identifier_token.handle(),
+														true,
+														arg_types,
+														all_overloads);
+												}
 											}
 											if (instantiated_func.has_value()) {
 												// Check if the function is deleted
