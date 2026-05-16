@@ -1,6 +1,6 @@
-#include "TemplateTypes.h"
-#include "TemplateTypes.h"
 #include "TemplateExpressionEquivalence.h"
+#include "CompileError.h"
+#include "TemplateTypes.h"
 #include <cstring>
 
 namespace FlashCpp {
@@ -20,6 +20,8 @@ bool equalTypeSpecifierIdentityImpl(const TypeSpecifierNode& lhs, const TypeSpec
 size_t hashTypeSpecifierIdentityImpl(const TypeSpecifierNode& type);
 bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs);
 size_t hashDependentExpressionIdentityImpl(const ASTNode& node);
+bool equalDeclarationIdentity(const DeclarationNode& lhs, const DeclarationNode& rhs);
+size_t hashDeclarationIdentity(const DeclarationNode& decl);
 
 template <typename Range>
 bool equalAstRange(const Range& lhs, const Range& rhs) {
@@ -39,6 +41,40 @@ size_t hashAstRange(const Range& range) {
 	size_t seed = std::hash<size_t>{}(range.size());
 	for (const ASTNode& node : range) {
 		hashCombine(seed, hashDependentExpressionIdentityImpl(node));
+	}
+	return seed;
+}
+
+template <typename Range>
+bool equalDeclarationAstRange(const Range& lhs, const Range& rhs, std::string_view context) {
+	if (lhs.size() != rhs.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.size(); ++i) {
+		if (!lhs[i].is<DeclarationNode>() || !rhs[i].is<DeclarationNode>()) {
+			throw InternalError(
+				std::string(context) +
+				" expected DeclarationNode parameter at index " +
+				std::to_string(i));
+		}
+		if (!equalDeclarationIdentity(lhs[i].as<DeclarationNode>(), rhs[i].as<DeclarationNode>())) {
+			return false;
+		}
+	}
+	return true;
+}
+
+template <typename Range>
+size_t hashDeclarationAstRange(const Range& range, std::string_view context) {
+	size_t seed = std::hash<size_t>{}(range.size());
+	for (size_t i = 0; i < range.size(); ++i) {
+		if (!range[i].is<DeclarationNode>()) {
+			throw InternalError(
+				std::string(context) +
+				" expected DeclarationNode parameter at index " +
+				std::to_string(i));
+		}
+		hashCombine(seed, hashDeclarationIdentity(range[i].as<DeclarationNode>()));
 	}
 	return seed;
 }
@@ -261,6 +297,51 @@ size_t hashLambdaCaptureIdentity(const LambdaCaptureNode& capture) {
 	return seed;
 }
 
+bool isSupportedDependentExpressionIdentityNode(const ASTNode& node) {
+	return node.is<TypeSpecifierNode>() ||
+		   tryGetIdentifier(node) != nullptr ||
+		   tryGetNode<QualifiedIdentifierNode>(node) != nullptr ||
+		   tryGetNode<NumericLiteralNode>(node) != nullptr ||
+		   tryGetNode<BoolLiteralNode>(node) != nullptr ||
+		   tryGetNode<StringLiteralNode>(node) != nullptr ||
+		   tryGetNode<BinaryOperatorNode>(node) != nullptr ||
+		   tryGetNode<UnaryOperatorNode>(node) != nullptr ||
+		   tryGetNode<TernaryOperatorNode>(node) != nullptr ||
+		   tryGetNode<MemberAccessNode>(node) != nullptr ||
+		   tryGetNode<PointerToMemberAccessNode>(node) != nullptr ||
+		   tryGetNode<PseudoDestructorCallNode>(node) != nullptr ||
+		   tryGetNode<ArraySubscriptNode>(node) != nullptr ||
+		   tryGetNode<SizeofExprNode>(node) != nullptr ||
+		   tryGetNode<SizeofPackNode>(node) != nullptr ||
+		   tryGetNode<AlignofExprNode>(node) != nullptr ||
+		   tryGetNode<NoexceptExprNode>(node) != nullptr ||
+		   tryGetNode<OffsetofExprNode>(node) != nullptr ||
+		   tryGetNode<TypeTraitExprNode>(node) != nullptr ||
+		   tryGetNode<NewExpressionNode>(node) != nullptr ||
+		   tryGetNode<DeleteExpressionNode>(node) != nullptr ||
+		   tryGetNode<StaticCastNode>(node) != nullptr ||
+		   tryGetNode<DynamicCastNode>(node) != nullptr ||
+		   tryGetNode<ConstCastNode>(node) != nullptr ||
+		   tryGetNode<ReinterpretCastNode>(node) != nullptr ||
+		   tryGetNode<TypeidNode>(node) != nullptr ||
+		   tryGetNode<LambdaExpressionNode>(node) != nullptr ||
+		   tryGetNode<TemplateParameterReferenceNode>(node) != nullptr ||
+		   tryGetNode<FoldExpressionNode>(node) != nullptr ||
+		   tryGetNode<PackExpansionExprNode>(node) != nullptr ||
+		   tryGetNode<InitializerListConstructionNode>(node) != nullptr ||
+		   tryGetNode<ThrowExpressionNode>(node) != nullptr ||
+		   tryGetNode<CallExprNode>(node) != nullptr ||
+		   tryGetNode<ConstructorCallNode>(node) != nullptr;
+}
+
+[[noreturn]] void throwUnsupportedDependentExpressionIdentityNode(std::string_view context, const ASTNode& node) {
+	throw InternalError(
+		std::string(context) +
+		" does not support AST node kind '" +
+		std::string(node.type_name()) +
+		"'");
+}
+
 bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs) {
 	if (!lhs.has_value() || !rhs.has_value()) {
 		return lhs.has_value() == rhs.has_value();
@@ -468,7 +549,10 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 				return false;
 			}
 		}
-		if (!equalAstRange(lhs_lambda->parameters(), rhs_lambda->parameters())) {
+		if (!equalDeclarationAstRange(
+				lhs_lambda->parameters(),
+				rhs_lambda->parameters(),
+				"equalDependentExpressionIdentity(lambda parameters)")) {
 			return false;
 		}
 		if (lhs_lambda->return_type().has_value() &&
@@ -531,6 +615,12 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 		return rhs_ctor != nullptr &&
 			   equalTypeSpecifierIdentityImpl(lhs_ctor->type_node(), rhs_ctor->type_node()) &&
 			   equalAstRange(lhs_ctor->arguments(), rhs_ctor->arguments());
+	}
+	if (!isSupportedDependentExpressionIdentityNode(lhs)) {
+		throwUnsupportedDependentExpressionIdentityNode("equalDependentExpressionIdentity(lhs)", lhs);
+	}
+	if (!isSupportedDependentExpressionIdentityNode(rhs)) {
+		throwUnsupportedDependentExpressionIdentityNode("equalDependentExpressionIdentity(rhs)", rhs);
 	}
 	return false;
 }
@@ -729,7 +819,11 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 		for (const LambdaCaptureNode& capture : lambda->captures()) {
 			hashCombine(seed, hashLambdaCaptureIdentity(capture));
 		}
-		hashCombine(seed, hashAstRange(lambda->parameters()));
+		hashCombine(
+			seed,
+			hashDeclarationAstRange(
+				lambda->parameters(),
+				"hashDependentExpressionIdentity(lambda parameters)"));
 		hashCombine(seed, std::hash<bool>{}(lambda->return_type().has_value()));
 		if (lambda->return_type().has_value()) {
 			hashCombine(seed, hashDependentExpressionIdentityImpl(*lambda->return_type()));
@@ -795,7 +889,7 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 		hashCombine(seed, hashAstRange(ctor->arguments()));
 		return seed;
 	}
-	return std::hash<std::string_view>{}(node.type_name());
+	throwUnsupportedDependentExpressionIdentityNode("hashDependentExpressionIdentity", node);
 }
 
 } // namespace

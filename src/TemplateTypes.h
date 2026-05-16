@@ -33,17 +33,18 @@
  * ```
  */
 
-#include "AstNodeTypes.h"  // For Type, TypeIndex
-#include "TemplateExpressionEquivalence.h"
-#include "StringTable.h"	 // For StringHandle
-#include "InlineVector.h"  // For InlineVector
 #include <array>
-#include <vector>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <functional>  // For std::hash
 #include <variant>
+#include <vector>
+#include "AstNodeTypes.h"  // For Type, TypeIndex
+#include "InlineVector.h"  // For InlineVector
+#include "StringBuilder.h"
+#include "StringTable.h"	 // For StringHandle
+#include "TemplateExpressionEquivalence.h"
 
 namespace FlashCpp {
 
@@ -460,7 +461,10 @@ struct NonTypeValueIdentity {
 		if (is_dependent && dependent_expression.has_value()) {
 			char buf[17];
 			snprintf(buf, sizeof(buf), "%016zx", hashDependentExpressionIdentity(*dependent_expression));
-			return std::string("dep_expr$") + buf;
+			StringBuilder builder;
+			builder.append("dep_expr$");
+			builder.append(std::string_view(buf));
+			return std::string(builder.commit());
 		}
 		if (is_dependent && dependent_name.isValid()) {
 			return std::string(StringTable::getStringView(dependent_name));

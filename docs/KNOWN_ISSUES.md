@@ -33,4 +33,4 @@
         return TraitUse<int>::first() != TraitUse<int>::second() ? 0 : 1;
     }
     ```
-  - Notes: The dependent-expression identity layer now distinguishes the two expressions, but downstream type-trait evaluation/materialization still produces the same result.
+  - Notes: The dependent-expression identity layer now distinguishes the two expressions, but the later type-trait evaluation/materialization phase still canonicalizes them to the same result. The collapse happens during evaluation/materialization rather than identity tracking, so the remaining fix belongs in the evaluator/materializer rather than the dependent-expression identity layer.

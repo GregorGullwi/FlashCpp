@@ -3,6 +3,7 @@
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "Log.h"
+#include <cstring>
 #include <sstream>
 #include <set>
 #include <unordered_set>
