@@ -2772,7 +2772,10 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 				}
 			}
 
-			return makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
+			TypeSpecifierNode substituted_type =
+				makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
+			applyOuterTypeModifiers(substituted_type, type);
+			return substituted_type;
 		}
 
 		// Resolve a type name that is a member of the current class template instantiation
