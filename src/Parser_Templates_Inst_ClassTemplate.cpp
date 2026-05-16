@@ -6993,13 +6993,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const auto& static_member,
 			const auto& template_params,
 			std::span<const TemplateTypeArg> template_args) -> std::optional<ASTNode> {
+		auto try_get_declaration_node = [](const ASTNode& node) -> const DeclarationNode* {
+			if (node.is<DeclarationNode>()) {
+				return &node.as<DeclarationNode>();
+			}
+			if (node.is<VariableDeclarationNode>()) {
+				return &node.as<VariableDeclarationNode>().declaration();
+			}
+			return nullptr;
+		};
+		auto try_get_declaration_node_mut = [](ASTNode& node) -> DeclarationNode* {
+			if (node.is<DeclarationNode>()) {
+				return &node.as<DeclarationNode>();
+			}
+			if (node.is<VariableDeclarationNode>()) {
+				return &node.as<VariableDeclarationNode>().declaration();
+			}
+			return nullptr;
+		};
+
 		if (!static_member.initializer_position.has_value() ||
-			!static_member.declaration.has_value() ||
-			!static_member.declaration->template is<DeclarationNode>()) {
+			!static_member.declaration.has_value()) {
 			return std::nullopt;
 		}
 
-		const DeclarationNode& declaration = static_member.declaration->template as<DeclarationNode>();
+		const DeclarationNode* declaration =
+			try_get_declaration_node(*static_member.declaration);
+		if (declaration == nullptr) {
+			return std::nullopt;
+		}
 
 		SaveHandle current_pos = save_token_position();
 		ScopedLexerPositionRestore lexer_restore(*this, current_pos);
@@ -7013,9 +7035,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		TemplateDefinitionLookupContext definition_lookup_context;
 		definition_lookup_context.definition_line =
-			declaration.identifier_token().line();
+			declaration->identifier_token().line();
 		definition_lookup_context.definition_file_index =
-			declaration.identifier_token().file_index();
+			declaration->identifier_token().file_index();
 		definition_lookup_context.definition_namespace =
 			struct_info->getNamespaceHandle();
 		definition_lookup_context.current_instantiation_name =
@@ -7044,7 +7066,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		restore_lexer_position_only(*static_member.initializer_position);
 
 		ASTNode declaration_copy = *static_member.declaration;
-		DeclarationNode& declaration_copy_ref = declaration_copy.as<DeclarationNode>();
+		DeclarationNode* declaration_copy_ptr =
+			try_get_declaration_node_mut(declaration_copy);
+		if (declaration_copy_ptr == nullptr) {
+			return std::nullopt;
+		}
+		DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;
 		TypeSpecifierNode& type_spec = declaration_copy_ref.type_specifier_node();
 
 		std::optional<ASTNode> reparsed_initializer;
@@ -7058,9 +7085,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				reparsed_initializer = *init_result.node();
 			}
 		} else {
-			FLASH_LOG(Templates, Debug, "Skipping in-class static initializer replay for ",
-					  declaration.identifier_token().value(),
-					  " — initializer token is neither '=' nor '{'");
+			FLASH_LOG(
+				Templates,
+				Debug,
+				"Skipping in-class static initializer replay for ",
+				declaration->identifier_token().value(),
+				" — initializer token is neither '=' nor '{'");
 		}
 
 		if (!reparsed_initializer.has_value()) {
@@ -7070,6 +7100,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return substituteTemplateParameters(
 			*reparsed_initializer,
 			substitution_context);
+	};
+
+	auto substitute_in_class_static_initializer_replay_first =
+		[&](
+			const auto& static_member,
+			const auto& template_params,
+			std::span<const TemplateTypeArg> template_args,
+			const auto& fallback_template_args) -> std::optional<ASTNode> {
+		if (!static_member.initializer.has_value()) {
+			return std::nullopt;
+		}
+
+		std::optional<ASTNode> substituted_initializer;
+		try {
+			substituted_initializer =
+				try_reparse_in_class_static_initializer_fallback(
+					static_member,
+					template_params,
+					template_args);
+		} catch (const std::exception& ex) {
+			FLASH_LOG(Templates, Debug,
+					  "Replay substitution failed for in-class static member: ",
+					  ex.what(),
+					  " — falling back to AST substitution");
+			substituted_initializer.reset();
+		}
+
+		if (!substituted_initializer.has_value()) {
+			substituted_initializer = substituteTemplateParameters(
+				*static_member.initializer,
+				template_params,
+				fallback_template_args);
+		}
+
+		return substituted_initializer;
 	};
 
 	// Process static members from StructTypeInfo (preferred source)
@@ -7334,17 +7399,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			// Eager processing path (when lazy is disabled or not needed)
-			std::optional<ASTNode> substituted_initializer;
-			if (static_member.initializer.has_value()) {
-				// Keep the AST-only path for this fallback source. Some placeholder/default-arg
-				// forms in class_decl.static_members() still rely on direct substitution and can
-				// fail replay classification. StructTypeInfo-backed members above already carry
-				// stable replay metadata and use replay-first substitution.
-				substituted_initializer = substituteTemplateParameters(
-					*static_member.initializer,
+			std::optional<ASTNode> substituted_initializer =
+				substitute_in_class_static_initializer_replay_first(
+					static_member,
 					effective_template_params,
+					std::span<const TemplateTypeArg>(
+						effective_template_args_vector.data(),
+						effective_template_args_vector.size()),
 					effective_template_args);
-			}
 
 			auto [substituted_type_index, substituted_size, substituted_alignment, is_array_member, resolved_array_dimensions] =
 				compute_substituted_static_member_layout(static_member);
@@ -7401,21 +7463,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 			std::optional<ASTNode> substituted_initializer;
-			if (static_member.initializer.has_value()) {
-				substituted_initializer =
-					try_reparse_in_class_static_initializer_fallback(
-						static_member,
-						effective_template_params,
-						std::span<const TemplateTypeArg>(
-							effective_template_args_vector.data(),
-							effective_template_args_vector.size()));
-				if (!substituted_initializer.has_value()) {
-					substituted_initializer = substituteTemplateParameters(
-						*static_member.initializer,
-						effective_template_params,
-						effective_template_args);
-				}
-			}
+			substituted_initializer =
+				substitute_in_class_static_initializer_replay_first(
+					static_member,
+					effective_template_params,
+					std::span<const TemplateTypeArg>(
+						effective_template_args_vector.data(),
+						effective_template_args_vector.size()),
+					effective_template_args);
 			struct_info->addStaticMember(
 				static_member.name,
 				substituted_type_index,
