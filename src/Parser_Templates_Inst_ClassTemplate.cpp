@@ -9647,6 +9647,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} catch (const std::exception& e) {
 				FLASH_LOG(Templates, Error, "Exception during template parameter substitution for static member ",
 						  out_of_line_var.member_name, ": ", e.what());
+				throw;
 			}
 		}
 
