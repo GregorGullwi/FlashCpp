@@ -1382,9 +1382,9 @@ private:
 			if (!active_) {
 				return;
 			}
+			active_ = false;
 			parser_.restore_lexer_position_only(saved_handle_);
 			parser_.discard_saved_token(saved_handle_);
-			active_ = false;
 		}
 
 	private:
