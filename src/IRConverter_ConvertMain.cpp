@@ -13768,8 +13768,10 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		}
 	} else if (is_literal) {
 		if (is_double_literal) {
-			uint64_t bits;
-			std::memcpy(&bits, &literal_double_value, sizeof(bits));
+			// Use encodeFloatingImmediateBits so that a double literal stored into a
+			// float32 member is first narrowed to float (32-bit IEEE-754 bits) rather
+			// than taking the low 32 bits of the 64-bit double representation.
+			uint64_t bits = encodeFloatingImmediateBits(literal_double_value, op.value.size_in_bits.value);
 			emitMovImm64(value_reg, bits);
 		} else {
 			uint64_t imm64 = static_cast<uint64_t>(literal_value);
