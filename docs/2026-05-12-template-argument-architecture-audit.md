@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-15 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened)
+**Last updated:** 2026-05-16 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -169,8 +169,13 @@ sema direct lookup probes. The active architecture tracks are therefore:
     initializer replay now captures/restores definition-context lookup metadata
     and reparses from saved initializer source
     (`test_template_out_of_line_static_member_two_phase_lookup_ret0.cpp`).
-    Remaining gaps are the other parser-time concretization/reparse paths that
-    still bypass record formation.
+    **New in this slice (2026-05-16, follow-up):** in-class class-template
+    static-member eager instantiation now also replays from saved initializer
+    source with `TemplateInstantiationContext` and definition-context lookup
+    installed for StructTypeInfo-backed members
+    (`test_template_inclass_static_member_two_phase_lookup_ret0.cpp`).
+    Remaining gaps are parser-time concretization paths that still use AST-only
+    substitution (notably the AST-only `class_decl.static_members()` fallback).
 
 2. **Two-phase lookup expansion (member function template bodies ✅ done).**
     Definition-context records now cover selected non-dependent calls,
@@ -183,7 +188,8 @@ sema direct lookup probes. The active architecture tracks are therefore:
       derived-owner link regressions (`test_inherited_member_template_lookup_ret42.cpp`,
       `test_inherited_member_template_this_explicit_ret42.cpp`).
     - Eager static initializers with parser-time reparse paths beyond the now
-      covered direct-call + out-of-line static-member initializer paths.
+      covered direct-call + out-of-line static-member initializer + StructTypeInfo-
+      backed in-class static-member initializer paths.
     - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
@@ -233,7 +239,10 @@ sema direct lookup probes. The active architecture tracks are therefore:
       unqualified POI completion now also instantiates ADL-associated
       function-template candidates by namespace-qualified names when needed.
       Out-of-line class-template static member initializer replay now preserves
-      definition-context lookup during instantiation-time reparse.
+      definition-context lookup during instantiation-time reparse. In-class
+      StructTypeInfo-backed eager static-member initialization now also
+      performs replay-first substitution with definition-context lookup before
+      falling back to AST-only substitution.
 
 3. **Structural NTTP value model.**
    The concrete value identity still has C++20 gaps beyond the supported
