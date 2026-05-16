@@ -5809,14 +5809,31 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						arr_ptr = &it->second;
 					}
 				}
-				if (!arr_ptr) {
+				const auto* pointer_snapshot = [&]() -> const std::vector<EvalResult>* {
+					if (!begin_result.pointer_value_snapshot.empty()) {
+						return &begin_result.pointer_value_snapshot;
+					}
+					if (!end_result.pointer_value_snapshot.empty()) {
+						return &end_result.pointer_value_snapshot;
+					}
+					return nullptr;
+				}();
+				if (!arr_ptr && !pointer_snapshot) {
 					return EvalResult::error("Range-based for: could not find backing array '" + std::string(arr_name) + "' for begin()/end() iteration");
 				}
-				if (end_off > static_cast<int64_t>(arr_ptr->array_elements.size())) {
+				assert(arr_ptr || pointer_snapshot);
+
+				const size_t element_count = arr_ptr
+					? arr_ptr->array_elements.size()
+					: pointer_snapshot->size();
+				if (end_off > static_cast<int64_t>(element_count)) {
 					return EvalResult::error("Range-based for: end() offset exceeds array size");
 				}
 				for (int64_t i = begin_off; i < end_off; i++) {
-					auto [stop, result] = run_body(arr_ptr->array_elements[static_cast<size_t>(i)]);
+					const EvalResult& element = arr_ptr
+						? arr_ptr->array_elements[static_cast<size_t>(i)]
+						: (*pointer_snapshot)[static_cast<size_t>(i)];
+					auto [stop, result] = run_body(element);
 					if (stop)
 						return result;
 				}

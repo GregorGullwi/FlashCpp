@@ -128,9 +128,9 @@ struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in 
 
 `std::initializer_list<T>` construction from a braced argument list (`{e1, e2, ...}`) is now supported in constexpr evaluation via `InitializerListConstructionNode`. The evaluator synthesises a backing array, constructs begin/end pointer pair (or begin/size for the `data_`/`size_` layout), and materialises the `initializer_list` struct via its constructor or falls back to direct aggregate member assignment.
 
-**Supported:** `size()` (pointer subtraction), pointer comparison, pointer arithmetic on the stored pointer. See `tests/test_constexpr_initializer_list_ret0.cpp`.
+**Supported:** `size()` (pointer subtraction), pointer comparison, pointer arithmetic on the stored pointer, and range-based for iteration via `begin()` / `end()` when the iterators are backed by the synthesized constexpr snapshot. See `tests/test_constexpr_initializer_list_ret0.cpp` and `tests/test_constexpr_initializer_list_range_for_ret0.cpp`.
 
-**Not yet supported:** Element iteration via a stored pointer member (`*p` where `p` was obtained from `begin()`). The `pointer_value_snapshot` is not propagated across struct member round-trips, so `*p` fails when `p` is retrieved from a struct member rather than directly from the evaluated pointer. Both the backing array binding and the `pointer_value_snapshot` are available while the construction expression is in scope; they do not survive a struct round-trip (store into member → load back out). Use explicit array parameters when element access is needed.
+**Still limited:** Direct element iteration only works while the iterator pointer keeps its synthesized snapshot. If user code stores the iterator in another object and later reloads it in a way that discards the snapshot metadata, dereference can still fail. The remaining work is to preserve snapshot-backed pointer state across every struct/member round-trip, not just through the range-for evaluator's direct `begin()`/`end()` path.
 
 ```cpp
 constexpr unsigned long count(std::initializer_list<int> lst) {
@@ -140,9 +140,10 @@ static_assert(count({1, 2, 3, 4, 5}) == 5);  // ✅ Supported
 
 constexpr int sum(std::initializer_list<int> lst) {
     int s = 0;
-    for (int v : lst) s += v;  // ❌ element dereference via stored pointer not yet supported
+    for (int v : lst) s += v;  // ✅ Supported
     return s;
 }
+static_assert(sum({1, 2, 3, 4}) == 10);  // ✅ Supported
 ```
 
 ---
