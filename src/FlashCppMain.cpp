@@ -424,7 +424,7 @@ int main_impl(int argc, char* argv[]) {
 			g_parser_instantiation_notes.clear();
 		}
 	}
-	if (parse_compile_error) {
+	if (parse_compile_error || parse_result.is_error()) {
 		if (show_perf_stats) {
 			parser->printRuntimeStats();
 			printTypeTableStats();
@@ -432,18 +432,11 @@ int main_impl(int argc, char* argv[]) {
 		}
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time,
 						   ir_conversion_time, deferred_gen_time, codegen_time, total_start);
-		FLASH_LOG(Parser, Error, "error: ", parse_compile_error_message, parse_compile_error_notes);
-		std::cerr << "error: " << parse_compile_error_message << parse_compile_error_notes << std::endl;
-		return 1;
-	}
-	if (parse_result.is_error()) {
-		if (show_perf_stats) {
-			parser->printRuntimeStats();
-			printTypeTableStats();
-			StackStringStats::print_stats();
+		if (parse_compile_error) {
+			FLASH_LOG(Parser, Error, "error: ", parse_compile_error_message, parse_compile_error_notes);
+			std::cerr << "error: " << parse_compile_error_message << parse_compile_error_notes << std::endl;
+			return 1;
 		}
-		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time,
-						   ir_conversion_time, deferred_gen_time, codegen_time, total_start);
 		// Print formatted error with file:line:column information and include stack
 		std::string error_msg = parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer);
 		FLASH_LOG(Parser, Error, error_msg);
