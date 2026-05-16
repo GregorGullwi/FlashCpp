@@ -480,26 +480,120 @@ ParseResult Parser::parse_template_parameter() {
 	Token param_name_token;
 	[[maybe_unused]] bool is_anonymous = false;
 
-	if (peek().is_identifier()) {
-		// Named parameter
-		param_name_token = peek_info();
-		param_name = param_name_token.value();
-		advance(); // consume parameter name
-	} else {
-		// Anonymous parameter - generate unique name
-		// Check if next token is valid for end of parameter (comma, >, or =)
-		if (!peek().is_eof() &&
-			(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "="_tok)) {
-			// Generate unique anonymous parameter name
-			static int anonymous_counter = 0;
-			param_name = StringBuilder().append("__anon_param_"sv).append(static_cast<int64_t>(anonymous_counter++)).commit();
+	// Check for function pointer declarator syntax: T (*Name)(params...)
+	// e.g., template <int (*F)()> or template <void (*)(int, double)>
+	// The base type specifier (e.g. 'int') has already been parsed into nttp_type.
+	// We now look for the (*Name)(...) declarator group that completes the function pointer type.
+	bool parsed_as_function_pointer = false;
+	if (!is_variadic && peek() == "("_tok) {
+		SaveHandle fp_decl_pos = save_token_position();
+		advance(); // consume '('
 
-			// Store the anonymous name in a way that persists
-			// We'll use the current token as the token reference
-			param_name_token = current_token_;
-			is_anonymous = true;
+		// Skip optional calling convention (__cdecl, __stdcall, etc.) before '*'
+		CallingConvention fp_calling_convention = parse_calling_convention(CallingConvention::Default);
+
+		if (peek() == "*"_tok) {
+			advance(); // consume '*'
+
+			// Parse the optional parameter name inside (*Name), e.g. 'F' in int (*F)()
+			Token fp_name_token;
+			std::string_view fp_name;
+			if (peek().is_identifier()) {
+				fp_name_token = peek_info();
+				fp_name = fp_name_token.value();
+				advance(); // consume the name
+			}
+
+			if (peek() == ")"_tok) {
+				advance(); // consume ')'
+
+				// Now expect the argument type list: (params...)
+				if (peek() == "("_tok) {
+					advance(); // consume '('
+
+					std::vector<TypeIndex> fp_param_types;
+					bool param_parse_ok = parse_function_type_parameter_list(fp_param_types);
+
+					if (param_parse_ok && peek() == ")"_tok) {
+						advance(); // consume ')'
+
+						// Parse optional noexcept specifier after parameter list
+						bool sig_is_noexcept = false;
+						if (peek() == "noexcept"_tok) {
+							advance(); // consume 'noexcept'
+							sig_is_noexcept = parse_noexcept_value();
+						}
+
+						// Build the function signature: the return type is nttp_type as currently
+						// parsed (e.g. 'int' for int (*F)()).
+						FunctionSignature func_sig;
+						func_sig.return_type_index = nttp_type.type_index();
+						func_sig.return_pointer_depth = static_cast<int>(nttp_type.pointer_depth());
+						func_sig.return_reference_qualifier = nttp_type.reference_qualifier();
+						func_sig.parameter_type_indices = std::move(fp_param_types);
+						func_sig.calling_convention = fp_calling_convention;
+						func_sig.is_noexcept = sig_is_noexcept;
+
+						// Rewrite nttp_type to TypeCategory::FunctionPointer.
+						// FunctionPointer is intrinsically pointer-sized; the "pointer-ness" is
+						// baked into the category (no extra pointer_level needed).
+						nttp_type.set_type_index(nativeTypeIndex(TypeCategory::FunctionPointer));
+						nttp_type.set_size_in_bits(64);
+						nttp_type.limit_pointer_depth(0);
+						nttp_type.set_function_signature(func_sig);
+
+						discard_saved_token(fp_decl_pos);
+						parsed_as_function_pointer = true;
+
+						// Use the name from (*Name), or generate an anonymous name
+						if (!fp_name.empty()) {
+							param_name = fp_name;
+							param_name_token = fp_name_token;
+						} else {
+							static int anonymous_fp_counter = 0;
+							param_name = StringBuilder()
+								.append("__anon_fp_param_"sv)
+								.append(static_cast<int64_t>(anonymous_fp_counter++))
+								.commit();
+							param_name_token = current_token_;
+							is_anonymous = true;
+						}
+					} else {
+						restore_token_position(fp_decl_pos);
+					}
+				} else {
+					restore_token_position(fp_decl_pos);
+				}
+			} else {
+				restore_token_position(fp_decl_pos);
+			}
 		} else {
-			return ParseResult::error("Expected identifier for non-type template parameter", current_token_);
+			restore_token_position(fp_decl_pos);
+		}
+	}
+
+	if (!parsed_as_function_pointer) {
+		if (peek().is_identifier()) {
+			// Named parameter
+			param_name_token = peek_info();
+			param_name = param_name_token.value();
+			advance(); // consume parameter name
+		} else {
+			// Anonymous parameter - generate unique name
+			// Check if next token is valid for end of parameter (comma, >, or =)
+			if (!peek().is_eof() &&
+				(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "="_tok)) {
+				// Generate unique anonymous parameter name
+				static int anonymous_counter = 0;
+				param_name = StringBuilder().append("__anon_param_"sv).append(static_cast<int64_t>(anonymous_counter++)).commit();
+
+				// Store the anonymous name in a way that persists
+				// We'll use the current token as the token reference
+				param_name_token = current_token_;
+				is_anonymous = true;
+			} else {
+				return ParseResult::error("Expected identifier for non-type template parameter", current_token_);
+			}
 		}
 	}
 

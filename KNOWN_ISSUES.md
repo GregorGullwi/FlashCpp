@@ -32,7 +32,49 @@ definition-time overload sets, consistent with free function template bodies.
 
 ---
 
-## 3) Out-of-line template member signature validation is still too strict for dependent aliases
+## 4) Pointer-NTTP full specialization dispatch: second lookup produces wrong arg type
+
+- **Symptom**: Given `template <int* P> struct Tag { static int value() { return -1; } };`
+  `template <> struct Tag<&ga> { static int value() { return 10; } };`, calling
+  `Tag<&ga>::value()` in `main()` returns `-1` (invokes the primary template) instead of `10`.
+  The specialization IS correctly instantiated and both symbols appear in the object file.
+
+- **Root cause (confirmed via debug instrumentation)**:
+  There are two distinct lookup paths for `Tag<&ga>`:
+  1. During parsing of `template <> struct Tag<&ga>`: `&ga` is evaluated to
+     `ObjectPointer(nativeTypeIndex(Int), "ga", 0)` → `SpecializationKey` hash matches →
+     `lookupExactSpecialization` returns the spec node ✓
+  2. During parsing of `Tag<&ga>::value()` in `main()`: `&ga` evaluates to a plain
+     `TemplateTypeArg(0, Int)` (value=0, `has_typed_value_identity=false`) → different hash →
+     `lookupExactSpecialization` returns `nullopt` → generic template is instantiated with
+     mangled name `Tag$00000a1837ced158` instead of `Tag$00a3b7d5a86c5df9` → `main` calls
+     the wrong symbol.
+
+  The second path fails to produce an `ObjectPointer` identity for the `&ga` argument. This
+  is likely because the expression-side template-argument classification in `main` context
+  either calls `parse_explicit_template_arguments()` without template params (skipping
+  `classifyExplicitTemplateArgumentsAgainstParameters`), or `try_evaluate_constant_expression`
+  returns an `EvalResult` without `pointer_to_var` set in that path, causing fallback to
+  `TemplateTypeArg::makeValue(0, Int)`.
+
+- **Affected paths**:
+  - `src/Parser_Expr_PrimaryExpr.cpp` — second call to `parse_explicit_template_arguments` /
+    `materializePrimaryTemplateOwnerForLookup` (line ~1461)
+  - `src/Parser_Templates_Params.cpp` — `makeValueArgForSyntax` / `classifyExplicitTemplateArgumentsAgainstParameters`
+  - `src/TemplateRegistry_Registry.h` — `lookupExactSpecialization`
+  - `src/Parser_Templates_Function.cpp` — `makeConstantValueFromEvalResult` (creates `ObjectPointer`)
+
+- **Recommended fix**: Ensure that wherever `Tag<&ga>` template args are parsed for the member
+  access / function call context, the path goes through `parse_explicit_template_arguments(primary_template_params)`
+  (with template params provided) and `classifyExplicitTemplateArgumentsAgainstParameters` is
+  called so `&ga` is evaluated with the declared `int*` type, giving `pointer_to_var.isValid()=true`
+  and thus `ObjectPointer` identity via `makeConstantValueFromEvalResult`.
+
+- **Impact**: All pointer-NTTP full specializations where the specialization adds/changes member
+  functions are silently not dispatched to; the generic template is called instead.
+
+- **Regression test (pending)**: `tests/test_nttp_ptr_specialization_ret0.cpp`
+
 
 - **Symptom**: Parser warnings like `Parameter 1 type mismatch in out-of-line template member ...` remain for
   valid declarations/definitions that differ only by dependent spelling/aliases.

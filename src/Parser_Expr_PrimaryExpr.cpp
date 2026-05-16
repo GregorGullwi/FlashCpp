@@ -2752,6 +2752,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return parse_qualified_operator_call(final_identifier, namespaces);
 				}
 
+				// Handle ::template syntax for dependent names (e.g., Host::template value<T>())
+				if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "template") {
+					advance(); // consume optional 'template' keyword
+				}
+
 				// Get next identifier
 				if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 					return ParseResult::error("Expected identifier after '::'", current_token_);
@@ -3123,6 +3128,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						// Parse the :: and the member name
 						advance(); // consume ::
+						// Handle ::template syntax for dependent names (e.g., Host2::template value<int>(2))
+						if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "template") {
+							advance(); // consume optional 'template' keyword
+						}
 						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 							return ParseResult::error("Expected identifier after '::'", current_token_);
 						}
@@ -3136,6 +3145,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							StringHandle member_handle = member_token.handle();
 							full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(full_ns_handle, member_handle);
 							advance(); // consume ::
+							// Handle ::template syntax for dependent names
+							if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "template") {
+								advance(); // consume optional 'template' keyword
+							}
 							if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 								return ParseResult::error("Expected identifier after '::'", current_token_);
 							}
