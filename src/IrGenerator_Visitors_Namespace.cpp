@@ -315,20 +315,20 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			}
 			if (expr_opt->is<ExpressionNode>()) {
 				const void* key = static_cast<const void*>(&expr_opt->as<ExpressionNode>());
-				auto slot = sema_->getSlot(key);
+				auto slot = sema_.getSlot(key);
 				if (!sema_applied_conversion && slot.has_value() && slot->has_cast()) {
 					const ImplicitCastInfo& cast_info =
-						sema_->castInfoTable()[slot->cast_info_index.value - 1];
-					const TypeCategory annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).category();
-					const TypeCategory to_type = sema_->typeContext().get(cast_info.target_type_id).category();
+						sema_.castInfoTable()[slot->cast_info_index.value - 1];
+					const TypeCategory annotated_source_type = sema_.typeContext().get(cast_info.source_type_id).category();
+					const TypeCategory to_type = sema_.typeContext().get(cast_info.target_type_id).category();
 					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						annotated_source_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
-						TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
+						TypeIndex source_type_idx = sema_.typeContext().get(cast_info.source_type_id).type_index;
 						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
 							const StructTypeInfo* src_struct_info = src_type_info->getStructInfo();
 							const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
-							const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
+							const bool source_is_const = ((static_cast<uint8_t>(sema_.typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 							const StructMemberFunction* conv_op = findConversionOperator(
 								src_struct_info, ret_type_idx, source_is_const);
 							if (conv_op) {

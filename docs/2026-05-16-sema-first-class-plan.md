@@ -79,6 +79,20 @@ Any code reading a table should be able to tell whether an empty lookup means:
 
 ## Stage 6: Make Callers Depend On Semantic Facts, Not Semantic Presence
 
+### Progress update (2026-05-16)
+
+Initial Stage 6 codegen invariants are now in place:
+
+- `AstToIr` now requires `SemanticAnalysis&` at construction time instead of receiving semantic data through a later setter call.
+- the `setSemanticData(...)` plumbing is gone, so codegen cannot accidentally start in a semantic-null state anymore.
+- IR generation helpers now treat semantic analysis as mandatory infrastructure and only branch on whether a particular semantic fact was available.
+
+Remaining Stage 6 work:
+
+- remove the remaining nullable-semantic branches in parser-owned constexpr/template/substitution contexts
+- continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
+- keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
+
 ### 6.1 Remove remaining nullable semantic branches in parser-owned contexts
 
 Target:
@@ -133,7 +147,7 @@ At that point, codegen nullability should be considered a bug.
 1. Inventory semantic APIs by phase: parser-safe, pending-root-safe, post-parse-only.
 2. Extract parser-safe operations behind a dedicated internal interface/class.
 3. Convert constexpr/template helpers to the parser-safe interface and remove nullable branches there.
-4. Convert `AstToIr` construction to require semantic analysis directly.
+4. Convert `AstToIr` construction to require semantic analysis directly. ✅
 5. Remove legacy parser/codegen fallback paths once invariants are enforced.
 
 ## Risks To Watch

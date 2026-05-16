@@ -604,10 +604,10 @@ TypedValue AstToIr::buildDirectIdentifierCallArgument(
 	bool needs_array_decay = false;
 	if (argument.is<ExpressionNode>()) {
 		const void* arg_key = &argument.as<ExpressionNode>();
-		const auto arg_slot = sema_->getSlot(arg_key);
+		const auto arg_slot = sema_.getSlot(arg_key);
 		if (arg_slot.has_value() && arg_slot->has_cast()) {
 			const ImplicitCastInfo& ci =
-				sema_->castInfoTable()[arg_slot->cast_info_index.value - 1];
+				sema_.castInfoTable()[arg_slot->cast_info_index.value - 1];
 			needs_array_decay =
 				(ci.cast_kind == StandardConversionKind::ArrayToPointer);
 		}
@@ -937,11 +937,10 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 	// but has not been materialized yet), trigger materialization now via sema before
 	// codegen references it. This prevents linker errors when implicit constructors
 	// (e.g. for a derived class) call an unmaterialized base-class constructor.
-	if (sema_ &&
-		!ctor_op.resolved_constructor->is_materialized() &&
+	if (!ctor_op.resolved_constructor->is_materialized() &&
 		ctor_op.resolved_constructor->has_any_body_source() &&
 		struct_info.name.isValid()) {
-		sema_->ensureMemberFunctionMaterialized(
+		sema_.ensureMemberFunctionMaterialized(
 			struct_info.name,
 			*ctor_op.resolved_constructor);
 		// Re-fetch after materialization: the lazy materializer replaces the
@@ -1083,7 +1082,7 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Sema owns the full ternary result type for normalized bodies. The fallbacks
 	// below are only for legacy non-normalized bodies that can still reach codegen.
 	TypeCategory common_cat = TypeCategory::Invalid;
-	exact_ternary_result_type = sema_->getTernaryResultType(ternaryNode);
+	exact_ternary_result_type = sema_.getTernaryResultType(ternaryNode);
 	if (context != ExpressionContext::LValueAddress && exact_ternary_result_type.has_value()) {
 		common_cat = exact_ternary_result_type->category();
 	}
@@ -1104,8 +1103,8 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Fallback: use sema-backed expression types when no explicit conversion
 	// annotation was recorded for either branch.
 	if (common_cat == TypeCategory::Invalid) {
-		auto true_ts = sema_->getExpressionType(ternaryNode.true_expr());
-		auto false_ts = sema_->getExpressionType(ternaryNode.false_expr());
+		auto true_ts = sema_.getExpressionType(ternaryNode.true_expr());
+		auto false_ts = sema_.getExpressionType(ternaryNode.false_expr());
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
@@ -1417,15 +1416,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// When expected_target is valid (not Invalid), the annotation's target type must match; otherwise
 	// the helper returns false so the caller's fallback policy runs instead.
 	auto tryGlobalSemaConv = [&](ExprResult& expr, const ASTNode& node, TypeCategory expected_cat = TypeCategory::Invalid) -> bool {
-		if (!sema_ || !node.is<ExpressionNode>())
+		if (!node.is<ExpressionNode>())
 			return false;
 		const void* key = &node.as<ExpressionNode>();
-		const auto slot = sema_->getSlot(key);
+		const auto slot = sema_.getSlot(key);
 		if (!slot.has_value() || !slot->has_cast())
 			return false;
-		const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-		TypeCategory from_t = sema_->typeContext().get(ci.source_type_id).category();
-		const TypeCategory to_t = sema_->typeContext().get(ci.target_type_id).category();
+		const ImplicitCastInfo& ci = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+		TypeCategory from_t = sema_.typeContext().get(ci.source_type_id).category();
+		const TypeCategory to_t = sema_.typeContext().get(ci.target_type_id).category();
 		if (from_t == TypeCategory::Struct || to_t == TypeCategory::Struct)
 			return false;
 		if (expected_cat != TypeCategory::Invalid && to_t != expected_cat)
@@ -1656,7 +1655,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					// Phase 17: verify sema annotated the back-conversion.
 					if (sema_normalized_current_function_ &&
 						is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(gsi.type_index.category())) {
-						auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
+						auto back_conv = sema_.getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 						if (!back_conv.has_value())
 							throw InternalError(std::string("Phase 17: sema missed global compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(gsi.type_index.category())) + ")");
 					}
@@ -1798,10 +1797,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
 		auto tryGetOperandTypeSpec = [&](const ASTNode& operand) -> std::optional<TypeSpecifierNode> {
-			if (sema_) {
-				if (auto sema_type_spec = sema_->getOverloadResolutionArgType(operand)) {
-					return sema_type_spec;
-				}
+			if (auto sema_type_spec = sema_.getOverloadResolutionArgType(operand)) {
+				return sema_type_spec;
 			}
 			if (!parser_) {
 				return std::nullopt;
@@ -3398,7 +3395,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			// Phase 17: verify sema annotated the back-conversion (ownership transfer).
 			if (sema_normalized_current_function_ &&
 				is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(lhsCat)) {
-				auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
+				auto back_conv = sema_.getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 				if (!back_conv.has_value())
 					throw InternalError(std::string("Phase 17: sema missed compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(lhsCat)) + ")");
 			}

@@ -406,8 +406,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	const FunctionDeclarationNode* const pre_resolved_direct_target = [&]() -> const FunctionDeclarationNode* {
 		const FunctionDeclarationNode* target =
 			getParserStoredDirectCallTarget(callExprNode);
-		if (!target && sema_) {
-			target = sema_->getResolvedDirectCall(sema_call_key);
+		if (!target) {
+			target = sema_.getResolvedDirectCall(sema_call_key);
 		}
 		return target;
 	}();
@@ -448,7 +448,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		auto arg_node = callExprNode.arguments()[0];
 		if (arg_node.is<ExpressionNode>()) {
 			auto getInlineAlwaysArgType = [&]() -> std::optional<TypeSpecifierNode> {
-				if (auto sema_type = sema_->getExpressionType(arg_node); sema_type.has_value()) {
+				if (auto sema_type = sema_.getExpressionType(arg_node); sema_type.has_value()) {
 					return sema_type;
 				}
 				if (parser_) {
@@ -541,7 +541,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	if (func_ptr_decl) {
 		const auto& func_type = func_ptr_decl->type_specifier_node();
 		const FunctionDeclarationNode* resolved_operator_call =
-			!sema_ ? nullptr : sema_->getResolvedOpCall(sema_call_key);
+			sema_.getResolvedOpCall(sema_call_key);
 
 		if (resolved_operator_call) {
 			ChunkedVector<ASTNode> member_args;
@@ -853,11 +853,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 		for (const auto& member_func : struct_info->member_functions) {
 			ASTNode function_node = member_func.function_decl;
-			if (sema_ && function_node.is<FunctionDeclarationNode>()) {
+			if (function_node.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func_decl = function_node.as<FunctionDeclarationNode>();
 				if (!func_decl.is_materialized() && !func_decl.is_implicit() && member_func.getName().isValid()) {
 					if (std::optional<ASTNode> materialized =
-							sema_->ensureMemberFunctionMaterialized(
+							sema_.ensureMemberFunctionMaterialized(
 								struct_name,
 								member_func.getName(),
 								member_func.is_const())) {
@@ -1016,8 +1016,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
 	// direct-call target stored by semantic analysis before attempting any
 	// duplicate symbol-table recovery work in codegen.
-	if (!matched_func_decl && sema_) {
-		consumeResolvedDirectCallTarget(sema_->getResolvedDirectCall(sema_call_key), "sema-resolved");
+	if (!matched_func_decl) {
+		consumeResolvedDirectCallTarget(sema_.getResolvedDirectCall(sema_call_key), "sema-resolved");
 	}
 
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
@@ -1034,7 +1034,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// hatches. Semantically normalized ordinary direct calls should now either
 	// provide a sema-owned target or mark the call as unresolved.
 	const bool sema_recorded_unresolved_call =
-		sema_->hasUnresolvedCallArgs(sema_call_key);
+		sema_.hasUnresolvedCallArgs(sema_call_key);
 	const bool allow_lookup_recovery =
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
@@ -1342,7 +1342,7 @@ ambiguous_qualified_static_member:
 		ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 		ctx.parser = parser_;
-		ctx.sema = sema_;
+		ctx.sema = &sema_;
 		auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);
 		auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
 		if (!eval_result.success()) {
@@ -1431,8 +1431,8 @@ ambiguous_qualified_static_member:
 		const TypeSpecifierNode* param_type = param_view.type();
 		CVReferenceQualifier param_ref_qualifier = param_view.ref_qualifier;
 		const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
-		if (param_type && sema_) {
-			sema_ref_binding = sema_->getCallRefBinding(
+		if (param_type) {
+			sema_ref_binding = sema_.getCallRefBinding(
 				sema_call_key,
 				arg_index);
 		}
@@ -1504,18 +1504,18 @@ ambiguous_qualified_static_member:
 			bool sema_applied_arg_conversion = false;
 			if (argument.is<ExpressionNode>()) {
 				const void* key = &argument.as<ExpressionNode>();
-				const auto slot = sema_->getSlot(key);
+				const auto slot = sema_.getSlot(key);
 				if (slot.has_value() && slot->has_cast()) {
 					const ImplicitCastInfo& cast_info =
-						sema_->castInfoTable()[slot->cast_info_index.value - 1];
-					TypeCategory from_type = sema_->typeContext().get(cast_info.source_type_id).category();
-					const TypeCategory to_type = sema_->typeContext().get(cast_info.target_type_id).category();
+						sema_.castInfoTable()[slot->cast_info_index.value - 1];
+					TypeCategory from_type = sema_.typeContext().get(cast_info.source_type_id).category();
+					const TypeCategory to_type = sema_.typeContext().get(cast_info.target_type_id).category();
 					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 						from_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
-						TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
+						TypeIndex source_type_idx = sema_.typeContext().get(cast_info.source_type_id).type_index;
 						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-							const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
+							const bool source_is_const = ((static_cast<uint8_t>(sema_.typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 							const StructMemberFunction* conv_op = findConversionOperator(
 								src_type_info->getStructInfo(), param_type->type_index(), source_is_const);
 							if (conv_op) {
@@ -1566,7 +1566,7 @@ ambiguous_qualified_static_member:
 				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 				if (standard_conversion.is_valid &&
 					standard_conversion.rank != ConversionRank::UserDefined) {
-					if (sema_normalized_current_function_ && !sema_->hasUnresolvedCallArgs(sema_call_key)) {
+					if (sema_normalized_current_function_ && !sema_.hasUnresolvedCallArgs(sema_call_key)) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, callExprNode.called_from());

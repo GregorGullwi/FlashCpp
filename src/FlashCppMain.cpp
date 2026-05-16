@@ -490,11 +490,10 @@ int main_impl(int argc, char* argv[]) {
 		}
 	}
 
-	AstToIr converter(gSymbolTable, context, *parser);
 	if (!sema->hasPostParseNormalizationCompleted()) {
 		throw InternalError("AstToIr requires completed post-parse semantic normalization");
 	}
-	converter.setSemanticData(sema.get());
+	AstToIr converter(gSymbolTable, context, *parser, *sema);
 
 	// Reserve space for IR instructions
 	// Estimate: ~2 instructions per source line (empirical heuristic)

@@ -99,11 +99,7 @@ bool isTrivialForDeferredImplicitMembers(const StructTypeInfo* struct_info) {
 } // namespace
 
 void AstToIr::normalizePendingSemanticRoots() {
-	if (!sema_) {
-		return;
-	}
-
-	sema_->parserSemanticServices().normalizePendingSemanticRoots();
+	sema_.parserSemanticServices().normalizePendingSemanticRoots();
 }
 
 void AstToIr::queueDeferredMemberFunctionFromNode(

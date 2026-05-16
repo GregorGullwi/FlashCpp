@@ -1113,7 +1113,7 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		const ASTNode& operand_node = typeidNode.operand();
 		const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
 		std::optional<TypeSpecifierNode> static_expr_type =
-			sema_ ? sema_->getExpressionType(operand_node) : std::nullopt;
+			sema_.getExpressionType(operand_node);
 		auto resolveExprTypeIndex = [&](const ExpressionNode& expr, TypeIndex fallback_type_index) -> TypeIndex {
 			if (fallback_type_index.category() == TypeCategory::Struct && fallback_type_index.is_valid()) {
 				return fallback_type_index;

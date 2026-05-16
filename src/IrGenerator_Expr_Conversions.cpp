@@ -749,9 +749,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		}
 	}
 
-	if (unaryOperatorNode.op() == "*" && unaryOperatorNode.get_operand().is<ExpressionNode>() && sema_) {
+	if (unaryOperatorNode.op() == "*" && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		if (const FunctionDeclarationNode* resolved_deref =
-				sema_->getResolvedUnaryDereferenceOperator(&unaryOperatorNode)) {
+				sema_.getResolvedUnaryDereferenceOperator(&unaryOperatorNode)) {
 			ChunkedVector<ASTNode> member_args;
 			CallExprNode member_call = makeResolvedMemberCallExpr(
 				unaryOperatorNode.get_operand(),
@@ -1495,11 +1495,11 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		bool promoted = false;
 		if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 			const void* key = &unaryOperatorNode.get_operand().as<ExpressionNode>();
-			const auto slot = sema_->getSlot(key);
+			const auto slot = sema_.getSlot(key);
 			if (slot.has_value() && slot->has_cast()) {
-				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-				TypeCategory from_t = sema_->typeContext().get(ci.source_type_id).category();
-				const TypeCategory to_t = sema_->typeContext().get(ci.target_type_id).category();
+				const ImplicitCastInfo& ci = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+				TypeCategory from_t = sema_.typeContext().get(ci.source_type_id).category();
+				const TypeCategory to_t = sema_.typeContext().get(ci.target_type_id).category();
 				if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
 						// Handle enum mismatch (sema annotates TypeCategory::Enum but codegen resolves early)
 					if (from_t != operandIrOperands.typeEnum() && from_t == TypeCategory::Enum)
@@ -1511,8 +1511,8 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			}
 		}
 			// Phase 15: sema should annotate all unary operand integral promotions.
-			// When sema_ is null (e.g., template instantiation), keep the fallback
-			// unconditionally to avoid dropping promotions.
+			// When sema does not provide an explicit cast annotation for this path,
+			// keep the fallback unconditionally to avoid dropping promotions.
 		if (!promoted && (operandType == TypeCategory::Bool ||
 						  (is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
 			if (sema_normalized_current_function_)
@@ -2089,7 +2089,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
 		if (operand_pointer_depth == 0) {
 			std::optional<TypeSpecifierNode> operand_type_opt;
-			operand_type_opt = sema_->getExpressionType(unaryOperatorNode.get_operand());
+			operand_type_opt = sema_.getExpressionType(unaryOperatorNode.get_operand());
 			if (!operand_type_opt.has_value() && parser_) {
 				operand_type_opt = parser_->get_expression_type(unaryOperatorNode.get_operand());
 			}
@@ -2118,8 +2118,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 					}
 				}
 			}
-			if (!object_type_opt.has_value() && sema_) {
-				object_type_opt = sema_->getExpressionType(member_access.object());
+			if (!object_type_opt.has_value()) {
+				object_type_opt = sema_.getExpressionType(member_access.object());
 			}
 			if (!object_type_opt.has_value() && parser_) {
 				object_type_opt = parser_->get_expression_type(member_access.object());
@@ -2271,7 +2271,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			ctx.global_symbols = global_symbol_table_;
 		}
 		ctx.parser = parser_;
-		ctx.sema = sema_;
+		ctx.sema = &sema_;
 
 		auto eval_result = ConstExpr::Evaluator::evaluate(*func_decl.noexcept_expression(), ctx);
 		return eval_result.success() && eval_result.as_bool();
@@ -2443,15 +2443,15 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 }
 
 TypeCategory AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
-	if (!sema_ || !node.is<ExpressionNode>())
+	if (!node.is<ExpressionNode>())
 		return TypeCategory::Invalid;
 	const void* key = &node.as<ExpressionNode>();
-	const auto slot = sema_->getSlot(key);
+	const auto slot = sema_.getSlot(key);
 	if (!slot.has_value() || !slot->has_cast())
 		return TypeCategory::Invalid;
-	const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-	const TypeCategory from_cat = sema_->typeContext().get(ci.source_type_id).category();
-	const TypeCategory to_cat = sema_->typeContext().get(ci.target_type_id).category();
+	const ImplicitCastInfo& ci = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+	const TypeCategory from_cat = sema_.typeContext().get(ci.source_type_id).category();
+	const TypeCategory to_cat = sema_.typeContext().get(ci.target_type_id).category();
 	if (from_cat == TypeCategory::Struct || to_cat == TypeCategory::Struct)
 		return TypeCategory::Invalid;
 	return to_cat;
@@ -2492,11 +2492,11 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 	bool sema_applied_bool_conv = false;
 	if (cond_node.is<ExpressionNode>()) {
 		const void* key = &cond_node.as<ExpressionNode>();
-		const auto slot = sema_->getSlot(key);
+		const auto slot = sema_.getSlot(key);
 		if (slot.has_value() && slot->has_cast()) {
 			const ImplicitCastInfo& cast_info =
-				sema_->castInfoTable()[slot->cast_info_index.value - 1];
-			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
+				sema_.castInfoTable()[slot->cast_info_index.value - 1];
+			const CanonicalTypeDesc& from_desc = sema_.typeContext().get(cast_info.source_type_id);
 			// Float/double → bool: emit FloatNotEqual(cond, 0.0).
 			if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.category())) {
 				return emitFloatNonZeroTest(condition);
@@ -2571,11 +2571,11 @@ ExprResult AstToIr::applyConstructorArgConversion(ExprResult arg_result,
 	// 1. Try sema annotation (most accurate path).
 	if (arg_expr.is<ExpressionNode>()) {
 		const void* key = &arg_expr.as<ExpressionNode>();
-		const auto slot = sema_->getSlot(key);
+		const auto slot = sema_.getSlot(key);
 		if (slot.has_value() && slot->has_cast()) {
-			const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(ci.source_type_id);
-			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(ci.target_type_id);
+			const ImplicitCastInfo& ci = sema_.castInfoTable()[slot->cast_info_index.value - 1];
+			const CanonicalTypeDesc& from_desc = sema_.typeContext().get(ci.source_type_id);
+			const CanonicalTypeDesc& to_desc = sema_.typeContext().get(ci.target_type_id);
 			TypeCategory from_t = from_desc.category();
 			const TypeCategory to_t = to_desc.category();
 			if (ci.cast_kind == StandardConversionKind::UserDefined &&
@@ -2761,9 +2761,9 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 	}
 
 	if (binding_info->has_pre_bind_cast()) {
-		const ImplicitCastInfo& cast_info = sema_->castInfoTable()[binding_info->pre_bind_cast_info_index.value - 1];
-		const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
-		const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
+		const ImplicitCastInfo& cast_info = sema_.castInfoTable()[binding_info->pre_bind_cast_info_index.value - 1];
+		const CanonicalTypeDesc& from_desc = sema_.typeContext().get(cast_info.source_type_id);
+		const CanonicalTypeDesc& to_desc = sema_.typeContext().get(cast_info.target_type_id);
 		TypeCategory from_t = from_desc.category();
 		const TypeCategory to_t = to_desc.category();
 		if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
@@ -2892,24 +2892,24 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 	const TypeSpecifierNode& target_type,
 	const Token& source_token,
 	bool use_return_slot) {
-	if (!sema_ || !source_expr.is<ExpressionNode>() ||
+	if (!source_expr.is<ExpressionNode>() ||
 		!is_struct_type(target_type.category()) ||
 		target_type.is_reference() ||
 		target_type.is_rvalue_reference()) {
 		return std::nullopt;
 	}
 
-	const auto slot = sema_->getSlot(&source_expr.as<ExpressionNode>());
+	const auto slot = sema_.getSlot(&source_expr.as<ExpressionNode>());
 	if (!slot.has_value() || !slot->has_cast()) {
 		return std::nullopt;
 	}
 
-	const ImplicitCastInfo& cast_info = sema_->castInfoTable()[slot->cast_info_index.value - 1];
+	const ImplicitCastInfo& cast_info = sema_.castInfoTable()[slot->cast_info_index.value - 1];
 	if (cast_info.cast_kind != StandardConversionKind::UserDefined || !cast_info.selected_constructor) {
 		return std::nullopt;
 	}
 
-	const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
+	const CanonicalTypeDesc& target_desc = sema_.typeContext().get(cast_info.target_type_id);
 	if (!is_struct_type(target_desc.category()) ||
 		target_desc.type_index != target_type.type_index()) {
 		return std::nullopt;

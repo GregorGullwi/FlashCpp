@@ -679,7 +679,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 	auto resolveImplicitMember = [&](TypeIndex owner_type_index, StringHandle member_name)
 		-> std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> {
-		if (auto resolved = sema_->getResolvedIdentifierMember(&identifierNode); resolved.has_value()) {
+		if (auto resolved = sema_.getResolvedIdentifierMember(&identifierNode); resolved.has_value()) {
 			return resolved;
 		}
 		if (auto resolved = FlashCpp::gLazyMemberResolver.resolve(owner_type_index, member_name)) {
@@ -1545,7 +1545,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			}
 		}
 
-		if (auto resolved = sema_->getResolvedQualifiedIdentifier(&qualifiedIdNode); resolved.has_value()) {
+		if (auto resolved = sema_.getResolvedQualifiedIdentifier(&qualifiedIdNode); resolved.has_value()) {
 				switch (resolved->kind) {
 					case SemanticAnalysis::ResolvedQualifiedIdentifierInfo::Kind::EnumConstant:
 						return makeExprResult(
