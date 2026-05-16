@@ -1392,32 +1392,9 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	// Uses shared evaluateTypeTrait() from TypeTraitEvaluator.h for consistency with CodeGen.h
 	if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 		const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
-
-		// Get the type(s) this trait is being applied to
-		if (!trait_expr.has_type()) {
-			// No-argument traits like __is_constant_evaluated
-			if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
-				// We're evaluating in a constant context, so return true
-				return makeConstantValueFromCategory(1, TypeCategory::Bool);
-			}
-			return std::nullopt;
-		}
-
-		const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
-		TypeIndex type_idx = type_spec.type_index();
-
-		FLASH_LOG_FORMAT(Templates, Debug, "Evaluating type trait {} on type index {} (base_type={})",
-						 static_cast<int>(trait_expr.kind()), type_idx, static_cast<int>(type_spec.type()));
-
-		// Get TypeInfo and StructTypeInfo for the type
-		const TypeInfo* type_info = tryGetTypeInfo(type_idx);
-		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
-
-		// Use shared evaluation function from TypeTraitEvaluator.h (overload that takes TypeSpecifierNode)
-		TypeTraitResult eval_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
+		TypeTraitResult eval_result = evaluateTypeTrait(trait_expr);
 
 		if (!eval_result.success) {
-			// Trait requires special handling (binary trait, etc.) or is not supported
 			FLASH_LOG_FORMAT(Templates, Debug, "Type trait {} requires special handling or is not supported",
 							 static_cast<int>(trait_expr.kind()));
 			return std::nullopt;
