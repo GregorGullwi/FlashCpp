@@ -36,7 +36,6 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.cv_qualifier = arg.cv_qualifier;
 	info.is_array = arg.is_array;
 	info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
-	info.value = arg.value;
 	info.is_value = arg.is_value;
 	info.is_pack = arg.is_pack;
 	info.dependent_name = arg.dependent_name;
@@ -45,6 +44,18 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.is_template_template_arg = arg.is_template_template_arg;
 	info.template_name = arg.template_name_handle;
 	info.member_pointer_kind = arg.member_pointer_kind;
+	// Default: store the integer value. For pointer/reference NTTPs with a named entity,
+	// override with the entity_name StringHandle so the identity survives the roundtrip.
+	info.value = arg.value;
+	if (arg.has_typed_value_identity) {
+		const auto& id = arg.typed_value_identity;
+		if (id.entity_name.isValid() &&
+			(id.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+			 id.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer ||
+			 id.kind == FlashCpp::NonTypeValueIdentityKind::Reference)) {
+			info.value = id.entity_name;
+		}
+	}
 	return info;
 }
 
@@ -67,7 +78,24 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.template_name_handle = arg.template_name;
 	ta.member_pointer_kind = arg.member_pointer_kind;
 	if (arg.is_value) {
-		ta.value = arg.intValue();
+		// If entity_name was stored as a StringHandle, reconstruct the typed_value_identity.
+		// The kind is inferred from stored fields rather than from an explicit kind tag:
+		//   - TypeCategory::FunctionPointer/MemberFunctionPointer → FunctionPointer kind
+		//   - ref_qualifier != None → Reference kind
+		//   - otherwise → ObjectPointer kind
+		// This mirrors the categorisation applied during serialisation in toTemplateArgInfo.
+		if (StringHandle sh = arg.stringValue(); sh.isValid()) {
+			TypeCategory cat = arg.category();
+			if (cat == TypeCategory::FunctionPointer || cat == TypeCategory::MemberFunctionPointer) {
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeFunctionPointer(arg.type_index, sh));
+			} else if (arg.ref_qualifier != ReferenceQualifier::None) {
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeReference(arg.type_index, sh));
+			} else {
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, sh, 0));
+			}
+		} else {
+			ta.value = arg.intValue();
+		}
 	}
 	return ta;
 }
