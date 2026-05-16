@@ -124,15 +124,13 @@ struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in 
 
 ---
 
-## Not Supported ❌
-
 ### `std::initializer_list` in constexpr — Partial Support ✅
 
 `std::initializer_list<T>` construction from a braced argument list (`{e1, e2, ...}`) is now supported in constexpr evaluation via `InitializerListConstructionNode`. The evaluator synthesises a backing array, constructs begin/end pointer pair (or begin/size for the `data_`/`size_` layout), and materialises the `initializer_list` struct via its constructor or falls back to direct aggregate member assignment.
 
 **Supported:** `size()` (pointer subtraction), pointer comparison, pointer arithmetic on the stored pointer. See `tests/test_constexpr_initializer_list_ret0.cpp`.
 
-**Not yet supported:** Element iteration via a stored pointer member (`*p` where `p` was obtained from `begin()`). The `pointer_value_snapshot` is not propagated across struct member round-trips, so `*p` fails when `p` is retrieved from a struct member rather than directly from the evaluated pointer. Use explicit array parameters when element access is needed.
+**Not yet supported:** Element iteration via a stored pointer member (`*p` where `p` was obtained from `begin()`). The `pointer_value_snapshot` is not propagated across struct member round-trips, so `*p` fails when `p` is retrieved from a struct member rather than directly from the evaluated pointer. Both the backing array binding and the `pointer_value_snapshot` are available while the construction expression is in scope; they do not survive a struct round-trip (store into member → load back out). Use explicit array parameters when element access is needed.
 
 ```cpp
 constexpr unsigned long count(std::initializer_list<int> lst) {
@@ -168,6 +166,8 @@ static_assert(safe_divide(10, 2) == 5); // ✅ Supported
 See `tests/test_constexpr_try_catch_ret0.cpp`.
 
 ---
+
+## Not Supported ❌
 
 The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Members`, and header files). Central types:
 
