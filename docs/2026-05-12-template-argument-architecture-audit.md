@@ -172,10 +172,11 @@ sema direct lookup probes. The active architecture tracks are therefore:
 
 3. **Structural NTTP implementation.**
    Typed integral/enum/`nullptr`, pointer, reference, function-pointer, and null
-   member-pointer identity exists. Add real semantic values for non-null
-   member-pointers, floating-point, and structural class-type NTTPs, and replace
-   the remaining vendor-hash mangling fallback (see `TODO(item-8)` in
-   `NameMangling.h`) where possible.
+   member-pointer identity exists. The `TemplateArgInfo` roundtrip is now
+   lossless (✅ done: `nttp_kind` + `nttp_entity_name` fields added). Remaining
+   work: add real semantic values for non-null member-pointers, floating-point,
+   and structural class-type NTTPs, and replace the remaining vendor-hash
+   mangling fallback (see `TODO(item-8)` in `NameMangling.h`) where possible.
 
 4. **Deduction and constraint pipeline split.**
    Signature-only candidate ranking now covers selected free, explicit free, and
@@ -258,6 +259,13 @@ sema direct lookup probes. The active architecture tracks are therefore:
   `TemplateInstantiationContext` are the intended substitution and
   current-instantiation owners, but some legacy paths still reconstruct raw
   parameter-name and argument vectors.
+- `TypeInfo::TemplateArgInfo` now carries explicit `nttp_kind`
+  (`FlashCpp::NonTypeValueIdentityKind`) and `nttp_entity_name` (`StringHandle`)
+  fields, making the `toTemplateArgInfo` / `toTemplateTypeArg` roundtrip
+  lossless for pointer, reference, and function-pointer NTTPs without any
+  inference from `TypeCategory` or `ref_qualifier`.
+  `NonTypeValueIdentityKind` is defined in `AstNodeTypes_TypeSystem.h` so that
+  `TemplateArgInfo` can use it without pulling in `TemplateTypes.h`.
 
 Parameter-context classification is now in place for the main explicit
 template-id use sites. Remaining classification risk is now concentrated in

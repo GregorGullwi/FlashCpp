@@ -45,6 +45,23 @@ enum class MemberPointerKind : uint8_t {
 	Function
 };
 
+namespace FlashCpp {
+// Non-type template parameter value identity kind.
+// Defined here (in the shared type-system header) so that TypeInfo::TemplateArgInfo
+// can store it directly, making the TemplateTypeArg↔TemplateArgInfo roundtrip lossless.
+enum class NonTypeValueIdentityKind : uint8_t {
+	Integral,
+	Nullptr,
+	ObjectPointer,
+	Reference,
+	FunctionPointer,
+	MemberPointer,
+	Floating,
+	StructuralClass,
+	Unsupported
+};
+} // namespace FlashCpp
+
 // Overloadable operator kinds for struct member operator overloads.
 // Stored as an enum instead of a string for efficient comparison.
 enum class OverloadableOperator : uint8_t {

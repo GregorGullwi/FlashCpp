@@ -998,6 +998,11 @@ struct TypeInfo {
 		bool is_template_template_arg;  // true if this is a template template argument
 		StringHandle template_name;  // Name of the template for template-template arguments
 		MemberPointerKind member_pointer_kind;  // Distinguish member function vs data pointers
+		// Explicit NTTP identity fields — keep the TemplateTypeArg↔TemplateArgInfo roundtrip
+		// lossless without inferring the kind from TypeCategory or ref_qualifier.
+		// Only meaningful when is_value == true and nttp_entity_name.isValid().
+		FlashCpp::NonTypeValueIdentityKind nttp_kind;  // Kind of the NTTP value identity
+		StringHandle nttp_entity_name;                 // Entity name for pointer/reference/function-pointer NTTPs
 
 		TemplateArgInfo()
 			: type_index(),
@@ -1009,7 +1014,8 @@ struct TypeInfo {
 			  is_pack(false),
 			  is_array(false),
 			  is_template_template_arg(false),
-			  member_pointer_kind(MemberPointerKind::None) {}
+			  member_pointer_kind(MemberPointerKind::None),
+			  nttp_kind(FlashCpp::NonTypeValueIdentityKind::Integral) {}
 
 		TemplateArgInfo(const TemplateArgInfo& other)
 			: type_index(other.type_index),
@@ -1027,7 +1033,9 @@ struct TypeInfo {
 			  dependent_expr(other.dependent_expr),
 			  is_template_template_arg(other.is_template_template_arg),
 			  template_name(other.template_name),
-			  member_pointer_kind(other.member_pointer_kind) {}
+			  member_pointer_kind(other.member_pointer_kind),
+			  nttp_kind(other.nttp_kind),
+			  nttp_entity_name(other.nttp_entity_name) {}
 
 		TemplateArgInfo(TemplateArgInfo&&) noexcept = default;
 
@@ -1049,6 +1057,8 @@ struct TypeInfo {
 				is_template_template_arg = other.is_template_template_arg;
 				template_name = other.template_name;
 				member_pointer_kind = other.member_pointer_kind;
+				nttp_kind = other.nttp_kind;
+				nttp_entity_name = other.nttp_entity_name;
 			}
 			return *this;
 		}
