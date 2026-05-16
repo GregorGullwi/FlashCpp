@@ -5821,6 +5821,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				if (!arr_ptr && !pointer_snapshot) {
 					return EvalResult::error("Range-based for: could not find backing array '" + std::string(arr_name) + "' for begin()/end() iteration");
 				}
+				assert(arr_ptr || pointer_snapshot);
 
 				const size_t element_count = arr_ptr
 					? arr_ptr->array_elements.size()
