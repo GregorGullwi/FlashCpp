@@ -719,12 +719,20 @@ private:
 		size_t calls = 0;
 		int64_t inclusive_time_us = 0;
 		int64_t self_time_us = 0;
+		// Per-phase save/restore/discard counts — directly shows which parse phase backtracks most
+		size_t saves = 0;
+		size_t restores = 0;
+		size_t discards = 0;
+		// AST nodes (ChunkedAnyVector slots) allocated during this phase
+		size_t ast_nodes_allocated = 0;
 	};
 
 	struct RuntimePhaseFrame {
 		RuntimePhase phase;
 		std::chrono::high_resolution_clock::time_point start;
 		int64_t child_time_us = 0;
+		size_t ast_nodes_at_start = 0;  // gChunkedAnyStorage.size() snapshot for allocation tracking
+		size_t child_ast_nodes_allocated = 0;  // Allocations attributed to nested phases
 	};
 
 	struct RuntimeStats {
@@ -763,6 +771,12 @@ private:
 		int64_t restore_time_us = 0;
 		int64_t restore_lexer_only_time_us = 0;
 		int64_t discard_time_us = 0;
+		// restore_token_delta_hist[i]: how many restores had a token-advance delta in the bucket.
+		// Buckets: [0]=0, [1]=1, [2]=2, [3]=3-4, [4]=5-9, [5]=10-19, [6]=20-49, [7]=50+
+		std::array<size_t, 8> restore_token_delta_hist{};
+		// lookahead_depth_hist[i]: how many peek_token(N) calls with depth N in the bucket.
+		// Buckets: [0]=1, [1]=2, [2]=3, [3]=4, [4]=5-9, [5]=10+
+		std::array<size_t, 6> lookahead_depth_hist{};
 		std::array<RuntimePhaseStat, static_cast<size_t>(RuntimePhase::Count)> phase_stats{};
 	};
 
@@ -774,9 +788,11 @@ private:
 				return;
 			}
 			parser_->runtime_phase_stack_.push_back(RuntimePhaseFrame{
-				phase_,
-				std::chrono::high_resolution_clock::now(),
-				0});
+				.phase = phase_,
+				.start = std::chrono::high_resolution_clock::now(),
+				.child_time_us = 0,
+				.ast_nodes_at_start = gChunkedAnyStorage.size(),
+				.child_ast_nodes_allocated = 0});
 			++parser_->runtime_stats_.phase_stats[static_cast<size_t>(phase_)].calls;
 		}
 
@@ -797,8 +813,11 @@ private:
 				self_time_us = 0;
 			}
 			stat.self_time_us += self_time_us;
+			size_t alloc_delta = gChunkedAnyStorage.size() - frame.ast_nodes_at_start;
+			stat.ast_nodes_allocated += (alloc_delta - frame.child_ast_nodes_allocated);
 			if (!parser_->runtime_phase_stack_.empty()) {
 				parser_->runtime_phase_stack_.back().child_time_us += elapsed_us;
+				parser_->runtime_phase_stack_.back().child_ast_nodes_allocated += alloc_delta;
 			}
 		}
 
@@ -1353,6 +1372,9 @@ private:
 		Token injected_token_;  // Phase 5: Save injected token state for >> splitting
 		size_t ast_nodes_size_ = 0;
 		TokenPosition lexer_position_;  // Store the lexer position with each save
+#if WITH_PARSER_RUNTIME_STATS
+		size_t tokens_advanced_at_save_ = 0;  // Snapshot of tokens_advanced for delta tracking
+#endif
 	};
 
 	// SaveHandle values are monotonically increasing dense indices during one
@@ -1362,6 +1384,7 @@ private:
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
 #if WITH_PARSER_RUNTIME_STATS
 	bool runtime_stats_enabled_ = false;
+	size_t ast_nodes_baseline_ = 0;  // gChunkedAnyStorage.size() when stats were enabled
 	RuntimeStats runtime_stats_;
 	std::vector<RuntimePhaseFrame> runtime_phase_stack_;
 #endif

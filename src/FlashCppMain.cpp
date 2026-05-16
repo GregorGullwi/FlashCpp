@@ -390,6 +390,7 @@ int main_impl(int argc, char* argv[]) {
 	// but outlive it (since Parser stores a reference to it)
 	std::unique_ptr<Lexer> lexer_ptr;
 	std::unique_ptr<Parser> parser;
+	setTypeTableStatsEnabled(show_perf_stats);
 	{
 		PhaseTimer timer("Lexer Setup", false, &lexer_setup_time);
 		lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
@@ -712,6 +713,8 @@ int main_impl(int argc, char* argv[]) {
 
 	if (show_perf_stats) {
 		StackStringStats::print_stats();
+
+		printTypeTableStats();
 
 #ifdef USE_GLOBAL_OPERAND_STORAGE
 		FLASH_LOG(General, Info, "\n");
