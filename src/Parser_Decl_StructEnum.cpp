@@ -1236,7 +1236,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							if (width_result.node().has_value()) {
 								ConstExpr::EvaluationContext ctx(gSymbolTable);
 								ctx.parser = this;
-								ctx.sema = getActiveSemanticAnalysis();
+								ctx.sema = &semanticAnalysis();
 								auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 								if (!eval_result.success() || eval_result.as_int() < 0) {
 									return ParseResult::error("Bitfield width must be a non-negative integral constant expression", current_token_);
@@ -1273,7 +1273,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							for (const auto& dim_expr : anon_array_dimensions) {
 								ConstExpr::EvaluationContext ctx(gSymbolTable);
 								ctx.parser = this;
-								ctx.sema = getActiveSemanticAnalysis();
+								ctx.sema = &semanticAnalysis();
 								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 								if (eval_result.success() && eval_result.as_int() > 0) {
 									size_t dim_size = static_cast<size_t>(eval_result.as_int());
@@ -1598,7 +1598,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				for (const auto& dim_expr : decl.array_dimensions()) {
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					ctx.parser = this;
-					ctx.sema = getActiveSemanticAnalysis();
+					ctx.sema = &semanticAnalysis();
 					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 					if (eval_result.success() && eval_result.as_int() > 0) {
 						size_t dim_size = static_cast<size_t>(eval_result.as_int());
@@ -1637,7 +1637,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (!isDependentTemplateContext()) {
 					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 					eval_ctx.parser = this;
-					eval_ctx.sema = getActiveSemanticAnalysis();
+					eval_ctx.sema = &semanticAnalysis();
 					eval_ctx.struct_info = struct_info.get();
 					eval_ctx.storage_duration = ConstExpr::StorageDuration::Automatic;
 					auto validation = ConstExpr::Evaluator::evaluate(*init_expr_opt, eval_ctx);
@@ -2022,7 +2022,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					ctx.parser = this;
-					ctx.sema = getActiveSemanticAnalysis();
+					ctx.sema = &semanticAnalysis();
 					auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
 					if (eval.success())
 						dtor_ref.set_noexcept(eval.as_bool());
@@ -2431,7 +2431,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (width_result.node().has_value()) {
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					ctx.parser = this;
-					ctx.sema = getActiveSemanticAnalysis();
+					ctx.sema = &semanticAnalysis();
 					auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 					if (!eval_result.success() || eval_result.as_int() < 0) {
 						// Defer evaluation for template non-type parameters
@@ -2584,7 +2584,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (width_result.node().has_value()) {
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						ctx.parser = this;
-						ctx.sema = getActiveSemanticAnalysis();
+						ctx.sema = &semanticAnalysis();
 						auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 						if (!eval_result.success() || eval_result.as_int() < 0) {
 							// Defer evaluation for template non-type parameters
@@ -2866,7 +2866,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				ConstExpr::EvaluationContext ctx(gSymbolTable);
 				// Lets constexpr evaluation classify unsubstituted template bounds as dependent.
 				ctx.parser = this;
-				ctx.sema = getActiveSemanticAnalysis();
+				ctx.sema = &semanticAnalysis();
 				auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 				if (!eval_result.success()) {
 					const bool can_defer_dependent_bound =
@@ -3877,7 +3877,7 @@ ParseResult Parser::parse_enum_declaration() {
 				if (!value_extracted) {
 					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 					eval_ctx.parser = this;
-					eval_ctx.sema = getActiveSemanticAnalysis();
+					eval_ctx.sema = &semanticAnalysis();
 					auto eval_result = ConstExpr::Evaluator::evaluate(*value_node, eval_ctx);
 					if (eval_result.success()) {
 						value = eval_result.as_int();
@@ -4202,7 +4202,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		for (const auto& dim_expr : array_dimensions) {
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			ctx.parser = this;
-			ctx.sema = getActiveSemanticAnalysis();
+			ctx.sema = &semanticAnalysis();
 			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 			if (eval_result.success() && eval_result.as_int() > 0) {
 				size_t dim_size = static_cast<size_t>(eval_result.as_int());

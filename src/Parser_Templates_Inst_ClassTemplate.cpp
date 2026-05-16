@@ -1221,7 +1221,7 @@ static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext
 	ConstExpr::EvaluationContext eval_ctx(symbol_table);
 	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 	eval_ctx.parser = parser;
-	eval_ctx.sema = parser ? parser->getActiveSemanticAnalysis() : nullptr;
+	eval_ctx.sema = parser ? &parser->semanticAnalysis() : nullptr;
 	eval_ctx.struct_info = struct_info;
 	if (struct_info && struct_info->own_type_index_.has_value()) {
 		eval_ctx.struct_type_index = *struct_info->own_type_index_;
@@ -1904,7 +1904,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
-		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.sema = &semanticAnalysis();
 		eval_ctx.template_args.assign(args.begin(), args.end());
 		eval_ctx.template_param_names.reserve(params.size());
 		for (const auto& param : params) {
@@ -2344,7 +2344,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
-		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.sema = &semanticAnalysis();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, eval_ctx);
 		if (!eval_result.success()) {
 			return false;
@@ -2378,7 +2378,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map, StringHandle{});
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
-		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.sema = &semanticAnalysis();
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 		if (eval_result.success() && eval_result.as_int() >= 0)
 			return static_cast<size_t>(eval_result.as_int());
@@ -2405,7 +2405,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
-		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.sema = &semanticAnalysis();
 		for (const auto& dim_expr : decl.array_dimensions()) {
 			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map, StringHandle{});
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
@@ -4532,7 +4532,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (referenced_static_member && referenced_static_member->initializer.has_value()) {
 								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 								eval_ctx.parser = this;
-								eval_ctx.sema = getActiveSemanticAnalysis();
+								eval_ctx.sema = &semanticAnalysis();
 								eval_ctx.struct_info = instantiated_struct_info;
 								eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 								auto eval_result = ConstExpr::Evaluator::evaluate(
@@ -4889,7 +4889,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Evaluate the substituted expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 				eval_ctx.parser = this;
-				eval_ctx.sema = getActiveSemanticAnalysis();
+				eval_ctx.sema = &semanticAnalysis();
 				eval_ctx.struct_node = &instantiated_struct_ref;
 
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
@@ -8860,7 +8860,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_dtor_ref.set_noexcept_expression(substituted_noexcept);
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						ctx.parser = this;
-						ctx.sema = getActiveSemanticAnalysis();
+						ctx.sema = &semanticAnalysis();
 						ctx.struct_info = struct_info_ptr;
 						ctx.struct_type_index =
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct);
@@ -10166,7 +10166,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Evaluate the substituted expression
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
-		eval_ctx.sema = getActiveSemanticAnalysis();
+		eval_ctx.sema = &semanticAnalysis();
 		eval_ctx.struct_node = &instantiated_struct.as<StructDeclarationNode>();
 
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);

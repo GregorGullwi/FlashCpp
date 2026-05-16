@@ -467,7 +467,7 @@ class Parser {
 public:
 	static constexpr size_t default_ast_tree_size_ = 256 * 1024;
 
-	explicit Parser(Lexer& lexer, CompileContext& context);
+	explicit Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis);
 
 	ParseResult parse() {
 		resetTemplateInstantiationCounters();
@@ -583,8 +583,12 @@ public:
 	bool enqueuePendingSemanticRootIfNeeded(const ASTNode& node) {
 		return enqueuePendingSemanticRoot(node);
 	}
-	void setActiveSemanticAnalysis(SemanticAnalysis* sema);
-	SemanticAnalysis* getActiveSemanticAnalysis() const;
+	SemanticAnalysis& semanticAnalysis() {
+		return semantic_analysis_;
+	}
+	const SemanticAnalysis& semanticAnalysis() const {
+		return semantic_analysis_;
+	}
 	void normalizePendingSemanticRootsIfAvailable();
 	ASTNode get_inner_node(ASTNode node) const {
 		return node;
@@ -640,7 +644,7 @@ private:
 	std::unordered_set<const void*> instantiated_node_keys_;
 	std::vector<ASTNode> pending_semantic_roots_;
 	std::unordered_set<const void*> pending_semantic_root_keys_;
-	SemanticAnalysis* active_sema_ = nullptr;
+	SemanticAnalysis& semantic_analysis_;
 	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
 	std::string last_error_;
 

@@ -512,7 +512,7 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 					// Evaluate the constant expression using ConstExprEvaluator
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					ctx.parser = this;  // Enable template function instantiation if needed
-					ctx.sema = getActiveSemanticAnalysis();
+					ctx.sema = &semanticAnalysis();
 
 					auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 
