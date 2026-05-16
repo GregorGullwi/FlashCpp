@@ -93,7 +93,6 @@ struct TemplateInstantiationContext {
 	TemplateLookupContext lookup_context;
 	const TemplateDefinitionLookupContext* definition_lookup_context = nullptr;
 	const ConstExpr::EvaluationContext* constexpr_context = nullptr;
-	const SemanticAnalysis* semantic_context = nullptr;
 	TemplateSubstitutionFailurePolicy failure_policy = TemplateSubstitutionFailurePolicy::HardUse;
 
 	bool isSfinaeProbe() const {

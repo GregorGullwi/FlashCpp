@@ -1214,14 +1214,14 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 template <typename TemplateParamsContainer>
 static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext(
 	const SymbolTable& symbol_table,
-	Parser* parser,
+	Parser& parser,
 	const StructTypeInfo* struct_info,
 	const TemplateParamsContainer& template_params,
 	std::span<const TemplateTypeArg> template_args) {
 	ConstExpr::EvaluationContext eval_ctx(symbol_table);
 	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
-	eval_ctx.parser = parser;
-	eval_ctx.sema = parser ? &parser->semanticAnalysis() : nullptr;
+	eval_ctx.parser = &parser;
+	eval_ctx.sema = &parser.semanticAnalysis();
 	eval_ctx.struct_info = struct_info;
 	if (struct_info && struct_info->own_type_index_.has_value()) {
 		eval_ctx.struct_type_index = *struct_info->own_type_index_;
@@ -1316,9 +1316,9 @@ static std::optional<NormalizedInitializer> tryBuildConstantStaticMemberInitiali
 
 static void instantiateDeferredStaticInitializerCalls(
 	const ASTNode& initializer,
-	Parser* parser,
+	Parser& parser,
 	const StructTypeInfo* struct_info) {
-	if (!parser || !struct_info) {
+	if (!struct_info) {
 		return;
 	}
 
@@ -1341,7 +1341,7 @@ static void instantiateDeferredStaticInitializerCalls(
 			return;
 		}
 
-		(void)parser->instantiateLazyMemberIfNeeded(member_key);
+		(void)parser.instantiateLazyMemberIfNeeded(member_key);
 	});
 }
 
@@ -1349,7 +1349,7 @@ template <typename TemplateParamsContainer>
 static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMemberInitializer(
 	std::optional<ASTNode>& initializer,
 	const SymbolTable& symbol_table,
-	Parser* parser,
+	Parser& parser,
 	const StructTypeInfo* struct_info,
 	const TemplateParamsContainer& template_params,
 	std::span<const TemplateTypeArg> template_args,
@@ -1371,8 +1371,8 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 
 	instantiateDeferredStaticInitializerCalls(*initializer, parser, struct_info);
 
-	if (parser != nullptr && initializer->is<ExpressionNode>()) {
-		initializer = parser->substituteTemplateParameters(
+	if (initializer->is<ExpressionNode>()) {
+		initializer = parser.substituteTemplateParameters(
 			initializer.value(),
 			template_params,
 			template_args,
@@ -1385,7 +1385,7 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 			template_args,
 			nullptr);
 		if (!substitution_environment.bindings.empty()) {
-			ExpressionSubstitutor substitutor(substitution_environment, *parser);
+			ExpressionSubstitutor substitutor(substitution_environment, parser);
 			substitutor.setCurrentOwnerTypeName(struct_info->getName());
 			initializer = substitutor.substitute(initializer.value());
 		}
@@ -1453,7 +1453,7 @@ static void retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 			tryEarlyNormalizeTemplateStaticMemberInitializer(
 				initializer,
 				gSymbolTable,
-				parser,
+				*parser,
 				struct_info,
 				template_params,
 				template_args,
@@ -7263,7 +7263,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				tryEarlyNormalizeTemplateStaticMemberInitializer(
 					substituted_initializer,
 					gSymbolTable,
-					this,
+					*this,
 					struct_info.get(),
 					effective_template_params,
 					effective_template_args_vector,
