@@ -39,6 +39,7 @@
 #include <array>
 #include <vector>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <functional>  // For std::hash
 #include <variant>
@@ -103,7 +104,8 @@ inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
 	return h;
 }
 
-std::string buildDependentExpressionIdentityString(const ASTNode& node);
+bool equalDependentExpressionIdentity(const ASTNode& lhs, const ASTNode& rhs);
+size_t hashDependentExpressionIdentity(const ASTNode& node);
 
 // ============================================================================
 // TypeIndexArg - A template type argument represented by TypeIndex
@@ -392,8 +394,7 @@ struct NonTypeValueIdentity {
 				return dependent_expression.has_value() == other.dependent_expression.has_value() &&
 					   equalValueTypeIdentity(value_type_index, other.value_type_index) &&
 					   (!dependent_expression.has_value() ||
-						buildDependentExpressionIdentityString(*dependent_expression) ==
-							buildDependentExpressionIdentityString(*other.dependent_expression));
+						equalDependentExpressionIdentity(*dependent_expression, *other.dependent_expression));
 			}
 			// Named dependent args use the template-parameter name as identity.
 			return dependent_name == other.dependent_name;
@@ -431,8 +432,7 @@ struct NonTypeValueIdentity {
 		if (is_dependent) {
 			if (dependent_expression.has_value()) {
 				h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
-				const std::string expr_identity = buildDependentExpressionIdentityString(*dependent_expression);
-				h ^= std::hash<std::string_view>{}(expr_identity) + 0x9e3779b9 + (h << 6) + (h >> 2);
+				h ^= hashDependentExpressionIdentity(*dependent_expression) + 0x9e3779b9 + (h << 6) + (h >> 2);
 			} else if (dependent_name.isValid()) {
 				h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
 			}
@@ -460,7 +460,9 @@ struct NonTypeValueIdentity {
 	// String representation for debugging and name generation
 	std::string toString() const {
 		if (is_dependent && dependent_expression.has_value()) {
-			return buildDependentExpressionIdentityString(*dependent_expression);
+			char buf[17];
+			snprintf(buf, sizeof(buf), "%016zx", hashDependentExpressionIdentity(*dependent_expression));
+			return std::string("dep_expr$") + buf;
 		}
 		if (is_dependent && dependent_name.isValid()) {
 			return std::string(StringTable::getStringView(dependent_name));

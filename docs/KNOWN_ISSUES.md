@@ -14,3 +14,23 @@
     }
     ```
   - Notes: This appears to be an aggregate materialization/codegen issue and is not specific to tuple-like structured bindings.
+
+- Dependent type-trait NTTP expressions can still collapse during evaluation/materialization.
+  - Repro:
+    ```cpp
+    template <bool B>
+    struct Flag {
+        static constexpr int value = B ? 1 : 0;
+    };
+
+    template <typename T>
+    struct TraitUse {
+        static int first() { return Flag<__is_same(T, T)>::value; }
+        static int second() { return Flag<__is_same(T, const T)>::value; }
+    };
+
+    int main() {
+        return TraitUse<int>::first() != TraitUse<int>::second() ? 0 : 1;
+    }
+    ```
+  - Notes: The dependent-expression identity layer now distinguishes the two expressions, but downstream type-trait evaluation/materialization still produces the same result.

@@ -12,407 +12,807 @@
 
 namespace FlashCpp {
 
-static void appendIdentityString(StringBuilder& builder, std::string_view value) {
-	builder.append(static_cast<uint64_t>(value.size()));
-	builder.append(':');
-	builder.append(value);
+namespace {
+
+template <typename T>
+inline void hashCombine(size_t& seed, const T& value) {
+	seed ^= std::hash<T>{}(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 }
 
-static void appendTypeSpecifierIdentity(StringBuilder& builder, const TypeSpecifierNode& type);
-static void appendDependentExpressionIdentity(StringBuilder& builder, const ASTNode& node);
-
-static void appendFunctionSignatureIdentity(StringBuilder& builder, const FunctionSignature& sig) {
-	builder.append("Fn("sv);
-	builder.append(static_cast<uint64_t>(sig.return_type_index.category()));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(sig.return_type_index.index()));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(sig.return_pointer_depth));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(sig.return_reference_qualifier));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(sig.parameter_type_indices.size()));
-	for (TypeIndex param_type : sig.parameter_type_indices) {
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(param_type.category()));
-		builder.append(',');
-		builder.append(static_cast<uint64_t>(param_type.index()));
-	}
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(sig.linkage));
-	builder.append(';');
-	if (sig.class_name.has_value()) {
-		appendIdentityString(builder, *sig.class_name);
-	}
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(sig.calling_convention));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(sig.is_variadic));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(sig.is_const));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(sig.is_volatile));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(sig.function_reference_qualifier));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(sig.is_noexcept));
-	builder.append(')');
+inline void hashCombineStringView(size_t& seed, std::string_view value) {
+	hashCombine(seed, std::hash<std::string_view>{}(value));
 }
 
-static void appendTypeSpecifierIdentity(StringBuilder& builder, const TypeSpecifierNode& type) {
-	builder.append("Type("sv);
-	builder.append(static_cast<uint64_t>(type.category()));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(type.type_index().index()));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(type.qualifier()));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(type.cv_qualifier()));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(type.reference_qualifier()));
-	builder.append(',');
-	builder.append(static_cast<uint64_t>(type.pointer_depth()));
+bool equalTypeSpecifierIdentityImpl(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs);
+size_t hashTypeSpecifierIdentityImpl(const TypeSpecifierNode& type);
+bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs);
+size_t hashDependentExpressionIdentityImpl(const ASTNode& node);
+
+template <typename Range>
+bool equalAstRange(const Range& lhs, const Range& rhs) {
+	if (lhs.size() != rhs.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.size(); ++i) {
+		if (!equalDependentExpressionIdentityImpl(lhs[i], rhs[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+template <typename Range>
+size_t hashAstRange(const Range& range) {
+	size_t seed = std::hash<size_t>{}(range.size());
+	for (const ASTNode& node : range) {
+		hashCombine(seed, hashDependentExpressionIdentityImpl(node));
+	}
+	return seed;
+}
+
+template <typename Range>
+bool equalTokenValueRange(const Range& lhs, const Range& rhs) {
+	if (lhs.size() != rhs.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.size(); ++i) {
+		if (lhs[i].value() != rhs[i].value()) {
+			return false;
+		}
+	}
+	return true;
+}
+
+template <typename Range>
+size_t hashTokenValueRange(const Range& range) {
+	size_t seed = std::hash<size_t>{}(range.size());
+	for (const Token& token : range) {
+		hashCombineStringView(seed, token.value());
+	}
+	return seed;
+}
+
+bool equalDependentQualifiedNameRecord(
+	const TypeInfo::DependentQualifiedNameRecord& lhs,
+	const TypeInfo::DependentQualifiedNameRecord& rhs) {
+	if (lhs.owner_kind != rhs.owner_kind ||
+		lhs.owner_name != rhs.owner_name ||
+		!equalTypeIndexIdentity(lhs.owner_type, rhs.owner_type) ||
+		lhs.member_chain.size() != rhs.member_chain.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.member_chain.size(); ++i) {
+		const auto& lhs_member = lhs.member_chain[i];
+		const auto& rhs_member = rhs.member_chain[i];
+		if (lhs_member.name != rhs_member.name ||
+			lhs_member.has_template_arguments != rhs_member.has_template_arguments ||
+			lhs_member.has_template_keyword != rhs_member.has_template_keyword) {
+			return false;
+		}
+	}
+	return true;
+}
+
+size_t hashDependentQualifiedNameRecord(const TypeInfo::DependentQualifiedNameRecord& record) {
+	size_t seed = std::hash<uint8_t>{}(static_cast<uint8_t>(record.owner_kind));
+	hashCombine(seed, std::hash<StringHandle>{}(record.owner_name));
+	hashCombine(seed, hashTypeIndexIdentity(record.owner_type));
+	hashCombine(seed, std::hash<size_t>{}(record.member_chain.size()));
+	for (const auto& member : record.member_chain) {
+		hashCombine(seed, std::hash<StringHandle>{}(member.name));
+		hashCombine(seed, std::hash<bool>{}(member.has_template_arguments));
+		hashCombine(seed, std::hash<bool>{}(member.has_template_keyword));
+	}
+	return seed;
+}
+
+bool equalTypeSpecifierIdentityImpl(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+	if (lhs.category() != rhs.category() ||
+		!equalTypeIndexIdentity(lhs.type_index(), rhs.type_index()) ||
+		lhs.qualifier() != rhs.qualifier() ||
+		lhs.cv_qualifier() != rhs.cv_qualifier() ||
+		lhs.reference_qualifier() != rhs.reference_qualifier() ||
+		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.is_array() != rhs.is_array() ||
+		lhs.has_unsized_outer_array_dimension() != rhs.has_unsized_outer_array_dimension() ||
+		lhs.array_dimension_count() != rhs.array_dimension_count() ||
+		lhs.is_pack_expansion() != rhs.is_pack_expansion() ||
+		lhs.has_member_class() != rhs.has_member_class() ||
+		lhs.has_function_signature() != rhs.has_function_signature() ||
+		lhs.has_concept_constraint() != rhs.has_concept_constraint()) {
+		return false;
+	}
+
+	const auto& lhs_levels = lhs.pointer_levels();
+	const auto& rhs_levels = rhs.pointer_levels();
+	if (lhs_levels.size() != rhs_levels.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs_levels.size(); ++i) {
+		if (lhs_levels[i].cv_qualifier != rhs_levels[i].cv_qualifier) {
+			return false;
+		}
+	}
+
+	if (lhs.array_dimensions().size() != rhs.array_dimensions().size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.array_dimensions().size(); ++i) {
+		if (lhs.array_dimensions()[i] != rhs.array_dimensions()[i]) {
+			return false;
+		}
+	}
+
+	if (lhs.has_member_class() && lhs.member_class_name() != rhs.member_class_name()) {
+		return false;
+	}
+	if (lhs.has_function_signature() &&
+		!equalFunctionSignatureIdentity(lhs.function_signature(), rhs.function_signature())) {
+		return false;
+	}
+	if (lhs.has_concept_constraint() &&
+		lhs.concept_constraint() != rhs.concept_constraint()) {
+		return false;
+	}
+	return true;
+}
+
+size_t hashTypeSpecifierIdentityImpl(const TypeSpecifierNode& type) {
+	size_t seed = std::hash<uint8_t>{}(static_cast<uint8_t>(type.category()));
+	hashCombine(seed, hashTypeIndexIdentity(type.type_index()));
+	hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type.qualifier())));
+	hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type.cv_qualifier())));
+	hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier())));
+	hashCombine(seed, std::hash<size_t>{}(type.pointer_depth()));
 	for (const PointerLevel& level : type.pointer_levels()) {
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(level.cv_qualifier));
+		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(level.cv_qualifier)));
 	}
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(type.is_array()));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(type.has_unsized_outer_array_dimension()));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(type.array_dimension_count()));
+	hashCombine(seed, std::hash<bool>{}(type.is_array()));
+	hashCombine(seed, std::hash<bool>{}(type.has_unsized_outer_array_dimension()));
+	hashCombine(seed, std::hash<size_t>{}(type.array_dimension_count()));
 	for (size_t dim : type.array_dimensions()) {
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(dim));
+		hashCombine(seed, std::hash<size_t>{}(dim));
 	}
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(type.is_pack_expansion()));
-	builder.append(';');
+	hashCombine(seed, std::hash<bool>{}(type.is_pack_expansion()));
+	hashCombine(seed, std::hash<bool>{}(type.has_member_class()));
 	if (type.has_member_class()) {
-		appendIdentityString(builder, StringTable::getStringView(type.member_class_name()));
+		hashCombine(seed, std::hash<StringHandle>{}(type.member_class_name()));
 	}
-	builder.append(';');
+	hashCombine(seed, std::hash<bool>{}(type.has_function_signature()));
 	if (type.has_function_signature()) {
-		appendFunctionSignatureIdentity(builder, type.function_signature());
+		hashCombine(seed, hashFunctionSignatureIdentity(type.function_signature()));
 	}
-	builder.append(';');
+	hashCombine(seed, std::hash<bool>{}(type.has_concept_constraint()));
 	if (type.has_concept_constraint()) {
-		appendIdentityString(builder, type.concept_constraint());
+		hashCombineStringView(seed, type.concept_constraint());
 	}
-	builder.append(')');
+	return seed;
 }
 
-static void appendDeclarationIdentity(StringBuilder& builder, const DeclarationNode& decl) {
-	builder.append("Decl("sv);
-	appendTypeSpecifierIdentity(builder, decl.type_specifier_node());
-	builder.append(';');
-	appendIdentityString(builder, decl.identifier_token().value());
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(decl.is_parameter_pack()));
-	builder.append(';');
-	builder.append(static_cast<uint64_t>(decl.is_unsized_array()));
-	builder.append(')');
+bool equalDeclarationIdentity(const DeclarationNode& lhs, const DeclarationNode& rhs) {
+	return equalTypeSpecifierIdentityImpl(lhs.type_specifier_node(), rhs.type_specifier_node()) &&
+		   lhs.identifier_token().value() == rhs.identifier_token().value() &&
+		   lhs.is_parameter_pack() == rhs.is_parameter_pack() &&
+		   lhs.is_unsized_array() == rhs.is_unsized_array();
 }
 
-static void appendCalleeDescriptorIdentity(StringBuilder& builder, const CalleeDescriptor& callee) {
-	builder.append("Callee("sv);
-	builder.append(static_cast<uint64_t>(callee.kind()));
-	builder.append(';');
-	appendDeclarationIdentity(builder, callee.declaration());
-	builder.append(')');
+size_t hashDeclarationIdentity(const DeclarationNode& decl) {
+	size_t seed = hashTypeSpecifierIdentityImpl(decl.type_specifier_node());
+	hashCombineStringView(seed, decl.identifier_token().value());
+	hashCombine(seed, std::hash<bool>{}(decl.is_parameter_pack()));
+	hashCombine(seed, std::hash<bool>{}(decl.is_unsized_array()));
+	return seed;
 }
 
-std::string buildDependentExpressionIdentityString(const ASTNode& node) {
-	StringBuilder builder;
-	appendDependentExpressionIdentity(builder, node);
-	return std::string(builder.commit());
+bool equalCalleeDescriptorIdentity(const CalleeDescriptor& lhs, const CalleeDescriptor& rhs) {
+	return lhs.kind() == rhs.kind() &&
+		   equalDeclarationIdentity(lhs.declaration(), rhs.declaration());
 }
 
-static void appendDependentExpressionIdentity(StringBuilder& builder, const ASTNode& node) {
+size_t hashCalleeDescriptorIdentity(const CalleeDescriptor& callee) {
+	size_t seed = std::hash<uint8_t>{}(static_cast<uint8_t>(callee.kind()));
+	hashCombine(seed, hashDeclarationIdentity(callee.declaration()));
+	return seed;
+}
+
+bool equalNumericLiteralIdentity(const NumericLiteralNode& lhs, const NumericLiteralNode& rhs) {
+	if (lhs.type() != rhs.type() ||
+		lhs.qualifier() != rhs.qualifier() ||
+		lhs.sizeInBits() != rhs.sizeInBits() ||
+		lhs.value().index() != rhs.value().index()) {
+		return false;
+	}
+	if (std::holds_alternative<unsigned long long>(lhs.value())) {
+		return std::get<unsigned long long>(lhs.value()) ==
+			   std::get<unsigned long long>(rhs.value());
+	}
+	double lhs_double = std::get<double>(lhs.value());
+	double rhs_double = std::get<double>(rhs.value());
+	uint64_t lhs_bits = 0;
+	uint64_t rhs_bits = 0;
+	std::memcpy(&lhs_bits, &lhs_double, sizeof(lhs_bits));
+	std::memcpy(&rhs_bits, &rhs_double, sizeof(rhs_bits));
+	return lhs_bits == rhs_bits;
+}
+
+size_t hashNumericLiteralIdentity(const NumericLiteralNode& numeric) {
+	size_t seed = std::hash<uint8_t>{}(static_cast<uint8_t>(numeric.type()));
+	hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(numeric.qualifier())));
+	hashCombine(seed, std::hash<size_t>{}(numeric.sizeInBits()));
+	if (std::holds_alternative<unsigned long long>(numeric.value())) {
+		hashCombine(seed, std::hash<unsigned long long>{}(std::get<unsigned long long>(numeric.value())));
+	} else {
+		double value = std::get<double>(numeric.value());
+		uint64_t bits = 0;
+		std::memcpy(&bits, &value, sizeof(bits));
+		hashCombine(seed, std::hash<uint64_t>{}(bits));
+	}
+	return seed;
+}
+
+bool equalLambdaCaptureIdentity(const LambdaCaptureNode& lhs, const LambdaCaptureNode& rhs) {
+	return lhs.kind() == rhs.kind() &&
+		   lhs.identifier_name() == rhs.identifier_name() &&
+		   lhs.has_initializer() == rhs.has_initializer() &&
+		   (!lhs.has_initializer() ||
+			equalDependentExpressionIdentityImpl(*lhs.initializer(), *rhs.initializer()));
+}
+
+size_t hashLambdaCaptureIdentity(const LambdaCaptureNode& capture) {
+	size_t seed = std::hash<uint8_t>{}(static_cast<uint8_t>(capture.kind()));
+	hashCombineStringView(seed, capture.identifier_name());
+	hashCombine(seed, std::hash<bool>{}(capture.has_initializer()));
+	if (capture.has_initializer()) {
+		hashCombine(seed, hashDependentExpressionIdentityImpl(*capture.initializer()));
+	}
+	return seed;
+}
+
+bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs) {
+	if (!lhs.has_value() || !rhs.has_value()) {
+		return lhs.has_value() == rhs.has_value();
+	}
+	if (lhs.is<TypeSpecifierNode>() || rhs.is<TypeSpecifierNode>()) {
+		return lhs.is<TypeSpecifierNode>() &&
+			   rhs.is<TypeSpecifierNode>() &&
+			   equalTypeSpecifierIdentityImpl(lhs.as<TypeSpecifierNode>(), rhs.as<TypeSpecifierNode>());
+	}
+	if (const IdentifierNode* lhs_identifier = tryGetIdentifier(lhs)) {
+		const IdentifierNode* rhs_identifier = tryGetIdentifier(rhs);
+		return rhs_identifier != nullptr &&
+			   lhs_identifier->name() == rhs_identifier->name();
+	}
+	if (const QualifiedIdentifierNode* lhs_qualified = tryGetNode<QualifiedIdentifierNode>(lhs)) {
+		const QualifiedIdentifierNode* rhs_qualified = tryGetNode<QualifiedIdentifierNode>(rhs);
+		if (rhs_qualified == nullptr ||
+			lhs_qualified->namespace_handle() != rhs_qualified->namespace_handle() ||
+			lhs_qualified->name() != rhs_qualified->name() ||
+			lhs_qualified->hasDependentQualifiedName() != rhs_qualified->hasDependentQualifiedName()) {
+			return false;
+		}
+		if (!lhs_qualified->hasDependentQualifiedName()) {
+			return true;
+		}
+		return equalDependentQualifiedNameRecord(
+			*lhs_qualified->dependentQualifiedName(),
+			*rhs_qualified->dependentQualifiedName());
+	}
+	if (const NumericLiteralNode* lhs_numeric = tryGetNode<NumericLiteralNode>(lhs)) {
+		const NumericLiteralNode* rhs_numeric = tryGetNode<NumericLiteralNode>(rhs);
+		return rhs_numeric != nullptr &&
+			   equalNumericLiteralIdentity(*lhs_numeric, *rhs_numeric);
+	}
+	if (const BoolLiteralNode* lhs_bool = tryGetNode<BoolLiteralNode>(lhs)) {
+		const BoolLiteralNode* rhs_bool = tryGetNode<BoolLiteralNode>(rhs);
+		return rhs_bool != nullptr &&
+			   lhs_bool->value() == rhs_bool->value();
+	}
+	if (const StringLiteralNode* lhs_string = tryGetNode<StringLiteralNode>(lhs)) {
+		const StringLiteralNode* rhs_string = tryGetNode<StringLiteralNode>(rhs);
+		return rhs_string != nullptr &&
+			   lhs_string->value() == rhs_string->value();
+	}
+	if (const BinaryOperatorNode* lhs_binary = tryGetNode<BinaryOperatorNode>(lhs)) {
+		const BinaryOperatorNode* rhs_binary = tryGetNode<BinaryOperatorNode>(rhs);
+		return rhs_binary != nullptr &&
+			   lhs_binary->op() == rhs_binary->op() &&
+			   equalDependentExpressionIdentityImpl(lhs_binary->get_lhs(), rhs_binary->get_lhs()) &&
+			   equalDependentExpressionIdentityImpl(lhs_binary->get_rhs(), rhs_binary->get_rhs());
+	}
+	if (const UnaryOperatorNode* lhs_unary = tryGetNode<UnaryOperatorNode>(lhs)) {
+		const UnaryOperatorNode* rhs_unary = tryGetNode<UnaryOperatorNode>(rhs);
+		return rhs_unary != nullptr &&
+			   lhs_unary->op() == rhs_unary->op() &&
+			   lhs_unary->is_prefix() == rhs_unary->is_prefix() &&
+			   lhs_unary->is_builtin_addressof() == rhs_unary->is_builtin_addressof() &&
+			   equalDependentExpressionIdentityImpl(lhs_unary->get_operand(), rhs_unary->get_operand());
+	}
+	if (const TernaryOperatorNode* lhs_ternary = tryGetNode<TernaryOperatorNode>(lhs)) {
+		const TernaryOperatorNode* rhs_ternary = tryGetNode<TernaryOperatorNode>(rhs);
+		return rhs_ternary != nullptr &&
+			   equalDependentExpressionIdentityImpl(lhs_ternary->condition(), rhs_ternary->condition()) &&
+			   equalDependentExpressionIdentityImpl(lhs_ternary->true_expr(), rhs_ternary->true_expr()) &&
+			   equalDependentExpressionIdentityImpl(lhs_ternary->false_expr(), rhs_ternary->false_expr());
+	}
+	if (const MemberAccessNode* lhs_member = tryGetNode<MemberAccessNode>(lhs)) {
+		const MemberAccessNode* rhs_member = tryGetNode<MemberAccessNode>(rhs);
+		return rhs_member != nullptr &&
+			   lhs_member->is_arrow() == rhs_member->is_arrow() &&
+			   lhs_member->member_name() == rhs_member->member_name() &&
+			   equalDependentExpressionIdentityImpl(lhs_member->object(), rhs_member->object());
+	}
+	if (const PointerToMemberAccessNode* lhs_member_ptr = tryGetNode<PointerToMemberAccessNode>(lhs)) {
+		const PointerToMemberAccessNode* rhs_member_ptr = tryGetNode<PointerToMemberAccessNode>(rhs);
+		return rhs_member_ptr != nullptr &&
+			   lhs_member_ptr->is_arrow() == rhs_member_ptr->is_arrow() &&
+			   equalDependentExpressionIdentityImpl(lhs_member_ptr->object(), rhs_member_ptr->object()) &&
+			   equalDependentExpressionIdentityImpl(lhs_member_ptr->member_pointer(), rhs_member_ptr->member_pointer());
+	}
+	if (const PseudoDestructorCallNode* lhs_pseudo_dtor = tryGetNode<PseudoDestructorCallNode>(lhs)) {
+		const PseudoDestructorCallNode* rhs_pseudo_dtor = tryGetNode<PseudoDestructorCallNode>(rhs);
+		return rhs_pseudo_dtor != nullptr &&
+			   lhs_pseudo_dtor->is_arrow_access() == rhs_pseudo_dtor->is_arrow_access() &&
+			   lhs_pseudo_dtor->qualified_type_name() == rhs_pseudo_dtor->qualified_type_name() &&
+			   lhs_pseudo_dtor->type_name() == rhs_pseudo_dtor->type_name() &&
+			   equalDependentExpressionIdentityImpl(lhs_pseudo_dtor->object(), rhs_pseudo_dtor->object());
+	}
+	if (const ArraySubscriptNode* lhs_subscript = tryGetNode<ArraySubscriptNode>(lhs)) {
+		const ArraySubscriptNode* rhs_subscript = tryGetNode<ArraySubscriptNode>(rhs);
+		return rhs_subscript != nullptr &&
+			   equalDependentExpressionIdentityImpl(lhs_subscript->array_expr(), rhs_subscript->array_expr()) &&
+			   equalDependentExpressionIdentityImpl(lhs_subscript->index_expr(), rhs_subscript->index_expr());
+	}
+	if (const SizeofExprNode* lhs_sizeof = tryGetNode<SizeofExprNode>(lhs)) {
+		const SizeofExprNode* rhs_sizeof = tryGetNode<SizeofExprNode>(rhs);
+		return rhs_sizeof != nullptr &&
+			   lhs_sizeof->is_type() == rhs_sizeof->is_type() &&
+			   equalDependentExpressionIdentityImpl(lhs_sizeof->type_or_expr(), rhs_sizeof->type_or_expr());
+	}
+	if (const SizeofPackNode* lhs_sizeof_pack = tryGetNode<SizeofPackNode>(lhs)) {
+		const SizeofPackNode* rhs_sizeof_pack = tryGetNode<SizeofPackNode>(rhs);
+		return rhs_sizeof_pack != nullptr &&
+			   lhs_sizeof_pack->pack_name() == rhs_sizeof_pack->pack_name();
+	}
+	if (const AlignofExprNode* lhs_alignof = tryGetNode<AlignofExprNode>(lhs)) {
+		const AlignofExprNode* rhs_alignof = tryGetNode<AlignofExprNode>(rhs);
+		return rhs_alignof != nullptr &&
+			   lhs_alignof->is_type() == rhs_alignof->is_type() &&
+			   equalDependentExpressionIdentityImpl(lhs_alignof->type_or_expr(), rhs_alignof->type_or_expr());
+	}
+	if (const NoexceptExprNode* lhs_noexcept = tryGetNode<NoexceptExprNode>(lhs)) {
+		const NoexceptExprNode* rhs_noexcept = tryGetNode<NoexceptExprNode>(rhs);
+		return rhs_noexcept != nullptr &&
+			   equalDependentExpressionIdentityImpl(lhs_noexcept->expr(), rhs_noexcept->expr());
+	}
+	if (const OffsetofExprNode* lhs_offsetof = tryGetNode<OffsetofExprNode>(lhs)) {
+		const OffsetofExprNode* rhs_offsetof = tryGetNode<OffsetofExprNode>(rhs);
+		return rhs_offsetof != nullptr &&
+			   equalTypeSpecifierIdentityImpl(lhs_offsetof->type_node(), rhs_offsetof->type_node()) &&
+			   equalTokenValueRange(lhs_offsetof->member_path(), rhs_offsetof->member_path());
+	}
+	if (const TypeTraitExprNode* lhs_type_trait = tryGetNode<TypeTraitExprNode>(lhs)) {
+		const TypeTraitExprNode* rhs_type_trait = tryGetNode<TypeTraitExprNode>(rhs);
+		return rhs_type_trait != nullptr &&
+			   lhs_type_trait->kind() == rhs_type_trait->kind() &&
+			   lhs_type_trait->has_type() == rhs_type_trait->has_type() &&
+			   (!lhs_type_trait->has_type() ||
+				equalDependentExpressionIdentityImpl(lhs_type_trait->type_node(), rhs_type_trait->type_node())) &&
+			   lhs_type_trait->has_second_type() == rhs_type_trait->has_second_type() &&
+			   (!lhs_type_trait->has_second_type() ||
+				equalDependentExpressionIdentityImpl(lhs_type_trait->second_type_node(), rhs_type_trait->second_type_node())) &&
+			   equalAstRange(lhs_type_trait->additional_type_nodes(), rhs_type_trait->additional_type_nodes());
+	}
+	if (const NewExpressionNode* lhs_new = tryGetNode<NewExpressionNode>(lhs)) {
+		const NewExpressionNode* rhs_new = tryGetNode<NewExpressionNode>(rhs);
+		return rhs_new != nullptr &&
+			   lhs_new->is_array() == rhs_new->is_array() &&
+			   lhs_new->has_value_init() == rhs_new->has_value_init() &&
+			   lhs_new->is_brace_init() == rhs_new->is_brace_init() &&
+			   equalDependentExpressionIdentityImpl(lhs_new->type_node(), rhs_new->type_node()) &&
+			   lhs_new->size_expr().has_value() == rhs_new->size_expr().has_value() &&
+			   (!lhs_new->size_expr().has_value() ||
+				equalDependentExpressionIdentityImpl(*lhs_new->size_expr(), *rhs_new->size_expr())) &&
+			   equalAstRange(lhs_new->constructor_args(), rhs_new->constructor_args()) &&
+			   equalAstRange(lhs_new->placement_args(), rhs_new->placement_args());
+	}
+	if (const DeleteExpressionNode* lhs_delete = tryGetNode<DeleteExpressionNode>(lhs)) {
+		const DeleteExpressionNode* rhs_delete = tryGetNode<DeleteExpressionNode>(rhs);
+		return rhs_delete != nullptr &&
+			   lhs_delete->is_array() == rhs_delete->is_array() &&
+			   equalDependentExpressionIdentityImpl(lhs_delete->expr(), rhs_delete->expr());
+	}
+	if (const StaticCastNode* lhs_static_cast = tryGetNode<StaticCastNode>(lhs)) {
+		const StaticCastNode* rhs_static_cast = tryGetNode<StaticCastNode>(rhs);
+		return rhs_static_cast != nullptr &&
+			   equalTypeSpecifierIdentityImpl(lhs_static_cast->target_type(), rhs_static_cast->target_type()) &&
+			   equalDependentExpressionIdentityImpl(lhs_static_cast->expr(), rhs_static_cast->expr());
+	}
+	if (const DynamicCastNode* lhs_dynamic_cast = tryGetNode<DynamicCastNode>(lhs)) {
+		const DynamicCastNode* rhs_dynamic_cast = tryGetNode<DynamicCastNode>(rhs);
+		return rhs_dynamic_cast != nullptr &&
+			   equalTypeSpecifierIdentityImpl(lhs_dynamic_cast->target_type(), rhs_dynamic_cast->target_type()) &&
+			   equalDependentExpressionIdentityImpl(lhs_dynamic_cast->expr(), rhs_dynamic_cast->expr());
+	}
+	if (const ConstCastNode* lhs_const_cast = tryGetNode<ConstCastNode>(lhs)) {
+		const ConstCastNode* rhs_const_cast = tryGetNode<ConstCastNode>(rhs);
+		return rhs_const_cast != nullptr &&
+			   equalTypeSpecifierIdentityImpl(lhs_const_cast->target_type(), rhs_const_cast->target_type()) &&
+			   equalDependentExpressionIdentityImpl(lhs_const_cast->expr(), rhs_const_cast->expr());
+	}
+	if (const ReinterpretCastNode* lhs_reinterpret_cast = tryGetNode<ReinterpretCastNode>(lhs)) {
+		const ReinterpretCastNode* rhs_reinterpret_cast = tryGetNode<ReinterpretCastNode>(rhs);
+		return rhs_reinterpret_cast != nullptr &&
+			   equalTypeSpecifierIdentityImpl(lhs_reinterpret_cast->target_type(), rhs_reinterpret_cast->target_type()) &&
+			   equalDependentExpressionIdentityImpl(lhs_reinterpret_cast->expr(), rhs_reinterpret_cast->expr());
+	}
+	if (const TypeidNode* lhs_typeid = tryGetNode<TypeidNode>(lhs)) {
+		const TypeidNode* rhs_typeid = tryGetNode<TypeidNode>(rhs);
+		return rhs_typeid != nullptr &&
+			   lhs_typeid->is_type() == rhs_typeid->is_type() &&
+			   equalDependentExpressionIdentityImpl(lhs_typeid->operand(), rhs_typeid->operand());
+	}
+	if (const LambdaExpressionNode* lhs_lambda = tryGetNode<LambdaExpressionNode>(lhs)) {
+		const LambdaExpressionNode* rhs_lambda = tryGetNode<LambdaExpressionNode>(rhs);
+		if (rhs_lambda == nullptr ||
+			lhs_lambda->lambda_id() != rhs_lambda->lambda_id() ||
+			lhs_lambda->is_mutable() != rhs_lambda->is_mutable() ||
+			lhs_lambda->is_noexcept() != rhs_lambda->is_noexcept() ||
+			lhs_lambda->is_constexpr() != rhs_lambda->is_constexpr() ||
+			lhs_lambda->is_consteval() != rhs_lambda->is_consteval() ||
+			lhs_lambda->template_params().size() != rhs_lambda->template_params().size() ||
+			lhs_lambda->captures().size() != rhs_lambda->captures().size() ||
+			lhs_lambda->parameters().size() != rhs_lambda->parameters().size() ||
+			lhs_lambda->return_type().has_value() != rhs_lambda->return_type().has_value()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs_lambda->template_params().size(); ++i) {
+			if (lhs_lambda->template_params()[i] != rhs_lambda->template_params()[i]) {
+				return false;
+			}
+		}
+		for (size_t i = 0; i < lhs_lambda->captures().size(); ++i) {
+			if (!equalLambdaCaptureIdentity(lhs_lambda->captures()[i], rhs_lambda->captures()[i])) {
+				return false;
+			}
+		}
+		if (!equalAstRange(lhs_lambda->parameters(), rhs_lambda->parameters())) {
+			return false;
+		}
+		if (lhs_lambda->return_type().has_value() &&
+			!equalDependentExpressionIdentityImpl(*lhs_lambda->return_type(), *rhs_lambda->return_type())) {
+			return false;
+		}
+		return true;
+	}
+	if (const TemplateParameterReferenceNode* lhs_template_param = tryGetNode<TemplateParameterReferenceNode>(lhs)) {
+		const TemplateParameterReferenceNode* rhs_template_param = tryGetNode<TemplateParameterReferenceNode>(rhs);
+		return rhs_template_param != nullptr &&
+			   lhs_template_param->param_name() == rhs_template_param->param_name();
+	}
+	if (const FoldExpressionNode* lhs_fold = tryGetNode<FoldExpressionNode>(lhs)) {
+		const FoldExpressionNode* rhs_fold = tryGetNode<FoldExpressionNode>(rhs);
+		return rhs_fold != nullptr &&
+			   lhs_fold->pack_name() == rhs_fold->pack_name() &&
+			   lhs_fold->op() == rhs_fold->op() &&
+			   lhs_fold->direction() == rhs_fold->direction() &&
+			   lhs_fold->type() == rhs_fold->type() &&
+			   lhs_fold->has_complex_pack_expr() == rhs_fold->has_complex_pack_expr() &&
+			   (!lhs_fold->has_complex_pack_expr() ||
+				equalDependentExpressionIdentityImpl(*lhs_fold->pack_expr(), *rhs_fold->pack_expr())) &&
+			   lhs_fold->init_expr().has_value() == rhs_fold->init_expr().has_value() &&
+			   (!lhs_fold->init_expr().has_value() ||
+				equalDependentExpressionIdentityImpl(*lhs_fold->init_expr(), *rhs_fold->init_expr()));
+	}
+	if (const PackExpansionExprNode* lhs_pack_expansion = tryGetNode<PackExpansionExprNode>(lhs)) {
+		const PackExpansionExprNode* rhs_pack_expansion = tryGetNode<PackExpansionExprNode>(rhs);
+		return rhs_pack_expansion != nullptr &&
+			   equalDependentExpressionIdentityImpl(lhs_pack_expansion->pattern(), rhs_pack_expansion->pattern());
+	}
+	if (const InitializerListConstructionNode* lhs_init_list = tryGetNode<InitializerListConstructionNode>(lhs)) {
+		const InitializerListConstructionNode* rhs_init_list = tryGetNode<InitializerListConstructionNode>(rhs);
+		return rhs_init_list != nullptr &&
+			   equalDependentExpressionIdentityImpl(lhs_init_list->element_type(), rhs_init_list->element_type()) &&
+			   equalDependentExpressionIdentityImpl(lhs_init_list->target_type(), rhs_init_list->target_type()) &&
+			   equalAstRange(lhs_init_list->elements(), rhs_init_list->elements());
+	}
+	if (const ThrowExpressionNode* lhs_throw = tryGetNode<ThrowExpressionNode>(lhs)) {
+		const ThrowExpressionNode* rhs_throw = tryGetNode<ThrowExpressionNode>(rhs);
+		return rhs_throw != nullptr &&
+			   lhs_throw->is_rethrow() == rhs_throw->is_rethrow() &&
+			   lhs_throw->expression().has_value() == rhs_throw->expression().has_value() &&
+			   (!lhs_throw->expression().has_value() ||
+				equalDependentExpressionIdentityImpl(*lhs_throw->expression(), *rhs_throw->expression()));
+	}
+	if (const CallExprNode* lhs_call = tryGetNode<CallExprNode>(lhs)) {
+		const CallExprNode* rhs_call = tryGetNode<CallExprNode>(rhs);
+		return rhs_call != nullptr &&
+			   equalCalleeDescriptorIdentity(lhs_call->callee(), rhs_call->callee()) &&
+			   lhs_call->has_receiver() == rhs_call->has_receiver() &&
+			   (!lhs_call->has_receiver() ||
+				equalDependentExpressionIdentityImpl(lhs_call->receiver(), rhs_call->receiver())) &&
+			   equalAstRange(lhs_call->arguments(), rhs_call->arguments()) &&
+			   equalAstRange(lhs_call->template_arguments(), rhs_call->template_arguments());
+	}
+	if (const ConstructorCallNode* lhs_ctor = tryGetNode<ConstructorCallNode>(lhs)) {
+		const ConstructorCallNode* rhs_ctor = tryGetNode<ConstructorCallNode>(rhs);
+		return rhs_ctor != nullptr &&
+			   equalTypeSpecifierIdentityImpl(lhs_ctor->type_node(), rhs_ctor->type_node()) &&
+			   equalAstRange(lhs_ctor->arguments(), rhs_ctor->arguments());
+	}
+	return false;
+}
+
+size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 	if (!node.has_value()) {
-		builder.append("Empty"sv);
-		return;
+		return std::hash<uint8_t>{}(0);
 	}
 	if (node.is<TypeSpecifierNode>()) {
-		appendTypeSpecifierIdentity(builder, node.as<TypeSpecifierNode>());
-		return;
+		size_t seed = std::hash<uint8_t>{}(1);
+		hashCombine(seed, hashTypeSpecifierIdentityImpl(node.as<TypeSpecifierNode>()));
+		return seed;
 	}
 	if (const IdentifierNode* identifier = tryGetIdentifier(node)) {
-		builder.append("Id("sv);
-		appendIdentityString(builder, identifier->name());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(2);
+		hashCombineStringView(seed, identifier->name());
+		return seed;
 	}
-	if (const QualifiedIdentifierNode* qualified_identifier = tryGetNode<QualifiedIdentifierNode>(node)) {
-		builder.append("QId("sv);
-		builder.append(static_cast<uint64_t>(qualified_identifier->namespace_handle().index));
-		builder.append(';');
-		appendIdentityString(builder, qualified_identifier->name());
-		if (qualified_identifier->hasDependentQualifiedName()) {
-			const auto* dependent_name = qualified_identifier->dependentQualifiedName();
-			builder.append(';');
-			builder.append(static_cast<uint64_t>(dependent_name->owner_kind));
-			builder.append(';');
-			if (dependent_name->owner_name.isValid()) {
-				appendIdentityString(builder, StringTable::getStringView(dependent_name->owner_name));
-			}
-			builder.append(';');
-			builder.append(static_cast<uint64_t>(dependent_name->owner_type.category()));
-			builder.append(',');
-			builder.append(static_cast<uint64_t>(dependent_name->owner_type.index()));
-			builder.append(';');
-			builder.append(static_cast<uint64_t>(dependent_name->member_chain.size()));
-			for (const auto& member : dependent_name->member_chain) {
-				builder.append(';');
-				if (member.name.isValid()) {
-					appendIdentityString(builder, StringTable::getStringView(member.name));
-				}
-				builder.append(',');
-				builder.append(static_cast<uint64_t>(member.has_template_arguments));
-				builder.append(',');
-				builder.append(static_cast<uint64_t>(member.has_template_keyword));
-			}
+	if (const QualifiedIdentifierNode* qualified = tryGetNode<QualifiedIdentifierNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(3);
+		hashCombine(seed, std::hash<NamespaceHandle>{}(qualified->namespace_handle()));
+		hashCombineStringView(seed, qualified->name());
+		hashCombine(seed, std::hash<bool>{}(qualified->hasDependentQualifiedName()));
+		if (qualified->hasDependentQualifiedName()) {
+			hashCombine(seed, hashDependentQualifiedNameRecord(*qualified->dependentQualifiedName()));
 		}
-		builder.append(')');
-		return;
+		return seed;
 	}
 	if (const NumericLiteralNode* numeric = tryGetNode<NumericLiteralNode>(node)) {
-		builder.append("Num("sv);
-		builder.append(static_cast<uint64_t>(numeric->type()));
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(numeric->qualifier()));
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(numeric->sizeInBits()));
-		builder.append(';');
-		if (std::holds_alternative<unsigned long long>(numeric->value())) {
-			builder.append(static_cast<uint64_t>(std::get<unsigned long long>(numeric->value())));
-		} else {
-			double double_value = std::get<double>(numeric->value());
-			uint64_t bits = 0;
-			std::memcpy(&bits, &double_value, sizeof(bits));
-			builder.append(bits);
-		}
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(4);
+		hashCombine(seed, hashNumericLiteralIdentity(*numeric));
+		return seed;
 	}
 	if (const BoolLiteralNode* bool_literal = tryGetNode<BoolLiteralNode>(node)) {
-		builder.append("Bool("sv);
-		builder.append(static_cast<uint64_t>(bool_literal->value()));
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(5);
+		hashCombine(seed, std::hash<bool>{}(bool_literal->value()));
+		return seed;
 	}
 	if (const StringLiteralNode* string_literal = tryGetNode<StringLiteralNode>(node)) {
-		builder.append("Str("sv);
-		appendIdentityString(builder, string_literal->value());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(6);
+		hashCombineStringView(seed, string_literal->value());
+		return seed;
 	}
 	if (const BinaryOperatorNode* binary = tryGetNode<BinaryOperatorNode>(node)) {
-		builder.append("Bin("sv);
-		appendIdentityString(builder, binary->op());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, binary->get_lhs());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, binary->get_rhs());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(7);
+		hashCombineStringView(seed, binary->op());
+		hashCombine(seed, hashDependentExpressionIdentityImpl(binary->get_lhs()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(binary->get_rhs()));
+		return seed;
 	}
 	if (const UnaryOperatorNode* unary = tryGetNode<UnaryOperatorNode>(node)) {
-		builder.append("Unary("sv);
-		appendIdentityString(builder, unary->op());
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(unary->is_prefix()));
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(unary->is_builtin_addressof()));
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, unary->get_operand());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(8);
+		hashCombineStringView(seed, unary->op());
+		hashCombine(seed, std::hash<bool>{}(unary->is_prefix()));
+		hashCombine(seed, std::hash<bool>{}(unary->is_builtin_addressof()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(unary->get_operand()));
+		return seed;
 	}
 	if (const TernaryOperatorNode* ternary = tryGetNode<TernaryOperatorNode>(node)) {
-		builder.append("Ternary("sv);
-		appendDependentExpressionIdentity(builder, ternary->condition());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, ternary->true_expr());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, ternary->false_expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(9);
+		hashCombine(seed, hashDependentExpressionIdentityImpl(ternary->condition()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(ternary->true_expr()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(ternary->false_expr()));
+		return seed;
 	}
-	if (const MemberAccessNode* member_access = tryGetNode<MemberAccessNode>(node)) {
-		builder.append("Member("sv);
-		builder.append(static_cast<uint64_t>(member_access->is_arrow()));
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, member_access->object());
-		builder.append(';');
-		appendIdentityString(builder, member_access->member_name());
-		builder.append(')');
-		return;
+	if (const MemberAccessNode* member = tryGetNode<MemberAccessNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(10);
+		hashCombine(seed, std::hash<bool>{}(member->is_arrow()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(member->object()));
+		hashCombineStringView(seed, member->member_name());
+		return seed;
 	}
-	if (const PointerToMemberAccessNode* member_pointer = tryGetNode<PointerToMemberAccessNode>(node)) {
-		builder.append("MemberPtr("sv);
-		builder.append(static_cast<uint64_t>(member_pointer->is_arrow()));
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, member_pointer->object());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, member_pointer->member_pointer());
-		builder.append(')');
-		return;
+	if (const PointerToMemberAccessNode* member_ptr = tryGetNode<PointerToMemberAccessNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(11);
+		hashCombine(seed, std::hash<bool>{}(member_ptr->is_arrow()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(member_ptr->object()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(member_ptr->member_pointer()));
+		return seed;
+	}
+	if (const PseudoDestructorCallNode* pseudo_dtor = tryGetNode<PseudoDestructorCallNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(12);
+		hashCombine(seed, std::hash<bool>{}(pseudo_dtor->is_arrow_access()));
+		hashCombine(seed, std::hash<StringHandle>{}(pseudo_dtor->qualified_type_name()));
+		hashCombineStringView(seed, pseudo_dtor->type_name());
+		hashCombine(seed, hashDependentExpressionIdentityImpl(pseudo_dtor->object()));
+		return seed;
 	}
 	if (const ArraySubscriptNode* subscript = tryGetNode<ArraySubscriptNode>(node)) {
-		builder.append("Subscript("sv);
-		appendDependentExpressionIdentity(builder, subscript->array_expr());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, subscript->index_expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(13);
+		hashCombine(seed, hashDependentExpressionIdentityImpl(subscript->array_expr()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(subscript->index_expr()));
+		return seed;
 	}
 	if (const SizeofExprNode* sizeof_expr = tryGetNode<SizeofExprNode>(node)) {
-		builder.append("Sizeof("sv);
-		builder.append(static_cast<uint64_t>(sizeof_expr->is_type()));
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, sizeof_expr->type_or_expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(14);
+		hashCombine(seed, std::hash<bool>{}(sizeof_expr->is_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(sizeof_expr->type_or_expr()));
+		return seed;
 	}
 	if (const SizeofPackNode* sizeof_pack = tryGetNode<SizeofPackNode>(node)) {
-		builder.append("SizeofPack("sv);
-		appendIdentityString(builder, sizeof_pack->pack_name());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(15);
+		hashCombineStringView(seed, sizeof_pack->pack_name());
+		return seed;
 	}
 	if (const AlignofExprNode* alignof_expr = tryGetNode<AlignofExprNode>(node)) {
-		builder.append("Alignof("sv);
-		builder.append(static_cast<uint64_t>(alignof_expr->is_type()));
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, alignof_expr->type_or_expr());
-		builder.append(')');
-		return;
-	}
-	if (const OffsetofExprNode* offsetof_expr = tryGetNode<OffsetofExprNode>(node)) {
-		builder.append("Offsetof("sv);
-		appendTypeSpecifierIdentity(builder, offsetof_expr->type_node());
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(offsetof_expr->member_path().size()));
-		for (const Token& member : offsetof_expr->member_path()) {
-			builder.append(';');
-			appendIdentityString(builder, member.value());
-		}
-		builder.append(')');
-		return;
-	}
-	if (const TypeTraitExprNode* type_trait = tryGetNode<TypeTraitExprNode>(node)) {
-		builder.append("TypeTrait("sv);
-		builder.append(static_cast<uint64_t>(type_trait->kind()));
-		builder.append(';');
-		if (type_trait->has_type()) {
-			appendDependentExpressionIdentity(builder, type_trait->type_node());
-		}
-		builder.append(';');
-		if (type_trait->has_second_type()) {
-			appendDependentExpressionIdentity(builder, type_trait->second_type_node());
-		}
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(type_trait->additional_type_nodes().size()));
-		for (const ASTNode& extra_type : type_trait->additional_type_nodes()) {
-			builder.append(';');
-			appendDependentExpressionIdentity(builder, extra_type);
-		}
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(16);
+		hashCombine(seed, std::hash<bool>{}(alignof_expr->is_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(alignof_expr->type_or_expr()));
+		return seed;
 	}
 	if (const NoexceptExprNode* noexcept_expr = tryGetNode<NoexceptExprNode>(node)) {
-		builder.append("Noexcept("sv);
-		appendDependentExpressionIdentity(builder, noexcept_expr->expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(17);
+		hashCombine(seed, hashDependentExpressionIdentityImpl(noexcept_expr->expr()));
+		return seed;
+	}
+	if (const OffsetofExprNode* offsetof_expr = tryGetNode<OffsetofExprNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(18);
+		hashCombine(seed, hashTypeSpecifierIdentityImpl(offsetof_expr->type_node()));
+		hashCombine(seed, hashTokenValueRange(offsetof_expr->member_path()));
+		return seed;
+	}
+	if (const TypeTraitExprNode* type_trait = tryGetNode<TypeTraitExprNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(19);
+		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(type_trait->kind())));
+		hashCombine(seed, std::hash<bool>{}(type_trait->has_type()));
+		if (type_trait->has_type()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(type_trait->type_node()));
+		}
+		hashCombine(seed, std::hash<bool>{}(type_trait->has_second_type()));
+		if (type_trait->has_second_type()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(type_trait->second_type_node()));
+		}
+		hashCombine(seed, hashAstRange(type_trait->additional_type_nodes()));
+		return seed;
+	}
+	if (const NewExpressionNode* new_expr = tryGetNode<NewExpressionNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(20);
+		hashCombine(seed, hashDependentExpressionIdentityImpl(new_expr->type_node()));
+		hashCombine(seed, std::hash<bool>{}(new_expr->is_array()));
+		hashCombine(seed, std::hash<bool>{}(new_expr->has_value_init()));
+		hashCombine(seed, std::hash<bool>{}(new_expr->is_brace_init()));
+		hashCombine(seed, std::hash<bool>{}(new_expr->size_expr().has_value()));
+		if (new_expr->size_expr().has_value()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(*new_expr->size_expr()));
+		}
+		hashCombine(seed, hashAstRange(new_expr->constructor_args()));
+		hashCombine(seed, hashAstRange(new_expr->placement_args()));
+		return seed;
+	}
+	if (const DeleteExpressionNode* delete_expr = tryGetNode<DeleteExpressionNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(21);
+		hashCombine(seed, std::hash<bool>{}(delete_expr->is_array()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(delete_expr->expr()));
+		return seed;
 	}
 	if (const StaticCastNode* static_cast_expr = tryGetNode<StaticCastNode>(node)) {
-		builder.append("StaticCast("sv);
-		appendTypeSpecifierIdentity(builder, static_cast_expr->target_type());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, static_cast_expr->expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(22);
+		hashCombine(seed, hashTypeSpecifierIdentityImpl(static_cast_expr->target_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(static_cast_expr->expr()));
+		return seed;
 	}
 	if (const DynamicCastNode* dynamic_cast_expr = tryGetNode<DynamicCastNode>(node)) {
-		builder.append("DynamicCast("sv);
-		appendTypeSpecifierIdentity(builder, dynamic_cast_expr->target_type());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, dynamic_cast_expr->expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(23);
+		hashCombine(seed, hashTypeSpecifierIdentityImpl(dynamic_cast_expr->target_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(dynamic_cast_expr->expr()));
+		return seed;
 	}
 	if (const ConstCastNode* const_cast_expr = tryGetNode<ConstCastNode>(node)) {
-		builder.append("ConstCast("sv);
-		appendTypeSpecifierIdentity(builder, const_cast_expr->target_type());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, const_cast_expr->expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(24);
+		hashCombine(seed, hashTypeSpecifierIdentityImpl(const_cast_expr->target_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(const_cast_expr->expr()));
+		return seed;
 	}
 	if (const ReinterpretCastNode* reinterpret_cast_expr = tryGetNode<ReinterpretCastNode>(node)) {
-		builder.append("ReinterpretCast("sv);
-		appendTypeSpecifierIdentity(builder, reinterpret_cast_expr->target_type());
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, reinterpret_cast_expr->expr());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(25);
+		hashCombine(seed, hashTypeSpecifierIdentityImpl(reinterpret_cast_expr->target_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(reinterpret_cast_expr->expr()));
+		return seed;
 	}
 	if (const TypeidNode* typeid_expr = tryGetNode<TypeidNode>(node)) {
-		builder.append("Typeid("sv);
-		builder.append(static_cast<uint64_t>(typeid_expr->is_type()));
-		builder.append(';');
-		appendDependentExpressionIdentity(builder, typeid_expr->operand());
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(26);
+		hashCombine(seed, std::hash<bool>{}(typeid_expr->is_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(typeid_expr->operand()));
+		return seed;
+	}
+	if (const LambdaExpressionNode* lambda = tryGetNode<LambdaExpressionNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(27);
+		hashCombine(seed, std::hash<size_t>{}(lambda->lambda_id()));
+		hashCombine(seed, std::hash<bool>{}(lambda->is_mutable()));
+		hashCombine(seed, std::hash<bool>{}(lambda->is_noexcept()));
+		hashCombine(seed, std::hash<bool>{}(lambda->is_constexpr()));
+		hashCombine(seed, std::hash<bool>{}(lambda->is_consteval()));
+		for (std::string_view param : lambda->template_params()) {
+			hashCombineStringView(seed, param);
+		}
+		for (const LambdaCaptureNode& capture : lambda->captures()) {
+			hashCombine(seed, hashLambdaCaptureIdentity(capture));
+		}
+		hashCombine(seed, hashAstRange(lambda->parameters()));
+		hashCombine(seed, std::hash<bool>{}(lambda->return_type().has_value()));
+		if (lambda->return_type().has_value()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(*lambda->return_type()));
+		}
+		return seed;
 	}
 	if (const TemplateParameterReferenceNode* template_param = tryGetNode<TemplateParameterReferenceNode>(node)) {
-		builder.append("TemplateParam("sv);
-		if (template_param->param_name().isValid()) {
-			appendIdentityString(builder, StringTable::getStringView(template_param->param_name()));
-		}
-		builder.append(')');
-		return;
+		size_t seed = std::hash<uint8_t>{}(28);
+		hashCombine(seed, std::hash<StringHandle>{}(template_param->param_name()));
+		return seed;
 	}
-	if (const CallExprNode* call_expr = tryGetNode<CallExprNode>(node)) {
-		builder.append("Call("sv);
-		appendCalleeDescriptorIdentity(builder, call_expr->callee());
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(call_expr->has_receiver()));
-		if (call_expr->has_receiver()) {
-			builder.append(';');
-			appendDependentExpressionIdentity(builder, call_expr->receiver());
+	if (const FoldExpressionNode* fold = tryGetNode<FoldExpressionNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(29);
+		hashCombineStringView(seed, fold->pack_name());
+		hashCombineStringView(seed, fold->op());
+		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(fold->direction())));
+		hashCombine(seed, std::hash<uint8_t>{}(static_cast<uint8_t>(fold->type())));
+		hashCombine(seed, std::hash<bool>{}(fold->has_complex_pack_expr()));
+		if (fold->has_complex_pack_expr()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(*fold->pack_expr()));
 		}
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(call_expr->arguments().size()));
-		for (const ASTNode& argument : call_expr->arguments()) {
-			builder.append(';');
-			appendDependentExpressionIdentity(builder, argument);
+		hashCombine(seed, std::hash<bool>{}(fold->init_expr().has_value()));
+		if (fold->init_expr().has_value()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(*fold->init_expr()));
 		}
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(call_expr->template_arguments().size()));
-		for (const ASTNode& argument : call_expr->template_arguments()) {
-			builder.append(';');
-			appendDependentExpressionIdentity(builder, argument);
-		}
-		builder.append(')');
-		return;
+		return seed;
 	}
-	if (const ConstructorCallNode* constructor_call = tryGetNode<ConstructorCallNode>(node)) {
-		builder.append("Ctor("sv);
-		appendTypeSpecifierIdentity(builder, constructor_call->type_node());
-		builder.append(';');
-		builder.append(static_cast<uint64_t>(constructor_call->arguments().size()));
-		for (const ASTNode& argument : constructor_call->arguments()) {
-			builder.append(';');
-			appendDependentExpressionIdentity(builder, argument);
-		}
-		builder.append(')');
-		return;
+	if (const PackExpansionExprNode* pack_expansion = tryGetNode<PackExpansionExprNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(30);
+		hashCombine(seed, hashDependentExpressionIdentityImpl(pack_expansion->pattern()));
+		return seed;
 	}
-	throw InternalError(std::string("Unsupported dependent expression identity node: ") + node.type_name());
+	if (const InitializerListConstructionNode* init_list = tryGetNode<InitializerListConstructionNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(31);
+		hashCombine(seed, hashDependentExpressionIdentityImpl(init_list->element_type()));
+		hashCombine(seed, hashDependentExpressionIdentityImpl(init_list->target_type()));
+		hashCombine(seed, hashAstRange(init_list->elements()));
+		return seed;
+	}
+	if (const ThrowExpressionNode* throw_expr = tryGetNode<ThrowExpressionNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(32);
+		hashCombine(seed, std::hash<bool>{}(throw_expr->is_rethrow()));
+		hashCombine(seed, std::hash<bool>{}(throw_expr->expression().has_value()));
+		if (throw_expr->expression().has_value()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(*throw_expr->expression()));
+		}
+		return seed;
+	}
+	if (const CallExprNode* call = tryGetNode<CallExprNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(33);
+		hashCombine(seed, hashCalleeDescriptorIdentity(call->callee()));
+		hashCombine(seed, std::hash<bool>{}(call->has_receiver()));
+		if (call->has_receiver()) {
+			hashCombine(seed, hashDependentExpressionIdentityImpl(call->receiver()));
+		}
+		hashCombine(seed, hashAstRange(call->arguments()));
+		hashCombine(seed, hashAstRange(call->template_arguments()));
+		return seed;
+	}
+	if (const ConstructorCallNode* ctor = tryGetNode<ConstructorCallNode>(node)) {
+		size_t seed = std::hash<uint8_t>{}(34);
+		hashCombine(seed, hashTypeSpecifierIdentityImpl(ctor->type_node()));
+		hashCombine(seed, hashAstRange(ctor->arguments()));
+		return seed;
+	}
+	return std::hash<std::string_view>{}(node.type_name());
+}
+
+} // namespace
+
+bool equalDependentExpressionIdentity(const ASTNode& lhs, const ASTNode& rhs) {
+	return equalDependentExpressionIdentityImpl(lhs, rhs);
+}
+
+size_t hashDependentExpressionIdentity(const ASTNode& node) {
+	return hashDependentExpressionIdentityImpl(node);
 }
 
 } // namespace FlashCpp
