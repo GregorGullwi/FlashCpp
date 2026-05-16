@@ -17,6 +17,16 @@
 #include "NameMangling.h"
 #include <algorithm>
 
+namespace {
+
+void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const char* operation) {
+	if (!sema.isParserAttached()) {
+		throw InternalError(std::string("ParserSemanticServices::") + operation + " requires an attached parser");
+	}
+}
+
+} // namespace
+
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
 	if (!decl.is_array() || type_spec.is_array()) {
 		return;
@@ -1314,6 +1324,79 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 
 // --- SemanticAnalysis ---
 
+ParserSemanticServices::ParserSemanticServices(SemanticAnalysis& owner)
+	: owner_(&owner) {
+}
+
+size_t ParserSemanticServices::normalizePendingSemanticRoots() {
+	requireParserSemanticServicesAttachment(*owner_, "normalizePendingSemanticRoots");
+	return owner_->normalizePendingSemanticRoots();
+}
+
+std::optional<TypeSpecifierNode> ParserSemanticServices::getExpressionType(const ASTNode& node) const {
+	return owner_->getExpressionType(node);
+}
+
+std::optional<TypeSpecifierNode> ParserSemanticServices::getOverloadResolutionArgType(const ASTNode& arg) const {
+	requireParserSemanticServicesAttachment(*owner_, "getOverloadResolutionArgType");
+	return owner_->getOverloadResolutionArgType(arg);
+}
+
+const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const void* key) const {
+	return owner_->getResolvedOpCall(key);
+}
+
+const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const CallExprNode* key) const {
+	return owner_->getResolvedOpCall(key);
+}
+
+const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(const void* key) const {
+	return owner_->getResolvedDirectCall(key);
+}
+
+const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(const CallExprNode* key) const {
+	return owner_->getResolvedDirectCall(key);
+}
+
+std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
+	StringHandle struct_name,
+	const FunctionDeclarationNode& function_decl) {
+	requireParserSemanticServicesAttachment(*owner_, "ensureMemberFunctionMaterialized(function)");
+	return owner_->ensureMemberFunctionMaterialized(struct_name, function_decl);
+}
+
+std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
+	StringHandle struct_name,
+	const ConstructorDeclarationNode& ctor_decl) {
+	requireParserSemanticServicesAttachment(*owner_, "ensureMemberFunctionMaterialized(constructor)");
+	return owner_->ensureMemberFunctionMaterialized(struct_name, ctor_decl);
+}
+
+std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
+	StringHandle struct_name,
+	StringHandle member_name,
+	std::optional<bool> is_const_member) {
+	requireParserSemanticServicesAttachment(*owner_, "ensureMemberFunctionMaterialized(name)");
+	return owner_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
+}
+
+void ParserSemanticServices::markResolvedOperatorOverloadOdrUsed(
+	const StructMemberFunction& member_overload) {
+	owner_->markResolvedOperatorOverloadOdrUsed(member_overload);
+}
+
+bool ParserSemanticServices::isParserAttached() const {
+	return owner_->isParserAttached();
+}
+
+bool ParserSemanticServices::hasPostParseNormalizationStarted() const {
+	return owner_->hasPostParseNormalizationStarted();
+}
+
+bool ParserSemanticServices::hasPostParseNormalizationCompleted() const {
+	return owner_->hasPostParseNormalizationCompleted();
+}
+
 SemanticAnalysis::SemanticAnalysis(CompileContext& context, SymbolTable& symbols)
 	: context_(context), symbols_(symbols) {
 	(void)context_;
@@ -1329,7 +1412,20 @@ SemanticAnalysis::~SemanticAnalysis() {
 }
 
 void SemanticAnalysis::attachParser(Parser& parser) {
+	if (lifecycle_state_ != LifecycleState::ParserDetached) {
+		throw InternalError("SemanticAnalysis::attachParser called after initialization");
+	}
 	parser_ = &parser;
+	lifecycle_state_ = LifecycleState::ParserAttached;
+}
+
+bool SemanticAnalysis::hasPostParseNormalizationStarted() const {
+	return lifecycle_state_ == LifecycleState::PostParseNormalizationStarted ||
+		   lifecycle_state_ == LifecycleState::PostParseNormalizationCompleted;
+}
+
+bool SemanticAnalysis::hasPostParseNormalizationCompleted() const {
+	return lifecycle_state_ == LifecycleState::PostParseNormalizationCompleted;
 }
 
 Parser& SemanticAnalysis::parser() {
@@ -1347,9 +1443,14 @@ const Parser& SemanticAnalysis::parser() const {
 }
 
 void SemanticAnalysis::run() {
-	parser().clearPendingSemanticRoots();
+	Parser& attached_parser = parser();
+	if (lifecycle_state_ != LifecycleState::ParserAttached) {
+		throw InternalError("SemanticAnalysis::run() requires attached parser in ParserAttached state");
+	}
+	lifecycle_state_ = LifecycleState::PostParseNormalizationStarted;
+	attached_parser.clearPendingSemanticRoots();
 
-	const auto& nodes = parser().get_nodes();
+	const auto& nodes = attached_parser.get_nodes();
 	const size_t initial_root_count = nodes.size();
 	stats_.total_roots = initial_root_count;
 
@@ -1357,7 +1458,7 @@ void SemanticAnalysis::run() {
 	logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
 
 	for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
-		ASTNode node = parser().get_nodes()[root_index];
+		ASTNode node = attached_parser.get_nodes()[root_index];
 		normalizeTopLevelNode(node);
 	}
 
@@ -1379,6 +1480,7 @@ void SemanticAnalysis::run() {
 			  stats_.expressions_visited, " expressions, ",
 			  stats_.statements_visited, " statements, ",
 			  stats_.canonical_types_interned, " canonical types");
+	lifecycle_state_ = LifecycleState::PostParseNormalizationCompleted;
 }
 
 size_t SemanticAnalysis::normalizePendingSemanticRoots() {

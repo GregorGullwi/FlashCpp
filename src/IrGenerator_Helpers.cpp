@@ -103,7 +103,7 @@ void AstToIr::normalizePendingSemanticRoots() {
 		return;
 	}
 
-	sema_->normalizePendingSemanticRoots();
+	sema_->parserSemanticServices().normalizePendingSemanticRoots();
 }
 
 void AstToIr::queueDeferredMemberFunctionFromNode(

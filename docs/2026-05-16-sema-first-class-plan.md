@@ -16,6 +16,21 @@ Stop modeling semantic availability as nullable object plumbing. Callers should 
 
 ## Stage 5: Split Always-Valid Services From Post-Parse Normalization
 
+### Progress update (2026-05-16)
+
+Initial Stage 5 groundwork is now in place:
+
+- `SemanticAnalysis` owns an explicit non-virtual `ParserSemanticServices` boundary for parser-safe operations.
+- `SemanticAnalysis` now exposes named lifecycle/state queries for parser attachment and post-parse normalization start/completion.
+- constexpr evaluation and pending-root normalization call sites have started routing through `ParserSemanticServices` instead of reaching straight into the full post-parse owner API.
+- the handoff into `AstToIr` now asserts that post-parse normalization completed before codegen consumes finalized semantic data.
+
+Remaining Stage 5 work:
+
+- move the rest of the parser/template/constexpr-safe queries behind the parser-safe boundary
+- split the whole-TU `run()` orchestration into a dedicated post-parse normalizer layer
+- audit side tables so "not analyzed yet" and "analyzed and absent" become explicit phase-aware states
+
 ### 5.1 Define the internal split inside `SemanticAnalysis`
 
 Create explicit internal layers:
