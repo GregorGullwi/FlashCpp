@@ -545,6 +545,20 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			object_decl = get_decl_from_symbol(*symbol);
 			if (object_decl) {
 				object_type = object_decl->type_specifier_node();
+				if (!object_type.type_index().is_valid()) {
+					StringHandle object_type_name = object_type.token().handle();
+					if (object_type_name.isValid()) {
+						auto object_type_it = getTypesByNameMap().find(object_type_name);
+						if (object_type_it != getTypesByNameMap().end() &&
+							object_type_it->second != nullptr) {
+							object_type.set_type_index(
+								object_type_it->second->type_index_.withCategory(
+									object_type_it->second->typeEnum()));
+							object_type.set_size_in_bits(
+								object_type_it->second->sizeInBits());
+						}
+					}
+				}
 
 				// If the type is 'auto', deduce the actual closure type from lambda initializer
 				if (isPlaceholderAutoType(object_type.type())) {
@@ -974,7 +988,29 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	if (const TypeInfo* type_info = tryGetTypeInfo(object_type.type_index())) {
 		struct_info = type_info->getStructInfo();
+	}
+	if (struct_info == nullptr && !member_func_decl.parent_struct_name().empty()) {
+		StringHandle owner_handle =
+			StringTable::getOrInternStringHandle(member_func_decl.parent_struct_name());
+		auto owner_it = getTypesByNameMap().find(owner_handle);
+		if (owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
+			struct_info = owner_it->second->getStructInfo();
+		}
+	}
+	if (struct_info == nullptr && callExprNode.has_qualified_name()) {
+		std::string_view qualified_name = callExprNode.qualified_name();
+		if (size_t scope_pos = qualified_name.rfind("::");
+			scope_pos != std::string_view::npos) {
+			StringHandle owner_handle = StringTable::getOrInternStringHandle(
+				qualified_name.substr(0, scope_pos));
+			auto owner_it = getTypesByNameMap().find(owner_handle);
+			if (owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
+				struct_info = owner_it->second->getStructInfo();
+			}
+		}
+	}
 
+	if (struct_info != nullptr) {
 		if (struct_info) {
 			// Find the member function in the struct
 			StringHandle func_name_handle = func_decl_node.identifier_token().handle();
@@ -1424,15 +1460,65 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 		// Check if this is an instantiated template function
 		std::string_view func_name = func_decl_node.identifier_token().value();
-		StringHandle function_name;
+		// Always regenerate the symbol name from struct_info so that template
+		// instantiations produce the correct instantiated owner name (e.g.
+		// Box$hash::method) rather than reusing a stale pattern-level name.
+		StringHandle function_name = StringHandle{};
 
 		// Check if this is a member function - use struct_info to determine
-		if (struct_info) {
+		if (struct_info && !function_name.isValid()) {
+			StringHandle struct_name = struct_info->getName();
+			// Per C++20 [basic.link]: a member function's mangled symbol uses the *declaring*
+			// class, not the *receiver* class.  member_func_decl.parent_struct_name() is set
+			// by the instantiator to the correct declaring owner (e.g. "Base" for inherited
+			// templates, "Box$hash" for instantiated templates).  Prefer it over the receiver
+			// type extracted from callExprNode.qualified_name(), but only when it is not a
+			// template pattern placeholder (which ends in "$pattern__") — those are not real
+			// symbols and must not be used for mangling.
+			auto is_pattern_name = [](std::string_view name) {
+				return name.ends_with("$pattern__"sv);
+			};
+			if (!member_func_decl.parent_struct_name().empty() &&
+				!is_pattern_name(member_func_decl.parent_struct_name())) {
+				struct_name = StringTable::getOrInternStringHandle(
+					member_func_decl.parent_struct_name());
+				// Sync struct_info to the declaring class so resolveOwnerManglingInfoForMangling
+				// picks it up correctly (it prefers struct_info over the fallback name).
+				auto decl_type_it = getTypesByNameMap().find(struct_name);
+				if (decl_type_it != getTypesByNameMap().end() && decl_type_it->second != nullptr) {
+					if (const StructTypeInfo* decl_struct = decl_type_it->second->getStructInfo()) {
+						struct_info = decl_struct;
+					}
+				}
+			} else if (callExprNode.has_qualified_name()) {
+				std::string_view qualified_name = callExprNode.qualified_name();
+				if (size_t scope_pos = qualified_name.rfind("::");
+					scope_pos != std::string_view::npos) {
+					struct_name = StringTable::getOrInternStringHandle(
+						qualified_name.substr(0, scope_pos));
+				}
+			}
+
 			// For nested classes, we need the fully qualified name from TypeInfo
-			auto struct_name = struct_info->getName();
 			auto type_it = getTypesByNameMap().find(struct_name);
 			if (type_it != getTypesByNameMap().end()) {
 				struct_name = type_it->second->name();
+			}
+
+			// [temp.inst] When called from within a template instantiation body, a
+			// member call on an object of the same template class must resolve to the
+			// current instantiation rather than the pattern.  E.g. inside Box<int>,
+			// `other.method()` should call Box$hash::method, not Box::method.
+			if (!current_struct_name_sv.empty() &&
+				!base_template_name.empty() &&
+				StringTable::getStringView(struct_name) == base_template_name) {
+				struct_name = current_struct_name_;
+				auto inst_it = getTypesByNameMap().find(current_struct_name_);
+				if (inst_it != getTypesByNameMap().end() && inst_it->second != nullptr) {
+					if (const StructTypeInfo* inst_struct = inst_it->second->getStructInfo()) {
+						struct_info = inst_struct;
+					}
+				}
 			}
 			auto qualified_template_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(func_name));
 
@@ -1693,8 +1779,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					func_for_mangling->is_const_member_function());
 				function_name = StringTable::getOrInternStringHandle(mangled);
 			}
-		} else {
-			// Non-member function or fallback
+		} else if (!function_name.isValid()) {
+			// No struct context: treat as an unqualified call (e.g. free function
+			// forwarded through this code path, or unresolved member without owner info).
 			function_name = StringTable::getOrInternStringHandle(func_name);
 		}
 

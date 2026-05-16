@@ -185,7 +185,34 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// If parent_struct_name is a template pattern but we have a valid struct context
 		// from visitStructDeclarationNode, keep the instantiated struct context.
 		if (!gTemplateRegistry.isPatternStructName(parent_handle)) {
-			current_struct_name_ = parent_handle;
+			// For out-of-line definitions of nested classes inside a template, the
+			// parent_struct_name may be a qualified pattern name like "Outer::Inner"
+			// where "Outer" is a class template.  In that case we reconstruct the
+			// instantiated qualified name (e.g. "Outer$hash::Inner") from the
+			// currently-active struct context so the function definition is emitted
+			// under the correct instantiated owner.
+			bool resolved_to_instantiation = false;
+			size_t scope_pos = parent_name.find("::");
+			if (scope_pos != std::string_view::npos && current_struct_name_.isValid()) {
+				std::string_view outer_component = parent_name.substr(0, scope_pos);
+				StringHandle outer_handle = StringTable::getOrInternStringHandle(outer_component);
+				if (gTemplateRegistry.isClassTemplate(outer_handle) ||
+					gTemplateRegistry.isPatternStructName(outer_handle)) {
+					std::string_view current_sv = StringTable::getStringView(current_struct_name_);
+					// extractBaseTemplateName returns the part before the first '$'
+					std::string_view current_base = extractBaseTemplateName(current_sv);
+					if (current_base == outer_component) {
+						// Build "Outer$hash::Inner" from current "Outer$hash" + rest of parent_name
+						StringHandle inst_name = StringTable::getOrInternStringHandle(
+							StringBuilder().append(current_sv).append("::").append(parent_name.substr(scope_pos + 2)));
+						current_struct_name_ = inst_name;
+						resolved_to_instantiation = true;
+					}
+				}
+			}
+			if (!resolved_to_instantiation) {
+				current_struct_name_ = parent_handle;
+			}
 		}
 	} else {
 		// Clear current_struct_name_ for free functions (no parent struct association).
