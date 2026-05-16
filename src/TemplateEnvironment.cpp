@@ -36,7 +36,6 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.cv_qualifier = arg.cv_qualifier;
 	info.is_array = arg.is_array;
 	info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
-	info.value = arg.value;
 	info.is_value = arg.is_value;
 	info.is_pack = arg.is_pack;
 	info.dependent_name = arg.dependent_name;
@@ -45,6 +44,17 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.is_template_template_arg = arg.is_template_template_arg;
 	info.template_name = arg.template_name_handle;
 	info.member_pointer_kind = arg.member_pointer_kind;
+	// Default: store the integer value. For pointer/reference/function-pointer NTTPs with
+	// a named entity, also preserve the explicit identity kind and entity name in the
+	// dedicated fields so the roundtrip through toTemplateTypeArg is lossless.
+	info.value = arg.value;
+	if (arg.has_typed_value_identity) {
+		const auto& id = arg.typed_value_identity;
+		info.nttp_kind = id.kind;
+		if (id.entity_name.isValid()) {
+			info.nttp_entity_name = id.entity_name;
+		}
+	}
 	return info;
 }
 
@@ -67,7 +77,29 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.template_name_handle = arg.template_name;
 	ta.member_pointer_kind = arg.member_pointer_kind;
 	if (arg.is_value) {
-		ta.value = arg.intValue();
+		if (arg.nttp_entity_name.isValid()) {
+			// Restore typed NTTP identity using the explicitly stored kind — no inference needed.
+			switch (arg.nttp_kind) {
+			case FlashCpp::NonTypeValueIdentityKind::FunctionPointer:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeFunctionPointer(arg.type_index, arg.nttp_entity_name));
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::Reference:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeReference(arg.type_index, arg.nttp_entity_name));
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::ObjectPointer:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, arg.nttp_entity_name, 0));
+				break;
+			default:
+				// Other kinds (MemberPointer, Floating, StructuralClass, etc.) do not carry an
+				// entity_name in the current model, so nttp_entity_name should never be valid for
+				// them. Fall back to ObjectPointer if this invariant is violated to preserve the
+				// entity name rather than silently losing it.
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, arg.nttp_entity_name, 0));
+				break;
+			}
+		} else {
+			ta.value = arg.intValue();
+		}
 	}
 	return ta;
 }
