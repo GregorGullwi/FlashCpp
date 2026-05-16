@@ -37,6 +37,7 @@ FlashCpp implements a custom constexpr evaluator used for `static_assert`, templ
 - Multi-statement constexpr free functions with local variables, `if`/`else`, `for`, `while`, `switch`, `break`, `continue`, and `return`.
 - Overload resolution reuses sema-resolved call target for both free functions and callable objects.
 - Virtual dispatch through base-class pointer/reference views (`Base*` / `Base&`) resolves to the most-derived constexpr override during constant evaluation.
+- Local reference variables bound to struct/class objects (`T&` / `const T&`) correctly alias the underlying object for member calls, including base-view virtual dispatch and mutating member functions.
 - Constexpr lambdas: explicit captures (`[x]`, `[&x]`), default captures (`[=]`, `[&]`), init-captures, `[this]`, `[*this]`.
 - Void lambdas (implicit or explicit `-> void`) with by-reference captures that mutate outer locals, including early `return;` paths.
 - Mutable closure-local state across repeated lambda calls.
@@ -150,42 +151,6 @@ C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot 
 
 ---
 
-### Local reference variables bound to struct objects
-
-References to local primitive variables work fully:
-```cpp
-constexpr int f() {
-    int x = 3;
-    int& r = x;  // ✅ reference to primitive
-    r += 39;
-    return x;    // returns 42
-}
-```
-
-References as **function parameters** also work (including base-class reference views for virtual dispatch):
-```cpp
-constexpr int call(const Base& b) { return b.value(); }  // ✅ reference parameter
-```
-
-However, a **local variable of reference type** bound to a struct object is not supported:
-```cpp
-constexpr int f() {
-    Derived d(42);
-    const Base& ref = d;   // ❌ local reference to struct object
-    return ref.value();    // "Unsupported by-reference init-capture alias target"
-}
-```
-
-**Root cause:** The evaluator models local references to primitive scalars as aliased name bindings, but does not have a separate "reference to struct object" binding kind. When a struct-type variable is bound to a reference local, the evaluator falls through to its init-capture alias path which does not handle struct objects.
-
-**Workaround:** Use a pointer instead — `const Base* p = &d; p->value();` is fully supported.
-
-**What is needed:** A reference-to-struct binding kind in the evaluator that forwards member-binding lookups and call dispatch to the pointed-to object, similar to how pointer dereference already works.
-
----
-
-
-
 The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Members`, and header files). Central types:
 
 - **`EvalResult`** — carries a scalar value, optional `object_member_bindings` (for struct objects), `array_elements` (for arrays), `callable_lambda` / `callable_var_decl` / `callable_bindings` (for lambda/functor callables), and `pointer_to_var` (for pointers). All evaluation results pass through this type; copies are value-semantic and expensive for large objects.
@@ -211,16 +176,15 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 5. **Dynamic allocation works** — `new`/`delete` in constexpr follow C++20 rules; all allocations must be freed before the constant expression returns.
 6. **`const char*` string operations work** — subscript, `while (*s != '\0')` traversal, and string-literal return values are all supported.
 7. **Avoid `std::initializer_list` parameters** — use explicit array parameters or variadic templates instead.
-8. **Avoid local reference variables bound to struct objects** — use a pointer (`const T* p = &obj; p->method();`) instead of `const T& ref = obj; ref.method();`.
+8. **Local struct references are supported** — `T& ref = obj; ref.method();` now behaves as an alias in constexpr evaluation.
 
 ### For Contributors
 
 The most impactful next improvements in rough priority order:
 
 1. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
-2. **Local reference-to-struct variables** — add a reference-to-struct binding kind so `const Base& ref = d; ref.method();` evaluates correctly, matching how pointer dereference already works.
-3. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
-4. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
+2. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
+3. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
 
 ---
 
@@ -244,6 +208,7 @@ The most impactful next improvements in rough priority order:
 - `tests/test_constexpr_bitwise_compound_assign_ret0.cpp` — bitwise compound assignments
 - `tests/test_constexpr_struct_ctor_in_body_ret0.cpp` — struct constructor calls inside constexpr functions
 - `tests/test_constexpr_reference_alias_ctor_body_ret0.cpp` — reference-alias mutation in constexpr
+- `tests/test_constexpr_local_struct_reference_alias_ret0.cpp` — local `T&` / `const T&` aliases to struct objects in constexpr (virtual dispatch + mutation)
 - `tests/test_constexpr_local_member_assign_ret0.cpp` — local struct member dot-assignment
 - `tests/test_constexpr_this_deref_ret0.cpp` — `*this` dereference in constexpr member functions
 - `tests/test_constexpr_multidim_array_ret0.cpp` — multi-dimensional array constexpr support
