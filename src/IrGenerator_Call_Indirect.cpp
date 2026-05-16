@@ -1468,16 +1468,35 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// Check if this is a member function - use struct_info to determine
 		if (struct_info && !function_name.isValid()) {
 			StringHandle struct_name = struct_info->getName();
-			if (callExprNode.has_qualified_name()) {
+			// Per C++20 [basic.link]: a member function's mangled symbol uses the *declaring*
+			// class, not the *receiver* class.  member_func_decl.parent_struct_name() is set
+			// by the instantiator to the correct declaring owner (e.g. "Base" for inherited
+			// templates, "Box$hash" for instantiated templates).  Prefer it over the receiver
+			// type extracted from callExprNode.qualified_name(), but only when it is not a
+			// template pattern placeholder (which ends in "$pattern__") — those are not real
+			// symbols and must not be used for mangling.
+			auto is_pattern_name = [](std::string_view name) {
+				return name.ends_with("$pattern__"sv);
+			};
+			if (!member_func_decl.parent_struct_name().empty() &&
+				!is_pattern_name(member_func_decl.parent_struct_name())) {
+				struct_name = StringTable::getOrInternStringHandle(
+					member_func_decl.parent_struct_name());
+				// Sync struct_info to the declaring class so resolveOwnerManglingInfoForMangling
+				// picks it up correctly (it prefers struct_info over the fallback name).
+				auto decl_type_it = getTypesByNameMap().find(struct_name);
+				if (decl_type_it != getTypesByNameMap().end() && decl_type_it->second != nullptr) {
+					if (const StructTypeInfo* decl_struct = decl_type_it->second->getStructInfo()) {
+						struct_info = decl_struct;
+					}
+				}
+			} else if (callExprNode.has_qualified_name()) {
 				std::string_view qualified_name = callExprNode.qualified_name();
 				if (size_t scope_pos = qualified_name.rfind("::");
 					scope_pos != std::string_view::npos) {
 					struct_name = StringTable::getOrInternStringHandle(
 						qualified_name.substr(0, scope_pos));
 				}
-			} else if (!member_func_decl.parent_struct_name().empty()) {
-				struct_name = StringTable::getOrInternStringHandle(
-					member_func_decl.parent_struct_name());
 			}
 
 			// For nested classes, we need the fully qualified name from TypeInfo
@@ -1503,25 +1522,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 			auto qualified_template_name = StringTable::getOrInternStringHandle(StringBuilder().append(struct_name).append("::"sv).append(func_name));
 
-			// Check if this is a template that has been instantiated.
-			// If the call qualified_name uses the receiver type (e.g. "Derived") but the
-			// template is defined in a base class (e.g. "Base"), the first lookup will
-			// fail.  In that case fall back to member_func_decl.parent_struct_name() which
-			// is the declaring owner set by the instantiator.
+			// Check if this is a template that has been instantiated
 			auto template_opt = gTemplateRegistry.lookupTemplate(qualified_template_name);
-			if (!template_opt.has_value() && !member_func_decl.parent_struct_name().empty()) {
-				StringHandle decl_owner = StringTable::getOrInternStringHandle(member_func_decl.parent_struct_name());
-				if (decl_owner != struct_name) {
-					StringHandle alt_name = StringTable::getOrInternStringHandle(
-						StringBuilder().append(decl_owner).append("::"sv).append(func_name));
-					auto alt_opt = gTemplateRegistry.lookupTemplate(alt_name);
-					if (alt_opt.has_value()) {
-						struct_name = decl_owner;
-						qualified_template_name = alt_name;
-						template_opt = std::move(alt_opt);
-					}
-				}
-			}
 			if (template_opt.has_value() && template_opt->is<TemplateFunctionDeclarationNode>()) {
 				// This is a member function template - use the mangled name
 
