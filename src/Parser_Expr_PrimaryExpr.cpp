@@ -4681,8 +4681,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				const bool has_dependent_call_args =
 					argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
-				if (has_dependent_call_args ||
-					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+				if (has_dependent_call_args) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
