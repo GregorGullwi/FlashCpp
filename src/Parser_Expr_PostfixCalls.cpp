@@ -701,8 +701,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 
 			// Check for (&func_name)(args) — address-of a named function called directly.
-			// This helps the FunctionPointer NTTP substitution path, but more follow-up
-			// work is still needed because the focused regression does not pass yet.
+			// This supports callable FunctionPointer NTTP substitution paths that
+			// materialize as address-of expressions in template instantiations.
 			const FunctionDeclarationNode* addressof_func_decl = nullptr;
 			if (!is_function_pointer_call && result->is<ExpressionNode>()) {
 				const ExpressionNode& expr = result->as<ExpressionNode>();
