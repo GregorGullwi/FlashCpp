@@ -2169,6 +2169,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	std::unordered_map<std::string_view, EvalResult> member_bindings;
 	bool write_back_to_object_binding = false;
 	bool write_back_through_pointer = false;
+	bool write_back_via_receiver_lvalue = false;
 	std::string_view object_name;
 	EvalResult pointed_object_result;
 
@@ -2240,6 +2241,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		}
 
 		if (object_value->pointer_to_var.isValid()) {
+			const bool is_reference_alias_receiver = isReferenceAliasBinding(*object_value);
 			pointed_object_result = deref_pointer_with_bindings(*object_value, bindings, context);
 			if (!pointed_object_result.success()) {
 				return pointed_object_result;
@@ -2249,9 +2251,16 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			}
 			bound_type_index = pointed_object_result.object_type_index;
 			member_bindings = pointed_object_result.object_member_bindings;
-			// Enable write-back when the receiver is a named identifier OR when the
-			// complex receiver resolved to a named binding (e.g. ternary -> identifier).
-			write_back_through_pointer = object_identifier != nullptr || !resolved_binding_name.empty();
+			if (is_reference_alias_receiver) {
+				// Local reference variables are alias bindings (pointer + reference-qualified type).
+				// Write back through the receiver lvalue to update the alias target, avoiding
+				// invalid `*receiver` expressions.
+				write_back_to_object_binding = object_identifier != nullptr || !resolved_binding_name.empty();
+				write_back_via_receiver_lvalue = write_back_to_object_binding;
+			} else {
+				// Raw pointer receiver (`ptr->fn()`): write back through `*ptr`.
+				write_back_through_pointer = object_identifier != nullptr || !resolved_binding_name.empty();
+			}
 		} else {
 			if (!object_value->object_type_index.is_valid()) {
 				return std::nullopt;
@@ -2435,9 +2444,22 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		// back to the outer map, so "this" is not accidentally stored as a member.
 		member_bindings.erase("this");
 		if (write_back_to_object_binding) {
-			auto object_it = mutable_bindings->find(object_name);
-			if (object_it != mutable_bindings->end()) {
-				object_it->second.object_member_bindings = member_bindings;
+			if (write_back_via_receiver_lvalue) {
+				EvalResult updated_object = pointed_object_result;
+				updated_object.object_member_bindings = member_bindings;
+				EvalResult write_back_result = write_value_to_bound_lvalue(
+					call_info->receiver,
+					updated_object,
+					*mutable_bindings,
+					context);
+				if (!write_back_result.success()) {
+					result = write_back_result;
+				}
+			} else {
+				auto object_it = mutable_bindings->find(object_name);
+				if (object_it != mutable_bindings->end()) {
+					object_it->second.object_member_bindings = member_bindings;
+				}
 			}
 		} else if (write_back_through_pointer) {
 			EvalResult updated_object = pointed_object_result;
