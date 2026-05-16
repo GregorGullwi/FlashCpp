@@ -4,6 +4,7 @@
 #include "NameMangling.h"
 #include "Log.h"
 #include <cstring>
+#include <iomanip>
 #include <sstream>
 #include <set>
 #include <unordered_set>
@@ -258,6 +259,61 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap() {
 	return gNativeTypes;
+}
+
+void printTypeTableStats() {
+	// --- gTypeInfo (type-index table) ---
+	size_t type_info_count = gTypeInfo.size();
+	size_t type_info_bytes = type_info_count * sizeof(TypeInfo);
+	FLASH_LOG(General, Info, "Type table stats:");
+	FLASH_LOG(General, Info, "  gTypeInfo (type-index table): entries=", type_info_count,
+			  ", sizeof(TypeInfo)=", sizeof(TypeInfo),
+			  ", estimated storage=", type_info_bytes, " bytes (",
+			  type_info_bytes / 1024, " KiB)");
+
+	// Break down entries by category
+	size_t cat_struct = 0, cat_enum = 0, cat_alias = 0, cat_native = 0, cat_other = 0;
+	for (size_t i = 0; i < type_info_count; ++i) {
+		TypeCategory cat = gTypeInfo[i].typeEnum();
+		switch (cat) {
+		case TypeCategory::Struct: ++cat_struct; break;
+		case TypeCategory::Enum:   ++cat_enum;   break;
+		case TypeCategory::TypeAlias: ++cat_alias; break;
+		case TypeCategory::Invalid: break;  // slot 0 sentinel, skip
+		default:
+			// Native scalar types are registered in gNativeTypes
+			if (gNativeTypes.count(cat)) {
+				++cat_native;
+			} else {
+				++cat_other;
+			}
+			break;
+		}
+	}
+	FLASH_LOG(General, Info, "  gTypeInfo breakdown: struct=", cat_struct,
+			  ", enum=", cat_enum, ", alias=", cat_alias,
+			  ", native=", cat_native, ", other/template=", cat_other);
+
+	// --- gTypesByName (name-lookup map) ---
+	size_t name_map_entries  = gTypesByName.size();
+	size_t name_map_buckets  = gTypesByName.bucket_count();
+	double name_map_load     = name_map_buckets > 0
+		? static_cast<double>(name_map_entries) / static_cast<double>(name_map_buckets)
+		: 0.0;
+	size_t name_map_max_bucket = 0;
+	for (size_t b = 0; b < name_map_buckets; ++b) {
+		size_t len = gTypesByName.bucket_size(b);
+		if (len > name_map_max_bucket) {
+			name_map_max_bucket = len;
+		}
+	}
+	FLASH_LOG(General, Info, "  gTypesByName (name-lookup map): entries=", name_map_entries,
+			  ", buckets=", name_map_buckets,
+			  ", load_factor=", std::fixed, std::setprecision(3), name_map_load,
+			  ", max_bucket_len=", name_map_max_bucket);
+
+	// --- gNativeTypes ---
+	FLASH_LOG(General, Info, "  gNativeTypes (native-type map): entries=", gNativeTypes.size());
 }
 
 void initialize_native_types() {

@@ -713,6 +713,8 @@ int main_impl(int argc, char* argv[]) {
 	if (show_perf_stats) {
 		StackStringStats::print_stats();
 
+		printTypeTableStats();
+
 #ifdef USE_GLOBAL_OPERAND_STORAGE
 		FLASH_LOG(General, Info, "\n");
 		GlobalOperandStorage::instance().printStats();

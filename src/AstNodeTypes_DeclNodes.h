@@ -1295,6 +1295,9 @@ bool isExactComparisonCategoryType(TypeIndex type_index);
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
+// Print allocation stats for gTypeInfo, gTypesByName, and gNativeTypes to the General/Info log
+void printTypeTableStats();
+
 struct CanonicalTypeAlias {
 	TypeIndex type_index{};
 
