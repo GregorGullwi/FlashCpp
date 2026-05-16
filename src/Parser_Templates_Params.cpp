@@ -3265,14 +3265,14 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 					identity.value_type_index = declared_type_index.is_valid()
 						? declared_type_index
 						: nativeTypeIndex(declared_type_index.category());
-					if (declared_category == TypeCategory::FunctionPointer ||
-						declared_category == TypeCategory::MemberFunctionPointer) {
+					if (declared_category == TypeCategory::FunctionPointer) {
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
 							identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
 							identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
 						}
-					} else if (declared_category == TypeCategory::MemberObjectPointer) {
+					} else if (declared_category == TypeCategory::MemberObjectPointer ||
+							   declared_category == TypeCategory::MemberFunctionPointer) {
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
 						}

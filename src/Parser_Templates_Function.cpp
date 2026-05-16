@@ -1088,10 +1088,10 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		value.type = declared_category;
 		value.type_index = makeConstantValueTypeIndex(declared_category, declared_type_index);
 		value.identity.value_type_index = value.type_index;
-		if (declared_category == TypeCategory::FunctionPointer ||
-				   declared_category == TypeCategory::MemberFunctionPointer) {
+		if (declared_category == TypeCategory::FunctionPointer) {
 			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
-		} else if (declared_category == TypeCategory::MemberObjectPointer) {
+		} else if (declared_category == TypeCategory::MemberObjectPointer ||
+				   declared_category == TypeCategory::MemberFunctionPointer) {
 			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
 		}
 		return value;

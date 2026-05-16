@@ -54,6 +54,12 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 		if (id.entity_name.isValid()) {
 			info.nttp_entity_name = id.entity_name;
 		}
+		if (id.member_name.isValid()) {
+			info.nttp_member_name = id.member_name;
+		}
+		info.nttp_pointer_offset = id.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer
+			? id.value
+			: id.pointer_offset;
 	}
 	return info;
 }
@@ -77,24 +83,43 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.template_name_handle = arg.template_name;
 	ta.member_pointer_kind = arg.member_pointer_kind;
 	if (arg.is_value) {
-		if (arg.nttp_entity_name.isValid()) {
-			// Restore typed NTTP identity using the explicitly stored kind — no inference needed.
+		const bool has_explicit_nttp_identity =
+			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
+			arg.nttp_entity_name.isValid() ||
+			arg.nttp_member_name.isValid() ||
+			arg.nttp_pointer_offset != 0;
+		if (has_explicit_nttp_identity) {
+			// Restore typed NTTP identity using the explicitly stored fields — no inference needed.
 			switch (arg.nttp_kind) {
 			case FlashCpp::NonTypeValueIdentityKind::FunctionPointer:
-				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeFunctionPointer(arg.type_index, arg.nttp_entity_name));
+				if (arg.nttp_entity_name.isValid()) {
+					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeFunctionPointer(arg.type_index, arg.nttp_entity_name));
+				} else {
+					ta.value = arg.intValue();
+				}
 				break;
 			case FlashCpp::NonTypeValueIdentityKind::Reference:
-				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeReference(arg.type_index, arg.nttp_entity_name));
+				if (arg.nttp_entity_name.isValid()) {
+					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeReference(arg.type_index, arg.nttp_entity_name));
+				} else {
+					ta.value = arg.intValue();
+				}
 				break;
 			case FlashCpp::NonTypeValueIdentityKind::ObjectPointer:
-				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, arg.nttp_entity_name, 0));
+				if (arg.nttp_entity_name.isValid()) {
+					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, arg.nttp_entity_name, arg.nttp_pointer_offset));
+				} else {
+					ta.value = arg.intValue();
+				}
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::MemberPointer:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeMemberPointer(arg.type_index, arg.nttp_member_name, arg.nttp_pointer_offset));
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::Nullptr:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeNullptr(arg.type_index));
 				break;
 			default:
-				// Other kinds (MemberPointer, Floating, StructuralClass, etc.) do not carry an
-				// entity_name in the current model, so nttp_entity_name should never be valid for
-				// them. Fall back to ObjectPointer if this invariant is violated to preserve the
-				// entity name rather than silently losing it.
-				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, arg.nttp_entity_name, 0));
+				ta.value = arg.intValue();
 				break;
 			}
 		} else {
