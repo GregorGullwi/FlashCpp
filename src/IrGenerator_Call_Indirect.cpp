@@ -490,7 +490,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label}, ternary.get_token()));
 
 				CallExprNode branch_call = makeBranchCall(receiver_node);
-				ExprResult branch_result = generateMemberFunctionCallIr(branch_call, context, &branch_call);
+				ExprResult branch_result = generateMemberFunctionCallIr(branch_call, context, sema_call_key);
 
 				if (!merged_result_shape.has_value()) {
 					merged_result_shape = branch_result;
