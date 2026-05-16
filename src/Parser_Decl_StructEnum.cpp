@@ -1504,6 +1504,27 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Check for initialization (static data member)
 			std::optional<ASTNode> init_expr_opt;
 			std::optional<SaveHandle> initializer_position;
+			const bool needs_template_initializer_lookup_context =
+				current_template_definition_lookup_context_ == nullptr &&
+				(parsing_template_class_ || hasActiveTemplateParameters());
+			TemplateDefinitionLookupContext static_member_definition_lookup_context;
+			const TemplateDefinitionLookupContext* initializer_definition_lookup_context =
+				current_template_definition_lookup_context_;
+			if (needs_template_initializer_lookup_context) {
+				static_member_definition_lookup_context.definition_line =
+					decl.identifier_token().line();
+				static_member_definition_lookup_context.definition_file_index =
+					decl.identifier_token().file_index();
+				static_member_definition_lookup_context.definition_namespace =
+					gSymbolTable.get_current_namespace_handle();
+				static_member_definition_lookup_context.current_instantiation_name =
+					StringTable::getOrInternStringHandle(qualified_struct_name);
+				if (static_member_definition_lookup_context.is_valid()) {
+					initializer_definition_lookup_context =
+						&static_member_definition_lookup_context;
+				}
+			}
+
 			if (peek() == "="_tok) {
 				// Save the lexer position at '=' so lazy template instantiation can
 				// re-parse the initializer with concrete template arguments substituted.
@@ -1516,6 +1537,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_type_index = type_it->second->type_index_;
 				}
 				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
+				const TemplateDefinitionLookupContext* previous_definition_lookup_context =
+					current_template_definition_lookup_context_;
+				current_template_definition_lookup_context_ =
+					initializer_definition_lookup_context;
+				auto restore_definition_lookup_context = ScopeGuard([&]() {
+					current_template_definition_lookup_context_ =
+						previous_definition_lookup_context;
+				});
 
 				// Parse initializer while preserving brace-init lists for aggregate/static object members.
 				auto init_result = parse_copy_initialization(decl, type_spec);
@@ -1538,6 +1567,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					struct_type_index = type_it->second->type_index_;
 				}
 				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
+				const TemplateDefinitionLookupContext* previous_definition_lookup_context =
+					current_template_definition_lookup_context_;
+				current_template_definition_lookup_context_ =
+					initializer_definition_lookup_context;
+				auto restore_definition_lookup_context = ScopeGuard([&]() {
+					current_template_definition_lookup_context_ =
+						previous_definition_lookup_context;
+				});
 				ParseResult init_result = parse_brace_initializer(type_spec);
 				member_function_context_stack_.pop_back();
 				if (init_result.is_error()) {

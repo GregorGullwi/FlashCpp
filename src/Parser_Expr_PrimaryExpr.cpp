@@ -5153,6 +5153,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							record.has_value()) {
 							setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
 						}
+						if (has_deferred_template_call_args) {
+							if (std::optional<DependentUnqualifiedCallLookupRecord> record =
+									makeDependentUnqualifiedCallLookupRecord(
+										current_template_definition_lookup_context_,
+										identifier_token,
+										argumentDependentLookupIncluded);
+								record.has_value()) {
+								setCallDependentUnqualifiedLookupRecord(
+									result->as<ExpressionNode>(),
+									*record);
+							}
+						}
 					}
 					return ParseResult::success(*result);
 				};
