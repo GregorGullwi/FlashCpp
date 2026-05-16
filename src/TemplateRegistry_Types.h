@@ -221,7 +221,7 @@ struct TemplateTypeArg {
 			return typed_value_identity;
 		}
 		if (is_dependent) {
-			return FlashCpp::NonTypeValueIdentity::makeDependentWithPlaceholder(dependent_name, value, type_index);
+			return FlashCpp::NonTypeValueIdentity::makeDependentExpression(dependent_expr, dependent_name, value, type_index);
 		}
 		return FlashCpp::NonTypeValueIdentity::makeConcrete(value, type_index);
 	}
@@ -234,6 +234,7 @@ struct TemplateTypeArg {
 		value = identity.value;
 		is_dependent = identity.is_dependent;
 		dependent_name = identity.dependent_name;
+		dependent_expr = identity.dependent_expression;
 	}
 
 	// Builds a TypeIndex with category directly.

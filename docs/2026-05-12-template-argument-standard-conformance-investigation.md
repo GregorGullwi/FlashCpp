@@ -413,12 +413,20 @@ behavior as compatibility constraints.
    bindings, pack bindings, current-instantiation identity, lookup context,
    constexpr context, and failure policy.
 
-4. **Separate deduction from instantiation/materialization**
+4. **Share one dependent-expression equivalence model**
+   Introduce one canonical semantic equivalence service for dependent
+   unevaluated expressions and route every relevant caller through it:
+   non-type template argument identity, template-argument
+   substitution/materialization, and any other comparison site that currently
+   performs local structural checks. The same C++20 expression-equivalence
+   notion must be reused across identity tracking and later evaluation paths.
+
+5. **Separate deduction from instantiation/materialization**
    Expand shape-only candidate viability until deduction, constraints, partial
    ordering, and overload ranking can run without body materialization in normal
    selection paths. Instantiate only after winner selection.
 
-5. **Expand structural NTTP identity beyond supported scalar cases**
+6. **Expand structural NTTP identity beyond supported scalar cases**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
    and null member-pointer identities are implemented. Add standard semantic
    values and equivalence for non-null member-pointer, floating-point, and
@@ -427,7 +435,7 @@ behavior as compatibility constraints.
    where standard entity encodings are available (tracked in `NameMangling.h`
    `TODO(item-8)` ~line 1103).
 
-6. **Complete dependent-name/current-instantiation modeling**
+7. **Complete dependent-name/current-instantiation modeling**
    Build on `DependentQualifiedNameRecord` with semantic records for expression
    qualified-ids, dependent bases, unknown specialization, injected-class-name,
    and current-instantiation member lookup.

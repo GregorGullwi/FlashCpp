@@ -3,12 +3,12 @@
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "Log.h"
-#include "TemplateEnvironment.h"
+#include <cstring>
 #include <sstream>
 #include <set>
 #include <unordered_set>
 #include <cstdlib>
-#include <cstring>
+
 
 // Helper class for cycle detection in recursive member lookup
 // Uses RAII to manage the resolution stack

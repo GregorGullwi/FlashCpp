@@ -341,6 +341,12 @@ dependent-base, injected-class-name, dependent template-id, and deeper
 expression/member-template segment paths. String identity is not enough to
 implement these rules reliably.
 
+Dependent unevaluated expressions also still lack one canonical semantic
+equivalence service. NTTP identity, substitution/materialization, and any other
+site that compares dependent unevaluated expressions need to reuse the same
+C++20 expression-equivalence model rather than carrying local structural checks
+or normalization rules.
+
 #### 4. Two-phase lookup is incomplete
 
 The current system still has paths that reparse and substitute using current
@@ -437,7 +443,14 @@ single parser bug; it is the absence of one semantic template system that owns:
    instantiation, dependent base members, unknown specializations, injected class
    names, dependent template-ids, and expression qualified-ids.
 
-6. **Convert repair paths into invariants**
+6. **Centralize dependent expression equivalence**
+   Introduce one canonical dependent-expression equivalence service and make
+   NTTP identity, template-argument substitution/materialization, and all other
+   dependent unevaluated-expression comparison sites call into it. Identity
+   tracking and evaluation/materialization must not diverge on what counts as
+   the same dependent expression.
+
+7. **Convert repair paths into invariants**
    Keep the current compatibility fallbacks only where they are still needed for
    uncovered cases. As sema coverage expands, convert constructor fallback,
    lookup fallback, and materialization fallback paths into explicit diagnostics

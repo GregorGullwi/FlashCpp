@@ -15,24 +15,45 @@
     ```
   - Notes: This appears to be an aggregate materialization/codegen issue and is not specific to tuple-like structured bindings.
 
-- Dependent non-type template argument expressions can collapse during instantiation identity/materialization.
+- Dependent type-trait NTTP expressions can still collapse during evaluation/materialization.
   - Repro:
     ```cpp
-    template <int N>
-    struct Box {
-        static constexpr int value = N;
+    template <bool B>
+    struct Flag {
+        static constexpr int value = B ? 1 : 0;
     };
 
     template <typename T>
-    struct UseDependentExprs {
-        static int first() { return Box<sizeof(T)>::value; }
-        static int second() { return Box<sizeof(T) + 1>::value; }
+    struct TraitUse {
+        static int first() { return Flag<__is_same(T, T)>::value; }
+        static int second() { return Flag<__is_same(T, const T)>::value; }
     };
 
     int main() {
-        int first = UseDependentExprs<int>::first();
-        int second = UseDependentExprs<int>::second();
-        return first == (int)sizeof(int) && second == (int)sizeof(int) + 1 && first != second ? 0 : 1;
+        return TraitUse<int>::first() != TraitUse<int>::second() ? 0 : 1;
     }
     ```
-  - Notes: This is separate from preserving `is_dependent` for type template arguments. The remaining gap is that unresolved dependent NTTP expressions such as `sizeof(T)` and `sizeof(T) + 1` need expression-aware identity/materialization so they do not reuse the same `Box<N>` instantiation or evaluate to the same value.
+  - Notes: The dependent-expression identity layer now distinguishes the two expressions, but the later type-trait evaluation/materialization phase still canonicalizes them to the same result. The collapse happens during evaluation/materialization rather than identity tracking, so the remaining fix belongs in the evaluator/materializer rather than the dependent-expression identity layer.
+
+- Dependent expression-form member template access with `::template` is still not parsed correctly in some contexts.
+  - Repro:
+    ```cpp
+    struct RebindCarrier {
+        template <typename T>
+        struct Rebind {
+            static constexpr int value = sizeof(T);
+        };
+    };
+
+    template <typename T>
+    struct UseExpr {
+        static int value() {
+            return T::template Rebind<int>::value;
+        }
+    };
+
+    int main() {
+        return UseExpr<RebindCarrier>::value() == (int)sizeof(int) ? 0 : 1;
+    }
+    ```
+  - Notes: This currently fails during parsing with an error near the dependent `::template` member access in expression context. It is a parser bug separate from dependent NTTP identity/equivalence.
