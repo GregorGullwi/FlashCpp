@@ -509,7 +509,8 @@ ASTNode Parser::substituteTemplateParameters(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_template_param_ref = true;
 					} else if (arg.is_value) {
-						// Pointer/reference NTTP: emit &entity_name so *P and F() work correctly.
+						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
+						// Callable F() still needs a follow-up fix after substitution.
 						if (arg.has_typed_value_identity) {
 							const auto kind = arg.typed_value_identity.kind;
 							const StringHandle entity_name = arg.typed_value_identity.entity_name;
@@ -567,7 +568,8 @@ ASTNode Parser::substituteTemplateParameters(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_identifier = true;
 					} else if (arg.is_value) {
-						// Pointer/reference NTTP: emit &entity_name so *P and F() work correctly.
+						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
+						// Callable F() still needs a follow-up fix after substitution.
 						if (arg.has_typed_value_identity) {
 							const auto kind = arg.typed_value_identity.kind;
 							const StringHandle entity_name = arg.typed_value_identity.entity_name;

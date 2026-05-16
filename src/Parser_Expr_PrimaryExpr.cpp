@@ -6221,7 +6221,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 										if (kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
 											identity.entity_name.isValid()) {
-											// Substitute F with &entity_name so (&fa)() is recognized as a direct call
+											// Substitute F with &entity_name.
+											// Direct-call recovery for (&fa)() still needs follow-up work.
 											std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
 											Token entity_token(Token::Type::Identifier, entity_name_view,
 														   identifier_token.line(), identifier_token.column(),
