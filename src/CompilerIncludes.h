@@ -71,6 +71,7 @@
 #include "IrType.cpp"
 #include "TypeTraitEvaluator.cpp"
 #include "TemplateEnvironment.cpp"
+#include "TemplateExpressionEquivalence.cpp"
 
 // Library implementations
 #include "AstNodeTypes.cpp"

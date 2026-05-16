@@ -34,6 +34,7 @@
  */
 
 #include "AstNodeTypes.h"  // For Type, TypeIndex
+#include "TemplateExpressionEquivalence.h"
 #include "StringTable.h"	 // For StringHandle
 #include "InlineVector.h"  // For InlineVector
 #include <array>
@@ -103,9 +104,6 @@ inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
 	h ^= std::hash<bool>{}(sig.is_noexcept) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	return h;
 }
-
-bool equalDependentExpressionIdentity(const ASTNode& lhs, const ASTNode& rhs);
-size_t hashDependentExpressionIdentity(const ASTNode& node);
 
 // ============================================================================
 // TypeIndexArg - A template type argument represented by TypeIndex
