@@ -4497,7 +4497,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			EvalErrorType::TemplateDependentExpression);
 	}
 
-	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
+	if (const FunctionDeclarationNode* resolved_function = getParserStoredDirectCallTarget(call_expr)) {
 		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, nullptr);
 	}
 

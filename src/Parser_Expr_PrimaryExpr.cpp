@@ -4687,6 +4687,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+					maybeAttachDependentUnqualifiedLookupRecord(
+						result->as<ExpressionNode>(),
+						identifier_token,
+						has_dependent_call_args,
+						current_template_definition_lookup_context_,
+						true);
 					return ParseResult::success(*result);
 				}
 
@@ -7384,7 +7390,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									maybeAttachDependentUnqualifiedLookupRecord(
 										result->as<ExpressionNode>(),
 										identifier_token,
-										argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()),
+										argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+											argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
 										current_template_definition_lookup_context_,
 										true);
 									// Return early - we've created the call expression with the args
