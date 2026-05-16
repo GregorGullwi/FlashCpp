@@ -9174,12 +9174,13 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		return EvalResult::from_bool(true);
 	}
 
-	if (trait_expr.has_second_type()) {
+	if (trait_expr.kind() == TypeTraitKind::IsSame &&
+		trait_expr.has_second_type()) {
 		TypeTraitResult trait_result = evaluateTypeTrait(trait_expr);
 		if (trait_result.success) {
 			return EvalResult::from_bool(trait_result.value);
 		}
-		return EvalResult::error("Failed to evaluate binary type trait");
+		return EvalResult::error("Failed to evaluate __is_same");
 	}
 
 	// For other type traits, we need to evaluate them based on the type
@@ -9365,9 +9366,9 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			return EvalResult::error("Failed to evaluate type trait");
 		}
 
-		// Add more type traits as needed
 	default:
-		return EvalResult::error("Unsupported type trait in constexpr evaluation");
+		result = false;
+		break;
 	}
 
 	return EvalResult::from_bool(result);
