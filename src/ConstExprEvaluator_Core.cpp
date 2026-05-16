@@ -801,6 +801,11 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 
 EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
 	const TypeCategory category = target_type.category();
+	if (category == TypeCategory::Void) {
+		EvalResult result = EvalResult::from_int(0);
+		result.set_exact_type(target_type);
+		return result;
+	}
 	if (isIntegralType(category) ||
 		isFloatingPointType(category) ||
 		category == TypeCategory::Enum) {
