@@ -470,10 +470,22 @@ struct EvaluationContext {
 	std::unordered_map<StringHandle, ConstexprHeapEntry, StringHash, StringEqual> constexpr_heap;
 	size_t next_heap_id = 0;
 
+	// Separate counter for synthetic initializer_list backing arrays.
+	// Keeping this distinct from next_heap_id avoids any conceptual confusion
+	// between heap-managed (@new_N) and non-heap synthetic (@ilist_N) objects,
+	// even though the key prefixes already prevent actual name collisions.
+	size_t next_ilist_id = 0;
+
 	// Allocate a fresh synthetic heap key, intern it, and return its StringHandle.
 	StringHandle alloc_heap_slot() {
 		return StringTable::getOrInternStringHandle(
 			StringBuilder().append("@new_"sv).append(static_cast<uint64_t>(next_heap_id++)).commit());
+	}
+
+	// Allocate a fresh backing-array key for std::initializer_list construction.
+	StringHandle alloc_ilist_slot() {
+		return StringTable::getOrInternStringHandle(
+			StringBuilder().append("@ilist_"sv).append(static_cast<uint64_t>(next_ilist_id++)).commit());
 	}
 
 	// Returns true iff any allocation that was made with `new` during this
@@ -1022,6 +1034,18 @@ private:
 	static std::optional<long long> safe_mul(long long a, long long b);
 	static std::optional<long long> safe_shl(long long a, long long b, int width_bits = 64);
 	static std::optional<long long> safe_shr(long long a, long long b, int width_bits = 64);
+
+	// Evaluate an InitializerListConstructionNode (std::initializer_list<T>{...}) in a
+	// constexpr context.  Creates a synthetic backing array, constructs begin/end pointers
+	// with a value snapshot, and materialises the initializer_list struct via its
+	// constructor (or falls back to aggregate-style member assignment).
+	// `mutable_bindings` may be null (const-only evaluation path) but is used when
+	// available to store the backing array so that name-based pointer lookup succeeds.
+	static EvalResult evaluate_initializer_list_construction(
+		const InitializerListConstructionNode& ilist_node,
+		const std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
+		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
 };
 
 // Evaluate a fold expression with concrete pack values

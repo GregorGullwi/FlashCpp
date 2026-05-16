@@ -5911,6 +5911,20 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
 	}
 
+	// Handle try/catch statements (C++20 constexpr) [stmt.try]
+	// Per C++20 [stmt.try]: try/catch blocks are permitted in constexpr functions.
+	// The catch handler can never be entered during constant evaluation since throw
+	// is rejected ([expr.const]/p5); evaluate only the try block and ignore catch clauses.
+	if (stmt_node.is<TryStatementNode>()) {
+		const TryStatementNode& try_stmt = stmt_node.as<TryStatementNode>();
+		return evaluate_block_with_bindings(
+			try_stmt.try_block(),
+			bindings,
+			context,
+			"Constexpr try block is not a block",
+			kStatementExecutedWithoutReturn);
+	}
+
 	return EvalResult::error("Unsupported statement type in constexpr function");
 }
 
