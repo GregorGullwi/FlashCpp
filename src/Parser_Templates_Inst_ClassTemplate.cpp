@@ -4222,6 +4222,126 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Also copy static members from the pattern AST node (for member template partial specializations)
 			// These may not have been added to StructTypeInfo yet
+			auto try_get_declaration_node = [](const ASTNode& node) -> const DeclarationNode* {
+				if (node.is<DeclarationNode>()) {
+					return &node.as<DeclarationNode>();
+				}
+				if (node.is<VariableDeclarationNode>()) {
+					return &node.as<VariableDeclarationNode>().declaration();
+				}
+				return nullptr;
+			};
+			auto try_get_declaration_node_mut = [](ASTNode& node) -> DeclarationNode* {
+				if (node.is<DeclarationNode>()) {
+					return &node.as<DeclarationNode>();
+				}
+				if (node.is<VariableDeclarationNode>()) {
+					return &node.as<VariableDeclarationNode>().declaration();
+				}
+				return nullptr;
+			};
+			auto substitute_in_class_static_initializer_replay_first =
+				[&](
+					const auto& static_member,
+					std::span<const TemplateTypeArg> template_args_for_substitution,
+					auto&& fallback_substitution) -> std::optional<ASTNode> {
+				if (!static_member.initializer.has_value()) {
+					return std::nullopt;
+				}
+
+				std::optional<ASTNode> substituted_initializer;
+				try {
+					if (static_member.initializer_position.has_value() &&
+						static_member.declaration.has_value()) {
+						const DeclarationNode* declaration =
+							try_get_declaration_node(*static_member.declaration);
+						if (declaration != nullptr) {
+							SaveHandle current_pos = save_token_position();
+							ScopedLexerPositionRestore lexer_restore(*this, current_pos);
+
+							TemplateInstantiationContext substitution_context =
+								buildTemplateInstantiationContext(
+									template_params,
+									template_args_for_substitution,
+									nullptr,
+									currentTemplateSubstitutionFailurePolicy());
+
+							TemplateDefinitionLookupContext definition_lookup_context;
+							definition_lookup_context.definition_line =
+								declaration->identifier_token().line();
+							definition_lookup_context.definition_file_index =
+								declaration->identifier_token().file_index();
+							definition_lookup_context.definition_namespace =
+								struct_info->getNamespaceHandle();
+							definition_lookup_context.current_instantiation_name =
+								instantiated_name;
+							substitution_context.definition_lookup_context =
+								definition_lookup_context.is_valid()
+									? &definition_lookup_context
+									: nullptr;
+
+							FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
+							parsing_template_depth_ = 1;
+							ScopedDefinitionLookupContext ctx_scope(
+								current_template_definition_lookup_context_,
+								substitution_context.definition_lookup_context);
+
+							InlineVector<StringHandle, 4> template_param_names;
+							template_param_names.reserve(template_params.size());
+							for (const auto& template_param : template_params) {
+								template_param_names.push_back(template_param.nameHandle());
+							}
+							FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+							setCurrentTemplateParamNames(template_param_names);
+
+							restore_lexer_position_only(*static_member.initializer_position);
+
+							ASTNode declaration_copy = *static_member.declaration;
+							DeclarationNode* declaration_copy_ptr =
+								try_get_declaration_node_mut(declaration_copy);
+							if (declaration_copy_ptr != nullptr) {
+								DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;
+								TypeSpecifierNode& type_spec =
+									declaration_copy_ref.type_specifier_node();
+
+								std::optional<ASTNode> reparsed_initializer;
+								if (peek() == "="_tok) {
+									reparsed_initializer = parse_copy_initialization(
+										declaration_copy_ref,
+										type_spec);
+								} else if (peek() == "{"_tok) {
+									ParseResult init_result = parse_brace_initializer(type_spec);
+									if (!init_result.is_error() &&
+										init_result.node().has_value()) {
+										reparsed_initializer = *init_result.node();
+									}
+								}
+
+								if (reparsed_initializer.has_value()) {
+									substituted_initializer = substituteTemplateParameters(
+										*reparsed_initializer,
+										substitution_context);
+								}
+							}
+						}
+					}
+				} catch (const std::exception& ex) {
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Replay substitution failed for AST static member initializer: ",
+						ex.what(),
+						" — falling back to AST substitution");
+					substituted_initializer.reset();
+				}
+
+				if (!substituted_initializer.has_value()) {
+					substituted_initializer = fallback_substitution();
+				}
+
+				return substituted_initializer;
+			};
+
 			if (!pattern_struct.static_members().empty()) {
 				FLASH_LOG(Templates, Debug, "Copying ", pattern_struct.static_members().size(), " static members from pattern AST node");
 				for (const auto& static_member : pattern_struct.static_members()) {
@@ -4253,23 +4373,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-					// Substitute template parameters in the static member initializer
-					// Use ExpressionSubstitutor to handle all types of template-dependent expressions
-					std::optional<ASTNode> substituted_initializer = static_member.initializer;
-					if (static_member.initializer.has_value()) {
-						TemplateEnvironment substitution_environment = buildTemplateEnvironment(
-							std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+					// Substitute template parameters in the static member initializer.
+					// Replay from source first so definition-context lookup metadata can be restored.
+					std::optional<ASTNode> substituted_initializer =
+						substitute_in_class_static_initializer_replay_first(
+							static_member,
 							template_args,
-							nullptr);
+							[&]() -> std::optional<ASTNode> {
+								std::optional<ASTNode> fallback_initializer = static_member.initializer;
+								if (!static_member.initializer.has_value()) {
+									return fallback_initializer;
+								}
 
-						// Use ExpressionSubstitutor to substitute template parameters in the initializer
-						if (!substitution_environment.bindings.empty()) {
-							ExpressionSubstitutor substitutor(substitution_environment, *this);
-							substitutor.setCurrentOwnerTypeName(struct_info->getName());
-							substituted_initializer = substitutor.substitute(static_member.initializer.value());
-							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member initializer");
-						}
-					}
+								TemplateEnvironment substitution_environment =
+									buildTemplateEnvironment(
+										std::span<const TemplateParameterNode>(
+											template_params.data(),
+											template_params.size()),
+										template_args,
+										nullptr);
+
+								// Use ExpressionSubstitutor to substitute template parameters in
+								// the initializer.
+								if (!substitution_environment.bindings.empty()) {
+									ExpressionSubstitutor substitutor(
+										substitution_environment,
+										*this);
+									substitutor.setCurrentOwnerTypeName(struct_info->getName());
+									fallback_initializer = substitutor.substitute(
+										static_member.initializer.value());
+									FLASH_LOG(
+										Templates,
+										Debug,
+										"Substituted template parameters in static member initializer");
+								}
+								return fallback_initializer;
+							});
 
 					struct_info->addStaticMember(
 						static_member.name,
@@ -4650,10 +4789,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_size *= dim_size;
 					}
 				}
-				std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
-																	 ? std::optional<ASTNode>(substituteTemplateParameters(
-																		   *static_member.initializer, template_params, template_args_for_pattern))
-																	 : std::nullopt;
+				std::optional<ASTNode> substituted_initializer =
+					substitute_in_class_static_initializer_replay_first(
+						static_member,
+						template_args_for_pattern,
+						[&]() -> std::optional<ASTNode> {
+							return static_member.initializer.has_value()
+									   ? std::optional<ASTNode>(substituteTemplateParameters(
+											 *static_member.initializer,
+											 template_params,
+											 template_args_for_pattern))
+									   : std::nullopt;
+						});
 				instantiated_struct_ref.add_static_member(
 					static_member.name,
 					substituted_type_index,
@@ -4666,8 +4813,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.pointer_depth,
 					static_member.is_array,
 					static_member.array_dimensions,
-					/* declaration */ std::nullopt,
-					/* initializer_position */ std::nullopt,
+					static_member.declaration,
+					static_member.initializer_position,
 					static_member.is_constexpr);
 			}
 

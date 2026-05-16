@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-16 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened)
+**Last updated:** 2026-05-16 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -178,6 +178,17 @@ Completed work:
     `test_template_static_member_initializer_dependent_adl_ret0.cpp`. Latest
     full-suite validation: 2377 pass, 182 expected-fail, 0 regressions.
 
+29. **partial-specialization static-member eager AST paths now replay-first
+    (2026-05-16):** in `Parser_Templates_Inst_ClassTemplate.cpp`, the remaining
+    eager AST-copy paths (`pattern_struct.static_members()` and
+    `instantiated_struct_ref` static-member copy) now first reparse from saved
+    `initializer_position`/`declaration` using
+    `TemplateInstantiationContext` + `TemplateDefinitionLookupContext` under
+    `ScopedDefinitionLookupContext` with `parsing_template_depth_ = 1`, then
+    conservatively fall back to the previous AST substitution behavior.
+    Regression:
+    `test_template_partial_spec_static_member_replay_two_phase_lookup_ret0.cpp`.
+
 Latest validation passed the full Linux suite: 2377 pass, 182 expected-fail,
 0 regressions.
 
@@ -208,8 +219,9 @@ focused investigations.
     source with `TemplateInstantiationContext` and definition-context lookup for
     StructTypeInfo-backed members
     (`test_template_inclass_static_member_two_phase_lookup_ret0.cpp`).
-    Remaining gaps are parser-time reparses and late concretization paths that
-    still use AST-only fallback paths.
+    Remaining gaps are static-member concretization paths where replay metadata
+    (`initializer_position`/`declaration`) is unavailable, so AST-only fallback
+    substitution must remain.
 
 2. **Broaden two-phase lookup records further (member func template bodies ✅ done).**
     Definition-context and semantic lookup records now protect selected
@@ -224,7 +236,8 @@ focused investigations.
       `test_inherited_member_template_this_explicit_ret42.cpp`.
     - Eager static initializers beyond the now covered dependent unqualified
       direct-call + out-of-line static-member initializer + StructTypeInfo-backed
-      in-class static-member replay case, richer dependent bases, deeper
+      in-class static-member replay + partial-specialization AST static-member
+      copy paths, richer dependent bases, deeper
       member-template segment chains, and the remaining parser-time ADL-sensitive
       paths.
 

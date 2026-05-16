@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-16 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened)
+**Last updated:** 2026-05-16 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -141,6 +141,16 @@ infrastructure tracks. The branch now includes:
   lookup state before building the initializer AST. Regression
   `test_template_static_member_initializer_dependent_adl_ret0.cpp` covers the
   fixed hidden-friend/ADL path.
+- **partial-specialization static-member eager AST paths now replay-first
+  (2026-05-16):** the remaining eager AST-copy paths in
+  `Parser_Templates_Inst_ClassTemplate.cpp`
+  (`pattern_struct.static_members()` and `instantiated_struct_ref` static-member
+  copy) now reparse from saved `initializer_position`/`declaration` with
+  `TemplateInstantiationContext`, `TemplateDefinitionLookupContext`,
+  `ScopedDefinitionLookupContext`, and `parsing_template_depth_ = 1` before
+  falling back to the previous AST substitution behavior. Regression
+  `test_template_partial_spec_static_member_replay_two_phase_lookup_ret0.cpp`
+  covers dependent unqualified call + ADL behavior in a partial specialization.
 
 Validation after all changes passed the Linux sharded build and the full test
 suite (2377 regular tests + 182 expected-fail tests, 0 regressions).
@@ -174,8 +184,9 @@ sema direct lookup probes. The active architecture tracks are therefore:
     source with `TemplateInstantiationContext` and definition-context lookup
     installed for StructTypeInfo-backed members
     (`test_template_inclass_static_member_two_phase_lookup_ret0.cpp`).
-    Remaining gaps are parser-time concretization paths that still use AST-only
-    substitution (notably the AST-only `class_decl.static_members()` fallback).
+    Remaining gaps are static-member entries that do not carry replay metadata
+    (`initializer_position`/`declaration`) and therefore must keep AST-only
+    fallback substitution.
 
 2. **Two-phase lookup expansion (member function template bodies ✅ done).**
     Definition-context records now cover selected non-dependent calls,
@@ -188,8 +199,9 @@ sema direct lookup probes. The active architecture tracks are therefore:
       derived-owner link regressions (`test_inherited_member_template_lookup_ret42.cpp`,
       `test_inherited_member_template_this_explicit_ret42.cpp`).
     - Eager static initializers with parser-time reparse paths beyond the now
-      covered direct-call + out-of-line static-member initializer + StructTypeInfo-
-      backed in-class static-member initializer paths.
+      covered direct-call + out-of-line static-member initializer +
+      StructTypeInfo-backed in-class static-member initializer +
+      partial-specialization AST static-member copy paths.
     - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
