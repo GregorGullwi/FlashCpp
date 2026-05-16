@@ -5809,15 +5809,17 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						arr_ptr = &it->second;
 					}
 				}
-				const std::vector<EvalResult>* pointer_snapshot = nullptr;
-				if (!arr_ptr) {
+				const auto* pointer_snapshot = [&]() -> const std::vector<EvalResult>* {
 					if (!begin_result.pointer_value_snapshot.empty()) {
-						pointer_snapshot = &begin_result.pointer_value_snapshot;
-					} else if (!end_result.pointer_value_snapshot.empty()) {
-						pointer_snapshot = &end_result.pointer_value_snapshot;
-					} else {
-						return EvalResult::error("Range-based for: could not find backing array '" + std::string(arr_name) + "' for begin()/end() iteration");
+						return &begin_result.pointer_value_snapshot;
 					}
+					if (!end_result.pointer_value_snapshot.empty()) {
+						return &end_result.pointer_value_snapshot;
+					}
+					return nullptr;
+				}();
+				if (!arr_ptr && !pointer_snapshot) {
+					return EvalResult::error("Range-based for: could not find backing array '" + std::string(arr_name) + "' for begin()/end() iteration");
 				}
 
 				const size_t element_count = arr_ptr
