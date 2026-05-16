@@ -39,7 +39,7 @@ public:
 	ParserSemanticServices() = delete;
 	explicit ParserSemanticServices(SemanticAnalysis& owner);
 
-	size_t normalizePendingSemanticRoots() const;
+	size_t normalizePendingSemanticRoots();
 
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg) const;
@@ -51,17 +51,17 @@ public:
 
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
-		const FunctionDeclarationNode& function_decl) const;
+		const FunctionDeclarationNode& function_decl);
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
-		const ConstructorDeclarationNode& ctor_decl) const;
+		const ConstructorDeclarationNode& ctor_decl);
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
 		StringHandle member_name,
-		std::optional<bool> is_const_member) const;
+		std::optional<bool> is_const_member);
 
 	void markResolvedOperatorOverloadOdrUsed(
-		const StructMemberFunction& member_overload) const;
+		const StructMemberFunction& member_overload);
 
 	bool isParserAttached() const;
 	bool hasPostParseNormalizationStarted() const;
@@ -92,8 +92,7 @@ public:
 	SemanticAnalysis(CompileContext& context, SymbolTable& symbols);
 	~SemanticAnalysis();
 	void attachParser(Parser& parser);
-	ParserSemanticServices& parserSemanticServices() { return parser_semantic_services_; }
-	const ParserSemanticServices& parserSemanticServices() const { return parser_semantic_services_; }
+	ParserSemanticServices parserSemanticServices() { return ParserSemanticServices(*this); }
 	bool isParserAttached() const { return parser_ != nullptr; }
 	bool hasPostParseNormalizationStarted() const;
 	bool hasPostParseNormalizationCompleted() const;
@@ -535,7 +534,6 @@ private:
 
 	// State
 	Parser* parser_ = nullptr;
-	ParserSemanticServices parser_semantic_services_;
 	CompileContext& context_;
 	SymbolTable& symbols_;
 	TypeContext type_context_;

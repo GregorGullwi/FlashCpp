@@ -17,6 +17,16 @@
 #include "NameMangling.h"
 #include <algorithm>
 
+namespace {
+
+void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const char* operation) {
+	if (!sema.isParserAttached()) {
+		throw InternalError(std::string("ParserSemanticServices::") + operation + " requires an attached parser");
+	}
+}
+
+} // namespace
+
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
 	if (!decl.is_array() || type_spec.is_array()) {
 		return;
@@ -1318,10 +1328,8 @@ ParserSemanticServices::ParserSemanticServices(SemanticAnalysis& owner)
 	: owner_(&owner) {
 }
 
-size_t ParserSemanticServices::normalizePendingSemanticRoots() const {
-	if (!owner_->isParserAttached()) {
-		throw InternalError("ParserSemanticServices requires an attached parser");
-	}
+size_t ParserSemanticServices::normalizePendingSemanticRoots() {
+	requireParserSemanticServicesAttachment(*owner_, "normalizePendingSemanticRoots");
 	return owner_->normalizePendingSemanticRoots();
 }
 
@@ -1351,34 +1359,28 @@ const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(con
 
 std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
 	StringHandle struct_name,
-	const FunctionDeclarationNode& function_decl) const {
-	if (!owner_->isParserAttached()) {
-		throw InternalError("ParserSemanticServices requires an attached parser");
-	}
+	const FunctionDeclarationNode& function_decl) {
+	requireParserSemanticServicesAttachment(*owner_, "ensureMemberFunctionMaterialized(function)");
 	return owner_->ensureMemberFunctionMaterialized(struct_name, function_decl);
 }
 
 std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
 	StringHandle struct_name,
-	const ConstructorDeclarationNode& ctor_decl) const {
-	if (!owner_->isParserAttached()) {
-		throw InternalError("ParserSemanticServices requires an attached parser");
-	}
+	const ConstructorDeclarationNode& ctor_decl) {
+	requireParserSemanticServicesAttachment(*owner_, "ensureMemberFunctionMaterialized(constructor)");
 	return owner_->ensureMemberFunctionMaterialized(struct_name, ctor_decl);
 }
 
 std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
 	StringHandle struct_name,
 	StringHandle member_name,
-	std::optional<bool> is_const_member) const {
-	if (!owner_->isParserAttached()) {
-		throw InternalError("ParserSemanticServices requires an attached parser");
-	}
+	std::optional<bool> is_const_member) {
+	requireParserSemanticServicesAttachment(*owner_, "ensureMemberFunctionMaterialized(name)");
 	return owner_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
 }
 
 void ParserSemanticServices::markResolvedOperatorOverloadOdrUsed(
-	const StructMemberFunction& member_overload) const {
+	const StructMemberFunction& member_overload) {
 	owner_->markResolvedOperatorOverloadOdrUsed(member_overload);
 }
 
@@ -1395,7 +1397,7 @@ bool ParserSemanticServices::hasPostParseNormalizationCompleted() const {
 }
 
 SemanticAnalysis::SemanticAnalysis(CompileContext& context, SymbolTable& symbols)
-	: parser_semantic_services_(*this), context_(context), symbols_(symbols) {
+	: context_(context), symbols_(symbols) {
 	(void)context_;
 
 	// Pre-intern the canonical bool type so tryAnnotateContextualBool avoids
