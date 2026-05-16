@@ -995,6 +995,25 @@ bool argsHaveDeferredTemplateDependency(
 	return astNodesHaveDeferredTemplateDependency(args, current_template_param_names);
 }
 
+void maybeAttachDependentUnqualifiedLookupRecord(
+	ExpressionNode& call_expr,
+	const Token& callee_token,
+	bool has_deferred_template_call_args,
+	const TemplateDefinitionLookupContext* definition_context,
+	bool argument_dependent_lookup_included) {
+	if (!has_deferred_template_call_args) {
+		return;
+	}
+	if (std::optional<DependentUnqualifiedCallLookupRecord> record =
+			makeDependentUnqualifiedCallLookupRecord(
+				definition_context,
+				callee_token,
+				argument_dependent_lookup_included);
+		record.has_value()) {
+		setCallDependentUnqualifiedLookupRecord(call_expr, *record);
+	}
+}
+
 void syncTemplateArgumentNodeMetadata(
 	std::vector<ASTNode>& template_arg_nodes,
 	std::span<const TemplateTypeArg> template_args) {
@@ -4659,14 +4678,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
-				if (has_dependent_call_args ||
-					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+				const bool has_dependent_call_args =
+					argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+				if (has_dependent_call_args) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+					maybeAttachDependentUnqualifiedLookupRecord(
+						result->as<ExpressionNode>(),
+						identifier_token,
+						has_dependent_call_args,
+						current_template_definition_lookup_context_,
+						true);
 					return ParseResult::success(*result);
 				}
 
@@ -4690,6 +4716,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 						}
 					}
+					maybeAttachDependentUnqualifiedLookupRecord(
+						result->as<ExpressionNode>(),
+						identifier_token,
+						has_dependent_call_args,
+						current_template_definition_lookup_context_,
+						true);
 					return ParseResult::success(*result);
 				}
 				// Template instantiation failure is an expected substitution failure in
@@ -5154,6 +5186,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
 						}
 					}
+					maybeAttachDependentUnqualifiedLookupRecord(
+						result->as<ExpressionNode>(),
+						identifier_token,
+						has_deferred_template_call_args,
+						current_template_definition_lookup_context_,
+						argumentDependentLookupIncluded);
 					return ParseResult::success(*result);
 				};
 
@@ -7349,6 +7387,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 										}
 									}
+									maybeAttachDependentUnqualifiedLookupRecord(
+										result->as<ExpressionNode>(),
+										identifier_token,
+										argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+											argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+										current_template_definition_lookup_context_,
+										true);
 									// Return early - we've created the call expression with the args
 									if (result.has_value())
 										return ParseResult::success(*result);
@@ -7567,6 +7612,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 											}
 										}
+										maybeAttachDependentUnqualifiedLookupRecord(
+											result->as<ExpressionNode>(),
+											identifier_token,
+											argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+											current_template_definition_lookup_context_,
+											true);
 									} else if (has_dependent_template_args || defer_struct_member_template_instantiation) {
 										// Template arguments are dependent - this is a template-dependent expression
 										// Create a CallExprNode with a placeholder declaration that will be resolved during template instantiation
@@ -7692,6 +7744,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 												}
 											}
+											maybeAttachDependentUnqualifiedLookupRecord(
+												result->as<ExpressionNode>(),
+												identifier_token,
+												argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+													argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+												current_template_definition_lookup_context_,
+												true);
 									} else {
 										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
 										if (has_dependent_call_args ||
@@ -7765,6 +7824,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 														setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 													}
 												}
+												maybeAttachDependentUnqualifiedLookupRecord(
+													result->as<ExpressionNode>(),
+													identifier_token,
+													argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+														argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+													current_template_definition_lookup_context_,
+													true);
 										} else {
 											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
 											if (has_dependent_call_args ||
@@ -7813,6 +7879,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													setCallQualifiedName(result->as<ExpressionNode>(), StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
 												}
 											}
+											maybeAttachDependentUnqualifiedLookupRecord(
+												result->as<ExpressionNode>(),
+												identifier_token,
+												argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+													argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+												current_template_definition_lookup_context_,
+												true);
 										}
 									}
 								}

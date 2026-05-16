@@ -155,7 +155,7 @@ Completed work:
     `test_template_two_phase_dependent_adl_function_template_poi_ret0.cpp`
     now covers this path.
 
-26. **two-phase lookup extended to member function template bodies (2026-05-15):**
+27. **two-phase lookup extended to member function template bodies (2026-05-15):**
     `instantiate_member_function_template_core` in
     `Parser_Templates_Inst_MemberFunc.cpp` now sets `phase1_cutoff_line_`,
     `phase1_cutoff_file_idx_`, and `current_template_definition_lookup_context_`
@@ -166,7 +166,19 @@ Completed work:
     Regression `test_template_two_phase_member_func_template_ret42.cpp`.
     Full-suite validation: 2361 pass, 184 expected-fail, 0 regressions.
 
-Latest validation passed the full Linux suite: 2361 pass, 184 expected-fail,
+28. **dependent unqualified-call POI completion broadened for ordinary-bound
+    calls and template static initializers (2026-05-16):**
+    unqualified dependent calls that already had a definition-time ordinary
+    candidate now also keep `DependentUnqualifiedCallLookupRecord` metadata
+    instead of silently freezing to the provisional callee. Template
+    substitution, semantic call annotation, and constexpr evaluation now prefer
+    POI completion whenever that record exists, and template static-member
+    initializer parsing now installs definition-context lookup state before
+    parsing initializer AST. Regression
+    `test_template_static_member_initializer_dependent_adl_ret0.cpp`. Latest
+    full-suite validation: 2377 pass, 182 expected-fail, 0 regressions.
+
+Latest validation passed the full Linux suite: 2377 pass, 182 expected-fail,
 0 regressions.
 
 The remaining target architecture sections are retained as the next conformance
@@ -182,11 +194,12 @@ focused investigations.
 ### Open next steps
 
 1. **Broaden POI completion beyond the new unresolved-call record.**
-   Unresolved dependent unqualified calls now carry explicit POI-completion
-   metadata and replay correctly through substitution, sema, constexpr, and
-   lazy-static paths. Remaining gaps are parser-time reparses that become
-   concrete before the record is formed and broader hidden-friend/
-   dependent-namespace coverage.
+    Unresolved dependent unqualified calls now carry explicit POI-completion
+    metadata and replay correctly through substitution, sema, constexpr, and
+    lazy-static paths. Covered direct-call paths that already had a
+    definition-time ordinary candidate now also retain this metadata, including
+    template static member initializers. Remaining gaps are parser-time reparses
+    and other late concretization paths that still bypass record formation.
 
 2. **Broaden two-phase lookup records further (member func template bodies ✅ done).**
     Definition-context and semantic lookup records now protect selected
@@ -199,8 +212,9 @@ focused investigations.
       derived-owner link regressions in
       `test_inherited_member_template_lookup_ret42.cpp` and
       `test_inherited_member_template_this_explicit_ret42.cpp`.
-    - Eager static initializers, richer dependent bases, deeper member-template
-      segment chains, and the remaining parser-time ADL-sensitive paths.
+    - Eager static initializers beyond the newly covered dependent unqualified
+      direct-call case, richer dependent bases, deeper member-template segment
+      chains, and the remaining parser-time ADL-sensitive paths.
 
 3. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
@@ -369,12 +383,13 @@ remaining work is the smaller phased delivery list below.
 
 ## Recommended next step
 
-Inherited member-template lookup is now complete (2026-05-15), including the
-remaining owner-selection codegen/link regression. The next highest-impact work is:
+Inherited member-template lookup is now complete (2026-05-15), and dependent
+unqualified POI completion now covers ordinary-bound calls plus template static
+member initializers (2026-05-16). The next highest-impact work is:
 
 1. **Continue two-phase lookup expansion**: extend definition-context records to
-   eager static initializers, dependent bases, and broader
-   hidden-friend/dependent-namespace dependent-call coverage.
+   the remaining eager-static reparse paths, dependent bases, and other
+   parser-time concretization paths that still bypass POI lookup records.
 
 2. **Structural NTTP completion** (non-null member-pointers, structural class
    types, and replacing `TODO(item-8)` mangling fallback) is the other major

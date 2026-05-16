@@ -3897,7 +3897,7 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 			}
 			return ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			const FunctionDeclarationNode* func_decl = inner.callee().function_declaration_or_null();
+			const FunctionDeclarationNode* func_decl = getParserStoredDirectCallTarget(inner);
 			if (!func_decl) {
 				func_decl = getResolvedDirectCall(&inner);
 			}
@@ -7021,9 +7021,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (func_decl)
 		return func_decl;
 
-	if (call_info.function_declaration)
-		return call_info.function_declaration;
-
 	if (!call_info.has_receiver &&
 		call_info.dependent_unqualified_lookup_record != nullptr &&
 		call_info.dependent_unqualified_lookup_record->has_value()) {
@@ -7045,6 +7042,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		unresolved_call_args_.insert(call_key);
 		return nullptr;
 	}
+
+	if (call_info.function_declaration)
+		return call_info.function_declaration;
 
 	const DeclarationNode& decl = *call_info.declaration;
 	if (call_info.mangled_name.isValid()) {

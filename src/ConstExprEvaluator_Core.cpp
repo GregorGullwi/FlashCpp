@@ -4448,10 +4448,6 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		return *current_struct_result;
 	}
 
-	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
-		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, nullptr);
-	}
-
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
@@ -4499,6 +4495,10 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		return EvalResult::error(
 			"Dependent unqualified call resolved to a non-function target",
 			EvalErrorType::TemplateDependentExpression);
+	}
+
+	if (const FunctionDeclarationNode* resolved_function = getParserStoredDirectCallTarget(call_expr)) {
+		return evaluate_resolved_function_call(*resolved_function, call_expr.arguments(), context, nullptr);
 	}
 
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.

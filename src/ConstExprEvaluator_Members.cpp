@@ -1677,17 +1677,6 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		}
 	}
 
-	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
-		if (resolved_function->is_static() || !context.struct_info) {
-			return evaluate_function_call_with_bindings(
-				*resolved_function,
-				call_expr.arguments(),
-				bindings,
-				context,
-			mutable_bindings);
-		}
-	}
-
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
@@ -1737,6 +1726,17 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		return EvalResult::error(
 			"Dependent unqualified call resolved to a non-function target",
 			EvalErrorType::TemplateDependentExpression);
+	}
+
+	if (const FunctionDeclarationNode* resolved_function = call_expr.callee().function_declaration_or_null()) {
+		if (resolved_function->is_static() || !context.struct_info) {
+			return evaluate_function_call_with_bindings(
+				*resolved_function,
+				call_expr.arguments(),
+				bindings,
+				context,
+				mutable_bindings);
+		}
 	}
 
 	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);
