@@ -956,32 +956,16 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		registerTypeParamsInScope(substitution_environment, template_scope, true);
 
 		SaveHandle current_pos = save_token_position();
-		struct LexerRestoreGuard {
-			Parser* parser;
-			SaveHandle pos;
-			bool active = true;
-			~LexerRestoreGuard() {
-				if (!active) {
-					return;
-				}
-				parser->restore_lexer_position_only(pos);
-				parser->discard_saved_token(pos);
-			}
-		} lexer_restore_guard{this, current_pos};
+		ScopedLexerPositionRestore lexer_restore(*this, current_pos);
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		// Keep template-context parsing semantics during replay so dependent NTTP
 		// expressions are preserved as AST and can be concretely substituted below.
 		parsing_template_depth_ = 1;
-		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
-			current_template_definition_lookup_context_;
-		current_template_definition_lookup_context_ =
+		ScopedDefinitionLookupContext ctx_scope(
+			current_template_definition_lookup_context_,
 			lazy_info.definition_lookup_context.is_valid()
 				? &lazy_info.definition_lookup_context
-				: previous_definition_lookup_context;
-		auto restore_definition_lookup_context = ScopeGuard([&]() {
-			current_template_definition_lookup_context_ =
-				previous_definition_lookup_context;
-		});
+				: current_template_definition_lookup_context_);
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -1026,9 +1010,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			return false;
 		}
 
-		lexer_restore_guard.active = false;
-		restore_lexer_position_only(current_pos);
-		discard_saved_token(current_pos);
+		lexer_restore.restoreNow();
 		return substituted_initializer.has_value();
 	};
 

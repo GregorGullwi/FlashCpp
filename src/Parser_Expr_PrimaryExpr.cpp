@@ -254,13 +254,9 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 		return std::nullopt;
 	}
 
-	const TemplateDefinitionLookupContext* previous_definition_lookup_context =
-		current_template_definition_lookup_context_;
-	current_template_definition_lookup_context_ =
-		record.definition_context.is_valid() ? &record.definition_context : nullptr;
-	auto restore_definition_lookup_context = ScopeGuard([&]() {
-		current_template_definition_lookup_context_ = previous_definition_lookup_context;
-	});
+	ScopedDefinitionLookupContext ctx_scope(
+		current_template_definition_lookup_context_,
+		record.definition_context.is_valid() ? &record.definition_context : nullptr);
 
 	std::vector<ASTNode> all_overloads =
 		gSymbolTable.lookup_all(StringTable::getStringView(record.callee_name));

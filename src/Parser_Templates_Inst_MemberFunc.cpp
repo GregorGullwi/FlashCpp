@@ -2098,14 +2098,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
 		definition_lookup_context.current_instantiation_name =
 			StringTable::getOrInternStringHandle(struct_name);
-		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
-			current_template_definition_lookup_context_;
-		current_template_definition_lookup_context_ = definition_lookup_context.is_valid()
-			? &definition_lookup_context
-			: nullptr;
-		auto restore_definition_lookup_context = ScopeGuard([&]() {
-			current_template_definition_lookup_context_ = previous_definition_lookup_context;
-		});
+		ScopedDefinitionLookupContext ctx_scope(
+			current_template_definition_lookup_context_,
+			definition_lookup_context.is_valid() ? &definition_lookup_context : nullptr);
 
 		// Parse the function body
 		{

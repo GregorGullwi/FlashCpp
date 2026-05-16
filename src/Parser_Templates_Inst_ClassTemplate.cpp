@@ -9584,14 +9584,70 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Substitute template parameters in the initializer
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
 		if (out_of_line_var.initializer.has_value()) {
-			try {
+			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
+				if (!out_of_line_var.initializer_position.has_value()) {
+					return false;
+				}
+
+				SaveHandle current_pos = save_token_position();
+				ScopedLexerPositionRestore lexer_restore(*this, current_pos);
+
+				TemplateInstantiationContext substitution_context =
+					buildTemplateInstantiationContext(
+						out_of_line_var.template_params,
+						template_args_to_use,
+						nullptr,
+						currentTemplateSubstitutionFailurePolicy());
+
+				TemplateDefinitionLookupContext definition_lookup_context =
+					out_of_line_var.definition_lookup_context;
+				const TemplateDefinitionLookupContext* active_definition_lookup_context = nullptr;
+				if (definition_lookup_context.is_valid()) {
+					definition_lookup_context.current_instantiation_name = instantiated_name;
+					active_definition_lookup_context = &definition_lookup_context;
+				}
+				substitution_context.definition_lookup_context =
+					active_definition_lookup_context;
+
+				FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
+				parsing_template_depth_ = 1;
+				ScopedDefinitionLookupContext ctx_scope(
+					current_template_definition_lookup_context_,
+					substitution_context.definition_lookup_context);
+
+				FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+				setCurrentTemplateParamNames(out_of_line_var.template_param_names);
+
+				restore_lexer_position_only(*out_of_line_var.initializer_position);
+				if (!consume("="_tok)) {
+					return false;
+				}
+				ParseResult init_parse_result =
+					parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (init_parse_result.is_error() || !init_parse_result.node().has_value()) {
+					return false;
+				}
+				if (!consume(";"_tok)) {
+					return false;
+				}
+
 				substituted_initializer = substituteTemplateParameters(
-					*out_of_line_var.initializer,
-					out_of_line_var.template_params,
-					template_args_to_use);
+					*init_parse_result.node(),
+					substitution_context);
+				return true;
+			};
+
+			try {
+				if (!try_reparse_out_of_line_static_initializer()) {
+					substituted_initializer = substituteTemplateParameters(
+						*out_of_line_var.initializer,
+						out_of_line_var.template_params,
+						template_args_to_use);
+				}
 			} catch (const std::exception& e) {
 				FLASH_LOG(Templates, Error, "Exception during template parameter substitution for static member ",
 						  out_of_line_var.member_name, ": ", e.what());
+				throw;
 			}
 		}
 
