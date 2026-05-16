@@ -3897,7 +3897,7 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 			}
 			return ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			const FunctionDeclarationNode* func_decl = inner.callee().function_declaration_or_null();
+			const FunctionDeclarationNode* func_decl = getParserStoredDirectCallTarget(inner);
 			if (!func_decl) {
 				func_decl = getResolvedDirectCall(&inner);
 			}

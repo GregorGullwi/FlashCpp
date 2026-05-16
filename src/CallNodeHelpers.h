@@ -15,6 +15,17 @@
 // source node.
 // ============================================================================
 
+inline const FunctionDeclarationNode* getParserStoredDirectCallTarget(const CallExprNode& node) {
+	// Dependent unqualified calls may carry a provisional parser-time callee only
+	// to preserve the definition-bound ordinary lookup result.  Once the POI
+	// completion record exists, downstream semantic consumers must not treat that
+	// provisional target as authoritative.
+	if (node.has_dependent_unqualified_lookup_record()) {
+		return nullptr;
+	}
+	return node.callee().function_declaration_or_null();
+}
+
 struct CallInfo {
 	// Callee declaration (always present).
 	const DeclarationNode* declaration;
@@ -45,7 +56,7 @@ struct CallInfo {
 	static CallInfo from(const CallExprNode& node) {
 		CallInfo info;
 		info.declaration           = &node.callee().declaration();
-		info.function_declaration  = node.callee().function_declaration_or_null();
+		info.function_declaration  = getParserStoredDirectCallTarget(node);
 		info.arguments             = &node.arguments();
 		info.called_from           = node.called_from();
 		info.receiver              = node.has_receiver() ? node.receiver() : ASTNode();

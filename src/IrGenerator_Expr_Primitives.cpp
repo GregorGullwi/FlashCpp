@@ -24,7 +24,7 @@ bool isAssignmentLikeOperator(std::string_view op) {
 //   - the call is indirect (through a function pointer / constexpr lambda variable).
 // This mirrors the predicate used by isSideEffectFreeConstexprCandidateNode below.
 bool isConstexprFoldableCall(const CallExprNode& call) {
-	const FunctionDeclarationNode* func_decl = call.callee().function_declaration_or_null();
+	const FunctionDeclarationNode* func_decl = getParserStoredDirectCallTarget(call);
 	if (func_decl && (func_decl->is_constexpr() || func_decl->is_consteval()))
 		return true;
 	return call.call_kind() == CalleeKind::IndirectCall;

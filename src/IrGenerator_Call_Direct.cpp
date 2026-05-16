@@ -405,7 +405,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		func_name_view.find('$') != std::string_view::npos;
 	const FunctionDeclarationNode* const pre_resolved_direct_target = [&]() -> const FunctionDeclarationNode* {
 		const FunctionDeclarationNode* target =
-			callExprNode.callee().function_declaration_or_null();
+			getParserStoredDirectCallTarget(callExprNode);
 		if (!target && sema_) {
 			target = sema_->getResolvedDirectCall(sema_call_key);
 		}
@@ -1001,7 +1001,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// instantiated members; only gate pattern-owned member descriptors.
 	if (!matched_func_decl) {
 		const FunctionDeclarationNode* callee_resolved_target =
-			callExprNode.callee().function_declaration_or_null();
+			getParserStoredDirectCallTarget(callExprNode);
 		if (callee_resolved_target) {
 			const bool is_pattern_member_target =
 				!callee_resolved_target->parent_struct_name().empty() &&
