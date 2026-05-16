@@ -751,6 +751,10 @@ private:
 		size_t active_saves = 0;
 		size_t peak_active_saves = 0;
 		size_t saved_token_slots_peak = 0;
+		size_t saved_token_capacity_peak = 0;
+		size_t saved_token_capacity_growths = 0;
+		size_t saved_token_holes_peak = 0;
+		size_t saved_token_reserved_bytes_peak = 0;
 		size_t restore_ast_nodes_scanned = 0;
 		size_t restore_ast_nodes_preserved = 0;
 		size_t restore_ast_nodes_discarded = 0;

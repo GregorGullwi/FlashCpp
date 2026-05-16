@@ -406,32 +406,45 @@ int main_impl(int argc, char* argv[]) {
 		parser->reserveSavedTokenStorage(std::min(source_line_count * SAVED_TOKEN_SLOTS_PER_LINE, SAVED_TOKEN_MAX_RESERVE));
 	}
 	Lexer& lexer = *lexer_ptr;
+	ParseResult parse_result;
+	bool parse_compile_error = false;
+	std::string parse_compile_error_message;
+	std::string parse_compile_error_notes;
 	{
 		PhaseTimer timer("Parsing", false, &parsing_time);
 		// Note: Lexing happens lazily during parsing in this implementation
 		// Template instantiation also happens during parsing
 
-		ParseResult parse_result;
 		try {
 			parse_result = parser->parse();
 		} catch (const CompileError& e) {
 			// Phase 1 violations (e.g. non-dependent name not visible at template definition)
 			// are thrown as CompileError from within template instantiation during parsing.
-			std::string notes = g_parser_instantiation_notes;
+			parse_compile_error = true;
+			parse_compile_error_message = e.what();
+			parse_compile_error_notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
-			FLASH_LOG(Parser, Error, "error: ", e.what(), notes);
-			std::cerr << "error: " << e.what() << notes << std::endl;
+		}
+	}
+	if (parse_compile_error || parse_result.is_error()) {
+		if (show_perf_stats) {
+			parser->printRuntimeStats();
+			printTypeTableStats();
+			StackStringStats::print_stats();
+		}
+		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time,
+						   ir_conversion_time, deferred_gen_time, codegen_time, total_start);
+		if (parse_compile_error) {
+			FLASH_LOG(Parser, Error, "error: ", parse_compile_error_message, parse_compile_error_notes);
+			std::cerr << "error: " << parse_compile_error_message << parse_compile_error_notes << std::endl;
 			return 1;
 		}
-
-		if (parse_result.is_error()) {
-			// Print formatted error with file:line:column information and include stack
-			std::string error_msg = parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer);
-			FLASH_LOG(Parser, Error, error_msg);
-			// Also print to stderr to ensure error is visible even with minimal logging
-			std::cerr << error_msg << std::endl;
-			return 1;
-		}
+		// Print formatted error with file:line:column information and include stack
+		std::string error_msg = parse_result.format_error(lexer.file_paths(), file_reader.get_line_map(), &lexer);
+		FLASH_LOG(Parser, Error, error_msg);
+		// Also print to stderr to ensure error is visible even with minimal logging
+		std::cerr << error_msg << std::endl;
+		return 1;
 	}
 	if (show_perf_stats) {
 		parser->printRuntimeStats();
