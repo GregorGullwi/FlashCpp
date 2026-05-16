@@ -10,7 +10,7 @@ namespace ConstExpr {
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
 	if (sema != nullptr) {
-		sema->normalizePendingSemanticRoots();
+		sema->parserSemanticServices().normalizePendingSemanticRoots();
 	}
 }
 
@@ -4457,7 +4457,8 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		if (context.sema) {
-			if (const FunctionDeclarationNode* sema_resolved = context.sema->getResolvedDirectCall(&call_expr)) {
+			if (const FunctionDeclarationNode* sema_resolved =
+					context.sema->parserSemanticServices().getResolvedDirectCall(&call_expr)) {
 				return evaluate_resolved_function_call(
 					*sema_resolved,
 					call_expr.arguments(),

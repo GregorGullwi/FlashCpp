@@ -32,6 +32,44 @@ struct StructMember;
 struct StructTypeInfo;
 struct LambdaInfo;
 struct CallInfo;
+class SemanticAnalysis;
+
+class ParserSemanticServices {
+public:
+	ParserSemanticServices() = delete;
+	explicit ParserSemanticServices(SemanticAnalysis& owner);
+
+	size_t normalizePendingSemanticRoots() const;
+
+	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg) const;
+
+	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
+	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
+	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
+
+	std::optional<ASTNode> ensureMemberFunctionMaterialized(
+		StringHandle struct_name,
+		const FunctionDeclarationNode& function_decl) const;
+	std::optional<ASTNode> ensureMemberFunctionMaterialized(
+		StringHandle struct_name,
+		const ConstructorDeclarationNode& ctor_decl) const;
+	std::optional<ASTNode> ensureMemberFunctionMaterialized(
+		StringHandle struct_name,
+		StringHandle member_name,
+		std::optional<bool> is_const_member) const;
+
+	void markResolvedOperatorOverloadOdrUsed(
+		const StructMemberFunction& member_overload) const;
+
+	bool isParserAttached() const;
+	bool hasPostParseNormalizationStarted() const;
+	bool hasPostParseNormalizationCompleted() const;
+
+private:
+	SemanticAnalysis* owner_ = nullptr;
+};
 
 // --- Semantic analysis pass ---
 // Post-parse semantic normalization.  See docs/IMPLICIT_CAST_SEMA_PLAN.md for
@@ -54,6 +92,11 @@ public:
 	SemanticAnalysis(CompileContext& context, SymbolTable& symbols);
 	~SemanticAnalysis();
 	void attachParser(Parser& parser);
+	ParserSemanticServices& parserSemanticServices() { return parser_semantic_services_; }
+	const ParserSemanticServices& parserSemanticServices() const { return parser_semantic_services_; }
+	bool isParserAttached() const { return parser_ != nullptr; }
+	bool hasPostParseNormalizationStarted() const;
+	bool hasPostParseNormalizationCompleted() const;
 
 	// Main entry point: run the translation-unit semantic pass.
 	// Phase 1 boundary guard: starts with a lightweight walk over the sema-owned
@@ -246,6 +289,15 @@ public:
 	size_t drainLazyMemberRegistry();
 
 private:
+	friend class ParserSemanticServices;
+
+	enum class LifecycleState : uint8_t {
+		ParserDetached,
+		ParserAttached,
+		PostParseNormalizationStarted,
+		PostParseNormalizationCompleted,
+	};
+
 	Parser& parser();
 	const Parser& parser() const;
 
@@ -483,12 +535,14 @@ private:
 
 	// State
 	Parser* parser_ = nullptr;
+	ParserSemanticServices parser_semantic_services_;
 	CompileContext& context_;
 	SymbolTable& symbols_;
 	TypeContext type_context_;
 	CanonicalTypeId bool_type_id_{};	 // Cached canonical type for bool (interned once in constructor).
 	std::vector<ImplicitCastInfo> cast_info_table_;
 	SemanticPassStats stats_;
+	LifecycleState lifecycle_state_ = LifecycleState::ParserDetached;
 
 	// Side table: expression node pointer → semantic slot.
 	std::unordered_map<const void*, SemanticSlot> semantic_slots_;

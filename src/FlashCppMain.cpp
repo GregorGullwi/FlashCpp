@@ -478,6 +478,9 @@ int main_impl(int argc, char* argv[]) {
 	}
 
 	AstToIr converter(gSymbolTable, context, *parser);
+	if (!sema->hasPostParseNormalizationCompleted()) {
+		throw InternalError("AstToIr requires completed post-parse semantic normalization");
+	}
 	converter.setSemanticData(sema.get());
 
 	// Reserve space for IR instructions

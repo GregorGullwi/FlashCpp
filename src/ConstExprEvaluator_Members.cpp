@@ -1681,7 +1681,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		if (context.sema) {
-			if (const FunctionDeclarationNode* sema_resolved = context.sema->getResolvedDirectCall(&call_expr)) {
+			if (const FunctionDeclarationNode* sema_resolved =
+					context.sema->parserSemanticServices().getResolvedDirectCall(&call_expr)) {
 				return evaluate_function_call_with_bindings(
 					*sema_resolved,
 					call_expr.arguments(),
@@ -2925,7 +2926,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// path only when sema is not wired up (e.g., very early speculative
 	// evaluation before a SemanticAnalysis is attached to the context).
 	if (context.sema) {
-		(void)context.sema->ensureMemberFunctionMaterialized(
+		(void)context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
 	} else if (context.parser) {
 		LazyMemberKey member_key = LazyMemberKey::anyConst(
@@ -2950,7 +2951,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
 		if (context.sema) {
-			(void)context.sema->ensureMemberFunctionMaterialized(owner_name, *result.function);
+			(void)context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
 		} else if (context.parser) {
 			if (context.parser->instantiateLazyMemberIfNeeded(
 					LazyMemberKey::exact(owner_name, *result.function))
