@@ -36,7 +36,6 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.cv_qualifier = arg.cv_qualifier;
 	info.is_array = arg.is_array;
 	info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
-	info.value = arg.value;
 	info.is_value = arg.is_value;
 	info.is_pack = arg.is_pack;
 	info.dependent_name = arg.dependent_name;
@@ -45,6 +44,23 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.is_template_template_arg = arg.is_template_template_arg;
 	info.template_name = arg.template_name_handle;
 	info.member_pointer_kind = arg.member_pointer_kind;
+	// Default: store the integer value. For pointer/reference/function-pointer NTTPs with
+	// a named entity, also preserve the explicit identity kind and entity name in the
+	// dedicated fields so the roundtrip through toTemplateTypeArg is lossless.
+	info.value = arg.value;
+	if (arg.has_typed_value_identity) {
+		const auto& id = arg.typed_value_identity;
+		info.nttp_kind = id.kind;
+		if (id.entity_name.isValid()) {
+			info.nttp_entity_name = id.entity_name;
+		}
+		if (id.member_name.isValid()) {
+			info.nttp_member_name = id.member_name;
+		}
+		info.nttp_pointer_offset = id.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer
+			? id.value
+			: id.pointer_offset;
+	}
 	return info;
 }
 
@@ -67,7 +83,48 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.template_name_handle = arg.template_name;
 	ta.member_pointer_kind = arg.member_pointer_kind;
 	if (arg.is_value) {
-		ta.value = arg.intValue();
+		const bool has_explicit_nttp_identity =
+			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
+			arg.nttp_entity_name.isValid() ||
+			arg.nttp_member_name.isValid() ||
+			arg.nttp_pointer_offset != 0;
+		if (has_explicit_nttp_identity) {
+			// Restore typed NTTP identity using the explicitly stored fields — no inference needed.
+			switch (arg.nttp_kind) {
+			case FlashCpp::NonTypeValueIdentityKind::FunctionPointer:
+				if (arg.nttp_entity_name.isValid()) {
+					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeFunctionPointer(arg.type_index, arg.nttp_entity_name));
+				} else {
+					ta.value = arg.intValue();
+				}
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::Reference:
+				if (arg.nttp_entity_name.isValid()) {
+					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeReference(arg.type_index, arg.nttp_entity_name));
+				} else {
+					ta.value = arg.intValue();
+				}
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::ObjectPointer:
+				if (arg.nttp_entity_name.isValid()) {
+					ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeObjectPointer(arg.type_index, arg.nttp_entity_name, arg.nttp_pointer_offset));
+				} else {
+					ta.value = arg.intValue();
+				}
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::MemberPointer:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeMemberPointer(arg.type_index, arg.nttp_member_name, arg.nttp_pointer_offset));
+				break;
+			case FlashCpp::NonTypeValueIdentityKind::Nullptr:
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeNullptr(arg.type_index));
+				break;
+			default:
+				ta.value = arg.intValue();
+				break;
+			}
+		} else {
+			ta.value = arg.intValue();
+		}
 	}
 	return ta;
 }

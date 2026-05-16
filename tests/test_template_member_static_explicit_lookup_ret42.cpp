@@ -1,15 +1,27 @@
-template <class T>
 struct Host {
 	template <class U>
+	static int value() {
+		return 42;
+	}
+};
+
+template <class T>
+int call_member_template() {
+	return Host::template value<T>();
+}
+
+template <class T>
+struct Host2 {
+	template <class U>
 	static int value(U v) {
-		return 40 + v;
+		return v;
 	}
 
 	static int run() {
-		return Host::value<int>(2);
+		return Host2::template value<int>(0);
 	}
 };
 
 int main() {
-	return Host<void>::run();
+	return call_member_template<int>() + Host2<void>::run();
 }

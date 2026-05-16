@@ -480,26 +480,261 @@ ParseResult Parser::parse_template_parameter() {
 	Token param_name_token;
 	[[maybe_unused]] bool is_anonymous = false;
 
-	if (peek().is_identifier()) {
-		// Named parameter
-		param_name_token = peek_info();
-		param_name = param_name_token.value();
-		advance(); // consume parameter name
-	} else {
-		// Anonymous parameter - generate unique name
-		// Check if next token is valid for end of parameter (comma, >, or =)
-		if (!peek().is_eof() &&
-			(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "="_tok)) {
-			// Generate unique anonymous parameter name
-			static int anonymous_counter = 0;
-			param_name = StringBuilder().append("__anon_param_"sv).append(static_cast<int64_t>(anonymous_counter++)).commit();
+	// Check for function pointer declarator syntax: T (*Name)(params...)
+	// e.g., template <int (*F)()> or template <void (*)(int, double)>
+	// Also handles member function pointer: T (Class::*Name)(params...)
+	// e.g., template <int (S::*MemberFn)()>
+	// The base type specifier (e.g. 'int') has already been parsed into nttp_type.
+	// We now look for the (*Name)(...) or (Class::*Name)(...) declarator group.
+	bool parsed_as_function_pointer = false;
+	if (!is_variadic && peek() == "("_tok) {
+		SaveHandle fp_decl_pos = save_token_position();
+		advance(); // consume '('
 
-			// Store the anonymous name in a way that persists
-			// We'll use the current token as the token reference
-			param_name_token = current_token_;
-			is_anonymous = true;
+		// Skip optional calling convention (__cdecl, __stdcall, etc.) before '*'
+		CallingConvention fp_calling_convention = parse_calling_convention(CallingConvention::Default);
+
+		if (peek() == "*"_tok) {
+			advance(); // consume '*'
+
+			// Parse the optional parameter name inside (*Name), e.g. 'F' in int (*F)()
+			Token fp_name_token;
+			std::string_view fp_name;
+			if (peek().is_identifier()) {
+				fp_name_token = peek_info();
+				fp_name = fp_name_token.value();
+				advance(); // consume the name
+			}
+
+			if (peek() == ")"_tok) {
+				advance(); // consume ')'
+
+				// Now expect the argument type list: (params...)
+				if (peek() == "("_tok) {
+					advance(); // consume '('
+
+					std::vector<TypeIndex> fp_param_types;
+					bool param_parse_ok = parse_function_type_parameter_list(fp_param_types);
+
+					if (param_parse_ok && peek() == ")"_tok) {
+						advance(); // consume ')'
+
+						// Parse optional noexcept specifier after parameter list
+						bool sig_is_noexcept = false;
+						if (peek() == "noexcept"_tok) {
+							advance(); // consume 'noexcept'
+							sig_is_noexcept = parse_noexcept_value();
+						}
+
+						// Build the function signature: the return type is nttp_type as currently
+						// parsed (e.g. 'int' for int (*F)()).
+						FunctionSignature func_sig;
+						func_sig.return_type_index = nttp_type.type_index();
+						func_sig.return_pointer_depth = static_cast<int>(nttp_type.pointer_depth());
+						func_sig.return_reference_qualifier = nttp_type.reference_qualifier();
+						func_sig.parameter_type_indices = std::move(fp_param_types);
+						func_sig.calling_convention = fp_calling_convention;
+						func_sig.is_noexcept = sig_is_noexcept;
+
+						// Rewrite nttp_type to TypeCategory::FunctionPointer.
+						// FunctionPointer is intrinsically pointer-sized; the "pointer-ness" is
+						// baked into the category (no extra pointer_level needed).
+						nttp_type.set_type_index(nativeTypeIndex(TypeCategory::FunctionPointer));
+						nttp_type.set_size_in_bits(64);
+						nttp_type.limit_pointer_depth(0);
+						nttp_type.set_function_signature(func_sig);
+
+						discard_saved_token(fp_decl_pos);
+						parsed_as_function_pointer = true;
+
+						// Use the name from (*Name), or generate an anonymous name
+						if (!fp_name.empty()) {
+							param_name = fp_name;
+							param_name_token = fp_name_token;
+						} else {
+							static int anonymous_fp_counter = 0;
+							param_name = StringBuilder()
+								.append("__anon_fp_param_"sv)
+								.append(static_cast<int64_t>(anonymous_fp_counter++))
+								.commit();
+							param_name_token = current_token_;
+							is_anonymous = true;
+						}
+					} else {
+						restore_token_position(fp_decl_pos);
+					}
+				} else {
+					restore_token_position(fp_decl_pos);
+				}
+			} else {
+				restore_token_position(fp_decl_pos);
+			}
+		} else if (peek().is_identifier()) {
+			// Check for member function pointer pattern: (ClassName::*Name)(params...)
+			// e.g., template <int (S::* MemberFn)()>
+			Token mfp_class_token = peek_info();
+			advance(); // consume class name
+			if (peek() == "::"_tok) {
+				advance(); // consume '::'
+				if (peek() == "*"_tok) {
+					advance(); // consume '*'
+
+					// Parse optional parameter name inside (ClassName::*Name)
+					Token mfp_name_token;
+					std::string_view mfp_name;
+					if (peek().is_identifier()) {
+						mfp_name_token = peek_info();
+						mfp_name = mfp_name_token.value();
+						advance(); // consume the name
+					}
+
+					if (peek() == ")"_tok) {
+						advance(); // consume ')'
+
+						// Expect the argument type list: (params...)
+						if (peek() == "("_tok) {
+							advance(); // consume '('
+
+							std::vector<TypeIndex> mfp_param_types;
+							bool mfp_param_ok = parse_function_type_parameter_list(mfp_param_types);
+
+							if (mfp_param_ok && peek() == ")"_tok) {
+								advance(); // consume ')'
+
+								// Parse optional cv-qualifiers, ref-qualifier, noexcept
+								// e.g., template <int (S::* F)() const noexcept>
+								bool mfp_is_const = false;
+								bool mfp_is_volatile = false;
+								ReferenceQualifier mfp_ref_qual = ReferenceQualifier::None;
+								bool mfp_is_noexcept = false;
+								while (!peek().is_eof()) {
+									if (peek() == "const"_tok) {
+										mfp_is_const = true;
+										advance();
+									} else if (peek() == "volatile"_tok) {
+										mfp_is_volatile = true;
+										advance();
+									} else if (peek() == "&"_tok) {
+										mfp_ref_qual = ReferenceQualifier::LValueReference;
+										advance();
+									} else if (peek() == "&&"_tok) {
+										mfp_ref_qual = ReferenceQualifier::RValueReference;
+										advance();
+									} else if (peek() == "noexcept"_tok) {
+										advance();
+										mfp_is_noexcept = parse_noexcept_value();
+									} else {
+										break;
+									}
+								}
+
+								// Build function signature for the member function pointer
+								FunctionSignature mfp_sig;
+								mfp_sig.return_type_index = nttp_type.type_index();
+								mfp_sig.return_pointer_depth = static_cast<int>(nttp_type.pointer_depth());
+								mfp_sig.return_reference_qualifier = nttp_type.reference_qualifier();
+								mfp_sig.parameter_type_indices = std::move(mfp_param_types);
+								mfp_sig.calling_convention = fp_calling_convention;
+								mfp_sig.is_const = mfp_is_const;
+								mfp_sig.is_volatile = mfp_is_volatile;
+								mfp_sig.function_reference_qualifier = mfp_ref_qual;
+								mfp_sig.is_noexcept = mfp_is_noexcept;
+
+								// Rewrite nttp_type as MemberFunctionPointer
+								nttp_type.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+								nttp_type.set_size_in_bits(64);
+								nttp_type.limit_pointer_depth(0);
+								nttp_type.set_function_signature(mfp_sig);
+								nttp_type.set_member_class_name(mfp_class_token.handle());
+
+								discard_saved_token(fp_decl_pos);
+								parsed_as_function_pointer = true;
+
+								// Use the name from (ClassName::*Name), or generate anonymous
+								if (!mfp_name.empty()) {
+									param_name = mfp_name;
+									param_name_token = mfp_name_token;
+								} else {
+									static int anonymous_mfp_counter = 0;
+									param_name = StringBuilder()
+										.append("__anon_mfp_param_"sv)
+										.append(static_cast<int64_t>(anonymous_mfp_counter++))
+										.commit();
+									param_name_token = current_token_;
+									is_anonymous = true;
+								}
+							} else {
+								restore_token_position(fp_decl_pos);
+							}
+						} else {
+							restore_token_position(fp_decl_pos);
+						}
+					} else {
+						restore_token_position(fp_decl_pos);
+					}
+				} else {
+					restore_token_position(fp_decl_pos);
+				}
+			} else {
+				restore_token_position(fp_decl_pos);
+			}
 		} else {
-			return ParseResult::error("Expected identifier for non-type template parameter", current_token_);
+			restore_token_position(fp_decl_pos);
+		}
+	}
+
+	// Check for member object pointer NTTP: BaseType ClassName::* param_name
+	// e.g., template <int S::* Member>
+	// This must come after the function pointer check (which handles '(' first).
+	// After consume_pointer_ref_modifiers, peek should be the class name identifier.
+	if (!is_variadic && !parsed_as_function_pointer && peek().is_identifier()) {
+		SaveHandle mop_pos = save_token_position();
+		Token mop_class_token = peek_info();
+		advance(); // consume potential class name
+		if (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (peek() == "*"_tok) {
+				advance(); // consume '*'
+				// This is T ClassName::* — member object pointer NTTP
+				// Rewrite nttp_type as MemberObjectPointer (64-bit, no extra pointer level)
+				nttp_type.set_type_index(nativeTypeIndex(TypeCategory::MemberObjectPointer));
+				nttp_type.set_size_in_bits(64);
+				nttp_type.limit_pointer_depth(0);
+				nttp_type.set_member_class_name(mop_class_token.handle());
+				discard_saved_token(mop_pos);
+				FLASH_LOG(Parser, Debug, "Parsed member object pointer NTTP: ",
+						  nttp_type.token().value(), " ", mop_class_token.value(), "::*");
+				// Fall through to parameter name parsing below
+			} else {
+				restore_token_position(mop_pos);
+			}
+		} else {
+			restore_token_position(mop_pos);
+		}
+	}
+
+	if (!parsed_as_function_pointer) {
+		if (peek().is_identifier()) {
+			// Named parameter
+			param_name_token = peek_info();
+			param_name = param_name_token.value();
+			advance(); // consume parameter name
+		} else {
+			// Anonymous parameter - generate unique name
+			// Check if next token is valid for end of parameter (comma, >, or =)
+			if (!peek().is_eof() &&
+				(peek() == ","_tok || peek() == ">"_tok || peek() == ">>"_tok || peek() == "="_tok)) {
+				// Generate unique anonymous parameter name
+				static int anonymous_counter = 0;
+				param_name = StringBuilder().append("__anon_param_"sv).append(static_cast<int64_t>(anonymous_counter++)).commit();
+
+				// Store the anonymous name in a way that persists
+				// We'll use the current token as the token reference
+				param_name_token = current_token_;
+				is_anonymous = true;
+			} else {
+				return ParseResult::error("Expected identifier for non-type template parameter", current_token_);
+			}
 		}
 	}
 
@@ -3030,14 +3265,14 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 					identity.value_type_index = declared_type_index.is_valid()
 						? declared_type_index
 						: nativeTypeIndex(declared_type_index.category());
-					if (declared_category == TypeCategory::FunctionPointer ||
-						declared_category == TypeCategory::MemberFunctionPointer) {
+					if (declared_category == TypeCategory::FunctionPointer) {
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
 							identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr ||
 							identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
 						}
-					} else if (declared_category == TypeCategory::MemberObjectPointer) {
+					} else if (declared_category == TypeCategory::MemberObjectPointer ||
+							   declared_category == TypeCategory::MemberFunctionPointer) {
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
 						}

@@ -700,6 +700,29 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				}
 			}
 
+			// Check for (&func_name)(args) — address-of a named function called directly.
+			// This supports callable FunctionPointer NTTP substitution paths that
+			// materialize as address-of expressions in template instantiations.
+			const FunctionDeclarationNode* addressof_func_decl = nullptr;
+			if (!is_function_pointer_call && result->is<ExpressionNode>()) {
+				const ExpressionNode& expr = result->as<ExpressionNode>();
+				if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+					const UnaryOperatorNode& unary = std::get<UnaryOperatorNode>(expr);
+					if (unary.op() == "&" && unary.is_prefix()) {
+						const ASTNode& operand = unary.get_operand();
+						if (operand.is<ExpressionNode>()) {
+							const ExpressionNode& op_expr = operand.as<ExpressionNode>();
+							if (std::holds_alternative<IdentifierNode>(op_expr)) {
+								const auto& id = std::get<IdentifierNode>(op_expr);
+								auto sym = gSymbolTable.lookup(id.name());
+								if (sym.has_value() && sym->is<FunctionDeclarationNode>())
+									addressof_func_decl = &sym->as<FunctionDeclarationNode>();
+							}
+						}
+					}
+				}
+			}
+
 			Token paren_token = peek_info();
 			advance(); // consume '('
 
@@ -731,6 +754,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				// Create member function call node - code generation will detect this is a function pointer
 				result = emplace_node<ExpressionNode>(
 					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), member_token));
+			} else if (addressof_func_decl) {
+				// (&func_name)(args) — treat as a direct call to func_name
+				result = emplace_node<ExpressionNode>(
+					makeResolvedCallExpr(*addressof_func_decl, std::move(args), paren_token));
+				if (addressof_func_decl->has_mangled_name())
+					setCallMangledName(result->as<ExpressionNode>(), addressof_func_decl->mangled_name());
 			} else {
 				// Create operator() call as a member function call
 				// The member function name is "operator()"

@@ -998,6 +998,13 @@ struct TypeInfo {
 		bool is_template_template_arg;  // true if this is a template template argument
 		StringHandle template_name;  // Name of the template for template-template arguments
 		MemberPointerKind member_pointer_kind;  // Distinguish member function vs data pointers
+		// Explicit NTTP identity fields — keep the TemplateTypeArg↔TemplateArgInfo roundtrip
+		// lossless without inferring the kind from TypeCategory or ref_qualifier.
+		// Only meaningful when is_value == true.
+		FlashCpp::NonTypeValueIdentityKind nttp_kind;  // Kind of the NTTP value identity
+		StringHandle nttp_entity_name;                 // Entity name for pointer/reference/function-pointer NTTPs
+		StringHandle nttp_member_name;                 // Member name for member-pointer NTTPs
+		int64_t nttp_pointer_offset;                   // Object-pointer element offset or member-pointer value offset
 
 		TemplateArgInfo()
 			: type_index(),
@@ -1009,7 +1016,9 @@ struct TypeInfo {
 			  is_pack(false),
 			  is_array(false),
 			  is_template_template_arg(false),
-			  member_pointer_kind(MemberPointerKind::None) {}
+			  member_pointer_kind(MemberPointerKind::None),
+			  nttp_kind(FlashCpp::NonTypeValueIdentityKind::Integral),
+			  nttp_pointer_offset(0) {}
 
 		TemplateArgInfo(const TemplateArgInfo& other)
 			: type_index(other.type_index),
@@ -1027,7 +1036,11 @@ struct TypeInfo {
 			  dependent_expr(other.dependent_expr),
 			  is_template_template_arg(other.is_template_template_arg),
 			  template_name(other.template_name),
-			  member_pointer_kind(other.member_pointer_kind) {}
+			  member_pointer_kind(other.member_pointer_kind),
+			  nttp_kind(other.nttp_kind),
+			  nttp_entity_name(other.nttp_entity_name),
+			  nttp_member_name(other.nttp_member_name),
+			  nttp_pointer_offset(other.nttp_pointer_offset) {}
 
 		TemplateArgInfo(TemplateArgInfo&&) noexcept = default;
 
@@ -1049,6 +1062,10 @@ struct TypeInfo {
 				is_template_template_arg = other.is_template_template_arg;
 				template_name = other.template_name;
 				member_pointer_kind = other.member_pointer_kind;
+				nttp_kind = other.nttp_kind;
+				nttp_entity_name = other.nttp_entity_name;
+				nttp_member_name = other.nttp_member_name;
+				nttp_pointer_offset = other.nttp_pointer_offset;
 			}
 			return *this;
 		}

@@ -132,6 +132,109 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 	consume_pointer_ref_modifiers(type_spec);
 
+	// Handle member object pointer type: T ClassName::*
+	// e.g., static_cast<int S::*>(nullptr)
+	if (peek().is_identifier()) {
+		SaveHandle mop_save = save_token_position();
+		Token mop_class_token = peek_info();
+		advance(); // consume potential class name
+		if (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (peek() == "*"_tok) {
+				advance(); // consume '*'
+				type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberObjectPointer));
+				type_spec.set_size_in_bits(64);
+				type_spec.limit_pointer_depth(0);
+				type_spec.set_member_class_name(mop_class_token.handle());
+				discard_saved_token(mop_save);
+			} else {
+				restore_token_position(mop_save);
+			}
+		} else {
+			restore_token_position(mop_save);
+		}
+	}
+
+	// Handle member function pointer type inside parens: (ClassName::*)(params...)
+	// e.g., static_cast<int (S::*)()>(nullptr)
+	if (!type_spec.is_member_object_pointer() && peek() == "("_tok) {
+		SaveHandle mfp_save = save_token_position();
+		advance(); // consume '('
+		if (peek().is_identifier()) {
+			Token mfp_class_token = peek_info();
+			advance(); // consume class name
+			if (peek() == "::"_tok) {
+				advance(); // consume '::'
+				if (peek() == "*"_tok) {
+					advance(); // consume '*'
+					if (peek() == ")"_tok) {
+						advance(); // consume ')'
+						if (peek() == "("_tok) {
+							advance(); // consume '('
+							std::vector<TypeIndex> mfp_params;
+							bool param_ok = parse_function_type_parameter_list(mfp_params);
+							if (param_ok && peek() == ")"_tok) {
+								advance(); // consume ')'
+								// Parse optional cv/ref/noexcept qualifiers
+								bool mfp_is_const = false;
+								bool mfp_is_volatile = false;
+								ReferenceQualifier mfp_ref = ReferenceQualifier::None;
+								bool mfp_is_noexcept = false;
+								while (!peek().is_eof()) {
+									if (peek() == "const"_tok) {
+										mfp_is_const = true;
+										advance();
+									} else if (peek() == "volatile"_tok) {
+										mfp_is_volatile = true;
+										advance();
+									} else if (peek() == "&"_tok) {
+										mfp_ref = ReferenceQualifier::LValueReference;
+										advance();
+									} else if (peek() == "&&"_tok) {
+										mfp_ref = ReferenceQualifier::RValueReference;
+										advance();
+									} else if (peek() == "noexcept"_tok) {
+										advance();
+										mfp_is_noexcept = parse_noexcept_value();
+									} else {
+										break;
+									}
+								}
+								FunctionSignature mfp_sig;
+								mfp_sig.return_type_index = type_spec.type_index();
+								mfp_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+								mfp_sig.return_reference_qualifier = type_spec.reference_qualifier();
+								mfp_sig.parameter_type_indices = std::move(mfp_params);
+								mfp_sig.is_const = mfp_is_const;
+								mfp_sig.is_volatile = mfp_is_volatile;
+								mfp_sig.function_reference_qualifier = mfp_ref;
+								mfp_sig.is_noexcept = mfp_is_noexcept;
+								type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+								type_spec.set_size_in_bits(64);
+								type_spec.limit_pointer_depth(0);
+								type_spec.set_function_signature(mfp_sig);
+								type_spec.set_member_class_name(mfp_class_token.handle());
+								discard_saved_token(mfp_save);
+							} else {
+								restore_token_position(mfp_save);
+							}
+						} else {
+							restore_token_position(mfp_save);
+						}
+					} else {
+						restore_token_position(mfp_save);
+					}
+				} else {
+					restore_token_position(mfp_save);
+				}
+			} else {
+				restore_token_position(mfp_save);
+			}
+		} else {
+			restore_token_position(mfp_save);
+		}
+	}
+
 	// Expect '>'
 	if (peek() != ">"_tok) {
 		return ParseResult::error(std::string(StringBuilder().append("Expected '>' after type in ").append(cast_name).commit()), current_token_);

@@ -1054,10 +1054,19 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 					eval_result.member_pointer_member,
 					eval_result.as_int());
 			} else {
-				value.identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
-					value.type_index,
-					StringHandle{},
-					eval_result.as_int());
+				// Null member pointer: emit a Nullptr-typed Integral identity (value=0)
+				// so that classifyExplicitTemplateArgumentsAgainstParameters handles it
+				// identically to the literal 'nullptr' path.  The literal path calls
+				// makeConstantValueFromCategory(0, Nullptr) → makeConcrete → kind=Integral;
+				// classifyExplicit then sets value_type_index to the declared
+				// MemberObject/FunctionPointer type but leaves kind=Integral because the
+				// kind==Nullptr guard in classifyExplicitTemplateArgumentsAgainstParameters is NOT triggered for kind=Integral.
+				// Both the registered specialization and the lookup arg therefore have
+				// kind=Integral, value=0, value_type_index=DeclaredMemberPtrType, which
+				// compare equal.
+				// kNullMemberPointerSentinel (-1) must not leak out; use 0.
+				value.identity = FlashCpp::NonTypeValueIdentity::makeConcrete(
+					0, nativeTypeIndex(TypeCategory::Nullptr));
 			}
 		}
 		return value;
@@ -1079,10 +1088,10 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		value.type = declared_category;
 		value.type_index = makeConstantValueTypeIndex(declared_category, declared_type_index);
 		value.identity.value_type_index = value.type_index;
-		if (declared_category == TypeCategory::FunctionPointer ||
-				   declared_category == TypeCategory::MemberFunctionPointer) {
+		if (declared_category == TypeCategory::FunctionPointer) {
 			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::FunctionPointer;
-		} else if (declared_category == TypeCategory::MemberObjectPointer) {
+		} else if (declared_category == TypeCategory::MemberObjectPointer ||
+				   declared_category == TypeCategory::MemberFunctionPointer) {
 			value.identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
 		}
 		return value;
@@ -1444,9 +1453,42 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		return std::nullopt;
 	}
 
-	// Handle unary operator expressions (e.g., -5, ~0, !true)
+	// Handle unary operator expressions (e.g., -5, ~0, !true, &global)
 	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		FLASH_LOG(Templates, Debug, "Evaluating unary operator expression");
+
+		// Special case: address-of a named entity (&identifier).
+		// The generic ConstExpr evaluator drops the entity name and returns 0,
+		// so we handle &func and &var here to preserve a proper NonTypeValueIdentity.
+		const auto& unop = std::get<UnaryOperatorNode>(expr);
+		if (unop.op() == "&" && unop.is_prefix() && unop.get_operand().is<ExpressionNode>()) {
+			const auto& op_expr = unop.get_operand().as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(op_expr)) {
+				const auto& id = std::get<IdentifierNode>(op_expr);
+				StringHandle entity_handle = StringTable::getOrInternStringHandle(id.name());
+				auto sym = gSymbolTable.lookup(id.name());
+				if (sym.has_value()) {
+					if (sym->is<FunctionDeclarationNode>()) {
+						TypeIndex fp_type = nativeTypeIndex(TypeCategory::FunctionPointer);
+						auto identity = FlashCpp::NonTypeValueIdentity::makeFunctionPointer(fp_type, entity_handle);
+						FLASH_LOG(Templates, Debug, "Address-of function '", id.name(), "' evaluated as FunctionPointer identity");
+						return ConstantValue{0, TypeCategory::FunctionPointer, fp_type, identity};
+					}
+					const TypeSpecifierNode* type_node = nullptr;
+					if (sym->is<VariableDeclarationNode>())
+						type_node = &sym->as<VariableDeclarationNode>().declaration().type_specifier_node();
+					else if (sym->is<DeclarationNode>())
+						type_node = &sym->as<DeclarationNode>().type_specifier_node();
+					if (type_node) {
+						TypeIndex pointee_type = type_node->type_index().withCategory(type_node->type());
+						auto identity = FlashCpp::NonTypeValueIdentity::makeObjectPointer(pointee_type, entity_handle, 0);
+						FLASH_LOG(Templates, Debug, "Address-of variable '", id.name(), "' evaluated as ObjectPointer identity");
+						return ConstantValue{0, type_node->type(), pointee_type, identity};
+					}
+				}
+			}
+		}
+
 		auto ctx = makeConstExprContext();
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
 		if (eval_result.success()) {

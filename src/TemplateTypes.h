@@ -203,17 +203,7 @@ struct TypeIndexArg {
  * 
  * The goal is one canonical representation that TemplateInstantiationKey consumes directly.
  */
-enum class NonTypeValueIdentityKind : uint8_t {
-	Integral,
-	Nullptr,
-	ObjectPointer,
-	Reference,
-	FunctionPointer,
-	MemberPointer,
-	Floating,
-	StructuralClass,
-	Unsupported
-};
+// NonTypeValueIdentityKind is defined in AstNodeTypes_TypeSystem.h (included via AstNodeTypes.h).
 
 struct NonTypeValueIdentity {
 	NonTypeValueIdentityKind kind = NonTypeValueIdentityKind::Integral;
