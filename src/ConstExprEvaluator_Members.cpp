@@ -3781,6 +3781,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return evaluate_delete_expression(*del_expr, context, &bindings, &bindings);
 	}
 
+	// Handle InitializerListConstructionNode with mutable bindings so the synthetic
+	// backing array is stored in the local binding map and pointer dereferences via
+	// name lookup succeed inside the called function body.
+	if (const auto* ilist_node = std::get_if<InitializerListConstructionNode>(&expr)) {
+		return evaluate_initializer_list_construction(*ilist_node, bindings, context, &bindings);
+	}
+
 	// For other expression types, use the const version (cast bindings to const)
 	const std::unordered_map<std::string_view, EvalResult>& const_bindings = bindings;
 	return evaluate_expression_with_bindings_const(expr_node, const_bindings, context);
@@ -4217,8 +4224,163 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		return evaluate_member_access(std::get<MemberAccessNode>(synthetic_member_access), context);
 	}
 
+	// Handle InitializerListConstructionNode (std::initializer_list<T>{e1, e2, ...}).
+	// Creates a synthetic backing array, constructs begin/end (or begin/size) pointers with
+	// a full value snapshot, and materialises the initializer_list struct from the result.
+	if (const auto* ilist_node = std::get_if<InitializerListConstructionNode>(&expr)) {
+		return evaluate_initializer_list_construction(*ilist_node, bindings, context, mutable_bindings);
+	}
+
 	// For literals and other expressions without parameters, evaluate normally
 	return evaluate(expr_node, context);
+}
+
+// ============================================================================
+// evaluate_initializer_list_construction
+//
+// Materialises a std::initializer_list<T> value during constant evaluation.
+//
+// The standard (C++20 [dcl.init.list] / [stmt.ranged]) requires the compiler to
+// create a backing array and construct the initializer_list around it.  We
+// synthesise this at the constexpr level as follows:
+//
+//   1. Evaluate all element expressions.
+//   2. Allocate a synthetic backing-array binding keyed "@ilist_N".
+//   3. Build begin_ptr (offset=0) and end_ptr (offset=N), both carrying a full
+//      pointer_value_snapshot so that pointer arithmetic and deref work even
+//      after the binding goes out of scope.
+//   4. Try to use the initializer_list constructor with the pre-evaluated pointer
+//      args.  Fall back to direct aggregate assignment otherwise.
+// ============================================================================
+EvalResult Evaluator::evaluate_initializer_list_construction(
+	const InitializerListConstructionNode& ilist_node,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
+
+	// Step 1: evaluate element expressions using whatever bindings we have.
+	const size_t n = ilist_node.size();
+	std::vector<EvalResult> elements;
+	elements.reserve(n);
+	for (const ASTNode& elem_node : ilist_node.elements()) {
+		auto elem_result = evaluate_expression_with_bindings_const(elem_node, bindings, context);
+		if (!elem_result.success())
+			return elem_result;
+		elements.push_back(std::move(elem_result));
+	}
+
+	// Step 2: allocate a synthetic backing-array key using a dedicated counter so that
+	// @ilist_N names never share the same numeric space as @new_N heap allocations.
+	// The key is not registered in constexpr_heap (it is not a `new` allocation and
+	// must not be freed by `delete`).
+	StringHandle backing_handle = context.alloc_ilist_slot();
+	// getStringView() returns a view into the interned string table which outlives
+	// the evaluation, so this view is a stable key for the local binding map.
+	std::string_view backing_key = StringTable::getStringView(backing_handle);
+
+	// Build the backing array EvalResult.
+	// EvalResult has no dedicated array factory, so we start from a zero scalar and
+	// then set the two array flags.  The scalar value is never read for array results.
+	EvalResult backing_array = EvalResult::from_int(0LL);
+	backing_array.is_array = true;
+	backing_array.array_elements = elements;
+
+	// Store backing array in mutable_bindings so that deref_pointer_with_bindings can
+	// find it by name during pointer dereference operations.
+	if (mutable_bindings) {
+		(*mutable_bindings)[backing_key] = backing_array;
+	}
+
+	// Step 3: build begin/end pointers with full snapshot so pointer arithmetic and
+	// deref work even in a different scope.
+	EvalResult begin_ptr = EvalResult::from_pointer(backing_handle, 0);
+	begin_ptr.pointer_value_snapshot = elements;
+
+	EvalResult end_ptr = EvalResult::from_pointer(backing_handle, static_cast<int64_t>(n));
+	end_ptr.pointer_value_snapshot = elements;
+
+	EvalResult int_size = EvalResult::from_uint(static_cast<unsigned long long>(n));
+
+	// Step 4: resolve the initializer_list struct type.
+	const ASTNode& target_type_node = ilist_node.target_type();
+	if (!target_type_node.is<TypeSpecifierNode>())
+		return EvalResult::error("InitializerListConstruction: target_type is not TypeSpecifierNode");
+	const TypeSpecifierNode& target_type_spec = target_type_node.as<TypeSpecifierNode>();
+
+	const StructTypeInfo* struct_info = get_struct_info_from_type(target_type_spec);
+	if (!struct_info)
+		return EvalResult::error("InitializerListConstruction: target type is not a struct");
+
+	TypeIndex type_index = target_type_spec.type_index();
+
+	// Determine whether the second member is a pointer (last_) or a size value (size_).
+	// This mirrors the runtime IR generator in generateInitializerListConstructionIr.
+	bool second_member_is_pointer = false;
+	if (struct_info->members.size() >= 2) {
+		second_member_is_pointer = struct_info->members[1].pointer_depth > 0;
+	}
+
+	// Choose the pre-evaluated args depending on the layout.
+	std::vector<EvalResult> ctor_args_vec = second_member_is_pointer
+		? std::vector<EvalResult>{begin_ptr, end_ptr}
+		: std::vector<EvalResult>{begin_ptr, int_size};
+
+	// Step 5: build the output EvalResult shell.
+	EvalResult result = EvalResult::from_int(0LL);
+	result.object_type_index = type_index;
+
+	// Step 6: try constructor approach.
+	// Look for any 2-parameter constructor (skip implicit copy/move constructors).
+	if (struct_info->hasUserDeclaredConstructor()) {
+		auto ctor_candidates = struct_info->getConstructorsByParameterCount(2, true);
+		const ConstructorDeclarationNode* matching_ctor = nullptr;
+		for (const StructMemberFunction* candidate : ctor_candidates) {
+			if (candidate && candidate->function_decl.is<ConstructorDeclarationNode>()) {
+				matching_ctor = &candidate->function_decl.as<ConstructorDeclarationNode>();
+				break;
+			}
+		}
+
+		if (matching_ctor) {
+			std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
+			// Also inject the backing array so that deref works inside the constructor body.
+			ctor_param_bindings[backing_key] = backing_array;
+
+			auto bind_result = bind_pre_evaluated_arguments(
+				matching_ctor->parameter_nodes(),
+				ctor_args_vec,
+				ctor_param_bindings,
+				context,
+				"InitializerListConstruction: failed to bind constructor parameters",
+				false);
+			if (bind_result.success()) {
+				auto materialize_result = materialize_members_from_constructor(
+					struct_info,
+					*matching_ctor,
+					ctor_param_bindings,
+					result.object_member_bindings,
+					context,
+					true);  // ignore_default_initializer_errors
+				if (materialize_result.success()) {
+					return result;
+				}
+			}
+		}
+	}
+
+	// Step 7: fallback — assign members directly based on their position and pointer_depth.
+	// member[0] always receives begin_ptr (first_ / data_).
+	// member[1] receives end_ptr if it is a pointer (last_), or int_size (size_) otherwise.
+	if (struct_info->members.size() >= 1) {
+		std::string_view m0 = StringTable::getStringView(struct_info->members[0].getName());
+		result.object_member_bindings[m0] = begin_ptr;
+	}
+	if (struct_info->members.size() >= 2) {
+		std::string_view m1 = StringTable::getStringView(struct_info->members[1].getName());
+		result.object_member_bindings[m1] = second_member_is_pointer ? end_ptr : int_size;
+	}
+
+	return result;
 }
 
 // Helper functions for overflow-safe arithmetic using compiler builtins

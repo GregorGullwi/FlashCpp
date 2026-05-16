@@ -1,6 +1,6 @@
 # Constexpr Evaluation Limitations
 
-**Standard boundary:** C++20 constexpr. `try`/`catch` inside constant evaluation is not a support target.
+**Standard boundary:** C++20 constexpr.
 
 ## Overview
 
@@ -124,32 +124,50 @@ struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in 
 
 ---
 
-## Not Supported ❌
+### `std::initializer_list` in constexpr — Partial Support ✅
 
-### `std::initializer_list` in constexpr
+`std::initializer_list<T>` construction from a braced argument list (`{e1, e2, ...}`) is now supported in constexpr evaluation via `InitializerListConstructionNode`. The evaluator synthesises a backing array, constructs begin/end pointer pair (or begin/size for the `data_`/`size_` layout), and materialises the `initializer_list` struct via its constructor or falls back to direct aggregate member assignment.
+
+**Supported:** `size()` (pointer subtraction), pointer comparison, pointer arithmetic on the stored pointer. See `tests/test_constexpr_initializer_list_ret0.cpp`.
+
+**Not yet supported:** Element iteration via a stored pointer member (`*p` where `p` was obtained from `begin()`). The `pointer_value_snapshot` is not propagated across struct member round-trips, so `*p` fails when `p` is retrieved from a struct member rather than directly from the evaluated pointer. Both the backing array binding and the `pointer_value_snapshot` are available while the construction expression is in scope; they do not survive a struct round-trip (store into member → load back out). Use explicit array parameters when element access is needed.
 
 ```cpp
-constexpr int sum(std::initializer_list<int> vals) {
+constexpr unsigned long count(std::initializer_list<int> lst) {
+    return lst.size();  // ✅ works via pointer subtraction
+}
+static_assert(count({1, 2, 3, 4, 5}) == 5);  // ✅ Supported
+
+constexpr int sum(std::initializer_list<int> lst) {
     int s = 0;
-    for (int v : vals) s += v;
+    for (int v : lst) s += v;  // ❌ element dereference via stored pointer not yet supported
     return s;
 }
-static_assert(sum({1, 2, 3}) == 6);  // ❌ "Expression type not supported in constant expressions"
 ```
 
-**Root cause:** `std::initializer_list<T>` is a library type backed by a compiler-synthesized backing array and two pointers (`begin`/`end`). FlashCpp's constexpr evaluator does not model this synthetic object. The brace-argument list `{1,2,3}` at a call site that expects `std::initializer_list` is parsed as an `InitializerListNode`, but the evaluator does not translate it into the `begin`/`end` pointer pair the library type exposes.
+---
 
-**What is needed:** Special-case `std::initializer_list<T>` in the evaluator: when a function parameter has this type and the argument is an `InitializerListNode`, synthesize an internal array `EvalResult` and make `begin()`/`end()` return suitable pointer results over it.
+### `try`/`catch` in constexpr ✅
+
+C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot be entered during constant evaluation). FlashCpp's constexpr evaluator now supports this: the `try` block body is evaluated normally and the `catch` clause is silently ignored (no exception is thrown during constant evaluation).
+
+```cpp
+constexpr int safe_divide(int a, int b) {
+    try {
+        if (b == 0) return -1;
+        return a / b;
+    } catch (...) {
+        return -1;
+    }
+}
+static_assert(safe_divide(10, 2) == 5); // ✅ Supported
+```
+
+See `tests/test_constexpr_try_catch_ret0.cpp`.
 
 ---
 
-### `try`/`catch` in constexpr
-
-C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot be entered during constant evaluation). FlashCpp does not currently parse `try` blocks inside constexpr function bodies, so any constexpr function containing a `try` block will fail to compile.
-
-**What is needed:** Parser support for `try`/`catch` inside constexpr bodies; the evaluator then simply never enters the handler during constant evaluation, so no evaluator changes are needed.
-
----
+## Not Supported ❌
 
 The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Members`, and header files). Central types:
 
@@ -175,14 +193,14 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 4. **`constexpr` lambdas and returned lambda values are supported**, including `constexpr auto fn = make_fn(); static_assert(fn(...));`.
 5. **Dynamic allocation works** — `new`/`delete` in constexpr follow C++20 rules; all allocations must be freed before the constant expression returns.
 6. **`const char*` string operations work** — subscript, `while (*s != '\0')` traversal, and string-literal return values are all supported.
-7. **Avoid `std::initializer_list` parameters** — use explicit array parameters or variadic templates instead.
+7. **Prefer `size()` over element iteration for `std::initializer_list`** — `size()` (pointer subtraction) works; direct element access via a stored pointer member does not yet propagate the snapshot across struct round-trips.
 8. **Local struct references are supported** — `T& ref = obj; ref.method();` now behaves as an alias in constexpr evaluation.
 
 ### For Contributors
 
 The most impactful next improvements in rough priority order:
 
-1. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
+1. **`std::initializer_list` element iteration** — propagate `pointer_value_snapshot` across struct member round-trips so that `*p` where `p = il.begin()` works in constexpr context.
 2. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
 3. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
 
@@ -198,6 +216,8 @@ The most impactful next improvements in rough priority order:
 - `tests/test_constexpr_const_char_ptr_ret0.cpp` — `const char*` / string-literal support
 - `tests/test_constexpr_new_delete_ret0.cpp` — constexpr `new`/`delete`
 - `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` — scalar `new T{arg}` rejects narrowing
+- `tests/test_constexpr_try_catch_ret0.cpp` — `try`/`catch` inside constexpr (C++20)
+- `tests/test_constexpr_initializer_list_ret0.cpp` — `std::initializer_list<T>` size in constexpr
 - `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp` — scalar `new T(arg)` uses normal conversions
 - `tests/test_constexpr_new_leak_fail.cpp` — constexpr heap leak detection (expected failure)
 - `tests/test_constexpr_new_default_init_scalar_fail.cpp` / `_array_fail.cpp` / `_aggregate_fail.cpp` — bare `new T` indeterminate-read rejection
