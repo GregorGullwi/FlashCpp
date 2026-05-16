@@ -150,7 +150,41 @@ C++20 permits `try`/`catch` blocks inside constexpr functions (they just cannot 
 
 ---
 
-## Implementation Architecture
+### Local reference variables bound to struct objects
+
+References to local primitive variables work fully:
+```cpp
+constexpr int f() {
+    int x = 3;
+    int& r = x;  // ✅ reference to primitive
+    r += 39;
+    return x;    // returns 42
+}
+```
+
+References as **function parameters** also work (including base-class reference views for virtual dispatch):
+```cpp
+constexpr int call(const Base& b) { return b.value(); }  // ✅ reference parameter
+```
+
+However, a **local variable of reference type** bound to a struct object is not supported:
+```cpp
+constexpr int f() {
+    Derived d(42);
+    const Base& ref = d;   // ❌ local reference to struct object
+    return ref.value();    // "Unsupported by-reference init-capture alias target"
+}
+```
+
+**Root cause:** The evaluator models local references to primitive scalars as aliased name bindings, but does not have a separate "reference to struct object" binding kind. When a struct-type variable is bound to a reference local, the evaluator falls through to its init-capture alias path which does not handle struct objects.
+
+**Workaround:** Use a pointer instead — `const Base* p = &d; p->value();` is fully supported.
+
+**What is needed:** A reference-to-struct binding kind in the evaluator that forwards member-binding lookups and call dispatch to the pointed-to object, similar to how pointer dereference already works.
+
+---
+
+
 
 The evaluator lives in `src/ConstExprEvaluator*.cpp` (split into `_Core`, `_Members`, and header files). Central types:
 
@@ -177,14 +211,16 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 5. **Dynamic allocation works** — `new`/`delete` in constexpr follow C++20 rules; all allocations must be freed before the constant expression returns.
 6. **`const char*` string operations work** — subscript, `while (*s != '\0')` traversal, and string-literal return values are all supported.
 7. **Avoid `std::initializer_list` parameters** — use explicit array parameters or variadic templates instead.
+8. **Avoid local reference variables bound to struct objects** — use a pointer (`const T* p = &obj; p->method();`) instead of `const T& ref = obj; ref.method();`.
 
 ### For Contributors
 
 The most impactful next improvements in rough priority order:
 
 1. **`std::initializer_list`** — synthesize an internal array from the brace-argument list when the parameter type is `std::initializer_list<T>`.
-2. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
-3. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
+2. **Local reference-to-struct variables** — add a reference-to-struct binding kind so `const Base& ref = d; ref.method();` evaluates correctly, matching how pointer dereference already works.
+3. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
+4. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
 
 ---
 
