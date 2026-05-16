@@ -807,6 +807,27 @@ EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& tar
 		return makeConvertedEvalResult(target_type, expr_result);
 	}
 
+	// Handle static_cast<MemberObjectPointer>(nullptr/0) and
+	// static_cast<MemberFunctionPointer>(nullptr/0): produce a null member pointer.
+	if (category == TypeCategory::MemberObjectPointer ||
+		category == TypeCategory::MemberFunctionPointer) {
+		// Allow conversion from nullptr literal (TypeCategory::Nullptr) or integer zero.
+		bool source_is_null = false;
+		if (expr_result.exact_type.has_value() &&
+			expr_result.exact_type->category() == TypeCategory::Nullptr) {
+			source_is_null = true;
+		} else if (expr_result.is_null_member_pointer) {
+			source_is_null = true;
+		} else if (expr_result.as_int() == 0) {
+			source_is_null = true;
+		}
+		if (source_is_null) {
+			EvalResult r = EvalResult::from_int(0);
+			r.set_exact_type(target_type); // set_exact_type sets is_null_member_pointer=true
+			return r;
+		}
+	}
+
 	return EvalResult::error(invalidTypeErrorStr);
 }
 

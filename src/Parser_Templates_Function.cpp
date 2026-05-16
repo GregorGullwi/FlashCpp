@@ -1054,10 +1054,19 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 					eval_result.member_pointer_member,
 					eval_result.as_int());
 			} else {
-				value.identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
-					value.type_index,
-					StringHandle{},
-					eval_result.as_int());
+				// Null member pointer: emit a Nullptr-typed Integral identity (value=0)
+				// so that classifyExplicitTemplateArgumentsAgainstParameters handles it
+				// identically to the literal 'nullptr' path.  The literal path calls
+				// makeConstantValueFromCategory(0, Nullptr) → makeConcrete → kind=Integral;
+				// classifyExplicit then sets value_type_index to the declared
+				// MemberObject/FunctionPointer type but leaves kind=Integral because the
+				// kind==Nullptr guard in classifyExplicitTemplateArgumentsAgainstParameters is NOT triggered for kind=Integral.
+				// Both the registered specialization and the lookup arg therefore have
+				// kind=Integral, value=0, value_type_index=DeclaredMemberPtrType, which
+				// compare equal.
+				// kNullMemberPointerSentinel (-1) must not leak out; use 0.
+				value.identity = FlashCpp::NonTypeValueIdentity::makeConcrete(
+					0, nativeTypeIndex(TypeCategory::Nullptr));
 			}
 		}
 		return value;
