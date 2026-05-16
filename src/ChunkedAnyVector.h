@@ -84,6 +84,10 @@ public:
 		}
 	}
 
+	std::size_t size() const {
+		return index_to_pointer.size();
+	}
+
 private:
 	std::array<char, InternalBufferSize> internal_buffer;
 #ifdef HAS_MEMORY_RESOURCE

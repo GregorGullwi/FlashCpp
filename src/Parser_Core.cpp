@@ -690,6 +690,9 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 void Parser::setRuntimeStatsEnabled(bool enabled) {
 #if WITH_PARSER_RUNTIME_STATS
 	runtime_stats_enabled_ = enabled;
+	if (enabled) {
+		ast_nodes_baseline_ = gChunkedAnyStorage.size();
+	}
 #else
 	(void)enabled;
 #endif
@@ -702,10 +705,12 @@ void Parser::reserveSavedTokenStorage(size_t saved_token_capacity) {
 void Parser::printRuntimeStats() const {
 #if WITH_PARSER_RUNTIME_STATS
 	const auto& stats = runtime_stats_;
+	size_t ast_nodes_allocated_total = gChunkedAnyStorage.size() - ast_nodes_baseline_;
 	FLASH_LOG(General, Info, "Parser runtime stats:");
 	FLASH_LOG(General, Info, "  Tokens advanced: ", stats.tokens_advanced);
 	FLASH_LOG(General, Info, "  Lookahead peeks: ", stats.lookahead_peeks);
 	FLASH_LOG(General, Info, "  Lookahead tokens consumed: ", stats.lookahead_tokens_consumed);
+	FLASH_LOG(General, Info, "  AST node allocations (gChunkedAnyStorage slots): ", ast_nodes_allocated_total);
 	FLASH_LOG(General, Info, "  Saved-token operations: save=", stats.save_count,
 			  ", restore=", stats.restore_count,
 			  ", restore-lexer-only=", stats.restore_lexer_only_count,
@@ -740,7 +745,20 @@ void Parser::printRuntimeStats() const {
 	FLASH_LOG(General, Info, "  Unary C-style cast probes: probes=", stats.unary_c_style_cast_probes,
 			  ", successes=", stats.unary_c_style_cast_successes,
 			  ", backtracks=", stats.unary_c_style_cast_backtracks);
-	FLASH_LOG(General, Info, "  Parser phase breakdown:");
+	{
+		const auto& h = stats.restore_token_delta_hist;
+		FLASH_LOG(General, Info, "  Restore token-delta histogram (tokens advanced between save and restore):");
+		FLASH_LOG(General, Info, "    delta=0: ", h[0], "  delta=1: ", h[1], "  delta=2: ", h[2],
+				  "  delta=3-4: ", h[3], "  delta=5-9: ", h[4],
+				  "  delta=10-19: ", h[5], "  delta=20-49: ", h[6], "  delta=50+: ", h[7]);
+	}
+	{
+		const auto& h = stats.lookahead_depth_hist;
+		FLASH_LOG(General, Info, "  Lookahead depth histogram (peek_token(N) call distribution):");
+		FLASH_LOG(General, Info, "    depth=1: ", h[0], "  depth=2: ", h[1], "  depth=3: ", h[2],
+				  "  depth=4: ", h[3], "  depth=5-9: ", h[4], "  depth=10+: ", h[5]);
+	}
+	FLASH_LOG(General, Info, "  Parser phase breakdown (saves/restores/discards show backtrack volume):");
 	double total_parse_loop_ms = 0.0;
 	if (const auto& parse_loop_stat = stats.phase_stats[static_cast<size_t>(RuntimePhase::ParseLoop)];
 		parse_loop_stat.inclusive_time_us > 0) {
@@ -770,7 +788,11 @@ void Parser::printRuntimeStats() const {
 				  ", inclusive=", std::fixed, std::setprecision(3), inclusive_ms, " ms",
 				  " (", std::setprecision(2), inclusive_pct, "%)",
 				  ", self=", std::setprecision(3), self_ms, " ms",
-				  " (", self_pct, "%)");
+				  " (", self_pct, "%)",
+				  ", saves=", phase_stat.saves,
+				  ", restores=", phase_stat.restores,
+				  ", discards=", phase_stat.discards,
+				  ", ast-allocs=", phase_stat.ast_nodes_allocated);
 	}
 #endif
 }
@@ -810,6 +832,8 @@ Token Parser::peek_token(size_t lookahead) {
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.lookahead_peeks;
 		runtime_stats_.lookahead_tokens_consumed += lookahead;
+		size_t bucket = lookahead == 1 ? 0 : lookahead == 2 ? 1 : lookahead == 3 ? 2 : lookahead == 4 ? 3 : lookahead <= 9 ? 4 : 5;
+		++runtime_stats_.lookahead_depth_hist[bucket];
 	}
 #endif
 
@@ -958,6 +982,10 @@ Parser::SaveHandle Parser::save_token_position() {
 		++runtime_stats_.active_saves;
 		runtime_stats_.peak_active_saves = std::max(runtime_stats_.peak_active_saves, runtime_stats_.active_saves);
 		runtime_stats_.saved_token_slots_peak = std::max(runtime_stats_.saved_token_slots_peak, saved_tokens_.size());
+		saved_tokens_[handle]->tokens_advanced_at_save_ = runtime_stats_.tokens_advanced;
+		if (!runtime_phase_stack_.empty()) {
+			++runtime_stats_.phase_stats[static_cast<size_t>(runtime_phase_stack_.back().phase)].saves;
+		}
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.save_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	}
@@ -1051,6 +1079,12 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.restore_count;
 		runtime_stats_.restore_ast_nodes_scanned += scanned_nodes;
+		size_t delta = runtime_stats_.tokens_advanced - saved_token.tokens_advanced_at_save_;
+		size_t bucket = delta == 0 ? 0 : delta == 1 ? 1 : delta == 2 ? 2 : delta <= 4 ? 3 : delta <= 9 ? 4 : delta <= 19 ? 5 : delta <= 49 ? 6 : 7;
+		++runtime_stats_.restore_token_delta_hist[bucket];
+		if (!runtime_phase_stack_.empty()) {
+			++runtime_stats_.phase_stats[static_cast<size_t>(runtime_phase_stack_.back().phase)].restores;
+		}
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.restore_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	}
@@ -1082,6 +1116,12 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.restore_lexer_only_count;
+		size_t delta = runtime_stats_.tokens_advanced - saved_token.tokens_advanced_at_save_;
+		size_t bucket = delta == 0 ? 0 : delta == 1 ? 1 : delta == 2 ? 2 : delta <= 4 ? 3 : delta <= 9 ? 4 : delta <= 19 ? 5 : delta <= 49 ? 6 : 7;
+		++runtime_stats_.restore_token_delta_hist[bucket];
+		if (!runtime_phase_stack_.empty()) {
+			++runtime_stats_.phase_stats[static_cast<size_t>(runtime_phase_stack_.back().phase)].restores;
+		}
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.restore_lexer_only_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	}
@@ -1106,6 +1146,9 @@ void Parser::discard_saved_token(SaveHandle handle) {
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.discard_count;
+		if (!runtime_phase_stack_.empty()) {
+			++runtime_stats_.phase_stats[static_cast<size_t>(runtime_phase_stack_.back().phase)].discards;
+		}
 		auto end = std::chrono::high_resolution_clock::now();
 		runtime_stats_.discard_time_us += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 	}
