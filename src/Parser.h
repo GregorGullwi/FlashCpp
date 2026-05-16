@@ -767,7 +767,6 @@ private:
 		size_t unary_c_style_cast_probes = 0;
 		size_t unary_c_style_cast_successes = 0;
 		size_t unary_c_style_cast_backtracks = 0;
-		size_t ast_nodes_allocated_total = 0;  // Total gChunkedAnyStorage slots created during parse
 		int64_t save_time_us = 0;
 		int64_t restore_time_us = 0;
 		int64_t restore_lexer_only_time_us = 0;
@@ -789,11 +788,11 @@ private:
 				return;
 			}
 			parser_->runtime_phase_stack_.push_back(RuntimePhaseFrame{
-				phase_,
-				std::chrono::high_resolution_clock::now(),
-				0,
-				gChunkedAnyStorage.size(),
-				0});
+				.phase = phase_,
+				.start = std::chrono::high_resolution_clock::now(),
+				.child_time_us = 0,
+				.ast_nodes_at_start = gChunkedAnyStorage.size(),
+				.child_ast_nodes_allocated = 0});
 			++parser_->runtime_stats_.phase_stats[static_cast<size_t>(phase_)].calls;
 		}
 
@@ -815,7 +814,7 @@ private:
 			}
 			stat.self_time_us += self_time_us;
 			size_t alloc_delta = gChunkedAnyStorage.size() - frame.ast_nodes_at_start;
-			stat.ast_nodes_allocated += alloc_delta;
+			stat.ast_nodes_allocated += (alloc_delta - frame.child_ast_nodes_allocated);
 			if (!parser_->runtime_phase_stack_.empty()) {
 				parser_->runtime_phase_stack_.back().child_time_us += elapsed_us;
 				parser_->runtime_phase_stack_.back().child_ast_nodes_allocated += alloc_delta;

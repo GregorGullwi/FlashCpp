@@ -687,6 +687,28 @@ ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
 	return std::move(result);
 }
 
+#if WITH_PARSER_RUNTIME_STATS
+static size_t getTokenDeltaBucket(size_t delta) {
+	if (delta == 0) return 0;
+	if (delta == 1) return 1;
+	if (delta == 2) return 2;
+	if (delta <= 4) return 3;
+	if (delta <= 9) return 4;
+	if (delta <= 19) return 5;
+	if (delta <= 49) return 6;
+	return 7;
+}
+
+static size_t getLookaheadDepthBucket(size_t depth) {
+	if (depth == 1) return 0;
+	if (depth == 2) return 1;
+	if (depth == 3) return 2;
+	if (depth == 4) return 3;
+	if (depth <= 9) return 4;
+	return 5;
+}
+#endif
+
 void Parser::setRuntimeStatsEnabled(bool enabled) {
 #if WITH_PARSER_RUNTIME_STATS
 	runtime_stats_enabled_ = enabled;
@@ -832,7 +854,7 @@ Token Parser::peek_token(size_t lookahead) {
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.lookahead_peeks;
 		runtime_stats_.lookahead_tokens_consumed += lookahead;
-		size_t bucket = lookahead == 1 ? 0 : lookahead == 2 ? 1 : lookahead == 3 ? 2 : lookahead == 4 ? 3 : lookahead <= 9 ? 4 : 5;
+		size_t bucket = getLookaheadDepthBucket(lookahead);
 		++runtime_stats_.lookahead_depth_hist[bucket];
 	}
 #endif
@@ -1080,8 +1102,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		++runtime_stats_.restore_count;
 		runtime_stats_.restore_ast_nodes_scanned += scanned_nodes;
 		size_t delta = runtime_stats_.tokens_advanced - saved_token.tokens_advanced_at_save_;
-		size_t bucket = delta == 0 ? 0 : delta == 1 ? 1 : delta == 2 ? 2 : delta <= 4 ? 3 : delta <= 9 ? 4 : delta <= 19 ? 5 : delta <= 49 ? 6 : 7;
-		++runtime_stats_.restore_token_delta_hist[bucket];
+		++runtime_stats_.restore_token_delta_hist[getTokenDeltaBucket(delta)];
 		if (!runtime_phase_stack_.empty()) {
 			++runtime_stats_.phase_stats[static_cast<size_t>(runtime_phase_stack_.back().phase)].restores;
 		}
@@ -1117,8 +1138,7 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.restore_lexer_only_count;
 		size_t delta = runtime_stats_.tokens_advanced - saved_token.tokens_advanced_at_save_;
-		size_t bucket = delta == 0 ? 0 : delta == 1 ? 1 : delta == 2 ? 2 : delta <= 4 ? 3 : delta <= 9 ? 4 : delta <= 19 ? 5 : delta <= 49 ? 6 : 7;
-		++runtime_stats_.restore_token_delta_hist[bucket];
+		++runtime_stats_.restore_token_delta_hist[getTokenDeltaBucket(delta)];
 		if (!runtime_phase_stack_.empty()) {
 			++runtime_stats_.phase_stats[static_cast<size_t>(runtime_phase_stack_.back().phase)].restores;
 		}
