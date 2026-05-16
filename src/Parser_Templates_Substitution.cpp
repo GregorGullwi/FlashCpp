@@ -509,6 +509,28 @@ ASTNode Parser::substituteTemplateParameters(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_template_param_ref = true;
 					} else if (arg.is_value) {
+						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
+						// Callable F() still needs a follow-up fix after substitution.
+						if (arg.has_typed_value_identity) {
+							const auto kind = arg.typed_value_identity.kind;
+							const StringHandle entity_name = arg.typed_value_identity.entity_name;
+							if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
+								entity_name.isValid()) {
+								std::string_view entity_name_view = StringTable::getStringView(entity_name);
+								Token entity_token(Token::Type::Identifier, entity_name_view,
+												   tparam_ref.token().line(), tparam_ref.token().column(),
+												   tparam_ref.token().file_index());
+								Token amp_token(Token::Type::Operator, "&"sv,
+												tparam_ref.token().line(), tparam_ref.token().column(),
+												tparam_ref.token().file_index());
+								ASTNode entity_id = emplace_node<ExpressionNode>(IdentifierNode(entity_token));
+								substituted_node = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
+								substituted_template_param_ref = true;
+								return;
+							}
+						}
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
@@ -546,6 +568,24 @@ ASTNode Parser::substituteTemplateParameters(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_identifier = true;
 					} else if (arg.is_value) {
+						// Pointer/reference NTTP: emit &entity_name so *P works correctly.
+						// Callable F() still needs a follow-up fix after substitution.
+						if (arg.has_typed_value_identity) {
+							const auto kind = arg.typed_value_identity.kind;
+							const StringHandle entity_name = arg.typed_value_identity.entity_name;
+							if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
+								entity_name.isValid()) {
+								std::string_view entity_name_view = StringTable::getStringView(entity_name);
+								Token entity_token(Token::Type::Identifier, entity_name_view, 0, 0, 0);
+								Token amp_token(Token::Type::Operator, "&"sv, 0, 0, 0);
+								ASTNode entity_id = emplace_node<ExpressionNode>(IdentifierNode(entity_token));
+								substituted_node = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
+								substituted_identifier = true;
+								return;
+							}
+						}
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
@@ -1271,6 +1311,14 @@ ASTNode Parser::substituteTemplateParameters(
 			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
 		}
 
+		if (std::holds_alternative<ConstructorCallNode>(expr)) {
+			return substituteTemplateParameters(
+				ASTNode(&std::get<ConstructorCallNode>(expr)),
+				template_params,
+				template_args,
+				current_owner_type_name);
+		}
+
 		// For other expression types that don't contain subexpressions, return as-is
 		return node;
 
@@ -1279,6 +1327,43 @@ ASTNode Parser::substituteTemplateParameters(
 
 	} else if (node.is<ConstructorCallNode>()) {
 		const ConstructorCallNode& constructor_call = node.as<ConstructorCallNode>();
+		std::string_view constructor_name = constructor_call.type_node().token().value();
+		if (!constructor_name.empty()) {
+			const TemplateTypeArg* bound_arg = nullptr;
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+					if (bound_arg == nullptr && param.name() == constructor_name) {
+						bound_arg = &arg;
+					}
+				});
+			if (bound_arg != nullptr &&
+				bound_arg->is_value &&
+				bound_arg->has_typed_value_identity &&
+				bound_arg->typed_value_identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
+				bound_arg->typed_value_identity.entity_name.isValid()) {
+				ChunkedVector<ASTNode> substituted_args;
+				for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
+					substituteArgWithPackExpansion(
+						constructor_call.arguments()[i],
+						template_params,
+						template_args,
+						current_owner_type_name,
+						substituted_args);
+				}
+				if (std::optional<ASTNode> function_symbol =
+						gSymbolTable.lookup(bound_arg->typed_value_identity.entity_name);
+					function_symbol.has_value() &&
+					function_symbol->is<FunctionDeclarationNode>()) {
+					return ASTNode::emplace_node<ExpressionNode>(
+						makeResolvedCallExpr(
+							function_symbol->as<FunctionDeclarationNode>(),
+							std::move(substituted_args),
+							constructor_call.called_from()));
+				}
+			}
+		}
 		ASTNode substituted_type = substituteTemplateParameters(
 			ASTNode(&constructor_call.type_node()),
 			template_params,
