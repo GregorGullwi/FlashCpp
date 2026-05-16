@@ -1338,6 +1338,7 @@ std::optional<TypeSpecifierNode> ParserSemanticServices::getExpressionType(const
 }
 
 std::optional<TypeSpecifierNode> ParserSemanticServices::getOverloadResolutionArgType(const ASTNode& arg) const {
+	requireParserSemanticServicesAttachment(*owner_, "getOverloadResolutionArgType");
 	return owner_->getOverloadResolutionArgType(arg);
 }
 
@@ -1411,6 +1412,9 @@ SemanticAnalysis::~SemanticAnalysis() {
 }
 
 void SemanticAnalysis::attachParser(Parser& parser) {
+	if (lifecycle_state_ != LifecycleState::ParserDetached) {
+		throw InternalError("SemanticAnalysis::attachParser called after initialization");
+	}
 	parser_ = &parser;
 	lifecycle_state_ = LifecycleState::ParserAttached;
 }
@@ -1439,10 +1443,14 @@ const Parser& SemanticAnalysis::parser() const {
 }
 
 void SemanticAnalysis::run() {
+	Parser& attached_parser = parser();
+	if (lifecycle_state_ != LifecycleState::ParserAttached) {
+		throw InternalError("SemanticAnalysis::run() requires attached parser in ParserAttached state");
+	}
 	lifecycle_state_ = LifecycleState::PostParseNormalizationStarted;
-	parser().clearPendingSemanticRoots();
+	attached_parser.clearPendingSemanticRoots();
 
-	const auto& nodes = parser().get_nodes();
+	const auto& nodes = attached_parser.get_nodes();
 	const size_t initial_root_count = nodes.size();
 	stats_.total_roots = initial_root_count;
 
@@ -1450,7 +1458,7 @@ void SemanticAnalysis::run() {
 	logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
 
 	for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
-		ASTNode node = parser().get_nodes()[root_index];
+		ASTNode node = attached_parser.get_nodes()[root_index];
 		normalizeTopLevelNode(node);
 	}
 

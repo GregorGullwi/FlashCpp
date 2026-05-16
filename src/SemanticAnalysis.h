@@ -34,7 +34,7 @@ struct LambdaInfo;
 struct CallInfo;
 class SemanticAnalysis;
 
-class ParserSemanticServices {
+class ParserSemanticServices final {
 public:
 	ParserSemanticServices() = delete;
 	explicit ParserSemanticServices(SemanticAnalysis& owner);
