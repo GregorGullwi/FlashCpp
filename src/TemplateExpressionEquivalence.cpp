@@ -1,5 +1,6 @@
 #include "TemplateExpressionEquivalence.h"
 #include "CompileError.h"
+#include "TemplateRegistry_Types.h"
 #include "TemplateTypes.h"
 #include <cstring>
 
@@ -22,6 +23,11 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 size_t hashDependentExpressionIdentityImpl(const ASTNode& node);
 bool equalDeclarationIdentity(const DeclarationNode& lhs, const DeclarationNode& rhs);
 size_t hashDeclarationIdentity(const DeclarationNode& decl);
+
+bool equalTemplateArgInfoIdentity(
+	const TypeInfo::TemplateArgInfo& lhs,
+	const TypeInfo::TemplateArgInfo& rhs);
+size_t hashTemplateArgInfoIdentity(const TypeInfo::TemplateArgInfo& arg);
 
 template <typename Range>
 bool equalAstRange(const Range& lhs, const Range& rhs) {
@@ -82,6 +88,28 @@ size_t hashDeclarationAstRange(const Range& range, std::string_view context) {
 }
 
 template <typename Range>
+bool equalTemplateArgInfoRange(const Range& lhs, const Range& rhs) {
+	if (lhs.size() != rhs.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.size(); ++i) {
+		if (!equalTemplateArgInfoIdentity(lhs[i], rhs[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+template <typename Range>
+size_t hashTemplateArgInfoRange(const Range& range) {
+	size_t seed = std::hash<size_t>{}(range.size());
+	for (const TypeInfo::TemplateArgInfo& arg : range) {
+		hashCombine(seed, hashTemplateArgInfoIdentity(arg));
+	}
+	return seed;
+}
+
+template <typename Range>
 bool equalTokenValueRange(const Range& lhs, const Range& rhs) {
 	if (lhs.size() != rhs.size()) {
 		return false;
@@ -109,6 +137,8 @@ bool equalDependentQualifiedNameRecord(
 	if (lhs.owner_kind != rhs.owner_kind ||
 		lhs.owner_name != rhs.owner_name ||
 		!equalTypeIndexIdentity(lhs.owner_type, rhs.owner_type) ||
+		lhs.names_current_instantiation != rhs.names_current_instantiation ||
+		!equalTemplateArgInfoRange(lhs.owner_template_arguments, rhs.owner_template_arguments) ||
 		lhs.member_chain.size() != rhs.member_chain.size()) {
 		return false;
 	}
@@ -120,6 +150,9 @@ bool equalDependentQualifiedNameRecord(
 			lhs_member.has_template_keyword != rhs_member.has_template_keyword) {
 			return false;
 		}
+		if (!equalTemplateArgInfoRange(lhs_member.template_arguments, rhs_member.template_arguments)) {
+			return false;
+		}
 	}
 	return true;
 }
@@ -128,11 +161,14 @@ size_t hashDependentQualifiedNameRecord(const TypeInfo::DependentQualifiedNameRe
 	size_t seed = std::hash<uint8_t>{}(static_cast<uint8_t>(record.owner_kind));
 	hashCombine(seed, std::hash<StringHandle>{}(record.owner_name));
 	hashCombine(seed, hashTypeIndexIdentity(record.owner_type));
+	hashCombine(seed, std::hash<bool>{}(record.names_current_instantiation));
+	hashCombine(seed, hashTemplateArgInfoRange(record.owner_template_arguments));
 	hashCombine(seed, std::hash<size_t>{}(record.member_chain.size()));
 	for (const auto& member : record.member_chain) {
 		hashCombine(seed, std::hash<StringHandle>{}(member.name));
 		hashCombine(seed, std::hash<bool>{}(member.has_template_arguments));
 		hashCombine(seed, std::hash<bool>{}(member.has_template_keyword));
+		hashCombine(seed, hashTemplateArgInfoRange(member.template_arguments));
 	}
 	return seed;
 }
@@ -233,6 +269,16 @@ size_t hashDeclarationIdentity(const DeclarationNode& decl) {
 	hashCombine(seed, std::hash<bool>{}(decl.is_parameter_pack()));
 	hashCombine(seed, std::hash<bool>{}(decl.is_unsized_array()));
 	return seed;
+}
+
+bool equalTemplateArgInfoIdentity(
+	const TypeInfo::TemplateArgInfo& lhs,
+	const TypeInfo::TemplateArgInfo& rhs) {
+	return toTemplateTypeArg(lhs) == toTemplateTypeArg(rhs);
+}
+
+size_t hashTemplateArgInfoIdentity(const TypeInfo::TemplateArgInfo& arg) {
+	return toTemplateTypeArg(arg).hash();
 }
 
 bool equalCalleeDescriptorIdentity(const CalleeDescriptor& lhs, const CalleeDescriptor& rhs) {
