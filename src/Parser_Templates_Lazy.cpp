@@ -956,7 +956,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		registerTypeParamsInScope(substitution_environment, template_scope, true);
 
 		SaveHandle current_pos = save_token_position();
-		ScopedLexerPositionRestore lexer_restore_guard(*this, current_pos);
+		ScopedLexerPositionRestore lexer_restore(*this, current_pos);
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		// Keep template-context parsing semantics during replay so dependent NTTP
 		// expressions are preserved as AST and can be concretely substituted below.
@@ -1015,7 +1015,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			return false;
 		}
 
-		lexer_restore_guard.restoreNow();
+		lexer_restore.restoreNow();
 		return substituted_initializer.has_value();
 	};
 

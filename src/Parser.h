@@ -1387,10 +1387,6 @@ private:
 			active_ = false;
 		}
 
-		void release() {
-			active_ = false;
-		}
-
 	private:
 		class Parser& parser_;
 		SaveHandle saved_handle_;

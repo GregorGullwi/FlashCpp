@@ -9590,7 +9590,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				SaveHandle current_pos = save_token_position();
-				ScopedLexerPositionRestore lexer_restore_guard(*this, current_pos);
+				ScopedLexerPositionRestore lexer_restore(*this, current_pos);
 
 				TemplateInstantiationContext substitution_context =
 					buildTemplateInstantiationContext(
