@@ -7026,6 +7026,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				: nullptr;
 
 		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
+		// Replay parsing should preserve template-context token classification even when
+		// instantiation-time callers are outside template parsing (depth 0).
 		parsing_template_depth_ = 1;
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
@@ -7055,6 +7057,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!init_result.is_error() && init_result.node().has_value()) {
 				reparsed_initializer = *init_result.node();
 			}
+		} else {
+			FLASH_LOG(Templates, Debug, "Skipping in-class static initializer replay for ",
+					  declaration.identifier_token().value(),
+					  " — initializer token is neither '=' nor '{'");
 		}
 
 		if (!reparsed_initializer.has_value()) {
@@ -7330,6 +7336,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Eager processing path (when lazy is disabled or not needed)
 			std::optional<ASTNode> substituted_initializer;
 			if (static_member.initializer.has_value()) {
+				// Keep the AST-only path for this fallback source. Some placeholder/default-arg
+				// forms in class_decl.static_members() still rely on direct substitution and can
+				// fail replay classification. StructTypeInfo-backed members above already carry
+				// stable replay metadata and use replay-first substitution.
 				substituted_initializer = substituteTemplateParameters(
 					*static_member.initializer,
 					effective_template_params,
