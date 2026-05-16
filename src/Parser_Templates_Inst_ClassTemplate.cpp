@@ -9590,18 +9590,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				SaveHandle current_pos = save_token_position();
-				struct LexerRestoreGuard {
-					Parser* parser;
-					SaveHandle pos;
-					bool active = true;
-					~LexerRestoreGuard() {
-						if (!active) {
-							return;
-						}
-						parser->restore_lexer_position_only(pos);
-						parser->discard_saved_token(pos);
-					}
-				} lexer_restore_guard{this, current_pos};
+				ScopedLexerPositionRestore lexer_restore_guard(*this, current_pos);
 
 				TemplateInstantiationContext substitution_context =
 					buildTemplateInstantiationContext(

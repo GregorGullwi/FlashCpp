@@ -1367,6 +1367,36 @@ private:
 		std::source_location location_;
 	};
 
+	class ScopedLexerPositionRestore {
+	public:
+		ScopedLexerPositionRestore(class Parser& parser, SaveHandle saved_handle)
+			: parser_(parser), saved_handle_(saved_handle) {}
+
+		~ScopedLexerPositionRestore() {
+			if (active_) {
+				restoreNow();
+			}
+		}
+
+		void restoreNow() {
+			if (!active_) {
+				return;
+			}
+			parser_.restore_lexer_position_only(saved_handle_);
+			parser_.discard_saved_token(saved_handle_);
+			active_ = false;
+		}
+
+		void release() {
+			active_ = false;
+		}
+
+	private:
+		class Parser& parser_;
+		SaveHandle saved_handle_;
+		bool active_ = true;
+	};
+
 	struct SavedToken {
 		Token current_token_;
 		Token injected_token_;  // Phase 5: Save injected token state for >> splitting
