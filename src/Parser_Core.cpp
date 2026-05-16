@@ -722,6 +722,14 @@ void Parser::setRuntimeStatsEnabled(bool enabled) {
 
 void Parser::reserveSavedTokenStorage(size_t saved_token_capacity) {
 	saved_tokens_.reserve(saved_token_capacity);
+#if WITH_PARSER_RUNTIME_STATS
+	if (runtime_stats_enabled_) {
+		runtime_stats_.saved_token_capacity_peak = std::max(runtime_stats_.saved_token_capacity_peak, saved_tokens_.capacity());
+		runtime_stats_.saved_token_reserved_bytes_peak = std::max(
+			runtime_stats_.saved_token_reserved_bytes_peak,
+			saved_tokens_.capacity() * sizeof(std::optional<SavedToken>));
+	}
+#endif
 }
 
 void Parser::printRuntimeStats() const {
@@ -739,6 +747,11 @@ void Parser::printRuntimeStats() const {
 			  ", discard=", stats.discard_count,
 			  ", missing=", stats.missing_restore_count);
 	FLASH_LOG(General, Info, "  Saved-token storage: peak slots=", stats.saved_token_slots_peak,
+			  ", peak capacity=", stats.saved_token_capacity_peak,
+			  ", slot-bytes=", sizeof(std::optional<SavedToken>),
+			  ", peak reserved-bytes=", stats.saved_token_reserved_bytes_peak,
+			  ", capacity growths=", stats.saved_token_capacity_growths,
+			  ", peak holes=", stats.saved_token_holes_peak,
 			  ", peak unreleased saves=", stats.peak_active_saves,
 			  ", unreleased at parse end=", stats.active_saves);
 	FLASH_LOG(General, Info, "  Restore AST cleanup: scanned=", stats.restore_ast_nodes_scanned,
@@ -994,6 +1007,7 @@ Parser::SaveHandle Parser::save_token_position() {
 
 	// Save current parser state (including injected token for >> splitting)
 	TokenPosition lexer_pos = lexer_.save_token_position();
+	size_t capacity_before = saved_tokens_.capacity();
 	if (saved_tokens_.size() <= handle) {
 		saved_tokens_.resize(handle + 1);
 	}
@@ -1004,6 +1018,15 @@ Parser::SaveHandle Parser::save_token_position() {
 		++runtime_stats_.active_saves;
 		runtime_stats_.peak_active_saves = std::max(runtime_stats_.peak_active_saves, runtime_stats_.active_saves);
 		runtime_stats_.saved_token_slots_peak = std::max(runtime_stats_.saved_token_slots_peak, saved_tokens_.size());
+		if (saved_tokens_.capacity() != capacity_before) {
+			++runtime_stats_.saved_token_capacity_growths;
+		}
+		runtime_stats_.saved_token_capacity_peak = std::max(runtime_stats_.saved_token_capacity_peak, saved_tokens_.capacity());
+		runtime_stats_.saved_token_reserved_bytes_peak = std::max(
+			runtime_stats_.saved_token_reserved_bytes_peak,
+			saved_tokens_.capacity() * sizeof(std::optional<SavedToken>));
+		size_t holes = saved_tokens_.size() - runtime_stats_.active_saves;
+		runtime_stats_.saved_token_holes_peak = std::max(runtime_stats_.saved_token_holes_peak, holes);
 		saved_tokens_[handle]->tokens_advanced_at_save_ = runtime_stats_.tokens_advanced;
 		if (!runtime_phase_stack_.empty()) {
 			++runtime_stats_.phase_stats[static_cast<size_t>(runtime_phase_stack_.back().phase)].saves;
@@ -1160,6 +1183,8 @@ void Parser::discard_saved_token(SaveHandle handle) {
 #if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			--runtime_stats_.active_saves;
+			size_t holes = saved_tokens_.size() - runtime_stats_.active_saves;
+			runtime_stats_.saved_token_holes_peak = std::max(runtime_stats_.saved_token_holes_peak, holes);
 		}
 #endif
 	}

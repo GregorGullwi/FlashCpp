@@ -32,6 +32,23 @@ definition-time overload sets, consistent with free function template bodies.
 
 ---
 
+## 3) Windows UCRT `va_start` assertion macro still trips expression parsing in `<limits>` include path
+
+- **Symptom**: On Windows/MSVC STL, `tests/std/test_std_limits.cpp` currently stops in
+  `corecrt_wstdio.h:486` at
+  `__vcrt_assert_va_start_is_not_reference<decltype(_Locale)>()` with
+  `Unexpected keyword in expression context`.
+- **Root cause**: Not fully reduced yet, but the failure sits in the UCRT
+  `va_start` assertion macro path and likely involves parsing unevaluated
+  `decltype(...)` inside a macro-expanded comma-expression/cast wrapper.
+- **Affected path**: Windows standard-header include chain for `<limits>` via
+  `<cwchar>` / `<cstdio>` / `stdio.h` / `corecrt_wstdio.h`.
+- **Impact**: Blocks deeper Windows/MSVC `<limits>` parsing and makes local
+  performance analysis on this header a "time to first hard parse error"
+  measurement instead of a full successful compile.
+
+---
+
 ## 4) Pointer-NTTP full specialization dispatch: second lookup produces wrong arg type
 
 - **Symptom**: Given `template <int* P> struct Tag { static int value() { return -1; } };`
