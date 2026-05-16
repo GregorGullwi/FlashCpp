@@ -183,25 +183,23 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return parser_type;
 	};
 
-	if (sema_) {
-		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
-			return sema_type;
+	if (auto sema_type = sema_.getOverloadResolutionArgType(arg); sema_type.has_value()) {
+		return sema_type;
+	}
+	const bool has_exact_sema_type_slot = [&]() {
+		if (!arg.is<ExpressionNode>()) {
+			return false;
 		}
-		const bool has_exact_sema_type_slot = [&]() {
-			if (!arg.is<ExpressionNode>()) {
-				return false;
-			}
-			auto slot = sema_->getSlot(static_cast<const void*>(&arg.as<ExpressionNode>()));
-			return slot.has_value() && slot->has_type();
-		}();
-		if (sema_normalized_current_function_ &&
-			has_exact_sema_type_slot &&
-			!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
-			throw InternalError(std::string(StringBuilder()
-				.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
-				.append(describeOverloadArgExprShape(arg))
-				.commit()));
-		}
+		auto slot = sema_.getSlot(static_cast<const void*>(&arg.as<ExpressionNode>()));
+		return slot.has_value() && slot->has_type();
+	}();
+	if (sema_normalized_current_function_ &&
+		has_exact_sema_type_slot &&
+		!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
+		throw InternalError(std::string(StringBuilder()
+			.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
+			.append(describeOverloadArgExprShape(arg))
+			.commit()));
 	}
 
 	if (!arg.is<ExpressionNode>()) {
@@ -664,7 +662,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				ctx.storage_duration = ConstExpr::StorageDuration::Static;
 			}
 			ctx.parser = parser_;
-			ctx.sema = sema_;
+			ctx.sema = &sema_;
 			return ctx;
 		};
 		auto shouldRejectStaticStorageEvalFailure = [&](ConstExpr::EvalErrorType error_type) {
@@ -727,7 +725,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					for (const auto& dim_expr : dims) {
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						ctx.parser = parser_;
-						ctx.sema = sema_;
+						ctx.sema = &sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 						if (eval_result.success() && eval_result.as_int() > 0) {
 							op.element_count *= static_cast<size_t>(eval_result.as_int());
@@ -948,7 +946,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					if (matching_ctor) {
 						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 						eval_ctx.parser = parser_;
-						eval_ctx.sema = sema_;
+						eval_ctx.sema = &sema_;
 						std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
 						eval_ctx.local_bindings = &param_bindings;
 						bool args_ok = true;
@@ -1327,7 +1325,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				// parser_ is always non-null when IR generation is active; EvaluationContext
 				// stores it as a pointer and guards all uses with nullptr checks.
 			ctx.parser = parser_;
-			ctx.sema = sema_;
+			ctx.sema = &sema_;
 			auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 
 			if (eval_result.success()) {
@@ -1800,7 +1798,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										if (member.default_initializer.has_value()) {
 											ConstExpr::EvaluationContext ctx(gSymbolTable);
 											ctx.parser = parser_;
-											ctx.sema = sema_;
+											ctx.sema = &sema_;
 											auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 											if (eval_result.success()) {
 												if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
@@ -1939,12 +1937,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// First check for a sema-annotated user-defined conversion
 						if (init_node.is<ExpressionNode>()) {
 							const void* key = &init_node.as<ExpressionNode>();
-							const auto slot = sema_->getSlot(key);
+							const auto slot = sema_.getSlot(key);
 							if (slot.has_value() && slot->has_cast()) {
 								const ImplicitCastInfo& cast_info =
-									sema_->castInfoTable()[slot->cast_info_index.value - 1];
+									sema_.castInfoTable()[slot->cast_info_index.value - 1];
 								if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
-									TypeIndex source_type_index = sema_->typeContext().get(cast_info.source_type_id).type_index;
+									TypeIndex source_type_index = sema_.typeContext().get(cast_info.source_type_id).type_index;
 									if (const TypeInfo* src_info = tryGetTypeInfo(source_type_index)) {
 										const StructMemberFunction* conv_op = findConversionOperator(
 											src_info->getStructInfo(), type_node.type_index(),
@@ -2028,12 +2026,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						bool sema_applied = false;
 						if (init_node.is<ExpressionNode>()) {
 							const void* key = &init_node.as<ExpressionNode>();
-							const auto slot = sema_->getSlot(key);
+							const auto slot = sema_.getSlot(key);
 							if (slot.has_value() && slot->has_cast()) {
 								const ImplicitCastInfo& cast_info =
-									sema_->castInfoTable()[slot->cast_info_index.value - 1];
-								TypeCategory from_t = sema_->typeContext().get(cast_info.source_type_id).category();
-								const TypeCategory to_t = sema_->typeContext().get(cast_info.target_type_id).category();
+									sema_.castInfoTable()[slot->cast_info_index.value - 1];
+								TypeCategory from_t = sema_.typeContext().get(cast_info.source_type_id).category();
+								const TypeCategory to_t = sema_.typeContext().get(cast_info.target_type_id).category();
 								if (from_t != TypeCategory::Struct && to_t != TypeCategory::Struct) {
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
@@ -2611,18 +2609,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							if (is_converting_ctor && init_node.is<ExpressionNode>()) {
 								const void* key = &init_node.as<ExpressionNode>();
-								const auto slot = sema_->getSlot(key);
+								const auto slot = sema_.getSlot(key);
 								if (slot.has_value() && slot->has_cast()) {
 									const ImplicitCastInfo& cast_info =
-										sema_->castInfoTable()[slot->cast_info_index.value - 1];
+										sema_.castInfoTable()[slot->cast_info_index.value - 1];
 									if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 										cast_info.selected_constructor) {
 										const CanonicalTypeDesc& target_desc =
-											sema_->typeContext().get(cast_info.target_type_id);
+											sema_.typeContext().get(cast_info.target_type_id);
 										if (target_desc.category() == TypeCategory::Struct &&
 											target_desc.type_index == type_node.type_index()) {
 											const CanonicalTypeDesc& source_desc =
-												sema_->typeContext().get(cast_info.source_type_id);
+												sema_.typeContext().get(cast_info.source_type_id);
 											if (source_desc.category() != TypeCategory::Invalid) {
 												sema_selected_converting_ctor = cast_info.selected_constructor;
 												const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
@@ -3023,7 +3021,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 							// Evaluate array size
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						ctx.parser = parser_;
-						ctx.sema = sema_;
+						ctx.sema = &sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
 						if (eval_result.success()) {
 							is_array = true;
@@ -3045,7 +3043,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 							// Evaluate array size
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						ctx.parser = parser_;
-						ctx.sema = sema_;
+						ctx.sema = &sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
 						if (eval_result.success()) {
 							is_array = true;
@@ -3293,9 +3291,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 
 	// Step 5a: Use sema-resolved tuple-like protocol plan when present.
 	const SemanticAnalysis::StructuredBindingPlan* sema_binding_plan = nullptr;
-	if (sema_) {
-		sema_binding_plan = sema_->getStructuredBindingPlan(&node);
-	}
+	sema_binding_plan = sema_.getStructuredBindingPlan(&node);
 	if (sema_binding_plan &&
 		sema_binding_plan->decomposition_kind == SemanticAnalysis::StructuredBindingDecompositionKind::TupleLike) {
 		size_t tuple_size_value = sema_binding_plan->tuple_elements.size();

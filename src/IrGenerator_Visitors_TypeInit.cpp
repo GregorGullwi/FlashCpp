@@ -29,10 +29,7 @@ TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec
 // ============================================================================
 
 std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
-	std::optional<TypeSpecifierNode> result;
-	if (sema_) {
-		result = sema_->getExpressionType(callNode);
-	}
+	std::optional<TypeSpecifierNode> result = sema_.getExpressionType(callNode);
 	if ((!result.has_value() || isPlaceholderAutoType(result->type())) && parser_) {
 		result = parser_->get_expression_type(callNode);
 	}
@@ -56,8 +53,12 @@ bool AstToIr::shouldPreferExpressionReturnType(
 	return true;
 }
 
-AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
-	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
+AstToIr::AstToIr(
+	SymbolTable& global_symbol_table,
+	CompileContext& context,
+	Parser& parser,
+	SemanticAnalysis& semantic_analysis)
+	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser), sema_(semantic_analysis) {
 	// Generate static member declarations for template classes before processing AST
 	generateStaticMemberDeclarations();
 	// Materialize implicit default constructors for instantiated structs that were
@@ -236,7 +237,7 @@ void AstToIr::generateCollectedLambdas() {
 			// Process from the end (newly added lambdas) backwards
 			size_t current_size = collected_lambdas_.size();
 			for (size_t i = current_size; i > processed_count; --i) {
-				sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[i - 1]);
+				sema_.normalizeInstantiatedLambdaBody(collected_lambdas_[i - 1]);
 
 				// Re-access via index after normalization to avoid any stale-
 				// reference risk (the vector could theoretically reallocate).
@@ -265,7 +266,7 @@ void AstToIr::generateCollectedLambdas() {
 
 		bool generated_deferred_lambda = false;
 		for (size_t di = deferred_scan_start; di < collected_lambdas_.size(); ++di) {
-			sema_->normalizeInstantiatedLambdaBody(collected_lambdas_[di]);
+			sema_.normalizeInstantiatedLambdaBody(collected_lambdas_[di]);
 			LambdaInfo& stored_lambda_info = collected_lambdas_[di];
 
 			if (!stored_lambda_info.is_generic || stored_lambda_info.deduced_auto_types.empty()) {
@@ -519,7 +520,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 		ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 		ctx.storage_duration = ConstExpr::StorageDuration::Static;
 		ctx.parser = parser_;
-		ctx.sema = sema_;
+		ctx.sema = &sema_;
 		ctx.struct_info = context_struct_info;
 		if (context_struct_info) {
 			bool context_loaded = false;
@@ -582,7 +583,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						ConstExpr::EvaluationContext rebound_ctx(*global_symbol_table_);
 						rebound_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 						rebound_ctx.parser = parser_;
-						rebound_ctx.sema = sema_;
+						rebound_ctx.sema = &sema_;
 						rebound_ctx.template_param_names = ctx.template_param_names;
 						rebound_ctx.template_args = ctx.template_args;
 						if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
@@ -1108,7 +1109,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
 											eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 											eval_ctx.parser = parser_;
-											eval_ctx.sema = sema_;
+											eval_ctx.sema = &sema_;
 											eval_ctx.struct_info = struct_info;
 											if (struct_info && struct_info->own_type_index_.has_value()) {
 												if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
@@ -1198,7 +1199,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
 							eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 							eval_ctx.parser = parser_;
-							eval_ctx.sema = sema_;
+							eval_ctx.sema = &sema_;
 							eval_ctx.struct_info = struct_info;
 							if (struct_info && struct_info->own_type_index_.has_value()) {
 								if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
@@ -1325,7 +1326,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 								if (const StructTypeInfo* ctor_struct_info = tryGetStructTypeInfo(ctor_type_index)) {
 									const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
 									const bool require_sema_resolved_ctor =
-										sema_ &&
 										ctor_struct_info->hasUserDeclaredConstructor();
 									if (matching_ctor &&
 										resolvedConstructorMatchesTargetType(*matching_ctor, ctor_type_index)) {
@@ -2012,9 +2012,9 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					if (base_struct_info && base_struct_info->hasConstructor()) {
 						// If the base class has a lazy (unmaterialized) default constructor,
 						// materialize it via the parser before emitting the ConstructorCallOp.
-						// generateTrivialDefaultConstructors() runs before sema_ is set, so we
-						// cannot use ensureMemberFunctionMaterialized here; instead we call the
-						// parser's lazy-instantiation entry point directly.
+						// This constructor path still uses the parser entry point because it
+						// predates the sema-owned helper and remains coupled to parser-side
+						// lazy instantiation bookkeeping.
 						if (parser_) {
 							const StructMemberFunction* base_default_ctor = base_struct_info->findDefaultConstructor();
 							if (base_default_ctor &&
@@ -2051,7 +2051,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 						unsigned long long val = 0;
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
 						ctx.parser = parser_;
-						ctx.sema = sema_;
+						ctx.sema = &sema_;
 						auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 						if (eval_result.success()) {
 							if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {

@@ -117,7 +117,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	// Phase 15: track whether sema normalized this function body.
 	sema_normalized_current_function_ = false;
 	if (node.is_materialized()) {
-		sema_normalized_current_function_ = sema_->hasNormalizedBody(
+		sema_normalized_current_function_ = sema_.hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
 
@@ -363,7 +363,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				ctx.global_symbols = global_symbol_table_;
 			}
 			ctx.parser = parser_;
-			ctx.sema = sema_;
+			ctx.sema = &sema_;
 
 			auto eval_result = ConstExpr::Evaluator::evaluate(*node.noexcept_expression(), ctx);
 			is_truly_noexcept = eval_result.success() && eval_result.as_bool();
@@ -1704,7 +1704,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	// Phase 16: track whether sema normalized this constructor body.
 	sema_normalized_current_function_ = false;
 	if (node.is_materialized()) {
-		sema_normalized_current_function_ = sema_->hasNormalizedBody(
+		sema_normalized_current_function_ = sema_.hasNormalizedBody(
 			static_cast<const void*>(&(*node.get_definition())));
 	}
 
@@ -2384,7 +2384,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									if (member.default_initializer.has_value()) {
 										ConstExpr::EvaluationContext ctx(gSymbolTable);
 										ctx.parser = parser_;
-										ctx.sema = sema_;
+										ctx.sema = &sema_;
 										auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 										if (eval_result.success()) {
 											if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
@@ -2971,7 +2971,7 @@ void AstToIr::visitDestructorDeclarationNode(const DestructorDeclarationNode& no
 
 	// track whether sema normalized this destructor body.
 	sema_normalized_current_function_ =
-		sema_->hasNormalizedBody(static_cast<const void*>(&(*node.get_definition())));
+		sema_.hasNormalizedBody(static_cast<const void*>(&(*node.get_definition())));
 
 	// Reset the temporary variable counter for each new destructor
 	// Destructors are always member functions, so reserve TempVar(1) for 'this'

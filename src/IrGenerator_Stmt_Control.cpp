@@ -40,7 +40,7 @@ void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
 			// Evaluate the condition at compile time
 		ConstExpr::EvaluationContext ctx(gSymbolTable);
 		ctx.parser = parser_;
-		ctx.sema = sema_;
+		ctx.sema = &sema_;
 		auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
 
 		if (!result.success()) {
@@ -849,7 +849,7 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 	}
 	const VariableDeclarationNode& original_var_decl = loop_var_decl.as<VariableDeclarationNode>();
 	ASTNode loop_decl_node = original_var_decl.declaration_node();
-	loop_decl_node = sema_->normalizeRangedForLoopDecl(original_var_decl, array_type);
+	loop_decl_node = sema_.normalizeRangedForLoopDecl(original_var_decl, array_type);
 
 		// C++20 standard: range-for desugars to `decl = *__begin;` for BOTH
 		// value and reference loop variables. The iterator is always dereferenced.
@@ -1061,7 +1061,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		// gives the element type directly. For struct iterators, use the declared
 		// operator*() return type as the range element type.
 	ASTNode loop_decl_node = original_var_decl.declaration_node();
-	loop_decl_node = sema_->normalizeRangedForLoopDecl(
+	loop_decl_node = sema_.normalizeRangedForLoopDecl(
 		original_var_decl,
 		range_type,
 		begin_return_type,

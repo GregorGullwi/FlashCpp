@@ -239,11 +239,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	}
 
 	if (member_func_decl.decl_node().identifier_token().value() == "operator()"sv &&
-		object_node.is<ExpressionNode>() &&
-		(parser_ || sema_)) {
+		object_node.is<ExpressionNode>()) {
 		std::optional<TypeSpecifierNode> callee_type;
 		const FunctionDeclarationNode* resolved_op_call =
-			sema_ ? sema_->getResolvedOpCall(sema_call_key) : nullptr;
+			sema_.getResolvedOpCall(sema_call_key);
 		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 		const auto* object_ident = std::get_if<IdentifierNode>(&object_expr);
 		auto isInconclusiveCallableType = [](const std::optional<TypeSpecifierNode>& candidate) {
@@ -252,7 +251,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					!candidate->is_function_pointer() &&
 					!candidate->has_function_signature());
 		};
-		callee_type = sema_->getExpressionType(object_node);
+		callee_type = sema_.getExpressionType(object_node);
 		const bool needs_parser_fallback =
 			isInconclusiveCallableType(callee_type) &&
 			!resolved_op_call;
@@ -410,7 +409,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
 		if (receiver_node.is<ExpressionNode>()) {
-			if (auto sema_type = sema_->getExpressionType(receiver_node); sema_type.has_value()) {
+			if (auto sema_type = sema_.getExpressionType(receiver_node); sema_type.has_value()) {
 				if (auto resolved_sema_type = normalizeResolvedStructType(*sema_type); resolved_sema_type.has_value()) {
 					return resolved_sema_type;
 				}
@@ -849,7 +848,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		ConstExpr::EvaluationContext ctx(symbol_table);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 		ctx.parser = parser_;
-		ctx.sema = sema_;
+		ctx.sema = &sema_;
 		// Step 1: Try evaluation via the member-function path (handles constexpr objects
 		// with 'this' access correctly).
 		auto member_eval_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);
@@ -1619,7 +1618,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						if (!argument.is<ExpressionNode>()) {
 							return std::nullopt;
 						}
-						if (auto sema_type = sema_->getExpressionType(argument); sema_type.has_value() &&
+						if (auto sema_type = sema_.getExpressionType(argument); sema_type.has_value() &&
 							!isPlaceholderAutoType(sema_type->type())) {
 							return sema_type;
 						}
@@ -1731,8 +1730,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						arg_idx++;
 					}
 
-					if (matched_lambda_info && sema_) {
-						sema_->normalizeInstantiatedLambdaBody(*matched_lambda_info);
+					if (matched_lambda_info) {
+						sema_.normalizeInstantiatedLambdaBody(*matched_lambda_info);
 						if (!isPlaceholderAutoType(matched_lambda_info->return_type_index.category())) {
 							resolved_generic_return_type.emplace(
 								matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
@@ -1943,8 +1942,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				nullptr);
 			const TypeSpecifierNode* param_type = param_view.type();
 			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
-			if (param_type && sema_) {
-				sema_ref_binding = sema_->getCallRefBinding(
+			if (param_type) {
+				sema_ref_binding = sema_.getCallRefBinding(
 					sema_call_key,
 					arg_index);
 			}

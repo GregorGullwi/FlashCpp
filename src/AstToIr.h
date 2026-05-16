@@ -16,7 +16,7 @@ inline std::string formatTokenLocationSuffix(const Token& token) {
 class AstToIr {
 public:
 	AstToIr() = delete;	// Require valid references
-	AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser);
+	AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser, SemanticAnalysis& semantic_analysis);
 
 	void visit(const ASTNode& node);
 
@@ -48,10 +48,6 @@ public:
 	void generateStaticMemberDeclarations();
 
 	void generateTrivialDefaultConstructors();
-
-	// Wire in semantic-analysis results so that IR lowering can consume
-	// pre-computed implicit-cast annotations instead of recomputing them.
-	void setSemanticData(SemanticAnalysis* sema) { sema_ = sema; }
 
 	/// Recursion depth cap for typeIndexContainsDependentPlaceholder checks.
 	/// Public so that file-local helpers outside the class can use the same limit.
@@ -1207,7 +1203,7 @@ private:
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
 	Parser* parser_;	 // Reference to parser for template instantiation
-	SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
+	SemanticAnalysis& sema_;  // Required semantic-analysis results for codegen
 	bool sema_normalized_current_function_ = false;	// Phase 15: true when sema visited the current function body
 
 	// Current function name (plain, used for friend access checks and diagnostics)

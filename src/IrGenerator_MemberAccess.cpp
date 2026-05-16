@@ -308,7 +308,7 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 											 ExpressionContext context) {
 	// If sema resolved this subscript to operator[], dispatch to member function call IR.
-	if (const FunctionDeclarationNode* op_subscript = sema_->getResolvedOpSubscript(&arraySubscriptNode)) {
+	if (const FunctionDeclarationNode* op_subscript = sema_.getResolvedOpSubscript(&arraySubscriptNode)) {
 		ChunkedVector<ASTNode> args;
 		args.push_back(arraySubscriptNode.index_expr());
 		CallExprNode member_call = makeResolvedMemberCallExpr(
@@ -788,12 +788,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	bool applied_subscript_pointer_conversion = false;
 	if (array_expr_node.is<ExpressionNode>()) {
 		const void* array_key = static_cast<const void*>(&array_expr_node.as<ExpressionNode>());
-		const auto slot = sema_->getSlot(array_key);
+		const auto slot = sema_.getSlot(array_key);
 		if (slot.has_value() && slot->has_cast()) {
 			const ImplicitCastInfo& cast_info =
-				sema_->castInfoTable()[slot->cast_info_index.value - 1];
-			const CanonicalTypeDesc& source_desc = sema_->typeContext().get(cast_info.source_type_id);
-			const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
+				sema_.castInfoTable()[slot->cast_info_index.value - 1];
+			const CanonicalTypeDesc& source_desc = sema_.typeContext().get(cast_info.source_type_id);
+			const CanonicalTypeDesc& target_desc = sema_.typeContext().get(cast_info.target_type_id);
 			if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 				source_desc.category() == TypeCategory::Struct &&
 				!target_desc.pointer_levels.empty()) {
@@ -3720,7 +3720,7 @@ bool AstToIr::isVariableReference(std::string_view var_name) const {
 bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 									  const StructTypeInfo*& out_struct_info,
 									  const StructMember*& out_member) const {
-	if (sema_->resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
+	if (sema_.resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
 		return true;
 	}
 	if (sema_normalized_current_function_) {
