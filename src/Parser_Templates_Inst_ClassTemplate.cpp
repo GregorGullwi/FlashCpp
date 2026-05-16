@@ -9611,14 +9611,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
 				parsing_template_depth_ = 1;
-				const TemplateDefinitionLookupContext* previous_definition_lookup_context =
-					current_template_definition_lookup_context_;
-				current_template_definition_lookup_context_ =
-					substitution_context.definition_lookup_context;
-				auto restore_definition_lookup_context = ScopeGuard([&]() {
-					current_template_definition_lookup_context_ =
-						previous_definition_lookup_context;
-				});
+				ScopedDefinitionLookupContext ctx_scope(
+					current_template_definition_lookup_context_,
+					substitution_context.definition_lookup_context);
 
 				FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 				setCurrentTemplateParamNames(out_of_line_var.template_param_names);

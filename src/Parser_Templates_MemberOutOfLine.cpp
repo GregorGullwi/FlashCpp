@@ -606,16 +606,11 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		advance();  // consume '='
 
 		// Parse initializer expression
-		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
-			current_template_definition_lookup_context_;
-		if (definition_lookup_context.is_valid()) {
-			current_template_definition_lookup_context_ =
-				&definition_lookup_context;
-		}
-		auto restore_definition_lookup_context = ScopeGuard([&]() {
-			current_template_definition_lookup_context_ =
-				previous_definition_lookup_context;
-		});
+		ScopedDefinitionLookupContext ctx_scope(
+			current_template_definition_lookup_context_,
+			definition_lookup_context.is_valid()
+				? &definition_lookup_context
+				: current_template_definition_lookup_context_);
 
 		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_result.is_error() || !init_result.node().has_value()) {

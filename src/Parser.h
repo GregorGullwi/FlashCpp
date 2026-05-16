@@ -1393,6 +1393,31 @@ private:
 		bool active_ = true;
 	};
 
+	// RAII guard that saves `current_template_definition_lookup_context_`, installs a caller-supplied
+	// replacement, then restores the original value on scope exit.
+	//
+	// When new_ctx is nullptr the field is explicitly set to nullptr (clearing any active context).
+	// When a caller wants "keep old if no valid new context", compute:
+	//   ctx.is_valid() ? &ctx : current_template_definition_lookup_context_
+	// and pass it as new_ctx — the old value is captured before the constructor runs.
+	class ScopedDefinitionLookupContext {
+	public:
+		ScopedDefinitionLookupContext(
+			const TemplateDefinitionLookupContext*& field,
+			const TemplateDefinitionLookupContext* new_ctx)
+			: field_(field), previous_(field) {
+			field_ = new_ctx;
+		}
+
+		~ScopedDefinitionLookupContext() {
+			field_ = previous_;
+		}
+
+	private:
+		const TemplateDefinitionLookupContext*& field_;
+		const TemplateDefinitionLookupContext* previous_;
+	};
+
 	struct SavedToken {
 		Token current_token_;
 		Token injected_token_;  // Phase 5: Save injected token state for >> splitting

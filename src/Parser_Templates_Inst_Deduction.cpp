@@ -1398,12 +1398,9 @@ void Parser::reparse_template_function_body(
 		substitution_context.definition_lookup_context = definition_lookup_context.is_valid()
 			? &definition_lookup_context
 			: nullptr;
-		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
-			current_template_definition_lookup_context_;
-		current_template_definition_lookup_context_ = substitution_context.definition_lookup_context;
-		auto restore_definition_lookup_context = ScopeGuard([&]() {
-			current_template_definition_lookup_context_ = previous_definition_lookup_context;
-		});
+		ScopedDefinitionLookupContext ctx_scope(
+			current_template_definition_lookup_context_,
+			substitution_context.definition_lookup_context);
 
 		// Parse the body, substitute template parameters, then install as definition.
 		{
