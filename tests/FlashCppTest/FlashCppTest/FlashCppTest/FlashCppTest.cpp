@@ -31,10 +31,10 @@
 static CompileContext compile_context;
 static FileTree file_tree;
 
-std::unique_ptr<SemanticAnalysis> runSemanticAnalysisForTest(Parser& parser, CompileContext& context) {
+SemanticAnalysis& runSemanticAnalysisForTest(Parser& parser, CompileContext& context) {
 	FlashCpp::gLazyMemberResolver.clearCache();
-	auto sema = std::make_unique<SemanticAnalysis>(parser, context, gSymbolTable);
-	sema->run();
+	SemanticAnalysis& sema = parser.semanticAnalysis();
+	sema.run();
 	return sema;
 }
 
@@ -69,7 +69,8 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	gTemplateRegistry.clear();
 	gConceptRegistry.clear();  // Clear concept registry
 	Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
-	Parser parser(lexer, test_context);
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
 #if WITH_DEBUG_INFO
 	parser.break_at_line_ = break_at_line;
 #endif
@@ -85,9 +86,9 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 
 	const auto& ast = parser.get_nodes();
 
-	auto sema = runSemanticAnalysisForTest(parser, test_context);
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
 	AstToIr converter(gSymbolTable, test_context, parser);
-	converter.setSemanticData(sema.get());
+	converter.setSemanticData(&sema);
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -706,7 +707,8 @@ TEST_SUITE("Parser") {
 			})";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
@@ -758,7 +760,8 @@ TEST_SUITE("Parser") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		gTypeInfo.clear();
 		gNativeTypes.clear();
 		gTypesByName.clear();
@@ -786,7 +789,8 @@ TEST_SUITE("Parser") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		gTypeInfo.clear();
 		gNativeTypes.clear();
 		gTypesByName.clear();
@@ -813,15 +817,16 @@ TEST_SUITE("Code gen") {
             })";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
 		const auto& ast = parser.get_nodes();
 
-		auto sema = runSemanticAnalysisForTest(parser, compile_context);
+		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(sema.get());
+		converter.setSemanticData(&sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1140,15 +1145,16 @@ TEST_SUITE("Code gen") {
             })";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
 		const auto& ast = parser.get_nodes();
 
-		auto sema = runSemanticAnalysisForTest(parser, compile_context);
+		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(sema.get());
+		converter.setSemanticData(&sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1186,15 +1192,16 @@ TEST_SUITE("Code gen") {
          })";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
 		const auto& ast = parser.get_nodes();
 
-		auto sema = runSemanticAnalysisForTest(parser, compile_context);
+		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(sema.get());
+		converter.setSemanticData(&sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1235,15 +1242,16 @@ TEST_SUITE("Code gen"){
          })";
 
 Lexer lexer(code);
-Parser parser(lexer, compile_context);
+SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+Parser parser(lexer, compile_context, parser_sema);
 auto parse_result = parser.parse();
 CHECK(!parse_result.is_error());
 
 const auto& ast = parser.get_nodes();
 
-auto sema = runSemanticAnalysisForTest(parser, compile_context);
+SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 AstToIr converter(gSymbolTable, compile_context, parser);
-converter.setSemanticData(sema.get());
+converter.setSemanticData(&sema);
 for (auto& node_handle : ast) {
 	converter.visit(node_handle);
 }
@@ -1286,15 +1294,16 @@ TEST_SUITE("Code gen"){
          })";
 
 Lexer lexer(code);
-Parser parser(lexer, compile_context);
+SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+Parser parser(lexer, compile_context, parser_sema);
 auto parse_result = parser.parse();
 CHECK(!parse_result.is_error());
 
 const auto& ast = parser.get_nodes();
 
-auto sema = runSemanticAnalysisForTest(parser, compile_context);
+SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 AstToIr converter(gSymbolTable, compile_context, parser);
-converter.setSemanticData(sema.get());
+converter.setSemanticData(&sema);
 for (auto& node_handle : ast) {
 	converter.visit(node_handle);
 }
@@ -1348,15 +1357,16 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 		})";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 
 	const auto& ast = parser.get_nodes();
 
-	auto sema = runSemanticAnalysisForTest(parser, compile_context);
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 	AstToIr converter(gSymbolTable, compile_context, parser);
-	converter.setSemanticData(sema.get());
+	converter.setSemanticData(&sema);
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -1628,7 +1638,8 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 
 		Lexer lexer(code);
 		compile_context.setInputFile("test_function_names.cpp");
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 
 		// Should parse successfully
@@ -1638,9 +1649,9 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 			const auto& ast = parser.get_nodes();
 
 			// Convert to IR to verify the string literals are created correctly
-			auto sema = runSemanticAnalysisForTest(parser, compile_context);
+			SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 			AstToIr converter(gSymbolTable, compile_context, parser);
-			converter.setSemanticData(sema.get());
+			converter.setSemanticData(&sema);
 			for (auto& node_handle : ast) {
 				converter.visit(node_handle);
 			}
@@ -1709,7 +1720,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1730,7 +1742,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1749,7 +1762,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1771,7 +1785,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1790,7 +1805,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1810,7 +1826,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1831,7 +1848,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1851,7 +1869,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1871,7 +1890,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1891,7 +1911,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1913,7 +1934,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1941,7 +1963,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1962,7 +1985,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -1983,7 +2007,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -2009,7 +2034,8 @@ TEST_SUITE("= default and = delete special member functions") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 	}
@@ -2027,15 +2053,16 @@ TEST_SUITE("new and delete operators") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
 		const auto& ast = parser.get_nodes();
 
-		auto sema = runSemanticAnalysisForTest(parser, compile_context);
+		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(sema.get());
+		converter.setSemanticData(&sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2074,15 +2101,16 @@ TEST_SUITE("new and delete operators") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
 		const auto& ast = parser.get_nodes();
 
-		auto sema = runSemanticAnalysisForTest(parser, compile_context);
+		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(sema.get());
+		converter.setSemanticData(&sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2125,15 +2153,16 @@ TEST_SUITE("new and delete operators") {
 		)";
 
 		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser(lexer, compile_context, parser_sema);
 		auto parse_result = parser.parse();
 		CHECK(!parse_result.is_error());
 
 		const auto& ast = parser.get_nodes();
 
-		auto sema = runSemanticAnalysisForTest(parser, compile_context);
+		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
 		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(sema.get());
+		converter.setSemanticData(&sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2721,13 +2750,14 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 	gConceptRegistry.clear();
 
 	Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
-	Parser parser(lexer, test_context);
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
 	auto parse_result = parser.parse();
 	REQUIRE(!parse_result.is_error());
 
-	auto sema = runSemanticAnalysisForTest(parser, test_context);
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
 	AstToIr converter(gSymbolTable, test_context, parser);
-	converter.setSemanticData(sema.get());
+	converter.setSemanticData(&sema);
 	for (auto& node_handle : parser.get_nodes()) {
 		converter.visit(node_handle);
 	}
@@ -3059,7 +3089,8 @@ TEST_CASE("Parser:ParameterList:Variadic") {
 	)";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 
@@ -3077,7 +3108,8 @@ TEST_CASE("Parser:MemberFunction:ConstVolatile") {
 	)";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 }
@@ -3094,7 +3126,8 @@ TEST_CASE("Parser:MemberFunction:OverrideFinal") {
 	)";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 }
@@ -3109,7 +3142,8 @@ TEST_CASE("Parser:Constructor:Defaulted") {
 	)";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 }
@@ -3125,7 +3159,8 @@ TEST_CASE("Parser:Destructor:Virtual") {
 	)";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 }
@@ -3139,7 +3174,8 @@ TEST_CASE("Parser:Template:MemberFunction") {
 	)";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 }
@@ -3156,7 +3192,8 @@ TEST_CASE("Parser:Template:OutOfLine") {
 	)";
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	CHECK(!parse_result.is_error());
 }
@@ -3692,7 +3729,8 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	gConceptRegistry.clear();
 
 	Lexer lexer(code);
-	Parser parser(lexer, compile_context);
+	SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+	Parser parser(lexer, compile_context, parser_sema);
 	auto parse_result = parser.parse();
 	REQUIRE(!parse_result.is_error());
 

@@ -1956,7 +1956,7 @@ ParseResult Parser::parse_static_member_block(
 		for (const auto& dim_expr : decl.array_dimensions()) {
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
 			ctx.parser = this;
-			ctx.sema = getActiveSemanticAnalysis();
+			ctx.sema = &semanticAnalysis();
 			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 			if (eval_result.success() && eval_result.as_int() > 0) {
 				size_t dim_size = static_cast<size_t>(eval_result.as_int());

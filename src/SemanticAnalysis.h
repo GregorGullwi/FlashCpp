@@ -51,8 +51,9 @@ struct CallInfo;
 
 class SemanticAnalysis {
 public:
-	SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols);
+	SemanticAnalysis(CompileContext& context, SymbolTable& symbols);
 	~SemanticAnalysis();
+	void attachParser(Parser& parser);
 
 	// Main entry point: run the translation-unit semantic pass.
 	// Phase 1 boundary guard: starts with a lightweight walk over the sema-owned
@@ -245,6 +246,9 @@ public:
 	size_t drainLazyMemberRegistry();
 
 private:
+	Parser& parser();
+	const Parser& parser() const;
+
 	// Top-level dispatch
 	void normalizeTopLevelNode(const ASTNode& node);
 
@@ -478,10 +482,9 @@ private:
 										  CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
 	// State
-	Parser& parser_;
+	Parser* parser_ = nullptr;
 	CompileContext& context_;
 	SymbolTable& symbols_;
-	SemanticAnalysis* previous_active_sema_ = nullptr;
 	TypeContext type_context_;
 	CanonicalTypeId bool_type_id_{};	 // Cached canonical type for bool (interned once in constructor).
 	std::vector<ImplicitCastInfo> cast_info_table_;

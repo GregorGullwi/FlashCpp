@@ -1314,11 +1314,9 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 
 // --- SemanticAnalysis ---
 
-SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols)
-	: parser_(parser), context_(context), symbols_(symbols) {
+SemanticAnalysis::SemanticAnalysis(CompileContext& context, SymbolTable& symbols)
+	: context_(context), symbols_(symbols) {
 	(void)context_;
-	previous_active_sema_ = parser_.getActiveSemanticAnalysis();
-	parser_.setActiveSemanticAnalysis(this);
 
 	// Pre-intern the canonical bool type so tryAnnotateContextualBool avoids
 	// repeated interning on every call.
@@ -1328,15 +1326,30 @@ SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, Symb
 }
 
 SemanticAnalysis::~SemanticAnalysis() {
-	if (parser_.getActiveSemanticAnalysis() == this) {
-		parser_.setActiveSemanticAnalysis(previous_active_sema_);
+}
+
+void SemanticAnalysis::attachParser(Parser& parser) {
+	parser_ = &parser;
+}
+
+Parser& SemanticAnalysis::parser() {
+	if (parser_ == nullptr) {
+		throw InternalError("SemanticAnalysis parser attachment is missing");
 	}
+	return *parser_;
+}
+
+const Parser& SemanticAnalysis::parser() const {
+	if (parser_ == nullptr) {
+		throw InternalError("SemanticAnalysis parser attachment is missing");
+	}
+	return *parser_;
 }
 
 void SemanticAnalysis::run() {
-	parser_.clearPendingSemanticRoots();
+	parser().clearPendingSemanticRoots();
 
-	const auto& nodes = parser_.get_nodes();
+	const auto& nodes = parser().get_nodes();
 	const size_t initial_root_count = nodes.size();
 	stats_.total_roots = initial_root_count;
 
@@ -1344,7 +1357,7 @@ void SemanticAnalysis::run() {
 	logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
 
 	for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
-		ASTNode node = parser_.get_nodes()[root_index];
+		ASTNode node = parser().get_nodes()[root_index];
 		normalizeTopLevelNode(node);
 	}
 
@@ -1372,7 +1385,7 @@ size_t SemanticAnalysis::normalizePendingSemanticRoots() {
 	size_t normalized_root_count = 0;
 
 	while (true) {
-		std::vector<ASTNode> pending_roots = parser_.takePendingSemanticRoots();
+		std::vector<ASTNode> pending_roots = parser().takePendingSemanticRoots();
 		if (pending_roots.empty()) {
 			break;
 		}
@@ -1888,7 +1901,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 }
 
 void SemanticAnalysis::resolveRemainingAutoReturns() {
-	auto& nodes = const_cast<std::vector<ASTNode>&>(parser_.get_nodes());
+	auto& nodes = const_cast<std::vector<ASTNode>&>(parser().get_nodes());
 	for (auto& node : nodes) {
 		resolveRemainingAutoReturnsInNode(node);
 	}
@@ -1928,7 +1941,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
 					deduced_type.has_value()) {
 					func.decl_node().set_type_node(*deduced_type);
-					parser_.compute_and_set_mangled_name(func, true);
+					parser().compute_and_set_mangled_name(func, true);
 				}
 			}
 		}
@@ -2925,7 +2938,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		NamespaceHandle std_namespace;
 	};
 
-	const StructuredBindingTupleProtocolLookup protocol_lookup(parser_, init_type_info->namespaceHandle(), init_type_info->name());
+	const StructuredBindingTupleProtocolLookup protocol_lookup(parser(), init_type_info->namespaceHandle(), init_type_info->name());
 
 	StructuredBindingTupleProtocolLookup::TemplateLookupSet tuple_size_lookup_set = protocol_lookup.resolveTemplateCandidates(
 		protocol_lookup.tuple_size_name,
@@ -3077,7 +3090,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		QualifiedIdentifierNode(tuple_size_scope, tuple_size_value_token));
 
 	ConstExpr::EvaluationContext eval_ctx(symbols_);
-	eval_ctx.parser = &parser_;
+	eval_ctx.parser = parser_;
 	eval_ctx.sema = this;
 	auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
 	if (!eval_result.success()) {
@@ -4063,7 +4076,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 						}
 
 						Parser::AliasTemplateMaterializationResult materialized_type =
-							parser_.materializeTemplateInstantiationForLookup(base_template_name, exact_args);
+							parser().materializeTemplateInstantiationForLookup(base_template_name, exact_args);
 						if (materialized_type.resolved_type_info) {
 							resolved_type_info = materialized_type.resolved_type_info;
 						} else if (!materialized_type.instantiated_name.empty()) {
@@ -4140,7 +4153,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 					struct_info = tryGetStructTypeInfo(owner_type_info->registeredTypeIndex());
 				}
 				if (struct_info) {
-					parser_.instantiateLazyStaticMember(struct_info->name, name_handle);
+					parser().instantiateLazyStaticMember(struct_info->name, name_handle);
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(name_handle);
 					if (static_member && owner_struct) {
 						ResolvedQualifiedIdentifierInfo resolved;
@@ -7025,9 +7038,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		call_info.dependent_unqualified_lookup_record != nullptr &&
 		call_info.dependent_unqualified_lookup_record->has_value()) {
 		std::vector<TypeSpecifierNode> arg_types;
-		if (parser_.tryCollectFunctionCallArgTypes(arguments, arg_types)) {
+		if (parser().tryCollectFunctionCallArgTypes(arguments, arg_types)) {
 			if (std::optional<ASTNode> resolved_target =
-					parser_.resolveDependentUnqualifiedCallAtPointOfInstantiation(
+					parser().resolveDependentUnqualifiedCallAtPointOfInstantiation(
 						**call_info.dependent_unqualified_lookup_record,
 						arguments,
 						arg_types);
@@ -7413,7 +7426,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
 	bool template_ctor_ambiguous = false;
-	resolution.selected_overload = parser_.materializeMatchingConstructorTemplate(
+	resolution.selected_overload = parser().materializeMatchingConstructorTemplate(
 		struct_info->getName(),
 		*struct_info,
 		arg_types,
@@ -7521,12 +7534,12 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
-	auto instantiated = parser_.instantiateLazyMemberIfNeeded(
+	auto instantiated = parser().instantiateLazyMemberIfNeeded(
 		LazyMemberKey::exact(struct_name, function_decl));
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
-	parser_.normalizePendingSemanticRootsIfAvailable();
+	parser().normalizePendingSemanticRootsIfAvailable();
 	return instantiated;
 }
 
@@ -7537,12 +7550,12 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
-	auto instantiated = parser_.instantiateLazyMemberIfNeeded(
+	auto instantiated = parser().instantiateLazyMemberIfNeeded(
 		LazyMemberKey::exact(struct_name, ctor_decl));
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
-	parser_.normalizePendingSemanticRootsIfAvailable();
+	parser().normalizePendingSemanticRootsIfAvailable();
 	return instantiated;
 }
 
@@ -7572,11 +7585,11 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	// when nothing is registered or the entry was already marked instantiated,
 	// so no separate needsInstantiation pre-check is needed.
 	LazyMemberKey query_key = LazyMemberKey::exact(struct_name, member_name, *is_const_member);
-	auto instantiated = parser_.instantiateLazyMemberIfNeeded(query_key);
+	auto instantiated = parser().instantiateLazyMemberIfNeeded(query_key);
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
-	parser_.normalizePendingSemanticRootsIfAvailable();
+	parser().normalizePendingSemanticRootsIfAvailable();
 	return instantiated;
 }
 
@@ -7625,7 +7638,7 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 						entry.registry_key))) {
 				continue;
 			}
-			auto result = parser_.instantiateLazyMemberIfNeeded(
+			auto result = parser().instantiateLazyMemberIfNeeded(
 				LazyMemberKey::exact(
 					entry.instantiated_owner_name,
 					entry.member_name,
@@ -7633,7 +7646,7 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 					entry.registry_key));
 			if (result.has_value()) {
 				++total_materialized;
-				parser_.normalizePendingSemanticRootsIfAvailable();
+				parser().normalizePendingSemanticRootsIfAvailable();
 				// Same rationale as the AST-walk pass: annotate the freshly-
 				// substituted body so its internal calls route through
 				// `markOdrUsed` and get picked up by the next fixpoint iteration
@@ -7689,7 +7702,7 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
 	bool template_ctor_ambiguous = false;
-	resolution.selected_overload = parser_.materializeMatchingConstructorTemplate(
+	resolution.selected_overload = parser().materializeMatchingConstructorTemplate(
 		struct_info.getName(),
 		struct_info,
 		arg_types,

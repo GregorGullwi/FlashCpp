@@ -389,14 +389,16 @@ int main_impl(int argc, char* argv[]) {
 	// Lexer is allocated on heap so it can be constructed inside the timed block
 	// but outlive it (since Parser stores a reference to it)
 	std::unique_ptr<Lexer> lexer_ptr;
+	std::unique_ptr<SemanticAnalysis> sema;
 	std::unique_ptr<Parser> parser;
 	setTypeTableStatsEnabled(show_perf_stats);
 	{
 		PhaseTimer timer("Lexer Setup", false, &lexer_setup_time);
 		lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
 		lexer_ptr->setMsvcSehKeywords(context.isMsvcMode());
+		sema = std::make_unique<SemanticAnalysis>(context, gSymbolTable);
 		// Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
-		parser = std::make_unique<Parser>(*lexer_ptr, context);
+		parser = std::make_unique<Parser>(*lexer_ptr, context, *sema);
 		parser->setRuntimeStatsEnabled(show_perf_stats);
 		// tests/std/README_STANDARD_HEADERS.md measured ~81,739 saved-token slots
 		// for 4019 preprocessed <limits> lines (~20/line). Cap the heuristic so
@@ -446,11 +448,10 @@ int main_impl(int argc, char* argv[]) {
 	// Semantic analysis pass (post-parse, pre-IR).
 	// The object is kept alive past AstToIr construction so that AstToIr can
 	// consume the semantic annotations (SemanticSlot side table, cast_info_table_).
-	SemanticAnalysis sema(*parser, context, gSymbolTable);
 	{
 		PhaseTimer sema_timer("Semantic Analysis", false, &semantic_analysis_time);
 		try {
-			sema.run();
+			sema->run();
 		} catch (const CompileError& e) {
 			std::string notes = g_parser_instantiation_notes;
 			g_parser_instantiation_notes.clear();
@@ -462,14 +463,14 @@ int main_impl(int argc, char* argv[]) {
 		}
 
 		if (show_perf_stats) {
-			const auto& stats = sema.stats();
+			const auto& stats = sema->stats();
 			FLASH_LOG(General, Info, "Semantic analysis stats:");
 			FLASH_LOG(General, Info, "  Total roots: ", stats.total_roots);
 			FLASH_LOG(General, Info, "  Roots visited: ", stats.roots_visited);
 			FLASH_LOG(General, Info, "  Expressions visited: ", stats.expressions_visited);
 			FLASH_LOG(General, Info, "  Statements visited: ", stats.statements_visited);
 			FLASH_LOG(General, Info, "  Canonical types interned: ", stats.canonical_types_interned);
-			FLASH_LOG(General, Info, "  Unique canonical types: ", sema.typeContext().size());
+			FLASH_LOG(General, Info, "  Unique canonical types: ", sema->typeContext().size());
 			FLASH_LOG(General, Info, "  Slots filled: ", stats.slots_filled);
 			FLASH_LOG(General, Info, "  Cast infos allocated: ", stats.cast_infos_allocated);
 			FLASH_LOG(General, Info, "  Op calls resolved: ", stats.op_calls_resolved);
@@ -477,7 +478,7 @@ int main_impl(int argc, char* argv[]) {
 	}
 
 	AstToIr converter(gSymbolTable, context, *parser);
-	converter.setSemanticData(&sema);
+	converter.setSemanticData(sema.get());
 
 	// Reserve space for IR instructions
 	// Estimate: ~2 instructions per source line (empirical heuristic)

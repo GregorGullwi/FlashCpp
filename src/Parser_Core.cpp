@@ -627,24 +627,15 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 	}
 }
 
-Parser::Parser(Lexer& lexer, CompileContext& context)
-	: lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
+Parser::Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis)
+	: lexer_(lexer), context_(context), current_token_(lexer_.next_token()), semantic_analysis_(semantic_analysis) {
+	semantic_analysis_.attachParser(*this);
 	initialize_native_types();
 	ast_nodes_.reserve(default_ast_tree_size_);
 }
 
-void Parser::setActiveSemanticAnalysis(SemanticAnalysis* sema) {
-	active_sema_ = sema;
-}
-
-SemanticAnalysis* Parser::getActiveSemanticAnalysis() const {
-	return active_sema_;
-}
-
 void Parser::normalizePendingSemanticRootsIfAvailable() {
-	if (active_sema_ != nullptr) {
-		active_sema_->normalizePendingSemanticRoots();
-	}
+	semantic_analysis_.normalizePendingSemanticRoots();
 }
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
