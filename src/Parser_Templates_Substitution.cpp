@@ -1309,6 +1309,14 @@ ASTNode Parser::substituteTemplateParameters(
 			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
 		}
 
+		if (std::holds_alternative<ConstructorCallNode>(expr)) {
+			return substituteTemplateParameters(
+				ASTNode(&std::get<ConstructorCallNode>(expr)),
+				template_params,
+				template_args,
+				current_owner_type_name);
+		}
+
 		// For other expression types that don't contain subexpressions, return as-is
 		return node;
 
@@ -1317,6 +1325,43 @@ ASTNode Parser::substituteTemplateParameters(
 
 	} else if (node.is<ConstructorCallNode>()) {
 		const ConstructorCallNode& constructor_call = node.as<ConstructorCallNode>();
+		std::string_view constructor_name = constructor_call.type_node().token().value();
+		if (!constructor_name.empty()) {
+			const TemplateTypeArg* bound_arg = nullptr;
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+					if (bound_arg == nullptr && param.name() == constructor_name) {
+						bound_arg = &arg;
+					}
+				});
+			if (bound_arg != nullptr &&
+				bound_arg->is_value &&
+				bound_arg->has_typed_value_identity &&
+				bound_arg->typed_value_identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
+				bound_arg->typed_value_identity.entity_name.isValid()) {
+				ChunkedVector<ASTNode> substituted_args;
+				for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
+					substituteArgWithPackExpansion(
+						constructor_call.arguments()[i],
+						template_params,
+						template_args,
+						current_owner_type_name,
+						substituted_args);
+				}
+				if (std::optional<ASTNode> function_symbol =
+						gSymbolTable.lookup(bound_arg->typed_value_identity.entity_name);
+					function_symbol.has_value() &&
+					function_symbol->is<FunctionDeclarationNode>()) {
+					return ASTNode::emplace_node<ExpressionNode>(
+						makeResolvedCallExpr(
+							function_symbol->as<FunctionDeclarationNode>(),
+							std::move(substituted_args),
+							constructor_call.called_from()));
+				}
+			}
+		}
 		ASTNode substituted_type = substituteTemplateParameters(
 			ASTNode(&constructor_call.type_node()),
 			template_params,
