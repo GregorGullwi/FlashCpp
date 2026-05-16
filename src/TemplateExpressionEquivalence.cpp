@@ -51,13 +51,15 @@ bool equalDeclarationAstRange(const Range& lhs, const Range& rhs, std::string_vi
 		return false;
 	}
 	for (size_t i = 0; i < lhs.size(); ++i) {
-		if (!lhs[i].is<DeclarationNode>() || !rhs[i].is<DeclarationNode>()) {
+		if (!lhs[i].template is<DeclarationNode>() || !rhs[i].template is<DeclarationNode>()) {
 			throw InternalError(
 				std::string(context) +
 				" expected DeclarationNode parameter at index " +
 				std::to_string(i));
 		}
-		if (!equalDeclarationIdentity(lhs[i].as<DeclarationNode>(), rhs[i].as<DeclarationNode>())) {
+		if (!equalDeclarationIdentity(
+				lhs[i].template as<DeclarationNode>(),
+				rhs[i].template as<DeclarationNode>())) {
 			return false;
 		}
 	}
@@ -68,13 +70,13 @@ template <typename Range>
 size_t hashDeclarationAstRange(const Range& range, std::string_view context) {
 	size_t seed = std::hash<size_t>{}(range.size());
 	for (size_t i = 0; i < range.size(); ++i) {
-		if (!range[i].is<DeclarationNode>()) {
+		if (!range[i].template is<DeclarationNode>()) {
 			throw InternalError(
 				std::string(context) +
 				" expected DeclarationNode parameter at index " +
 				std::to_string(i));
 		}
-		hashCombine(seed, hashDeclarationIdentity(range[i].as<DeclarationNode>()));
+		hashCombine(seed, hashDeclarationIdentity(range[i].template as<DeclarationNode>()));
 	}
 	return seed;
 }
