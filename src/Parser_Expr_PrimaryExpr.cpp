@@ -6198,6 +6198,44 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							bool substituted = false;
 							for (const auto& subst : template_param_substitutions_) {
 								if (subst.param_name == param_name && subst.is_value_param) {
+									// Handle pointer/reference NTTP identities before integral fallback
+									if (subst.typed_value_identity.has_value()) {
+										const auto& identity = *subst.typed_value_identity;
+										const auto kind = identity.kind;
+										if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+											 kind == FlashCpp::NonTypeValueIdentityKind::Reference) &&
+											identity.entity_name.isValid()) {
+											// Substitute P with &entity_name so *P dereferences the pointed-to object
+											std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
+											Token entity_token(Token::Type::Identifier, entity_name_view,
+														   identifier_token.line(), identifier_token.column(),
+														   identifier_token.file_index());
+											Token amp_token(Token::Type::Operator, "&"sv,
+														identifier_token.line(), identifier_token.column(),
+														identifier_token.file_index());
+											ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
+											result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
+											FLASH_LOG(Templates, Debug, "Substituted ObjectPointer/Reference NTTP '", param_name,
+													  "' with &", entity_name_view);
+											return ParseResult::success(*result);
+										}
+										if (kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
+											identity.entity_name.isValid()) {
+											// Substitute F with &entity_name so (&fa)() is recognized as a direct call
+											std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
+											Token entity_token(Token::Type::Identifier, entity_name_view,
+														   identifier_token.line(), identifier_token.column(),
+														   identifier_token.file_index());
+											Token amp_token(Token::Type::Operator, "&"sv,
+														identifier_token.line(), identifier_token.column(),
+														identifier_token.file_index());
+											ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
+											result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
+											FLASH_LOG(Templates, Debug, "Substituted FunctionPointer NTTP '", param_name,
+													  "' with &", entity_name_view);
+											return ParseResult::success(*result);
+										}
+									}
 									// Substitute with actual value - return immediately
 									// Use StringBuilder.append(int64_t) to persist the string value (avoids temporary strings)
 									StringBuilder value_str;

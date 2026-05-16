@@ -1047,6 +1047,8 @@ private:
 		// For template template parameters - maps param name to concrete template name
 		bool is_template_template_param = false;
 		StringHandle concrete_template_name;	 // e.g. "MyVec" when Container=MyVec
+		// For pointer/reference NTTPs - full identity carrying entity_name (nullopt for plain integrals)
+		std::optional<FlashCpp::NonTypeValueIdentity> typed_value_identity;
 	};
 	InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 

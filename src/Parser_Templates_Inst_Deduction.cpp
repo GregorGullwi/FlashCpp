@@ -1226,6 +1226,8 @@ void Parser::populateTemplateParamSubstitutions(
 			subst.is_value_param = true;
 			subst.value = arg.value;
 			subst.value_type = arg.typeEnum();
+			if (arg.has_typed_value_identity)
+				subst.typed_value_identity = arg.typed_value_identity;
 			return subst;
 		}
 		subst.is_type_param = true;

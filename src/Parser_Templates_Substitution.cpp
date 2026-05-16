@@ -509,6 +509,27 @@ ASTNode Parser::substituteTemplateParameters(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_template_param_ref = true;
 					} else if (arg.is_value) {
+						// Pointer/reference NTTP: emit &entity_name so *P and F() work correctly.
+						if (arg.has_typed_value_identity) {
+							const auto kind = arg.typed_value_identity.kind;
+							const StringHandle entity_name = arg.typed_value_identity.entity_name;
+							if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
+								entity_name.isValid()) {
+								std::string_view entity_name_view = StringTable::getStringView(entity_name);
+								Token entity_token(Token::Type::Identifier, entity_name_view,
+												   tparam_ref.token().line(), tparam_ref.token().column(),
+												   tparam_ref.token().file_index());
+								Token amp_token(Token::Type::Operator, "&"sv,
+												tparam_ref.token().line(), tparam_ref.token().column(),
+												tparam_ref.token().file_index());
+								ASTNode entity_id = emplace_node<ExpressionNode>(IdentifierNode(entity_token));
+								substituted_node = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
+								substituted_template_param_ref = true;
+								return;
+							}
+						}
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
@@ -546,6 +567,23 @@ ASTNode Parser::substituteTemplateParameters(
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_identifier = true;
 					} else if (arg.is_value) {
+						// Pointer/reference NTTP: emit &entity_name so *P and F() work correctly.
+						if (arg.has_typed_value_identity) {
+							const auto kind = arg.typed_value_identity.kind;
+							const StringHandle entity_name = arg.typed_value_identity.entity_name;
+							if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
+								 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
+								entity_name.isValid()) {
+								std::string_view entity_name_view = StringTable::getStringView(entity_name);
+								Token entity_token(Token::Type::Identifier, entity_name_view, 0, 0, 0);
+								Token amp_token(Token::Type::Operator, "&"sv, 0, 0, 0);
+								ASTNode entity_id = emplace_node<ExpressionNode>(IdentifierNode(entity_token));
+								substituted_node = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
+								substituted_identifier = true;
+								return;
+							}
+						}
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
