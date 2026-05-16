@@ -198,8 +198,13 @@ focused investigations.
     metadata and replay correctly through substitution, sema, constexpr, and
     lazy-static paths. Covered direct-call paths that already had a
     definition-time ordinary candidate now also retain this metadata, including
-    template static member initializers. Remaining gaps are parser-time reparses
-    and other late concretization paths that still bypass record formation.
+    template static member initializers.
+    **New in this slice (2026-05-16):** out-of-line class-template static member
+    initializer replay now captures/restores definition-context lookup metadata
+    and reparses from saved initializer source
+    (`test_template_out_of_line_static_member_two_phase_lookup_ret0.cpp`).
+    Remaining gaps are parser-time reparses and other late concretization paths
+    that still bypass record formation.
 
 2. **Broaden two-phase lookup records further (member func template bodies ✅ done).**
     Definition-context and semantic lookup records now protect selected
@@ -212,9 +217,10 @@ focused investigations.
       derived-owner link regressions in
       `test_inherited_member_template_lookup_ret42.cpp` and
       `test_inherited_member_template_this_explicit_ret42.cpp`.
-    - Eager static initializers beyond the newly covered dependent unqualified
-      direct-call case, richer dependent bases, deeper member-template segment
-      chains, and the remaining parser-time ADL-sensitive paths.
+    - Eager static initializers beyond the now covered dependent unqualified
+      direct-call + out-of-line static-member initializer case, richer dependent
+      bases, deeper member-template segment chains, and the remaining parser-time
+      ADL-sensitive paths.
 
 3. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
@@ -383,13 +389,16 @@ remaining work is the smaller phased delivery list below.
 
 ## Recommended next step
 
-Inherited member-template lookup is now complete (2026-05-15), and dependent
+Inherited member-template lookup is now complete (2026-05-15), dependent
 unqualified POI completion now covers ordinary-bound calls plus template static
-member initializers (2026-05-16). The next highest-impact work is:
+member initializers (2026-05-16), and out-of-line class-template static member
+initializer replay now preserves definition-context lookup during instantiation
+reparse (2026-05-16). The next highest-impact work is:
 
 1. **Continue two-phase lookup expansion**: extend definition-context records to
-   the remaining eager-static reparse paths, dependent bases, and other
-   parser-time concretization paths that still bypass POI lookup records.
+   the remaining eager-static/parser-time reparse paths (after the out-of-line
+   static-member initializer replay fix), dependent bases, and other
+   concretization paths that still bypass POI lookup records.
 
 2. **Structural NTTP completion** (non-null member-pointers, structural class
    types, and replacing `TODO(item-8)` mangling fallback) is the other major
@@ -419,7 +428,8 @@ behavior as compatibility constraints.
    Persist non-dependent lookup at definition time and defer only dependent
    completion to instantiation time. Member function template bodies and
    inherited `this->template` member-template calls now apply the same owner-
-   correct lookup/instantiation path. Remaining: static initializer paths, dependent bases, unknown
+   correct lookup/instantiation path. Remaining: static initializer paths beyond
+   the out-of-line static-member replay fix, dependent bases, unknown
    specializations, and ADL-sensitive dependent calls.
 
 3. **Consolidate substitution context ownership**

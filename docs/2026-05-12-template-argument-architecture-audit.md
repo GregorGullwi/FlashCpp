@@ -164,8 +164,13 @@ sema direct lookup probes. The active architecture tracks are therefore:
     metadata and replay correctly through substitution, sema, constexpr, and
     lazy-static paths. Definition-time ordinary matches now also keep that POI
     metadata in the covered unqualified-call paths, including template static
-    member initializers. Remaining gaps are parser-time reparses and other late
-    concretization paths that still bypass record formation.
+    member initializers.
+    **New in this slice (2026-05-16):** out-of-line class-template static member
+    initializer replay now captures/restores definition-context lookup metadata
+    and reparses from saved initializer source
+    (`test_template_out_of_line_static_member_two_phase_lookup_ret0.cpp`).
+    Remaining gaps are the other parser-time concretization/reparse paths that
+    still bypass record formation.
 
 2. **Two-phase lookup expansion (member function template bodies ✅ done).**
     Definition-context records now cover selected non-dependent calls,
@@ -177,8 +182,8 @@ sema direct lookup probes. The active architecture tracks are therefore:
       the declaring-owner symbol in lowering/codegen, fixing the previous
       derived-owner link regressions (`test_inherited_member_template_lookup_ret42.cpp`,
       `test_inherited_member_template_this_explicit_ret42.cpp`).
-    - Eager static initializers with deeper parser-time reparse paths beyond the
-      newly covered dependent unqualified direct-call case.
+    - Eager static initializers with parser-time reparse paths beyond the now
+      covered direct-call + out-of-line static-member initializer paths.
     - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
@@ -222,11 +227,13 @@ sema direct lookup probes. The active architecture tracks are therefore:
     point-of-instantiation completion records. This also gives qualified lookup,
     ADL, static initializers, and member-template calls a shared source of truth.
      **Progress:** conservative definition-context records now guard
-     non-dependent unqualified function calls, and semantic lookup records now
-     cover the main function/member/qualified/operator template discovery and
-     probe paths with dependent POI/ADL behavior regression-tested. Dependent
-     unqualified POI completion now also instantiates ADL-associated
-     function-template candidates by namespace-qualified names when needed.
+      non-dependent unqualified function calls, and semantic lookup records now
+      cover the main function/member/qualified/operator template discovery and
+      probe paths with dependent POI/ADL behavior regression-tested. Dependent
+      unqualified POI completion now also instantiates ADL-associated
+      function-template candidates by namespace-qualified names when needed.
+      Out-of-line class-template static member initializer replay now preserves
+      definition-context lookup during instantiation-time reparse.
 
 3. **Structural NTTP value model.**
    The concrete value identity still has C++20 gaps beyond the supported

@@ -590,9 +590,33 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Check if this is a static member variable definition (=) or a member function (()
 	if (peek() == "="_tok) {
 		// This is a static member variable definition: template<typename T> Type ClassName<T>::member = value;
+		SaveHandle initializer_position = save_token_position();
+		TemplateDefinitionLookupContext definition_lookup_context;
+		if (current_template_definition_lookup_context_ != nullptr &&
+			current_template_definition_lookup_context_->is_valid()) {
+			definition_lookup_context = *current_template_definition_lookup_context_;
+		} else {
+			definition_lookup_context.definition_line = function_name_token.line();
+			definition_lookup_context.definition_file_index = function_name_token.file_index();
+			definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
+			definition_lookup_context.current_instantiation_name =
+				StringTable::getOrInternStringHandle(qualified_class_name);
+		}
+
 		advance();  // consume '='
 
 		// Parse initializer expression
+		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
+			current_template_definition_lookup_context_;
+		current_template_definition_lookup_context_ =
+			definition_lookup_context.is_valid()
+				? &definition_lookup_context
+				: previous_definition_lookup_context;
+		auto restore_definition_lookup_context = ScopeGuard([&]() {
+			current_template_definition_lookup_context_ =
+				previous_definition_lookup_context;
+		});
+
 		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_result.is_error() || !init_result.node().has_value()) {
 			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");
@@ -611,6 +635,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
 		out_of_line_var.initializer = *init_result.node();
+		out_of_line_var.initializer_position = initializer_position;
+		out_of_line_var.definition_lookup_context = definition_lookup_context;
 		out_of_line_var.template_param_names = template_param_names;
 
 		gTemplateRegistry.registerOutOfLineMemberVariable(
