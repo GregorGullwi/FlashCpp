@@ -32,20 +32,20 @@ definition-time overload sets, consistent with free function template bodies.
 
 ---
 
-## 3) Windows UCRT `va_start` assertion macro still trips expression parsing in `<limits>` include path
+## 3) MSVC `<limits>` now stops later on `numeric_limits` constexpr member initialization
 
-- **Symptom**: On Windows/MSVC STL, `tests/std/test_std_limits.cpp` currently stops in
-  `corecrt_wstdio.h:486` at
-  `__vcrt_assert_va_start_is_not_reference<decltype(_Locale)>()` with
-  `Unexpected keyword in expression context`.
-- **Root cause**: Not fully reduced yet, but the failure sits in the UCRT
-  `va_start` assertion macro path and likely involves parsing unevaluated
-  `decltype(...)` inside a macro-expanded comma-expression/cast wrapper.
-- **Affected path**: Windows standard-header include chain for `<limits>` via
-  `<cwchar>` / `<cstdio>` / `stdio.h` / `corecrt_wstdio.h`.
-- **Impact**: Blocks deeper Windows/MSVC `<limits>` parsing and makes local
-  performance analysis on this header a "time to first hard parse error"
-  measurement instead of a full successful compile.
+- **Symptom**: On Windows/MSVC STL, `tests/std/test_std_limits.cpp` now gets past
+  the UCRT `__crt_va_start` wrappers but stops later with
+  `Fatal error: static constexpr member initializer for 'std::_Num_float_base::has_denorm' is not a constant expression: initializer is unresolved`.
+- **Current frontier**: `limits` around the `_Num_base` / `_Num_float_base`
+  `static constexpr float_denorm_style has_denorm = denorm_absent/present;`
+  members.
+- **Root cause**: Not reduced yet. The parser and preprocessor now survive the
+  previous `corecrt_wstdio.h` barrier, so the remaining blocker appears to be
+  constexpr/sema handling for enum-valued `static constexpr` data members in the
+  MSVC STL numeric-limits hierarchy.
+- **Impact**: Windows/MSVC `<limits>` analysis is no longer "time to first UCRT
+  parse failure", but the header still does not complete semantic analysis.
 
 ---
 

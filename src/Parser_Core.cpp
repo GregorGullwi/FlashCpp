@@ -1583,12 +1583,38 @@ void Parser::register_builtin_functions() {
 		gSymbolTable.insert(name, func_decl_node);
 	};
 
+	// Helper lambda to register a variadic builtin with one named parameter.
+	// This is used for intrinsics like __va_start where the second source-level
+	// argument is semantically special and should not compete as a fixed overload
+	// against the platform header declaration `void __va_start(va_list*, ...)`.
+	auto register_variadic_one_param_builtin = [&](std::string_view name, TypeCategory return_type, TypeCategory param1_type) {
+		Token type_token = dummy_token;
+		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token, CVQualifier::None);
+
+		Token func_token = dummy_token;
+		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
+
+		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
+		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
+
+		Token param1_token = dummy_token;
+		auto param1_type_node = emplace_node<TypeSpecifierNode>(param1_type, TypeQualifier::None, 64, param1_token, CVQualifier::None);
+		auto param1_decl = emplace_node<DeclarationNode>(param1_type_node, param1_token);
+		func_decl_ref.add_parameter_node(param1_decl);
+		func_decl_ref.set_linkage(Linkage::C);
+		func_decl_ref.set_is_variadic(true);
+
+		gSymbolTable.insert(name, func_decl_node);
+	};
+
 	// Register variadic argument intrinsics (support both __va_start and __builtin_va_start)
-	// __builtin_va_start(va_list*, last_param) - Clang-style
-	// __va_start(va_list*, last_param) - MSVC-style (legacy)
-	// Both return void
-	register_two_param_builtin("__builtin_va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
-	register_two_param_builtin("__va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
+	// __builtin_va_start(ap, last_param) and __va_start(&ap, last_param) both take
+	// two source-level arguments, but the second operand is the variadic anchor and
+	// must not participate in fixed-arity overload ranking. Register them as one
+	// named generic parameter plus ellipsis so a real header declaration like
+	// `void __va_start(va_list*, ...)` cleanly outranks the fallback builtin.
+	register_variadic_one_param_builtin("__builtin_va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong);
+	register_variadic_one_param_builtin("__va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong);
 
 	// __builtin_va_arg(va_list, type) - returns the specified type
 	// For registration purposes, we use int as the return type (will be overridden in codegen)
