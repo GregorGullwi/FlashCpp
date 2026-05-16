@@ -131,9 +131,19 @@ infrastructure tracks. The branch now includes:
   Regression `test_template_two_phase_member_func_template_ret42.cpp` covers
   the non-dependent call case. Full-suite validation: 2361 pass, 184
   expected-fail, 0 regressions.
+- **dependent unqualified-call POI completion broadened for ordinary-bound calls
+  and template static initializers (2026-05-16):** unqualified dependent calls
+  that already had a definition-time ordinary candidate now also retain
+  `DependentUnqualifiedCallLookupRecord` metadata instead of silently freezing to
+  the provisional callee. Semantic call annotation, constexpr evaluation, and
+  template substitution now prefer POI completion whenever that record exists,
+  and template static-member initializer parsing installs definition-context
+  lookup state before building the initializer AST. Regression
+  `test_template_static_member_initializer_dependent_adl_ret0.cpp` covers the
+  fixed hidden-friend/ADL path.
 
 Validation after all changes passed the Linux sharded build and the full test
-suite (2361 regular tests + 184 expected-fail tests, 0 regressions).
+suite (2377 regular tests + 182 expected-fail tests, 0 regressions).
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
@@ -150,11 +160,12 @@ sema direct lookup probes. The active architecture tracks are therefore:
 ### Open next steps
 
 1. **Broaden POI completion beyond the new unresolved-call record.**
-   Unresolved dependent unqualified calls now carry explicit POI-completion
-   metadata and replay correctly through substitution, sema, constexpr, and
-   lazy-static paths. Remaining gaps are parser-time reparses that become
-   concrete before the record is formed and broader hidden-friend/
-   dependent-namespace coverage.
+    Unresolved dependent unqualified calls now carry explicit POI-completion
+    metadata and replay correctly through substitution, sema, constexpr, and
+    lazy-static paths. Definition-time ordinary matches now also keep that POI
+    metadata in the covered unqualified-call paths, including template static
+    member initializers. Remaining gaps are parser-time reparses and other late
+    concretization paths that still bypass record formation.
 
 2. **Two-phase lookup expansion (member function template bodies ✅ done).**
     Definition-context records now cover selected non-dependent calls,
@@ -166,8 +177,8 @@ sema direct lookup probes. The active architecture tracks are therefore:
       the declaring-owner symbol in lowering/codegen, fixing the previous
       derived-owner link regressions (`test_inherited_member_template_lookup_ret42.cpp`,
       `test_inherited_member_template_this_explicit_ret42.cpp`).
-    - Eager static initializers (constexpr static members whose initializers
-      call constexpr functions at definition time).
+    - Eager static initializers with deeper parser-time reparse paths beyond the
+      newly covered dependent unqualified direct-call case.
     - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
