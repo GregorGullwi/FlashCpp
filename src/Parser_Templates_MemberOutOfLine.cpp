@@ -608,10 +608,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Parse initializer expression
 		const TemplateDefinitionLookupContext* previous_definition_lookup_context =
 			current_template_definition_lookup_context_;
-		current_template_definition_lookup_context_ =
-			definition_lookup_context.is_valid()
-				? &definition_lookup_context
-				: previous_definition_lookup_context;
+		if (definition_lookup_context.is_valid()) {
+			current_template_definition_lookup_context_ =
+				&definition_lookup_context;
+		}
 		auto restore_definition_lookup_context = ScopeGuard([&]() {
 			current_template_definition_lookup_context_ =
 				previous_definition_lookup_context;

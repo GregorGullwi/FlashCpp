@@ -9650,9 +9650,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_initializer = substituteTemplateParameters(
 					*init_parse_result.node(),
 					substitution_context);
-				lexer_restore_guard.active = false;
-				restore_lexer_position_only(current_pos);
-				discard_saved_token(current_pos);
 				return true;
 			};
 
