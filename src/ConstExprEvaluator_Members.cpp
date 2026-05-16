@@ -86,7 +86,7 @@ TemplateEnvironment buildOuterFunctionTemplateEnvironment(
 	return env;
 }
 
-const StructMemberFunction* find_member_function_metadata_recursive(
+const StructMemberFunction* findMemberFunctionMetadataRecursive(
 	const StructTypeInfo* struct_info,
 	const FunctionDeclarationNode& target_function) {
 	if (!struct_info) {
@@ -113,8 +113,62 @@ const StructMemberFunction* find_member_function_metadata_recursive(
 			continue;
 		}
 		if (const StructMemberFunction* base_match =
-				find_member_function_metadata_recursive(base_struct_info, target_function)) {
+				findMemberFunctionMetadataRecursive(base_struct_info, target_function)) {
 			return base_match;
+		}
+	}
+
+	return nullptr;
+}
+
+// Find the final overrider of `base_virtual` in `dynamic_struct_info` and its
+// base classes.  Returns the most-derived StructMemberFunction that overrides
+// `base_virtual` (same name, same arity, and is_virtual/is_override), or
+// nullptr when no override exists (caller should keep the base declaration).
+const StructMemberFunction* findFinalOverrider(
+	const StructTypeInfo* dynamic_struct_info,
+	const StructMemberFunction& base_virtual,
+	size_t param_count) {
+	if (!dynamic_struct_info) {
+		return nullptr;
+	}
+
+	for (const auto& mf : dynamic_struct_info->member_functions) {
+		if (mf.name != base_virtual.name) {
+			continue;
+		}
+		// Only consider functions that are virtual or explicitly override
+		// something - this avoids selecting a same-name non-overriding overload.
+		if (!mf.is_virtual && !mf.is_override) {
+			continue;
+		}
+		// Don't return the base virtual itself as its own "override".
+		if (&mf == &base_virtual) {
+			continue;
+		}
+		if (!mf.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+		if (fd.parameter_nodes().size() != param_count) {
+			continue;
+		}
+		return &mf;
+	}
+
+	// Recurse into base classes (most-derived first) to find overrides in
+	// intermediate base classes.
+	for (const auto& base_class : dynamic_struct_info->base_classes) {
+		const TypeInfo* bti = tryGetTypeInfo(base_class.type_index);
+		if (!bti) {
+			continue;
+		}
+		const StructTypeInfo* bsi = bti->getStructInfo();
+		if (!bsi) {
+			continue;
+		}
+		if (const StructMemberFunction* found = findFinalOverrider(bsi, base_virtual, param_count)) {
+			return found;
 		}
 	}
 
@@ -2233,7 +2287,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return nullptr;
 	}();
 	const StructMemberFunction* actual_member =
-		actual_func ? find_member_function_metadata_recursive(bound_struct_info, *actual_func) : nullptr;
+		actual_func ? findMemberFunctionMetadataRecursive(bound_struct_info, *actual_func) : nullptr;
 	if (!actual_func) {
 		auto member_function_match = receiver_is_this
 										 ? find_current_struct_member_function_candidate(
@@ -2258,21 +2312,18 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		actual_func = member_function_match.function;
 		actual_member = member_function_match.member;
 	}
-	if (!receiver_is_this && actual_func && actual_member && actual_member->is_virtual) {
-		auto dynamic_match = find_member_function_candidate(
-			bound_struct_info,
-			func_name_handle,
-			call_info->arguments->size(),
-			context,
-			MemberFunctionLookupMode::LookupOnly,
-			false,
-			true);
-		if (dynamic_match.ambiguous) {
-			return EvalResult::error("Ambiguous member function overload in constant expression");
-		}
-		if (dynamic_match.function) {
-			actual_func = dynamic_match.function;
-			actual_member = dynamic_match.member;
+	// Virtual dispatch: when the resolved function is virtual, find the final
+	// overrider in the dynamic type (bound_struct_info) rather than staying pinned
+	// to the sema-resolved static target.  This applies to all receiver kinds,
+	// including calls through `this`, since virtual dispatch must occur for all
+	// non-qualified virtual calls per C++20 [class.virtual].
+	if (actual_func && actual_member && actual_member->is_virtual) {
+		if (const StructMemberFunction* override_member = findFinalOverrider(
+				bound_struct_info,
+				*actual_member,
+				actual_func->parameter_nodes().size())) {
+			actual_func = &override_member->function_decl.as<FunctionDeclarationNode>();
+			actual_member = override_member;
 		}
 	}
 	if (!actual_func) {
@@ -7158,7 +7209,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		MemberFunctionLookupMode::LookupOnly,
 		false);
 	const StructMemberFunction* actual_member =
-		actual_func ? find_member_function_metadata_recursive(struct_info, *actual_func) : nullptr;
+		actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : nullptr;
 	if (!actual_func) {
 		auto member_function_match = find_member_function_candidate(
 			struct_info,
@@ -7174,21 +7225,16 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		actual_func = member_function_match.function;
 		actual_member = member_function_match.member;
 	}
+	// Virtual dispatch: resolve to the final overrider in the dynamic type using
+	// is_virtual/is_override flags so that same-name non-overriding derived
+	// overloads (e.g. Derived::f(long) vs Base::f(int)) are not selected.
 	if (actual_func && actual_member && actual_member->is_virtual) {
-		auto dynamic_match = find_member_function_candidate(
-			struct_info,
-			func_name_handle,
-			arguments.size(),
-			context,
-			MemberFunctionLookupMode::LookupOnly,
-			false,
-			true);
-		if (dynamic_match.ambiguous) {
-			return EvalResult::error("Ambiguous member function overload in constant expression");
-		}
-		if (dynamic_match.function) {
-			actual_func = dynamic_match.function;
-			actual_member = dynamic_match.member;
+		if (const StructMemberFunction* override_member = findFinalOverrider(
+				struct_info,
+				*actual_member,
+				actual_func->parameter_nodes().size())) {
+			actual_func = &override_member->function_decl.as<FunctionDeclarationNode>();
+			actual_member = override_member;
 		}
 	}
 
