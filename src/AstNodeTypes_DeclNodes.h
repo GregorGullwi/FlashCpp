@@ -1296,6 +1296,7 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 // Print allocation stats for gTypeInfo, gTypesByName, and gNativeTypes to the General/Info log
+void setTypeTableStatsEnabled(bool enabled);
 void printTypeTableStats();
 
 struct CanonicalTypeAlias {
