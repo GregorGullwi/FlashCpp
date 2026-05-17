@@ -452,6 +452,9 @@ private:
 	void addCapturedVariablesToSymbolTable(std::span<const LambdaCaptureNode> captures,
 										   std::span<const ASTNode> captured_var_decls);
 
+	// Creates an EvaluationContext pre-populated with parser and sema for codegen use.
+	ConstExpr::EvaluationContext makeEvalContext(const SymbolTable& symbols) const;
+
 	// ── inline private helpers (IrGenerator_Visitors_TypeInit.cpp) ──
 	// Helper: resolve self-referential struct types in template instantiations.
 	// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
@@ -1202,7 +1205,7 @@ private:
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
-	Parser* parser_;	 // Reference to parser for template instantiation
+	Parser& parser_;	 // Reference to parser for template instantiation
 	SemanticAnalysis& sema_;  // Required semantic-analysis results for codegen
 	bool sema_normalized_current_function_ = false;	// Phase 15: true when sema visited the current function body
 

@@ -30,8 +30,8 @@ TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec
 
 std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
 	std::optional<TypeSpecifierNode> result = sema_.getExpressionType(callNode);
-	if ((!result.has_value() || isPlaceholderAutoType(result->type())) && parser_) {
-		result = parser_->get_expression_type(callNode);
+	if ((!result.has_value() || isPlaceholderAutoType(result->type()))) {
+		result = parser_.get_expression_type(callNode);
 	}
 	return result;
 }
@@ -58,7 +58,7 @@ AstToIr::AstToIr(
 	CompileContext& context,
 	Parser& parser,
 	SemanticAnalysis& semantic_analysis)
-	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser), sema_(semantic_analysis) {
+	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(parser), sema_(semantic_analysis) {
 	// Generate static member declarations for template classes before processing AST
 	generateStaticMemberDeclarations();
 	// Materialize implicit default constructors for instantiated structs that were
@@ -358,7 +358,7 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				if (!func.is_materialized()) {
 					throw InternalError("Deferred function queue received an unmaterialized function");
 				}
-				parser_->enqueuePendingSemanticRootIfNeeded(info.function_node);
+				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitFunctionDeclarationNode(func);
 			} else if (info.function_node.is<ConstructorDeclarationNode>()) {
@@ -366,17 +366,17 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 				if (!ctor.is_materialized()) {
 					throw InternalError("Deferred constructor queue received an unmaterialized constructor");
 				}
-				parser_->enqueuePendingSemanticRootIfNeeded(info.function_node);
+				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitConstructorDeclarationNode(info.function_node.as<ConstructorDeclarationNode>());
 			} else if (info.function_node.is<DestructorDeclarationNode>()) {
-				parser_->enqueuePendingSemanticRootIfNeeded(info.function_node);
+				parser_.enqueuePendingSemanticRootIfNeeded(info.function_node);
 				normalizePendingSemanticRoots();
 				visitDestructorDeclarationNode(info.function_node.as<DestructorDeclarationNode>());
 			} else if (info.function_node.is<TemplateFunctionDeclarationNode>()) {
 				const auto& tmpl = info.function_node.as<TemplateFunctionDeclarationNode>();
 				if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
-					parser_->enqueuePendingSemanticRootIfNeeded(tmpl.function_declaration());
+					parser_.enqueuePendingSemanticRootIfNeeded(tmpl.function_declaration());
 					normalizePendingSemanticRoots();
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
@@ -517,10 +517,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 		}
 	};
 	auto makeStaticMemberEvalContext = [&](const StructTypeInfo* context_struct_info) {
-		ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+		ConstExpr::EvaluationContext ctx = makeEvalContext(*global_symbol_table_);
 		ctx.storage_duration = ConstExpr::StorageDuration::Static;
-		ctx.parser = parser_;
-		ctx.sema = &sema_;
 		ctx.struct_info = context_struct_info;
 		if (context_struct_info) {
 			bool context_loaded = false;
@@ -580,10 +578,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 						global_symbol_table_->enter_scope(ScopeType::Block);
 						global_symbol_table_->insert(call_info->declaration->identifier_token().value(), *member_function_node);
 
-						ConstExpr::EvaluationContext rebound_ctx(*global_symbol_table_);
+						ConstExpr::EvaluationContext rebound_ctx = makeEvalContext(*global_symbol_table_);
 						rebound_ctx.storage_duration = ConstExpr::StorageDuration::Static;
-						rebound_ctx.parser = parser_;
-						rebound_ctx.sema = &sema_;
 						rebound_ctx.template_param_names = ctx.template_param_names;
 						rebound_ctx.template_args = ctx.template_args;
 						if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
@@ -1106,10 +1102,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 												0,
 												0);
 										} else {
-											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+											ConstExpr::EvaluationContext eval_ctx = makeEvalContext(*global_symbol_table_);
 											eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
-											eval_ctx.parser = parser_;
-											eval_ctx.sema = &sema_;
 											eval_ctx.struct_info = struct_info;
 											if (struct_info && struct_info->own_type_index_.has_value()) {
 												if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
@@ -1196,10 +1190,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 							FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
 							write_back_constant_bytes();
 						} else if (static_member.is_array && !static_member.array_dimensions.empty()) {
-							ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+							ConstExpr::EvaluationContext eval_ctx = makeEvalContext(*global_symbol_table_);
 							eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
-							eval_ctx.parser = parser_;
-							eval_ctx.sema = &sema_;
 							eval_ctx.struct_info = struct_info;
 							if (struct_info && struct_info->own_type_index_.has_value()) {
 								if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
@@ -1521,8 +1513,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 								if (referenced_static_member != nullptr &&
 									(!referenced_static_member->initializer.has_value()) &&
-									parser_ && struct_info != nullptr) {
-									parser_->instantiateLazyStaticMember(static_member_owner_name, member_name_handle);
+									struct_info != nullptr) {
+									parser_.instantiateLazyStaticMember(static_member_owner_name, member_name_handle);
 									normalizePendingSemanticRoots();
 									auto refreshed_lookup = struct_info->findStaticMemberRecursive(member_name_handle);
 									referenced_static_member = refreshed_lookup.first;
@@ -1678,18 +1670,16 @@ void AstToIr::generateStaticMemberDeclarations() {
 								// Try triggering lazy instantiation for template static members
 								// The initializer may contain unsubstituted template parameters
 								bool resolved_via_lazy = false;
-								if (parser_) {
-									parser_->instantiateLazyStaticMember(static_member_owner_name, static_member.getName());
-									normalizePendingSemanticRoots();
-									// Re-lookup the member after lazy instantiation may have updated it
-									const StructStaticMember* updated = struct_info->findStaticMember(static_member.getName());
-									if (updated && updated->initializer.has_value()) {
-										if (evaluate_static_initializer(*updated->initializer, evaluated_value, struct_info)) {
-											FLASH_LOG(Codegen, Debug, "Evaluated lazy-instantiated constexpr initializer for static member '",
-													  qualified_name, "' = ", evaluated_value);
-											append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
-											resolved_via_lazy = true;
-										}
+								parser_.instantiateLazyStaticMember(static_member_owner_name, static_member.getName());
+								normalizePendingSemanticRoots();
+								// Re-lookup the member after lazy instantiation may have updated it
+								const StructStaticMember* updated = struct_info->findStaticMember(static_member.getName());
+								if (updated && updated->initializer.has_value()) {
+									if (evaluate_static_initializer(*updated->initializer, evaluated_value, struct_info)) {
+										FLASH_LOG(Codegen, Debug, "Evaluated lazy-instantiated constexpr initializer for static member '",
+												  qualified_name, "' = ", evaluated_value);
+										append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+										resolved_via_lazy = true;
 									}
 								}
 								if (!resolved_via_lazy) {
@@ -2015,19 +2005,17 @@ void AstToIr::generateTrivialDefaultConstructors() {
 						// This constructor path still uses the parser entry point because it
 						// predates the sema-owned helper and remains coupled to parser-side
 						// lazy instantiation bookkeeping.
-						if (parser_) {
-							const StructMemberFunction* base_default_ctor = base_struct_info->findDefaultConstructor();
-							if (base_default_ctor &&
-								base_default_ctor->function_decl.is<ConstructorDeclarationNode>() &&
-								!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_materialized()) {
-								StringHandle base_name = base_struct_info->name;
-								const auto& ctor_decl = base_default_ctor->function_decl.as<ConstructorDeclarationNode>();
-								StringHandle ctor_name = ctor_decl.name();
-								if (base_name.isValid() && ctor_name.isValid()) {
-									LazyMemberKey key = LazyMemberKey::exact(base_name, ctor_decl);
-									parser_->instantiateLazyMemberIfNeeded(key);
-									normalizePendingSemanticRoots();
-								}
+						const StructMemberFunction* base_default_ctor = base_struct_info->findDefaultConstructor();
+						if (base_default_ctor &&
+							base_default_ctor->function_decl.is<ConstructorDeclarationNode>() &&
+							!base_default_ctor->function_decl.as<ConstructorDeclarationNode>().is_materialized()) {
+							StringHandle base_name = base_struct_info->name;
+							const auto& ctor_decl = base_default_ctor->function_decl.as<ConstructorDeclarationNode>();
+							StringHandle ctor_name = ctor_decl.name();
+							if (base_name.isValid() && ctor_name.isValid()) {
+								LazyMemberKey key = LazyMemberKey::exact(base_name, ctor_decl);
+								parser_.instantiateLazyMemberIfNeeded(key);
+								normalizePendingSemanticRoots();
 							}
 						}
 						ConstructorCallOp call_op;
@@ -2049,9 +2037,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					if (member.bitfield_width.has_value() && member.default_initializer.has_value()) {
 						bitfield_offsets.insert(member.offset);
 						unsigned long long val = 0;
-						ConstExpr::EvaluationContext ctx(gSymbolTable);
-						ctx.parser = parser_;
-						ctx.sema = &sema_;
+						ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 						if (eval_result.success()) {
 							if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
@@ -2996,7 +2982,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Parse the template body with concrete types
 	// Pass the struct name and type index so the parser can set up member function context
-	auto body_node_opt = parser_->parseTemplateBody(
+	auto body_node_opt = parser_.parseTemplateBody(
 		inst_info.body_position,
 		inst_info.template_param_names,
 		inst_info.template_args,

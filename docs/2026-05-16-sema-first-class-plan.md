@@ -116,14 +116,17 @@ Stage 6 progress so far:
 - that parser-side construction-site audit now covers the parser-owned constexpr/template/substitution call families called out in Stage 6.1, reducing drift while `EvaluationContext::sema` remains nullable for standalone/non-parser contexts.
 - `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
 - the `struct-without-conversion-operator` codegen fallback has been removed: the conditional `if (sema_normalized_current_function_)` guard is now an unconditional `InternalError` since all 2393 tests pass without the fallback path; lambda/requires cases confirmed to not exercise struct-to-non-struct return lowering at all.
+- `AstToIr::parser_` changed from `Parser*` to `Parser&`: AstToIr always takes a `Parser&` at construction, so the field was a pointer that was never null; converting it to a reference removes 13 defensive `if (parser_)` / `if (!parser_)` null guards in IrGenerator files and changes 18 `parser_->method()` calls to `parser_.method()`.
+- `AstToIr::makeEvalContext(const SymbolTable&)` added: centralises `EvaluationContext` creation for codegen; the 17+ manual `ctx.parser = &parser_; ctx.sema = &sema_` assignment pairs scattered across IrGenerator files are replaced with a single `makeEvalContext(...)` call, so every codegen-created context is guaranteed to receive parser and sema.
 
 Remaining Stage 6 work:
 
-- parser-owned constexpr/template/substitution construction sites now share one attachment path; making `EvaluationContext::sema` non-nullable next requires auditing the remaining standalone and codegen-side construction sites that still intentionally allow a null sema
-- `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites; making it non-nullable requires auditing all non-parser construction sites that currently do not set sema
+- `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites (array-dimension evaluation, simple constant folding in MemberAccess/NewDelete); making it non-nullable requires either injecting sema at those sites or introducing an explicit "no-sema" opt-in type
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
 - struct-without-conversion-operator codegen fallback removed; sema return-conversion is now fully enforced for struct returns ✅
+- `parser_` in `AstToIr` is now `Parser&` — no more defensive null guards in codegen ✅
+- codegen-side `EvaluationContext` construction centralised via `makeEvalContext`; all codegen contexts carry parser + sema ✅
 
 ### 6.1 Remove remaining nullable semantic branches in parser-owned contexts
 
