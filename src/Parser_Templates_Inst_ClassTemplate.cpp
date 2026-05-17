@@ -10036,7 +10036,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
 		if (out_of_line_var.initializer.has_value()) {
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
-				auto try_get_declaration_node_mut = [](ASTNode& node) -> DeclarationNode* {
+				auto tryGetDeclarationNode = [](ASTNode& node) -> DeclarationNode* {
 					if (node.is<DeclarationNode>()) {
 						return &node.as<DeclarationNode>();
 					}
@@ -10083,7 +10083,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
 
 				ASTNode declaration_copy = *out_of_line_var.declaration;
-				DeclarationNode* declaration_copy_ptr = try_get_declaration_node_mut(declaration_copy);
+				DeclarationNode* declaration_copy_ptr = tryGetDeclarationNode(declaration_copy);
 				if (declaration_copy_ptr == nullptr) {
 					return false;
 				}
@@ -10141,14 +10141,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Check if this static member was already added (e.g., from primary template processing)
 			// If it exists, update the initializer; otherwise add a new member
-			StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
-			if (existing_member != nullptr) {
-				if (!existing_member->declaration.has_value() && out_of_line_var.declaration.has_value()) {
-					existing_member->setDeclaration(*out_of_line_var.declaration);
+			StructStaticMember* existingMember = struct_info_ptr->findStaticMember(static_member_name_handle);
+			if (existingMember != nullptr) {
+				if (out_of_line_var.declaration.has_value()) {
+					existingMember->setDeclaration(*out_of_line_var.declaration);
 				}
-				if (!existing_member->initializer_position.has_value() &&
-					out_of_line_var.initializer_position.has_value()) {
-					existing_member->setInitializerPosition(*out_of_line_var.initializer_position);
+				if (out_of_line_var.initializer_position.has_value()) {
+					existingMember->setInitializerPosition(*out_of_line_var.initializer_position);
 				}
 				// Member already exists - update the initializer with the out-of-line definition
 				if (substituted_initializer.has_value()) {
