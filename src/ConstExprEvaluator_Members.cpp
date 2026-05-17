@@ -16,6 +16,13 @@ constexpr size_t kSyntheticTokenLine = 0;
 constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
 constexpr std::string_view kNestedTypeAliasName = "type";
+constexpr size_t kInitializerListBeginMemberIndex = 0;
+constexpr size_t kInitializerListEndOrSizeMemberIndex = 1;
+
+const std::unordered_map<std::string_view, EvalResult>& emptyEvalBindings() {
+	static const std::unordered_map<std::string_view, EvalResult> kEmpty;
+	return kEmpty;
+}
 
 SemanticAnalysis& requireParserOwnedMemberContextSema(const EvaluationContext& context, const char* operation) {
 	if (context.sema == nullptr) {
@@ -1979,6 +1986,19 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 									 "' not found on heap-allocated object in constant expression");
 		}
 		return std::nullopt;
+	}
+	if (member_access.is_arrow() && object_result->pointer_to_var.isValid()) {
+		auto deref_result = deref_pointer_with_bindings(*object_result, bindings, context);
+		if (!deref_result.success()) {
+			return deref_result;
+		}
+		auto member_it = deref_result.object_member_bindings.find(member_access.member_name());
+		if (member_it != deref_result.object_member_bindings.end()) {
+			return validateConstexprRead(member_it->second);
+		}
+		return EvalResult::error(
+			"Member '" + std::string(member_access.member_name()) +
+			"' not found on pointed-to object in constant expression");
 	}
 
 	if (!object_result->object_type_index.is_valid()) {
@@ -4097,15 +4117,17 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 					if (binding_it != bindings.end() && binding_it->second.pointer_to_var.isValid()) {
 						const EvalResult& ptr_eval = binding_it->second;
 						std::string_view ptr_var_name = StringTable::getStringView(ptr_eval.pointer_to_var);
-						// When the pointer has a non-zero offset, dereference the array element first.
-						if (ptr_eval.pointer_offset != 0) {
-							auto elem_result = deref_pointer_with_bindings(ptr_eval, bindings, context);
-							if (elem_result.success()) {
-								auto member_it = elem_result.object_member_bindings.find(member_name);
-								if (member_it != elem_result.object_member_bindings.end()) {
-									return member_it->second;
-								}
+						// First try direct pointer dereference against active bindings.
+						// This handles struct-array pointers (any offset) and synthesized
+						// backing arrays such as std::initializer_list storage.
+						auto elem_result = deref_pointer_with_bindings(ptr_eval, bindings, context);
+						if (elem_result.success()) {
+							auto member_it = elem_result.object_member_bindings.find(member_name);
+							if (member_it != elem_result.object_member_bindings.end()) {
+								return member_it->second;
 							}
+						}
+						if (ptr_eval.pointer_offset != 0) {
 							return EvalResult::error("Arrow member access (->): member '" + std::string(member_name) +
 													 "' not found at offset " + std::to_string(ptr_eval.pointer_offset));
 						}
@@ -4288,6 +4310,8 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	// find it by name during pointer dereference operations.
 	if (mutable_bindings) {
 		(*mutable_bindings)[backing_key] = backing_array;
+	} else if (context.local_bindings) {
+		(*context.local_bindings)[backing_key] = backing_array;
 	}
 
 	// Step 3: build begin/end pointers with full snapshot so pointer arithmetic and
@@ -4361,6 +4385,19 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 					context,
 					true);  // ignore_default_initializer_errors
 				if (materialize_result.success()) {
+					// Ensure synthesized iterator pointers keep their snapshot payload even
+					// when constructor materialization routes through parameter/member
+					// rewrites that may drop pointer_value_snapshot metadata.
+					if (struct_info->members.size() > kInitializerListBeginMemberIndex) {
+						std::string_view m0 =
+							StringTable::getStringView(struct_info->members[kInitializerListBeginMemberIndex].getName());
+						result.object_member_bindings[m0] = begin_ptr;
+					}
+					if (struct_info->members.size() > kInitializerListEndOrSizeMemberIndex) {
+						std::string_view m1 =
+							StringTable::getStringView(struct_info->members[kInitializerListEndOrSizeMemberIndex].getName());
+						result.object_member_bindings[m1] = second_member_is_pointer ? end_ptr : int_size;
+					}
 					return result;
 				}
 			}
@@ -4368,14 +4405,17 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	}
 
 	// Step 7: fallback — assign members directly based on their position and pointer_depth.
-	// member[0] always receives begin_ptr (first_ / data_).
-	// member[1] receives end_ptr if it is a pointer (last_), or int_size (size_) otherwise.
-	if (struct_info->members.size() >= 1) {
-		std::string_view m0 = StringTable::getStringView(struct_info->members[0].getName());
+	// member[kInitializerListBeginMemberIndex] always receives begin_ptr (first_ / data_).
+	// member[kInitializerListEndOrSizeMemberIndex] receives end_ptr if it is a pointer (last_),
+	// or int_size (size_) otherwise.
+	if (struct_info->members.size() > kInitializerListBeginMemberIndex) {
+		std::string_view m0 =
+			StringTable::getStringView(struct_info->members[kInitializerListBeginMemberIndex].getName());
 		result.object_member_bindings[m0] = begin_ptr;
 	}
-	if (struct_info->members.size() >= 2) {
-		std::string_view m1 = StringTable::getStringView(struct_info->members[1].getName());
+	if (struct_info->members.size() > kInitializerListEndOrSizeMemberIndex) {
+		std::string_view m1 =
+			StringTable::getStringView(struct_info->members[kInitializerListEndOrSizeMemberIndex].getName());
 		result.object_member_bindings[m1] = second_member_is_pointer ? end_ptr : int_size;
 	}
 
@@ -5644,10 +5684,14 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 			return EvalResult::error("Arrow member access (->): object must be a constexpr pointer in constant expressions");
 		}
 		std::string_view pointed_name = StringTable::getStringView(ptr_result.pointer_to_var);
-		// Try to dereference the element (handles both offset==0 for array pointers like &arr[0]
-		// and non-zero offsets like (ptr + 1)->member).  This path is tried first so that a
-		// pointer into a struct array is resolved to the correct element regardless of offset.
-		auto elem_result = dereference_constexpr_pointer(pointed_name, context, ptr_result.pointer_offset);
+		// Try to dereference through binding-aware path first so pointer snapshots
+		// (e.g. synthesized std::initializer_list backing arrays) remain usable even
+		// when the original synthetic binding no longer exists in the active scope.
+		const auto* active_bindings = context.local_bindings;
+		auto elem_result = deref_pointer_with_bindings(
+			ptr_result,
+			active_bindings ? *active_bindings : emptyEvalBindings(),
+			context);
 		if (elem_result.success()) {
 			auto it = elem_result.object_member_bindings.find(member_name);
 			if (it != elem_result.object_member_bindings.end()) {
