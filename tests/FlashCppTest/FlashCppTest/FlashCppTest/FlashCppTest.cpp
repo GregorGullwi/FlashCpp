@@ -38,35 +38,43 @@ SemanticAnalysis& runSemanticAnalysisForTest(Parser& parser, CompileContext& con
 	return sema;
 }
 
-static const CallExprNode* findMainReturnCallExpr(const Parser& parser) {
-	for (const ASTNode& node : parser.get_nodes()) {
-		if (!node.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-		const auto& function = node.as<FunctionDeclarationNode>();
-		if (function.decl_node().identifier_token().value() != "main"sv) {
-			continue;
-		}
-		if (!function.get_definition().has_value()) {
-			return nullptr;
-		}
-		const ASTNode& definition = *function.get_definition();
-		if (!definition.is<BlockNode>()) {
-			return nullptr;
-		}
-		const auto& statements = definition.as<BlockNode>().get_statements();
-		if (statements.empty() || !statements[0].is<ReturnStatementNode>()) {
-			return nullptr;
-		}
-		const auto& return_stmt = statements[0].as<ReturnStatementNode>();
+static const CallExprNode* findReturnCallExprInNode(const ASTNode& node) {
+	if (node.is<ReturnStatementNode>()) {
+		const auto& return_stmt = node.as<ReturnStatementNode>();
 		if (!return_stmt.expression().has_value()) {
 			return nullptr;
 		}
 		const ASTNode& expr = *return_stmt.expression();
-		if (!expr.is<CallExprNode>()) {
-			return nullptr;
+		if (expr.is<CallExprNode>()) {
+			return &expr.as<CallExprNode>();
 		}
-		return &expr.as<CallExprNode>();
+		return nullptr;
+	}
+
+	if (node.is<BlockNode>()) {
+		for (const ASTNode& stmt : node.as<BlockNode>().get_statements()) {
+			if (const CallExprNode* call_expr = findReturnCallExprInNode(stmt)) {
+				return call_expr;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+static const CallExprNode* findAnyReturnCallExpr(const Parser& parser) {
+	for (const ASTNode& node : parser.get_nodes()) {
+		const FunctionDeclarationNode* function = get_function_decl_node(node);
+		if (function == nullptr) {
+			continue;
+		}
+		if (!function->get_definition().has_value()) {
+			continue;
+		}
+		const ASTNode& definition = *function->get_definition();
+		if (const CallExprNode* call_expr = findReturnCallExprInNode(definition)) {
+			return call_expr;
+		}
 	}
 	return nullptr;
 }
@@ -1715,7 +1723,7 @@ TEST_CASE("SemanticAnalysis:ResolvedDirectCallQueryTracksAnalysisState") {
 		return;
 	}
 
-	const CallExprNode* call_expr = findMainReturnCallExpr(parser);
+	const CallExprNode* call_expr = findAnyReturnCallExpr(parser);
 	REQUIRE(call_expr != nullptr);
 
 	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
@@ -1748,7 +1756,7 @@ TEST_CASE("SemanticAnalysis:OverloadResolutionArgTypeQueryTracksAnalysisState") 
 		return;
 	}
 
-	const CallExprNode* call_expr = findMainReturnCallExpr(parser);
+	const CallExprNode* call_expr = findAnyReturnCallExpr(parser);
 	REQUIRE(call_expr != nullptr);
 	REQUIRE(call_expr->arguments().size() == 1);
 	const ASTNode& arg_expr = call_expr->arguments()[0];
@@ -1782,7 +1790,7 @@ TEST_CASE("SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState") {
 		return;
 	}
 
-	const CallExprNode* call_expr = findMainReturnCallExpr(parser);
+	const CallExprNode* call_expr = findAnyReturnCallExpr(parser);
 	REQUIRE(call_expr != nullptr);
 
 	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
