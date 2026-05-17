@@ -16,12 +16,21 @@ constexpr size_t kSyntheticTokenLine = 0;
 constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
 constexpr std::string_view kNestedTypeAliasName = "type";
+constexpr const char* kMemberFunctionMaterializationLookupOp = "member function materialization lookup";
+constexpr const char* kMemberFunctionMaterializationReplayOp = "member function materialization replay";
 
 SemanticAnalysis& requireParserOwnedMemberContextSema(const EvaluationContext& context, const char* operation) {
 	if (context.sema == nullptr) {
 		throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
 	}
 	return *context.sema;
+}
+
+SemanticAnalysis* getSemaForMaterialization(const EvaluationContext& context, const char* operation) {
+	if (context.parser != nullptr) {
+		return &requireParserOwnedMemberContextSema(context, operation);
+	}
+	return context.sema;
 }
 
 TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, std::span<const size_t> array_dimensions);
@@ -2931,8 +2940,9 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
-	if (context.sema != nullptr) {
-		context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(
+	if (SemanticAnalysis* sema = getSemaForMaterialization(
+			context, kMemberFunctionMaterializationLookupOp); sema != nullptr) {
+		sema->parserSemanticServices().ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
 	}
 
@@ -2949,8 +2959,9 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		if (context.sema != nullptr) {
-			context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
+		if (SemanticAnalysis* sema = getSemaForMaterialization(
+				context, kMemberFunctionMaterializationReplayOp); sema != nullptr) {
+			sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
 		}
 		result = find_member_function_candidate(
 			context.struct_info,
