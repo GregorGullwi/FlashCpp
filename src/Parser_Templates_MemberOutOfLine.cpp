@@ -268,6 +268,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		restore_token_position(ctor_check);
 	}
 
+	// parse_type_specifier() deliberately skips declaration specifiers, so capture constexpr/constinit
+	// before parsing the type and propagate them to the replay declaration metadata.
+	FlashCpp::DeclarationSpecifiers declaration_specs = parse_declaration_specifiers();
+	const bool out_of_line_decl_is_constexpr = declaration_specs.is_constexpr();
+	const bool out_of_line_decl_is_constinit = declaration_specs.is_constinit();
+
 	// Try to parse return type
 	auto return_type_result = parse_type_specifier();
 	if (return_type_result.is_error() || !return_type_result.node().has_value()) {
@@ -587,6 +593,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	std::string_view qualified_class_name = StringTable::getStringView(
 		StringTable::getOrInternStringHandle(qualified_class_name_storage));
 
+	auto create_out_of_line_static_member_declaration = [&]() -> ASTNode {
+		ASTNode declaration_node = emplace_node<DeclarationNode>(return_type_node, function_name_token);
+		ASTNode var_declaration_node = emplace_node<VariableDeclarationNode>(
+			declaration_node,
+			std::nullopt,
+			StorageClass::Static);
+		VariableDeclarationNode& var_declaration_ref = var_declaration_node.as<VariableDeclarationNode>();
+		var_declaration_ref.set_is_constexpr(out_of_line_decl_is_constexpr);
+		var_declaration_ref.set_is_constinit(out_of_line_decl_is_constinit);
+		return var_declaration_node;
+	};
+
 	// Check if this is a static member variable definition (=) or a member function (()
 	if (peek() == "="_tok) {
 		// This is a static member variable definition: template<typename T> Type ClassName<T>::member = value;
@@ -603,17 +621,21 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 				StringTable::getOrInternStringHandle(qualified_class_name);
 		}
 
-		advance();  // consume '='
+		ASTNode var_declaration_node = create_out_of_line_static_member_declaration();
+		VariableDeclarationNode& var_declaration_ref = var_declaration_node.as<VariableDeclarationNode>();
+		DeclarationNode& declaration_ref = var_declaration_ref.declaration();
 
-		// Parse initializer expression
+		// Parse copy-initialization so both `= expr` and `= {expr}` preserve two-phase lookup:
+		// unqualified function lookup binds at definition time and overload resolution occurs at instantiation.
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
 			definition_lookup_context.is_valid()
 				? &definition_lookup_context
 				: current_template_definition_lookup_context_);
-
-		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-		if (init_result.is_error() || !init_result.node().has_value()) {
+		std::optional<ASTNode> initializer = parse_copy_initialization(
+			declaration_ref,
+			declaration_ref.type_specifier_node());
+		if (!initializer.has_value()) {
 			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");
 			return std::nullopt;
 		}
@@ -629,8 +651,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.template_params = template_params;
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
-		out_of_line_var.declaration = emplace_node<DeclarationNode>(return_type_node, function_name_token);
-		out_of_line_var.initializer = *init_result.node();
+		out_of_line_var.declaration = var_declaration_node;
+		out_of_line_var.initializer = *initializer;
 		out_of_line_var.initializer_position = initializer_position;
 		out_of_line_var.definition_lookup_context = definition_lookup_context;
 		out_of_line_var.template_param_names = template_param_names;
@@ -656,7 +678,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.template_params = template_params;
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
-		out_of_line_var.declaration = emplace_node<DeclarationNode>(return_type_node, function_name_token);
+		out_of_line_var.declaration = create_out_of_line_static_member_declaration();
 		// No initializer for this case
 		out_of_line_var.template_param_names = template_param_names;
 
