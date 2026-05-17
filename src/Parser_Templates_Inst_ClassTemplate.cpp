@@ -4271,15 +4271,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Also copy static members from the pattern AST node (for member template partial specializations)
 			// These may not have been added to StructTypeInfo yet
-			auto try_get_declaration_node = [](const ASTNode& node) -> const DeclarationNode* {
-				if (node.is<DeclarationNode>()) {
-					return &node.as<DeclarationNode>();
-				}
-				if (node.is<VariableDeclarationNode>()) {
-					return &node.as<VariableDeclarationNode>().declaration();
-				}
-				return nullptr;
-			};
 			auto build_effective_partial_spec_template_bindings =
 				[&](std::span<const TemplateTypeArg> local_template_args) {
 				InlineVector<TemplateParameterNode, 4> effective_template_params;
@@ -4357,7 +4348,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (static_member.initializer_position.has_value() &&
 						static_member.declaration.has_value()) {
 						const DeclarationNode* declaration =
-							try_get_declaration_node(*static_member.declaration);
+							get_decl_from_symbol(*static_member.declaration);
 						if (declaration != nullptr) {
 							SaveHandle current_pos = save_token_position();
 							ScopedLexerPositionRestore lexer_restore(*this, current_pos);
@@ -7282,32 +7273,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const auto& static_member,
 			const auto& template_params,
 			std::span<const TemplateTypeArg> template_args) -> std::optional<ASTNode> {
-		auto try_get_declaration_node = [](const ASTNode& node) -> const DeclarationNode* {
-			if (node.is<DeclarationNode>()) {
-				return &node.as<DeclarationNode>();
-			}
-			if (node.is<VariableDeclarationNode>()) {
-				return &node.as<VariableDeclarationNode>().declaration();
-			}
-			return nullptr;
-		};
-		auto try_get_declaration_node_mut = [](ASTNode& node) -> DeclarationNode* {
-			if (node.is<DeclarationNode>()) {
-				return &node.as<DeclarationNode>();
-			}
-			if (node.is<VariableDeclarationNode>()) {
-				return &node.as<VariableDeclarationNode>().declaration();
-			}
-			return nullptr;
-		};
-
 		if (!static_member.initializer_position.has_value() ||
 			!static_member.declaration.has_value()) {
 			return std::nullopt;
 		}
 
 		const DeclarationNode* declaration =
-			try_get_declaration_node(*static_member.declaration);
+			get_decl_from_symbol(*static_member.declaration);
 		if (declaration == nullptr) {
 			return std::nullopt;
 		}
@@ -7362,7 +7334,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		ASTNode declaration_copy = *static_member.declaration;
 		DeclarationNode* declaration_copy_ptr =
-			try_get_declaration_node_mut(declaration_copy);
+			get_decl_from_symbol_mut(declaration_copy);
 		if (declaration_copy_ptr == nullptr) {
 			return std::nullopt;
 		}
@@ -9882,21 +9854,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::vector<ASTNode> definition_scope_params(inst_func_params.begin(), inst_func_params.end());
 					const auto& definition_params = func_decl.parameter_nodes();
 					if (definition_scope_params.size() == definition_params.size()) {
-						auto get_decl_const = [](const ASTNode& node) -> const DeclarationNode* {
-							if (node.is<DeclarationNode>()) {
-								return &node.as<DeclarationNode>();
-							}
-							if (node.is<VariableDeclarationNode>()) {
-								return &node.as<VariableDeclarationNode>().declaration();
-							}
-							return nullptr;
-						};
-						auto get_decl_mut = [&](ASTNode& node) -> DeclarationNode* {
-							return const_cast<DeclarationNode*>(get_decl_const(node));
-						};
 						for (size_t param_index = 0; param_index < definition_scope_params.size(); ++param_index) {
-							DeclarationNode* scope_decl = get_decl_mut(definition_scope_params[param_index]);
-							const DeclarationNode* def_decl = get_decl_const(definition_params[param_index]);
+							DeclarationNode* scope_decl = get_decl_from_symbol_mut(definition_scope_params[param_index]);
+							const DeclarationNode* def_decl = get_decl_from_symbol(definition_params[param_index]);
 							if (!scope_decl || !def_decl) {
 								continue;
 							}
@@ -10036,7 +9996,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
 		if (out_of_line_var.initializer.has_value()) {
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
-				if (!out_of_line_var.initializer_position.has_value()) {
+				if (!out_of_line_var.initializer_position.has_value() ||
+					!out_of_line_var.declaration.has_value()) {
 					return false;
 				}
 
@@ -10070,12 +10031,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setCurrentTemplateParamNames(out_of_line_var.template_param_names);
 
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
-				if (!consume("="_tok)) {
+
+				const DeclarationNode* declaration_ptr =
+					get_decl_from_symbol(*out_of_line_var.declaration);
+				if (declaration_ptr == nullptr) {
 					return false;
 				}
-				ParseResult init_parse_result =
-					parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (init_parse_result.is_error() || !init_parse_result.node().has_value()) {
+				DeclarationNode declaration_copy = *declaration_ptr;
+				TypeSpecifierNode& type_spec = declaration_copy.type_specifier_node();
+
+				std::optional<ASTNode> reparsed_initializer;
+				if (peek() == "="_tok) {
+					reparsed_initializer = parse_copy_initialization(
+						declaration_copy,
+						type_spec);
+				} else if (peek() == "{"_tok) {
+					ParseResult init_parse_result = parse_brace_initializer(type_spec);
+					if (!init_parse_result.is_error() && init_parse_result.node().has_value()) {
+						reparsed_initializer = *init_parse_result.node();
+					}
+				}
+
+				if (!reparsed_initializer.has_value()) {
 					return false;
 				}
 				if (!consume(";"_tok)) {
@@ -10083,7 +10060,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				substituted_initializer = substituteTemplateParameters(
-					*init_parse_result.node(),
+					*reparsed_initializer,
 					substitution_context);
 				return true;
 			};
@@ -10114,8 +10091,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Check if this static member was already added (e.g., from primary template processing)
 			// If it exists, update the initializer; otherwise add a new member
-			const StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
+			StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
 			if (existing_member != nullptr) {
+				if (out_of_line_var.declaration.has_value()) {
+					existing_member->setDeclaration(*out_of_line_var.declaration);
+				}
+				if (out_of_line_var.initializer_position.has_value()) {
+					existing_member->setInitializerPosition(*out_of_line_var.initializer_position);
+				}
 				// Member already exists - update the initializer with the out-of-line definition
 				if (substituted_initializer.has_value()) {
 					struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
@@ -10142,8 +10125,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					/* ptr_depth */ static_cast<int>(type_spec.pointer_depth()),
 					is_array,
 					array_dimensions,
-					/* declaration */ std::nullopt,
-					/* initializer_position */ std::nullopt,
+					out_of_line_var.declaration,
+					out_of_line_var.initializer_position,
 					/* is_constexpr */ false);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,

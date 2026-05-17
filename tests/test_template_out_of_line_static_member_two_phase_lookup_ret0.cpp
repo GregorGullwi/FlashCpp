@@ -14,7 +14,18 @@ int select_overload(int) {
 	return 22;
 }
 
+template <typename T>
+int read_holder_value() {
+	return Holder<T>::value;
+}
+
 int main() {
+	if (read_holder_value<int>() != 11) {
+		return 5;
+	}
+	if (read_holder_value<long>() != 11) {
+		return 6;
+	}
 	// Returns 1 if wrong overload selected (post-definition int overload picked instead of long).
 	if (Holder<int>::value == 22) {
 		return 1;

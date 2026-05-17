@@ -629,6 +629,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.template_params = template_params;
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
+		out_of_line_var.declaration = emplace_node<DeclarationNode>(return_type_node, function_name_token);
 		out_of_line_var.initializer = *init_result.node();
 		out_of_line_var.initializer_position = initializer_position;
 		out_of_line_var.definition_lookup_context = definition_lookup_context;
@@ -655,6 +656,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.template_params = template_params;
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
+		out_of_line_var.declaration = emplace_node<DeclarationNode>(return_type_node, function_name_token);
 		// No initializer for this case
 		out_of_line_var.template_param_names = template_param_names;
 
