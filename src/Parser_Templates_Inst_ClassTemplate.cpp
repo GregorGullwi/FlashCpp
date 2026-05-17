@@ -4231,9 +4231,76 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				return nullptr;
 			};
+			auto build_effective_partial_spec_template_bindings =
+				[&](std::span<const TemplateTypeArg> local_template_args) {
+				InlineVector<TemplateParameterNode, 4> effective_template_params;
+				std::vector<TemplateTypeArg> effective_template_args;
+				if (const OuterTemplateBinding* outer_binding =
+						gTemplateRegistry.getOuterTemplateBinding(template_name)) {
+					effective_template_params.reserve(
+						outer_binding->param_names.size() + template_params.size());
+					effective_template_args.reserve(
+						outer_binding->param_args.size() + local_template_args.size());
+					for (size_t i = 0;
+						 i < outer_binding->param_names.size() &&
+						 i < outer_binding->param_args.size();
+						 ++i) {
+						StringHandle outer_name = outer_binding->param_names[i];
+						const TemplateTypeArg& outer_arg =
+							outer_binding->param_args[i];
+						Token outer_token(
+							Token::Type::Identifier,
+							StringTable::getStringView(outer_name),
+							0,
+							0,
+							0);
+						if (outer_arg.is_value) {
+							TypeSpecifierNode outer_type(
+								outer_arg.type_index.withCategory(
+									outer_arg.typeEnum()),
+								get_type_size_bits(outer_arg.typeEnum()),
+								outer_token,
+								CVQualifier::None,
+								ReferenceQualifier::None);
+							effective_template_params.push_back(
+								TemplateParameterNode(
+									outer_name,
+									outer_type,
+									outer_token));
+						} else {
+							TemplateParameterNode outer_param(
+								outer_name,
+								outer_token);
+							outer_param.set_registered_type_index(
+								outer_arg.type_index.withCategory(
+									outer_arg.typeEnum()));
+							effective_template_params.push_back(outer_param);
+						}
+						effective_template_args.push_back(outer_arg);
+					}
+				} else {
+					effective_template_params.reserve(template_params.size());
+					effective_template_args.reserve(local_template_args.size());
+				}
+				for (const TemplateParameterNode& template_param :
+					 template_params) {
+					effective_template_params.push_back(template_param);
+				}
+				effective_template_args.insert(
+					effective_template_args.end(),
+					local_template_args.begin(),
+					local_template_args.end());
+				return std::pair<
+					InlineVector<TemplateParameterNode, 4>,
+					std::vector<TemplateTypeArg>>(
+					std::move(effective_template_params),
+					std::move(effective_template_args));
+			};
 			auto substitute_in_class_static_initializer_replay_first =
 				[&](
 					const auto& static_member,
+					std::span<const TemplateParameterNode>
+						template_params_for_substitution,
 					std::span<const TemplateTypeArg> template_args_for_substitution,
 					auto&& fallback_substitution) -> std::optional<ASTNode> {
 				if (!static_member.initializer.has_value()) {
@@ -4252,7 +4319,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 							TemplateInstantiationContext substitution_context =
 								buildTemplateInstantiationContext(
-									template_params,
+									template_params_for_substitution,
 									template_args_for_substitution,
 									nullptr,
 									currentTemplateSubstitutionFailurePolicy());
@@ -4278,8 +4345,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								substitution_context.definition_lookup_context);
 
 							InlineVector<StringHandle, 4> template_param_names;
-							template_param_names.reserve(template_params.size());
-							for (const auto& template_param : template_params) {
+							template_param_names.reserve(
+								template_params_for_substitution.size());
+							for (const auto& template_param :
+								 template_params_for_substitution) {
 								template_param_names.push_back(template_param.nameHandle());
 							}
 							FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -4342,10 +4411,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
 					TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 					original_type_spec.set_type_index(static_member.type_index);
+					auto [effective_template_params, effective_template_args_storage] =
+						build_effective_partial_spec_template_bindings(
+							template_args_for_member_copy);
+					std::span<const TemplateTypeArg> effective_template_args(
+						effective_template_args_storage.data(),
+						effective_template_args_storage.size());
 
 					// Use substitute_template_parameter for consistent template parameter matching
 					TypeIndex substituted_type_index = substitute_template_parameter(
-						original_type_spec, template_params, template_args_for_member_copy);
+						original_type_spec,
+						effective_template_params,
+						effective_template_args);
 
 					size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
 					if (static_member.is_array) {
@@ -4364,7 +4441,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::optional<ASTNode> substituted_initializer =
 						substitute_in_class_static_initializer_replay_first(
 							static_member,
-							template_args_for_member_copy,
+							effective_template_params,
+							effective_template_args,
 							[&]() -> std::optional<ASTNode> {
 								std::optional<ASTNode> fallback_initializer = static_member.initializer;
 								if (!static_member.initializer.has_value()) {
@@ -4374,9 +4452,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								TemplateEnvironment substitution_environment =
 									buildTemplateEnvironment(
 										std::span<const TemplateParameterNode>(
-											template_params.data(),
-											template_params.size()),
-										template_args_for_member_copy,
+											effective_template_params.data(),
+											effective_template_params.size()),
+										effective_template_args,
 										nullptr);
 
 								// Use ExpressionSubstitutor to substitute template parameters in
@@ -4743,7 +4821,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				false // is_class
 			);
 			StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
-			setOuterTemplateBindingsFromParams(instantiated_struct_ref, template_params, template_args_for_pattern);
+			auto [effective_pattern_template_params, effective_pattern_template_args_storage] =
+				build_effective_partial_spec_template_bindings(
+					template_args_for_pattern);
+			std::span<const TemplateTypeArg> effective_pattern_template_args(
+				effective_pattern_template_args_storage.data(),
+				effective_pattern_template_args_storage.size());
+			setOuterTemplateBindingsFromParams(
+				instantiated_struct_ref,
+				effective_pattern_template_params,
+				effective_pattern_template_args);
 
 			// Copy data members
 			for (const auto& member_decl : pattern_struct.members()) {
@@ -4768,8 +4855,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			for (const auto& static_member : pattern_struct.static_members()) {
 				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 				original_type_spec.set_type_index(static_member.type_index);
+				auto [effective_template_params, effective_template_args_storage] =
+					build_effective_partial_spec_template_bindings(
+						template_args_for_pattern);
+				std::span<const TemplateTypeArg> effective_template_args(
+					effective_template_args_storage.data(),
+					effective_template_args_storage.size());
 				TypeIndex substituted_type_index = substitute_template_parameter(
-					original_type_spec, template_params, template_args_for_pattern);
+					original_type_spec,
+					effective_template_params,
+					effective_template_args);
 				size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
 				if (static_member.is_array) {
 					for (size_t dim_size : static_member.array_dimensions) {
@@ -4779,13 +4874,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::optional<ASTNode> substituted_initializer =
 					substitute_in_class_static_initializer_replay_first(
 						static_member,
-						template_args_for_pattern,
+						effective_template_params,
+						effective_template_args,
 						[&]() -> std::optional<ASTNode> {
 							return static_member.initializer.has_value()
 									   ? std::optional<ASTNode>(substituteTemplateParameters(
 											 *static_member.initializer,
-											 template_params,
-											 template_args_for_pattern))
+											 effective_template_params,
+											 effective_template_args))
 									   : std::nullopt;
 						});
 				instantiated_struct_ref.add_static_member(
