@@ -593,20 +593,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	std::string_view qualified_class_name = StringTable::getStringView(
 		StringTable::getOrInternStringHandle(qualified_class_name_storage));
 
-	auto create_out_of_line_static_member_declaration = [&]() -> std::optional<ASTNode> {
+	auto create_out_of_line_static_member_declaration = [&]() -> ASTNode {
 		ASTNode declaration_node = emplace_node<DeclarationNode>(return_type_node, function_name_token);
-		if (!declaration_node.is<DeclarationNode>()) {
-			FLASH_LOG(Parser, Error, "Failed to emplace declaration node for static member variable");
-			return std::nullopt;
-		}
 		ASTNode var_declaration_node = emplace_node<VariableDeclarationNode>(
 			declaration_node,
 			std::nullopt,
 			StorageClass::Static);
-		if (!var_declaration_node.is<VariableDeclarationNode>()) {
-			FLASH_LOG(Parser, Error, "Failed to emplace variable declaration node for static member variable");
-			return std::nullopt;
-		}
 		VariableDeclarationNode& var_declaration_ref = var_declaration_node.as<VariableDeclarationNode>();
 		var_declaration_ref.set_is_constexpr(out_of_line_decl_is_constexpr);
 		var_declaration_ref.set_is_constinit(out_of_line_decl_is_constinit);
@@ -629,15 +621,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 				StringTable::getOrInternStringHandle(qualified_class_name);
 		}
 
-		std::optional<ASTNode> var_declaration_node = create_out_of_line_static_member_declaration();
-		if (!var_declaration_node.has_value() || !var_declaration_node->is<VariableDeclarationNode>()) {
-			FLASH_LOG(Parser, Error, "Failed to build variable declaration for static member variable");
-			return std::nullopt;
-		}
-		VariableDeclarationNode& var_declaration_ref = var_declaration_node->as<VariableDeclarationNode>();
+		ASTNode var_declaration_node = create_out_of_line_static_member_declaration();
+		VariableDeclarationNode& var_declaration_ref = var_declaration_node.as<VariableDeclarationNode>();
 		DeclarationNode& declaration_ref = var_declaration_ref.declaration();
 
-		// Parse initializer
+		// Parse copy-initialization so both `= expr` and `= {expr}` preserve two-phase lookup:
+		// unqualified function lookup binds at definition time and overload resolution occurs at instantiation.
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
 			definition_lookup_context.is_valid()
@@ -662,7 +651,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.template_params = template_params;
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
-		out_of_line_var.declaration = *var_declaration_node;
+		out_of_line_var.declaration = var_declaration_node;
 		out_of_line_var.initializer = *initializer;
 		out_of_line_var.initializer_position = initializer_position;
 		out_of_line_var.definition_lookup_context = definition_lookup_context;
@@ -690,10 +679,6 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
 		out_of_line_var.declaration = create_out_of_line_static_member_declaration();
-		if (!out_of_line_var.declaration.has_value()) {
-			FLASH_LOG(Parser, Error, "Failed to build variable declaration for static member variable");
-			return std::nullopt;
-		}
 		// No initializer for this case
 		out_of_line_var.template_param_names = template_param_names;
 

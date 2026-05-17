@@ -8,6 +8,8 @@ struct Holder {
 };
 
 template <typename T>
+// Two-phase lookup: unqualified lookup for select_overload happens at template definition
+// time, when only select_overload(long) is visible, so both instantiations evaluate to 17.
 constexpr int Holder<T>::value = select_overload(T{});
 
 constexpr int select_overload(int) {
