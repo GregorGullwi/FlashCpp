@@ -25,5 +25,8 @@ struct Tag {
 }
 
 int main() {
-	return UseBox<N::Tag>::value == 42 ? 0 : 1;
+	if (UseBox<N::Tag>::value != 42) {
+		return 1;
+	}
+	return UseBox<int>::value == 7 ? 0 : 2;
 }

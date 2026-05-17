@@ -512,6 +512,8 @@ struct StructTypeInfo {
 		for (auto& static_member : static_members) {
 			if (static_member.name == member_name) {
 				static_member.initializer = initializer;
+				// Metadata is optional because some update paths only have initializer AST
+				// while replay-capable paths also carry declaration/save-handle state.
 				if (declaration.has_value()) {
 					static_member.setDeclaration(*declaration);
 				}
