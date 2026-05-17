@@ -50,6 +50,21 @@ struct ResolvedFunctionQueryResult {
 	}
 };
 
+struct TypeSpecifierQueryResult {
+	enum class State : uint8_t {
+		NotYetAnalyzed,
+		AnalyzedAbsent,
+		Available,
+	};
+
+	State state = State::NotYetAnalyzed;
+	std::optional<TypeSpecifierNode> type;
+
+	bool hasValue() const {
+		return state == State::Available && type.has_value();
+	}
+};
+
 class ParserSemanticServices final {
 public:
 	ParserSemanticServices() = delete;
@@ -58,6 +73,7 @@ public:
 	size_t normalizePendingSemanticRoots();
 
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	TypeSpecifierQueryResult getOverloadResolutionArgTypeQuery(const ASTNode& arg) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg) const;
 
 	ResolvedFunctionQueryResult getResolvedOpCallQuery(const void* key) const;
@@ -144,6 +160,7 @@ public:
 	// Build the type/category view used specifically for overload-resolution arguments.
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
 	// such as prvalue member access becoming an xvalue.
+	TypeSpecifierQueryResult getOverloadResolutionArgTypeQuery(const ASTNode& arg) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg);
 
 	enum class StructuredBindingDecompositionKind : uint8_t {
@@ -381,6 +398,9 @@ private:
 	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
 	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
 	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
+	const void* getOverloadResolutionArgQueryKey(const ASTNode& arg) const;
+	void markOverloadResolutionArgQueryAnalyzed(const ASTNode& arg);
+	void cacheOverloadResolutionArgType(const ASTNode& arg, const TypeSpecifierNode& type);
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(
 		const ASTNode& arg,
 		CanonicalTypeId* inferred_type_id = nullptr);
@@ -587,6 +607,7 @@ private:
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
 	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
+	std::unordered_set<const void*> analyzed_overload_resolution_arg_queries_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;
 	std::unordered_map<const StructuredBindingNode*, StructuredBindingPlan> structured_binding_plans_;

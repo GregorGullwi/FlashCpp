@@ -1731,6 +1731,40 @@ TEST_CASE("SemanticAnalysis:ResolvedDirectCallQueryTracksAnalysisState") {
 	CHECK(after_run.function->decl_node().identifier_token().value() == "foo"sv);
 }
 
+TEST_CASE("SemanticAnalysis:OverloadResolutionArgTypeQueryTracksAnalysisState") {
+	std::string code = R"(
+		int bar(int x) { return x; }
+		int main() { return bar(1); }
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_overload_resolution_arg_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+	if (parse_result.is_error()) {
+		return;
+	}
+
+	const CallExprNode* call_expr = findMainReturnCallExpr(parser);
+	REQUIRE(call_expr != nullptr);
+	REQUIRE(call_expr->arguments().size() == 1);
+	const ASTNode& arg_expr = call_expr->arguments()[0];
+
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	TypeSpecifierQueryResult before_run = parser_services.getOverloadResolutionArgTypeQuery(arg_expr);
+	CHECK(before_run.state == TypeSpecifierQueryResult::State::NotYetAnalyzed);
+	CHECK(!before_run.type.has_value());
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	TypeSpecifierQueryResult after_run = sema.parserSemanticServices().getOverloadResolutionArgTypeQuery(arg_expr);
+	CHECK(after_run.state == TypeSpecifierQueryResult::State::Available);
+	REQUIRE(after_run.type.has_value());
+	CHECK(after_run.type->type() == TypeCategory::Int);
+}
+
 TEST_CASE("Constructor with no parameters") {
 	run_test_from_file("test_constructor_no_params.cpp", "Constructor with no parameters", false);
 }

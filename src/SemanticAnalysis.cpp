@@ -1406,6 +1406,10 @@ std::optional<TypeSpecifierNode> ParserSemanticServices::getExpressionType(const
 	return owner_->getExpressionType(node);
 }
 
+TypeSpecifierQueryResult ParserSemanticServices::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
+	return owner_->getOverloadResolutionArgTypeQuery(arg);
+}
+
 std::optional<TypeSpecifierNode> ParserSemanticServices::getOverloadResolutionArgType(const ASTNode& arg) const {
 	requireParserSemanticServicesAttachment(*owner_, "getOverloadResolutionArgType");
 	return owner_->getOverloadResolutionArgType(arg);
@@ -3915,24 +3919,57 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getTernaryResultType(const Te
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
+	if (TypeSpecifierQueryResult cached = getOverloadResolutionArgTypeQuery(arg); cached.hasValue()) {
+		return cached.type;
+	}
 	if (arg.is<ExpressionNode>()) {
-		const void* key = getExpressionKey(arg);
-		auto it = overload_resolution_arg_types_.find(key);
-		if (it != overload_resolution_arg_types_.end()) {
-			return it->second;
-		}
-
 		if (auto slot_backed_type = getExpressionType(arg); slot_backed_type.has_value()) {
-			overload_resolution_arg_types_.emplace(key, *slot_backed_type);
+			cacheOverloadResolutionArgType(arg, *slot_backed_type);
 			return slot_backed_type;
 		}
 	}
 	auto result = buildOverloadResolutionArgType(arg, nullptr);
-	if (result.has_value() && arg.is<ExpressionNode>()) {
-		const void* key = getExpressionKey(arg);
-		overload_resolution_arg_types_.emplace(key, *result);
+	if (result.has_value()) {
+		cacheOverloadResolutionArgType(arg, *result);
 	}
 	return result;
+}
+
+const void* SemanticAnalysis::getOverloadResolutionArgQueryKey(const ASTNode& arg) const {
+	if (!arg.is<ExpressionNode>()) {
+		return nullptr;
+	}
+	return getExpressionKey(arg);
+}
+
+void SemanticAnalysis::markOverloadResolutionArgQueryAnalyzed(const ASTNode& arg) {
+	if (const void* key = getOverloadResolutionArgQueryKey(arg); key != nullptr) {
+		analyzed_overload_resolution_arg_queries_.insert(key);
+	}
+}
+
+void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg, const TypeSpecifierNode& type) {
+	if (const void* key = getOverloadResolutionArgQueryKey(arg); key != nullptr) {
+		overload_resolution_arg_types_[key] = type;
+	}
+}
+
+TypeSpecifierQueryResult SemanticAnalysis::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
+	if (!arg.is<ExpressionNode>()) {
+		if (auto type = getExpressionType(arg); type.has_value()) {
+			return {TypeSpecifierQueryResult::State::Available, type};
+		}
+		return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
+	}
+
+	const void* key = getOverloadResolutionArgQueryKey(arg);
+	if (auto it = overload_resolution_arg_types_.find(key); it != overload_resolution_arg_types_.end()) {
+		return {TypeSpecifierQueryResult::State::Available, it->second};
+	}
+	if (analyzed_overload_resolution_arg_queries_.count(key) > 0) {
+		return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
+	}
+	return {TypeSpecifierQueryResult::State::NotYetAnalyzed, std::nullopt};
 }
 
 ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) {
@@ -5357,6 +5394,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(
 	const ASTNode& arg,
 	CanonicalTypeId* inferred_type_id) {
+	markOverloadResolutionArgQueryAnalyzed(arg);
+
 	auto applyExpressionValueCategory = [this, &arg](TypeSpecifierNode& type) {
 		if (!arg.is<ExpressionNode>()) {
 			return;
@@ -5376,9 +5415,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		}
 	};
 	auto storeArgType = [this, &arg](const TypeSpecifierNode& type) {
-		if (arg.is<ExpressionNode>()) {
-			overload_resolution_arg_types_[getExpressionKey(arg)] = type;
-		}
+		cacheOverloadResolutionArgType(arg, type);
 	};
 
 	if (arg.is<ExpressionNode>()) {
