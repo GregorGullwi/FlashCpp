@@ -451,11 +451,8 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 										"Codegen-side return conversion-operator fallback should not run: "
 										"sema must annotate struct-to-non-struct return conversions");
 								} else {
-									if (sema_normalized_current_function_) {
-										throw InternalError(
-											"sema-normalized return lowering should not require struct-without-conversion-operator fallback");
-									}
-									operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+									throw InternalError(
+										"sema-normalized return lowering should not require struct-without-conversion-operator fallback");
 								}
 							}
 						} else {
