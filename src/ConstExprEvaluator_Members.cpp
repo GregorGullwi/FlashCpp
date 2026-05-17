@@ -4306,22 +4306,22 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	for (const ASTNode& elem_node : ilist_node.elements()) {
 		backing_init_list.add_initializer(elem_node);
 	}
-	EvalResult backing_array = materialize_array_value(
+	EvalResult materialized_array = materialize_array_value(
 		element_type_spec.type_index(),
 		backing_init_list,
 		context,
 		&bindings);
-	if (!backing_array.success()) {
-		return backing_array;
+	if (!materialized_array.success()) {
+		return materialized_array;
 	}
-	std::vector<EvalResult> elements = backing_array.array_elements;
-	if (elements.empty() && !backing_array.array_values.empty()) {
-		elements.reserve(backing_array.array_values.size());
+	EvalResult backing_array = std::move(materialized_array);
+	if (backing_array.array_elements.empty() && !backing_array.array_values.empty()) {
+		backing_array.array_elements.reserve(backing_array.array_values.size());
 		for (int64_t value : backing_array.array_values) {
-			elements.push_back(EvalResult::from_int(value));
+			backing_array.array_elements.push_back(EvalResult::from_int(value));
 		}
 	}
-	const size_t n = elements.size();
+	const size_t n = backing_array.array_elements.size();
 
 	// Step 2: allocate a synthetic backing-array key using a dedicated counter so that
 	// @ilist_N names never share the same numeric space as @new_N heap allocations.
@@ -4331,9 +4331,6 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	// getStringView() returns a view into the interned string table which outlives
 	// the evaluation, so this view is a stable key for the local binding map.
 	std::string_view backing_key = StringTable::getStringView(backing_handle);
-
-	// Build the backing array EvalResult.
-	backing_array.array_elements = elements;
 
 	// Store backing array in mutable_bindings so that deref_pointer_with_bindings can
 	// find it by name during pointer dereference operations.
@@ -4346,10 +4343,10 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	// Step 3: build begin/end pointers with full snapshot so pointer arithmetic and
 	// deref work even in a different scope.
 	EvalResult begin_ptr = EvalResult::from_pointer(backing_handle, 0);
-	begin_ptr.pointer_value_snapshot = elements;
+	begin_ptr.pointer_value_snapshot = backing_array.array_elements;
 
 	EvalResult end_ptr = EvalResult::from_pointer(backing_handle, static_cast<int64_t>(n));
-	end_ptr.pointer_value_snapshot = elements;
+	end_ptr.pointer_value_snapshot = backing_array.array_elements;
 
 	EvalResult int_size = EvalResult::from_uint(static_cast<unsigned long long>(n));
 
