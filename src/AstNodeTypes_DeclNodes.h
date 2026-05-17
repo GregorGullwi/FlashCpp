@@ -505,6 +505,26 @@ struct StructTypeInfo {
 		return false;
 	}
 
+	bool updateStaticMemberInitializerWithMetadata(StringHandle member_name,
+												   std::optional<ASTNode> initializer,
+												   std::optional<ASTNode> declaration,
+												   std::optional<SaveHandle> initializer_position) {
+		for (auto& static_member : static_members) {
+			if (static_member.name == member_name) {
+				static_member.initializer = initializer;
+				if (declaration.has_value()) {
+					static_member.setDeclaration(*declaration);
+				}
+				if (initializer_position.has_value()) {
+					static_member.setInitializerPosition(*initializer_position);
+				}
+				static_member.normalized_init.reset();
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Find member recursively through base classes
 	std::optional<StructMember> findMemberRecursive(StringHandle member_name) const;
 

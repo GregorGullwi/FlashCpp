@@ -10101,7 +10101,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				// Member already exists - update the initializer with the out-of-line definition
 				if (substituted_initializer.has_value()) {
-					struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
+					struct_info_ptr->updateStaticMemberInitializerWithMetadata(
+						static_member_name_handle,
+						substituted_initializer,
+						out_of_line_var.declaration,
+						out_of_line_var.initializer_position);
 					FLASH_LOG(Templates, Debug, "Updated out-of-line static member initializer for ", out_of_line_var.member_name,
 							  " in instantiated struct ", instantiated_name);
 				}
@@ -10378,7 +10382,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (existing_member != nullptr) {
 					// Member already exists - update the initializer if we have a substituted one
 					if (substituted_initializer.has_value()) {
-						struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
+						struct_info_ptr->updateStaticMemberInitializerWithMetadata(
+							static_member_name_handle,
+							substituted_initializer,
+							static_member.declaration,
+							static_member.initializer_position);
 					}
 					// Skip adding duplicate
 				} else {

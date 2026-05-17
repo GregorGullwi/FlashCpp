@@ -1247,7 +1247,11 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	// Update the existing static member with the computed initializer
 	// (The member was already added during template instantiation with std::nullopt initializer)
-	if (!struct_info->updateStaticMemberInitializer(lazy_info.member_name, substituted_initializer)) {
+	if (!struct_info->updateStaticMemberInitializerWithMetadata(
+			lazy_info.member_name,
+			substituted_initializer,
+			lazy_info.declaration,
+			lazy_info.initializer_position)) {
 		// Member doesn't exist yet - add it (shouldn't normally happen with lazy instantiation)
 		struct_info->addStaticMember(
 			lazy_info.member_name,
