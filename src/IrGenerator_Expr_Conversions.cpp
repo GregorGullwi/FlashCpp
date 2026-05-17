@@ -2090,8 +2090,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (operand_pointer_depth == 0) {
 			std::optional<TypeSpecifierNode> operand_type_opt;
 			operand_type_opt = sema_.getExpressionType(unaryOperatorNode.get_operand());
-			if (!operand_type_opt.has_value() && parser_) {
-				operand_type_opt = parser_->get_expression_type(unaryOperatorNode.get_operand());
+			if (!operand_type_opt.has_value()) {
+				operand_type_opt = parser_.get_expression_type(unaryOperatorNode.get_operand());
 			}
 			if (operand_type_opt.has_value()) {
 				applyPointerTypeInfo(*operand_type_opt);
@@ -2121,8 +2121,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			if (!object_type_opt.has_value()) {
 				object_type_opt = sema_.getExpressionType(member_access.object());
 			}
-			if (!object_type_opt.has_value() && parser_) {
-				object_type_opt = parser_->get_expression_type(member_access.object());
+			if (!object_type_opt.has_value()) {
+				object_type_opt = parser_.get_expression_type(member_access.object());
 			}
 			if (object_type_opt.has_value() &&
 				isIrStructType(toIrType(object_type_opt->type())) &&
@@ -2266,12 +2266,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			return true;
 		}
 
-		ConstExpr::EvaluationContext ctx(symbol_table);
+		ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 		if (global_symbol_table_) {
 			ctx.global_symbols = global_symbol_table_;
 		}
-		ctx.parser = parser_;
-		ctx.sema = &sema_;
 
 		auto eval_result = ConstExpr::Evaluator::evaluate(*func_decl.noexcept_expression(), ctx);
 		return eval_result.success() && eval_result.as_bool();

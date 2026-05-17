@@ -172,11 +172,7 @@ std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
 	auto tryParserFallback = [&](const ASTNode& fallback_arg) -> std::optional<TypeSpecifierNode> {
-		if (!parser_) {
-			return std::nullopt;
-		}
-
-		auto parser_type = parser_->get_expression_type(fallback_arg);
+		auto parser_type = parser_.get_expression_type(fallback_arg);
 		if (parser_type.has_value()) {
 			adjust_argument_type_for_overload_resolution(fallback_arg, *parser_type);
 		}
@@ -650,7 +646,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			return (it != global_variable_names_.end()) ? it->second : reloc_simple_name_handle;
 		};
 		auto makeStaticStorageEvalContext = [&]() {
-			ConstExpr::EvaluationContext ctx(is_static_local ? symbol_table : gSymbolTable);
+			ConstExpr::EvaluationContext ctx = makeEvalContext(is_static_local ? symbol_table : gSymbolTable);
 			if (is_static_local && global_symbol_table_) {
 				ctx.global_symbols = global_symbol_table_;
 			}
@@ -661,8 +657,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// bodies are available for non-constexpr static-storage variables.
 				ctx.storage_duration = ConstExpr::StorageDuration::Static;
 			}
-			ctx.parser = parser_;
-			ctx.sema = &sema_;
 			return ctx;
 		};
 		auto shouldRejectStaticStorageEvalFailure = [&](ConstExpr::EvalErrorType error_type) {
@@ -723,9 +717,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						// Calculate total element count as product of all dimensions
 					op.element_count = 1;
 					for (const auto& dim_expr : dims) {
-						ConstExpr::EvaluationContext ctx(gSymbolTable);
-						ctx.parser = parser_;
-						ctx.sema = &sema_;
+						ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 						if (eval_result.success() && eval_result.as_int() > 0) {
 							op.element_count *= static_cast<size_t>(eval_result.as_int());
@@ -944,9 +936,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						missing_ctor_for_nonaggregate = true;
 					}
 					if (matching_ctor) {
-						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-						eval_ctx.parser = parser_;
-						eval_ctx.sema = &sema_;
+						ConstExpr::EvaluationContext eval_ctx = makeEvalContext(gSymbolTable);
 						std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
 						eval_ctx.local_bindings = &param_bindings;
 						bool args_ok = true;
@@ -1318,14 +1308,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 		if (is_function_call) {
 				// Try to evaluate the function call at compile time
-			ConstExpr::EvaluationContext ctx(symbol_table);
+			ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 			if (global_symbol_table_) {
 				ctx.global_symbols = global_symbol_table_;
 			}
-				// parser_ is always non-null when IR generation is active; EvaluationContext
-				// stores it as a pointer and guards all uses with nullptr checks.
-			ctx.parser = parser_;
-			ctx.sema = &sema_;
 			auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 
 			if (eval_result.success()) {
@@ -1796,9 +1782,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									} else {
 										// Use default member initializer if available, otherwise zero-initialize
 										if (member.default_initializer.has_value()) {
-											ConstExpr::EvaluationContext ctx(gSymbolTable);
-											ctx.parser = parser_;
-											ctx.sema = &sema_;
+											ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 											auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 											if (eval_result.success()) {
 												if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
@@ -3019,9 +3003,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					const DeclarationNode& decl = symbol->as<DeclarationNode>();
 					if (decl.is_array() && decl.array_size().has_value()) {
 							// Evaluate array size
-						ConstExpr::EvaluationContext ctx(gSymbolTable);
-						ctx.parser = parser_;
-						ctx.sema = &sema_;
+						ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
 						if (eval_result.success()) {
 							is_array = true;
@@ -3041,9 +3023,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					const DeclarationNode& decl = var_decl.declaration();
 					if (decl.is_array() && decl.array_size().has_value()) {
 							// Evaluate array size
-						ConstExpr::EvaluationContext ctx(gSymbolTable);
-						ctx.parser = parser_;
-						ctx.sema = &sema_;
+						ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 						auto eval_result = ConstExpr::Evaluator::evaluate(*decl.array_size(), ctx);
 						if (eval_result.success()) {
 							is_array = true;

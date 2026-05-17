@@ -1800,11 +1800,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (auto sema_type_spec = sema_.getOverloadResolutionArgType(operand)) {
 				return sema_type_spec;
 			}
-			if (!parser_) {
-				return std::nullopt;
-			}
 
-			auto parser_type_spec = parser_->get_expression_type(operand);
+			auto parser_type_spec = parser_.get_expression_type(operand);
 			if (parser_type_spec.has_value()) {
 				adjust_argument_type_for_overload_resolution(operand, *parser_type_spec);
 			}

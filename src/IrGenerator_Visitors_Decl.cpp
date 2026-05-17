@@ -358,12 +358,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	{
 		bool is_truly_noexcept = node.is_noexcept();
 		if (is_truly_noexcept && node.has_noexcept_expression() && !node.is_implicit()) {
-			ConstExpr::EvaluationContext ctx(symbol_table);
+			ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 			if (global_symbol_table_) {
 				ctx.global_symbols = global_symbol_table_;
 			}
-			ctx.parser = parser_;
-			ctx.sema = &sema_;
 
 			auto eval_result = ConstExpr::Evaluator::evaluate(*node.noexcept_expression(), ctx);
 			is_truly_noexcept = eval_result.success() && eval_result.as_bool();
@@ -2382,9 +2380,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									bitfield_offsets.insert(member.offset);
 									unsigned long long val = 0;
 									if (member.default_initializer.has_value()) {
-										ConstExpr::EvaluationContext ctx(gSymbolTable);
-										ctx.parser = parser_;
-										ctx.sema = &sema_;
+										ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 										auto eval_result = ConstExpr::Evaluator::evaluate(*member.default_initializer, ctx);
 										if (eval_result.success()) {
 											if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {

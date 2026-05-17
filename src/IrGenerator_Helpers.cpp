@@ -102,6 +102,13 @@ void AstToIr::normalizePendingSemanticRoots() {
 	sema_.parserSemanticServices().normalizePendingSemanticRoots();
 }
 
+ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols) const {
+	ConstExpr::EvaluationContext ctx(symbols);
+	ctx.parser = &parser_;
+	ctx.sema = &sema_;
+	return ctx;
+}
+
 void AstToIr::queueDeferredMemberFunctionFromNode(
 	StringHandle struct_name,
 	ASTNode function_node,
