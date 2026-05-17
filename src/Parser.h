@@ -3334,6 +3334,8 @@ private:	 // Resume private methods
 	// Returns the vector of all template overloads if found, nullptr otherwise
 	// Uses depth limit to prevent infinite recursion in malformed input
 	const std::vector<ASTNode>* lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth = 0);
+	StringHandle buildQualifiedMemberNameHandle(StringHandle owner_name, StringHandle member_name) const;
+	std::string_view lookup_direct_member_template_name(StringHandle owner_name, StringHandle member_name) const;
 	// Helper: Resolve an alias/class member-template segment including inherited bases.
 	// Returns the qualified template name to materialize, or empty when not found.
 	std::string_view lookup_inherited_member_template_name(StringHandle struct_name, StringHandle member_name, int depth);

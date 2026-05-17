@@ -773,6 +773,68 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	return nullptr;
 }
 
+StringHandle Parser::buildQualifiedMemberNameHandle(StringHandle owner_name, StringHandle member_name) const {
+	return StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(StringTable::getStringView(owner_name))
+			.append("::")
+			.append(StringTable::getStringView(member_name))
+			.commit());
+}
+
+std::string_view Parser::lookup_direct_member_template_name(
+	StringHandle owner_name,
+	StringHandle member_name) const {
+	auto has_registered_member_template = [&](StringHandle qualified_name) {
+		TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(
+			buildTemplateNameLookupRequest(
+				qualified_name,
+				TemplateNameLookupKind::Qualified,
+				false));
+		return lookup_result.hasAliasTemplate() || lookup_result.hasClassTemplate();
+	};
+
+	StringHandle qualified_member_template_name =
+		buildQualifiedMemberNameHandle(owner_name, member_name);
+	if (has_registered_member_template(qualified_member_template_name)) {
+		return StringTable::getStringView(qualified_member_template_name);
+	}
+
+	auto owner_it = getTypesByNameMap().find(owner_name);
+	const TypeInfo* owner_type_info =
+		owner_it != getTypesByNameMap().end() ? owner_it->second : nullptr;
+	if (owner_type_info == nullptr) {
+		return {};
+	}
+
+	if (auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(owner_name);
+		pattern_name_opt.has_value()) {
+		StringHandle pattern_member_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(*pattern_name_opt)
+				.append("::")
+				.append(StringTable::getStringView(member_name))
+				.commit());
+		if (has_registered_member_template(pattern_member_name)) {
+			return StringTable::getStringView(pattern_member_name);
+		}
+	}
+
+	if (owner_type_info->isTemplateInstantiation()) {
+		StringHandle primary_member_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(StringTable::getStringView(owner_type_info->baseTemplateName()))
+				.append("::")
+				.append(StringTable::getStringView(member_name))
+				.commit());
+		if (has_registered_member_template(primary_member_name)) {
+			return StringTable::getStringView(primary_member_name);
+		}
+	}
+
+	return {};
+}
+
 std::string_view Parser::lookup_inherited_member_template_name(
 	StringHandle struct_name,
 	StringHandle member_name,
@@ -788,65 +850,11 @@ std::string_view Parser::lookup_inherited_member_template_name(
 		return {};
 	}
 
-	auto has_registered_member_template = [&](std::string_view qualified_name) {
-		TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(
-			buildTemplateNameLookupRequest(
-				StringTable::getOrInternStringHandle(qualified_name),
-				TemplateNameLookupKind::Qualified,
-				false));
-		return lookup_result.hasAliasTemplate() || lookup_result.hasClassTemplate();
-	};
-	auto build_qualified_member_name = [&](std::string_view owner_name) {
-		return StringBuilder()
-			.append(owner_name)
-			.append("::")
-			.append(StringTable::getStringView(member_name))
-			.commit();
-	};
-	auto try_lookup_direct_member_template_name =
-		[&](StringHandle owner_handle, const TypeInfo* owner_type_info) -> std::string_view {
-		std::string_view owner_name = StringTable::getStringView(owner_handle);
-		std::string_view qualified_member_template_name =
-			build_qualified_member_name(owner_name);
-		if (has_registered_member_template(qualified_member_template_name)) {
-			return qualified_member_template_name;
-		}
-
-		if (owner_type_info != nullptr) {
-			if (auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(owner_handle);
-				pattern_name_opt.has_value()) {
-				std::string_view pattern_member_name =
-					StringBuilder()
-						.append(*pattern_name_opt)
-						.append("::")
-						.append(StringTable::getStringView(member_name))
-						.commit();
-				if (has_registered_member_template(pattern_member_name)) {
-					return pattern_member_name;
-				}
-			}
-
-			if (owner_type_info->isTemplateInstantiation()) {
-				std::string_view primary_member_name =
-					StringBuilder()
-						.append(StringTable::getStringView(owner_type_info->baseTemplateName()))
-						.append("::")
-						.append(StringTable::getStringView(member_name))
-						.commit();
-				if (has_registered_member_template(primary_member_name)) {
-					return primary_member_name;
-				}
-			}
-		}
-
-		return {};
-	};
-
 	if (auto direct_it = getTypesByNameMap().find(struct_name);
 		direct_it != getTypesByNameMap().end() &&
 		direct_it->second != nullptr) {
 		if (std::string_view direct_name =
-				try_lookup_direct_member_template_name(struct_name, direct_it->second);
+				lookup_direct_member_template_name(struct_name, member_name);
 			!direct_name.empty()) {
 			return direct_name;
 		}
@@ -961,13 +969,6 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 		return findTypeByName(StringTable::getOrInternStringHandle(base_class_name));
 	}
 
-	auto buildQualifiedMemberName = [](std::string_view owner_name, StringHandle member_name_handle) {
-		return StringBuilder()
-			.append(owner_name)
-			.append("::")
-			.append(StringTable::getStringView(member_name_handle))
-			.commit();
-	};
 	auto normalizeResolvedMemberOwner =
 		[&](const TypeInfo*& type_info, std::string_view& owner_name) {
 		const std::string_view resolved_name =
@@ -1036,7 +1037,10 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 		}
 
 		StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
-			buildQualifiedMemberName(current_base_name, member_access.member_name));
+			StringTable::getStringView(
+				buildQualifiedMemberNameHandle(
+					StringTable::getOrInternStringHandle(current_base_name),
+					member_access.member_name)));
 
 		auto alias_it = getTypesByNameMap().find(qualified_member_handle);
 		resolved_type = alias_it != getTypesByNameMap().end() ? alias_it->second : nullptr;

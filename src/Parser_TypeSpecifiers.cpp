@@ -1408,17 +1408,10 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
-					auto buildQualifiedMemberName = [&](std::string_view base_type_name, std::string_view member_name) {
-						return StringBuilder()
-							.append(base_type_name)
-							.append("::")
-							.append(member_name)
-							.commit();
-					};
-
 					auto findOrCreateQualifiedMemberType = [&](std::string_view base_type_name, std::string_view member_name) -> const TypeInfo& {
-						StringHandle qualified_member_handle =
-							StringTable::getOrInternStringHandle(buildQualifiedMemberName(base_type_name, member_name));
+						StringHandle qualified_member_handle = buildQualifiedMemberNameHandle(
+							StringTable::getOrInternStringHandle(base_type_name),
+							StringTable::getOrInternStringHandle(member_name));
 						auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
 						if (member_type_it == getTypesByNameMap().end()) {
 							TypeInfo& placeholder_type = add_empty_type_entry();
@@ -1513,8 +1506,10 @@ ParseResult Parser::parse_type_specifier() {
 								discard_saved_token(scope_pos);
 
 								// Build qualified type name
-								std::string_view qualified_type_name =
-									buildQualifiedMemberName(resolved_instantiated_type_name, member_name);
+								std::string_view qualified_type_name = StringTable::getStringView(
+									buildQualifiedMemberNameHandle(
+										StringTable::getOrInternStringHandle(resolved_instantiated_type_name),
+										member_token.handle()));
 
 								FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias template resolution");
 
