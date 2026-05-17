@@ -112,11 +112,13 @@ Stage 6 progress so far:
 - constexpr member-function materialization lookup/replay now uses a shared parser-owned sema requirement helper: parser-owned contexts throw on missing sema instead of silently skipping sema materialization.
 - parser-owned constexpr sema invariants now route through a single `EvaluationContext::requireParserOwnedSema(...)` helper, and dependent-unqualified call reuse plus member-materialization lookup/replay now consume that shared contract instead of file-local nullable helper variants.
 - `Evaluator::evaluate(...)` now enforces the parser-owned sema invariant at the constexpr entrypoint: parser-owned contexts (`parser != nullptr`) hard-fail immediately when `sema` is missing instead of allowing deeper nullable behavior.
+- parser-owned constexpr/template/substitution `EvaluationContext` setup now goes through a shared `attachParserOwnedSema(Parser&)` helper instead of open-coding paired `parser`/`sema` field assignments at each parser construction site.
+- that parser-side construction-site audit now covers the parser-owned constexpr/template/substitution call families called out in Stage 6.1, reducing drift while `EvaluationContext::sema` remains nullable for standalone/non-parser contexts.
 - `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
 
 Remaining Stage 6 work:
 
-- finish auditing parser-owned constexpr/template/substitution construction sites so `EvaluationContext::sema` can eventually stop being nullable as a field, not just as an enforced parser-owned invariant
+- parser-owned constexpr/template/substitution construction sites now share one attachment path; making `EvaluationContext::sema` non-nullable next requires auditing the remaining standalone and codegen-side construction sites that still intentionally allow a null sema
 - `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites; making it non-nullable requires auditing all non-parser construction sites that currently do not set sema
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
