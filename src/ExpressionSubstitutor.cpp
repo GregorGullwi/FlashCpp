@@ -1958,22 +1958,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					owner_subst_it != param_map_.end()) {
 					if (const TypeInfo* owner_type_info =
 							tryGetTypeInfo(owner_subst_it->second.type_index)) {
-						FLASH_LOG(Templates, Debug, "  [DIAG-TParam] owner='", owner_name,
-								  "' -> TypeInfo name='", StringTable::getStringView(owner_type_info->name()),
-								  "', cat=", static_cast<int>(owner_type_info->category()),
-								  ", isStruct=", owner_type_info->isStruct(),
-								  ", hasStructInfo=", (owner_type_info->getStructInfo() != nullptr),
-								  ", isTemplateInst=", owner_type_info->isTemplateInstantiation());
 						materialized_owner_name =
 							StringTable::getStringView(owner_type_info->name());
-					} else {
-						FLASH_LOG(Templates, Debug, "  [DIAG-TParam] owner='", owner_name,
-								  "' -> tryGetTypeInfo returned nullptr for type_index=",
-								  owner_subst_it->second.type_index);
 					}
-				} else {
-					FLASH_LOG(Templates, Debug, "  [DIAG-TParam] owner='", owner_name,
-							  "' NOT found in param_map_");
 				}
 				break;
 			}
@@ -2167,6 +2154,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			// For a qualified-id such as A::value in a default NTTP, failing to look
 			// through the TypeIndex keeps the name as the dependent spelling "A::value"
 			// and the constexpr evaluator quite correctly diagnoses it as undefined.
+			// Resolution order:
+			// 1) resolved alias terminal TypeInfo
+			// 2) resolved alias TypeIndex lookup
+			// 3) original TypeIndex lookup
 			const auto resolve_concrete_owner_type_info = [&](const TemplateTypeArg& arg) -> const TypeInfo* {
 				if (!arg.type_index.is_valid()) {
 					return nullptr;
@@ -2222,14 +2213,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			// (e.g., !type_index.is_valid() due to incomplete resolution, or base_type is Template).
 			// Return as-is rather than falling through to $/_-based separator logic which
 			// would incorrectly parse the namespace name as a mangled template instantiation.
-			if (const TypeInfo* dbg_ti = tryGetTypeInfo(concrete_type.type_index)) {
-				FLASH_LOG(Templates, Debug, "  [DIAG] TypeInfo at index: name='",
-						  StringTable::getStringView(dbg_ti->name()), "', category=",
-						  static_cast<int>(dbg_ti->category()), ", isStruct=", dbg_ti->isStruct(),
-						  ", hasStructInfo=", (dbg_ti->getStructInfo() != nullptr),
-						  ", isTemplateInst=", dbg_ti->isTemplateInstantiation(),
-						  ", isDependentPlaceholder=", dbg_ti->isDependentPlaceholder());
-			}
 			FLASH_LOG(Templates, Debug, "  Template parameter '", ns_name,
 					  "' found but concrete type is not a resolvable struct (base_type=",
 					  static_cast<int>(concrete_type.typeEnum()), ", type_index=", concrete_type.type_index,

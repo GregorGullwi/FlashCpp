@@ -5033,12 +5033,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		return EvalResult::error("Cannot evaluate qualified identifier: no symbol table provided");
 	}
 
-	// Debug: show when this function is called for ratio-related qualified IDs
-	if (qualified_id.full_name().find("_R1") != std::string_view::npos ||
-		qualified_id.full_name().find("_R2") != std::string_view::npos) {
-		FLASH_LOG(ConstExpr, Debug, "[DIAG-EvalQualId] called for '", qualified_id.full_name(), "'");
-	}
-
 	// Try to look up the qualified name
 	auto symbol_opt = context.symbols->lookup_qualified(qualified_id.qualifiedIdentifier());
 	if (!symbol_opt.has_value()) {
@@ -5051,24 +5045,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			ns_handle.isValid() &&
 			!ns_handle.isGlobal() &&
 			context.symbols->has_namespace_symbols(ns_handle);
-
-		if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
-			FLASH_LOG(ConstExpr, Debug, "ns_handle.isGlobal()=", ns_handle.isGlobal(),
-					  ", qualified_id='", qualified_id.full_name(), "'");
-			FLASH_LOG(ConstExpr, Debug, "  [DIAG-Eval] context.template_param_names.size()=", context.template_param_names.size());
-			for (size_t _i = 0; _i < context.template_param_names.size() && _i < context.template_args.size(); ++_i) {
-				const TemplateTypeArg& _arg = context.template_args[_i];
-				FLASH_LOG(ConstExpr, Debug, "    param[", _i, "]=", context.template_param_names[_i],
-						  " -> is_value=", _arg.is_value, ", type_index=", _arg.type_index,
-						  ", category=", static_cast<int>(_arg.typeEnum()));
-				if (!_arg.is_value && _arg.type_index.is_valid()) {
-					if (const TypeInfo* _ti = tryGetTypeInfo(_arg.type_index)) {
-						FLASH_LOG(ConstExpr, Debug, "      TypeInfo: name='", StringTable::getStringView(_ti->name()),
-								  "', isStruct=", _ti->isStruct(), ", hasStructInfo=", (_ti->getStructInfo() != nullptr));
-					}
-				}
-			}
-		}
 
 		if (!ns_handle.isGlobal()) {
 			struct_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);

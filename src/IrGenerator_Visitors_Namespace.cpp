@@ -455,6 +455,9 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 										throw InternalError(
 											"sema-normalized return lowering should not require struct-without-conversion-operator fallback");
 									}
+									// Legacy parser-only paths can still reach this conversion fallback
+									// before sema normalization is available. Keep behavior unchanged
+									// for those paths while enforcing hard-fail for sema-normalized code.
 									operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 								}
 							}

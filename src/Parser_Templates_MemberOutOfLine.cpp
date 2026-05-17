@@ -612,6 +612,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 				? &definition_lookup_context
 				: current_template_definition_lookup_context_);
 
+		// Use expression parsing here (not copy-initialization) so dependent and
+		// qualified member expressions are preserved for template replay/substitution.
 		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_result.is_error() || !init_result.node().has_value()) {
 			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");
