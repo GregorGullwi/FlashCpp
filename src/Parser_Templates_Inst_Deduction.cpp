@@ -732,10 +732,17 @@ bool Parser::tryAppendDefaultTemplateArg(
 		}
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr, eval_ctx);
 		if (!eval_result.success()) {
+			// HardUse normally requires a concrete value, but libstdc++ ratio defaults can
+			// remain template-dependent bool expressions after substitution. Preserve them
+			// as dependent bool NTTPs so downstream substitution can continue.
+			const bool allow_dependent_bool_fallback =
+				failure_policy == TemplateSubstitutionFailurePolicy::HardUse &&
+				param.has_type() &&
+				param.type_specifier_node().type() == TypeCategory::Bool;
 			if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
-				failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly) {
+				(failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly || allow_dependent_bool_fallback)) {
 				if (!param.has_type()) {
-					throw InternalError("ShapeOnly non-type template parameter default requires declared type");
+					throw InternalError("Dependent non-type template parameter default requires declared type");
 				}
 				TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(
 					param.nameHandle(),
