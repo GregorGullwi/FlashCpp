@@ -857,6 +857,10 @@ EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& tar
 // Main evaluation entry point
 // Evaluates a constant expression and returns the result
 EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& context) {
+	if (context.parser != nullptr && context.sema == nullptr) {
+		throw InternalError("ConstExpr evaluate requires sema-backed EvaluationContext when parser is set");
+	}
+
 	// Check complexity limit
 	if (++context.step_count > context.max_steps) {
 		return EvalResult::error("Constexpr evaluation exceeded complexity limit (infinite loop?)");
