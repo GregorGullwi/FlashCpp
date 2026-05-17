@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-16 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
+**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -224,6 +224,12 @@ focused investigations.
     metadata (`declaration` + `initializer_position`) across `addStaticMember`
     transfer, extending replay-first substitution coverage
     (`test_member_template_partial_spec_static_member_replay_ret0.cpp`).
+    **New in this slice (2026-05-17, follow-up):** out-of-line template static
+    member variable definitions now capture declaration AST at parse time and
+    preserve declaration + initializer-position metadata through concretization
+    and update paths, so replay-first substitution remains available on those
+    static members instead of dropping to AST-only substitution when metadata is
+    missing in transfer paths.
     Remaining gaps are static-member concretization paths where replay metadata
     is never captured at parse time, so AST-only fallback substitution must
     remain.

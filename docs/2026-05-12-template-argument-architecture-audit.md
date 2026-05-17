@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-16 (dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
+**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -118,6 +118,12 @@ infrastructure tracks. The branch now includes:
   when ordinary overload sets are empty. Regression
   `test_template_two_phase_dependent_adl_function_template_poi_ret0.cpp`
   covers the case.
+- **out-of-line template static-member replay metadata propagation (2026-05-17):**
+  out-of-line static member variable definitions now capture declaration AST at
+  parse time and preserve declaration + initializer-position metadata through
+  registry and concretization paths, so replay-first substitution can stay in
+  two-phase lookup mode instead of dropping to AST-only substitution when
+  metadata transfer was previously incomplete.
 - **two-phase lookup extended to member function template bodies (2026-05-15):**
   `instantiate_member_function_template_core` in
   `Parser_Templates_Inst_MemberFunc.cpp` now sets `phase1_cutoff_line_`,
@@ -476,6 +482,8 @@ single parser bug; it is the absence of one semantic template system that owns:
    Extend the existing non-dependent function-call records to qualified names,
    member-template calls, static initializers, dependent bases, unknown
    specializations, and expression qualified-ids.
+   - **Next:** extend replay metadata coverage to remaining non-out-of-line
+     static-member update paths that still rely on initializer-only updates.
 
 3. **Complete remaining structural NTTP values**
    Add parser/constexpr support for non-null member-pointer, floating-point, and

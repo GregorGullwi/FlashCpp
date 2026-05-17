@@ -45,6 +45,7 @@ struct OutOfLineMemberVariable {
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., <typename T>)
 	StringHandle member_name; // Name of the static member variable
 	ASTNode type_node; // Type of the variable (TypeSpecifierNode)
+	std::optional<ASTNode> declaration; // Declaration node for replay-based initializer parsing
 	std::optional<ASTNode> initializer; // Initializer expression
 	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' for instantiation-time reparse
 	TemplateDefinitionLookupContext definition_lookup_context; // Definition-context lookup boundary for two-phase lookup

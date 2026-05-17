@@ -10036,7 +10036,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
 		if (out_of_line_var.initializer.has_value()) {
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
-				if (!out_of_line_var.initializer_position.has_value()) {
+				auto try_get_declaration_node_mut = [](ASTNode& node) -> DeclarationNode* {
+					if (node.is<DeclarationNode>()) {
+						return &node.as<DeclarationNode>();
+					}
+					if (node.is<VariableDeclarationNode>()) {
+						return &node.as<VariableDeclarationNode>().declaration();
+					}
+					return nullptr;
+				};
+
+				if (!out_of_line_var.initializer_position.has_value() ||
+					!out_of_line_var.declaration.has_value()) {
 					return false;
 				}
 
@@ -10070,12 +10081,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setCurrentTemplateParamNames(out_of_line_var.template_param_names);
 
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
-				if (!consume("="_tok)) {
+
+				ASTNode declaration_copy = *out_of_line_var.declaration;
+				DeclarationNode* declaration_copy_ptr = try_get_declaration_node_mut(declaration_copy);
+				if (declaration_copy_ptr == nullptr) {
 					return false;
 				}
-				ParseResult init_parse_result =
-					parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (init_parse_result.is_error() || !init_parse_result.node().has_value()) {
+				DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;
+				TypeSpecifierNode& type_spec = declaration_copy_ref.type_specifier_node();
+
+				std::optional<ASTNode> reparsed_initializer;
+				if (peek() == "="_tok) {
+					reparsed_initializer = parse_copy_initialization(
+						declaration_copy_ref,
+						type_spec);
+				} else if (peek() == "{"_tok) {
+					ParseResult init_parse_result = parse_brace_initializer(type_spec);
+					if (!init_parse_result.is_error() && init_parse_result.node().has_value()) {
+						reparsed_initializer = *init_parse_result.node();
+					}
+				}
+
+				if (!reparsed_initializer.has_value()) {
 					return false;
 				}
 				if (!consume(";"_tok)) {
@@ -10083,7 +10110,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				substituted_initializer = substituteTemplateParameters(
-					*init_parse_result.node(),
+					*reparsed_initializer,
 					substitution_context);
 				return true;
 			};
@@ -10114,8 +10141,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Check if this static member was already added (e.g., from primary template processing)
 			// If it exists, update the initializer; otherwise add a new member
-			const StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
+			StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
 			if (existing_member != nullptr) {
+				if (!existing_member->declaration.has_value() && out_of_line_var.declaration.has_value()) {
+					existing_member->setDeclaration(*out_of_line_var.declaration);
+				}
+				if (!existing_member->initializer_position.has_value() &&
+					out_of_line_var.initializer_position.has_value()) {
+					existing_member->setInitializerPosition(*out_of_line_var.initializer_position);
+				}
 				// Member already exists - update the initializer with the out-of-line definition
 				if (substituted_initializer.has_value()) {
 					struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
@@ -10142,8 +10176,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					/* ptr_depth */ static_cast<int>(type_spec.pointer_depth()),
 					is_array,
 					array_dimensions,
-					/* declaration */ std::nullopt,
-					/* initializer_position */ std::nullopt,
+					out_of_line_var.declaration,
+					out_of_line_var.initializer_position,
 					/* is_constexpr */ false);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
