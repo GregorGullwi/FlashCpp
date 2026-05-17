@@ -1,3 +1,5 @@
+// Regression: static-member initializer replay in partial specializations must preserve
+// definition-context lookup (friend ADL) during two-phase template instantiation.
 constexpr int adl_pick(long) {
 	return 1;
 }

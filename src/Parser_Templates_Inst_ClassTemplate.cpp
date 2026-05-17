@@ -4231,15 +4231,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				return nullptr;
 			};
-			auto try_get_declaration_node_mut = [](ASTNode& node) -> DeclarationNode* {
-				if (node.is<DeclarationNode>()) {
-					return &node.as<DeclarationNode>();
-				}
-				if (node.is<VariableDeclarationNode>()) {
-					return &node.as<VariableDeclarationNode>().declaration();
-				}
-				return nullptr;
-			};
 			auto substitute_in_class_static_initializer_replay_first =
 				[&](
 					const auto& static_member,
@@ -4272,7 +4263,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							definition_lookup_context.definition_file_index =
 								declaration->identifier_token().file_index();
 							definition_lookup_context.definition_namespace =
-								struct_info->getNamespaceHandle();
+								spec_decl_ns;
 							definition_lookup_context.current_instantiation_name =
 								instantiated_name;
 							substitution_context.definition_lookup_context =
@@ -4296,32 +4287,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 							restore_lexer_position_only(*static_member.initializer_position);
 
-							ASTNode declaration_copy = *static_member.declaration;
-							DeclarationNode* declaration_copy_ptr =
-								try_get_declaration_node_mut(declaration_copy);
-							if (declaration_copy_ptr != nullptr) {
-								DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;
-								TypeSpecifierNode& type_spec =
-									declaration_copy_ref.type_specifier_node();
+							DeclarationNode declaration_copy = *declaration;
+							TypeSpecifierNode& type_spec =
+								declaration_copy.type_specifier_node();
 
-								std::optional<ASTNode> reparsed_initializer;
-								if (peek() == "="_tok) {
-									reparsed_initializer = parse_copy_initialization(
-										declaration_copy_ref,
-										type_spec);
-								} else if (peek() == "{"_tok) {
-									ParseResult init_result = parse_brace_initializer(type_spec);
-									if (!init_result.is_error() &&
-										init_result.node().has_value()) {
-										reparsed_initializer = *init_result.node();
-									}
+							std::optional<ASTNode> reparsed_initializer;
+							if (peek() == "="_tok) {
+								reparsed_initializer = parse_copy_initialization(
+									declaration_copy,
+									type_spec);
+							} else if (peek() == "{"_tok) {
+								ParseResult init_result = parse_brace_initializer(type_spec);
+								if (!init_result.is_error() &&
+									init_result.node().has_value()) {
+									reparsed_initializer = *init_result.node();
 								}
+							}
 
-								if (reparsed_initializer.has_value()) {
-									substituted_initializer = substituteTemplateParameters(
-										*reparsed_initializer,
-										substitution_context);
-								}
+							if (reparsed_initializer.has_value()) {
+								substituted_initializer = substituteTemplateParameters(
+									*reparsed_initializer,
+									substitution_context);
 							}
 						}
 					}
@@ -4359,7 +4345,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Use substitute_template_parameter for consistent template parameter matching
 					TypeIndex substituted_type_index = substitute_template_parameter(
-						original_type_spec, template_params, template_args);
+						original_type_spec, template_params, template_args_for_member_copy);
 
 					size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
 					if (static_member.is_array) {
@@ -4378,7 +4364,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::optional<ASTNode> substituted_initializer =
 						substitute_in_class_static_initializer_replay_first(
 							static_member,
-							template_args,
+							template_args_for_member_copy,
 							[&]() -> std::optional<ASTNode> {
 								std::optional<ASTNode> fallback_initializer = static_member.initializer;
 								if (!static_member.initializer.has_value()) {
@@ -4390,7 +4376,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										std::span<const TemplateParameterNode>(
 											template_params.data(),
 											template_params.size()),
-										template_args,
+										template_args_for_member_copy,
 										nullptr);
 
 								// Use ExpressionSubstitutor to substitute template parameters in
@@ -4520,7 +4506,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			std::span<const TemplateTypeArg> template_args_for_pattern =
 				template_args_for_pattern_storage.empty() ? template_args : std::span<const TemplateTypeArg>(template_args_for_pattern_storage);
-			const StructTypeInfo* instantiated_struct_info = struct_type_info.getStructInfo();
+			StructTypeInfo* instantiated_struct_info_mut = struct_type_info.getStructInfo();
+			const StructTypeInfo* instantiated_struct_info = instantiated_struct_info_mut;
 
 			for (const auto& type_alias : pattern_struct.type_aliases()) {
 				// Build the qualified name: enable_if_true_int::type
@@ -4739,8 +4726,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (substituted_type == TypeCategory::Enum && substituted_type_index.is_valid()) {
 					if (const TypeInfo* enum_ti = tryGetTypeInfo(substituted_type_index)) {
 						const EnumTypeInfo* enum_info = enum_ti->getEnumInfo();
-						if (enum_info && !enum_info->is_scoped) {
-							struct_info->addNestedEnumIndex(substituted_type_index);
+						if (enum_info && !enum_info->is_scoped && instantiated_struct_info_mut) {
+							instantiated_struct_info_mut->addNestedEnumIndex(substituted_type_index);
 						}
 					}
 				}
