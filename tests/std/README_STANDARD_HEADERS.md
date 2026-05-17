@@ -101,6 +101,108 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-17 `<limits>` O(N²) lookahead fix — ~23× parse-time speedup
+
+#### Root cause discovered and fixed
+
+`extractDependentMemberProbeFromCurrentTemplateArg()` scanned tokens inside a
+`for (steps = 0; steps < 128; ++steps)` loop using `peek_info(steps)`.
+`peek_info(N)` calls `peek_token(N)`, which internally does:
+`save_token_position()` + N×`advance()` + `restore_lexer_position_only()` +
+`discard_saved_token()` — one full save/restore pair and N token advances per
+call.  Scanning K tokens therefore cost **O(K²)** in save/restore pairs and
+token advances.
+
+#### Fix applied (see `src/Parser_Templates_Params.cpp`)
+
+Save the lexer position **once** at function entry, scan forward with `advance()` on
+every loop step (O(1) each), then `restore_lexer_position_only` + `discard`
+after the loop.  The `typename Owner::chain` branch now uses `peek_info(1)` and
+`peek_info(2)` relative to the current position — O(1–2) instead of
+O(lookahead+1, lookahead+2).  The function remains a pure read-only probe; the
+caller's token position is unchanged.
+
+#### Before / after timing (5-sample medians, Linux `-O2 -DNDEBUG` build)
+
+| Build | Flags | Preprocessing | Parsing | Total |
+|-------|-------|---------------|---------|-------|
+| Before fix | `--timing` | ~5.8ms | ~2147ms | ~2153ms |
+| **After fix** | `--timing` | ~4.4ms | **~92ms** | **~96ms** |
+
+**~23× parse-time reduction** (2147ms → 92ms).  First-order blocker is unchanged:
+`static constexpr member initializer for 'std::__numeric_limits_base::has_denorm'
+is not a constant expression: initializer is unresolved`.
+
+#### Pre-fix timing profile (for reference)
+
+The instrumented snapshot below was captured **before** the fix and explains why
+the hot path was so expensive.
+
+Run protocol (pre-fix, instrumented `-O2 -DNDEBUG` build):
+
+- 5 samples with `--timing`
+- 5 samples with `--timing --stats`
+
+Pre-fix timing summary:
+
+| Run set | Flags | Preprocessing | Parsing | Notes |
+|---------|-------|---------------|---------|-------|
+| Pre-fix | `--timing` | 5.8ms | 2147ms | Dominant cost was O(N²) lookahead in template-arg scanning. |
+| Pre-fix | `--timing --stats` | 5.8ms | 2273ms | Includes runtime-stats collection overhead (~126ms). |
+
+Representative pre-fix parser/runtime counters (`--timing --stats`):
+
+| Metric | Value |
+|--------|-------|
+| Preprocessed source lines | 4019 |
+| Top-level nodes / AST nodes | 7 / 178 |
+| Tokens advanced | 98,738 |
+| Lookahead peeks | 538,687 |
+| Lookahead tokens consumed | 33,422,812 |
+| Saved-token saves | 603,772 |
+| Full restores | 70,063 |
+| Lexer-only restores | 538,687 |
+| Discards | 553,678 |
+| Peak saved-token slots / capacity | 603,772 / 643,040 |
+| Peak saved-token reserved bytes | ~103 MiB |
+| Peak unreleased saves / at parse end | 50,098 / 50,094 |
+
+Pre-fix hot-path interpretation:
+
+- `extractDependentMemberProbeFromCurrentTemplateArg` called by
+  `parse_explicit_template_arguments` on every template-argument parse attempt
+  (inside its inner while loop) and scanned up to 128 tokens with O(K²)
+  lookahead.  With ~8,000+ calls at average scan depth ~62, this generated the
+  538k save/restore pairs and 33M token-advance ops measured above.
+- The `typename Owner::chain` inner loop compounded the cost:
+  `peek_info(chain_lookahead)` at offsets 62+2, 62+4, … added additional deep
+  peeks on top of the outer scan depth.
+- Saved-token backing vector grew to ~103 MiB as a direct consequence of the
+  high save count, not due to structural parser complexity.
+- Preprocessing and type/sema volume were never the bottleneck for `<limits>`.
+
+#### Updated recommended next steps (post-fix, priority order)
+
+1. **Collect a new `--timing --stats` baseline after the O(N) fix** to confirm
+   the save/restore/lookahead counters have collapsed as expected and identify
+   the next hot path.
+2. **Tackle the first-order compile error** (`has_denorm` constexpr unresolved)
+   to unlock progress on the rest of `<numeric_limits>` and enable testing
+   heavier headers that exercise the newly-fast template-arg scanning code path.
+3. **Audit other O(N²) lookahead patterns.**  `peek_info(lookahead)` or
+   `peek_token(lookahead)` in any loop over a variable index is suspect.  Scan
+   for similar patterns in other parser files and apply the same save-once /
+   advance-sequentially treatment.
+4. **Split saved-token lifecycle classes (ephemeral vs persistent).**  With the
+   dominant O(N²) cost eliminated the ~50k unreleased handles at parse end are
+   the next structural item — separating deferred-body anchors from speculative
+   handles will make that population auditable.
+5. **Re-tune reserve heuristics** once the new baseline counters are collected.
+   The 2026-05-06 heuristic (`SAVED_TOKEN_SLOTS_PER_LINE` calibrated from the
+   older snapshot) is now a large overestimate; the actual active-save count
+   after this fix should be much lower.
+6. **Preprocessing and type preallocation remain low priority** for `<limits>`.
+
 ### 2026-05-12 Linux/libstdc++ template-instantiation depth guard follow-up
 
 This pass raises parser-side template-instantiation nesting guards from 24 to
