@@ -105,12 +105,17 @@ Stage 6 progress so far:
 - dependent-unqualified constexpr call reuse now requires a sema-backed `EvaluationContext` when the context is parser-owned, instead of silently skipping sema reuse on a missing pointer.
 - lazy constexpr member materialization now requires sema for parser-owned contexts and no longer falls back to direct parser-side instantiate/normalize bookkeeping.
 - parser-owned `EvaluationContext::normalizePendingSemanticRoots()` now throws on missing sema instead of quietly becoming a no-op.
+- parser-owned dependent-unqualified constexpr reuse now always performs sema query through the parser-owned sema requirement before POI fallback, instead of guarding that sema query behind `if (sema != nullptr)`.
+- parser-owned lazy constexpr member materialization no longer uses mixed `parser || sema` gating; since every `EvaluationContext` construction site always sets both `parser` and `sema` together, the materialization guard now uses a single `if (sema != nullptr)` check that covers both parser-owned and standalone sema-only callers.
+- `EvaluationContext::normalizePendingSemanticRoots()` now uses a single `if (sema != nullptr)` check; the redundant parser-first branch is removed since sema is always set whenever parser is set.
+- `EvaluationContext::normalizePendingSemanticRoots()` now hard-fails when `parser` is set but `sema` is missing, while still allowing standalone non-parser evaluator contexts without sema to return early.
+- constexpr member-function materialization lookup/replay now uses a shared parser-owned sema requirement helper: parser-owned contexts throw on missing sema instead of silently skipping sema materialization.
 - `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
 
 Remaining Stage 6 work:
 
 - finish auditing parser-owned constexpr/template/substitution construction sites so `EvaluationContext::sema` can eventually stop being nullable as a field, not just as an enforced parser-owned invariant
-- `EvaluationContext::sema` is still a nullable pointer with a single `if (sema != nullptr)` guard in `normalizePendingSemanticRoots()`; making it non-nullable requires auditing all EvaluationContext creation sites that do not set sema
+- `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites; making it non-nullable requires auditing all non-parser construction sites that currently do not set sema
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
 

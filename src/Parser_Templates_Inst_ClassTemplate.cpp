@@ -4262,8 +4262,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							static_member.pointer_depth,
 							static_member.is_array,
 							static_member.array_dimensions,
-							/* declaration */ std::nullopt,
-							/* initializer_position */ std::nullopt,
+							static_member.declaration,
+							static_member.initializer_position,
 							static_member.is_constexpr);
 					}
 				}
