@@ -4295,16 +4295,33 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	EvaluationContext& context,
 	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
 
-	// Step 1: evaluate element expressions using whatever bindings we have.
-	const size_t n = ilist_node.size();
-	std::vector<EvalResult> elements;
-	elements.reserve(n);
-	for (const ASTNode& elem_node : ilist_node.elements()) {
-		auto elem_result = evaluate_expression_with_bindings_const(elem_node, bindings, context);
-		if (!elem_result.success())
-			return elem_result;
-		elements.push_back(std::move(elem_result));
+	// Step 1: materialize the backing array using the declared initializer_list
+	// element type so aggregate/class elements keep their full object bindings.
+	const ASTNode& element_type_node = ilist_node.element_type();
+	if (!element_type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("InitializerListConstruction: element_type is not TypeSpecifierNode");
 	}
+	const TypeSpecifierNode& element_type_spec = element_type_node.as<TypeSpecifierNode>();
+	InitializerListNode backing_init_list;
+	for (const ASTNode& elem_node : ilist_node.elements()) {
+		backing_init_list.add_initializer(elem_node);
+	}
+	EvalResult backing_array = materialize_array_value(
+		element_type_spec.type_index(),
+		backing_init_list,
+		context,
+		&bindings);
+	if (!backing_array.success()) {
+		return backing_array;
+	}
+	std::vector<EvalResult> elements = backing_array.array_elements;
+	if (elements.empty() && !backing_array.array_values.empty()) {
+		elements.reserve(backing_array.array_values.size());
+		for (int64_t value : backing_array.array_values) {
+			elements.push_back(EvalResult::from_int(value));
+		}
+	}
+	const size_t n = elements.size();
 
 	// Step 2: allocate a synthetic backing-array key using a dedicated counter so that
 	// @ilist_N names never share the same numeric space as @new_N heap allocations.
@@ -4316,10 +4333,6 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	std::string_view backing_key = StringTable::getStringView(backing_handle);
 
 	// Build the backing array EvalResult.
-	// EvalResult has no dedicated array factory, so we start from a zero scalar and
-	// then set the two array flags.  The scalar value is never read for array results.
-	EvalResult backing_array = EvalResult::from_int(0LL);
-	backing_array.is_array = true;
 	backing_array.array_elements = elements;
 
 	// Store backing array in mutable_bindings so that deref_pointer_with_bindings can
