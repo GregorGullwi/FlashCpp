@@ -38,23 +38,19 @@ SemanticAnalysis& runSemanticAnalysisForTest(Parser& parser, CompileContext& con
 	return sema;
 }
 
-static const CallExprNode* findReturnCallExprInNode(const ASTNode& node) {
+static const ASTNode* findReturnExprInNode(const ASTNode& node) {
 	if (node.is<ReturnStatementNode>()) {
 		const auto& return_stmt = node.as<ReturnStatementNode>();
 		if (!return_stmt.expression().has_value()) {
 			return nullptr;
 		}
-		const ASTNode& expr = *return_stmt.expression();
-		if (expr.is<CallExprNode>()) {
-			return &expr.as<CallExprNode>();
-		}
-		return nullptr;
+		return &*return_stmt.expression();
 	}
 
 	if (node.is<BlockNode>()) {
 		for (const ASTNode& stmt : node.as<BlockNode>().get_statements()) {
-			if (const CallExprNode* call_expr = findReturnCallExprInNode(stmt)) {
-				return call_expr;
+			if (const ASTNode* return_expr = findReturnExprInNode(stmt)) {
+				return return_expr;
 			}
 		}
 	}
@@ -62,7 +58,8 @@ static const CallExprNode* findReturnCallExprInNode(const ASTNode& node) {
 	return nullptr;
 }
 
-static const CallExprNode* findAnyReturnCallExpr(const Parser& parser) {
+template <typename Predicate>
+static const ASTNode* findAnyReturnExprNode(const Parser& parser, Predicate&& predicate) {
 	for (const ASTNode& node : parser.get_nodes()) {
 		const FunctionDeclarationNode* function = get_function_decl_node(node);
 		if (function == nullptr) {
@@ -72,36 +69,39 @@ static const CallExprNode* findAnyReturnCallExpr(const Parser& parser) {
 			continue;
 		}
 		const ASTNode& definition = *function->get_definition();
-		if (const CallExprNode* call_expr = findReturnCallExprInNode(definition)) {
-			return call_expr;
+		if (const ASTNode* return_expr = findReturnExprInNode(definition)) {
+			if (predicate(*return_expr)) {
+				return return_expr;
+			}
 		}
 	}
 	return nullptr;
 }
 
-static const ASTNode* findAnyReturnExpr(const Parser& parser) {
-	for (const ASTNode& node : parser.get_nodes()) {
-		const FunctionDeclarationNode* function = get_function_decl_node(node);
-		if (function == nullptr || !function->get_definition().has_value()) {
-			continue;
-		}
-
-		const ASTNode& definition = *function->get_definition();
-		if (!definition.is<BlockNode>()) {
-			continue;
-		}
-
-		for (const ASTNode& stmt : definition.as<BlockNode>().get_statements()) {
-			if (!stmt.is<ReturnStatementNode>()) {
-				continue;
-			}
-			const auto& return_stmt = stmt.as<ReturnStatementNode>();
-			if (return_stmt.expression().has_value()) {
-				return &*return_stmt.expression();
-			}
-		}
+static const CallExprNode* findAnyReturnCallExpr(const Parser& parser) {
+	const ASTNode* return_expr = findAnyReturnExprNode(parser, [](const ASTNode& expr) {
+		return expr.is<ExpressionNode>() && std::holds_alternative<CallExprNode>(expr.as<ExpressionNode>());
+	});
+	if (return_expr == nullptr || !return_expr->is<ExpressionNode>()) {
+		return nullptr;
 	}
-	return nullptr;
+	return std::get_if<CallExprNode>(&return_expr->as<ExpressionNode>());
+}
+
+static const ASTNode* findAnyReturnCallExprNode(const Parser& parser) {
+	return findAnyReturnExprNode(parser, [](const ASTNode& expr) {
+		return expr.is<ExpressionNode>() && std::holds_alternative<CallExprNode>(expr.as<ExpressionNode>());
+	});
+}
+
+static const ArraySubscriptNode* findAnyReturnSubscriptExpr(const Parser& parser) {
+	const ASTNode* return_expr = findAnyReturnExprNode(parser, [](const ASTNode& expr) {
+		return expr.is<ExpressionNode>() && std::holds_alternative<ArraySubscriptNode>(expr.as<ExpressionNode>());
+	});
+	if (return_expr == nullptr || !return_expr->is<ExpressionNode>()) {
+		return nullptr;
+	}
+	return std::get_if<ArraySubscriptNode>(&return_expr->as<ExpressionNode>());
 }
 
 // Helper function to read test files from Reference directory
@@ -1815,16 +1815,18 @@ TEST_CASE("SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState") {
 		return;
 	}
 
+	const ASTNode* return_expr = findAnyReturnCallExprNode(parser);
+	REQUIRE(return_expr != nullptr);
 	const CallExprNode* call_expr = findAnyReturnCallExpr(parser);
 	REQUIRE(call_expr != nullptr);
 
 	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
-	TypeSpecifierQueryResult before_run = parser_services.getExpressionTypeQuery(ASTNode(call_expr));
+	TypeSpecifierQueryResult before_run = parser_services.getExpressionTypeQuery(*return_expr);
 	CHECK(before_run.state == TypeSpecifierQueryResult::State::NotYetAnalyzed);
 	CHECK(!before_run.type.has_value());
 
 	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
-	TypeSpecifierQueryResult after_run = sema.parserSemanticServices().getExpressionTypeQuery(ASTNode(call_expr));
+	TypeSpecifierQueryResult after_run = sema.parserSemanticServices().getExpressionTypeQuery(*return_expr);
 	CHECK(after_run.state == TypeSpecifierQueryResult::State::Available);
 	REQUIRE(after_run.type.has_value());
 	CHECK(after_run.type->type() == TypeCategory::Int);
@@ -1854,19 +1856,17 @@ TEST_CASE("SemanticAnalysis:ResolvedSubscriptQueryTracksAnalysisState") {
 		return;
 	}
 
-	const ASTNode* return_expr = findAnyReturnExpr(parser);
-	REQUIRE(return_expr != nullptr);
-	REQUIRE(return_expr->is<ArraySubscriptNode>());
-	const auto& subscript_expr = return_expr->as<ArraySubscriptNode>();
+	const ArraySubscriptNode* subscript_expr = findAnyReturnSubscriptExpr(parser);
+	REQUIRE(subscript_expr != nullptr);
 
 	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
-	ResolvedFunctionQueryResult before_run = parser_services.getResolvedOpSubscriptQuery(&subscript_expr);
+	ResolvedFunctionQueryResult before_run = parser_services.getResolvedOpSubscriptQuery(subscript_expr);
 	CHECK(before_run.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed);
 	CHECK(before_run.function == nullptr);
-	CHECK(parser_services.getResolvedOpSubscript(&subscript_expr) == nullptr);
+	CHECK(parser_services.getResolvedOpSubscript(subscript_expr) == nullptr);
 
 	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
-	ResolvedFunctionQueryResult after_run = sema.parserSemanticServices().getResolvedOpSubscriptQuery(&subscript_expr);
+	ResolvedFunctionQueryResult after_run = sema.parserSemanticServices().getResolvedOpSubscriptQuery(subscript_expr);
 	CHECK(after_run.state == ResolvedFunctionQueryResult::State::Available);
 	REQUIRE(after_run.function != nullptr);
 	CHECK(after_run.function->decl_node().identifier_token().value() == "operator[]"sv);
