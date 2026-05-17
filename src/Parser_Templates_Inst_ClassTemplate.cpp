@@ -9995,10 +9995,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Substitute template parameters in the initializer
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
 		bool out_of_line_is_constexpr = false;
-		if (out_of_line_var.declaration.has_value()) {
-			if (out_of_line_var.declaration->is<VariableDeclarationNode>()) {
-				out_of_line_is_constexpr = out_of_line_var.declaration->as<VariableDeclarationNode>().is_constexpr();
-			}
+		if (out_of_line_var.declaration.has_value() && out_of_line_var.declaration->is<VariableDeclarationNode>()) {
+			out_of_line_is_constexpr = out_of_line_var.declaration->as<VariableDeclarationNode>().is_constexpr();
 		}
 		if (out_of_line_var.initializer.has_value()) {
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
