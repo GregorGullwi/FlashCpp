@@ -1687,11 +1687,9 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
-		if (context.sema != nullptr || context.parser != nullptr) {
+		if (context.sema != nullptr) {
 			if (const FunctionDeclarationNode* sema_resolved =
-					requireParserOwnedContextSema(context, "dependent unqualified member call reuse")
-						.parserSemanticServices()
-						.getResolvedDirectCall(&call_expr)) {
+					context.sema->parserSemanticServices().getResolvedDirectCall(&call_expr)) {
 				return evaluate_function_call_with_bindings(
 					*sema_resolved,
 					call_expr.arguments(),
@@ -1707,6 +1705,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
+		(void)requireParserOwnedContextSema(context, "dependent unqualified member call reuse");
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(

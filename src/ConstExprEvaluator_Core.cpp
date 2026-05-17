@@ -18,6 +18,9 @@ SemanticAnalysis& requireParserOwnedContextSema(const EvaluationContext& context
 } // namespace
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
+	if (parser != nullptr && sema == nullptr) {
+		throw InternalError("ConstExpr normalizePendingSemanticRoots requires sema-backed parser-owned EvaluationContext");
+	}
 	if (sema != nullptr) {
 		sema->parserSemanticServices().normalizePendingSemanticRoots();
 	}
@@ -4465,11 +4468,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
-		if (context.sema != nullptr || context.parser != nullptr) {
+		if (context.sema != nullptr) {
 			if (const FunctionDeclarationNode* sema_resolved =
-					requireParserOwnedContextSema(context, "dependent unqualified call reuse")
-						.parserSemanticServices()
-						.getResolvedDirectCall(&call_expr)) {
+					context.sema->parserSemanticServices().getResolvedDirectCall(&call_expr)) {
 				return evaluate_resolved_function_call(
 					*sema_resolved,
 					call_expr.arguments(),
@@ -4484,6 +4485,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
+		(void)requireParserOwnedContextSema(context, "dependent unqualified call reuse");
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
