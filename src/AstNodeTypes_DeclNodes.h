@@ -1723,6 +1723,7 @@ struct ResolvedAliasTypeInfo {
 	size_t pointer_depth = 0;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
 	std::optional<FunctionSignature> function_signature;
+	std::optional<StringHandle> member_class_name;
 	std::vector<size_t> array_dimensions;
 	const TypeInfo* terminal_type_info = nullptr;
 
@@ -1768,6 +1769,9 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 				}
 				if (!resolved.function_signature.has_value() && alias_type_spec->has_function_signature()) {
 					resolved.function_signature = alias_type_spec->function_signature();
+				}
+				if (!resolved.member_class_name.has_value() && alias_type_spec->has_member_class()) {
+					resolved.member_class_name = alias_type_spec->member_class_name();
 				}
 				if (alias_type_spec->is_array()) {
 					appendArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());

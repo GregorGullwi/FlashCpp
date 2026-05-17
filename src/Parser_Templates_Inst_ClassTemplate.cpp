@@ -6252,12 +6252,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										auto subst_it = subst_map.find(original_type_name);
 										if (subst_it != subst_map.end()) {
 											const TemplateTypeArg& subst = subst_it->second;
-											substituted_type_specifier = TypeSpecifierNode(
-												subst.type_index.withCategory(subst.typeEnum()),
-												0,
-												Token(),
-												original_type_spec.cv_qualifier(),
-												ReferenceQualifier::None);
+											substituted_type_specifier.set_type_index(
+												subst.type_index.withCategory(subst.typeEnum()));
+											substituted_type_specifier.set_category(subst.typeEnum());
 											FLASH_LOG_FORMAT(
 												Templates,
 												Debug,

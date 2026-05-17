@@ -9,6 +9,21 @@ struct TraitUse {
 	static int second() { return Flag<__is_same(T, const T)>::value; }
 };
 
+struct MyStruct {};
+
+template <typename T>
+using Alias = T;
+
+template <typename T>
+bool checksPass() {
+	return TraitUse<T>::first() != TraitUse<T>::second();
+}
+
 int main() {
-	return TraitUse<int>::first() != TraitUse<int>::second() ? 0 : 1;
+	return (checksPass<int>() &&
+			checksPass<long>() &&
+			checksPass<MyStruct>() &&
+			checksPass<Alias<char>>())
+		? 0
+		: 1;
 }

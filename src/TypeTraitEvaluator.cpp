@@ -129,6 +129,8 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 
 	if (type_spec.has_member_class()) {
 		normalized_type.set_member_class_name(type_spec.member_class_name());
+	} else if (resolved_alias.member_class_name.has_value()) {
+		normalized_type.set_member_class_name(*resolved_alias.member_class_name);
 	}
 
 	return normalized_type;

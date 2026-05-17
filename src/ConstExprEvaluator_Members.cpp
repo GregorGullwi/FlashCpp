@@ -9182,6 +9182,9 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		}
 		return EvalResult::error("Failed to evaluate __is_same");
 	}
+	if (trait_expr.kind() == TypeTraitKind::IsSame) {
+		return EvalResult::error("malformed __is_same: missing second type");
+	}
 
 	// For other type traits, we need to evaluate them based on the type
 	// Most type traits can be evaluated at compile time
