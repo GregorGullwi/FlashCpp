@@ -219,9 +219,14 @@ focused investigations.
     source with `TemplateInstantiationContext` and definition-context lookup for
     StructTypeInfo-backed members
     (`test_template_inclass_static_member_two_phase_lookup_ret0.cpp`).
+    **New in this slice (2026-05-17):** member-template partial-specialization
+    and full-specialization static-member AST copy paths now preserve replay
+    metadata (`declaration` + `initializer_position`) across `addStaticMember`
+    transfer, extending replay-first substitution coverage
+    (`test_member_template_partial_spec_static_member_replay_ret0.cpp`).
     Remaining gaps are static-member concretization paths where replay metadata
-    (`initializer_position`/`declaration`) is unavailable, so AST-only fallback
-    substitution must remain.
+    is never captured at parse time, so AST-only fallback substitution must
+    remain.
 
 2. **Broaden two-phase lookup records further (member func template bodies ✅ done).**
     Definition-context and semantic lookup records now protect selected
@@ -410,17 +415,18 @@ remaining work is the smaller phased delivery list below.
 
 Inherited member-template lookup is now complete (2026-05-15), dependent
 unqualified POI completion now covers ordinary-bound calls plus template static
-member initializers (2026-05-16), and out-of-line class-template static member
-initializer replay now preserves definition-context lookup during instantiation
-reparse (2026-05-16). In-class StructTypeInfo-backed static-member eager replay
-now also preserves definition-context lookup during instantiation substitution
-(2026-05-16 follow-up). The next highest-impact work is:
+member initializers (2026-05-16), out-of-line class-template static member
+initializer replay preserves definition-context lookup during instantiation
+reparse (2026-05-16), in-class StructTypeInfo-backed static-member eager replay
+preserves definition-context lookup during instantiation substitution (2026-05-16
+follow-up), and member-template partial-specialization + full-specialization
+static-member AST copy paths now preserve replay metadata for replay-first
+substitution (2026-05-17). The next highest-impact work is:
 
 1. **Continue two-phase lookup expansion**: extend definition-context records to
-   the remaining eager-static/parser-time reparse paths (after the out-of-line
-   and StructTypeInfo-backed in-class static-member initializer replay fixes),
-   dependent bases, and other
-   concretization paths that still bypass POI lookup records.
+   dependent-base and unknown-specialization concretization paths, plus any
+   remaining eager-static/parser-time paths that still cannot capture replay
+   metadata at parse time.
 
 2. **Structural NTTP completion** (non-null member-pointers, structural class
    types, and replacing `TODO(item-8)` mangling fallback) is the other major
@@ -450,9 +456,10 @@ behavior as compatibility constraints.
    Persist non-dependent lookup at definition time and defer only dependent
    completion to instantiation time. Member function template bodies and
    inherited `this->template` member-template calls now apply the same owner-
-   correct lookup/instantiation path. Remaining: static initializer paths beyond
-   the out-of-line + StructTypeInfo-backed in-class static-member replay fixes,
-   dependent bases, unknown specializations, and ADL-sensitive dependent calls.
+   correct lookup/instantiation path. Static-member replay metadata propagation
+   now also covers member-template partial-specialization and full-specialization
+   AST copy paths. Remaining: dependent bases, unknown specializations, and
+   ADL-sensitive dependent calls.
 
 3. **Consolidate substitution context ownership**
    Continue replacing ad-hoc name/vector substitution channels with
