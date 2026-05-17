@@ -184,9 +184,13 @@ sema direct lookup probes. The active architecture tracks are therefore:
     source with `TemplateInstantiationContext` and definition-context lookup
     installed for StructTypeInfo-backed members
     (`test_template_inclass_static_member_two_phase_lookup_ret0.cpp`).
-    Remaining gaps are static-member entries that do not carry replay metadata
-    (`initializer_position`/`declaration`) and therefore must keep AST-only
-    fallback substitution.
+    **New in this slice (2026-05-17):** member-template partial-specialization
+    static-member copy paths and full-specialization static-member AST copy now
+    preserve replay metadata (`declaration` + `initializer_position`) during
+    `addStaticMember` transfer, so replay-first substitution can run in those
+    paths as well (`test_member_template_partial_spec_static_member_replay_ret0.cpp`).
+    Remaining gaps are declarations that never record replay metadata at parse
+    time and therefore still need AST-only fallback substitution.
 
 2. **Two-phase lookup expansion (member function template bodies ✅ done).**
     Definition-context records now cover selected non-dependent calls,
@@ -201,7 +205,8 @@ sema direct lookup probes. The active architecture tracks are therefore:
     - Eager static initializers with parser-time reparse paths beyond the now
       covered direct-call + out-of-line static-member initializer +
       StructTypeInfo-backed in-class static-member initializer +
-      partial-specialization AST static-member copy paths.
+      partial-specialization/member-template static-member copy paths +
+      full-specialization static-member AST copy paths.
     - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
