@@ -5496,19 +5496,21 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						origin = StringTable::getOrInternStringHandle(origin_name);
 					}
 				}
-				if (origin.isValid()) {
-					EvalResult decayed_ptr = EvalResult::from_pointer(origin, 0);
-					if (!init_result.array_elements.empty()) {
-						decayed_ptr.pointer_value_snapshot = init_result.array_elements;
-					} else if (!init_result.array_values.empty()) {
-						decayed_ptr.pointer_value_snapshot.reserve(init_result.array_values.size());
-						for (int64_t value : init_result.array_values) {
-							decayed_ptr.pointer_value_snapshot.push_back(EvalResult::from_int(value));
-						}
-					}
-					maybe_set_binding_result_exact_type(decayed_ptr, decl, &init_expr, context);
-					init_result = std::move(decayed_ptr);
+				if (!origin.isValid()) {
+					return EvalResult::error(
+						"Constexpr array-to-pointer decay failed: could not resolve array origin for pointer initializer");
 				}
+				EvalResult decayed_ptr = EvalResult::from_pointer(origin, 0);
+				if (!init_result.array_elements.empty()) {
+					decayed_ptr.pointer_value_snapshot = init_result.array_elements;
+				} else if (!init_result.array_values.empty()) {
+					decayed_ptr.pointer_value_snapshot.reserve(init_result.array_values.size());
+					for (int64_t value : init_result.array_values) {
+						decayed_ptr.pointer_value_snapshot.push_back(EvalResult::from_int(value));
+					}
+				}
+				maybe_set_binding_result_exact_type(decayed_ptr, decl, &init_expr, context);
+				init_result = std::move(decayed_ptr);
 			}
 			apply_uint_init_narrowing(init_result);
 

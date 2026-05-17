@@ -24,6 +24,13 @@ const std::unordered_map<std::string_view, EvalResult>& emptyEvalBindings() {
 	return kEmpty;
 }
 
+bool isRecoverablePointerDerefFailure(const EvalResult& result) {
+	if (result.success()) {
+		return false;
+	}
+	return result.error_message.rfind("Cannot dereference constexpr pointer:", 0) == 0;
+}
+
 SemanticAnalysis& requireParserOwnedMemberContextSema(const EvaluationContext& context, const char* operation) {
 	if (context.sema == nullptr) {
 		throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
@@ -1990,11 +1997,17 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 	if (member_access.is_arrow() && object_result->pointer_to_var.isValid()) {
 		auto deref_result = deref_pointer_with_bindings(*object_result, bindings, context);
 		if (!deref_result.success()) {
-			return deref_result;
+			if (!isRecoverablePointerDerefFailure(deref_result)) {
+				return deref_result;
+			}
+			return std::nullopt;
 		}
 		auto member_it = deref_result.object_member_bindings.find(member_access.member_name());
 		if (member_it != deref_result.object_member_bindings.end()) {
 			return validateConstexprRead(member_it->second);
+		}
+		if (object_result->pointer_offset == 0) {
+			return std::nullopt;
 		}
 		return EvalResult::error(
 			"Member '" + std::string(member_access.member_name()) +
@@ -4121,7 +4134,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 						// This handles struct-array pointers (any offset) and synthesized
 						// backing arrays such as std::initializer_list storage.
 						auto elem_result = deref_pointer_with_bindings(ptr_eval, bindings, context);
-						if (elem_result.success()) {
+						if (!elem_result.success()) {
+							if (!isRecoverablePointerDerefFailure(elem_result)) {
+								return elem_result;
+							}
+						} else {
 							auto member_it = elem_result.object_member_bindings.find(member_name);
 							if (member_it != elem_result.object_member_bindings.end()) {
 								return member_it->second;
@@ -5692,7 +5709,11 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 			ptr_result,
 			active_bindings ? *active_bindings : emptyEvalBindings(),
 			context);
-		if (elem_result.success()) {
+		if (!elem_result.success()) {
+			if (!isRecoverablePointerDerefFailure(elem_result)) {
+				return elem_result;
+			}
+		} else {
 			auto it = elem_result.object_member_bindings.find(member_name);
 			if (it != elem_result.object_member_bindings.end()) {
 				return it->second;
