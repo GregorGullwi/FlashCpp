@@ -19,16 +19,9 @@ constexpr std::string_view kNestedTypeAliasName = "type";
 constexpr const char* kMemberFunctionMaterializationLookupOp = "member function materialization lookup";
 constexpr const char* kMemberFunctionMaterializationReplayOp = "member function materialization replay";
 
-SemanticAnalysis& requireParserOwnedMemberContextSema(const EvaluationContext& context, const char* operation) {
-	if (context.sema == nullptr) {
-		throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
-	}
-	return *context.sema;
-}
-
 SemanticAnalysis* getSemaForMaterialization(const EvaluationContext& context, const char* operation) {
 	if (context.parser != nullptr) {
-		return &requireParserOwnedMemberContextSema(context, operation);
+		return &context.requireParserOwnedSema(operation);
 	}
 	return context.sema;
 }
@@ -1704,7 +1697,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
-			requireParserOwnedMemberContextSema(context, "dependent unqualified member call reuse")
+			context
+				.requireParserOwnedSema("dependent unqualified member call reuse")
 				.parserSemanticServices()
 				.getResolvedDirectCallQuery(&call_expr);
 		if (sema_query.hasValue()) {

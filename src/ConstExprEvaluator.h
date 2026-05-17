@@ -442,6 +442,7 @@ struct EvaluationContext {
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;
 	SemanticAnalysis* sema = nullptr;
+	SemanticAnalysis& requireParserOwnedSema(std::string_view operation) const;
 	void normalizePendingSemanticRoots() const;
 
 	// Return type of the constexpr function currently being evaluated.
