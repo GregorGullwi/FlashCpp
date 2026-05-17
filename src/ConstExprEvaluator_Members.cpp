@@ -4316,6 +4316,8 @@ EvalResult Evaluator::evaluate_initializer_list_construction(
 	}
 	EvalResult backing_array = std::move(materialized_array);
 	if (backing_array.array_elements.empty() && !backing_array.array_values.empty()) {
+		// materialize_array_value keeps legacy scalar arrays in array_values only;
+		// initializer_list pointer snapshots always need element-shaped entries.
 		backing_array.array_elements.reserve(backing_array.array_values.size());
 		for (int64_t value : backing_array.array_values) {
 			backing_array.array_elements.push_back(EvalResult::from_int(value));
