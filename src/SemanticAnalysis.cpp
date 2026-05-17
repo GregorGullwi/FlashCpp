@@ -3886,6 +3886,34 @@ namespace {
 const void* getExpressionKey(const ASTNode& node) {
 	return static_cast<const void*>(&node.as<ExpressionNode>());
 }
+
+std::optional<TypeSpecifierNode> tryBuildDirectLiteralQueryType(const ASTNode& node) {
+	if (node.is<NumericLiteralNode>()) {
+		const TypeCategory literal_type = node.as<NumericLiteralNode>().type();
+		return TypeSpecifierNode(
+			literal_type,
+			TypeQualifier::None,
+			get_type_size_bits(literal_type),
+			Token{},
+			CVQualifier::None);
+	}
+	if (node.is<BoolLiteralNode>()) {
+		return TypeSpecifierNode(
+			TypeCategory::Bool,
+			TypeQualifier::None,
+			get_type_size_bits(TypeCategory::Bool),
+			Token{},
+			CVQualifier::None);
+	}
+	if (node.is<StringLiteralNode>()) {
+		const int char_size_bits = static_cast<int>(get_type_size_bits(TypeCategory::Char));
+		TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
+		type.add_pointer_level();
+		type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		return type;
+	}
+	return std::nullopt;
+}
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {
@@ -3895,6 +3923,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 
 TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
+		if (auto literal_type = tryBuildDirectLiteralQueryType(node); literal_type.has_value()) {
+			return {TypeSpecifierQueryResult::State::Available, *literal_type};
+		}
 		return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
 	}
 
@@ -3903,11 +3934,9 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 	if (!slot.has_value() || !slot->has_type()) {
 		const ExpressionNode& expr = node.as<ExpressionNode>();
 		if (std::holds_alternative<StringLiteralNode>(expr)) {
-			const int char_size_bits = static_cast<int>(get_type_size_bits(TypeCategory::Char));
-			TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
-			type.add_pointer_level();
-			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
-			return {TypeSpecifierQueryResult::State::Available, type};
+			if (auto literal_type = tryBuildDirectLiteralQueryType(node); literal_type.has_value()) {
+				return {TypeSpecifierQueryResult::State::Available, *literal_type};
+			}
 		}
 		if (normalized_ast_nodes_.count(key) > 0) {
 			return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
@@ -3977,6 +4006,9 @@ void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg, const 
 
 TypeSpecifierQueryResult SemanticAnalysis::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
 	if (!arg.is<ExpressionNode>()) {
+		if (auto literal_type = tryBuildDirectLiteralQueryType(arg); literal_type.has_value()) {
+			return {TypeSpecifierQueryResult::State::Available, *literal_type};
+		}
 		if (auto type = getExpressionType(arg); type.has_value()) {
 			return {TypeSpecifierQueryResult::State::Available, type};
 		}
