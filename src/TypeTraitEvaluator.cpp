@@ -1,5 +1,7 @@
 #include "TypeTraitEvaluator.h"
 
+#include <ranges>
+
 namespace TypeTraitEval {
 
 inline bool isScalarType(TypeCategory cat, bool is_reference, size_t pointer_depth) {
@@ -63,6 +65,140 @@ const StructTypeInfo* structInfoFromTypeIndex(TypeIndex type_index) {
 }
 
 std::optional<TypeIndex> resolvePseudoDestructorObjectTypeIndex(const ASTNode& object, const SymbolTable& symbols);
+
+ReferenceQualifier mergeReferenceQualifier(
+	ReferenceQualifier lhs,
+	ReferenceQualifier rhs) {
+	if (lhs == ReferenceQualifier::LValueReference ||
+		rhs == ReferenceQualifier::LValueReference) {
+		return ReferenceQualifier::LValueReference;
+	}
+	if (lhs != ReferenceQualifier::None) {
+		return lhs;
+	}
+	return rhs;
+}
+
+TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) {
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
+	TypeCategory normalized_category = type_spec.type();
+	TypeIndex normalized_type_index = type_spec.type_index();
+	if (resolved_alias.type_index.is_valid()) {
+		normalized_category = resolved_alias.typeEnum();
+		normalized_type_index = resolved_alias.type_index.withCategory(normalized_category);
+	} else if (!normalized_type_index.is_valid()) {
+		normalized_type_index = nativeTypeIndex(normalized_category);
+	} else if (normalized_type_index.category() == TypeCategory::Invalid &&
+			   normalized_category != TypeCategory::Invalid) {
+		normalized_type_index = normalized_type_index.withCategory(normalized_category);
+	}
+
+	TypeSpecifierNode normalized_type(
+		normalized_type_index,
+		0,
+		type_spec.token(),
+		type_spec.cv_qualifier() | resolved_alias.cv_qualifier,
+		mergeReferenceQualifier(
+			type_spec.reference_qualifier(),
+			resolved_alias.reference_qualifier));
+
+	for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
+		normalized_type.add_pointer_level(pointer_level.cv_qualifier);
+	}
+	normalized_type.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+
+	std::vector<size_t> array_dimensions;
+	if (type_spec.is_array()) {
+		array_dimensions.assign(
+			type_spec.array_dimensions().begin(),
+			type_spec.array_dimensions().end());
+	}
+	array_dimensions.insert(
+		array_dimensions.end(),
+		resolved_alias.array_dimensions.begin(),
+		resolved_alias.array_dimensions.end());
+	if (!array_dimensions.empty()) {
+		normalized_type.set_array_dimensions(array_dimensions);
+	}
+
+	if (type_spec.has_function_signature()) {
+		normalized_type.set_function_signature(type_spec.function_signature());
+	} else if (resolved_alias.function_signature.has_value()) {
+		normalized_type.set_function_signature(*resolved_alias.function_signature);
+	}
+
+	if (type_spec.has_member_class()) {
+		normalized_type.set_member_class_name(type_spec.member_class_name());
+	} else if (resolved_alias.member_class_name.has_value()) {
+		normalized_type.set_member_class_name(*resolved_alias.member_class_name);
+	}
+
+	return normalized_type;
+}
+
+bool functionSignaturesMatch(
+	const FunctionSignature& lhs,
+	const FunctionSignature& rhs) {
+	if (lhs.returnType() != rhs.returnType() ||
+		canonicalize_type_alias(lhs.return_type_index).resolvedTypeIndex() !=
+			canonicalize_type_alias(rhs.return_type_index).resolvedTypeIndex() ||
+		lhs.return_pointer_depth != rhs.return_pointer_depth ||
+		lhs.return_reference_qualifier != rhs.return_reference_qualifier ||
+		lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size() ||
+		lhs.linkage != rhs.linkage ||
+		lhs.class_name != rhs.class_name ||
+		lhs.calling_convention != rhs.calling_convention ||
+		lhs.is_variadic != rhs.is_variadic ||
+		lhs.is_const != rhs.is_const ||
+		lhs.is_volatile != rhs.is_volatile ||
+		lhs.function_reference_qualifier != rhs.function_reference_qualifier ||
+		lhs.is_noexcept != rhs.is_noexcept) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.parameter_type_indices.size(); ++i) {
+		if (canonicalize_type_alias(lhs.parameter_type_indices[i]).resolvedTypeIndex() !=
+			canonicalize_type_alias(rhs.parameter_type_indices[i]).resolvedTypeIndex()) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool areSameTypeTraitOperands(
+	const TypeSpecifierNode& lhs,
+	const TypeSpecifierNode& rhs) {
+	const TypeSpecifierNode normalized_lhs = normalizeTypeTraitOperand(lhs);
+	const TypeSpecifierNode normalized_rhs = normalizeTypeTraitOperand(rhs);
+	if (normalized_lhs.type() != normalized_rhs.type() ||
+		normalized_lhs.type_index() != normalized_rhs.type_index() ||
+		normalized_lhs.cv_qualifier() != normalized_rhs.cv_qualifier() ||
+		normalized_lhs.reference_qualifier() != normalized_rhs.reference_qualifier() ||
+		normalized_lhs.pointer_levels().size() != normalized_rhs.pointer_levels().size() ||
+		!std::ranges::equal(
+			normalized_lhs.array_dimensions(),
+			normalized_rhs.array_dimensions()) ||
+		normalized_lhs.has_member_class() != normalized_rhs.has_member_class() ||
+		normalized_lhs.has_function_signature() != normalized_rhs.has_function_signature()) {
+		return false;
+	}
+	for (size_t i = 0; i < normalized_lhs.pointer_levels().size(); ++i) {
+		if (normalized_lhs.pointer_levels()[i].cv_qualifier !=
+			normalized_rhs.pointer_levels()[i].cv_qualifier) {
+			return false;
+		}
+	}
+	if (normalized_lhs.has_member_class() &&
+		normalized_lhs.member_class_name() != normalized_rhs.member_class_name()) {
+		return false;
+	}
+	if (normalized_lhs.has_function_signature() &&
+		!functionSignaturesMatch(
+			normalized_lhs.function_signature(),
+			normalized_rhs.function_signature())) {
+		return false;
+	}
+	return true;
+}
 
 std::optional<TypeIndex> resolvePseudoDestructorExpressionTypeIndex(const ExpressionNode& expr, const SymbolTable& symbols) {
 	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
@@ -559,4 +695,35 @@ TypeTraitResult evaluateTypeTrait(
 		type_spec.is_array(),
 		type_spec.array_size(),
 		struct_info);
+}
+
+TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
+	if (trait_expr.is_no_arg_trait()) {
+		return trait_expr.kind() == TypeTraitKind::IsConstantEvaluated
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::failure();
+	}
+	if (!trait_expr.has_type() || !trait_expr.type_node().is<TypeSpecifierNode>()) {
+		return TypeTraitResult::failure();
+	}
+
+	const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
+	if (trait_expr.has_second_type()) {
+		if (!trait_expr.second_type_node().is<TypeSpecifierNode>()) {
+			return TypeTraitResult::failure();
+		}
+		const TypeSpecifierNode& second_type_spec =
+			trait_expr.second_type_node().as<TypeSpecifierNode>();
+		switch (trait_expr.kind()) {
+		case TypeTraitKind::IsSame:
+			return areSameTypeTraitOperands(type_spec, second_type_spec)
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		default:
+			return TypeTraitResult::failure();
+		}
+	}
+
+	const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
+	return evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
 }

@@ -9174,6 +9174,18 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		return EvalResult::from_bool(true);
 	}
 
+	if (trait_expr.kind() == TypeTraitKind::IsSame &&
+		trait_expr.has_second_type()) {
+		TypeTraitResult trait_result = evaluateTypeTrait(trait_expr);
+		if (trait_result.success) {
+			return EvalResult::from_bool(trait_result.value);
+		}
+		return EvalResult::error("Failed to evaluate __is_same");
+	}
+	if (trait_expr.kind() == TypeTraitKind::IsSame) {
+		return EvalResult::error("malformed __is_same: missing second type");
+	}
+
 	// For other type traits, we need to evaluate them based on the type
 	// Most type traits can be evaluated at compile time
 	if (!trait_expr.has_type()) {
@@ -9357,8 +9369,6 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			return EvalResult::error("Failed to evaluate type trait");
 		}
 
-		// Add more type traits as needed
-		// For now, other type traits return false during constexpr evaluation
 	default:
 		result = false;
 		break;

@@ -6234,45 +6234,60 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Special handling for TypeTraitExprNode - need to substitute template parameters
 						if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 							const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
+							auto substituteTraitTypeSpecifier = [&](const ASTNode& trait_type_node) {
+								const TypeSpecifierNode& original_type_spec =
+									trait_type_node.as<TypeSpecifierNode>();
+								TypeCategory original_base_type = original_type_spec.type();
+								TypeIndex original_type_index = original_type_spec.type_index();
+								TypeSpecifierNode substituted_type_specifier = original_type_spec;
 
-							// Create a substituted version of the type trait
-							if (trait_expr.has_type()) {
-								const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
-
-								// Check if the type needs substitution
-								TypeCategory base_type = type_spec.type();
-								TypeIndex type_idx = type_spec.type_index();
-								[[maybe_unused]] bool substituted = false;
-								TypeSpecifierNode substituted_type_spec = type_spec;
-
-								if ((is_struct_type(base_type) ||
-									 base_type == TypeCategory::UserDefined ||
-									 base_type == TypeCategory::TypeAlias ||
-									 base_type == TypeCategory::Template) &&
-									type_idx.is_valid()) {
-									if (const TypeInfo* type_idx_ti = tryGetTypeInfo(type_idx)) {
-										std::string_view type_name = StringTable::getStringView(type_idx_ti->name());
-										auto subst_it = subst_map.find(type_name);
+								if ((is_struct_type(original_base_type) ||
+									 original_base_type == TypeCategory::UserDefined ||
+									 original_base_type == TypeCategory::TypeAlias ||
+									 original_base_type == TypeCategory::Template) &&
+									original_type_index.is_valid()) {
+									if (const TypeInfo* original_type_info = tryGetTypeInfo(original_type_index)) {
+										std::string_view original_type_name =
+											StringTable::getStringView(original_type_info->name());
+										auto subst_it = subst_map.find(original_type_name);
 										if (subst_it != subst_map.end()) {
-											// Substitute the type
 											const TemplateTypeArg& subst = subst_it->second;
-											substituted_type_spec = TypeSpecifierNode(
-												subst.type_index.withCategory(subst.typeEnum()),
-												0, // size will be looked up
-												Token(),
-												type_spec.cv_qualifier(),
-												ReferenceQualifier::None);
-											substituted = true;
-											FLASH_LOG_FORMAT(Templates, Debug, "Substituted type '{}' with type_index {} for type trait evaluation",
-															 type_name, subst.type_index);
+											substituted_type_specifier.set_type_index(
+												subst.type_index.withCategory(subst.typeEnum()));
+											FLASH_LOG_FORMAT(
+												Templates,
+												Debug,
+												"Substituted type '{}' with type_index {} for type trait evaluation",
+												original_type_name,
+												subst.type_index);
 										}
 									}
 								}
 
+								return substituted_type_specifier;
+							};
+
+							// Create a substituted version of the type trait
+							if (trait_expr.has_type()) {
+								TypeSpecifierNode substituted_type_spec =
+									substituteTraitTypeSpecifier(trait_expr.type_node());
+
 								// Create substituted type trait node and evaluate
 								ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
-								ASTNode subst_trait_node = emplace_node<ExpressionNode>(
-									TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
+								ASTNode subst_trait_node;
+								if (trait_expr.has_second_type()) {
+									ASTNode substituted_second_type = emplace_node<TypeSpecifierNode>(
+										substituteTraitTypeSpecifier(trait_expr.second_type_node()));
+									subst_trait_node = emplace_node<ExpressionNode>(
+										TypeTraitExprNode(
+											trait_expr.kind(),
+											subst_type_node,
+											substituted_second_type,
+											trait_expr.trait_token()));
+								} else {
+									subst_trait_node = emplace_node<ExpressionNode>(
+										TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
+								}
 
 								if (typeSpecStillUsesDependentPlaceholder(substituted_type_spec)) {
 									StringHandle dependent_anchor;
