@@ -180,9 +180,10 @@ Updated recommended next steps (priority order):
    lookahead sites, avoid full save/restore/discard when a bounded token buffer
    (or equivalent non-owning peek path) is sufficient.
 5. **Re-tune reserve heuristics using current counters.**  The earlier
-   `<limits>`-derived 20-slots/line heuristic now underestimates this measured
-   workload by a wide margin, so reserve policy should be revisited with current
-   multi-header data.
+   `<limits>`-derived 20-slots/line heuristic (see the 2026-05-06 section below
+   where `SAVED_TOKEN_SLOTS_PER_LINE` was calibrated from the older run) now
+   underestimates this measured workload by a wide margin, so reserve policy
+   should be revisited with current multi-header data.
 6. **Keep preprocessing and broad type preallocation lower priority for
    `<limits>`.**  Based on this run shape, parser speculative parsing and
    saved-token lifecycle remain the highest-value optimization targets.
