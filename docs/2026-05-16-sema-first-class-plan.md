@@ -115,7 +115,7 @@ Stage 6 progress so far:
 - parser-owned constexpr/template/substitution `EvaluationContext` setup now goes through a shared `attachParserOwnedSema(Parser&)` helper instead of open-coding paired `parser`/`sema` field assignments at each parser construction site.
 - that parser-side construction-site audit now covers the parser-owned constexpr/template/substitution call families called out in Stage 6.1, reducing drift while `EvaluationContext::sema` remains nullable for standalone/non-parser contexts.
 - `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
-- stage-6 audit and invariant probe on sema-normalized return lowering confirmed that broad struct-return fallback removal is not yet safe: lambda/requires flows still reach the `struct-without-conversion-operator` fallback path (`test_lambda_advanced_features_ret47.cpp`, `test_lambda_cpp20_comprehensive_ret135.cpp`, `test_requires_requires_detection_ret42.cpp`).
+- Stage 6 audit and invariant probe on sema-normalized return lowering confirmed that broad struct-return fallback removal is not yet safe: lambda/requires flows still reach the `struct-without-conversion-operator` fallback path (`test_lambda_advanced_features_ret47.cpp`, `test_lambda_cpp20_comprehensive_ret135.cpp`, `test_requires_requires_detection_ret42.cpp`).
 - this narrows the next high-value work: sema return-conversion annotation still has uncovered paths for those lambda/requires cases, so codegen fallback hard-fail expansion must follow semantic-side coverage first.
 
 Remaining Stage 6 work:
