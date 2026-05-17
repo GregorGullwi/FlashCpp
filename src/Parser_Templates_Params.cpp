@@ -3465,7 +3465,8 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 		}
 
 		if (kind == "typename"_tok) {
-			// Current token is 'typename'; peek_info(1) = owner, peek_info(2) = first '::'
+			// advance() is below, so current_token_ is still 'typename' here.
+			// peek_info(1) = owner identifier, peek_info(2) = first '::'.
 			Token owner_token = peek_info(1);
 			Token scope_token = peek_info(2);
 			if (owner_token.kind().is_eof() ||
