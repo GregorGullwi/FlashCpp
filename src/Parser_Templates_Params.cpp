@@ -3420,27 +3420,32 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 }
 
 StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
+	// O(N) probe: save once, scan forward with advance(), restore at end.
+	// The old implementation used peek_info(lookahead) inside a loop which
+	// cost O(K) save/restore pairs per iteration — O(N²) total for N tokens.
+	StringHandle result{};
+	SaveHandle saved_pos = save_token_position();
 	int angle_depth = 0;
 	int paren_depth = 0;
 	int bracket_depth = 0;
-	for (size_t lookahead = 0; lookahead < 128; ++lookahead) {
-		Token token = peek_info(lookahead);
+	for (size_t steps = 0; steps < 128; ++steps) {
+		Token token = peek_info();
 		TokenKind kind = token.kind();
 		if (kind.is_eof()) {
-			return {};
+			break;
 		}
 		if (kind == "<"_tok) {
 			++angle_depth;
 		} else if (kind == ">"_tok) {
 			if (angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
-				return {};
+				break;
 			}
 			if (angle_depth > 0) {
 				--angle_depth;
 			}
 		} else if (kind == ">>"_tok) {
 			if (angle_depth <= 1 && paren_depth == 0 && bracket_depth == 0) {
-				return {};
+				break;
 			}
 			angle_depth = angle_depth > 1 ? angle_depth - 2 : 0;
 		} else if (kind == "("_tok) {
@@ -3456,15 +3461,16 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 				--bracket_depth;
 			}
 		} else if (kind == ","_tok && angle_depth == 0 && paren_depth == 0 && bracket_depth == 0) {
-			return {};
+			break;
 		}
 
 		if (kind == "typename"_tok) {
-			Token owner_token = peek_info(lookahead + 1);
-			Token scope_token = peek_info(lookahead + 2);
+			// Current token is 'typename'; peek_info(1) = owner, peek_info(2) = first '::'
+			Token owner_token = peek_info(1);
+			Token scope_token = peek_info(2);
 			if (owner_token.kind().is_eof() ||
 				scope_token.kind().is_eof()) {
-				return {};
+				break;
 			}
 			if (owner_token.type() == Token::Type::Identifier &&
 				scope_token.kind() == "::"_tok) {
@@ -3479,7 +3485,8 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 				if (owner_is_template_param) {
 					InlineVector<StringHandle, 4> components;
 					components.push_back(owner_handle);
-					size_t chain_lookahead = lookahead + 2;
+					// chain_lookahead 2 → first '::' after owner (relative to current 'typename')
+					size_t chain_lookahead = 2;
 					while (peek_info(chain_lookahead).kind() == "::"_tok) {
 						Token member_token = peek_info(chain_lookahead + 1);
 						if (member_token.kind().is_eof() ||
@@ -3490,13 +3497,18 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 						chain_lookahead += 2;
 					}
 					if (components.size() > 1) {
-						return gNamespaceRegistry.buildQualifiedIdentifier(components);
+						result = gNamespaceRegistry.buildQualifiedIdentifier(components);
+						break;
 					}
 				}
 			}
 		}
+		advance();
 	}
-	return {};
+	// Restore caller's lexer position — this function is a pure read-only probe.
+	restore_lexer_position_only(saved_pos);
+	discard_saved_token(saved_pos);
+	return result;
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
