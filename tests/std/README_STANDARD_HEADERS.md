@@ -129,7 +129,7 @@ caller's token position is unchanged.
 | Before fix | `--timing` | ~5.8ms | ~2147ms | ~2153ms |
 | **After fix** | `--timing` | ~4.4ms | **~92ms** | **~96ms** |
 
-**~23× parse-time reduction** (2147ms → 92ms).  First-order stop is unchanged:
+**~23× parse-time reduction** (2147ms → 92ms).  First-order blocker is unchanged:
 `static constexpr member initializer for 'std::__numeric_limits_base::has_denorm'
 is not a constant expression: initializer is unresolved`.
 

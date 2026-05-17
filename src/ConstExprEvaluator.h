@@ -443,6 +443,12 @@ struct EvaluationContext {
 	Parser* parser = nullptr;
 	SemanticAnalysis* sema = nullptr;
 	void normalizePendingSemanticRoots() const;
+	SemanticAnalysis& requireParserOwnedSema(const char* operation) const {
+		if (sema == nullptr) {
+			throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
+		}
+		return *sema;
+	}
 
 	// Return type of the constexpr function currently being evaluated.
 	// Set by evaluate_function_call_with_bindings so that aggregate initializer

@@ -17,13 +17,6 @@ constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
 constexpr std::string_view kNestedTypeAliasName = "type";
 
-SemanticAnalysis& requireParserOwnedMemberContextSema(const EvaluationContext& context, const char* operation) {
-	if (context.sema == nullptr) {
-		throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
-	}
-	return *context.sema;
-}
-
 TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, std::span<const size_t> array_dimensions);
 EvalResult materializeArrayInitializer(
 	TypeIndex type_index,
@@ -1695,7 +1688,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
-			requireParserOwnedMemberContextSema(context, "dependent unqualified member call reuse")
+			context.requireParserOwnedSema("dependent unqualified member call reuse")
 				.parserSemanticServices()
 				.getResolvedDirectCallQuery(&call_expr);
 		if (sema_query.hasValue()) {
