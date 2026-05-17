@@ -2931,12 +2931,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
-	if (context.parser != nullptr) {
-		(void)requireParserOwnedMemberContextSema(context, "lazy member materialization")
-				  .parserSemanticServices()
-				  .ensureMemberFunctionMaterialized(
-			context.struct_info->name, function_name_handle, std::nullopt);
-	} else if (context.sema != nullptr) {
+	if (context.sema != nullptr) {
 		context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
 	}
@@ -2954,11 +2949,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		if (context.parser != nullptr) {
-			(void)requireParserOwnedMemberContextSema(context, "lazy member candidate materialization")
-					  .parserSemanticServices()
-					  .ensureMemberFunctionMaterialized(owner_name, *result.function);
-		} else if (context.sema != nullptr) {
+		if (context.sema != nullptr) {
 			context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
 		}
 		result = find_member_function_candidate(
