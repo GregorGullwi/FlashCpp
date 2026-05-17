@@ -3556,6 +3556,10 @@ private:	 // Resume private methods
 		return nullptr;
 	}
 
+	static DeclarationNode* get_decl_from_symbol_mut(ASTNode& symbol) {
+		return const_cast<DeclarationNode*>(get_decl_from_symbol(symbol));
+	}
+
 		// Create an IdentifierNode and perform ordinary unqualified lookup to classify its binding.
 		// Non-const because it may call instantiateLazyStaticMember.
 		// Returns Unresolved when the name cannot be classified (template-dependent names,
