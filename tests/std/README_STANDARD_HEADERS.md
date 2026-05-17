@@ -101,6 +101,92 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-17 `<limits>` timing refresh (parser runtime + preprocessor timings enabled)
+
+This refresh reran `tests/std/test_std_limits.cpp` on Linux/libstdc++-14 with
+`x64/Sharded/FlashCpp` rebuilt using:
+
+- `-DWITH_PARSER_RUNTIME_STATS=1`
+- `-DWITH_PREPROCESSOR_TIMINGS=1`
+- `-O2 -DNDEBUG`
+
+Run protocol:
+
+- 5 samples with `--timing`
+- 5 samples with `--timing --stats`
+
+Current first-order stop in this configuration:
+
+- `Fatal error: static constexpr member initializer for 'std::__numeric_limits_base::has_denorm' is not a constant expression: initializer is unresolved`
+
+Timing summary (medians from the 5-sample sets):
+
+| Run set | Flags | Preprocessing | Parsing | Notes |
+|---------|-------|---------------|---------|-------|
+| Instrumented build | `--timing` | 5.8ms | 2147ms | Lowest-overhead wall-clock parser timing in this run protocol. |
+| Instrumented build | `--timing --stats` | 5.8ms | 2273ms | Includes runtime-stats collection overhead (~126ms median vs `--timing`). |
+
+Representative parser/runtime counters (`--timing --stats`, stable across samples):
+
+| Metric | Value |
+|--------|-------|
+| Preprocessed source lines | 4019 |
+| Top-level nodes / AST nodes | 7 / 178 |
+| Tokens advanced | 98,738 |
+| Lookahead peeks | 538,687 |
+| Lookahead tokens consumed | 33,422,812 |
+| Saved-token saves | 603,772 |
+| Full restores | 70,063 |
+| Lexer-only restores | 538,687 |
+| Discards | 553,678 |
+| Missing restore/discard handles | 0 |
+| Peak saved-token slots / capacity | 603,772 / 643,040 |
+| Saved-token slot bytes | 168 |
+| Peak saved-token reserved bytes | 108,030,720 (~103 MiB) |
+| Peak unreleased saves / unreleased at parse end | 50,098 / 50,094 |
+| AST node allocations (`gChunkedAnyStorage` slots) | 56,338 |
+| Canonical types interned / unique canonical types | 343 / 39 |
+| Saved-token measured time | save ~15.7-16.9ms, restore ~0.01-0.04ms, lexer-only restore ~0.11-0.38ms, discard ~0.16-0.29ms |
+
+Hot-path interpretation from this refresh:
+
+- The dominant parser self-time is now in
+  `parse_explicit_template_arguments_as_result` (~2.1s self-time in the phase
+  breakdown), with very high speculative save/restore volume concentrated there.
+- `peek_token(N)` behavior is much heavier than the older `<limits>` snapshot:
+  lookahead peeks are now 538k and most calls fall into deep lookahead buckets
+  (`depth=10+` dominates), which amplifies save/restore/discard churn.
+- Saved-token backing memory is now material (~103 MiB reserved peak for this
+  single header run) even though direct save/restore function timing is still
+  small relative to parse wall-clock.
+- Preprocessing remains minor in absolute terms (single-digit milliseconds here)
+  compared with parser time.
+- Type/sema volume is non-zero but still not the primary wall-clock driver for
+  this `<limits>` path.
+
+Updated recommended next steps (priority order):
+
+1. **Reduce speculative work in template-argument probes first.**  Target
+   `parse_explicit_template_arguments_as_result` call patterns to cut backtrack
+   volume before attempting allocator-level changes.
+2. **Split saved-token lifecycle classes (ephemeral vs persistent).**  Keep
+   deferred replay anchors explicit and make short-lived speculative handles
+   auditable, so the ~50k end-of-parse active handles are intentional by design.
+3. **Add focused allocation telemetry before allocator replacement.**  Track
+   saved-token capacity growth bytes, moved/copied bytes on growth, and
+   per-phase active-handle lifetime buckets to prove whether allocator swaps are
+   justified.
+4. **Introduce a cheaper lookahead path for common probes.**  For high-frequency
+   lookahead sites, avoid full save/restore/discard when a bounded token buffer
+   (or equivalent non-owning peek path) is sufficient.
+5. **Re-tune reserve heuristics using current counters.**  The earlier
+   `<limits>`-derived 20-slots/line heuristic now underestimates this measured
+   workload by a wide margin, so reserve policy should be revisited with current
+   multi-header data.
+6. **Keep preprocessing and broad type preallocation lower priority for
+   `<limits>`.**  Based on this run shape, parser speculative parsing and
+   saved-token lifecycle remain the highest-value optimization targets.
+
 ### 2026-05-12 Linux/libstdc++ template-instantiation depth guard follow-up
 
 This pass raises parser-side template-instantiation nesting guards from 24 to
