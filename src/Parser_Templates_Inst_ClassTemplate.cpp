@@ -9994,6 +9994,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& out_of_line_var : out_of_line_vars) {
 		// Substitute template parameters in the initializer
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
+		bool out_of_line_is_constexpr = false;
+		if (out_of_line_var.declaration.has_value()) {
+			if (out_of_line_var.declaration->is<VariableDeclarationNode>()) {
+				out_of_line_is_constexpr = out_of_line_var.declaration->as<VariableDeclarationNode>().is_constexpr();
+			}
+		}
 		if (out_of_line_var.initializer.has_value()) {
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
 				if (!out_of_line_var.initializer_position.has_value() ||
@@ -10093,6 +10099,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// If it exists, update the initializer; otherwise add a new member
 			StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
 			if (existing_member != nullptr) {
+				if (out_of_line_is_constexpr) {
+					existing_member->is_constexpr = true;
+				}
 				if (out_of_line_var.declaration.has_value()) {
 					existing_member->setDeclaration(*out_of_line_var.declaration);
 				}
@@ -10127,7 +10136,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					array_dimensions,
 					out_of_line_var.declaration,
 					out_of_line_var.initializer_position,
-					/* is_constexpr */ false);
+					out_of_line_is_constexpr);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
