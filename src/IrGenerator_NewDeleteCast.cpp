@@ -64,7 +64,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		ExprResult init_operands = visitExpressionNode(ctor_args[0].as<ExpressionNode>());
 		if (newExpr.is_brace_init()) {
 			std::optional<ConstExpr::EvalResult> constant_value;
-			ConstExpr::EvaluationContext ctx(symbol_table);
+			ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 			if (global_symbol_table_) {
 				ctx.global_symbols = global_symbol_table_;
 			}
