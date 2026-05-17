@@ -387,13 +387,13 @@ static bool hasSamePointerElementBaseType(
 std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc* optional_target_desc,
-	SemanticAnalysis* sema,
+	SemanticAnalysis& sema,
 	bool prefer_const,
 	int depth) {
 	// Mirrors the existing conversion-operator inheritance recursion guard:
 	// deep or cyclic inheritance graphs stop probing and report no match.
 	static constexpr int kMaxInheritanceDepth = 8;
-	if (!sema || depth > kMaxInheritanceDepth)
+	if (depth > kMaxInheritanceDepth)
 		return std::nullopt;
 
 	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
@@ -419,10 +419,10 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 		if (!return_type_node.is<TypeSpecifierNode>())
 			continue;
 
-		const CanonicalTypeId conv_op_return_type_id = sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
+		const CanonicalTypeId conv_op_return_type_id = sema.canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
 		if (!conv_op_return_type_id)
 			continue;
-		const CanonicalTypeDesc& return_desc = sema->typeContext().get(conv_op_return_type_id);
+		const CanonicalTypeDesc& return_desc = sema.typeContext().get(conv_op_return_type_id);
 		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
 			continue;
 		if (optional_target_desc && !(return_desc == *optional_target_desc))
@@ -434,13 +434,13 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 			LazyMemberInstantiationRegistry::getInstance().markOdrUsedAllInClass(
 				struct_info->name);
 			if (function_decl.needs_body_materialization()) {
-				sema->ensureMemberFunctionMaterialized(struct_info->name, function_decl);
+				sema.ensureMemberFunctionMaterialized(struct_info->name, function_decl);
 			}
 		}
 
 		CanonicalTypeDesc element_desc = return_desc;
 		element_desc.pointer_levels.pop_back();
-		const CanonicalTypeId element_type_id = sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
+		const CanonicalTypeId element_type_id = sema.canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
 		return PointerConversionInfo{conv_op_return_type_id, element_type_id, &function_decl};
 	}
 
@@ -458,10 +458,8 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc* optional_target_desc,
-	SemanticAnalysis* sema,
+	SemanticAnalysis& sema,
 	int depth) {
-	if (!sema)
-		return std::nullopt;
 	if (hasCVQualifier(from_desc.base_cv, CVQualifier::Const)) {
 		return findStructPointerConversionOperator(from_desc, optional_target_desc, sema, true, depth);
 	}
@@ -476,12 +474,12 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 // operators are viable (the caller is responsible for resolving preference).
 static void collectAllStructPointerConversionOperators(
 	const CanonicalTypeDesc& from_desc,
-	SemanticAnalysis* sema,
+	SemanticAnalysis& sema,
 	bool require_const,
 	int depth,
 	std::vector<PointerConversionInfo>& out_ops) {
 	static constexpr int kMaxInheritanceDepth = 8;
-	if (!sema || depth > kMaxInheritanceDepth)
+	if (depth > kMaxInheritanceDepth)
 		return;
 
 	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
@@ -505,17 +503,17 @@ static void collectAllStructPointerConversionOperators(
 			continue;
 
 		const CanonicalTypeId conv_op_return_type_id =
-			sema->canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
+			sema.canonicalizeTypeForImplicitConversion(return_type_node.as<TypeSpecifierNode>());
 		if (!conv_op_return_type_id)
 			continue;
-		const CanonicalTypeDesc& return_desc = sema->typeContext().get(conv_op_return_type_id);
+		const CanonicalTypeDesc& return_desc = sema.typeContext().get(conv_op_return_type_id);
 		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
 			continue;
 
 		CanonicalTypeDesc element_desc = return_desc;
 		element_desc.pointer_levels.pop_back();
 		const CanonicalTypeId element_type_id =
-			sema->canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
+			sema.canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
 		out_ops.push_back({conv_op_return_type_id, element_type_id, &function_decl});
 	}
 
@@ -537,10 +535,7 @@ static void collectAllStructPointerConversionOperators(
 // produce an ambiguous overload set.
 static bool hasAmbiguousPointerConversionOperators(
 	const CanonicalTypeDesc& from_desc,
-	SemanticAnalysis* sema) {
-	if (!sema)
-		return false;
-
+	SemanticAnalysis& sema) {
 	const bool source_is_const = hasCVQualifier(from_desc.base_cv, CVQualifier::Const);
 
 	// Collect all viable candidates: for a const source only const operators
@@ -554,9 +549,9 @@ static bool hasAmbiguousPointerConversionOperators(
 	// Check whether all operators have the same underlying element type (ignoring
 	// CV qualifiers). Operators returning e.g. int* and const int* share the same
 	// underlying element type and are resolved by cv-preference, not ambiguity.
-	const CanonicalTypeDesc& first_elem = sema->typeContext().get(all_ops[0].element_type_id);
+	const CanonicalTypeDesc& first_elem = sema.typeContext().get(all_ops[0].element_type_id);
 	for (size_t i = 1; i < all_ops.size(); ++i) {
-		const CanonicalTypeDesc& elem_i = sema->typeContext().get(all_ops[i].element_type_id);
+		const CanonicalTypeDesc& elem_i = sema.typeContext().get(all_ops[i].element_type_id);
 		if (!hasSamePointerElementBaseType(first_elem, elem_i))
 			return true;
 	}
@@ -4329,14 +4324,14 @@ std::optional<CanonicalTypeId> SemanticAnalysis::normalizeBuiltinSubscriptOperan
 			return std::nullopt;
 		// C++20 [over.match.sub]: if multiple viable pointer conversion operators
 		// produce different element types the overload set is ambiguous.
-		if (hasAmbiguousPointerConversionOperators(desc, this)) {
+		if (hasAmbiguousPointerConversionOperators(desc, *this)) {
 			const TypeInfo* type_info = tryGetTypeInfo(desc.type_index);
 			const std::string_view type_name =
 				type_info ? StringTable::getStringView(type_info->name()) : "<unknown>";
 			throw CompileError("ambiguous built-in subscript: '" + std::string(type_name) +
 							   "' has multiple pointer conversion operators with different element types");
 		}
-		if (auto pointer_conversion = findStructPointerConversionOperator(desc, nullptr, this, 0)) {
+		if (auto pointer_conversion = findStructPointerConversionOperator(desc, nullptr, *this, 0)) {
 			return pointer_conversion->target_type_id;
 		}
 		return std::nullopt;
@@ -4760,7 +4755,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(elem_desc);
 				}
 				if (array_desc.category() == TypeCategory::Struct) {
-					if (auto pointer_conversion = findStructPointerConversionOperator(array_desc, nullptr, this, 0))
+					if (auto pointer_conversion = findStructPointerConversionOperator(array_desc, nullptr, *this, 0))
 						return pointer_conversion->element_type_id;
 				}
 				// Plain type subscript — return base type.
@@ -5497,13 +5492,12 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 // `sema` is provided. This removes the need for codegen's `emitConversionOperatorCall`
 // to trigger lazy materialization as a "make the body exist now" fallback: by the time
 // codegen runs the struct visitor, the instantiated body already lives on the struct
-// and gets queued for deferred codegen through the normal path. Passing sema=nullptr
-// preserves the original existence-only behavior for callers that must not mutate
-// registry state (none currently, but kept explicit for safety).
+// and gets queued for deferred codegen through the normal path. All callers
+// always pass a valid SemanticAnalysis reference.
 static bool structHasConversionOperatorTo(
 	const CanonicalTypeDesc& from_desc,
 	const CanonicalTypeDesc& to_desc,
-	SemanticAnalysis* sema,
+	SemanticAnalysis& sema,
 	int depth = 0) {
 	// Guard against infinite recursion in pathological inheritance graphs.
 	static constexpr int kMaxInheritanceDepth = 8;
@@ -5516,8 +5510,6 @@ static bool structHasConversionOperatorTo(
 	if (!struct_info)
 		return false;
 	if (!to_desc.pointer_levels.empty() || !to_desc.array_dimensions.empty()) {
-		if (!sema)
-			return false;
 		return findStructPointerConversionOperator(from_desc, &to_desc, sema, depth).has_value();
 	}
 	TypeIndex canonical_target_type = canonicalize_conversion_target_type(to_desc.type_index, to_desc.category());
@@ -5544,7 +5536,7 @@ static bool structHasConversionOperatorTo(
 		// ensureMemberFunctionMaterialized is idempotent and cheap when the
 		// entry is already marked instantiated, so calling it unconditionally
 		// here is safe for non-lazy conversion operators too.
-		if (sema && struct_info->name.isValid() && mf.getName().isValid()) {
+		if (struct_info->name.isValid() && mf.getName().isValid()) {
 			// Phase 5 Slice G: the conversion operator was selected by
 			// overload resolution in a non-SFINAE annotation path, so this
 			// is a real ODR-use. Record it before materialization so the
@@ -5564,7 +5556,7 @@ static bool structHasConversionOperatorTo(
 				mf.function_decl.is<FunctionDeclarationNode>() &&
 				mf.function_decl.as<FunctionDeclarationNode>().needs_body_materialization();
 			if (needs_materialization) {
-				sema->ensureMemberFunctionMaterialized(
+				sema.ensureMemberFunctionMaterialized(
 					struct_info->name, mf.function_decl.as<FunctionDeclarationNode>());
 			}
 		}
@@ -5662,7 +5654,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		// is still useful as a side effect to mark ODR-use of any matching
 		// overload(s), so we call it for that purpose first.
 		const auto pointer_conversion =
-			findStructPointerConversionOperator(from_desc, &to_desc, this, 0);
+			findStructPointerConversionOperator(from_desc, &to_desc, *this, 0);
 		if (!pointer_conversion) {
 			FLASH_LOG(General, Debug,
 					  "SemanticAnalysis: skipping UserDefined pointer annotation — "
@@ -5875,7 +5867,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// slots_filled stats and misrepresents the actual operator availability.
 	// Codegen already handles null conv_op safely, so this is a stats/accuracy fix only.
 	if (plan.rank == ConversionRank::UserDefined) {
-		if (!structHasConversionOperatorTo(from_desc, to_desc, this)) {
+		if (!structHasConversionOperatorTo(from_desc, to_desc, *this)) {
 			FLASH_LOG(General, Debug,
 					  "SemanticAnalysis: skipping UserDefined annotation — "
 					  "no conversion operator found in struct source type");

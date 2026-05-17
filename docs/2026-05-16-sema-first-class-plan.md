@@ -25,6 +25,14 @@ Initial Stage 5 groundwork is now in place:
 - constexpr evaluation and pending-root normalization call sites have started routing through `ParserSemanticServices` instead of reaching straight into the full post-parse owner API.
 - the handoff into `AstToIr` now asserts that post-parse normalization completed before codegen consumes finalized semantic data.
 
+### Progress update (2026-05-16, continued)
+
+Further null-pointer elimination in internal helpers:
+
+- `TemplateEnvironment::semantic_context` was confirmed unused and removed.
+- Three helpers in `Parser_Templates_Inst_ClassTemplate.cpp` that forwarded a nullable `Parser*` into `EvaluationContext::sema` now take `Parser&`: the ternary `parser ? &parser->semanticAnalysis() : nullptr` assignment is gone.
+- Four file-static conversion-operator helpers in `SemanticAnalysis.cpp` (`findStructPointerConversionOperator`, `collectAllStructPointerConversionOperators`, `hasAmbiguousPointerConversionOperators`, `structHasConversionOperatorTo`) changed from `SemanticAnalysis*` to `SemanticAnalysis&`, removing all null guards on the sema parameter at those call sites.
+
 Remaining Stage 5 work:
 
 - move the rest of the parser/template/constexpr-safe queries behind the parser-safe boundary
@@ -87,9 +95,17 @@ Initial Stage 6 codegen invariants are now in place:
 - the `setSemanticData(...)` plumbing is gone, so codegen cannot accidentally start in a semantic-null state anymore.
 - IR generation helpers now treat semantic analysis as mandatory infrastructure and only branch on whether a particular semantic fact was available.
 
+### Progress update (2026-05-16, continued)
+
+Nullable sema elimination continued in template-instantiation and conversion-operator helpers:
+
+- `Parser*` → `Parser&` in `makeStaticMemberInitializerEvaluationContext` and its two callers; the `parser ? &parser->semanticAnalysis() : nullptr` ternary assignment into `EvaluationContext::sema` is eliminated.
+- `SemanticAnalysis*` → `SemanticAnalysis&` in four file-static conversion-operator helpers in `SemanticAnalysis.cpp`; null guards removed.
+
 Remaining Stage 6 work:
 
 - remove the remaining nullable-semantic branches in parser-owned constexpr/template/substitution contexts
+- `EvaluationContext::sema` is still a nullable pointer with a single `if (sema != nullptr)` guard in `normalizePendingSemanticRoots()`; making it non-nullable requires auditing all EvaluationContext creation sites that do not set sema
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
 
