@@ -5502,6 +5502,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						origin = StringTable::getOrInternStringHandle(origin_name);
 					}
 				}
+				if (!origin.isValid() && !var_name.empty() && init_expr.is<ExpressionNode>() &&
+					std::holds_alternative<StringLiteralNode>(init_expr.as<ExpressionNode>())) {
+					origin = StringTable::getOrInternStringHandle(var_name);
+				}
 				if (!origin.isValid()) {
 					return EvalResult::error(
 						"Constexpr array-to-pointer decay failed: could not resolve array origin for pointer initializer");
