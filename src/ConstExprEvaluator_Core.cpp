@@ -5490,6 +5490,38 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			}
 
 			maybe_set_binding_result_exact_type(init_result, decl, &init_expr, context);
+			// C++ array-to-pointer decay for local declarations like:
+			//   T* p = arr;
+			// When the initializer evaluates to an array value, materialize a pointer
+			// to the array origin so later pointer operations/member access work.
+			if ((decl_type_spec.is_pointer() || decl_type_spec.pointer_depth() > 0) && init_result.is_array) {
+				StringHandle origin = init_result.array_origin_var;
+				if (!origin.isValid()) {
+					const std::string_view origin_name = getIdentifierNameFromAstNode(init_expr);
+					if (!origin_name.empty()) {
+						origin = StringTable::getOrInternStringHandle(origin_name);
+					}
+				}
+				if (!origin.isValid() && !var_name.empty() && init_expr.is<ExpressionNode>() &&
+					std::holds_alternative<StringLiteralNode>(init_expr.as<ExpressionNode>())) {
+					origin = StringTable::getOrInternStringHandle(var_name);
+				}
+				if (!origin.isValid()) {
+					return EvalResult::error(
+						"Constexpr array-to-pointer decay failed: could not resolve array origin for pointer initializer");
+				}
+				EvalResult decayed_ptr = EvalResult::from_pointer(origin, 0);
+				if (!init_result.array_elements.empty()) {
+					decayed_ptr.pointer_value_snapshot = init_result.array_elements;
+				} else if (!init_result.array_values.empty()) {
+					decayed_ptr.pointer_value_snapshot.reserve(init_result.array_values.size());
+					for (int64_t value : init_result.array_values) {
+						decayed_ptr.pointer_value_snapshot.push_back(EvalResult::from_int(value));
+					}
+				}
+				maybe_set_binding_result_exact_type(decayed_ptr, decl, &init_expr, context);
+				init_result = std::move(decayed_ptr);
+			}
 			apply_uint_init_narrowing(init_result);
 
 			// Add to bindings

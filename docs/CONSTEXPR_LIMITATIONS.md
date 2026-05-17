@@ -130,6 +130,8 @@ struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in 
 
 **Supported:** `size()` (pointer subtraction), pointer comparison, pointer arithmetic on the stored pointer, and range-based for iteration via `begin()` / `end()` when the iterators are backed by the synthesized constexpr snapshot. See `tests/test_constexpr_initializer_list_ret0.cpp` and `tests/test_constexpr_initializer_list_range_for_ret0.cpp`.
 
+**Recent improvement:** Arrow-member resolution in constexpr evaluation now dereferences binding-backed pointers before falling back to symbol-table reconstruction. This improves behavior when synthesized iterator/backing pointers are still available in active bindings.
+
 **Still limited:** Direct element iteration only works while the iterator pointer keeps its synthesized snapshot. If user code stores the iterator in another object and later reloads it in a way that discards the snapshot metadata, dereference can still fail. The remaining work is to preserve snapshot-backed pointer state across every struct/member round-trip, not just through the range-for evaluator's direct `begin()`/`end()` path.
 
 ```cpp
