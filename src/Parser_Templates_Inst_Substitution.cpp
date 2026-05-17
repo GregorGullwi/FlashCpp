@@ -154,8 +154,7 @@ namespace {
 	}
 
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	eval_ctx.parser = &parser;
-	eval_ctx.sema = &parser.semanticAnalysis();
+	eval_ctx.attachParserOwnedSema(parser);
 	eval_ctx.template_environment = buildTemplateEnvironment(
 		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 		template_args,
@@ -2250,8 +2249,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				eval_ctx.parser = this;
-				eval_ctx.sema = &semanticAnalysis();
+				eval_ctx.attachParserOwnedSema(*this);
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default, eval_ctx);
 				if (!eval_result.success()) {
 					FLASH_LOG(Templates, Error, "Failed to evaluate non-type default for variable template parameter '",
@@ -3111,8 +3109,7 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 
 	// Evaluate the substituted expression using the standard constant expression evaluator
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	eval_ctx.parser = this;
-	eval_ctx.sema = &semanticAnalysis();
+	eval_ctx.attachParserOwnedSema(*this);
 	eval_ctx.template_environment = buildTemplateEnvironment(
 		template_params,
 		template_args,

@@ -2258,8 +2258,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Try to evaluate the array size as a constant expression
 						if (size_result.node().has_value()) {
 							ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-							eval_ctx.parser = this;
-							eval_ctx.sema = &semanticAnalysis();
+							eval_ctx.attachParserOwnedSema(*this);
 							auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
 							if (eval_result.success()) {
 								array_size_val = static_cast<size_t>(eval_result.as_int());
@@ -2306,8 +2305,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 								if (size_result.node().has_value()) {
 									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-									eval_ctx.parser = this;
-									eval_ctx.sema = &semanticAnalysis();
+									eval_ctx.attachParserOwnedSema(*this);
 									auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
 									if (eval_result.success()) {
 										array_size_val = static_cast<size_t>(eval_result.as_int());
@@ -2364,8 +2362,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 							if (size_result.node().has_value()) {
 								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-								eval_ctx.parser = this;
-								eval_ctx.sema = &semanticAnalysis();
+								eval_ctx.attachParserOwnedSema(*this);
 								auto eval_result = ConstExpr::Evaluator::evaluate(*size_result.node(), eval_ctx);
 								if (eval_result.success()) {
 									array_size_val = static_cast<size_t>(eval_result.as_int());

@@ -8,6 +8,11 @@
 
 namespace ConstExpr {
 
+void EvaluationContext::attachParserOwnedSema(Parser& parser_owner) {
+	parser = &parser_owner;
+	sema = &parser_owner.semanticAnalysis();
+}
+
 SemanticAnalysis& EvaluationContext::requireParserOwnedSema(std::string_view operation) const {
 	if (parser == nullptr) {
 		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
