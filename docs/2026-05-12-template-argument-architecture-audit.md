@@ -204,6 +204,11 @@ sema direct lookup probes. The active architecture tracks are therefore:
     preserve replay metadata (`declaration` + `initializer_position`) during
     `addStaticMember` transfer, so replay-first substitution can run in those
     paths as well (`test_member_template_partial_spec_static_member_replay_ret0.cpp`).
+    **New in this slice (2026-05-17, follow-up):** metadata-aware static-member
+    initializer updates now preserve replay metadata (`declaration` +
+    `initializer_position`) when updating already-registered members in primary
+    template copy and lazy materialization paths
+    (`test_template_lazy_static_member_replay_metadata_ret0.cpp`).
     Remaining gaps are declarations that never record replay metadata at parse
     time and therefore still need AST-only fallback substitution.
 
@@ -221,7 +226,8 @@ sema direct lookup probes. The active architecture tracks are therefore:
       covered direct-call + out-of-line static-member initializer +
       StructTypeInfo-backed in-class static-member initializer +
       partial-specialization/member-template static-member copy paths +
-      full-specialization static-member AST copy paths.
+      full-specialization static-member AST copy paths + metadata-aware
+      initializer updates for existing members in primary/lazy update paths.
     - Richer dependent-base lookup and deeper member-template segment chains.
 
 3. **Structural NTTP implementation.**
@@ -491,8 +497,8 @@ single parser bug; it is the absence of one semantic template system that owns:
    Extend the existing non-dependent function-call records to qualified names,
    member-template calls, static initializers, dependent bases, unknown
    specializations, and expression qualified-ids.
-   - **Next:** extend replay metadata coverage to remaining non-out-of-line
-     static-member update paths that still rely on initializer-only updates.
+   - **Next:** extend parse-time replay metadata capture into remaining
+     declarations that still only support AST-only fallback substitution.
 
 3. **Complete remaining structural NTTP values**
    Add parser/constexpr support for non-null member-pointer, floating-point, and
