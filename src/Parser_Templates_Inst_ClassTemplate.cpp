@@ -10374,9 +10374,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Check if this static member was already added (e.g., by lazy instantiation path)
 				// If it exists but has no initializer, update it with the substituted initializer
 				// This ensures lazy instantiation registrations get their initializers filled in
-				const bool has_existing_member =
+				const bool member_exists =
 					struct_info_ptr->findStaticMember(static_member_name_handle) != nullptr;
-				if (has_existing_member) {
+				if (member_exists) {
 					// Member already exists - update the initializer if we have a substituted one
 					if (substituted_initializer.has_value()) {
 						struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);

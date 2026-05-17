@@ -718,7 +718,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 			if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
 				failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly) {
 				if (!param.has_type()) {
-					throw InternalError("Dependent non-type template parameter default requires declared type");
+					throw InternalError("Non-type template parameter with a dependent default value must declare an explicit type");
 				}
 				TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(
 					param.nameHandle(),

@@ -605,15 +605,16 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 		advance();  // consume '='
 
-		// Parse initializer expression
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
 			definition_lookup_context.is_valid()
 				? &definition_lookup_context
 				: current_template_definition_lookup_context_);
 
-		// Use expression parsing here (not copy-initialization) so dependent and
-		// qualified member expressions are preserved for template replay/substitution.
+		// Parse the initializer as an expression (not copy-initialization) so
+		// dependent and qualified member expressions are preserved in the AST.
+		// That preserved form is replayed later when class-template static member
+		// initializers are substituted during instantiation.
 		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_result.is_error() || !init_result.node().has_value()) {
 			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");

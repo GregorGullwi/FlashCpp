@@ -2154,16 +2154,18 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			// For a qualified-id such as A::value in a default NTTP, failing to look
 			// through the TypeIndex keeps the name as the dependent spelling "A::value"
 			// and the constexpr evaluator quite correctly diagnoses it as undefined.
+			// This order ensures qualified-id expressions like A::value resolve through
+			// alias chains to the concrete struct/class owner type.
 			// Resolution order:
 			// 1) resolved alias terminal TypeInfo
 			// 2) resolved alias TypeIndex lookup
 			// 3) original TypeIndex lookup
-			const auto resolve_concrete_owner_type_info = [&](const TemplateTypeArg& arg) -> const TypeInfo* {
-				if (!arg.type_index.is_valid()) {
+			const auto resolve_concrete_owner_type_info = [&](const TemplateTypeArg& type_arg) -> const TypeInfo* {
+				if (!type_arg.type_index.is_valid()) {
 					return nullptr;
 				}
 				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-					arg.type_index.withCategory(arg.typeEnum()));
+					type_arg.type_index.withCategory(type_arg.typeEnum()));
 				if (resolved_alias.terminal_type_info != nullptr) {
 					return resolved_alias.terminal_type_info;
 				}
@@ -2172,7 +2174,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						return resolved_info;
 					}
 				}
-				return tryGetTypeInfo(arg.type_index);
+				return tryGetTypeInfo(type_arg.type_index);
 			};
 			const TypeInfo* type_info = resolve_concrete_owner_type_info(concrete_type);
 			if (type_info != nullptr && (type_info->isStruct() || type_info->getStructInfo() != nullptr)) {
