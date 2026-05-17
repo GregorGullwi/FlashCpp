@@ -4469,10 +4469,11 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		if (context.sema != nullptr) {
-			if (const FunctionDeclarationNode* sema_resolved =
-					context.sema->parserSemanticServices().getResolvedDirectCall(&call_expr)) {
+			ResolvedFunctionQueryResult sema_query =
+				context.sema->parserSemanticServices().getResolvedDirectCallQuery(&call_expr);
+			if (sema_query.hasValue()) {
 				return evaluate_resolved_function_call(
-					*sema_resolved,
+					*sema_query.function,
 					call_expr.arguments(),
 					context,
 					nullptr);

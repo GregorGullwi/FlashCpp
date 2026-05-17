@@ -1411,12 +1411,28 @@ std::optional<TypeSpecifierNode> ParserSemanticServices::getOverloadResolutionAr
 	return owner_->getOverloadResolutionArgType(arg);
 }
 
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpCallQuery(const void* key) const {
+	return owner_->getResolvedOpCallQuery(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpCallQuery(const CallExprNode* key) const {
+	return owner_->getResolvedOpCallQuery(key);
+}
+
 const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const void* key) const {
 	return owner_->getResolvedOpCall(key);
 }
 
 const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const CallExprNode* key) const {
 	return owner_->getResolvedOpCall(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedDirectCallQuery(const void* key) const {
+	return owner_->getResolvedDirectCallQuery(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedDirectCallQuery(const CallExprNode* key) const {
+	return owner_->getResolvedDirectCallQuery(key);
 }
 
 const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(const void* key) const {
@@ -4059,9 +4075,23 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* k
 	return it != op_call_table_.end() ? it->second : nullptr;
 }
 
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpCallQuery(const void* key) const {
+	if (auto it = op_call_table_.find(key); it != op_call_table_.end()) {
+		return {ResolvedFunctionQueryResult::State::Available, it->second};
+	}
+	if (analyzed_op_call_queries_.count(key) > 0) {
+		return {ResolvedFunctionQueryResult::State::AnalyzedAbsent, nullptr};
+	}
+	return {ResolvedFunctionQueryResult::State::NotYetAnalyzed, nullptr};
+}
+
 const SemanticAnalysis::StructuredBindingPlan* SemanticAnalysis::getStructuredBindingPlan(const StructuredBindingNode* key) const {
 	auto it = structured_binding_plans_.find(key);
 	return it != structured_binding_plans_.end() ? &it->second : nullptr;
+}
+
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpCallQuery(const CallExprNode* key) const {
+	return getResolvedOpCallQuery(static_cast<const void*>(key));
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExprNode* key) const {
@@ -4078,8 +4108,22 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const voi
 	return it != resolved_direct_call_table_.end() ? it->second : nullptr;
 }
 
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedDirectCallQuery(const void* key) const {
+	if (auto it = resolved_direct_call_table_.find(key); it != resolved_direct_call_table_.end()) {
+		return {ResolvedFunctionQueryResult::State::Available, it->second};
+	}
+	if (analyzed_direct_call_queries_.count(key) > 0) {
+		return {ResolvedFunctionQueryResult::State::AnalyzedAbsent, nullptr};
+	}
+	return {ResolvedFunctionQueryResult::State::NotYetAnalyzed, nullptr};
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const CallExprNode* key) const {
 	return getResolvedDirectCall(static_cast<const void*>(key));
+}
+
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedDirectCallQuery(const CallExprNode* key) const {
+	return getResolvedDirectCallQuery(static_cast<const void*>(key));
 }
 
 std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::getResolvedIdentifierMember(const IdentifierNode* key) const {
@@ -6387,6 +6431,8 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 // --- Callable operator() resolution ---
 
 void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key) {
+	analyzed_op_call_queries_.insert(call_key);
+
 	if (call_info.has_receiver)
 		return;
 
@@ -7383,6 +7429,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 														 const CallInfo& call_info,
 														 const void* call_key,
 														 const char* context_description) {
+	analyzed_direct_call_queries_.insert(call_key);
+
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
 		for (const ASTNode& arg : *call_info.arguments) {

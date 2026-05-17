@@ -35,6 +35,21 @@ struct CallInfo;
 class SemanticAnalysis;
 class PostParseSemanticNormalizer;
 
+struct ResolvedFunctionQueryResult {
+	enum class State : uint8_t {
+		NotYetAnalyzed,
+		AnalyzedAbsent,
+		Available,
+	};
+
+	State state = State::NotYetAnalyzed;
+	const FunctionDeclarationNode* function = nullptr;
+
+	bool hasValue() const {
+		return state == State::Available && function != nullptr;
+	}
+};
+
 class ParserSemanticServices final {
 public:
 	ParserSemanticServices() = delete;
@@ -45,8 +60,12 @@ public:
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg) const;
 
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
 
@@ -177,11 +196,16 @@ public:
 	}
 
 	// Look up the pre-resolved callable operator() for a call node.
-	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
+	// Returns nullptr when no positive annotation was stored. Use the Query variant
+	// when the caller must distinguish "not yet analyzed" from "analyzed and absent".
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
 	struct ResolvedIdentifierMemberInfo {
@@ -557,6 +581,8 @@ private:
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const UnaryOperatorNode*, const FunctionDeclarationNode*> op_unary_deref_table_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
+	std::unordered_set<const void*> analyzed_op_call_queries_;
+	std::unordered_set<const void*> analyzed_direct_call_queries_;
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
 	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;

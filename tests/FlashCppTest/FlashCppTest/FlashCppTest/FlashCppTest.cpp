@@ -38,6 +38,39 @@ SemanticAnalysis& runSemanticAnalysisForTest(Parser& parser, CompileContext& con
 	return sema;
 }
 
+static const CallExprNode* findMainReturnCallExpr(const Parser& parser) {
+	for (const ASTNode& node : parser.get_nodes()) {
+		if (!node.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& function = node.as<FunctionDeclarationNode>();
+		if (function.decl_node().identifier_token().value() != "main"sv) {
+			continue;
+		}
+		if (!function.get_definition().has_value()) {
+			return nullptr;
+		}
+		const ASTNode& definition = *function.get_definition();
+		if (!definition.is<BlockNode>()) {
+			return nullptr;
+		}
+		const auto& statements = definition.as<BlockNode>().get_statements();
+		if (statements.empty() || !statements[0].is<ReturnStatementNode>()) {
+			return nullptr;
+		}
+		const auto& return_stmt = statements[0].as<ReturnStatementNode>();
+		if (!return_stmt.expression().has_value()) {
+			return nullptr;
+		}
+		const ASTNode& expr = *return_stmt.expression();
+		if (!expr.is<CallExprNode>()) {
+			return nullptr;
+		}
+		return &expr.as<CallExprNode>();
+	}
+	return nullptr;
+}
+
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {
 	std::ifstream file("tests/" + filename);
@@ -1664,6 +1697,39 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 	}
 }
 #endif
+
+TEST_CASE("SemanticAnalysis:ResolvedDirectCallQueryTracksAnalysisState") {
+	std::string code = R"(
+		int foo() { return 7; }
+		int main() { return foo(); }
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_resolved_direct_call_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+	if (parse_result.is_error()) {
+		return;
+	}
+
+	const CallExprNode* call_expr = findMainReturnCallExpr(parser);
+	REQUIRE(call_expr != nullptr);
+
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	ResolvedFunctionQueryResult before_run = parser_services.getResolvedDirectCallQuery(call_expr);
+	CHECK(before_run.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed);
+	CHECK(before_run.function == nullptr);
+	CHECK(parser_services.getResolvedDirectCall(call_expr) == nullptr);
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	ResolvedFunctionQueryResult after_run = sema.parserSemanticServices().getResolvedDirectCallQuery(call_expr);
+	CHECK(after_run.state == ResolvedFunctionQueryResult::State::Available);
+	REQUIRE(after_run.function != nullptr);
+	CHECK(after_run.function->decl_node().identifier_token().value() == "foo"sv);
+}
 
 TEST_CASE("Constructor with no parameters") {
 	run_test_from_file("test_constructor_no_params.cpp", "Constructor with no parameters", false);

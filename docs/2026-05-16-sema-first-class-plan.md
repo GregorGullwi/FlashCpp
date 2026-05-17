@@ -42,10 +42,18 @@ The Stage 5 structural split is now explicit in code:
 - `Parser::normalizePendingSemanticRootsIfAvailable()` now routes through `semantic_analysis_.parserSemanticServices().normalizePendingSemanticRoots()` instead of bypassing the parser-safe boundary
 - the remaining Stage 5 work is now narrower: phase-aware side-table/query contracts and additional parser-safe query migration, rather than the high-level owner/normalizer split itself
 
+### Progress update (2026-05-17, continued)
+
+Resolved-call query state is now phase-aware instead of using bare null as the only contract:
+
+- parser-safe resolved direct-call and `operator()` lookups now have explicit query-state APIs that distinguish `NotYetAnalyzed`, `AnalyzedAbsent`, and `Available`
+- sema records when those call-query families were actually examined, so callers no longer have to infer phase from object lifetime or from a missing map entry
+- constexpr direct-call reuse now goes through the explicit direct-call query API, so the parser-safe boundary exercises the new contract directly
+- the remaining Stage 5 side-table work is still broader than call resolution alone: expression-type, overload-argument-type, member-access, and similar tables still need the same phase-aware audit
+
 Remaining Stage 5 work:
 
-- move the rest of the parser/template/constexpr-safe queries behind the parser-safe boundary
-- audit side tables so "not analyzed yet" and "analyzed and absent" become explicit phase-aware states
+- continue the side-table audit so additional families beyond resolved-call lookups distinguish "not analyzed yet" from "analyzed and absent"
 
 ### 5.1 Define the internal split inside `SemanticAnalysis`
 
