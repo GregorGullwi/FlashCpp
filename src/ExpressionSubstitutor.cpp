@@ -2154,7 +2154,18 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			// For a qualified-id such as A::value in a default NTTP, failing to look
 			// through the TypeIndex keeps the name as the dependent spelling "A::value"
 			// and the constexpr evaluator quite correctly diagnoses it as undefined.
-			const TypeInfo* type_info = tryGetTypeInfo(concrete_type.type_index);
+			const TypeInfo* type_info = nullptr;
+			if (concrete_type.type_index.is_valid()) {
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					concrete_type.type_index.withCategory(concrete_type.typeEnum()));
+				type_info = resolved_alias.terminal_type_info;
+				if (type_info == nullptr && resolved_alias.type_index.is_valid()) {
+					type_info = tryGetTypeInfo(resolved_alias.type_index);
+				}
+				if (type_info == nullptr) {
+					type_info = tryGetTypeInfo(concrete_type.type_index);
+				}
+			}
 			if (type_info != nullptr && (type_info->isStruct() || type_info->getStructInfo() != nullptr)) {
 				StringHandle type_name_handle = type_info->name();
 
