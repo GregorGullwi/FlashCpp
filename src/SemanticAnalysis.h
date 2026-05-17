@@ -72,6 +72,7 @@ public:
 
 	size_t normalizePendingSemanticRoots();
 
+	TypeSpecifierQueryResult getExpressionTypeQuery(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	TypeSpecifierQueryResult getOverloadResolutionArgTypeQuery(const ASTNode& arg) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg) const;
@@ -152,6 +153,7 @@ public:
 	// Look up the semantic slot for an expression node.
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
+	TypeSpecifierQueryResult getExpressionTypeQuery(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getTernaryResultType(const TernaryOperatorNode& ternary_node) const;
 	// Public bridge for codegen/helper paths that need the same canonical type

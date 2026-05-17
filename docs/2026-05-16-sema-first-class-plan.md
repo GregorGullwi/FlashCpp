@@ -36,10 +36,12 @@ Stage 5 progress so far:
 - parser-safe overload-argument-type queries now expose `NotYetAnalyzed`, `AnalyzedAbsent`, and `Available` instead of making callers guess from a missing cache entry.
 - sema now records when overload-resolution argument typing was actually attempted for an expression node, even when no type could be produced.
 - the eager `getOverloadResolutionArgType(...)` API remains in place for existing callers, but it now has a sibling query API for phase-aware consumers and tests.
+- parser-safe expression-type queries now also distinguish `NotYetAnalyzed`, `AnalyzedAbsent`, and `Available` instead of treating a missing semantic slot as the only state signal.
+- expression normalization now records that an expression node was sema-visited even when no semantic type slot was produced, so expression-type queries no longer have to guess phase from slot presence alone.
 
 Remaining Stage 5 work:
 
-- continue the side-table audit so additional families beyond resolved-call lookups distinguish "not analyzed yet" from "analyzed and absent"
+- core Stage 5 side-table/query audit is in place for resolved-call, overload-argument-type, and expression-type queries; the remaining follow-on audit is narrower and mostly concerns other specialized caches such as member-access related tables
 
 ### 5.1 Define the internal split inside `SemanticAnalysis`
 

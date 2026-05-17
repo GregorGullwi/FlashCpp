@@ -1406,6 +1406,10 @@ std::optional<TypeSpecifierNode> ParserSemanticServices::getExpressionType(const
 	return owner_->getExpressionType(node);
 }
 
+TypeSpecifierQueryResult ParserSemanticServices::getExpressionTypeQuery(const ASTNode& node) const {
+	return owner_->getExpressionTypeQuery(node);
+}
+
 TypeSpecifierQueryResult ParserSemanticServices::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
 	return owner_->getOverloadResolutionArgTypeQuery(arg);
 }
@@ -3743,6 +3747,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				   expr);
 
 		const void* key = static_cast<const void*>(&expr);
+		normalized_ast_nodes_.insert(key);
 		auto existing_slot = getSlot(key);
 		if (!existing_slot.has_value() || !existing_slot->has_type()) {
 			if (const CanonicalTypeId inferred_type_id = inferExpressionType(node)) {
@@ -3876,8 +3881,13 @@ const void* getExpressionKey(const ASTNode& node) {
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {
+	TypeSpecifierQueryResult query = getExpressionTypeQuery(node);
+	return query.hasValue() ? query.type : std::nullopt;
+}
+
+TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
-		return std::nullopt;
+		return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
 	}
 
 	const auto* key = getExpressionKey(node);
@@ -3889,9 +3899,12 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 			TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
 			type.add_pointer_level();
 			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
-			return type;
+			return {TypeSpecifierQueryResult::State::Available, type};
 		}
-		return std::nullopt;
+		if (normalized_ast_nodes_.count(key) > 0) {
+			return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
+		}
+		return {TypeSpecifierQueryResult::State::NotYetAnalyzed, std::nullopt};
 	}
 
 	TypeSpecifierNode type = materializeTypeSpecifier(type_context_.get(slot->type_id));
@@ -3907,7 +3920,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 		default:
 			throw InternalError("Unexpected semantic value category");
 	}
-	return type;
+	return {TypeSpecifierQueryResult::State::Available, type};
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getTernaryResultType(const TernaryOperatorNode& ternary_node) const {
