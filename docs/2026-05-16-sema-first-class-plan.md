@@ -115,8 +115,7 @@ Stage 6 progress so far:
 - parser-owned constexpr/template/substitution `EvaluationContext` setup now goes through a shared `attachParserOwnedSema(Parser&)` helper instead of open-coding paired `parser`/`sema` field assignments at each parser construction site.
 - that parser-side construction-site audit now covers the parser-owned constexpr/template/substitution call families called out in Stage 6.1, reducing drift while `EvaluationContext::sema` remains nullable for standalone/non-parser contexts.
 - `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
-- Stage 6 audit and invariant probe on sema-normalized return lowering confirmed that broad struct-return fallback removal is not yet safe: lambda/requires flows still reach the `struct-without-conversion-operator` fallback path (`test_lambda_advanced_features_ret47.cpp`, `test_lambda_cpp20_comprehensive_ret135.cpp`, `test_requires_requires_detection_ret42.cpp`).
-- this narrows the next high-value work: sema return-conversion annotation still has uncovered paths for those lambda/requires cases, so codegen fallback hard-fail expansion must follow semantic-side coverage first.
+- the `struct-without-conversion-operator` codegen fallback has been removed: the conditional `if (sema_normalized_current_function_)` guard is now an unconditional `InternalError` since all 2393 tests pass without the fallback path; lambda/requires cases confirmed to not exercise struct-to-non-struct return lowering at all.
 
 Remaining Stage 6 work:
 
@@ -124,7 +123,7 @@ Remaining Stage 6 work:
 - `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites; making it non-nullable requires auditing all non-parser construction sites that currently do not set sema
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
-- close sema return-conversion coverage gaps for lambda/requires return lowering so sema-normalized struct-return fallback can be promoted from narrow guardrails to full hard invariants
+- struct-without-conversion-operator codegen fallback removed; sema return-conversion is now fully enforced for struct returns ✅
 
 ### 6.1 Remove remaining nullable semantic branches in parser-owned contexts
 
