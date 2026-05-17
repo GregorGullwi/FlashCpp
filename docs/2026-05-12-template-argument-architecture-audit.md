@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
+**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first; parser substitution now concretizes template-template dependent owners before member-chain resolution)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -157,6 +157,15 @@ infrastructure tracks. The branch now includes:
   falling back to the previous AST substitution behavior. Regression
   `test_template_partial_spec_static_member_replay_two_phase_lookup_ret0.cpp`
   covers dependent unqualified call + ADL behavior in a partial specialization.
+- **dependent template-template owner concretization in parser substitution
+  (2026-05-17):** `substitute_template_parameter` in
+  `Parser_Expr_QualLookup.cpp` now remaps dependent-owner names that bind to
+  template-template parameters (e.g. `TemplateOwner`) to their concrete
+  template names before `resolveConcreteInstantiatedMemberChain` runs for
+  dependent/unknown-specialization owner records. This closes a remaining
+  parser-time concretization gap for member chains like
+  `typename TemplateOwner<U>::type`. Regression
+  `dependent_template_template_owner_member_type_ret42.cpp` covers the path.
 
 Validation after all changes passed the Linux sharded build and the full test
 suite (2377 regular tests + 182 expected-fail tests, 0 regressions).
