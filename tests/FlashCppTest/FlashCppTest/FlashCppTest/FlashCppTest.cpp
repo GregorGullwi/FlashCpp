@@ -87,8 +87,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	const auto& ast = parser.get_nodes();
 
 	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
-	AstToIr converter(gSymbolTable, test_context, parser);
-	converter.setSemanticData(&sema);
+	AstToIr converter(gSymbolTable, test_context, parser, sema);
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -730,21 +729,23 @@ TEST_SUITE("Parser") {
 				return 0;
 			})";
 
-	// Test with function return type
+		// Test with function return type
 		Lexer lexer1(code_with_return_type);
-		Parser parser1(lexer1, compile_context);
+		SemanticAnalysis parser_sema(compile_context, gSymbolTable);
+		Parser parser1(lexer1, compile_context, parser_sema);
 		auto parse_result1 = parser1.parse();
 		CHECK(!parse_result1.is_error());
 		const auto& ast1 = parser1.get_nodes();
 
-	// Test with auto and trailing return type
+		// Test with auto and trailing return type
 		Lexer lexer2(code_with_auto_return_type);
-		Parser parser2(lexer2, compile_context);
+		SemanticAnalysis parser_sema2(compile_context, gSymbolTable);
+		Parser parser2(lexer2, compile_context, parser_sema2);
 		auto parse_result2 = parser2.parse();
 		CHECK(!parse_result2.is_error());
 		const auto& ast2 = parser2.get_nodes();
 
-	// Compare AST nodes
+		// Compare AST nodes
 		CHECK(ast1.size() == ast2.size());
 		for (std::size_t i = 0; i < ast1.size(); ++i) {
 			CHECK(typeid(ast1[i].type_name()) == typeid(ast2[i].type_name()));
@@ -824,19 +825,18 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(&sema);
+		runSemanticAnalysisForTest(parser, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
 
-	// Now converter.ir should contain the IR for the code.
+		// Now converter.ir should contain the IR for the code.
 		const auto& ir = converter.getIr();
 
 		std::puts("\n=== Test: Empty main() C++17 source string ===");
 
-	// Let's just print the IR for now.
+		// Let's just print the IR for now.
 		for (const auto& instruction : ir.getInstructions()) {
 			std::puts(instruction.getReadableString().c_str());
 		}
@@ -1152,9 +1152,8 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(&sema);
+		runSemanticAnalysisForTest(parser, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1199,9 +1198,8 @@ TEST_SUITE("Code gen") {
 
 		const auto& ast = parser.get_nodes();
 
-		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(&sema);
+		runSemanticAnalysisForTest(parser, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -1249,9 +1247,8 @@ CHECK(!parse_result.is_error());
 
 const auto& ast = parser.get_nodes();
 
-SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-AstToIr converter(gSymbolTable, compile_context, parser);
-converter.setSemanticData(&sema);
+ runSemanticAnalysisForTest(parser, compile_context);
+AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 for (auto& node_handle : ast) {
 	converter.visit(node_handle);
 }
@@ -1301,9 +1298,8 @@ CHECK(!parse_result.is_error());
 
 const auto& ast = parser.get_nodes();
 
-SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-AstToIr converter(gSymbolTable, compile_context, parser);
-converter.setSemanticData(&sema);
+runSemanticAnalysisForTest(parser, compile_context);
+AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 for (auto& node_handle : ast) {
 	converter.visit(node_handle);
 }
@@ -1364,9 +1360,8 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 
 	const auto& ast = parser.get_nodes();
 
-	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-	AstToIr converter(gSymbolTable, compile_context, parser);
-	converter.setSemanticData(&sema);
+	runSemanticAnalysisForTest(parser, compile_context);
+	AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 	for (auto& node_handle : ast) {
 		converter.visit(node_handle);
 	}
@@ -2060,9 +2055,8 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(&sema);
+		runSemanticAnalysisForTest(parser, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2108,9 +2102,8 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(&sema);
+		runSemanticAnalysisForTest(parser, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2160,9 +2153,8 @@ TEST_SUITE("new and delete operators") {
 
 		const auto& ast = parser.get_nodes();
 
-		SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		converter.setSemanticData(&sema);
+		runSemanticAnalysisForTest(parser, compile_context);
+		AstToIr converter(gSymbolTable, compile_context, parser, parser_sema);
 		for (auto& node_handle : ast) {
 			converter.visit(node_handle);
 		}
@@ -2755,9 +2747,8 @@ TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
 	auto parse_result = parser.parse();
 	REQUIRE(!parse_result.is_error());
 
-	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
-	AstToIr converter(gSymbolTable, test_context, parser);
-	converter.setSemanticData(&sema);
+	runSemanticAnalysisForTest(parser, test_context);
+	AstToIr converter(gSymbolTable, test_context, parser, parser_sema);
 	for (auto& node_handle : parser.get_nodes()) {
 		converter.visit(node_handle);
 	}
