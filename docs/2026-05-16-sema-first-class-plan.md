@@ -38,10 +38,11 @@ Stage 5 progress so far:
 - the eager `getOverloadResolutionArgType(...)` API remains in place for existing callers, but it now has a sibling query API for phase-aware consumers and tests.
 - parser-safe expression-type queries now also distinguish `NotYetAnalyzed`, `AnalyzedAbsent`, and `Available` instead of treating a missing semantic slot as the only state signal.
 - expression normalization now records that an expression node was sema-visited even when no semantic type slot was produced, so expression-type queries no longer have to guess phase from slot presence alone.
+- after the remaining code audit, the unresolved nullable/empty lookups are now mostly narrower specialized caches (`identifier` / `qualified-identifier` / member-access / subscript / unary-dereference / structured-binding) that are primarily codegen/finalized consumers rather than the broad parser-safe query families Stage 5 set out to split and phase-harden.
 
 Remaining Stage 5 work:
 
-- core Stage 5 side-table/query audit is in place for resolved-call, overload-argument-type, and expression-type queries; the remaining follow-on audit is narrower and mostly concerns other specialized caches such as member-access related tables
+- Stage 5 core work is effectively complete; any further query-state tightening is now narrower follow-on work on specialized caches and fits better under Stage 6 API-contract/finalized-query hardening
 
 ### 5.1 Define the internal split inside `SemanticAnalysis`
 
