@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first)
+**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first; parser substitution now concretizes template-template dependent owners before member-chain resolution)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -179,15 +179,25 @@ Completed work:
     full-suite validation: 2377 pass, 182 expected-fail, 0 regressions.
 
 29. **partial-specialization static-member eager AST paths now replay-first
-    (2026-05-16):** in `Parser_Templates_Inst_ClassTemplate.cpp`, the remaining
-    eager AST-copy paths (`pattern_struct.static_members()` and
+     (2026-05-16):** in `Parser_Templates_Inst_ClassTemplate.cpp`, the remaining
+     eager AST-copy paths (`pattern_struct.static_members()` and
     `instantiated_struct_ref` static-member copy) now first reparse from saved
     `initializer_position`/`declaration` using
     `TemplateInstantiationContext` + `TemplateDefinitionLookupContext` under
     `ScopedDefinitionLookupContext` with `parsing_template_depth_ = 1`, then
     conservatively fall back to the previous AST substitution behavior.
-    Regression:
-    `test_template_partial_spec_static_member_replay_two_phase_lookup_ret0.cpp`.
+     Regression:
+     `test_template_partial_spec_static_member_replay_two_phase_lookup_ret0.cpp`.
+
+30. **dependent template-template owner concretization in parser substitution
+    (2026-05-17):** `substitute_template_parameter` in
+    `Parser_Expr_QualLookup.cpp` now remaps dependent-owner names bound through
+    template-template parameters to their concrete template names before
+    `resolveConcreteInstantiatedMemberChain` runs for
+    dependent/unknown-specialization owner records. This closes a parser-time
+    concretization gap for member chains such as
+    `typename TemplateOwner<U>::type`. Regression:
+    `dependent_template_template_owner_member_type_ret42.cpp`.
 
 Latest validation passed the full Linux suite: 2377 pass, 182 expected-fail,
 0 regressions.

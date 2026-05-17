@@ -1445,6 +1445,26 @@ TypeIndex Parser::substitute_template_parameter(
 			}
 			return materialized_args;
 		};
+		auto resolveTemplateTemplateOwnerName =
+			[&](std::string_view dependent_owner_name) -> std::string_view {
+			std::string_view resolved_owner_name = dependent_owner_name;
+			bool owner_name_resolved = false;
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
+					if (owner_name_resolved ||
+						template_param.name() != dependent_owner_name ||
+						!template_arg.is_template_template_arg ||
+						!template_arg.template_name_handle.isValid()) {
+						return;
+					}
+					resolved_owner_name =
+						StringTable::getStringView(template_arg.template_name_handle);
+					owner_name_resolved = true;
+				});
+			return resolved_owner_name;
+		};
 		std::string_view owner_name = StringTable::getStringView(dependent_name->owner_name);
 		std::string_view materialized_owner_name;
 		switch (dependent_name->owner_kind) {
@@ -1476,8 +1496,10 @@ TypeIndex Parser::substitute_template_parameter(
 			std::vector<TemplateTypeArg> owner_args =
 				materializeRecordArgs(dependent_name->owner_template_arguments);
 			if (areTemplateArgsConcrete(owner_args)) {
+				const std::string_view resolved_owner_name =
+					resolveTemplateTemplateOwnerName(owner_name);
 				if (const TypeInfo* owner_type =
-						resolveConcreteInstantiatedMemberChain(owner_name, owner_args, {})) {
+						resolveConcreteInstantiatedMemberChain(resolved_owner_name, owner_args, {})) {
 					materialized_owner_name = StringTable::getStringView(owner_type->name());
 				}
 			}
