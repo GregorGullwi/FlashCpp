@@ -81,6 +81,8 @@ public:
 	ResolvedFunctionQueryResult getResolvedOpCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
+	const FunctionDeclarationNode* getResolvedOpSubscript(const ArraySubscriptNode* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
@@ -222,6 +224,7 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
 	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
@@ -614,10 +617,11 @@ private:
 	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;
 	std::unordered_map<const StructuredBindingNode*, StructuredBindingPlan> structured_binding_plans_;
 
-	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
-	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.
-	// Empty entry means built-in pointer/array subscript (handled by pointer arithmetic codegen).
+	// Side table: ArraySubscriptNode pointer -> resolved operator[] declaration.
+	// Use getResolvedOpSubscriptQuery(...) when callers must distinguish
+	// "not yet analyzed" from "analyzed and no operator[] overload selected".
 	std::unordered_map<const ArraySubscriptNode*, const FunctionDeclarationNode*> op_subscript_table_;
+	std::unordered_set<const ArraySubscriptNode*> analyzed_op_subscript_queries_;
 
 	// Track which function body ASTNode pointers sema has normalized.
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited

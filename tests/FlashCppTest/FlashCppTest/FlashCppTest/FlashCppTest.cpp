@@ -79,6 +79,31 @@ static const CallExprNode* findAnyReturnCallExpr(const Parser& parser) {
 	return nullptr;
 }
 
+static const ASTNode* findAnyReturnExpr(const Parser& parser) {
+	for (const ASTNode& node : parser.get_nodes()) {
+		const FunctionDeclarationNode* function = get_function_decl_node(node);
+		if (function == nullptr || !function->get_definition().has_value()) {
+			continue;
+		}
+
+		const ASTNode& definition = *function->get_definition();
+		if (!definition.is<BlockNode>()) {
+			continue;
+		}
+
+		for (const ASTNode& stmt : definition.as<BlockNode>().get_statements()) {
+			if (!stmt.is<ReturnStatementNode>()) {
+				continue;
+			}
+			const auto& return_stmt = stmt.as<ReturnStatementNode>();
+			if (return_stmt.expression().has_value()) {
+				return &*return_stmt.expression();
+			}
+		}
+	}
+	return nullptr;
+}
+
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {
 	std::ifstream file("tests/" + filename);
@@ -1803,6 +1828,48 @@ TEST_CASE("SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState") {
 	CHECK(after_run.state == TypeSpecifierQueryResult::State::Available);
 	REQUIRE(after_run.type.has_value());
 	CHECK(after_run.type->type() == TypeCategory::Int);
+}
+
+TEST_CASE("SemanticAnalysis:ResolvedSubscriptQueryTracksAnalysisState") {
+	std::string code = R"(
+		struct Buffer {
+			int data[2];
+			int& operator[](int index) { return data[index]; }
+		};
+
+		int main() {
+			Buffer buffer{{3, 7}};
+			return buffer[1];
+		}
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_resolved_subscript_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+	if (parse_result.is_error()) {
+		return;
+	}
+
+	const ASTNode* return_expr = findAnyReturnExpr(parser);
+	REQUIRE(return_expr != nullptr);
+	REQUIRE(return_expr->is<ArraySubscriptNode>());
+	const auto& subscript_expr = return_expr->as<ArraySubscriptNode>();
+
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	ResolvedFunctionQueryResult before_run = parser_services.getResolvedOpSubscriptQuery(&subscript_expr);
+	CHECK(before_run.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed);
+	CHECK(before_run.function == nullptr);
+	CHECK(parser_services.getResolvedOpSubscript(&subscript_expr) == nullptr);
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	ResolvedFunctionQueryResult after_run = sema.parserSemanticServices().getResolvedOpSubscriptQuery(&subscript_expr);
+	CHECK(after_run.state == ResolvedFunctionQueryResult::State::Available);
+	REQUIRE(after_run.function != nullptr);
+	CHECK(after_run.function->decl_node().identifier_token().value() == "operator[]"sv);
 }
 
 TEST_CASE("Constructor with no parameters") {

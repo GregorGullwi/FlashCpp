@@ -1435,6 +1435,14 @@ const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const C
 	return owner_->getResolvedOpCall(key);
 }
 
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
+	return owner_->getResolvedOpSubscriptQuery(key);
+}
+
+const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
+	return owner_->getResolvedOpSubscript(key);
+}
+
 ResolvedFunctionQueryResult ParserSemanticServices::getResolvedDirectCallQuery(const void* key) const {
 	return owner_->getResolvedDirectCallQuery(key);
 }
@@ -4153,6 +4161,16 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedUnaryDereferenceOper
 	return it != op_unary_deref_table_.end() ? it->second : nullptr;
 }
 
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
+	if (auto it = op_subscript_table_.find(key); it != op_subscript_table_.end()) {
+		return {ResolvedFunctionQueryResult::State::Available, it->second};
+	}
+	if (analyzed_op_subscript_queries_.count(key) > 0) {
+		return {ResolvedFunctionQueryResult::State::AnalyzedAbsent, nullptr};
+	}
+	return {ResolvedFunctionQueryResult::State::NotYetAnalyzed, nullptr};
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const void* key) const {
 	auto it = resolved_direct_call_table_.find(key);
 	return it != resolved_direct_call_table_.end() ? it->second : nullptr;
@@ -6640,6 +6658,9 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 }
 
 void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node) {
+	analyzed_op_subscript_queries_.insert(&subscript_node);
+	op_subscript_table_.erase(&subscript_node);
+
 	// Determine whether the array expression has struct type (no pointer, no array dims).
 	const CanonicalTypeId object_type_id = inferExpressionType(subscript_node.array_expr());
 	if (!object_type_id)
