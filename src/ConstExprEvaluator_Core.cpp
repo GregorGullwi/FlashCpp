@@ -18,8 +18,11 @@ SemanticAnalysis& requireParserOwnedCallContextSema(const EvaluationContext& con
 } // namespace
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
-	if (parser != nullptr && sema == nullptr) {
-		throw InternalError("ConstExpr normalizePendingSemanticRoots requires sema-backed parser-owned EvaluationContext");
+	if (parser != nullptr) {
+		requireParserOwnedCallContextSema(*this, "normalizePendingSemanticRoots")
+			.parserSemanticServices()
+			.normalizePendingSemanticRoots();
+		return;
 	}
 	if (sema != nullptr) {
 		sema->parserSemanticServices().normalizePendingSemanticRoots();
@@ -4466,19 +4469,6 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	}
 
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
-		// The sema pass may have already resolved this call during annotation.
-		// Consume that pre-resolved result directly instead of re-running POI lookup.
-		if (context.sema != nullptr) {
-			ResolvedFunctionQueryResult sema_query =
-				context.sema->parserSemanticServices().getResolvedDirectCallQuery(&call_expr);
-			if (sema_query.hasValue()) {
-				return evaluate_resolved_function_call(
-					*sema_query.function,
-					call_expr.arguments(),
-					context,
-					nullptr);
-			}
-		}
 		// POI resolution requires the parser.  If context.parser is null here it
 		// means the evaluator was invoked without a parser in a context where a
 		// dependent-unqualified call survived template instantiation, which is a
@@ -4486,7 +4476,19 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
-		(void)requireParserOwnedCallContextSema(context, "dependent unqualified call reuse");
+		// The sema pass may have already resolved this call during annotation.
+		// Consume that pre-resolved result directly instead of re-running POI lookup.
+		ResolvedFunctionQueryResult sema_query =
+			requireParserOwnedCallContextSema(context, "dependent unqualified call reuse")
+				.parserSemanticServices()
+				.getResolvedDirectCallQuery(&call_expr);
+		if (sema_query.hasValue()) {
+			return evaluate_resolved_function_call(
+				*sema_query.function,
+				call_expr.arguments(),
+				context,
+				nullptr);
+		}
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
