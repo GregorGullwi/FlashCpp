@@ -140,7 +140,7 @@ Target end state:
 In priority order:
 
 1. **Finish the next two-phase lookup slice**
-   - current-instantiation/type-alias follow-ons after inherited member-template
+   - current-instantiation/type-alias follow-up work after inherited member-template
      alias recovery;
    - remaining replay-metadata gaps for static-member initialization;
    - remaining dependent-base/member-chain paths that still bypass the shared
