@@ -18,6 +18,12 @@ SemanticAnalysis& requireParserOwnedCallContextSema(const EvaluationContext& con
 } // namespace
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
+	if (parser != nullptr) {
+		requireParserOwnedCallContextSema(*this, "normalize pending semantic roots")
+			.parserSemanticServices()
+			.normalizePendingSemanticRoots();
+		return;
+	}
 	if (sema != nullptr) {
 		sema->parserSemanticServices().normalizePendingSemanticRoots();
 	}
