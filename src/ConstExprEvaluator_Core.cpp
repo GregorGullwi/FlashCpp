@@ -9,7 +9,7 @@
 namespace ConstExpr {
 
 namespace {
-SemanticAnalysis& requireParserOwnedContextSema(const EvaluationContext& context, const char* operation) {
+SemanticAnalysis& requireParserOwnedCallContextSema(const EvaluationContext& context, const char* operation) {
 	if (context.sema == nullptr) {
 		throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
 	}
@@ -4485,7 +4485,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
-		(void)requireParserOwnedContextSema(context, "dependent unqualified call reuse");
+		(void)requireParserOwnedCallContextSema(context, "dependent unqualified call reuse");
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(

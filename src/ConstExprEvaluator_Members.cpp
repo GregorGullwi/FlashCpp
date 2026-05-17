@@ -17,7 +17,7 @@ constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
 constexpr std::string_view kNestedTypeAliasName = "type";
 
-SemanticAnalysis& requireParserOwnedContextSema(const EvaluationContext& context, const char* operation) {
+SemanticAnalysis& requireParserOwnedMemberContextSema(const EvaluationContext& context, const char* operation) {
 	if (context.sema == nullptr) {
 		throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
 	}
@@ -1705,7 +1705,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
-		(void)requireParserOwnedContextSema(context, "dependent unqualified member call reuse");
+		(void)requireParserOwnedMemberContextSema(context, "dependent unqualified member call reuse");
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
@@ -2932,7 +2932,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
 	if (context.sema != nullptr || context.parser != nullptr) {
-		(void)requireParserOwnedContextSema(context, "lazy member materialization")
+		(void)requireParserOwnedMemberContextSema(context, "lazy member materialization")
 				  .parserSemanticServices()
 				  .ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
@@ -2952,7 +2952,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
 		if (context.sema != nullptr || context.parser != nullptr) {
-			(void)requireParserOwnedContextSema(context, "lazy member candidate materialization")
+			(void)requireParserOwnedMemberContextSema(context, "lazy member candidate materialization")
 					  .parserSemanticServices()
 					  .ensureMemberFunctionMaterialized(owner_name, *result.function);
 		}
