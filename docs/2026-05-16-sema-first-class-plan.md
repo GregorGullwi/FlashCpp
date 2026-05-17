@@ -33,10 +33,18 @@ Further null-pointer elimination in internal helpers:
 - Three helpers in `Parser_Templates_Inst_ClassTemplate.cpp` that forwarded a nullable `Parser*` into `EvaluationContext::sema` now take `Parser&`: the ternary `parser ? &parser->semanticAnalysis() : nullptr` assignment is gone.
 - Four file-static conversion-operator helpers in `SemanticAnalysis.cpp` (`findStructPointerConversionOperator`, `collectAllStructPointerConversionOperators`, `hasAmbiguousPointerConversionOperators`, `structHasConversionOperatorTo`) changed from `SemanticAnalysis*` to `SemanticAnalysis&`, removing all null guards on the sema parameter at those call sites.
 
+### Progress update (2026-05-17)
+
+The Stage 5 structural split is now explicit in code:
+
+- post-parse whole-translation-unit orchestration now lives in a dedicated internal `PostParseSemanticNormalizer` layer instead of being open-coded directly inside `SemanticAnalysis::run()` / `SemanticAnalysis::normalizePendingSemanticRoots()`
+- `SemanticAnalysis` remains the compilation-lifetime owner/coordinator and delegates whole-TU normalization work into that dedicated layer
+- `Parser::normalizePendingSemanticRootsIfAvailable()` now routes through `semantic_analysis_.parserSemanticServices().normalizePendingSemanticRoots()` instead of bypassing the parser-safe boundary
+- the remaining Stage 5 work is now narrower: phase-aware side-table/query contracts and additional parser-safe query migration, rather than the high-level owner/normalizer split itself
+
 Remaining Stage 5 work:
 
 - move the rest of the parser/template/constexpr-safe queries behind the parser-safe boundary
-- split the whole-TU `run()` orchestration into a dedicated post-parse normalizer layer
 - audit side tables so "not analyzed yet" and "analyzed and absent" become explicit phase-aware states
 
 ### 5.1 Define the internal split inside `SemanticAnalysis`
@@ -101,6 +109,14 @@ Nullable sema elimination continued in template-instantiation and conversion-ope
 
 - `Parser*` → `Parser&` in `makeStaticMemberInitializerEvaluationContext` and its two callers; the `parser ? &parser->semanticAnalysis() : nullptr` ternary assignment into `EvaluationContext::sema` is eliminated.
 - `SemanticAnalysis*` → `SemanticAnalysis&` in four file-static conversion-operator helpers in `SemanticAnalysis.cpp`; null guards removed.
+
+### Progress update (2026-05-17)
+
+Parser-owned constexpr flows now tighten their semantic contract further:
+
+- dependent-unqualified constexpr call reuse now requires a sema-backed `EvaluationContext` when the context is parser-owned, instead of silently skipping sema reuse on a missing pointer
+- lazy constexpr member materialization now requires sema for parser-owned contexts and no longer falls back to direct parser-side instantiate/normalize bookkeeping
+- `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant
 
 Remaining Stage 6 work:
 

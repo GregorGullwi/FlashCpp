@@ -17,6 +17,13 @@ constexpr size_t kSyntheticTokenColumn = 0;
 constexpr size_t kSyntheticTokenFileIndex = 0;
 constexpr std::string_view kNestedTypeAliasName = "type";
 
+SemanticAnalysis& requireParserOwnedContextSema(const EvaluationContext& context, const char* operation) {
+	if (context.sema == nullptr) {
+		throw InternalError(std::string("ConstExpr ") + operation + " requires a sema-backed EvaluationContext");
+	}
+	return *context.sema;
+}
+
 TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, std::span<const size_t> array_dimensions);
 EvalResult materializeArrayInitializer(
 	TypeIndex type_index,
@@ -1680,9 +1687,11 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
-		if (context.sema) {
+		if (context.sema != nullptr || context.parser != nullptr) {
 			if (const FunctionDeclarationNode* sema_resolved =
-					context.sema->parserSemanticServices().getResolvedDirectCall(&call_expr)) {
+					requireParserOwnedContextSema(context, "dependent unqualified member call reuse")
+						.parserSemanticServices()
+						.getResolvedDirectCall(&call_expr)) {
 				return evaluate_function_call_with_bindings(
 					*sema_resolved,
 					call_expr.arguments(),
@@ -2922,19 +2931,12 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
-	// instantiate/normalize/mark bookkeeping directly. Fall back to the parser
-	// path only when sema is not wired up (e.g., very early speculative
-	// evaluation before a SemanticAnalysis is attached to the context).
-	if (context.sema) {
-		(void)context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(
+	// instantiate/normalize/mark bookkeeping directly.
+	if (context.sema != nullptr || context.parser != nullptr) {
+		(void)requireParserOwnedContextSema(context, "lazy member materialization")
+				  .parserSemanticServices()
+				  .ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
-	} else if (context.parser) {
-		LazyMemberKey member_key = LazyMemberKey::anyConst(
-			context.struct_info->name,
-			function_name_handle);
-		if (context.parser->instantiateLazyMemberIfNeeded(member_key).has_value()) {
-			context.normalizePendingSemanticRoots();
-		}
 	}
 
 	result = find_member_function_candidate(
@@ -2950,14 +2952,10 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		if (context.sema) {
-			(void)context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
-		} else if (context.parser) {
-			if (context.parser->instantiateLazyMemberIfNeeded(
-					LazyMemberKey::exact(owner_name, *result.function))
-					.has_value()) {
-				context.normalizePendingSemanticRoots();
-			}
+		if (context.sema != nullptr || context.parser != nullptr) {
+			(void)requireParserOwnedContextSema(context, "lazy member candidate materialization")
+					  .parserSemanticServices()
+					  .ensureMemberFunctionMaterialized(owner_name, *result.function);
 		}
 		result = find_member_function_candidate(
 			context.struct_info,

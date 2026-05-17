@@ -25,6 +25,80 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 	}
 }
 
+class PostParseSemanticNormalizer {
+public:
+	explicit PostParseSemanticNormalizer(SemanticAnalysis& owner)
+		: owner_(owner) {
+	}
+
+	void run() {
+		Parser& attached_parser = owner_.parser();
+		if (owner_.lifecycle_state_ != SemanticAnalysis::LifecycleState::ParserAttached) {
+			throw InternalError("SemanticAnalysis::run() requires attached parser in ParserAttached state");
+		}
+		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationStarted;
+		attached_parser.clearPendingSemanticRoots();
+
+		const auto& nodes = attached_parser.get_nodes();
+		const size_t initial_root_count = nodes.size();
+		owner_.stats_.total_roots = initial_root_count;
+
+		FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", initial_root_count, " top-level nodes");
+		logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
+
+		for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
+			ASTNode node = attached_parser.get_nodes()[root_index];
+			owner_.normalizeTopLevelNode(node);
+		}
+
+		normalizePendingSemanticRoots();
+
+		// Materialize any lazy members sema marked ODR-used before codegen starts.
+		if (owner_.drainLazyMemberRegistry() > 0) {
+			normalizePendingSemanticRoots();
+		}
+
+		owner_.resolveRemainingAutoReturns();
+
+		FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
+				  owner_.stats_.roots_visited, " roots visited, ",
+				  owner_.stats_.expressions_visited, " expressions, ",
+				  owner_.stats_.statements_visited, " statements, ",
+				  owner_.stats_.canonical_types_interned, " canonical types");
+		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
+	}
+
+	size_t normalizePendingSemanticRoots() {
+		size_t normalized_root_count = 0;
+
+		while (true) {
+			std::vector<ASTNode> pending_roots = owner_.parser().takePendingSemanticRoots();
+			if (pending_roots.empty()) {
+				break;
+			}
+
+			owner_.stats_.total_roots += pending_roots.size();
+			logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(pending_roots));
+
+			for (const ASTNode& pending_root : pending_roots) {
+				if (!pending_root.has_value()) {
+					continue;
+				}
+
+				owner_.normalizeTopLevelNode(pending_root);
+				ASTNode root_handle_for_auto_return_resolution = pending_root;
+				owner_.resolveRemainingAutoReturnsInNode(root_handle_for_auto_return_resolution);
+				++normalized_root_count;
+			}
+		}
+
+		return normalized_root_count;
+	}
+
+private:
+	SemanticAnalysis& owner_;
+};
+
 } // namespace
 
 void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec) {
@@ -1438,71 +1512,11 @@ const Parser& SemanticAnalysis::parser() const {
 }
 
 void SemanticAnalysis::run() {
-	Parser& attached_parser = parser();
-	if (lifecycle_state_ != LifecycleState::ParserAttached) {
-		throw InternalError("SemanticAnalysis::run() requires attached parser in ParserAttached state");
-	}
-	lifecycle_state_ = LifecycleState::PostParseNormalizationStarted;
-	attached_parser.clearPendingSemanticRoots();
-
-	const auto& nodes = attached_parser.get_nodes();
-	const size_t initial_root_count = nodes.size();
-	stats_.total_roots = initial_root_count;
-
-	FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", initial_root_count, " top-level nodes");
-	logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
-
-	for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
-		ASTNode node = attached_parser.get_nodes()[root_index];
-		normalizeTopLevelNode(node);
-	}
-
-	normalizePendingSemanticRoots();
-
-	// Phase 5 Slice F: materialize every remaining lazy-member registry entry
-	// here, before codegen begins. Any newly-materialized bodies may themselves
-	// introduce further pending sema roots (e.g., nested template usages inside
-	// the freshly-substituted body), so re-drain the pending-root queue after
-	// the registry drain to keep sema output consistent.
-	if (drainLazyMemberRegistry() > 0) {
-		normalizePendingSemanticRoots();
-	}
-
-	resolveRemainingAutoReturns();
-
-	FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
-			  stats_.roots_visited, " roots visited, ",
-			  stats_.expressions_visited, " expressions, ",
-			  stats_.statements_visited, " statements, ",
-			  stats_.canonical_types_interned, " canonical types");
-	lifecycle_state_ = LifecycleState::PostParseNormalizationCompleted;
+	PostParseSemanticNormalizer(*this).run();
 }
 
 size_t SemanticAnalysis::normalizePendingSemanticRoots() {
-	size_t normalized_root_count = 0;
-
-	while (true) {
-		std::vector<ASTNode> pending_roots = parser().takePendingSemanticRoots();
-		if (pending_roots.empty()) {
-			break;
-		}
-
-		stats_.total_roots += pending_roots.size();
-		logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(pending_roots));
-
-		for (const ASTNode& pending_root : pending_roots) {
-			if (!pending_root.has_value()) {
-				continue;
-			}
-
-			normalizeTopLevelNode(pending_root);
-			ASTNode root_handle_for_auto_return_resolution = pending_root;
-			resolveRemainingAutoReturnsInNode(root_handle_for_auto_return_resolution);
-			++normalized_root_count;
-		}
-	}
-
-	return normalized_root_count;
+	return PostParseSemanticNormalizer(*this).normalizePendingSemanticRoots();
 }
 
 std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(

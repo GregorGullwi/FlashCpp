@@ -33,6 +33,7 @@ struct StructTypeInfo;
 struct LambdaInfo;
 struct CallInfo;
 class SemanticAnalysis;
+class PostParseSemanticNormalizer;
 
 class ParserSemanticServices final {
 public:
@@ -289,6 +290,7 @@ public:
 
 private:
 	friend class ParserSemanticServices;
+	friend class PostParseSemanticNormalizer;
 
 	enum class LifecycleState : uint8_t {
 		ParserDetached,

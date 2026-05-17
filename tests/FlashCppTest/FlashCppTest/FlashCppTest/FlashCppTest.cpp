@@ -1645,8 +1645,7 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 
 			// Convert to IR to verify the string literals are created correctly
 			SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-			AstToIr converter(gSymbolTable, compile_context, parser);
-			converter.setSemanticData(&sema);
+			AstToIr converter(gSymbolTable, compile_context, parser, sema);
 			for (auto& node_handle : ast) {
 				converter.visit(node_handle);
 			}
