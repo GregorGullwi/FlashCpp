@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first; parser substitution now concretizes template-template dependent owners before member-chain resolution)
+**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first; parser substitution now concretizes template-template dependent owners before member-chain resolution; inherited dependent-base member-template alias owners now resolve through the shared member-chain concretization path)
 
 This document describes how FlashCpp's template argument architecture can move
 toward C++20 conformance. It is intentionally architectural: it identifies the
@@ -198,9 +198,18 @@ Completed work:
     concretization gap for member chains such as
     `typename TemplateOwner<U>::type`. Regression:
     `dependent_template_template_owner_member_type_ret42.cpp`.
+31. **inherited dependent-base member-template alias owner recovery
+    (2026-05-17):** the shared member-chain concretization path now resolves
+    alias/class member-template segments through inherited bases instead of
+    requiring them to live directly on the current owner, pattern owner, or
+    primary owner. `Parser_TypeSpecifiers.cpp` now reuses that inherited-owner
+    helper for direct member-template-alias probes as well. This fixes base
+    specifiers such as `Mid<T>::template rebind<int>` that previously lost the
+    inherited owner. Regression:
+    `test_template_current_instantiation_inherited_member_template_type_ret0.cpp`.
 
-Latest validation passed the full Linux suite: 2377 pass, 182 expected-fail,
-0 regressions.
+Latest validation passed the full Windows sharded suite: 2427 pass,
+182 expected-fail, 0 regressions.
 
 The remaining target architecture sections are retained as the next conformance
 roadmap, especially deeper dependent-base and segment-chain modeling, ADL
@@ -266,6 +275,11 @@ focused investigations.
       copy paths, richer dependent bases, deeper
       member-template segment chains, and the remaining parser-time ADL-sensitive
       paths.
+    - New narrower follow-up after this slice: current-instantiation/type-alias
+      spellings that preserve member-template alias placeholders
+      (`typename Derived<T>::template rebind<U>`) still need to materialize
+      through the same inherited-owner path instead of falling back to
+      placeholder alias copies during later alias substitution.
 
 3. **Implement remaining structural NTTP values.**
    Typed integral/enum/`nullptr`, object-pointer, reference, function-pointer,
@@ -445,9 +459,12 @@ static-member AST copy paths now preserve replay metadata for replay-first
 substitution (2026-05-17). The next highest-impact work is:
 
 1. **Continue two-phase lookup expansion**: extend definition-context records to
-   dependent-base and unknown-specialization concretization paths, plus any
-   remaining eager-static/parser-time paths that still cannot capture replay
-   metadata at parse time.
+   the remaining current-instantiation/type-alias dependent-base concretization
+   paths, plus any eager-static/parser-time paths that still cannot capture
+   replay metadata at parse time. The inherited member-template alias owner
+   lookup is now shared for base-specifier/member-chain concretization; the
+   next slice should make alias materialization reuse that same path for
+   spellings like `typename Derived<T>::template rebind<U>`.
 
 2. **Structural NTTP completion** (non-null member-pointers, structural class
    types, and replacing `TODO(item-8)` mangling fallback) is the other major

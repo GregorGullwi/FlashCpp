@@ -2682,6 +2682,21 @@ ParseResult Parser::parse_type_specifier() {
 							}
 						}
 
+						if (!member_alias_opt.has_value()) {
+							std::string_view inherited_member_alias_name =
+								lookup_inherited_member_template_name(
+									StringTable::getOrInternStringHandle(instantiated_name),
+									StringTable::getOrInternStringHandle(member_name),
+									0);
+							if (!inherited_member_alias_name.empty()) {
+								member_alias_opt =
+									gTemplateRegistry.lookup_alias_template(inherited_member_alias_name);
+								if (member_alias_opt.has_value()) {
+									member_alias_name_str = std::string(inherited_member_alias_name);
+								}
+							}
+						}
+
 						if (member_alias_opt.has_value()) {
 							const TemplateAliasNode& alias_node = member_alias_opt->as<TemplateAliasNode>();
 

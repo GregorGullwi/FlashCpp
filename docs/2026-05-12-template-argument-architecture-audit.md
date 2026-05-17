@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12
-**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first; parser substitution now concretizes template-template dependent owners before member-chain resolution)
+**Last updated:** 2026-05-17 (out-of-line template static-member concretization now preserves replay metadata through parse/registry/instantiation transfer paths; dependent unqualified call POI metadata/completion added; lazy static-member replay now restores definition lookup context; ADL function-template POI completion broadened; partial-specialization AST static-member eager paths now replay-first; parser substitution now concretizes template-template dependent owners before member-chain resolution; inherited dependent-base member-template alias owners now resolve through the shared member-chain concretization path)
 
 This document describes the current FlashCpp template-argument architecture for
 types, non-type values, template-template arguments, class templates, function
@@ -166,9 +166,20 @@ infrastructure tracks. The branch now includes:
   parser-time concretization gap for member chains like
   `typename TemplateOwner<U>::type`. Regression
   `dependent_template_template_owner_member_type_ret42.cpp` covers the path.
+- **inherited dependent-base member-template alias lookup unified
+  (2026-05-17):** `resolveBaseClassMemberTypeChain()` in
+  `Parser_Expr_QualLookup.cpp` now resolves alias/class member-template
+  segments through inherited bases instead of requiring the segment to be
+  declared directly on the current owner/pattern/primary owner. The direct
+  parse-time member-template-alias probe in `Parser_TypeSpecifiers.cpp` now
+  uses the same inherited-owner helper. This closes the missing cross-product
+  between dependent-base lookup and deeper member-template segments for base
+  specifiers such as `Mid<T>::template rebind<int>`. Regression
+  `test_template_current_instantiation_inherited_member_template_type_ret0.cpp`
+  covers the fixed path.
 
-Validation after all changes passed the Linux sharded build and the full test
-suite (2377 regular tests + 182 expected-fail tests, 0 regressions).
+Validation after all changes passed the Windows sharded build and the full test
+suite (2427 regular tests + 182 expected-fail tests, 0 regressions).
 
 The remaining non-conforming areas below are therefore forward-looking
 architecture gaps, not known regressions from the refactor.
@@ -228,7 +239,12 @@ sema direct lookup probes. The active architecture tracks are therefore:
       partial-specialization/member-template static-member copy paths +
       full-specialization static-member AST copy paths + metadata-aware
       initializer updates for existing members in primary/lazy update paths.
-    - Richer dependent-base lookup and deeper member-template segment chains.
+    - Remaining current-instantiation / type-alias materialization follow-ons
+      after inherited member-template alias owner recovery. The new shared
+      inherited-owner lookup fixes base-specifier/member-chain concretization,
+      but type-alias spellings such as `typename Derived<T>::template rebind<U>`
+      still need a follow-up pass so alias materialization reuses the same
+      semantic path instead of falling back to placeholder alias copies.
 
 3. **Structural NTTP implementation.**
    Typed integral/enum/`nullptr`, pointer, reference, function-pointer, and null
