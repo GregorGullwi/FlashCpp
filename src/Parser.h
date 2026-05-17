@@ -520,7 +520,7 @@ public:
 		return parseResult;
 	}
 
-	const auto& get_nodes() { return ast_nodes_; }
+	const auto& get_nodes() const { return ast_nodes_; }
 	void setRuntimeStatsEnabled(bool enabled);
 	void reserveSavedTokenStorage(size_t saved_token_capacity);
 	void printRuntimeStats() const;

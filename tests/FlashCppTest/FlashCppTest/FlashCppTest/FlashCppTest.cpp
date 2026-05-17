@@ -38,6 +38,72 @@ SemanticAnalysis& runSemanticAnalysisForTest(Parser& parser, CompileContext& con
 	return sema;
 }
 
+static const ASTNode* findReturnExprInNode(const ASTNode& node) {
+	if (node.is<ReturnStatementNode>()) {
+		const auto& return_stmt = node.as<ReturnStatementNode>();
+		if (!return_stmt.expression().has_value()) {
+			return nullptr;
+		}
+		return &*return_stmt.expression();
+	}
+
+	if (node.is<BlockNode>()) {
+		for (const ASTNode& stmt : node.as<BlockNode>().get_statements()) {
+			if (const ASTNode* return_expr = findReturnExprInNode(stmt)) {
+				return return_expr;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+template <typename Predicate>
+static const ASTNode* findAnyReturnExprNode(const Parser& parser, Predicate&& predicate) {
+	for (const ASTNode& node : parser.get_nodes()) {
+		const FunctionDeclarationNode* function = get_function_decl_node(node);
+		if (function == nullptr) {
+			continue;
+		}
+		if (!function->get_definition().has_value()) {
+			continue;
+		}
+		const ASTNode& definition = *function->get_definition();
+		if (const ASTNode* return_expr = findReturnExprInNode(definition)) {
+			if (predicate(*return_expr)) {
+				return return_expr;
+			}
+		}
+	}
+	return nullptr;
+}
+
+static const CallExprNode* findAnyReturnCallExpr(const Parser& parser) {
+	const ASTNode* return_expr = findAnyReturnExprNode(parser, [](const ASTNode& expr) {
+		return expr.is<ExpressionNode>() && std::holds_alternative<CallExprNode>(expr.as<ExpressionNode>());
+	});
+	if (return_expr == nullptr || !return_expr->is<ExpressionNode>()) {
+		return nullptr;
+	}
+	return std::get_if<CallExprNode>(&return_expr->as<ExpressionNode>());
+}
+
+static const ASTNode* findAnyReturnCallExprNode(const Parser& parser) {
+	return findAnyReturnExprNode(parser, [](const ASTNode& expr) {
+		return expr.is<ExpressionNode>() && std::holds_alternative<CallExprNode>(expr.as<ExpressionNode>());
+	});
+}
+
+static const ArraySubscriptNode* findAnyReturnSubscriptExpr(const Parser& parser) {
+	const ASTNode* return_expr = findAnyReturnExprNode(parser, [](const ASTNode& expr) {
+		return expr.is<ExpressionNode>() && std::holds_alternative<ArraySubscriptNode>(expr.as<ExpressionNode>());
+	});
+	if (return_expr == nullptr || !return_expr->is<ExpressionNode>()) {
+		return nullptr;
+	}
+	return std::get_if<ArraySubscriptNode>(&return_expr->as<ExpressionNode>());
+}
+
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {
 	std::ifstream file("tests/" + filename);
@@ -1645,8 +1711,7 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 
 			// Convert to IR to verify the string literals are created correctly
 			SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, compile_context);
-			AstToIr converter(gSymbolTable, compile_context, parser);
-			converter.setSemanticData(&sema);
+			AstToIr converter(gSymbolTable, compile_context, parser, sema);
 			for (auto& node_handle : ast) {
 				converter.visit(node_handle);
 			}
@@ -1665,6 +1730,147 @@ TEST_CASE("Parser:FunctionNameIdentifiers") {
 	}
 }
 #endif
+
+TEST_CASE("SemanticAnalysis:ResolvedDirectCallQueryTracksAnalysisState") {
+	std::string code = R"(
+		int foo() { return 7; }
+		int main() { return foo(); }
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_resolved_direct_call_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+	if (parse_result.is_error()) {
+		return;
+	}
+
+	const CallExprNode* call_expr = findAnyReturnCallExpr(parser);
+	REQUIRE(call_expr != nullptr);
+
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	ResolvedFunctionQueryResult before_run = parser_services.getResolvedDirectCallQuery(call_expr);
+	CHECK(before_run.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed);
+	CHECK(before_run.function == nullptr);
+	CHECK(parser_services.getResolvedDirectCall(call_expr) == nullptr);
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	ResolvedFunctionQueryResult after_run = sema.parserSemanticServices().getResolvedDirectCallQuery(call_expr);
+	CHECK(after_run.state == ResolvedFunctionQueryResult::State::Available);
+	REQUIRE(after_run.function != nullptr);
+	CHECK(after_run.function->decl_node().identifier_token().value() == "foo"sv);
+}
+
+TEST_CASE("SemanticAnalysis:OverloadResolutionArgTypeQueryTracksAnalysisState") {
+	std::string code = R"(
+		int bar(int x) { return x; }
+		int main() { return bar(1); }
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_overload_resolution_arg_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+	if (parse_result.is_error()) {
+		return;
+	}
+
+	const CallExprNode* call_expr = findAnyReturnCallExpr(parser);
+	REQUIRE(call_expr != nullptr);
+	REQUIRE(call_expr->arguments().size() == 1);
+	const ASTNode& arg_expr = call_expr->arguments()[0];
+
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	TypeSpecifierQueryResult before_run = parser_services.getOverloadResolutionArgTypeQuery(arg_expr);
+	CHECK(before_run.state == TypeSpecifierQueryResult::State::NotYetAnalyzed);
+	CHECK(!before_run.type.has_value());
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	TypeSpecifierQueryResult after_run = sema.parserSemanticServices().getOverloadResolutionArgTypeQuery(arg_expr);
+	CHECK(after_run.state == TypeSpecifierQueryResult::State::Available);
+	REQUIRE(after_run.type.has_value());
+	CHECK(after_run.type->type() == TypeCategory::Int);
+}
+
+TEST_CASE("SemanticAnalysis:ExpressionTypeQueryTracksAnalysisState") {
+	std::string code = R"(
+		int foo() { return 7; }
+		int main() { return foo(); }
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_expression_type_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+	if (parse_result.is_error()) {
+		return;
+	}
+
+	const ASTNode* return_expr = findAnyReturnCallExprNode(parser);
+	REQUIRE(return_expr != nullptr);
+	const CallExprNode* call_expr = findAnyReturnCallExpr(parser);
+	REQUIRE(call_expr != nullptr);
+
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	TypeSpecifierQueryResult before_run = parser_services.getExpressionTypeQuery(*return_expr);
+	CHECK(before_run.state == TypeSpecifierQueryResult::State::NotYetAnalyzed);
+	CHECK(!before_run.type.has_value());
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	TypeSpecifierQueryResult after_run = sema.parserSemanticServices().getExpressionTypeQuery(*return_expr);
+	CHECK(after_run.state == TypeSpecifierQueryResult::State::Available);
+	REQUIRE(after_run.type.has_value());
+	CHECK(after_run.type->type() == TypeCategory::Int);
+}
+
+TEST_CASE("SemanticAnalysis:ResolvedSubscriptQueryTracksAnalysisState") {
+	std::string code = R"(
+		struct Buffer {
+			int data[2];
+			int& operator[](int index) { return data[index]; }
+		};
+
+		int main() {
+			Buffer buffer{{3, 7}};
+			return buffer[1];
+		}
+	)";
+
+	Lexer lexer(code);
+	CompileContext test_context;
+	test_context.setInputFile("test_resolved_subscript_query.cpp");
+	SemanticAnalysis parser_sema(test_context, gSymbolTable);
+	Parser parser(lexer, test_context, parser_sema);
+	auto parse_result = parser.parse();
+	CHECK(!parse_result.is_error());
+	if (parse_result.is_error()) {
+		return;
+	}
+
+	const ArraySubscriptNode* subscript_expr = findAnyReturnSubscriptExpr(parser);
+	REQUIRE(subscript_expr != nullptr);
+
+	ParserSemanticServices parser_services = parser.semanticAnalysis().parserSemanticServices();
+	ResolvedFunctionQueryResult before_run = parser_services.getResolvedOpSubscriptQuery(subscript_expr);
+	CHECK(before_run.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed);
+	CHECK(before_run.function == nullptr);
+	CHECK(parser_services.getResolvedOpSubscript(subscript_expr) == nullptr);
+
+	SemanticAnalysis& sema = runSemanticAnalysisForTest(parser, test_context);
+	ResolvedFunctionQueryResult after_run = sema.parserSemanticServices().getResolvedOpSubscriptQuery(subscript_expr);
+	CHECK(after_run.state == ResolvedFunctionQueryResult::State::Available);
+	REQUIRE(after_run.function != nullptr);
+	CHECK(after_run.function->decl_node().identifier_token().value() == "operator[]"sv);
+}
 
 TEST_CASE("Constructor with no parameters") {
 	run_test_from_file("test_constructor_no_params.cpp", "Constructor with no parameters", false);

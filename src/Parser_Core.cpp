@@ -635,7 +635,7 @@ Parser::Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic
 }
 
 void Parser::normalizePendingSemanticRootsIfAvailable() {
-	semantic_analysis_.normalizePendingSemanticRoots();
+	semantic_analysis_.parserSemanticServices().normalizePendingSemanticRoots();
 }
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {

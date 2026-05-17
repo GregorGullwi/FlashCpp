@@ -1317,6 +1317,80 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 }
 } // namespace
 
+class PostParseSemanticNormalizer {
+public:
+	explicit PostParseSemanticNormalizer(SemanticAnalysis& owner)
+		: owner_(owner) {
+	}
+
+	void run() {
+		Parser& attached_parser = owner_.parser();
+		if (owner_.lifecycle_state_ != SemanticAnalysis::LifecycleState::ParserAttached) {
+			throw InternalError("SemanticAnalysis::run() requires attached parser in ParserAttached state");
+		}
+		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationStarted;
+		attached_parser.clearPendingSemanticRoots();
+
+		const auto& nodes = attached_parser.get_nodes();
+		const size_t initial_root_count = nodes.size();
+		owner_.stats_.total_roots = initial_root_count;
+
+		FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", initial_root_count, " top-level nodes");
+		logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
+
+		for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
+			ASTNode node = attached_parser.get_nodes()[root_index];
+			owner_.normalizeTopLevelNode(node);
+		}
+
+		normalizePendingSemanticRoots();
+
+		// Materialize any lazy members sema marked ODR-used before codegen starts.
+		if (owner_.drainLazyMemberRegistry() > 0) {
+			normalizePendingSemanticRoots();
+		}
+
+		owner_.resolveRemainingAutoReturns();
+
+		FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
+				  owner_.stats_.roots_visited, " roots visited, ",
+				  owner_.stats_.expressions_visited, " expressions, ",
+				  owner_.stats_.statements_visited, " statements, ",
+				  owner_.stats_.canonical_types_interned, " canonical types");
+		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
+	}
+
+	size_t normalizePendingSemanticRoots() {
+		size_t normalized_root_count = 0;
+
+		while (true) {
+			std::vector<ASTNode> pending_roots = owner_.parser().takePendingSemanticRoots();
+			if (pending_roots.empty()) {
+				break;
+			}
+
+			owner_.stats_.total_roots += pending_roots.size();
+			logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(pending_roots));
+
+			for (const ASTNode& pending_root : pending_roots) {
+				if (!pending_root.has_value()) {
+					continue;
+				}
+
+				owner_.normalizeTopLevelNode(pending_root);
+				ASTNode root_handle_for_auto_return_resolution = pending_root;
+				owner_.resolveRemainingAutoReturnsInNode(root_handle_for_auto_return_resolution);
+				++normalized_root_count;
+			}
+		}
+
+		return normalized_root_count;
+	}
+
+private:
+	SemanticAnalysis& owner_;
+};
+
 // --- SemanticAnalysis ---
 
 ParserSemanticServices::ParserSemanticServices(SemanticAnalysis& owner)
@@ -1332,9 +1406,25 @@ std::optional<TypeSpecifierNode> ParserSemanticServices::getExpressionType(const
 	return owner_->getExpressionType(node);
 }
 
+TypeSpecifierQueryResult ParserSemanticServices::getExpressionTypeQuery(const ASTNode& node) const {
+	return owner_->getExpressionTypeQuery(node);
+}
+
+TypeSpecifierQueryResult ParserSemanticServices::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
+	return owner_->getOverloadResolutionArgTypeQuery(arg);
+}
+
 std::optional<TypeSpecifierNode> ParserSemanticServices::getOverloadResolutionArgType(const ASTNode& arg) const {
 	requireParserSemanticServicesAttachment(*owner_, "getOverloadResolutionArgType");
 	return owner_->getOverloadResolutionArgType(arg);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpCallQuery(const void* key) const {
+	return owner_->getResolvedOpCallQuery(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpCallQuery(const CallExprNode* key) const {
+	return owner_->getResolvedOpCallQuery(key);
 }
 
 const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const void* key) const {
@@ -1343,6 +1433,22 @@ const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const v
 
 const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const CallExprNode* key) const {
 	return owner_->getResolvedOpCall(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
+	return owner_->getResolvedOpSubscriptQuery(key);
+}
+
+const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
+	return owner_->getResolvedOpSubscript(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedDirectCallQuery(const void* key) const {
+	return owner_->getResolvedDirectCallQuery(key);
+}
+
+ResolvedFunctionQueryResult ParserSemanticServices::getResolvedDirectCallQuery(const CallExprNode* key) const {
+	return owner_->getResolvedDirectCallQuery(key);
 }
 
 const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(const void* key) const {
@@ -1438,71 +1544,11 @@ const Parser& SemanticAnalysis::parser() const {
 }
 
 void SemanticAnalysis::run() {
-	Parser& attached_parser = parser();
-	if (lifecycle_state_ != LifecycleState::ParserAttached) {
-		throw InternalError("SemanticAnalysis::run() requires attached parser in ParserAttached state");
-	}
-	lifecycle_state_ = LifecycleState::PostParseNormalizationStarted;
-	attached_parser.clearPendingSemanticRoots();
-
-	const auto& nodes = attached_parser.get_nodes();
-	const size_t initial_root_count = nodes.size();
-	stats_.total_roots = initial_root_count;
-
-	FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", initial_root_count, " top-level nodes");
-	logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
-
-	for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
-		ASTNode node = attached_parser.get_nodes()[root_index];
-		normalizeTopLevelNode(node);
-	}
-
-	normalizePendingSemanticRoots();
-
-	// Phase 5 Slice F: materialize every remaining lazy-member registry entry
-	// here, before codegen begins. Any newly-materialized bodies may themselves
-	// introduce further pending sema roots (e.g., nested template usages inside
-	// the freshly-substituted body), so re-drain the pending-root queue after
-	// the registry drain to keep sema output consistent.
-	if (drainLazyMemberRegistry() > 0) {
-		normalizePendingSemanticRoots();
-	}
-
-	resolveRemainingAutoReturns();
-
-	FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
-			  stats_.roots_visited, " roots visited, ",
-			  stats_.expressions_visited, " expressions, ",
-			  stats_.statements_visited, " statements, ",
-			  stats_.canonical_types_interned, " canonical types");
-	lifecycle_state_ = LifecycleState::PostParseNormalizationCompleted;
+	PostParseSemanticNormalizer(*this).run();
 }
 
 size_t SemanticAnalysis::normalizePendingSemanticRoots() {
-	size_t normalized_root_count = 0;
-
-	while (true) {
-		std::vector<ASTNode> pending_roots = parser().takePendingSemanticRoots();
-		if (pending_roots.empty()) {
-			break;
-		}
-
-		stats_.total_roots += pending_roots.size();
-		logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(pending_roots));
-
-		for (const ASTNode& pending_root : pending_roots) {
-			if (!pending_root.has_value()) {
-				continue;
-			}
-
-			normalizeTopLevelNode(pending_root);
-			ASTNode root_handle_for_auto_return_resolution = pending_root;
-			resolveRemainingAutoReturnsInNode(root_handle_for_auto_return_resolution);
-			++normalized_root_count;
-		}
-	}
-
-	return normalized_root_count;
+	return PostParseSemanticNormalizer(*this).normalizePendingSemanticRoots();
 }
 
 std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
@@ -3709,6 +3755,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				   expr);
 
 		const void* key = static_cast<const void*>(&expr);
+		normalized_ast_nodes_.insert(key);
 		auto existing_slot = getSlot(key);
 		if (!existing_slot.has_value() || !existing_slot->has_type()) {
 			if (const CanonicalTypeId inferred_type_id = inferExpressionType(node)) {
@@ -3839,11 +3886,47 @@ namespace {
 const void* getExpressionKey(const ASTNode& node) {
 	return static_cast<const void*>(&node.as<ExpressionNode>());
 }
+
+std::optional<TypeSpecifierNode> tryBuildDirectLiteralQueryType(const ASTNode& node) {
+	if (node.is<NumericLiteralNode>()) {
+		const TypeCategory literal_type = node.as<NumericLiteralNode>().type();
+		return TypeSpecifierNode(
+			literal_type,
+			TypeQualifier::None,
+			get_type_size_bits(literal_type),
+			Token{},
+			CVQualifier::None);
+	}
+	if (node.is<BoolLiteralNode>()) {
+		return TypeSpecifierNode(
+			TypeCategory::Bool,
+			TypeQualifier::None,
+			get_type_size_bits(TypeCategory::Bool),
+			Token{},
+			CVQualifier::None);
+	}
+	if (node.is<StringLiteralNode>()) {
+		const int char_size_bits = static_cast<int>(get_type_size_bits(TypeCategory::Char));
+		TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
+		type.add_pointer_level();
+		type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		return type;
+	}
+	return std::nullopt;
+}
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {
+	TypeSpecifierQueryResult query = getExpressionTypeQuery(node);
+	return query.hasValue() ? query.type : std::nullopt;
+}
+
+TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
-		return std::nullopt;
+		if (auto literal_type = tryBuildDirectLiteralQueryType(node); literal_type.has_value()) {
+			return {TypeSpecifierQueryResult::State::Available, *literal_type};
+		}
+		return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
 	}
 
 	const auto* key = getExpressionKey(node);
@@ -3851,13 +3934,14 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	if (!slot.has_value() || !slot->has_type()) {
 		const ExpressionNode& expr = node.as<ExpressionNode>();
 		if (std::holds_alternative<StringLiteralNode>(expr)) {
-			const int char_size_bits = static_cast<int>(get_type_size_bits(TypeCategory::Char));
-			TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
-			type.add_pointer_level();
-			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
-			return type;
+			if (auto literal_type = tryBuildDirectLiteralQueryType(node); literal_type.has_value()) {
+				return {TypeSpecifierQueryResult::State::Available, *literal_type};
+			}
 		}
-		return std::nullopt;
+		if (normalized_ast_nodes_.count(key) > 0) {
+			return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
+		}
+		return {TypeSpecifierQueryResult::State::NotYetAnalyzed, std::nullopt};
 	}
 
 	TypeSpecifierNode type = materializeTypeSpecifier(type_context_.get(slot->type_id));
@@ -3873,7 +3957,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 		default:
 			throw InternalError("Unexpected semantic value category");
 	}
-	return type;
+	return {TypeSpecifierQueryResult::State::Available, type};
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getTernaryResultType(const TernaryOperatorNode& ternary_node) const {
@@ -3885,24 +3969,60 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getTernaryResultType(const Te
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
+	if (TypeSpecifierQueryResult cached = getOverloadResolutionArgTypeQuery(arg); cached.hasValue()) {
+		return cached.type;
+	}
 	if (arg.is<ExpressionNode>()) {
-		const void* key = getExpressionKey(arg);
-		auto it = overload_resolution_arg_types_.find(key);
-		if (it != overload_resolution_arg_types_.end()) {
-			return it->second;
-		}
-
 		if (auto slot_backed_type = getExpressionType(arg); slot_backed_type.has_value()) {
-			overload_resolution_arg_types_.emplace(key, *slot_backed_type);
+			cacheOverloadResolutionArgType(arg, *slot_backed_type);
 			return slot_backed_type;
 		}
 	}
 	auto result = buildOverloadResolutionArgType(arg, nullptr);
-	if (result.has_value() && arg.is<ExpressionNode>()) {
-		const void* key = getExpressionKey(arg);
-		overload_resolution_arg_types_.emplace(key, *result);
+	if (result.has_value()) {
+		cacheOverloadResolutionArgType(arg, *result);
 	}
 	return result;
+}
+
+const void* SemanticAnalysis::getOverloadResolutionArgQueryKey(const ASTNode& arg) const {
+	if (!arg.is<ExpressionNode>()) {
+		return nullptr;
+	}
+	return getExpressionKey(arg);
+}
+
+void SemanticAnalysis::markOverloadResolutionArgQueryAnalyzed(const ASTNode& arg) {
+	if (const void* key = getOverloadResolutionArgQueryKey(arg); key != nullptr) {
+		analyzed_overload_resolution_arg_queries_.insert(key);
+	}
+}
+
+void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg, const TypeSpecifierNode& type) {
+	if (const void* key = getOverloadResolutionArgQueryKey(arg); key != nullptr) {
+		overload_resolution_arg_types_[key] = type;
+	}
+}
+
+TypeSpecifierQueryResult SemanticAnalysis::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
+	if (!arg.is<ExpressionNode>()) {
+		if (auto literal_type = tryBuildDirectLiteralQueryType(arg); literal_type.has_value()) {
+			return {TypeSpecifierQueryResult::State::Available, *literal_type};
+		}
+		if (auto type = getExpressionType(arg); type.has_value()) {
+			return {TypeSpecifierQueryResult::State::Available, type};
+		}
+		return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
+	}
+
+	const void* key = getOverloadResolutionArgQueryKey(arg);
+	if (auto it = overload_resolution_arg_types_.find(key); it != overload_resolution_arg_types_.end()) {
+		return {TypeSpecifierQueryResult::State::Available, it->second};
+	}
+	if (analyzed_overload_resolution_arg_queries_.count(key) > 0) {
+		return {TypeSpecifierQueryResult::State::AnalyzedAbsent, std::nullopt};
+	}
+	return {TypeSpecifierQueryResult::State::NotYetAnalyzed, std::nullopt};
 }
 
 ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) {
@@ -4045,9 +4165,23 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* k
 	return it != op_call_table_.end() ? it->second : nullptr;
 }
 
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpCallQuery(const void* key) const {
+	if (auto it = op_call_table_.find(key); it != op_call_table_.end()) {
+		return {ResolvedFunctionQueryResult::State::Available, it->second};
+	}
+	if (analyzed_op_call_queries_.count(key) > 0) {
+		return {ResolvedFunctionQueryResult::State::AnalyzedAbsent, nullptr};
+	}
+	return {ResolvedFunctionQueryResult::State::NotYetAnalyzed, nullptr};
+}
+
 const SemanticAnalysis::StructuredBindingPlan* SemanticAnalysis::getStructuredBindingPlan(const StructuredBindingNode* key) const {
 	auto it = structured_binding_plans_.find(key);
 	return it != structured_binding_plans_.end() ? &it->second : nullptr;
+}
+
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpCallQuery(const CallExprNode* key) const {
+	return getResolvedOpCallQuery(static_cast<const void*>(key));
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExprNode* key) const {
@@ -4059,13 +4193,37 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedUnaryDereferenceOper
 	return it != op_unary_deref_table_.end() ? it->second : nullptr;
 }
 
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
+	if (auto it = op_subscript_table_.find(key); it != op_subscript_table_.end()) {
+		return {ResolvedFunctionQueryResult::State::Available, it->second};
+	}
+	if (analyzed_op_subscript_queries_.count(key) > 0) {
+		return {ResolvedFunctionQueryResult::State::AnalyzedAbsent, nullptr};
+	}
+	return {ResolvedFunctionQueryResult::State::NotYetAnalyzed, nullptr};
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const void* key) const {
 	auto it = resolved_direct_call_table_.find(key);
 	return it != resolved_direct_call_table_.end() ? it->second : nullptr;
 }
 
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedDirectCallQuery(const void* key) const {
+	if (auto it = resolved_direct_call_table_.find(key); it != resolved_direct_call_table_.end()) {
+		return {ResolvedFunctionQueryResult::State::Available, it->second};
+	}
+	if (analyzed_direct_call_queries_.count(key) > 0) {
+		return {ResolvedFunctionQueryResult::State::AnalyzedAbsent, nullptr};
+	}
+	return {ResolvedFunctionQueryResult::State::NotYetAnalyzed, nullptr};
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const CallExprNode* key) const {
 	return getResolvedDirectCall(static_cast<const void*>(key));
+}
+
+ResolvedFunctionQueryResult SemanticAnalysis::getResolvedDirectCallQuery(const CallExprNode* key) const {
+	return getResolvedDirectCallQuery(static_cast<const void*>(key));
 }
 
 std::optional<SemanticAnalysis::ResolvedIdentifierMemberInfo> SemanticAnalysis::getResolvedIdentifierMember(const IdentifierNode* key) const {
@@ -5299,6 +5457,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(
 	const ASTNode& arg,
 	CanonicalTypeId* inferred_type_id) {
+	markOverloadResolutionArgQueryAnalyzed(arg);
+
 	auto applyExpressionValueCategory = [this, &arg](TypeSpecifierNode& type) {
 		if (!arg.is<ExpressionNode>()) {
 			return;
@@ -5318,9 +5478,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		}
 	};
 	auto storeArgType = [this, &arg](const TypeSpecifierNode& type) {
-		if (arg.is<ExpressionNode>()) {
-			overload_resolution_arg_types_[getExpressionKey(arg)] = type;
-		}
+		cacheOverloadResolutionArgType(arg, type);
 	};
 
 	if (arg.is<ExpressionNode>()) {
@@ -6373,6 +6531,8 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 // --- Callable operator() resolution ---
 
 void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key) {
+	analyzed_op_call_queries_.insert(call_key);
+
 	if (call_info.has_receiver)
 		return;
 
@@ -6530,6 +6690,9 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 }
 
 void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node) {
+	analyzed_op_subscript_queries_.insert(&subscript_node);
+	op_subscript_table_.erase(&subscript_node);
+
 	// Determine whether the array expression has struct type (no pointer, no array dims).
 	const CanonicalTypeId object_type_id = inferExpressionType(subscript_node.array_expr());
 	if (!object_type_id)
@@ -7369,6 +7532,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 														 const CallInfo& call_info,
 														 const void* call_key,
 														 const char* context_description) {
+	analyzed_direct_call_queries_.insert(call_key);
+
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
 		for (const ASTNode& arg : *call_info.arguments) {

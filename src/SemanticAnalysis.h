@@ -33,6 +33,37 @@ struct StructTypeInfo;
 struct LambdaInfo;
 struct CallInfo;
 class SemanticAnalysis;
+class PostParseSemanticNormalizer;
+
+struct ResolvedFunctionQueryResult {
+	enum class State : uint8_t {
+		NotYetAnalyzed,
+		AnalyzedAbsent,
+		Available,
+	};
+
+	State state = State::NotYetAnalyzed;
+	const FunctionDeclarationNode* function = nullptr;
+
+	bool hasValue() const {
+		return state == State::Available && function != nullptr;
+	}
+};
+
+struct TypeSpecifierQueryResult {
+	enum class State : uint8_t {
+		NotYetAnalyzed,
+		AnalyzedAbsent,
+		Available,
+	};
+
+	State state = State::NotYetAnalyzed;
+	std::optional<TypeSpecifierNode> type;
+
+	bool hasValue() const {
+		return state == State::Available && type.has_value();
+	}
+};
 
 class ParserSemanticServices final {
 public:
@@ -41,11 +72,19 @@ public:
 
 	size_t normalizePendingSemanticRoots();
 
+	TypeSpecifierQueryResult getExpressionTypeQuery(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
+	TypeSpecifierQueryResult getOverloadResolutionArgTypeQuery(const ASTNode& arg) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg) const;
 
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
+	const FunctionDeclarationNode* getResolvedOpSubscript(const ArraySubscriptNode* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
 
@@ -116,6 +155,7 @@ public:
 	// Look up the semantic slot for an expression node.
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
+	TypeSpecifierQueryResult getExpressionTypeQuery(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 	std::optional<TypeSpecifierNode> getTernaryResultType(const TernaryOperatorNode& ternary_node) const;
 	// Public bridge for codegen/helper paths that need the same canonical type
@@ -124,6 +164,7 @@ public:
 	// Build the type/category view used specifically for overload-resolution arguments.
 	// Unlike getExpressionType(), this preserves overload-sensitive lvalue/xvalue details
 	// such as prvalue member access becoming an xvalue.
+	TypeSpecifierQueryResult getOverloadResolutionArgTypeQuery(const ASTNode& arg) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg);
 
 	enum class StructuredBindingDecompositionKind : uint8_t {
@@ -176,11 +217,17 @@ public:
 	}
 
 	// Look up the pre-resolved callable operator() for a call node.
-	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
+	// Returns nullptr when no positive annotation was stored. Use the Query variant
+	// when the caller must distinguish "not yet analyzed" from "analyzed and absent".
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedOpCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
 	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
+	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
 	struct ResolvedIdentifierMemberInfo {
@@ -289,6 +336,7 @@ public:
 
 private:
 	friend class ParserSemanticServices;
+	friend class PostParseSemanticNormalizer;
 
 	enum class LifecycleState : uint8_t {
 		ParserDetached,
@@ -355,6 +403,9 @@ private:
 	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
 	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
 	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
+	const void* getOverloadResolutionArgQueryKey(const ASTNode& arg) const;
+	void markOverloadResolutionArgQueryAnalyzed(const ASTNode& arg);
+	void cacheOverloadResolutionArgType(const ASTNode& arg, const TypeSpecifierNode& type);
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(
 		const ASTNode& arg,
 		CanonicalTypeId* inferred_type_id = nullptr);
@@ -555,18 +606,22 @@ private:
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const UnaryOperatorNode*, const FunctionDeclarationNode*> op_unary_deref_table_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
+	std::unordered_set<const void*> analyzed_op_call_queries_;
+	std::unordered_set<const void*> analyzed_direct_call_queries_;
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
 	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
+	std::unordered_set<const void*> analyzed_overload_resolution_arg_queries_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;
 	std::unordered_map<const StructuredBindingNode*, StructuredBindingPlan> structured_binding_plans_;
 
-	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
-	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.
-	// Empty entry means built-in pointer/array subscript (handled by pointer arithmetic codegen).
+	// Side table: ArraySubscriptNode pointer -> resolved operator[] declaration.
+	// Use getResolvedOpSubscriptQuery(...) when callers must distinguish
+	// "not yet analyzed" from "analyzed and no operator[] overload selected".
 	std::unordered_map<const ArraySubscriptNode*, const FunctionDeclarationNode*> op_subscript_table_;
+	std::unordered_set<const ArraySubscriptNode*> analyzed_op_subscript_queries_;
 
 	// Track which function body ASTNode pointers sema has normalized.
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited

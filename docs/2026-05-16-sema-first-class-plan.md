@@ -16,28 +16,34 @@ Stop modeling semantic availability as nullable object plumbing. Callers should 
 
 ## Stage 5: Split Always-Valid Services From Post-Parse Normalization
 
-### Progress update (2026-05-16)
+### Progress update
 
-Initial Stage 5 groundwork is now in place:
+Stage 5 progress so far:
 
 - `SemanticAnalysis` owns an explicit non-virtual `ParserSemanticServices` boundary for parser-safe operations.
 - `SemanticAnalysis` now exposes named lifecycle/state queries for parser attachment and post-parse normalization start/completion.
 - constexpr evaluation and pending-root normalization call sites have started routing through `ParserSemanticServices` instead of reaching straight into the full post-parse owner API.
 - the handoff into `AstToIr` now asserts that post-parse normalization completed before codegen consumes finalized semantic data.
-
-### Progress update (2026-05-16, continued)
-
-Further null-pointer elimination in internal helpers:
-
 - `TemplateEnvironment::semantic_context` was confirmed unused and removed.
-- Three helpers in `Parser_Templates_Inst_ClassTemplate.cpp` that forwarded a nullable `Parser*` into `EvaluationContext::sema` now take `Parser&`: the ternary `parser ? &parser->semanticAnalysis() : nullptr` assignment is gone.
-- Four file-static conversion-operator helpers in `SemanticAnalysis.cpp` (`findStructPointerConversionOperator`, `collectAllStructPointerConversionOperators`, `hasAmbiguousPointerConversionOperators`, `structHasConversionOperatorTo`) changed from `SemanticAnalysis*` to `SemanticAnalysis&`, removing all null guards on the sema parameter at those call sites.
+- three helpers in `Parser_Templates_Inst_ClassTemplate.cpp` that forwarded a nullable `Parser*` into `EvaluationContext::sema` now take `Parser&`: the ternary `parser ? &parser->semanticAnalysis() : nullptr` assignment is gone.
+- four file-static conversion-operator helpers in `SemanticAnalysis.cpp` (`findStructPointerConversionOperator`, `collectAllStructPointerConversionOperators`, `hasAmbiguousPointerConversionOperators`, `structHasConversionOperatorTo`) changed from `SemanticAnalysis*` to `SemanticAnalysis&`, removing all null guards on the sema parameter at those call sites.
+- post-parse whole-translation-unit orchestration now lives in a dedicated internal `PostParseSemanticNormalizer` layer instead of being open-coded directly inside `SemanticAnalysis::run()` / `SemanticAnalysis::normalizePendingSemanticRoots()`.
+- `SemanticAnalysis` remains the compilation-lifetime owner/coordinator and delegates whole-TU normalization work into that dedicated layer.
+- `Parser::normalizePendingSemanticRootsIfAvailable()` now routes through `semantic_analysis_.parserSemanticServices().normalizePendingSemanticRoots()` instead of bypassing the parser-safe boundary.
+- parser-safe resolved direct-call and `operator()` lookups now have explicit query-state APIs that distinguish `NotYetAnalyzed`, `AnalyzedAbsent`, and `Available`.
+- sema records when those call-query families were actually examined, so callers no longer have to infer phase from object lifetime or from a missing map entry.
+- constexpr direct-call reuse now goes through the explicit direct-call query API, so the parser-safe boundary exercises the new contract directly.
+- parser-safe overload-argument-type queries now expose `NotYetAnalyzed`, `AnalyzedAbsent`, and `Available` instead of making callers guess from a missing cache entry.
+- sema now records when overload-resolution argument typing was actually attempted for an expression node, even when no type could be produced.
+- the eager `getOverloadResolutionArgType(...)` API remains in place for existing callers, but it now has a sibling query API for phase-aware consumers and tests.
+- parser-safe expression-type queries now also distinguish `NotYetAnalyzed`, `AnalyzedAbsent`, and `Available` instead of treating a missing semantic slot as the only state signal.
+- expression normalization now records that an expression node was sema-visited even when no semantic type slot was produced, so expression-type queries no longer have to guess phase from slot presence alone.
+- subscript-resolution queries now use the same explicit `NotYetAnalyzed` / `AnalyzedAbsent` / `Available` contract, so parser-safe `operator[]` lookups no longer have to infer phase from a missing side-table entry.
+- after the remaining code audit, the unresolved nullable/empty lookups are now mostly narrower specialized caches (`identifier` / `qualified-identifier` / member-access / unary-dereference / structured-binding) that are primarily codegen/finalized consumers rather than the broad parser-safe query families Stage 5 set out to split and phase-harden.
 
 Remaining Stage 5 work:
 
-- move the rest of the parser/template/constexpr-safe queries behind the parser-safe boundary
-- split the whole-TU `run()` orchestration into a dedicated post-parse normalizer layer
-- audit side tables so "not analyzed yet" and "analyzed and absent" become explicit phase-aware states
+- Stage 5 core work is complete for the parser-safe services and resolved-call/query families called out above; any further query-state tightening is now narrower follow-on work on specialized finalized/codegen-side caches and fits better under Stage 6 API-contract/finalized-query hardening
 
 ### 5.1 Define the internal split inside `SemanticAnalysis`
 
@@ -87,24 +93,23 @@ Any code reading a table should be able to tell whether an empty lookup means:
 
 ## Stage 6: Make Callers Depend On Semantic Facts, Not Semantic Presence
 
-### Progress update (2026-05-16)
+### Progress update
 
-Initial Stage 6 codegen invariants are now in place:
+Stage 6 progress so far:
 
 - `AstToIr` now requires `SemanticAnalysis&` at construction time instead of receiving semantic data through a later setter call.
 - the `setSemanticData(...)` plumbing is gone, so codegen cannot accidentally start in a semantic-null state anymore.
 - IR generation helpers now treat semantic analysis as mandatory infrastructure and only branch on whether a particular semantic fact was available.
-
-### Progress update (2026-05-16, continued)
-
-Nullable sema elimination continued in template-instantiation and conversion-operator helpers:
-
 - `Parser*` → `Parser&` in `makeStaticMemberInitializerEvaluationContext` and its two callers; the `parser ? &parser->semanticAnalysis() : nullptr` ternary assignment into `EvaluationContext::sema` is eliminated.
 - `SemanticAnalysis*` → `SemanticAnalysis&` in four file-static conversion-operator helpers in `SemanticAnalysis.cpp`; null guards removed.
+- dependent-unqualified constexpr call reuse now requires a sema-backed `EvaluationContext` when the context is parser-owned, instead of silently skipping sema reuse on a missing pointer.
+- lazy constexpr member materialization now requires sema for parser-owned contexts and no longer falls back to direct parser-side instantiate/normalize bookkeeping.
+- parser-owned `EvaluationContext::normalizePendingSemanticRoots()` now throws on missing sema instead of quietly becoming a no-op.
+- `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
 
 Remaining Stage 6 work:
 
-- remove the remaining nullable-semantic branches in parser-owned constexpr/template/substitution contexts
+- finish auditing parser-owned constexpr/template/substitution construction sites so `EvaluationContext::sema` can eventually stop being nullable as a field, not just as an enforced parser-owned invariant
 - `EvaluationContext::sema` is still a nullable pointer with a single `if (sema != nullptr)` guard in `normalizePendingSemanticRoots()`; making it non-nullable requires auditing all EvaluationContext creation sites that do not set sema
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
