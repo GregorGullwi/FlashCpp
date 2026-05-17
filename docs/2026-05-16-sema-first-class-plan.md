@@ -110,6 +110,7 @@ Stage 6 progress so far:
 - `EvaluationContext::normalizePendingSemanticRoots()` now uses a single `if (sema != nullptr)` check; the redundant parser-first branch is removed since sema is always set whenever parser is set.
 - `EvaluationContext::normalizePendingSemanticRoots()` now hard-fails when `parser` is set but `sema` is missing, while still allowing standalone non-parser evaluator contexts without sema to return early.
 - constexpr member-function materialization lookup/replay now uses a shared parser-owned sema requirement helper: parser-owned contexts throw on missing sema instead of silently skipping sema materialization.
+- parser-owned constexpr sema invariants now route through a single `EvaluationContext::requireParserOwnedSema(...)` helper, and dependent-unqualified call reuse plus member-materialization lookup/replay now consume that shared contract instead of file-local nullable helper variants.
 - `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
 
 Remaining Stage 6 work:
