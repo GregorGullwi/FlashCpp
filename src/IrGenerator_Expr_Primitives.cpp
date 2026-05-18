@@ -1678,7 +1678,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						static_member->is_constexpr &&
 						!is_struct_type(static_member->memberType()) &&
 						!static_member->is_array) {
-						ConstExpr::EvaluationContext eval_ctx(symbol_table);
+						ConstExpr::EvaluationContext eval_ctx = makeEvalContext(symbol_table);
 						if (global_symbol_table_) {
 							eval_ctx.global_symbols = global_symbol_table_;
 						}

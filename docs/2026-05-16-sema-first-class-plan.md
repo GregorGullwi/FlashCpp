@@ -119,16 +119,16 @@ Stage 6 progress so far:
 - `AstToIr::parser_` changed from `Parser*` to `Parser&`: AstToIr always takes a `Parser&` at construction, so the field was a pointer that was never null; converting it to a reference removes 13 defensive `if (parser_)` / `if (!parser_)` null guards in IrGenerator files and changes 18 `parser_->method()` calls to `parser_.method()`.
 - `AstToIr::makeEvalContext(const SymbolTable&)` added: centralises `EvaluationContext` creation for codegen; the 17+ manual `ctx.parser = &parser_; ctx.sema = &sema_` assignment pairs scattered across IrGenerator files are replaced with a single `makeEvalContext(...)` call, so every codegen-created context is guaranteed to receive parser and sema.
 - additional codegen constexpr-evaluation sites in `IrGenerator_MemberAccess.cpp`, `IrGenerator_NewDeleteCast.cpp`, and `IrGenerator_Expr_Conversions.cpp` now build contexts via `makeEvalContext(...)` instead of direct `EvaluationContext(symbol_table)` construction, so these paths no longer drop parser/sema wiring.
+- remaining direct codegen constexpr-evaluation sites in `IrGenerator_Expr_Primitives.cpp`, `IrGenerator_Visitors_Decl.cpp`, and `IrGenerator_Stmt_Decl.cpp` now also route through `makeEvalContext(...)`; this shrinks the remaining direct-construction tail to helper-style sites (for example multidimensional member-array dimension evaluation in `IrGenerator_MemberAccess.cpp`) that are not currently wired through `AstToIr::makeEvalContext`.
 
 Remaining Stage 6 work:
 
-- `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites (array-dimension evaluation, simple constant folding in MemberAccess/NewDelete); making it non-nullable requires either injecting sema at those sites or introducing an explicit "no-sema" opt-in type
+- `EvaluationContext::sema` is still a nullable pointer for standalone non-codegen evaluator call sites; making it non-nullable requires either injecting sema at those sites or introducing an explicit "no-sema" opt-in type
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
 - struct-without-conversion-operator codegen fallback removed; sema return-conversion is now fully enforced for struct returns ✅
 - `parser_` in `AstToIr` is now `Parser&` — no more defensive null guards in codegen ✅
-- codegen-side `EvaluationContext` construction is now largely centralised via `makeEvalContext`, and converted call sites carry parser + sema by construction
-- a smaller tail of codegen constexpr contexts still uses direct `EvaluationContext(symbol_table)` construction outside the recently converted member-access/new/delete/conversion sites; continue migrating those to `makeEvalContext(...)`
+- codegen-side `EvaluationContext` construction is now further centralised via `makeEvalContext`, and the converted call sites carry parser + sema by construction
 
 ### 6.1 Remove remaining nullable semantic branches in parser-owned contexts
 
