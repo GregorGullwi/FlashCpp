@@ -422,9 +422,11 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 	if (!resolved_binding.has_value()) {
 		if (lookup_name.isValid() &&
 			owner_type_info != nullptr &&
-			owner_type_info->isTemplateInstantiation()) {
+			owner_type_info->isTemplateInstantiation() &&
+			context.parser != nullptr) {
+			Parser& parser = *context.parser;
 			InlineVector<TemplateParameterNode, 4> owner_template_params =
-				getTemplateParametersForTypeInfo(*owner_type_info, *context.parser);
+				getTemplateParametersForTypeInfo(*owner_type_info, parser);
 			const size_t owner_pair_count = std::min(
 				owner_template_params.size(),
 				owner_type_info->templateArgs().size());
@@ -5124,6 +5126,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (type_info->isTemplateInstantiation() &&
 					type_info->getStructInfo() == nullptr &&
 					context.parser != nullptr) {
+					Parser& parser = *context.parser;
 					auto materialize_template_arg_for_owner =
 						[&](auto&& self,
 							const TemplateTypeArg& source_arg,
@@ -5171,7 +5174,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 
 						Parser::AliasTemplateMaterializationResult nested_materialized_type =
-							context.parser->materializeTemplateInstantiationForLookup(
+							parser.materializeTemplateInstantiationForLookup(
 								nested_base_template_name,
 								nested_concrete_args);
 						const TypeInfo* nested_resolved_info =
@@ -5210,7 +5213,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 
 						Parser::AliasTemplateMaterializationResult materialized_type =
-							context.parser->materializeTemplateInstantiationForLookup(
+							parser.materializeTemplateInstantiationForLookup(
 								base_template_name,
 								concrete_args);
 						if (materialized_type.resolved_type_info != nullptr) {
@@ -5386,6 +5389,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							nested_target_info->isTemplateInstantiation() &&
 							nested_target_info->getStructInfo() == nullptr &&
 							context.parser != nullptr) {
+							Parser& parser = *context.parser;
 							const TypeInfo* nested_lookup_owner = nested_target_info;
 							if (resolved_type_info != nullptr &&
 								resolved_type_info->hasInstantiationContext()) {
@@ -5433,7 +5437,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									concrete_nested_args.push_back(std::move(concrete_nested_arg));
 								}
 								Parser::AliasTemplateMaterializationResult concrete_materialized =
-									context.parser->materializeTemplateInstantiationForLookup(
+									parser.materializeTemplateInstantiationForLookup(
 										concrete_base_name,
 										concrete_nested_args);
 								const TypeInfo* concrete_resolved_info = concrete_materialized.resolved_type_info;
@@ -5467,7 +5471,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 								StringTable::getStringView(nested_target_info->baseTemplateName());
 							if (!nested_base_name.empty()) {
 								Parser::AliasTemplateMaterializationResult materialized_target =
-									context.parser->materializeTemplateInstantiationForLookup(
+									parser.materializeTemplateInstantiationForLookup(
 										nested_base_name,
 										nested_template_args);
 								if (materialized_target.resolved_type_info != nullptr) {
