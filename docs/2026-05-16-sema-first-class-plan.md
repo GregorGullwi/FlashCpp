@@ -140,6 +140,7 @@ Stage 6 progress so far:
 - the constexpr evaluation entrypoint in `ConstExprEvaluator_Core.cpp` now enforces parser-owned sema attachment via `requireParserOwnedSema(\"evaluate\")` instead of duplicating the parser+sema invariant check inline.
 - parser-required constexpr POI/variable-template paths now bind a local `Parser&` immediately after their null boundary checks, and `ConstExprEvaluator_Members.cpp` no longer carries a dead `context.parser == nullptr` guard inside parser-only template-owner materialization or duplicated parser-presence conditions for dependent expression substitution.
 - dependent template-argument owner rebinding in `ConstExprEvaluator_Members.cpp` now explicitly skips parser-backed positional template-parameter lookup when no parser is attached, and the parser-only owner/nested-alias materialization branches bind local `Parser&` references instead of repeatedly dereferencing nullable `context.parser` inside already-guarded scopes.
+- array-bound evaluation in `applyDeclarationArrayBoundsToTypeSpec(...)` is now sema-backed in both semantic-normalization and parser argument-type callers: sema-owned sites pass `SemanticAnalysis`, parser-owned sites pass `Parser`, and neither path builds a bare constexpr `EvaluationContext` anymore. substituted alias array-dimension evaluation in `Parser_Templates_Inst_ClassTemplate.cpp` now also carries parser-owned sema before evaluating the substituted bound expressions.
 
 Remaining Stage 6 work:
 
