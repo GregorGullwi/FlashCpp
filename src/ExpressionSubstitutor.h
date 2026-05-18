@@ -4,6 +4,7 @@
 #include "TemplateEnvironment.h"
 #include "TemplateRegistry.h"
 #include <unordered_map>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -108,6 +109,11 @@ private:
 		std::vector<TemplateTypeArg> args;
 		bool had_substitution = false;
 	};
+	struct MaterializedDependentMemberLookup {
+		const TypeInfo* resolved_type = nullptr;
+		StringHandle materialized_member_handle{};
+		StringHandle terminal_member_name{};
+	};
 
 	// Handlers for different expression types
 	ASTNode substituteConstructorCall(const ConstructorCallNode& ctor);
@@ -144,6 +150,16 @@ private:
 		std::span<const TypeInfo::TemplateArgInfo> stored_args,
 		int depth);
 	bool templateArgsStillDependent(std::span<const TemplateTypeArg> args) const;
+	MaterializedDependentMemberLookup lookupMaterializedDependentMember(
+		const TypeInfo& type_info,
+		int depth);
+	const TypeInfo* resolveMaterializedMemberAliasLookup(
+		const MaterializedDependentMemberLookup& lookup);
+	const TypeInfo* resolveQualifiedMemberNamespaceChain(
+		std::string_view owner_name,
+		std::span<QualifiedTypeMemberAccess> member_chain);
+	const TypeInfo* resolveCurrentOwnerQualifiedNamespaceMember(
+		StringHandle member_name_handle);
 	const TypeInfo* resolveDependentMemberType(const TypeInfo& type_info, int depth);
 	void rebuildEnvironmentFromCurrentBindings();
 

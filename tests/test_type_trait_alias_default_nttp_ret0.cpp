@@ -24,7 +24,10 @@ struct IsEmpty : ConditionalT<__is_empty(Type), TrueType, FalseType> {
 };
 
 template<typename Type>
-using EmptyNotFinal = ConditionalT<__is_final(Type), FalseType, IsEmpty<Type>>;
+using EmptyAlias = IsEmpty<Type>;
+
+template<typename Type>
+using EmptyNotFinal = ConditionalT<__is_final(Type), FalseType, EmptyAlias<Type>>;
 
 template<unsigned long Index, typename Head, bool = EmptyNotFinal<Head>::value>
 struct HeadBase {

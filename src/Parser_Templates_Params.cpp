@@ -3252,6 +3252,14 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 					expr_node)) {
 			if (auto const_value = try_evaluate_constant_expression(expr_node)) {
 				FlashCpp::NonTypeValueIdentity identity = const_value->identity;
+				if (!identity.member_class_name.isValid() &&
+					existing_arg.member_class_name.isValid()) {
+					identity.member_class_name = existing_arg.member_class_name;
+				}
+				if (!identity.function_signature.has_value() &&
+					existing_arg.function_signature.has_value()) {
+					identity.function_signature = existing_arg.function_signature;
+				}
 				TypeIndex declared_type_index = param.has_type()
 					? param.type_specifier_node().type_index().withCategory(param.type_specifier_node().type())
 					: TypeIndex{};
@@ -3273,6 +3281,14 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 						}
 					} else if (declared_category == TypeCategory::MemberObjectPointer ||
 							   declared_category == TypeCategory::MemberFunctionPointer) {
+						if (!identity.member_class_name.isValid() &&
+							param.type_specifier_node().has_member_class()) {
+							identity.member_class_name = param.type_specifier_node().member_class_name();
+						}
+						if (!identity.function_signature.has_value() &&
+							param.type_specifier_node().has_function_signature()) {
+							identity.function_signature = param.type_specifier_node().function_signature();
+						}
 						if (identity.kind == FlashCpp::NonTypeValueIdentityKind::Nullptr) {
 							identity.kind = FlashCpp::NonTypeValueIdentityKind::MemberPointer;
 						}

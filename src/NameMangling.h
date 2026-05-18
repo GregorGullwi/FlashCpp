@@ -189,6 +189,9 @@ inline std::string generateItaniumEncodedTypeName(std::string_view qualified_nam
 	return std::string(builder.commit());
 }
 
+template <typename OutputType>
+inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter);
+
 // Helper to append CV-qualifier code (A/B/C/D) to output
 inline void appendCVQualifier(auto& output, CVQualifier cv) {
 	if (cv == CVQualifier::None) {
@@ -282,6 +285,9 @@ inline TemplateTypeArg normalizeTemplateTypeArgForMangling(TemplateTypeArg arg) 
 		if (!arg.function_signature.has_value() && alias_info.function_signature.has_value()) {
 			arg.function_signature = alias_info.function_signature;
 		}
+		if (!arg.member_class_name.isValid() && alias_info.member_class_name.has_value()) {
+			arg.member_class_name = *alias_info.member_class_name;
+		}
 	}
 
 	if ((category_out_of_range || arg.category() == TypeCategory::Invalid) && arg.type_index.is_valid()) {
@@ -291,6 +297,100 @@ inline TemplateTypeArg normalizeTemplateTypeArgForMangling(TemplateTypeArg arg) 
 	}
 
 	return arg;
+}
+
+inline const StructMember* tryResolveMemberObjectPointerMemberRecursive(
+	const StructTypeInfo* struct_info,
+	StringHandle member_name) {
+	if (struct_info == nullptr) {
+		return nullptr;
+	}
+	for (const StructMember& member : struct_info->members) {
+		if (member.name == member_name) {
+			return &member;
+		}
+	}
+	for (const BaseClassSpecifier& base : struct_info->base_classes) {
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		if (base_type_info == nullptr || base_type_info->getStructInfo() == nullptr) {
+			continue;
+		}
+		if (const StructMember* resolved = tryResolveMemberObjectPointerMemberRecursive(
+				base_type_info->getStructInfo(),
+				member_name)) {
+			return resolved;
+		}
+	}
+	return nullptr;
+}
+
+inline const StructMember* tryResolveMemberObjectPointerMember(const FlashCpp::NonTypeValueIdentity& identity) {
+	if (!identity.member_class_name.isValid() || !identity.member_name.isValid()) {
+		return nullptr;
+	}
+	auto type_it = getTypesByNameMap().find(identity.member_class_name);
+	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+		return nullptr;
+	}
+	const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+	return tryResolveMemberObjectPointerMemberRecursive(struct_info, identity.member_name);
+}
+
+template <typename OutputType>
+inline void appendItaniumVendorExtendedTypeCode(
+	OutputType& output,
+	std::string_view prefix,
+	size_t hash_value) {
+	const std::string encoded_name = std::string(prefix) + std::to_string(hash_value);
+	output += 'u';
+	output += std::to_string(encoded_name.size());
+	output += encoded_name;
+}
+
+template <typename OutputType>
+inline bool appendItaniumMemberPointerTypeCode(
+	OutputType& output,
+	const FlashCpp::NonTypeValueIdentity& identity) {
+	if (!identity.member_class_name.isValid()) {
+		return false;
+	}
+	output += 'M';
+	appendItaniumQualifiedTypeName(output, StringTable::getStringView(identity.member_class_name));
+	if (identity.valueTypeCategory() == TypeCategory::MemberObjectPointer) {
+		const StructMember* member = tryResolveMemberObjectPointerMember(identity);
+		if (member == nullptr) {
+			return false;
+		}
+		TypeSpecifierNode member_type(member->type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+		member_type.add_pointer_levels(member->pointer_depth);
+		member_type.set_reference_qualifier(member->reference_qualifier);
+		if (member->is_array) {
+			member_type.set_array_dimensions(member->array_dimensions);
+		}
+		if (member->function_signature.has_value()) {
+			member_type.set_function_signature(*member->function_signature);
+		}
+		appendItaniumTypeCode(output, member_type, false);
+		return true;
+	}
+	if (identity.valueTypeCategory() == TypeCategory::MemberFunctionPointer &&
+		identity.function_signature.has_value()) {
+		output += 'F';
+		const FunctionSignature& sig = *identity.function_signature;
+		TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+		appendItaniumTypeCode(output, ret_spec, false);
+		if (sig.parameter_type_indices.empty()) {
+			output += 'v';
+		} else {
+			for (const TypeIndex& pt : sig.parameter_type_indices) {
+				TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+				appendItaniumTypeCode(output, param_spec, false);
+			}
+		}
+		output += 'E';
+		return true;
+	}
+	return false;
 }
 
 // Generate MSVC type code for mangling
@@ -1060,6 +1160,17 @@ inline void appendItaniumTypeTemplateArgs(
 			case TypeCategory::Nullptr:
 				output += "Dn";
 				break;
+			case TypeCategory::MemberObjectPointer:
+			case TypeCategory::MemberFunctionPointer:
+				if (!appendItaniumMemberPointerTypeCode(output, identity)) {
+					appendItaniumVendorExtendedTypeCode(
+						output,
+						identity.valueTypeCategory() == TypeCategory::MemberFunctionPointer
+							? "flash_mfp_"
+							: "flash_mop_",
+						identity.hash());
+				}
+				break;
 			case TypeCategory::Struct:
 			case TypeCategory::UserDefined:
 			case TypeCategory::TypeAlias:
@@ -1102,9 +1213,9 @@ inline void appendItaniumTypeTemplateArgs(
 				identity.kind == FlashCpp::NonTypeValueIdentityKind::Reference) {
 				// TODO(item-8): Encode FunctionPointer with full Itanium function-signature
 				// mangling (XadL_Z<mangled-function>EE) once function-pointer NTTP evaluation
-				// is implemented. MemberPointer encoding (Xad<member-external-name>EE) likewise
-				// requires constexpr member-pointer evaluation. Until then use a vendor-extended
-				// hash to ensure uniqueness.
+				// is implemented. MemberPointer value encoding still lacks a complete Itanium
+				// external-name form for the covered semantic data, so keep the conservative
+				// vendor-extended hash fallback until that wiring exists.
 				const size_t identity_hash = identity.hash();
 				output += "u";
 				if (identity.kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) {

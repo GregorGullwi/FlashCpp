@@ -530,6 +530,48 @@ ASTNode Parser::substituteTemplateParameters(
 								substituted_template_param_ref = true;
 								return;
 							}
+							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
+								arg.typed_value_identity.member_name.isValid() &&
+								arg.valueIdentity().member_class_name.isValid()) {
+								InlineVector<StringHandle, 4> owner_components;
+								std::string_view owner_name_view =
+									StringTable::getStringView(arg.valueIdentity().member_class_name);
+								size_t owner_start = 0;
+								while (owner_start < owner_name_view.size()) {
+									size_t owner_end = owner_name_view.find("::", owner_start);
+									if (owner_end == std::string_view::npos) {
+										owner_end = owner_name_view.size();
+									}
+									owner_components.push_back(StringTable::getOrInternStringHandle(
+										owner_name_view.substr(owner_start, owner_end - owner_start)));
+									owner_start = owner_end == owner_name_view.size() ? owner_end : owner_end + 2;
+								}
+								NamespaceHandle owner_scope = owner_components.empty()
+									? NamespaceRegistry::GLOBAL_NAMESPACE
+									: gNamespaceRegistry.getOrCreatePath(
+										NamespaceRegistry::GLOBAL_NAMESPACE,
+										std::span<const StringHandle>(owner_components.data(), owner_components.size()));
+								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
+									Token member_token(
+										Token::Type::Identifier,
+										StringTable::getStringView(arg.typed_value_identity.member_name),
+										tparam_ref.token().line(),
+										tparam_ref.token().column(),
+										tparam_ref.token().file_index());
+									Token amp_token(
+										Token::Type::Operator,
+										"&"sv,
+										tparam_ref.token().line(),
+										tparam_ref.token().column(),
+										tparam_ref.token().file_index());
+									ASTNode qualified_member = emplace_node<ExpressionNode>(
+										QualifiedIdentifierNode(owner_scope, member_token));
+									substituted_node = emplace_node<ExpressionNode>(
+										UnaryOperatorNode(amp_token, qualified_member, true));
+									substituted_template_param_ref = true;
+									return;
+								}
+							}
 						}
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
@@ -584,6 +626,43 @@ ASTNode Parser::substituteTemplateParameters(
 								substituted_node = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
 								substituted_identifier = true;
 								return;
+							}
+							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
+								arg.typed_value_identity.member_name.isValid() &&
+								arg.valueIdentity().member_class_name.isValid()) {
+								InlineVector<StringHandle, 4> owner_components;
+								std::string_view owner_name_view =
+									StringTable::getStringView(arg.valueIdentity().member_class_name);
+								size_t owner_start = 0;
+								while (owner_start < owner_name_view.size()) {
+									size_t owner_end = owner_name_view.find("::", owner_start);
+									if (owner_end == std::string_view::npos) {
+										owner_end = owner_name_view.size();
+									}
+									owner_components.push_back(StringTable::getOrInternStringHandle(
+										owner_name_view.substr(owner_start, owner_end - owner_start)));
+									owner_start = owner_end == owner_name_view.size() ? owner_end : owner_end + 2;
+								}
+								NamespaceHandle owner_scope = owner_components.empty()
+									? NamespaceRegistry::GLOBAL_NAMESPACE
+									: gNamespaceRegistry.getOrCreatePath(
+										NamespaceRegistry::GLOBAL_NAMESPACE,
+										std::span<const StringHandle>(owner_components.data(), owner_components.size()));
+								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
+									Token member_token(
+										Token::Type::Identifier,
+										StringTable::getStringView(arg.typed_value_identity.member_name),
+										0,
+										0,
+										0);
+									Token amp_token(Token::Type::Operator, "&"sv, 0, 0, 0);
+									ASTNode qualified_member = emplace_node<ExpressionNode>(
+										QualifiedIdentifierNode(owner_scope, member_token));
+									substituted_node = emplace_node<ExpressionNode>(
+										UnaryOperatorNode(amp_token, qualified_member, true));
+									substituted_identifier = true;
+									return;
+								}
 							}
 						}
 						TypeCategory value_type = arg.typeEnum();

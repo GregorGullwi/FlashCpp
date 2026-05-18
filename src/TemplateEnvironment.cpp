@@ -44,6 +44,7 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 	info.is_template_template_arg = arg.is_template_template_arg;
 	info.template_name = arg.template_name_handle;
 	info.member_pointer_kind = arg.member_pointer_kind;
+	info.member_class_name = arg.member_class_name;
 	// Default: store the integer value. For pointer/reference/function-pointer NTTPs with
 	// a named entity, also preserve the explicit identity kind and entity name in the
 	// dedicated fields so the roundtrip through toTemplateTypeArg is lossless.
@@ -56,6 +57,9 @@ TypeInfo::TemplateArgInfo toTemplateArgInfo(const TemplateTypeArg& arg) {
 		}
 		if (id.member_name.isValid()) {
 			info.nttp_member_name = id.member_name;
+		}
+		if (id.member_class_name.isValid()) {
+			info.member_class_name = id.member_class_name;
 		}
 		info.nttp_pointer_offset = id.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer
 			? id.value
@@ -82,6 +86,7 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.is_template_template_arg = arg.is_template_template_arg;
 	ta.template_name_handle = arg.template_name;
 	ta.member_pointer_kind = arg.member_pointer_kind;
+	ta.member_class_name = arg.member_class_name;
 	if (arg.is_value) {
 		const bool has_explicit_nttp_identity =
 			arg.nttp_kind != FlashCpp::NonTypeValueIdentityKind::Integral ||
@@ -113,7 +118,11 @@ TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 				}
 				break;
 			case FlashCpp::NonTypeValueIdentityKind::MemberPointer:
-				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeMemberPointer(arg.type_index, arg.nttp_member_name, arg.nttp_pointer_offset));
+				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeMemberPointer(
+					arg.type_index,
+					arg.nttp_member_name,
+					arg.nttp_pointer_offset,
+					arg.member_class_name));
 				break;
 			case FlashCpp::NonTypeValueIdentityKind::Nullptr:
 				ta.setValueIdentity(FlashCpp::NonTypeValueIdentity::makeNullptr(arg.type_index));

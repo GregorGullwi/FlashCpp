@@ -155,6 +155,28 @@ std::vector<size_t> concatenateArrayDimensions(std::vector<size_t> prefix_dimens
 	return prefix_dimensions;
 }
 
+std::vector<QualifiedTypeMemberAccess> buildQualifiedMemberAccessChain(std::string_view qualified_name) {
+	std::vector<QualifiedTypeMemberAccess> member_chain;
+	size_t start = 0;
+	while (start < qualified_name.size()) {
+		size_t separator = qualified_name.find("::", start);
+		std::string_view component = separator == std::string_view::npos
+			? qualified_name.substr(start)
+			: qualified_name.substr(start, separator - start);
+		if (!component.empty()) {
+			QualifiedTypeMemberAccess member_access;
+			member_access.member_name =
+				StringTable::getOrInternStringHandle(component);
+			member_chain.push_back(std::move(member_access));
+		}
+		if (separator == std::string_view::npos) {
+			break;
+		}
+		start = separator + 2;
+	}
+	return member_chain;
+}
+
 void appendArrayDimensions(TypeSpecifierNode& target, std::span<const size_t> prefix_dimensions) {
 	if (prefix_dimensions.empty()) {
 		return;
@@ -863,9 +885,11 @@ bool ExpressionSubstitutor::templateArgsStillDependent(std::span<const TemplateT
 	return false;
 }
 
-const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo& type_info, int depth) {
+ExpressionSubstitutor::MaterializedDependentMemberLookup
+ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_info, int depth) {
+	MaterializedDependentMemberLookup lookup;
 	if (!type_info.isDependentMemberType() || depth >= kMaxDependentMemberTypeResolutionDepth) {
-		return nullptr;
+		return lookup;
 	}
 
 	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
@@ -933,7 +957,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 					InlineVector<TemplateTypeArg, 4> member_args =
 						materializeDependentRecordTemplateArgs(member_record.template_arguments, depth);
 					if (templateArgsStillDependent(member_args)) {
-						return nullptr;
+						return lookup;
 					}
 					member_access.has_template_arguments = true;
 					member_access.template_arguments =
@@ -947,6 +971,27 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 					materialized_owner_name,
 					member_chain);
 			if (resolved_type != nullptr) {
+				if (!dependent_name->member_chain.empty()) {
+					StringBuilder member_path_builder;
+					for (size_t member_index = 0; member_index < dependent_name->member_chain.size();
+						 ++member_index) {
+						if (member_index != 0) {
+							member_path_builder.append("::");
+						}
+						member_path_builder.append(
+							StringTable::getStringView(
+								dependent_name->member_chain[member_index].name));
+					}
+					lookup.materialized_member_handle =
+						StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(materialized_owner_name)
+								.append("::")
+								.append(member_path_builder.commit())
+								.commit());
+					lookup.terminal_member_name =
+						dependent_name->member_chain.back().name;
+				}
 				const TypeInfo* next_dependent_type = nullptr;
 				if (const TypeInfo* alias_target =
 						tryGetTypeInfo(resolved_type->type_index_);
@@ -958,9 +1003,15 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 					next_dependent_type = resolved_type;
 				}
 				if (next_dependent_type != nullptr) {
-					return resolveDependentMemberType(*next_dependent_type, depth + 1);
+					MaterializedDependentMemberLookup nested_lookup =
+						lookupMaterializedDependentMember(*next_dependent_type, depth + 1);
+					if (nested_lookup.resolved_type != nullptr) {
+						return nested_lookup;
+					}
+					return lookup;
 				}
-				return resolved_type;
+				lookup.resolved_type = resolved_type;
+				return lookup;
 			}
 		}
 	}
@@ -968,7 +1019,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 	std::string_view type_name = StringTable::getStringView(type_info.name());
 	size_t member_sep = type_name.rfind("::");
 	if (member_sep == std::string_view::npos) {
-		return nullptr;
+		return lookup;
 	}
 
 	std::string_view dependent_base_name = type_name.substr(0, member_sep);
@@ -976,7 +1027,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 	std::string_view dependent_member_name = type_name.substr(member_sep + kScopeResolutionLength);
 	std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
 	if (base_template_name.empty()) {
-		return nullptr;
+		return lookup;
 	}
 
 	auto dependent_base_it = getTypesByNameMap().find(
@@ -984,7 +1035,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 	if (dependent_base_it == getTypesByNameMap().end() ||
 		dependent_base_it->second == nullptr ||
 		!dependent_base_it->second->isTemplateInstantiation()) {
-		return nullptr;
+		return lookup;
 	}
 
 	MaterializedStoredTemplateArgs concrete_base_args =
@@ -998,7 +1049,7 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 			concrete_base_args.args);
 	std::string_view materialized_base_name = materialized_base.canonicalName();
 	if (materialized_base_name.empty()) {
-		return nullptr;
+		return lookup;
 	}
 
 	QualifiedTypeMemberAccess member_access;
@@ -1010,8 +1061,16 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 			materialized_base_name,
 			member_chain);
 	if (resolved_type == nullptr) {
-		return nullptr;
+		return lookup;
 	}
+	lookup.materialized_member_handle =
+		StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(materialized_base_name)
+				.append("::")
+				.append(dependent_member_name)
+				.commit());
+	lookup.terminal_member_name = member_access.member_name;
 
 	const TypeInfo* next_dependent_type = nullptr;
 	if (const TypeInfo* alias_target = tryGetTypeInfo(resolved_type->type_index_);
@@ -1021,10 +1080,138 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo
 		next_dependent_type = resolved_type;
 	}
 	if (next_dependent_type != nullptr) {
-		return resolveDependentMemberType(*next_dependent_type, depth + 1);
+		MaterializedDependentMemberLookup nested_lookup =
+			lookupMaterializedDependentMember(*next_dependent_type, depth + 1);
+		if (nested_lookup.resolved_type != nullptr) {
+			return nested_lookup;
+		}
+		return lookup;
 	}
 
-	return resolved_type;
+	lookup.resolved_type = resolved_type;
+	return lookup;
+}
+
+const TypeInfo* ExpressionSubstitutor::resolveMaterializedMemberAliasLookup(
+	const MaterializedDependentMemberLookup& lookup) {
+	if (lookup.resolved_type == nullptr) {
+		return nullptr;
+	}
+	if (!lookup.materialized_member_handle.isValid()) {
+		return lookup.resolved_type;
+	}
+
+	auto concrete_member_it = getTypesByNameMap().find(lookup.materialized_member_handle);
+	if (concrete_member_it != getTypesByNameMap().end() &&
+		concrete_member_it->second != nullptr) {
+		return concrete_member_it->second;
+	}
+
+	if (!lookup.terminal_member_name.isValid() ||
+		StringTable::getStringView(lookup.resolved_type->name()) !=
+			StringTable::getStringView(lookup.terminal_member_name)) {
+		return lookup.resolved_type;
+	}
+
+	TypeIndex resolved_member_index =
+		lookup.resolved_type->registeredTypeIndex().withCategory(
+			lookup.resolved_type->typeEnum());
+	TypeSpecifierNode concrete_member_spec(
+		resolved_member_index,
+		lookup.resolved_type->sizeInBits(),
+		Token(),
+		CVQualifier::None,
+		ReferenceQualifier::None);
+	if (const TypeSpecifierNode* existing_alias_spec =
+			lookup.resolved_type->aliasTypeSpecifier()) {
+		concrete_member_spec = *existing_alias_spec;
+	}
+	TypeInfo& concrete_member_info = add_type_alias_copy(
+		lookup.materialized_member_handle,
+		resolved_member_index,
+		lookup.resolved_type->sizeInBits().value,
+		concrete_member_spec,
+		*lookup.resolved_type);
+	getTypesByNameMap().insert_or_assign(
+		lookup.materialized_member_handle,
+		&concrete_member_info);
+	return &concrete_member_info;
+}
+
+const TypeInfo* ExpressionSubstitutor::resolveQualifiedMemberNamespaceChain(
+	std::string_view owner_name,
+	std::span<QualifiedTypeMemberAccess> member_chain) {
+	if (owner_name.empty()) {
+		return nullptr;
+	}
+
+	const TypeInfo* resolved_member =
+		parser_.resolveBaseClassMemberTypeChain(owner_name, member_chain);
+	if (resolved_member == nullptr) {
+		return nullptr;
+	}
+
+	bool had_dependent_member_lookup = false;
+	if (const TypeInfo* alias_target = tryGetTypeInfo(resolved_member->type_index_);
+		alias_target != nullptr &&
+		alias_target != resolved_member &&
+		alias_target->isDependentMemberType()) {
+		had_dependent_member_lookup = true;
+		MaterializedDependentMemberLookup lookup =
+			lookupMaterializedDependentMember(
+				*alias_target,
+				kInitialDependentMemberTypeResolutionDepth);
+		if (const TypeInfo* materialized_member =
+				resolveMaterializedMemberAliasLookup(lookup);
+			materialized_member != nullptr) {
+			return materialized_member;
+		}
+	}
+	if (resolved_member->isDependentMemberType()) {
+		had_dependent_member_lookup = true;
+		MaterializedDependentMemberLookup lookup =
+			lookupMaterializedDependentMember(
+				*resolved_member,
+				kInitialDependentMemberTypeResolutionDepth);
+		if (const TypeInfo* materialized_member =
+				resolveMaterializedMemberAliasLookup(lookup);
+			materialized_member != nullptr) {
+			return materialized_member;
+		}
+	}
+
+	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+		resolved_member->registeredTypeIndex().withCategory(
+			resolved_member->typeEnum()));
+	const TypeInfo* resolved_type_info = resolved_alias.terminal_type_info;
+	if (resolved_type_info == nullptr && resolved_alias.type_index.is_valid()) {
+		resolved_type_info = tryGetTypeInfo(resolved_alias.type_index);
+	}
+	if (resolved_type_info != nullptr &&
+		!resolved_type_info->isDependentMemberType()) {
+		return resolved_type_info;
+	}
+	return had_dependent_member_lookup ? nullptr : resolved_member;
+}
+
+const TypeInfo* ExpressionSubstitutor::resolveCurrentOwnerQualifiedNamespaceMember(
+	StringHandle member_name_handle) {
+	if (!current_owner_type_name_.isValid() || !member_name_handle.isValid()) {
+		return nullptr;
+	}
+
+	std::vector<QualifiedTypeMemberAccess> member_chain =
+		buildQualifiedMemberAccessChain(
+			StringTable::getStringView(member_name_handle));
+	if (member_chain.empty()) {
+		return nullptr;
+	}
+	std::string_view owner_name = StringTable::getStringView(current_owner_type_name_);
+	return resolveQualifiedMemberNamespaceChain(owner_name, member_chain);
+}
+
+const TypeInfo* ExpressionSubstitutor::resolveDependentMemberType(const TypeInfo& type_info, int depth) {
+	return lookupMaterializedDependentMember(type_info, depth).resolved_type;
 }
 
 const TypeInfo* ExpressionSubstitutor::resolveDependentMemberTypeForSubstitution(const TypeInfo& type_info) {
@@ -2107,47 +2294,46 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 		if (!materialized_owner_name.empty() && !dependent_name->member_chain.empty()) {
 			std::string_view materialized_namespace = materialized_owner_name;
-			for (size_t member_index = 0;
-				 member_index + 1 < dependent_name->member_chain.size();
-				 ++member_index) {
-				const auto& member_record = dependent_name->member_chain[member_index];
-				std::string_view member_name =
-					StringTable::getStringView(member_record.name);
-				if (member_record.has_template_arguments) {
-					InlineVector<TemplateTypeArg, 4> member_args =
-						materializeDependentRecordTemplateArgs(
-							member_record.template_arguments,
-							kInitialDependentMemberTypeResolutionDepth);
-					if (templateArgsStillDependent(member_args)) {
-						ExpressionNode& deferred_expr =
-							gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
-						return ASTNode(&deferred_expr);
+			if (dependent_name->member_chain.size() > 1) {
+				std::vector<QualifiedTypeMemberAccess> namespace_member_chain;
+				namespace_member_chain.reserve(
+					dependent_name->member_chain.size() - 1);
+				for (size_t member_index = 0;
+					 member_index + 1 < dependent_name->member_chain.size();
+					 ++member_index) {
+					const auto& member_record =
+						dependent_name->member_chain[member_index];
+					QualifiedTypeMemberAccess member_access;
+					member_access.member_name = member_record.name;
+					if (member_record.has_template_arguments) {
+						InlineVector<TemplateTypeArg, 4> member_args =
+							materializeDependentRecordTemplateArgs(
+								member_record.template_arguments,
+								kInitialDependentMemberTypeResolutionDepth);
+						if (templateArgsStillDependent(member_args)) {
+							ExpressionNode& deferred_expr =
+								gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+							return ASTNode(&deferred_expr);
+						}
+						member_access.has_template_arguments = true;
+						member_access.template_arguments =
+							&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
+								member_args.toVector());
 					}
-					std::string_view member_template_name =
-						StringBuilder()
-							.append(materialized_namespace)
-							.append("::")
-							.append(member_name)
-							.commit();
-					Parser::AliasTemplateMaterializationResult materialized_member =
-						parser_.materializeTemplateInstantiationForLookup(
-							member_template_name,
-							member_args);
-					materialized_namespace = materialized_member.canonicalName();
-					if (materialized_namespace.empty()) {
-						materialized_namespace =
-							parser_.get_instantiated_class_name(
-								member_template_name,
-								member_args);
-					}
-				} else {
-					materialized_namespace =
-						StringBuilder()
-							.append(materialized_namespace)
-							.append("::")
-							.append(member_name)
-							.commit();
+					namespace_member_chain.push_back(std::move(member_access));
 				}
+				const TypeInfo* resolved_namespace =
+					resolveQualifiedMemberNamespaceChain(
+						materialized_owner_name,
+						namespace_member_chain);
+				if (resolved_namespace == nullptr ||
+					!resolved_namespace->name().isValid()) {
+					ExpressionNode& deferred_expr =
+						gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+					return ASTNode(&deferred_expr);
+				}
+				materialized_namespace =
+					StringTable::getStringView(resolved_namespace->name());
 			}
 
 			const auto& final_member = dependent_name->member_chain.back();
@@ -2265,46 +2451,14 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			// and the constexpr evaluator quite correctly diagnoses it as undefined.
 			// This order ensures qualified-id expressions like A::value resolve through
 			// alias chains to the concrete struct/class owner type.
-			// Resolution order:
-			// 1) resolved alias terminal TypeInfo
-			// 2) resolved alias TypeIndex lookup
-			// 3) original TypeIndex lookup
-			const auto resolve_concrete_owner_type_info = [&](const TemplateTypeArg& type_arg) -> const TypeInfo* {
-				if (!type_arg.type_index.is_valid()) {
-					return nullptr;
-				}
-				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-					type_arg.type_index.withCategory(type_arg.typeEnum()));
-				if (resolved_alias.terminal_type_info != nullptr) {
-					return resolved_alias.terminal_type_info;
-				}
-				if (resolved_alias.type_index.is_valid()) {
-					if (const TypeInfo* resolved_info = tryGetTypeInfo(resolved_alias.type_index)) {
-						return resolved_info;
-					}
-				}
-				return tryGetTypeInfo(type_arg.type_index);
-			};
-			const TypeInfo* type_info = resolve_concrete_owner_type_info(concrete_type);
+			Parser::AliasTemplateMaterializationResult canonical_owner =
+				parser_.materializeCanonicalOwnerTypeForLookup(concrete_type);
+			const TypeInfo* type_info = canonical_owner.resolved_type_info;
 			if (type_info != nullptr && (type_info->isStruct() || type_info->getStructInfo() != nullptr)) {
-				StringHandle type_name_handle = type_info->name();
-
-				if (type_info->isTemplateInstantiation()) {
-					std::string_view base_name = StringTable::getStringView(type_info->baseTemplateName());
-					FLASH_LOG(Templates, Debug, "  Concrete type is template instantiation: base='", base_name, "'");
-					if (!base_name.empty()) {
-						std::vector<TemplateTypeArg> concrete_inst_args;
-						for (const auto& stored_arg : type_info->templateArgs()) {
-							concrete_inst_args.push_back(toTemplateTypeArg(stored_arg));
-						}
-						Parser::AliasTemplateMaterializationResult materialized_type =
-							parser_.materializeTemplateInstantiationForLookup(base_name, concrete_inst_args);
-						if (!materialized_type.instantiated_name.empty()) {
-							type_name_handle = StringTable::getOrInternStringHandle(
-								materialized_type.instantiated_name);
-						}
-					}
-				}
+				StringHandle type_name_handle =
+					canonical_owner.canonicalNameHandle().isValid()
+						? canonical_owner.canonicalNameHandle()
+						: type_info->name();
 
 				// Create a new QualifiedIdentifierNode with the concrete struct as namespace
 				NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
@@ -2336,120 +2490,22 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	}
 
 	if (current_owner_type_name_.isValid() && !ns_name.empty()) {
-		StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
-			StringBuilder()
-				.append(current_owner_type_name_)
-				.append("::")
-				.append(ns_name)
-				.commit());
-		auto alias_it = getTypesByNameMap().find(qualified_alias_handle);
-		if (alias_it != getTypesByNameMap().end() && alias_it->second != nullptr) {
-			const TypeInfo* alias_info = alias_it->second;
-			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-				alias_info->registeredTypeIndex().withCategory(alias_info->typeEnum()));
-			const TypeInfo* resolved_type_info = resolved_alias.terminal_type_info;
-			if (!resolved_type_info && resolved_alias.type_index.is_valid()) {
-				resolved_type_info = tryGetTypeInfo(resolved_alias.type_index);
-			}
-			if (resolved_type_info != nullptr) {
-				StringHandle resolved_name_handle = resolved_type_info->name();
-				std::string_view materialization_target_name =
-					StringTable::getStringView(resolved_name_handle);
-				if (const TypeInfo* direct_alias_target_info =
-						tryGetTypeInfo(alias_info->type_index_)) {
-					// Phase 4: use explicit placeholder flag instead of string heuristic
-					if (direct_alias_target_info->isDependentMemberType()) {
-						materialization_target_name =
-							StringTable::getStringView(direct_alias_target_info->name());
-					}
-				}
-				size_t member_sep = materialization_target_name.rfind("::");
-				if (member_sep != std::string_view::npos) {
-					std::string_view dependent_base_name =
-						materialization_target_name.substr(0, member_sep);
-					std::string_view dependent_member_name =
-						materialization_target_name.substr(member_sep + 2);
-					std::string_view base_template_name = extractBaseTemplateName(dependent_base_name);
-					if (!base_template_name.empty()) {
-						std::vector<TemplateTypeArg> current_inst_args =
-							collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteQualifiedIdentifier");
-						StringHandle dependent_base_handle =
-							StringTable::getOrInternStringHandle(dependent_base_name);
-						auto dependent_base_it = getTypesByNameMap().find(dependent_base_handle);
-						if (dependent_base_it != getTypesByNameMap().end() &&
-							dependent_base_it->second != nullptr &&
-							dependent_base_it->second->isTemplateInstantiation()) {
-							MaterializedStoredTemplateArgs concrete_base_args =
-								materializeStoredTemplateArgs(
-									*dependent_base_it->second,
-									/*evaluate_dependent_member_values=*/true,
-									kInitialDependentMemberTypeResolutionDepth);
-							if (!concrete_base_args.args.empty()) {
-								current_inst_args = std::move(concrete_base_args.args);
-							}
-						}
-						if (!current_inst_args.empty()) {
-							Parser::AliasTemplateMaterializationResult materialized_alias_base =
-								parser_.materializeTemplateInstantiationForLookup(
-									base_template_name,
-									current_inst_args);
-							std::string_view materialized_alias_base_name =
-								materialized_alias_base.canonicalName();
-							if (!materialized_alias_base_name.empty()) {
-								StringHandle concrete_member_handle = StringTable::getOrInternStringHandle(
-									StringBuilder()
-										.append(materialized_alias_base_name)
-										.append("::")
-										.append(dependent_member_name)
-										.commit());
-								auto concrete_member_it = getTypesByNameMap().find(concrete_member_handle);
-								if (concrete_member_it != getTypesByNameMap().end() &&
-									concrete_member_it->second != nullptr) {
-									resolved_type_info = concrete_member_it->second;
-									resolved_name_handle = concrete_member_it->second->name();
-								} else if (StringTable::getStringView(resolved_name_handle) ==
-										   dependent_member_name) {
-									TypeIndex resolved_member_index =
-										resolved_type_info->registeredTypeIndex().withCategory(
-											resolved_type_info->typeEnum());
-									TypeSpecifierNode concrete_member_spec(
-										resolved_member_index,
-										resolved_type_info->sizeInBits(),
-										Token(),
-										CVQualifier::None,
-										ReferenceQualifier::None);
-									if (const TypeSpecifierNode* existing_alias_spec =
-											resolved_type_info->aliasTypeSpecifier()) {
-										concrete_member_spec = *existing_alias_spec;
-									}
-									TypeInfo& concrete_member_info = add_type_alias_copy(
-										concrete_member_handle,
-										resolved_member_index,
-										resolved_type_info->sizeInBits().value,
-										concrete_member_spec,
-										*resolved_type_info);
-									getTypesByNameMap().insert_or_assign(
-										concrete_member_handle,
-										&concrete_member_info);
-									resolved_type_info = &concrete_member_info;
-									resolved_name_handle = concrete_member_info.name();
-								}
-							}
-						}
-					}
-				}
-				NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
-					NamespaceRegistry::GLOBAL_NAMESPACE,
-					resolved_name_handle);
-				QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-					new_ns_handle,
-					qual_id.identifier_token());
-				FLASH_LOG(Templates, Debug, "  Resolved struct-local alias namespace '", ns_name,
-						  "' -> ", StringTable::getStringView(resolved_name_handle),
-						  " in owner ", StringTable::getStringView(current_owner_type_name_));
-				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
-				return ASTNode(&new_expr);
-			}
+		if (const TypeInfo* resolved_member_info =
+				resolveCurrentOwnerQualifiedNamespaceMember(
+					StringTable::getOrInternStringHandle(ns_name));
+			resolved_member_info != nullptr) {
+			StringHandle resolved_name_handle = resolved_member_info->name();
+			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE,
+				resolved_name_handle);
+			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+				new_ns_handle,
+				qual_id.identifier_token());
+			FLASH_LOG(Templates, Debug, "  Resolved struct-local alias namespace '", ns_name,
+					  "' -> ", StringTable::getStringView(resolved_name_handle),
+					  " in owner ", StringTable::getStringView(current_owner_type_name_));
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+			return ASTNode(&new_expr);
 		}
 	}
 

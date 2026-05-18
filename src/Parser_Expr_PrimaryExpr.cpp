@@ -4038,6 +4038,56 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						owner_template_arg_infos = owner_type_it->second->templateArgs();
 					}
 				}
+				if (!owner_is_dependent) {
+					std::string_view current_owner_name;
+					if (!member_function_context_stack_.empty()) {
+						const auto& member_ctx = member_function_context_stack_.back();
+						current_owner_name =
+							StringTable::getStringView(member_ctx.struct_name);
+						owner_type_index = member_ctx.struct_type_index;
+					} else if (!struct_parsing_context_stack_.empty()) {
+						const auto& struct_ctx = struct_parsing_context_stack_.back();
+						current_owner_name = struct_ctx.struct_name;
+						auto current_owner_it = getTypesByNameMap().find(
+							StringTable::getOrInternStringHandle(current_owner_name));
+						if (current_owner_it != getTypesByNameMap().end() &&
+							current_owner_it->second != nullptr) {
+							owner_type_index =
+								current_owner_it->second->registeredTypeIndex();
+						}
+					}
+					if (!current_owner_name.empty()) {
+						std::vector<QualifiedTypeMemberAccess> namespace_member_chain;
+						namespace_member_chain.reserve(namespaces.size());
+						for (const auto& namespace_part : namespaces) {
+							QualifiedTypeMemberAccess member_access;
+							member_access.member_name =
+								StringTable::getOrInternStringHandle(
+									namespace_part.c_str());
+							namespace_member_chain.push_back(std::move(member_access));
+						}
+						if (resolveBaseClassMemberTypeChain(
+								current_owner_name,
+								namespace_member_chain) != nullptr) {
+							std::vector<StringHandle> dependent_member_names;
+							dependent_member_names.reserve(namespaces.size() + 1);
+							for (const auto& namespace_part : namespaces) {
+								dependent_member_names.push_back(
+									StringTable::getOrInternStringHandle(
+										namespace_part.c_str()));
+							}
+							dependent_member_names.push_back(final_identifier.handle());
+							qual_id.setDependentQualifiedName(
+								makeExpressionDependentQualifiedNameRecord(
+									StringTable::getOrInternStringHandle(
+										current_owner_name),
+									owner_type_index,
+									TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation,
+									{},
+									dependent_member_names));
+						}
+					}
+				}
 				if (owner_is_dependent) {
 					std::vector<StringHandle> dependent_member_names;
 					dependent_member_names.reserve(namespaces.size());
@@ -6260,6 +6310,50 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								FLASH_LOG(Templates, Debug, "Substituted FunctionPointer NTTP '", param_name,
 										  "' with &", entity_name_view);
 								return true;
+							}
+							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
+								identity.member_name.isValid() &&
+								identity.member_class_name.isValid()) {
+								InlineVector<StringHandle, 4> owner_components;
+								std::string_view owner_name_view = StringTable::getStringView(identity.member_class_name);
+								size_t owner_start = 0;
+								while (owner_start < owner_name_view.size()) {
+									size_t owner_end = owner_name_view.find("::", owner_start);
+									if (owner_end == std::string_view::npos) {
+										owner_end = owner_name_view.size();
+									}
+									owner_components.push_back(StringTable::getOrInternStringHandle(
+										owner_name_view.substr(owner_start, owner_end - owner_start)));
+									owner_start = owner_end == owner_name_view.size() ? owner_end : owner_end + 2;
+								}
+								NamespaceHandle owner_scope = owner_components.empty()
+									? NamespaceRegistry::GLOBAL_NAMESPACE
+									: gNamespaceRegistry.getOrCreatePath(
+										NamespaceRegistry::GLOBAL_NAMESPACE,
+										std::span<const StringHandle>(owner_components.data(), owner_components.size()));
+								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
+									std::string_view member_name_view = StringTable::getStringView(identity.member_name);
+									Token member_token(Token::Type::Identifier, member_name_view,
+											   identifier_token.line(), identifier_token.column(),
+											   identifier_token.file_index());
+									Token amp_token(Token::Type::Operator, "&"sv,
+											identifier_token.line(), identifier_token.column(),
+											identifier_token.file_index());
+									ASTNode qualified_member = emplace_node<ExpressionNode>(
+										QualifiedIdentifierNode(owner_scope, member_token));
+									result = emplace_node<ExpressionNode>(
+										UnaryOperatorNode(amp_token, qualified_member, true));
+									FLASH_LOG(
+										Templates,
+										Debug,
+										"Substituted MemberPointer NTTP '",
+										param_name,
+										"' with &",
+										StringTable::getStringView(identity.member_class_name),
+										"::",
+										member_name_view);
+									return true;
+								}
 							}
 						}
 						// Substitute with actual value

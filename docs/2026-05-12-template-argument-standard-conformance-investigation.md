@@ -56,16 +56,21 @@ Future work should assume these are already in place:
   metadata and definition-context lookup;
 - inherited dependent-base member-template alias owners already resolve through
   the shared member-chain concretization path for covered base-specifier flows;
+- deferred alias/member-chain materialization now recursively concretizes nested
+  alias-target template-instantiation arguments before deferred-base trait
+  evaluation;
+- current-owner qualified-id member aliases now reuse the same member-side
+  lookup/materialization path as nearby current-instantiation member-type
+  resolution, including direct dependent-member-target handling and concrete
+  member-alias cache population when a concrete sibling alias must be materialized;
 - typed NTTP identity already exists for integral, enum, `nullptr`, object
-  pointer, reference, function pointer, null member pointer, and covered
-  floating-point cases;
+  pointer, reference, function pointer, non-null/null member-data pointer, and
+  covered floating-point cases;
 - selected free/member function-template overload paths already rank
   signatures before materializing bodies.
 
 Latest validation on Windows sharded build:
-`2427` regular tests compiled/linked, `2426` runtime pass,
-`1` runtime regression (`test_type_trait_alias_default_nttp_ret0.cpp`),
-`182` expected-fail tests.
+`2437` regular tests compiled/linked/runtime-pass, `182` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -85,12 +90,12 @@ Immediate targets:
 
 Most concrete next subtask:
 
-- finish the remaining alias-selected default-NTTP path where qualified-id
-  substitution still reaches a nested stored template-instantiation argument
-  through placeholder state; the inherited-owner `rebind<U>` slice is done, but
-  `ConditionalT<..., IsEmpty<Type>>::value` still needs the nested
-  `IsEmpty<Type>` argument to materialize semantically to `IsEmpty<Concrete>`
-  before deferred-base type-trait evaluation.
+- finish the remaining dependent-base/unknown-specialization member-chain work
+  and the declarations that still fail to capture replay metadata at parse time;
+  deeper current-instantiation/type-alias qualified-id/member chains now reuse
+  the shared member-side lookup/materialization path, and replayed qualified-id
+  parsing now captures the current-instantiation metadata needed for covered
+  lazy/static flows.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -122,15 +127,17 @@ Without this, identity tracking and later evaluation can still diverge.
 
 The main unsupported categories remain:
 
-- non-null member pointers;
+- non-null member-function pointers;
 - structural class-type NTTPs;
 - remaining end-to-end floating-point coverage if any paths still rely on local
   normalization instead of semantic value identity.
 
 Also required:
 
-- replace remaining conservative function/member-pointer mangling fallbacks
-  where full standard encodings are available.
+- replace the remaining conservative function/member-pointer mangling fallbacks;
+  member-pointer type information is richer now, but value encoding still falls
+  back conservatively until a full standard external-name form is available
+  from current semantic data.
 
 ### 5. Expand deduction/constraint separation before materialization
 
@@ -160,10 +167,11 @@ coverage becomes sufficient.
 ## Recommended implementation order
 
 1. **Two-phase lookup follow-up**
-   - finish current-instantiation/type-alias owner recovery;
-   - complete alias-selected owner canonicalization in default-NTTP qualified-id
-     substitution so helper owners are not reintroduced after semantic alias
-     resolution;
+   - treat the deeper current-instantiation/type-alias member-chain recovery work
+      after the current-owner member-alias qualified-id cleanup as complete for
+      the covered qualified-id/member-side cases;
+   - keep reusing the shared member-side lookup/materialization path in the
+      remaining qualified-id spellings so local repair logic is not reintroduced;
    - extend replay metadata capture into remaining declarations;
    - remove the next AST-only fallback path.
 
@@ -177,7 +185,7 @@ coverage becomes sufficient.
      expressions.
 
 4. **NTTP completion**
-   - non-null member pointers;
+   - non-null member-function pointers;
    - structural class NTTPs;
    - remaining mangling cleanup.
 
@@ -218,6 +226,11 @@ areas:
 This section is intentionally short. It exists only to stop future work from
 re-solving already-solved problems.
 
+- alias-selected default-NTTP qualified-id substitution now canonicalizes the
+  substituted owner through a shared parser/substitutor owner-materialization
+  primitive instead of bespoke alias/default-NTTP recovery in
+  `ExpressionSubstitutor`;
+
 - semantic analyzer unification on parser-owned template-name lookup is done
   for the previously remaining sema-layer probe paths;
 - selected member function template bodies already apply definition-context
@@ -229,7 +242,19 @@ re-solving already-solved problems.
   place for covered base-specifier/member-chain cases;
 - main qualified-id substitution paths now prefer semantic alias owners over
   helper instantiated names when alias materialization already resolved a
-  concrete `TypeInfo`.
+  concrete `TypeInfo`;
+- current-owner member-alias qualified-id substitution now resolves through
+  `resolveBaseClassMemberTypeChain` and dependent-member materialization helpers
+  instead of bespoke local alias repair in `ExpressionSubstitutor`;
+- deeper current-instantiation/type-alias qualified-id namespace chains now go
+  through the same shared member-side path, and replay parsing preserves covered
+  current-instantiation qualified-id metadata early enough for lazy/static
+  substitution to stay semantic instead of falling back to repair;
+- member-data-pointer NTTPs now keep declaring-class identity through
+  constexpr/template-arg round-trips and substitute correctly inside template
+  bodies; mangling now preserves richer member-pointer type identity but still
+  keeps conservative fallback value encoding until a full external-name form is
+  available.
 
 ## Exit criteria
 

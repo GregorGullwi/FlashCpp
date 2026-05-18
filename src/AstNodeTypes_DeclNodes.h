@@ -1020,6 +1020,7 @@ struct TypeInfo {
 		bool is_template_template_arg;  // true if this is a template template argument
 		StringHandle template_name;  // Name of the template for template-template arguments
 		MemberPointerKind member_pointer_kind;  // Distinguish member function vs data pointers
+		StringHandle member_class_name;  // Declaring class for pointer-to-member types
 		// Explicit NTTP identity fields — keep the TemplateTypeArg↔TemplateArgInfo roundtrip
 		// lossless without inferring the kind from TypeCategory or ref_qualifier.
 		// Only meaningful when is_value == true.
@@ -1039,6 +1040,7 @@ struct TypeInfo {
 			  is_array(false),
 			  is_template_template_arg(false),
 			  member_pointer_kind(MemberPointerKind::None),
+			  member_class_name(),
 			  nttp_kind(FlashCpp::NonTypeValueIdentityKind::Integral),
 			  nttp_pointer_offset(0) {}
 
@@ -1059,6 +1061,7 @@ struct TypeInfo {
 			  is_template_template_arg(other.is_template_template_arg),
 			  template_name(other.template_name),
 			  member_pointer_kind(other.member_pointer_kind),
+			  member_class_name(other.member_class_name),
 			  nttp_kind(other.nttp_kind),
 			  nttp_entity_name(other.nttp_entity_name),
 			  nttp_member_name(other.nttp_member_name),
@@ -1084,6 +1087,7 @@ struct TypeInfo {
 				is_template_template_arg = other.is_template_template_arg;
 				template_name = other.template_name;
 				member_pointer_kind = other.member_pointer_kind;
+				member_class_name = other.member_class_name;
 				nttp_kind = other.nttp_kind;
 				nttp_entity_name = other.nttp_entity_name;
 				nttp_member_name = other.nttp_member_name;
