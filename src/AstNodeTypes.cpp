@@ -364,8 +364,12 @@ TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNod
 	auto& info = emplaceTypeInfoTracked("register_type_alias", name, type_spec.type_index(), type_spec.size_in_bits());
 	info.registered_type_index_ = alias_idx;
 	info.setNamespaceHandle(ns);
-	info.is_type_alias_ = true;
-	info.setAliasTypeSpecifier(type_spec);
+	update_type_alias_copy(
+		info,
+		type_spec.type_index(),
+		type_spec.size_in_bits(),
+		&type_spec,
+		tryGetTypeInfo(type_spec.type_index()));
 	if (type_spec.category() == TypeCategory::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
 		if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().index()].getEnumInfo()) {
 			info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
@@ -459,16 +463,87 @@ TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t s
 	return type_info;
 }
 
+namespace {
+
+void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
+	alias_type_info.placeholder_kind_ = DependentPlaceholderKind::None;
+	alias_type_info.dependent_qualified_name_.reset();
+	alias_type_info.base_template_ = QualifiedIdentifier{};
+	alias_type_info.template_args_.clear();
+	alias_type_info.instantiation_context_.reset();
+	alias_type_info.is_incomplete_instantiation_ = false;
+}
+
+void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& semantic_source_type_info) {
+	alias_type_info.placeholder_kind_ = semantic_source_type_info.placeholder_kind_;
+	alias_type_info.dependent_qualified_name_ = semantic_source_type_info.dependent_qualified_name_;
+	alias_type_info.base_template_ = semantic_source_type_info.base_template_;
+	alias_type_info.template_args_ = semantic_source_type_info.template_args_;
+	alias_type_info.is_incomplete_instantiation_ = semantic_source_type_info.is_incomplete_instantiation_;
+	if (const TypeInfo::InstantiationContext* instantiation_context =
+			semantic_source_type_info.instantiationContext();
+		instantiation_context != nullptr) {
+		alias_type_info.setInstantiationContext(
+			instantiation_context->param_names,
+			instantiation_context->param_args,
+			instantiation_context->parent);
+	} else {
+		alias_type_info.instantiation_context_.reset();
+	}
+}
+
+} // namespace
+
+void update_type_alias_copy(
+	TypeInfo& alias_type_info,
+	TypeIndex source_type_index,
+	uint32_t size_bits,
+	const TypeSpecifierNode* alias_type_spec,
+	const TypeInfo* semantic_source_type_info) {
+	const uint32_t alias_slot = alias_type_info.registeredTypeIndex().index();
+	alias_type_info.type_index_ = source_type_index;
+	alias_type_info.registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
+	alias_type_info.fallback_size_bits_ = size_bits;
+	alias_type_info.is_type_alias_ = true;
+	alias_type_info.setEnumInfo(nullptr);
+	const TypeInfo* enum_source_type_info = semantic_source_type_info;
+	if (enum_source_type_info == nullptr &&
+		alias_type_spec != nullptr &&
+		alias_type_spec->type_index().is_valid()) {
+		enum_source_type_info = tryGetTypeInfo(alias_type_spec->type_index());
+	}
+	if (enum_source_type_info != nullptr) {
+		if (const EnumTypeInfo* enum_info = enum_source_type_info->getEnumInfo()) {
+			alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+		}
+	}
+	resetTypeAliasSemanticMetadata(alias_type_info);
+	if (semantic_source_type_info != nullptr) {
+		copyTypeAliasSemanticMetadata(alias_type_info, *semantic_source_type_info);
+	}
+	alias_type_info.clearAliasTypeSpecifier();
+	if (alias_type_spec != nullptr) {
+		alias_type_info.setAliasTypeSpecifier(*alias_type_spec);
+	} else if (semantic_source_type_info != nullptr) {
+		if (const TypeSpecifierNode* source_alias_type_spec =
+				semantic_source_type_info->aliasTypeSpecifier();
+			source_alias_type_spec != nullptr) {
+			alias_type_info.setAliasTypeSpecifier(*source_alias_type_spec);
+		}
+	}
+}
+
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits) {
 	TypeIndex alias_idx{gTypeInfo.size(), TypeCategory::TypeAlias};
 	auto& type_info = emplaceTypeInfoTracked("add_type_alias_copy", name, source_type_index, size_bits);
 	type_info.registered_type_index_ = alias_idx;
-	type_info.is_type_alias_ = true;
+	update_type_alias_copy(type_info, source_type_index, size_bits, nullptr, nullptr);
 	emplaceTypeNameTracked("add_type_alias_copy", type_info.name(), &type_info);
 	return type_info;
 }
 
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode& alias_type_spec) {
+	const TypeInfo* semantic_source_type_info = tryGetTypeInfo(alias_type_spec.type_index());
 	auto& type_info = add_type_alias_copy(name, source_type_index, size_bits);
 	if (!type_info.type_index_.is_valid() && alias_type_spec.type() != TypeCategory::Invalid) {
 		TypeIndex canonical_source = alias_type_spec.type_index();
@@ -481,15 +556,30 @@ TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, ui
 		}
 		type_info.type_index_ = canonical_source;
 	}
-	type_info.setAliasTypeSpecifier(alias_type_spec);
+	update_type_alias_copy(type_info, type_info.type_index_, size_bits, &alias_type_spec, semantic_source_type_info);
+	return type_info;
+}
+
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode& alias_type_spec, const TypeInfo& semantic_source_type_info) {
+	auto& type_info = add_type_alias_copy(name, source_type_index, size_bits);
+	if (!type_info.type_index_.is_valid() && alias_type_spec.type() != TypeCategory::Invalid) {
+		TypeIndex canonical_source = alias_type_spec.type_index();
+		if (canonical_source.is_valid()) {
+			canonical_source = canonical_source.withCategory(alias_type_spec.type());
+		} else if (TypeIndex native_type_index = nativeTypeIndex(alias_type_spec.type()); native_type_index.is_valid()) {
+			canonical_source = native_type_index;
+		} else {
+			canonical_source = type_info.registeredTypeIndex().withCategory(alias_type_spec.type());
+		}
+		type_info.type_index_ = canonical_source;
+	}
+	update_type_alias_copy(type_info, type_info.type_index_, size_bits, &alias_type_spec, &semantic_source_type_info);
 	return type_info;
 }
 
 TypeInfo& add_type_alias_copy(StringHandle name, const TypeInfo& source_type_info, uint32_t size_bits) {
-	auto& type_info = add_type_alias_copy(
-		name,
-		source_type_info.registeredTypeIndex().withCategory(source_type_info.typeEnum()),
-		size_bits);
+	auto& type_info = add_type_alias_copy(name, source_type_info.registeredTypeIndex().withCategory(source_type_info.typeEnum()), size_bits);
+	update_type_alias_copy(type_info, type_info.type_index_, size_bits, source_type_info.aliasTypeSpecifier(), &source_type_info);
 	return type_info;
 }
 

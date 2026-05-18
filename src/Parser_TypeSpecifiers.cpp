@@ -1408,17 +1408,10 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
-					auto buildQualifiedMemberName = [&](std::string_view base_type_name, std::string_view member_name) {
-						return StringBuilder()
-							.append(base_type_name)
-							.append("::")
-							.append(member_name)
-							.commit();
-					};
-
 					auto findOrCreateQualifiedMemberType = [&](std::string_view base_type_name, std::string_view member_name) -> const TypeInfo& {
-						StringHandle qualified_member_handle =
-							StringTable::getOrInternStringHandle(buildQualifiedMemberName(base_type_name, member_name));
+						StringHandle qualified_member_handle = buildQualifiedMemberNameHandle(
+							StringTable::getOrInternStringHandle(base_type_name),
+							StringTable::getOrInternStringHandle(member_name));
 						auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
 						if (member_type_it == getTypesByNameMap().end()) {
 							TypeInfo& placeholder_type = add_empty_type_entry();
@@ -1513,8 +1506,10 @@ ParseResult Parser::parse_type_specifier() {
 								discard_saved_token(scope_pos);
 
 								// Build qualified type name
-								std::string_view qualified_type_name =
-									buildQualifiedMemberName(resolved_instantiated_type_name, member_name);
+								std::string_view qualified_type_name = StringTable::getStringView(
+									buildQualifiedMemberNameHandle(
+										StringTable::getOrInternStringHandle(resolved_instantiated_type_name),
+										member_token.handle()));
 
 								FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias template resolution");
 
@@ -1536,10 +1531,24 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						return buildTypeFromInfo(*instantiated_type_info, type_name_token, false);
 					};
+					auto aliasTemplateArgsStillDependent =
+						[](std::span<const TemplateTypeArg> args) -> bool {
+						for (const TemplateTypeArg& arg : args) {
+							if (arg.is_dependent ||
+								arg.is_pack ||
+								arg.dependent_name.isValid() ||
+								arg.dependent_expr.has_value()) {
+								return true;
+							}
+						}
+						return false;
+					};
+					const bool has_dependent_alias_args =
+						aliasTemplateArgsStillDependent(*template_args);
 
 					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
 					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
-					if (alias_node.is_deferred()) {
+					if (alias_node.is_deferred() && !has_dependent_alias_args) {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						// Route directly through the alias-specific materialization path
@@ -1582,48 +1591,53 @@ ParseResult Parser::parse_type_specifier() {
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 							*rebound_arg,
 							Token());
-					} else if (const TypeInfo* concrete_member_info =
-								   materializeInstantiatedMemberAliasTarget(
-									   instantiated_type,
-									   alias_node.template_parameters(),
-									   *template_args);
-							   concrete_member_info != nullptr) {
-						instantiated_type = resolveTypeInfoToTypeSpec(*concrete_member_info, instantiated_type);
-					} else if (const TypeInfo* alias_target_info =
-								   tryGetTypeInfo(instantiated_type.type_index());
-							   alias_target_info != nullptr &&
-							   alias_target_info->isTemplateInstantiation()) {
-						StringHandle qualified_target_template_name =
-							gNamespaceRegistry.buildQualifiedIdentifier(
-								alias_target_info->sourceNamespace(),
-								alias_target_info->baseTemplateName());
-						auto alias_target_entry =
-							gTemplateRegistry.lookup_alias_template(qualified_target_template_name);
-						if (!alias_target_entry.has_value()) {
-							alias_target_entry = gTemplateRegistry.lookup_alias_template(
-								alias_target_info->baseTemplateName());
-						}
-						if (alias_target_entry.has_value()) {
-							std::vector<TemplateTypeArg> concrete_target_args =
-								materializeTemplateArgs(
-									*alias_target_info,
+					} else if (!has_dependent_alias_args) {
+						if (const TypeInfo* concrete_member_info =
+								materializeInstantiatedMemberAliasTarget(
+									instantiated_type,
 									alias_node.template_parameters(),
 									*template_args);
-							AliasTemplateMaterializationResult materialized_target =
-								materializeTemplateInstantiationForLookup(
-									StringTable::getStringView(qualified_target_template_name),
-									concrete_target_args);
-							if (!materialized_target.resolved_type_info &&
-								qualified_target_template_name != alias_target_info->baseTemplateName()) {
-								materialized_target = materializeTemplateInstantiationForLookup(
-									StringTable::getStringView(alias_target_info->baseTemplateName()),
-									concrete_target_args);
+							concrete_member_info != nullptr) {
+							instantiated_type = resolveTypeInfoToTypeSpec(*concrete_member_info, instantiated_type);
+						} else if (const TypeInfo* alias_target_info =
+									   tryGetTypeInfo(instantiated_type.type_index());
+								   alias_target_info != nullptr &&
+								   alias_target_info->isTemplateInstantiation()) {
+							StringHandle qualified_target_template_name =
+								gNamespaceRegistry.buildQualifiedIdentifier(
+									alias_target_info->sourceNamespace(),
+									alias_target_info->baseTemplateName());
+							auto alias_target_entry =
+								gTemplateRegistry.lookup_alias_template(qualified_target_template_name);
+							if (!alias_target_entry.has_value()) {
+								alias_target_entry = gTemplateRegistry.lookup_alias_template(
+									alias_target_info->baseTemplateName());
 							}
-							if (materialized_target.resolved_type_info != nullptr) {
-								instantiated_type = resolveTypeInfoToTypeSpec(
-									*materialized_target.resolved_type_info, instantiated_type);
+							if (alias_target_entry.has_value()) {
+								std::vector<TemplateTypeArg> concrete_target_args =
+									materializeTemplateArgs(
+										*alias_target_info,
+										alias_node.template_parameters(),
+										*template_args);
+								AliasTemplateMaterializationResult materialized_target =
+									materializeTemplateInstantiationForLookup(
+										StringTable::getStringView(qualified_target_template_name),
+										concrete_target_args);
+								if (!materialized_target.resolved_type_info &&
+									qualified_target_template_name != alias_target_info->baseTemplateName()) {
+									materialized_target = materializeTemplateInstantiationForLookup(
+										StringTable::getStringView(alias_target_info->baseTemplateName()),
+										concrete_target_args);
+								}
+								if (materialized_target.resolved_type_info != nullptr) {
+									instantiated_type = resolveTypeInfoToTypeSpec(
+										*materialized_target.resolved_type_info, instantiated_type);
+								}
 							}
 						}
+					}
+					if (has_dependent_alias_args && peek() != "::"_tok) {
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 					}
 
 					if (const TypeInfo* instantiated_type_info =
@@ -2679,6 +2693,21 @@ ParseResult Parser::parse_type_specifier() {
 								std::string_view base_member_alias_name = base_builder.append(base_template_name).append("::").append(member_name).preview();
 								member_alias_opt = gTemplateRegistry.lookup_alias_template(base_member_alias_name);
 								base_builder.reset();
+							}
+						}
+
+						if (!member_alias_opt.has_value()) {
+							std::string_view inherited_member_alias_name =
+								lookup_inherited_member_template_name(
+									StringTable::getOrInternStringHandle(instantiated_name),
+									StringTable::getOrInternStringHandle(member_name),
+									0);
+							if (!inherited_member_alias_name.empty()) {
+								member_alias_opt =
+									gTemplateRegistry.lookup_alias_template(inherited_member_alias_name);
+								if (member_alias_opt.has_value()) {
+									member_alias_name_str = std::string(inherited_member_alias_name);
+								}
 							}
 						}
 

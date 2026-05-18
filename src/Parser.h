@@ -345,6 +345,26 @@ struct SubstitutionParamMap {
 inline TemplateTypeArg enrichTemplateArgForParameter(
 	const TemplateParameterNode& param,
 	TemplateTypeArg arg) {
+	if (param.kind() == TemplateParameterKind::Type &&
+		!arg.is_value &&
+		arg.type_index.is_valid()) {
+		const TypeInfo* semantic_type_info = tryGetTypeInfo(arg.type_index);
+		if (semantic_type_info != nullptr &&
+			!semantic_type_info->isDependentPlaceholder()) {
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				arg.type_index.withCategory(semantic_type_info->typeEnum()));
+			if (resolved_alias.terminal_type_info != nullptr &&
+				resolved_alias.terminal_type_info->typeEnum() != TypeCategory::Invalid) {
+				semantic_type_info = resolved_alias.terminal_type_info;
+			}
+			if (semantic_type_info->typeEnum() != TypeCategory::Invalid) {
+				arg.type_index = FlashCpp::canonicalizeTemplateIdentityTypeIndex(
+					semantic_type_info->registeredTypeIndex().withCategory(
+						semantic_type_info->typeEnum()));
+				arg.setCategory(semantic_type_info->typeEnum());
+			}
+		}
+	}
 	if (param.kind() != TemplateParameterKind::Template) {
 		return arg;
 	}
@@ -2846,6 +2866,22 @@ private:
 		std::string_view instantiated_name{};
 		const TypeInfo* resolved_type_info = nullptr;
 		std::optional<ASTNode> instantiated_struct_node{};  // Set when try_instantiate_class_template returns a StructDeclarationNode
+		StringHandle canonicalNameHandle() const {
+			if (resolved_type_info != nullptr &&
+				resolved_type_info->name().isValid()) {
+				return resolved_type_info->name();
+			}
+			if (!instantiated_name.empty()) {
+				return StringTable::getOrInternStringHandle(instantiated_name);
+			}
+			return StringHandle{};
+		}
+		std::string_view canonicalName() const {
+			StringHandle canonical_name = canonicalNameHandle();
+			return canonical_name.isValid()
+				? StringTable::getStringView(canonical_name)
+				: std::string_view{};
+		}
 	};
 	std::string_view get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Get mangled name for instantiated class
 	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, std::span<const TemplateTypeArg> template_args);  // Helper: Instantiate base class template and add to AST
@@ -3334,6 +3370,13 @@ private:	 // Resume private methods
 	// Returns the vector of all template overloads if found, nullptr otherwise
 	// Uses depth limit to prevent infinite recursion in malformed input
 	const std::vector<ASTNode>* lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth = 0);
+	// Helper: Build 'owner::member' as an interned handle for member alias/template lookup.
+	StringHandle buildQualifiedMemberNameHandle(StringHandle owner_name, StringHandle member_name) const;
+	// Helper: Resolve direct member-template name on owner/pattern/primary-template fallback.
+	std::string_view lookup_direct_member_template_name(StringHandle owner_name, StringHandle member_name) const;
+	// Helper: Resolve an alias/class member-template segment including inherited bases.
+	// Returns the qualified template name to materialize, or empty when not found.
+	std::string_view lookup_inherited_member_template_name(StringHandle struct_name, StringHandle member_name, int depth);
 	// Convenience overload for string_view parameters
 	const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
 		return lookup_inherited_template(
@@ -3354,6 +3397,11 @@ private:	 // Resume private methods
 		Resolved,
 		StillDependent
 	};
+	const TypeInfo* resolveDependentMemberTypeSemantic(
+		const TypeInfo& dependent_type_info,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		StringHandle current_owner_type_name);
 	DependentAliasResolutionStatus resolveDependentMemberAlias(
 		ASTNode& type_node,
 		std::span<const TemplateParameterNode> template_params,

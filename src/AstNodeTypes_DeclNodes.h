@@ -1461,7 +1461,9 @@ TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t s
 // For adding an alias entry that copies type info from another TypeInfo
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits);
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode& alias_type_spec);
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode& alias_type_spec, const TypeInfo& semantic_source_type_info);
 TypeInfo& add_type_alias_copy(StringHandle name, const TypeInfo& source_type_info, uint32_t size_bits);
+void update_type_alias_copy(TypeInfo& alias_type_info, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode* alias_type_spec, const TypeInfo* semantic_source_type_info);
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
 TypeCreationResult add_empty_type_entry();

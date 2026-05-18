@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "AstTraversal.h"
 #include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
@@ -257,6 +258,19 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		return DependentAliasResolutionStatus::Resolved;
 	};
 
+	if (type_info->isDependentMemberType() &&
+		type_info->hasDependentQualifiedName()) {
+		if (const TypeInfo* resolved_dependent_type =
+				resolveDependentMemberTypeSemantic(
+					*type_info,
+					template_params,
+					template_args,
+					StringHandle{});
+			resolved_dependent_type != nullptr) {
+			return emplaceResolvedSpec(resolved_dependent_type);
+		}
+	}
+
 	if (const StructTypeInfo* owner_struct = type_info->getStructInfo();
 		owner_struct && type_name.find("::") == std::string_view::npos) {
 		std::string_view token_name = ts.token().value();
@@ -454,11 +468,29 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		}
 		return DependentAliasResolutionStatus::StillDependent;
 	}
-
 	auto status = emplaceResolvedSpec(type_it->second);
 	FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(type_it->second->typeEnum()),
 			  ", index=", type_it->second->type_index_);
 	return status;
+}
+
+const TypeInfo* Parser::resolveDependentMemberTypeSemantic(
+	const TypeInfo& dependent_type_info,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle current_owner_type_name) {
+	if (!dependent_type_info.isDependentMemberType() ||
+		!dependent_type_info.hasDependentQualifiedName()) {
+		return nullptr;
+	}
+
+	SubstitutionParamMap sub_map =
+		buildSubstitutionParamMap(template_params, template_args);
+	ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
+	if (current_owner_type_name.isValid()) {
+		substitutor.setCurrentOwnerTypeName(current_owner_type_name);
+	}
+	return substitutor.resolveDependentMemberTypeForSubstitution(dependent_type_info);
 }
 
 static bool hasUsableTemplateFunctionDefinition(const FunctionDeclarationNode& func_decl) {
@@ -2766,6 +2798,17 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	} else {
 		const TypeSpecifierNode& orig_return_type = orig_decl.type_specifier_node();
 		bool should_reparse = func_decl.has_template_declaration_position();
+		if (!should_reparse) {
+			if (gTemplateRegistry.lookup_alias_template(orig_return_type.token().handle()).has_value()) {
+				should_reparse = true;
+			} else if (const TypeInfo* orig_return_type_info =
+						   tryGetTypeInfo(orig_return_type.type_index());
+					   orig_return_type_info != nullptr &&
+					   (orig_return_type_info->isDependentMemberType() ||
+						orig_return_type_info->isTemplateInstantiation())) {
+				should_reparse = true;
+			}
+		}
 		if (should_reparse) {
 			static thread_local std::unordered_set<std::string_view> trailing_return_in_progress;
 			if (trailing_return_in_progress.count(mangled_name)) {
@@ -2861,6 +2904,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	resolveDependentMemberAlias(return_type, template_params, template_args);
 	if (return_type.is<TypeSpecifierNode>()) {
 		auto& rt = return_type.as<TypeSpecifierNode>();
+		resolveAliasTemplateInstantiation(rt);
 		apply_resolved_alias_metadata_local(rt);
 		if ((rt.category() == TypeCategory::UserDefined ||
 			 rt.category() == TypeCategory::TypeAlias ||
