@@ -1222,9 +1222,19 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		// Check if target name is already registered (avoid duplicates)
 		if (getTypesByNameMap().find(target_type_name) == getTypesByNameMap().end()) {
 			if (existing_type_it != getTypesByNameMap().end()) {
-				// Found existing type - create alias pointing to it
+				// Found existing type - create alias pointing to it.
+				// Use the TypeIndex overload (not the TypeInfo& overload) so we do NOT copy
+				// the source's aliasTypeSpecifier.  If the source is itself an alias (e.g.
+				// "Source::Ptr = int*"), copying its aliasTypeSpecifier would cause
+				// resolveAliasTypeInfo to accumulate pointer/reference depth twice while
+				// walking the chain: once from this new alias and once from the original alias.
+				// By leaving the aliasTypeSpecifier empty we let the chain traversal pick up
+				// all indirection metadata from the original alias exactly once.
 				const TypeInfo* source_type = existing_type_it->second;
-				auto& alias_type_info = add_type_alias_copy(target_type_name, *source_type, source_type->fallback_size_bits_);
+				auto& alias_type_info = add_type_alias_copy(
+					target_type_name,
+					source_type->registeredTypeIndex().withCategory(source_type->typeEnum()),
+					source_type->fallback_size_bits_);
 
 				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
 				// This is the same pattern used for typedef resolution
