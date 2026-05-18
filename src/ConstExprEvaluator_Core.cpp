@@ -8,9 +8,31 @@
 
 namespace ConstExpr {
 
+void EvaluationContext::attachSemaOnly(SemanticAnalysis& sema_owner) {
+	parser = nullptr;
+	sema = &sema_owner;
+}
+
 void EvaluationContext::attachParserOwnedSema(Parser& parser_owner) {
 	parser = &parser_owner;
 	sema = &parser_owner.semanticAnalysis();
+}
+
+SemanticAnalysis& EvaluationContext::requireSema(std::string_view operation) const {
+	if (sema == nullptr) {
+		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
+							" requires a sema-backed EvaluationContext");
+	}
+	return *sema;
+}
+
+SemanticAnalysis& EvaluationContext::requireParserAttachedSema(std::string_view operation) const {
+	SemanticAnalysis& sema_ref = requireSema(operation);
+	if (!sema_ref.isParserAttached()) {
+		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
+							" requires parser-attached semantic analysis");
+	}
+	return sema_ref;
 }
 
 SemanticAnalysis& EvaluationContext::requireParserOwnedSema(std::string_view operation) const {
@@ -18,11 +40,7 @@ SemanticAnalysis& EvaluationContext::requireParserOwnedSema(std::string_view ope
 		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
 							" requires a parser-owned EvaluationContext");
 	}
-	if (sema == nullptr) {
-		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
-							" requires a sema-backed EvaluationContext");
-	}
-	return *sema;
+	return requireParserAttachedSema(operation);
 }
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
@@ -32,9 +50,8 @@ void EvaluationContext::normalizePendingSemanticRoots() const {
 			.normalizePendingSemanticRoots();
 		return;
 	}
-	if (sema != nullptr) {
-		sema->parserSemanticServices().normalizePendingSemanticRoots();
-	}
+	requireParserAttachedSema("normalize pending semantic roots")
+		.normalizePendingSemanticRoots();
 }
 
 namespace {
@@ -864,6 +881,8 @@ EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& tar
 EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& context) {
 	if (context.parser != nullptr) {
 		(void)context.requireParserOwnedSema("evaluate");
+	} else {
+		(void)context.requireSema("evaluate");
 	}
 
 	// Check complexity limit
@@ -1887,6 +1906,10 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						// Look up the array identifier in the symbol table
 						if (context.symbols) {
 							auto symbol = context.symbols->lookup(id_node.name());
+							if (!symbol.has_value() && context.global_symbols != nullptr &&
+								context.global_symbols != context.symbols) {
+								symbol = context.global_symbols->lookup(id_node.name());
+							}
 							if (symbol.has_value()) {
 								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 								if (decl && decl->is_array()) {

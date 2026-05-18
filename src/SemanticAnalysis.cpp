@@ -38,7 +38,7 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	std::vector<size_t> resolved_dimensions;
 	resolved_dimensions.reserve(decl.array_dimension_count());
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	eval_ctx.sema = const_cast<SemanticAnalysis*>(&sema);
+	eval_ctx.attachSemaOnly(const_cast<SemanticAnalysis&>(sema));
 	for (const auto& dim_expr : decl.array_dimensions()) {
 		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
 		if (!eval_result.success() || eval_result.as_int() <= 0) {
@@ -3272,7 +3272,7 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 	if (parser_ != nullptr) {
 		eval_ctx.attachParserOwnedSema(parser());
 	} else {
-		eval_ctx.sema = this;
+		eval_ctx.attachSemaOnly(*this);
 	}
 	auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
 	if (!eval_result.success()) {

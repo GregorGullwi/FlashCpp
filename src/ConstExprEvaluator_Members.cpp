@@ -2963,17 +2963,11 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
-	auto resolveMaterializationSema = [&](const char* operation) -> SemanticAnalysis* {
-		if (context.parser != nullptr) {
-			return &context.requireParserOwnedSema(operation);
-		}
-		return context.sema;
-	};
-	if (SemanticAnalysis* sema = resolveMaterializationSema(
-			kMemberFunctionMaterializationLookupOp); sema != nullptr) {
-		sema->parserSemanticServices().ensureMemberFunctionMaterialized(
+	context
+		.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
+		.parserSemanticServices()
+		.ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
-	}
 
 	result = find_member_function_candidate(
 		context.struct_info,
@@ -2988,10 +2982,10 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		if (SemanticAnalysis* sema = resolveMaterializationSema(
-				kMemberFunctionMaterializationReplayOp); sema != nullptr) {
-			sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
-		}
+		context
+			.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
+			.parserSemanticServices()
+			.ensureMemberFunctionMaterialized(owner_name, *result.function);
 		result = find_member_function_candidate(
 			context.struct_info,
 			function_name_handle,

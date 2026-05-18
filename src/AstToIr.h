@@ -535,7 +535,7 @@ private:
 	template <typename NodeType>
 	ExprResult tryEvaluateAsConstExpr(const NodeType& node) {
 		// Try to evaluate as a constant expression first
-		ConstExpr::EvaluationContext ctx(symbol_table);
+		ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 
 		// Pass global symbol table for resolving global variables in sizeof etc.
 		if (global_symbol_table_) {
