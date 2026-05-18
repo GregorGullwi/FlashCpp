@@ -30,7 +30,7 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
-	const SemanticAnalysis& sema) {
+	SemanticAnalysis& sema) {
 	if (!decl.is_array() || type_spec.is_array()) {
 		return;
 	}
@@ -38,7 +38,7 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	std::vector<size_t> resolved_dimensions;
 	resolved_dimensions.reserve(decl.array_dimension_count());
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	eval_ctx.attachSemaOnly(const_cast<SemanticAnalysis&>(sema));
+	eval_ctx.attachSemaOnly(sema);
 	for (const auto& dim_expr : decl.array_dimensions()) {
 		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
 		if (!eval_result.success() || eval_result.as_int() <= 0) {

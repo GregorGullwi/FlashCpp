@@ -40,7 +40,12 @@ SemanticAnalysis& EvaluationContext::requireParserOwnedSema(std::string_view ope
 		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
 							" requires a parser-owned EvaluationContext");
 	}
-	return requireParserAttachedSema(operation);
+	SemanticAnalysis& sema_ref = requireParserAttachedSema(operation);
+	if (&parser->semanticAnalysis() != &sema_ref) {
+		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
+							" requires parser and sema from the same owner");
+	}
+	return sema_ref;
 }
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
@@ -51,6 +56,7 @@ void EvaluationContext::normalizePendingSemanticRoots() const {
 		return;
 	}
 	requireParserAttachedSema("normalize pending semantic roots")
+		.parserSemanticServices()
 		.normalizePendingSemanticRoots();
 }
 
