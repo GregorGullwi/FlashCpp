@@ -451,10 +451,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				if (auto sema_type = sema_.getExpressionType(arg_node); sema_type.has_value()) {
 					return sema_type;
 				}
-				if (parser_) {
-					return parser_->get_expression_type(arg_node);
-				}
-				return std::nullopt;
+				return parser_.get_expression_type(arg_node);
 			};
 			auto inlineAlwaysTypeMatches = [&](const TypeSpecifierNode& arg_type) {
 				if (!returns_reference) {
@@ -1339,10 +1336,8 @@ ambiguous_qualified_static_member:
 	if (matched_func_decl && matched_func_decl->is_consteval()) {
 		// Use the global symbol table so free functions declared at namespace scope can be found.
 		extern SymbolTable gSymbolTable;
-		ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
+		ConstExpr::EvaluationContext ctx = makeEvalContext(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
-		ctx.parser = parser_;
-		ctx.sema = &sema_;
 		auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);
 		auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
 		if (!eval_result.success()) {

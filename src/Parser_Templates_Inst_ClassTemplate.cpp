@@ -1269,8 +1269,7 @@ static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext
 	std::span<const TemplateTypeArg> template_args) {
 	ConstExpr::EvaluationContext eval_ctx(symbol_table);
 	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
-	eval_ctx.parser = &parser;
-	eval_ctx.sema = &parser.semanticAnalysis();
+	eval_ctx.attachParserOwnedSema(parser);
 	eval_ctx.struct_info = struct_info;
 	if (struct_info && struct_info->own_type_index_.has_value()) {
 		eval_ctx.struct_type_index = *struct_info->own_type_index_;
@@ -1952,8 +1951,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.parser = this;
-		eval_ctx.sema = &semanticAnalysis();
+		eval_ctx.attachParserOwnedSema(*this);
 		eval_ctx.template_args.assign(args.begin(), args.end());
 		eval_ctx.template_param_names.reserve(params.size());
 		for (const auto& param : params) {
@@ -2392,8 +2390,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.parser = this;
-		eval_ctx.sema = &semanticAnalysis();
+		eval_ctx.attachParserOwnedSema(*this);
 		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, eval_ctx);
 		if (!eval_result.success()) {
 			return false;
@@ -2426,8 +2423,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		ASTNode substituted = substitute_template_params_in_expression(
 			*member_decl.bitfield_width_expr, type_sub_map, nontype_sub_map, StringHandle{});
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.parser = this;
-		eval_ctx.sema = &semanticAnalysis();
+		eval_ctx.attachParserOwnedSema(*this);
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
 		if (eval_result.success() && eval_result.as_int() >= 0)
 			return static_cast<size_t>(eval_result.as_int());
@@ -2453,8 +2449,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.parser = this;
-		eval_ctx.sema = &semanticAnalysis();
+		eval_ctx.attachParserOwnedSema(*this);
 		for (const auto& dim_expr : decl.array_dimensions()) {
 			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map, StringHandle{});
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
@@ -4782,8 +4777,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								instantiated_struct_info ? instantiated_struct_info->findStaticMember(concrete_arg.dependent_name) : nullptr;
 							if (referenced_static_member && referenced_static_member->initializer.has_value()) {
 								ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-								eval_ctx.parser = this;
-								eval_ctx.sema = &semanticAnalysis();
+								eval_ctx.attachParserOwnedSema(*this);
 								eval_ctx.struct_info = instantiated_struct_info;
 								eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 								auto eval_result = ConstExpr::Evaluator::evaluate(
@@ -5153,8 +5147,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Evaluate the substituted expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-				eval_ctx.parser = this;
-				eval_ctx.sema = &semanticAnalysis();
+				eval_ctx.attachParserOwnedSema(*this);
 				eval_ctx.struct_node = &instantiated_struct_ref;
 
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
@@ -9282,8 +9275,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							template_args_to_use);
 						new_dtor_ref.set_noexcept_expression(substituted_noexcept);
 						ConstExpr::EvaluationContext ctx(gSymbolTable);
-						ctx.parser = this;
-						ctx.sema = &semanticAnalysis();
+						ctx.attachParserOwnedSema(*this);
 						ctx.struct_info = struct_info_ptr;
 						ctx.struct_type_index =
 							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct);
@@ -9994,6 +9986,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& out_of_line_var : out_of_line_vars) {
 		// Substitute template parameters in the initializer
 		std::optional<ASTNode> substituted_initializer = out_of_line_var.initializer;
+		bool out_of_line_is_constexpr = false;
+		if (out_of_line_var.declaration.has_value() && out_of_line_var.declaration->is<VariableDeclarationNode>()) {
+			out_of_line_is_constexpr = out_of_line_var.declaration->as<VariableDeclarationNode>().is_constexpr();
+		}
 		if (out_of_line_var.initializer.has_value()) {
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
 				if (!out_of_line_var.initializer_position.has_value() ||
@@ -10093,6 +10089,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// If it exists, update the initializer; otherwise add a new member
 			StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
 			if (existing_member != nullptr) {
+				if (out_of_line_is_constexpr) {
+					existing_member->is_constexpr = true;
+				}
 				if (out_of_line_var.declaration.has_value()) {
 					existing_member->setDeclaration(*out_of_line_var.declaration);
 				}
@@ -10101,7 +10100,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				// Member already exists - update the initializer with the out-of-line definition
 				if (substituted_initializer.has_value()) {
-					struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
+					existing_member->initializer = substituted_initializer;
+					existing_member->normalized_init.reset();
 					FLASH_LOG(Templates, Debug, "Updated out-of-line static member initializer for ", out_of_line_var.member_name,
 							  " in instantiated struct ", instantiated_name);
 				}
@@ -10127,7 +10127,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					array_dimensions,
 					out_of_line_var.declaration,
 					out_of_line_var.initializer_position,
-					/* is_constexpr */ false);
+					out_of_line_is_constexpr);
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
@@ -10374,12 +10374,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Check if this static member was already added (e.g., by lazy instantiation path)
 				// If it exists but has no initializer, update it with the substituted initializer
 				// This ensures lazy instantiation registrations get their initializers filled in
-				const bool member_exists =
-					struct_info_ptr->findStaticMember(static_member_name_handle) != nullptr;
-				if (member_exists) {
+				StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
+				if (existing_member != nullptr) {
 					// Member already exists - update the initializer if we have a substituted one
 					if (substituted_initializer.has_value()) {
-						struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
+						existing_member->initializer = substituted_initializer;
+						if (static_member.declaration.has_value()) {
+							existing_member->setDeclaration(*static_member.declaration);
+						}
+						if (static_member.initializer_position.has_value()) {
+							existing_member->setInitializerPosition(*static_member.initializer_position);
+						}
+						existing_member->normalized_init.reset();
 					}
 					// Skip adding duplicate
 				} else {
@@ -10656,8 +10662,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Evaluate the substituted expression
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.parser = this;
-		eval_ctx.sema = &semanticAnalysis();
+		eval_ctx.attachParserOwnedSema(*this);
 		eval_ctx.struct_node = &instantiated_struct.as<StructDeclarationNode>();
 
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);

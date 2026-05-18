@@ -112,14 +112,23 @@ Stage 6 progress so far:
 - constexpr member-function materialization lookup/replay now uses a shared parser-owned sema requirement helper: parser-owned contexts throw on missing sema instead of silently skipping sema materialization.
 - parser-owned constexpr sema invariants now route through a single `EvaluationContext::requireParserOwnedSema(...)` helper, and dependent-unqualified call reuse plus member-materialization lookup/replay now consume that shared contract instead of file-local nullable helper variants.
 - `Evaluator::evaluate(...)` now enforces the parser-owned sema invariant at the constexpr entrypoint: parser-owned contexts (`parser != nullptr`) hard-fail immediately when `sema` is missing instead of allowing deeper nullable behavior.
+- parser-owned constexpr/template/substitution `EvaluationContext` setup now goes through a shared `attachParserOwnedSema(Parser&)` helper instead of open-coding paired `parser`/`sema` field assignments at each parser construction site.
+- that parser-side construction-site audit now covers the parser-owned constexpr/template/substitution call families called out in Stage 6.1, reducing drift while `EvaluationContext::sema` remains nullable for standalone/non-parser contexts.
 - `EvaluationContext::sema` itself is still nullable overall because standalone non-parser evaluator callers remain, but the parser/template/member-function paths are now closer to the intended Stage 6 invariant.
+- the `struct-without-conversion-operator` codegen fallback has been removed: the conditional `if (sema_normalized_current_function_)` guard is now an unconditional `InternalError` since all 2393 tests pass without the fallback path; lambda/requires cases confirmed to not exercise struct-to-non-struct return lowering at all.
+- `AstToIr::parser_` changed from `Parser*` to `Parser&`: AstToIr always takes a `Parser&` at construction, so the field was a pointer that was never null; converting it to a reference removes 13 defensive `if (parser_)` / `if (!parser_)` null guards in IrGenerator files and changes 18 `parser_->method()` calls to `parser_.method()`.
+- `AstToIr::makeEvalContext(const SymbolTable&)` added: centralises `EvaluationContext` creation for codegen; the 17+ manual `ctx.parser = &parser_; ctx.sema = &sema_` assignment pairs scattered across IrGenerator files are replaced with a single `makeEvalContext(...)` call, so every codegen-created context is guaranteed to receive parser and sema.
+- additional codegen constexpr-evaluation sites in `IrGenerator_MemberAccess.cpp`, `IrGenerator_NewDeleteCast.cpp`, and `IrGenerator_Expr_Conversions.cpp` now build contexts via `makeEvalContext(...)` instead of direct `EvaluationContext(symbol_table)` construction, so these paths no longer drop parser/sema wiring.
 
 Remaining Stage 6 work:
 
-- finish auditing parser-owned constexpr/template/substitution construction sites so `EvaluationContext::sema` can eventually stop being nullable as a field, not just as an enforced parser-owned invariant
-- `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites; making it non-nullable requires auditing all non-parser construction sites that currently do not set sema
+- `EvaluationContext::sema` is still a nullable pointer for standalone evaluator call sites (array-dimension evaluation, simple constant folding in MemberAccess/NewDelete); making it non-nullable requires either injecting sema at those sites or introducing an explicit "no-sema" opt-in type
 - continue replacing parser/codegen fallback ambiguity with explicit "fact unavailable yet" contracts
 - keep tightening finalized-query misuse into hard invariants once the remaining fallback families are retired
+- struct-without-conversion-operator codegen fallback removed; sema return-conversion is now fully enforced for struct returns ✅
+- `parser_` in `AstToIr` is now `Parser&` — no more defensive null guards in codegen ✅
+- codegen-side `EvaluationContext` construction is now largely centralised via `makeEvalContext`, and converted call sites carry parser + sema by construction
+- a smaller tail of codegen constexpr contexts still uses direct `EvaluationContext(symbol_table)` construction outside the recently converted member-access/new/delete/conversion sites; continue migrating those to `makeEvalContext(...)`
 
 ### 6.1 Remove remaining nullable semantic branches in parser-owned contexts
 

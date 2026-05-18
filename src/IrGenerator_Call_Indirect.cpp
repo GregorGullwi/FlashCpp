@@ -255,11 +255,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const bool needs_parser_fallback =
 			isInconclusiveCallableType(callee_type) &&
 			!resolved_op_call;
-		if (needs_parser_fallback && parser_) {
+		if (needs_parser_fallback) {
 			if (sema_normalized_current_function_) {
 				throw InternalError("Normalized callable operator() receiver is missing sema-resolved target/type");
 			}
-			callee_type = parser_->get_expression_type(object_node);
+			callee_type = parser_.get_expression_type(object_node);
 		}
 		if (!callee_type.has_value()) {
 			if (object_ident) {
@@ -435,10 +435,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 		}
 
-		if (!parser_) {
-			return std::nullopt;
-		}
-		auto deduced_type = parser_->get_expression_type(receiver_node);
+		auto deduced_type = parser_.get_expression_type(receiver_node);
 		if (!deduced_type.has_value()) {
 			return std::nullopt;
 		}
@@ -604,10 +601,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const DeclarationNode& decl = *call_info->declaration;
 		{
 			TypeSpecifierNode ret_type = decl.type_specifier_node();
-			if (parser_) {
-				if (auto expression_type = parser_->get_expression_type(object_node); expression_type.has_value()) {
-					ret_type = *expression_type;
-				}
+			if (auto expression_type = parser_.get_expression_type(object_node); expression_type.has_value()) {
+				ret_type = *expression_type;
 			}
 			if (auto resolved_ret_type = normalizeResolvedStructType(ret_type); resolved_ret_type.has_value()) {
 				object_type = *resolved_ret_type;
@@ -753,7 +748,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 	}
 
-	if (object_expr && !object_type.type_index().is_valid() && parser_) {
+	if (object_expr && !object_type.type_index().is_valid()) {
 		if (auto deduced_object_type = resolveStructTypeFromReceiverNode(object_node); deduced_object_type.has_value()) {
 			object_type = *deduced_object_type;
 		}
@@ -845,10 +840,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	if (func_decl.is_consteval()) {
 		std::string_view func_name_sv = func_decl_node.identifier_token().value();
 		extern SymbolTable gSymbolTable;
-		ConstExpr::EvaluationContext ctx(symbol_table);
+		ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
-		ctx.parser = parser_;
-		ctx.sema = &sema_;
 		// Step 1: Try evaluation via the member-function path (handles constexpr objects
 		// with 'this' access correctly).
 		auto member_eval_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);

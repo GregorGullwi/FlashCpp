@@ -38,9 +38,7 @@ void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
 		// Handle C++17 if constexpr - evaluate condition at compile time
 	if (node.is_constexpr()) {
 			// Evaluate the condition at compile time
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		ctx.parser = parser_;
-		ctx.sema = &sema_;
+		ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 		auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
 
 		if (!result.success()) {
@@ -648,11 +646,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 			inferred_range_type = node.resolved_range_type();
 		}
 		if (!inferred_range_type.has_value()) {
-			if (!parser_) {
-				FLASH_LOG(Codegen, Error, "Parser is required to infer non-identifier range expression types");
-				return;
-			}
-			inferred_range_type = parser_->get_expression_type(range_expr);
+			inferred_range_type = parser_.get_expression_type(range_expr);
 		}
 		if (!inferred_range_type.has_value()) {
 			FLASH_LOG(Codegen, Error, "Could not infer type of non-identifier range expression");

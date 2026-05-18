@@ -469,8 +469,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				converted_template_args);
 			new_dtor_ref.set_noexcept_expression(substituted_noexcept);
 			ConstExpr::EvaluationContext ctx(gSymbolTable);
-			ctx.parser = this;
-			ctx.sema = &semanticAnalysis();
+			ctx.attachParserOwnedSema(*this);
 			std::optional<TemplateEnvironment> outer_environment;
 			ctx.template_environment = buildLazySubstitutionEnvironment(
 				lazy_info.outer_template_environment_snapshot,
@@ -1187,8 +1186,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
 		if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			eval_ctx.parser = this;
-			eval_ctx.sema = &semanticAnalysis();
+			eval_ctx.attachParserOwnedSema(*this);
 			// Provide struct context so the evaluator prefers same-struct member functions over globals.
 			eval_ctx.struct_info = struct_info;
 			// Provide template args so sizeof(T) etc. resolve correctly.
@@ -1247,7 +1245,11 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	// Update the existing static member with the computed initializer
 	// (The member was already added during template instantiation with std::nullopt initializer)
-	if (!struct_info->updateStaticMemberInitializer(lazy_info.member_name, substituted_initializer)) {
+	if (!struct_info->updateStaticMemberInitializerWithMetadata(
+			lazy_info.member_name,
+			substituted_initializer,
+			lazy_info.declaration,
+			lazy_info.initializer_position)) {
 		// Member doesn't exist yet - add it (shouldn't normally happen with lazy instantiation)
 		struct_info->addStaticMember(
 			lazy_info.member_name,

@@ -240,6 +240,11 @@ focused investigations.
     and update paths, so replay-first substitution remains available on those
     static members instead of dropping to AST-only substitution when metadata is
     missing in transfer paths.
+    **New in this slice (2026-05-17, follow-up 2):** metadata-aware static-member
+    initializer updates now preserve replay metadata (`declaration` +
+    `initializer_position`) when updating already-registered members in primary
+    static-member copy and lazy materialization paths
+    (`test_template_lazy_static_member_replay_metadata_ret0.cpp`).
     Remaining gaps are static-member concretization paths where replay metadata
     is never captured at parse time, so AST-only fallback substitution must
     remain.
@@ -474,8 +479,9 @@ behavior as compatibility constraints.
    inherited `this->template` member-template calls now apply the same owner-
    correct lookup/instantiation path. Static-member replay metadata propagation
    now also covers member-template partial-specialization and full-specialization
-   AST copy paths. Remaining: dependent bases, unknown specializations, and
-   ADL-sensitive dependent calls.
+   AST copy paths, plus metadata-aware update paths for already-registered
+   static members in primary/lazy flows. Remaining: dependent bases, unknown
+   specializations, and ADL-sensitive dependent calls.
 
 3. **Consolidate substitution context ownership**
    Continue replacing ad-hoc name/vector substitution channels with
