@@ -130,6 +130,7 @@ Stage 6 progress so far:
 - `AstToIr::generateMemberFunctionCallIr(...)` now routes member-call receiver struct-type lookup in `resolveStructTypeFromReceiverNode(...)` through `ParserSemanticServices::getExpressionTypeQuery(...)`, treating `NotYetAnalyzed` as an invariant violation in sema-normalized bodies while preserving identifier/static-cast and parser fallback recovery for non-normalized flow.
 - `AstToIr::generateArraySubscriptIr(...)` now consumes `ParserSemanticServices::getResolvedOpSubscriptQuery(...)` before deciding whether `operator[]` dispatch should fall back to builtin array indexing, and sema-normalized bodies now treat `NotYetAnalyzed` subscript-resolution state as an invariant violation instead of quietly skipping to legacy fallback logic.
 - the function-pointer `operator()` branch in `AstToIr::generateFunctionCallIr(...)` now also consumes `ParserSemanticServices::getResolvedOpCallQuery(...)`, so sema-normalized direct-call lowering hard-fails on `NotYetAnalyzed` instead of silently treating an unfinished callable lookup as ordinary fallback flow.
+- ternary common-type fallback in `IrGenerator_Expr_Operators.cpp` now consumes `ParserSemanticServices::getExpressionTypeQuery(...)` for both branch expressions, making sema-normalized ternary lowering fail explicitly on `NotYetAnalyzed` branch-type queries instead of reading nullable sema slots.
 
 Remaining Stage 6 work:
 

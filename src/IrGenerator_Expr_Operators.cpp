@@ -1103,8 +1103,23 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Fallback: use sema-backed expression types when no explicit conversion
 	// annotation was recorded for either branch.
 	if (common_cat == TypeCategory::Invalid) {
-		auto true_ts = sema_.getExpressionType(ternaryNode.true_expr());
-		auto false_ts = sema_.getExpressionType(ternaryNode.false_expr());
+		TypeSpecifierQueryResult true_type_query =
+			sema_.parserSemanticServices().getExpressionTypeQuery(ternaryNode.true_expr());
+		TypeSpecifierQueryResult false_type_query =
+			sema_.parserSemanticServices().getExpressionTypeQuery(ternaryNode.false_expr());
+		if (sema_normalized_current_function_ &&
+			(true_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed ||
+			 false_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed)) {
+			throw InternalError("Normalized ternary branch type query remained NotYetAnalyzed");
+		}
+		std::optional<TypeSpecifierNode> true_ts =
+			true_type_query.state == TypeSpecifierQueryResult::State::Available
+				? true_type_query.type
+				: std::nullopt;
+		std::optional<TypeSpecifierNode> false_ts =
+			false_type_query.state == TypeSpecifierQueryResult::State::Available
+				? false_type_query.type
+				: std::nullopt;
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
