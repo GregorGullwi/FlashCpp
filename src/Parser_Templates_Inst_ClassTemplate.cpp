@@ -2465,7 +2465,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									 TypeIndex substituted_type_index,
 									 TypeCategory substituted_type,
 									 const auto& params,
-									 const auto& args) -> std::optional<TypeSpecifierNode> {
+									 const auto& args,
+									 StringHandle current_owner_type_name) -> std::optional<TypeSpecifierNode> {
 		if (!type_alias.type_node.is<TypeSpecifierNode>()) {
 			return std::nullopt;
 		}
@@ -2479,7 +2480,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						*substituted_type_info,
 						params,
 						args,
-						StringHandle{});
+						current_owner_type_name);
 				resolved_dependent_type != nullptr) {
 				substituted_type_index = resolved_dependent_type->registeredTypeIndex();
 				substituted_type = resolved_dependent_type->typeEnum();
@@ -4878,7 +4879,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Register the type alias globally with its qualified name
 				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
-					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_for_pattern);
+					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_for_pattern, instantiated_name);
 				const TypeSpecifierNode& alias_registration_type_spec =
 					resolved_alias_type_spec_override.has_value()
 						? resolved_alias_type_spec_override.value()
@@ -8425,7 +8426,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Register the type alias in getTypesByNameMap()
 		std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
-			type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_to_use);
+			type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_to_use, instantiated_name);
 		const TypeSpecifierNode& alias_registration_type_spec =
 			resolved_alias_type_spec_override.has_value()
 				? resolved_alias_type_spec_override.value()
