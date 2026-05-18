@@ -1660,7 +1660,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			static_member->is_constexpr &&
 			!is_struct_type(static_member->memberType()) &&
 			!static_member->is_array) {
-			ConstExpr::EvaluationContext eval_ctx(symbol_table);
+			ConstExpr::EvaluationContext eval_ctx = makeEvalContext(symbol_table);
 			if (global_symbol_table_) {
 				eval_ctx.global_symbols = global_symbol_table_;
 			}
@@ -1905,7 +1905,7 @@ std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
 
 	// Evaluate all dimension size expressions and compute total element count
 	size_t array_count = 1;
-	ConstExpr::EvaluationContext ctx(symbol_table);
+	ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 
 	for (const auto& dim_expr : dims) {
 		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
@@ -2198,7 +2198,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 						if (dims.size() > 1) {
 							// Calculate sub-array size: element_size * product of all dims except first
 							size_t sub_array_count = 1;
-							ConstExpr::EvaluationContext ctx(symbol_table);
+							ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 
 							for (size_t i = 1; i < dims.size(); ++i) {
 								auto eval_result = ConstExpr::Evaluator::evaluate(dims[i], ctx);

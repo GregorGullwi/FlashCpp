@@ -1037,7 +1037,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 					for (size_t i = 0; i < dims.size(); ++i) {
 						size_t stride = 1;
 						for (size_t j = i + 1; j < dims.size(); ++j) {
-							ConstExpr::EvaluationContext ctx(symbol_table);
+							ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 							auto eval_result = ConstExpr::Evaluator::evaluate(dims[j], ctx);
 							if (eval_result.success() && eval_result.as_int() > 0) {
 								stride *= static_cast<size_t>(eval_result.as_int());
