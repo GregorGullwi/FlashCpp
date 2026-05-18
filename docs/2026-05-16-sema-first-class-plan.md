@@ -122,6 +122,7 @@ Stage 6 progress so far:
 - remaining direct codegen constexpr-evaluation sites in `IrGenerator_Expr_Primitives.cpp`, `IrGenerator_Visitors_Decl.cpp`, and `IrGenerator_Stmt_Decl.cpp` now also route through `makeEvalContext(...)`; this shrinks the remaining direct-construction tail to helper-style sites (for example multidimensional member-array dimension evaluation in `IrGenerator_MemberAccess.cpp`) that are not currently wired through `AstToIr::makeEvalContext`.
 - parser-owned lazy static-member materialization in constexpr/codegen no longer calls `Parser::instantiateLazyStaticMember(...)` directly: `ParserSemanticServices::tryInstantiateLazyStaticMember(...)` now owns that parser-attached entrypoint, and the affected call families in `ConstExprEvaluator_Core.cpp`, `ConstExprEvaluator_Members.cpp`, and `IrGenerator_Visitors_TypeInit.cpp` route through sema services instead of parser plumbing.
 - codegen overload-argument typing in `AstToIr::buildCodegenOverloadResolutionArgType(...)` now consumes `ParserSemanticServices::getOverloadResolutionArgTypeQuery(...)` and treats `NotYetAnalyzed` as an invariant violation in sema-normalized bodies instead of silently collapsing all missing answers into parser fallback behavior.
+- binary-operator overload-argument typing in `IrGenerator_Expr_Operators.cpp` now also consumes the explicit overload-arg query API before parser fallback, so this codegen family no longer depends on nullable sema lookup plumbing.
 
 Remaining Stage 6 work:
 
