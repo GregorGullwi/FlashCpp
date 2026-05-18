@@ -133,6 +133,7 @@ Stage 6 progress so far:
 - ternary common-type fallback in `IrGenerator_Expr_Operators.cpp` now consumes `ParserSemanticServices::getExpressionTypeQuery(...)` for both branch expressions, making sema-normalized ternary lowering fail explicitly on `NotYetAnalyzed` branch-type queries instead of reading nullable sema slots.
 - `typeid(expr)` lowering in `IrGenerator_NewDeleteCast.cpp` now consumes `ParserSemanticServices::getExpressionTypeQuery(...)` for the operand's static type/reference query, so sema-normalized bodies hard-fail on `NotYetAnalyzed` instead of silently collapsing incomplete semantic typing into the legacy runtime/type-index fallback path.
 - generic-lambda argument typing in `IrGenerator_Call_Indirect.cpp` now consumes `ParserSemanticServices::getExpressionTypeQuery(...)`, so sema-normalized member-call lowering fails explicitly on `NotYetAnalyzed` argument-type queries before falling back to the existing symbol/closure/literal deduction helpers.
+- builtin `++`/`--` fallback typing in `IrGenerator_Expr_Conversions.cpp` now also consumes `ParserSemanticServices::getExpressionTypeQuery(...)`, but only hard-fails on `NotYetAnalyzed` where the recovery path actually depends on sema-owned expression typing; identifier/member/dereference pointer-shape recovery still keeps the older parser/declaration-based fallback so Duff's-device-style code continues to lower correctly.
 
 Remaining Stage 6 work:
 
