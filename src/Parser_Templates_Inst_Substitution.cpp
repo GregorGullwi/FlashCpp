@@ -762,11 +762,32 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	};
 	auto materializeTemplateArgsForLookup =
 		[&](const TypeInfo& source_type_info) -> std::vector<TemplateTypeArg> {
+		// Evaluator for dependent NTTP expressions (e.g. __is_final(Head) -> false).
+		// Uses the Parser's active substitution context so outer bindings like Head->Empty
+		// are visible even when the stored dependent_expr references the original param name.
+		auto eval_nttp = [this](
+			const ASTNode& expr,
+			std::span<const ASTNode> params,
+			std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+			InlineVector<TemplateParameterNode, 4> typed_params;
+			typed_params.reserve(params.size());
+			for (const ASTNode& param_node : params) {
+				if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+					typed_param != nullptr) {
+					typed_params.push_back(*typed_param);
+				}
+			}
+			return this->evaluateDependentNTTPExpression(
+				expr,
+				std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+				args);
+		};
 		std::vector<TemplateTypeArg> concrete_args =
 			materializeTemplateArgs(
 				source_type_info,
 				alias_node->template_parameters(),
-				template_args);
+				template_args,
+				eval_nttp);
 		auto recursively_materialize_type_arg =
 			[&](auto&& self,
 				TemplateTypeArg concrete_arg,
@@ -808,7 +829,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				materializeTemplateArgs(
 					*concrete_type_info,
 					alias_node->template_parameters(),
-					template_args);
+					template_args,
+					eval_nttp);
 			for (TemplateTypeArg& nested_arg : nested_concrete_args) {
 				nested_arg = self(self, std::move(nested_arg), depth + 1);
 			}
@@ -1720,7 +1742,24 @@ std::string_view Parser::instantiate_and_register_base_template(
 					materializeTemplateArgs(
 						*alias_target_info,
 						alias_node.template_parameters(),
-						template_args);
+						template_args,
+						[this](
+							const ASTNode& expr,
+							std::span<const ASTNode> params,
+							std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+							InlineVector<TemplateParameterNode, 4> typed_params;
+							typed_params.reserve(params.size());
+							for (const ASTNode& param_node : params) {
+								if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+									typed_param != nullptr) {
+									typed_params.push_back(*typed_param);
+								}
+							}
+							return this->evaluateDependentNTTPExpression(
+								expr,
+								std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+								args);
+						});
 				StringHandle qualified_target_template_handle =
 					gNamespaceRegistry.buildQualifiedIdentifier(
 						alias_target_info->sourceNamespace(),

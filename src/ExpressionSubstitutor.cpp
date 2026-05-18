@@ -708,12 +708,76 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 					materialized_arg = rebindDependentTemplateTypeArg(type_subst_it->second, materialized_arg);
 					result.had_substitution = true;
 					substituted = true;
-				} else if (arg_type_info->isDependentPlaceholder()) {
+				} else if (arg_type_info->name().isValid()) {
+					// Alias-target stored template args may carry intermediate
+					// dependent parameter names (e.g. Type -> Head). If direct
+					// param_map_ lookup misses, resolve via the full environment so
+					// deferred trait/default evaluation sees the concrete outer type.
 					if (auto context_binding = resolveContextBinding(arg_type_info->name(), lookup_environment);
 						context_binding.has_value()) {
-					materialized_arg = rebindDependentTemplateTypeArg(*context_binding, materialized_arg);
-					result.had_substitution = true;
-					substituted = true;
+						materialized_arg = rebindDependentTemplateTypeArg(*context_binding, materialized_arg);
+						result.had_substitution = true;
+						substituted = true;
+					}
+				}
+
+				if (!substituted &&
+					arg_type_info->isTemplateInstantiation() &&
+					depth < kMaxDependentMemberTypeResolutionDepth) {
+					MaterializedStoredTemplateArgs nested_materialized_args =
+						materializeStoredTemplateArgs(
+							*arg_type_info,
+							evaluate_dependent_member_values,
+							depth + 1);
+					if (!nested_materialized_args.args.empty() &&
+						!templateArgsStillDependent(nested_materialized_args.args)) {
+						StringHandle qualified_base_template_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								arg_type_info->sourceNamespace(),
+								arg_type_info->baseTemplateName());
+						std::string_view base_template_name =
+							StringTable::getStringView(qualified_base_template_name);
+						if (base_template_name.empty()) {
+							base_template_name =
+								StringTable::getStringView(arg_type_info->baseTemplateName());
+						}
+						if (!base_template_name.empty()) {
+							Parser::AliasTemplateMaterializationResult materialized_nested =
+								parser_.materializeTemplateInstantiationForLookup(
+									base_template_name,
+									nested_materialized_args.args);
+							const TypeInfo* resolved_nested_type =
+								materialized_nested.resolved_type_info;
+							if (resolved_nested_type == nullptr &&
+								qualified_base_template_name != arg_type_info->baseTemplateName()) {
+								materialized_nested =
+									parser_.materializeTemplateInstantiationForLookup(
+										StringTable::getStringView(arg_type_info->baseTemplateName()),
+										nested_materialized_args.args);
+								resolved_nested_type = materialized_nested.resolved_type_info;
+							}
+							if (resolved_nested_type == nullptr) {
+								StringHandle canonical_name_handle =
+									materialized_nested.canonicalNameHandle();
+								if (canonical_name_handle.isValid()) {
+									resolved_nested_type = findTypeByName(canonical_name_handle);
+								}
+							}
+							if (resolved_nested_type != nullptr) {
+								TypeIndex resolved_nested_index =
+									resolved_nested_type->registeredTypeIndex().withCategory(
+										resolved_nested_type->typeEnum());
+								TemplateTypeArg resolved_nested_arg =
+									makeTemplateTypeArgFromResolvedAlias(
+										resolveAliasTypeInfo(resolved_nested_index),
+										resolved_nested_index);
+								materialized_arg = rebindDependentTemplateTypeArg(
+									resolved_nested_arg,
+									materialized_arg);
+								result.had_substitution = true;
+								substituted = true;
+							}
+						}
 					}
 				}
 			}
@@ -2442,6 +2506,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				auto param_it = param_map_.find(arg_type_name);
 				if (param_it != param_map_.end()) {
 					arg = rebindDependentTemplateTypeArg(param_it->second, arg);
+				} else if (auto context_binding =
+							   resolveContextBinding(arg_type_info->name(), environment_);
+						   context_binding.has_value()) {
+					arg = rebindDependentTemplateTypeArg(*context_binding, arg);
 				}
 			}
 		}
