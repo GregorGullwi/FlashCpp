@@ -136,6 +136,7 @@ Stage 6 progress so far:
 - builtin `++`/`--` fallback typing in `IrGenerator_Expr_Conversions.cpp` now also consumes `ParserSemanticServices::getExpressionTypeQuery(...)`, but only hard-fails on `NotYetAnalyzed` where the recovery path actually depends on sema-owned expression typing; identifier/member/dereference pointer-shape recovery still keeps the older parser/declaration-based fallback so Duff's-device-style code continues to lower correctly.
 - parser-owned normalization callers now invoke `Parser::normalizePendingSemanticRoots()` directly; the old `normalizePendingSemanticRootsIfAvailable()` name is gone because parser-attached semantic normalization is no longer an optional capability in these paths.
 - parser-owned constexpr member-function materialization lookup/replay in `ConstExprEvaluator_Members.cpp` now calls `requireParserOwnedSema(...)` directly instead of routing parser-backed contexts through a nullable helper first; standalone sema-only evaluator contexts still keep the explicit nullable fallback.
+- sema-owned structured-binding tuple-size constexpr evaluation now uses `EvaluationContext::attachParserOwnedSema(...)` whenever a parser is attached instead of open-coding paired `parser`/`sema` assignment; standalone sema-only evaluation still sets only `sema` explicitly.
 
 Remaining Stage 6 work:
 

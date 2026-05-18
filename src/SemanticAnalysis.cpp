@@ -3240,8 +3240,11 @@ void SemanticAnalysis::normalizeStructuredBinding(const StructuredBindingNode& b
 		QualifiedIdentifierNode(tuple_size_scope, tuple_size_value_token));
 
 	ConstExpr::EvaluationContext eval_ctx(symbols_);
-	eval_ctx.parser = parser_;
-	eval_ctx.sema = this;
+	if (parser_ != nullptr) {
+		eval_ctx.attachParserOwnedSema(parser());
+	} else {
+		eval_ctx.sema = this;
+	}
 	auto eval_result = ConstExpr::Evaluator::evaluate(tuple_size_value_expr, eval_ctx);
 	if (!eval_result.success()) {
 		throw CompileError("structured binding tuple-like protocol failed: cannot evaluate tuple_size::value");
