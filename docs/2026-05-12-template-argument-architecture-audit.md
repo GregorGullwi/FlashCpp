@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-17
+**Last updated:** 2026-05-18
 
 This document is the short audit for FlashCpp's template infrastructure. Its
 main purpose is to describe what is still structurally wrong, what the next
@@ -44,8 +44,12 @@ Useful to know before changing anything:
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
-Validation at this point passed the Windows sharded build and the full suite:
-`2427` regular tests, `182` expected-fail tests, `0` regressions.
+Validation at this point passed the Windows sharded build. The focused
+follow-up regression for inherited member-template alias lookup now passes, and
+the remaining full-suite state is down to one runtime mismatch:
+`2427` regular tests compiled/linked, `2426` runtime pass, `1` runtime
+regression (`test_type_trait_alias_default_nttp_ret0.cpp`), `182`
+expected-fail tests.
 
 ## What is still wrong
 
@@ -65,9 +69,12 @@ What still needs work:
 
 Concrete follow-up already identified by recent work:
 
-- `typename Derived<T>::template rebind<U>`-style alias materialization should
-  reuse the inherited-owner member-template path instead of falling back to
-  placeholder alias copies.
+- alias-selected owners in default-NTTP/qualified-id substitution must now stay
+  attached to the semantic alias result type instead of round-tripping through
+  helper owners such as `Conditional$...::value`;
+- nested alias-target template arguments still need one semantic
+  materialization pass so `IsEmpty<Type>`-style stored template-instantiation
+  arguments become `IsEmpty<Concrete>` before deferred-base trait evaluation.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -142,6 +149,9 @@ In priority order:
 1. **Finish the next two-phase lookup slice**
    - current-instantiation/type-alias follow-up work after inherited member-template
      alias recovery;
+   - complete the remaining alias-owner/default-NTTP path so qualified-id
+     substitution, not constexpr repair logic, owns alias-selected static-member
+     lookup;
    - remaining replay-metadata gaps for static-member initialization;
    - remaining dependent-base/member-chain paths that still bypass the shared
      semantic lookup model.
@@ -177,7 +187,10 @@ materially changes what future refactors can assume.
 - dependent template-template owner concretization is in place for covered
   parser substitution paths;
 - inherited dependent-base member-template alias owner lookup is now shared for
-  covered base-specifier/member-chain concretization cases.
+  covered base-specifier/member-chain concretization cases;
+- alias-template lookup results now expose a canonical semantic owner/result
+  name and the main qualified-id substitution paths prefer that semantic owner
+  over helper instantiated names.
 
 ## Exit criteria for this audit
 

@@ -1,22 +1,19 @@
 template<typename T>
-struct Holder {
-	int value;
-};
-
-template<typename T>
 struct Base {
 	template<typename U>
-	using rebind = Holder<U>;
+	using rebind = U;
 };
 
 template<typename T>
 struct Mid : Base<T> {};
 
 template<typename T>
-struct Derived : Mid<T>::template rebind<int> {
+struct Derived {
+	using value_type = typename Mid<T>::template rebind<int>;
+
 	int run() {
-		this->value = 42;
-		return this->value - 42;
+		value_type value = 42;
+		return value - 42;
 	}
 };
 

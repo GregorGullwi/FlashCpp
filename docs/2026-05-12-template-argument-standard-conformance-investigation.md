@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-17
+**Last updated:** 2026-05-18
 
 This document is the execution plan for moving FlashCpp's template
 infrastructure toward C++20 conformance. It intentionally focuses on remaining
@@ -62,8 +62,10 @@ Future work should assume these are already in place:
 - selected free/member function-template overload paths already rank
   signatures before materializing bodies.
 
-Latest validation passed the Windows sharded suite: `2427` pass,
-`182` expected-fail, `0` regressions.
+Latest validation on Windows sharded build:
+`2427` regular tests compiled/linked, `2426` runtime pass,
+`1` runtime regression (`test_type_trait_alias_default_nttp_ret0.cpp`),
+`182` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -83,9 +85,12 @@ Immediate targets:
 
 Most concrete next subtask:
 
-- make alias materialization for spellings such as
-  `typename Derived<T>::template rebind<U>` reuse the inherited-owner
-  member-template path instead of preserving placeholder alias copies.
+- finish the remaining alias-selected default-NTTP path where qualified-id
+  substitution still reaches a nested stored template-instantiation argument
+  through placeholder state; the inherited-owner `rebind<U>` slice is done, but
+  `ConditionalT<..., IsEmpty<Type>>::value` still needs the nested
+  `IsEmpty<Type>` argument to materialize semantically to `IsEmpty<Concrete>`
+  before deferred-base type-trait evaluation.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -156,6 +161,9 @@ coverage becomes sufficient.
 
 1. **Two-phase lookup follow-up**
    - finish current-instantiation/type-alias owner recovery;
+   - complete alias-selected owner canonicalization in default-NTTP qualified-id
+     substitution so helper owners are not reintroduced after semantic alias
+     resolution;
    - extend replay metadata capture into remaining declarations;
    - remove the next AST-only fallback path.
 
@@ -218,7 +226,10 @@ re-solving already-solved problems.
   ad hoc retry path;
 - several static-member replay and copy/update paths already preserve metadata;
 - inherited dependent-base member-template alias owner recovery is already in
-  place for covered base-specifier/member-chain cases.
+  place for covered base-specifier/member-chain cases;
+- main qualified-id substitution paths now prefer semantic alias owners over
+  helper instantiated names when alias materialization already resolved a
+  concrete `TypeInfo`.
 
 ## Exit criteria
 

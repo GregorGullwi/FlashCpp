@@ -1739,19 +1739,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					auto existing_it = getTypesByNameMap().find(alias_instantiated_handle);
 					if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
 						alias_info = existing_it->second;
-						const uint32_t alias_slot = alias_info->registeredTypeIndex().index();
-						alias_info->type_index_ = resolved_registered_index;
-						alias_info->registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
-						alias_info->fallback_size_bits_ = resolved_info->sizeInBits().value;
-						alias_info->is_type_alias_ = true;
-						alias_info->clearAliasTypeSpecifier();
-						alias_info->setAliasTypeSpecifier(alias_type_spec);
+						update_type_alias_copy(
+							*alias_info,
+							resolved_registered_index,
+							resolved_info->sizeInBits().value,
+							&alias_type_spec,
+							resolved_info);
 					} else {
 						alias_info = &add_type_alias_copy(
 							alias_instantiated_handle,
 							resolved_registered_index,
 							resolved_info->sizeInBits().value,
-							alias_type_spec);
+							alias_type_spec,
+							*resolved_info);
 					}
 
 					if (alias_info != nullptr) {
@@ -2468,6 +2468,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									 const auto& args) -> std::optional<TypeSpecifierNode> {
 		if (!type_alias.type_node.is<TypeSpecifierNode>()) {
 			return std::nullopt;
+		}
+
+		if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index);
+			substituted_type_info != nullptr &&
+			substituted_type_info->isDependentMemberType() &&
+			substituted_type_info->hasDependentQualifiedName()) {
+			if (const TypeInfo* resolved_dependent_type =
+					resolveDependentMemberTypeSemantic(
+						*substituted_type_info,
+						params,
+						args,
+						StringHandle{});
+				resolved_dependent_type != nullptr) {
+				substituted_type_index = resolved_dependent_type->registeredTypeIndex();
+				substituted_type = resolved_dependent_type->typeEnum();
+			}
 		}
 
 		ResolvedAliasTypeInfo resolved_alias_target = resolveAliasTypeInfo(substituted_type_index);
@@ -4752,6 +4768,47 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substitution_done:;
 				}
 
+				const TypeInfo* alias_semantic_source =
+					tryGetTypeInfo(TypeIndex{substituted_type_index});
+				std::optional<TypeSpecifierNode> resolved_alias_type_spec_override;
+				{
+					ASTNode resolved_alias_type_node =
+						emplace_node<TypeSpecifierNode>(alias_type_spec);
+					if (resolveDependentMemberAlias(
+							resolved_alias_type_node,
+							template_params,
+							template_args_for_pattern) == DependentAliasResolutionStatus::Resolved) {
+						const TypeSpecifierNode& resolved_alias_type_spec =
+							resolved_alias_type_node.as<TypeSpecifierNode>();
+						substituted_type = resolved_alias_type_spec.type();
+						substituted_type_index = resolved_alias_type_spec.type_index();
+						substituted_size = resolved_alias_type_spec.size_in_bits();
+						alias_semantic_source =
+							tryGetTypeInfo(resolved_alias_type_spec.type_index());
+						resolved_alias_type_spec_override = resolved_alias_type_spec;
+					}
+				}
+				if (const TypeInfo* dependent_alias_target_info =
+						tryGetTypeInfo(TypeIndex{substituted_type_index});
+					dependent_alias_target_info != nullptr &&
+					dependent_alias_target_info->isDependentMemberType() &&
+					dependent_alias_target_info->hasDependentQualifiedName()) {
+					if (const TypeInfo* resolved_dependent_type =
+							resolveDependentMemberTypeSemantic(
+								*dependent_alias_target_info,
+								template_params,
+								template_args_for_pattern,
+								instantiated_name);
+						resolved_dependent_type != nullptr) {
+						substituted_type = resolved_dependent_type->typeEnum();
+						substituted_type_index =
+							resolved_dependent_type->registeredTypeIndex().withCategory(
+								resolved_dependent_type->typeEnum());
+						substituted_size = resolved_dependent_type->sizeInBits().value;
+						alias_semantic_source = resolved_dependent_type;
+					}
+				}
+
 				if (const TypeInfo* concrete_member_info =
 						materializeInstantiatedMemberAliasTarget(
 							alias_type_spec,
@@ -4763,9 +4820,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						concrete_member_info->registeredTypeIndex().withCategory(
 							concrete_member_info->typeEnum());
 					substituted_size = concrete_member_info->sizeInBits().value;
+					alias_semantic_source = concrete_member_info;
 				}
 
-				if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
+				if (const TypeInfo* alias_target_info = tryGetTypeInfo(TypeIndex{substituted_type_index});
 					alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
 					std::vector<TemplateTypeArg> concrete_alias_args;
 					concrete_alias_args.reserve(alias_target_info->templateArgs().size());
@@ -4812,6 +4870,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									concrete_alias_target->registeredTypeIndex().withCategory(
 										concrete_alias_target->typeEnum());
 								substituted_size = concrete_alias_target->sizeInBits().value;
+								alias_semantic_source = concrete_alias_target;
 							}
 						}
 					}
@@ -4820,14 +4879,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register the type alias globally with its qualified name
 				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
 					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_for_pattern);
-				const TypeSpecifierNode& alias_registration_type_spec = substituted_alias_type_spec.has_value()
-																		   ? substituted_alias_type_spec.value()
-																		   : alias_type_spec;
-				auto& alias_type_info = add_type_alias_copy(
-					qualified_alias_name,
-					TypeIndex{substituted_type_index},
-					substituted_size,
-					alias_registration_type_spec);
+				const TypeSpecifierNode& alias_registration_type_spec =
+					resolved_alias_type_spec_override.has_value()
+						? resolved_alias_type_spec_override.value()
+						: (substituted_alias_type_spec.has_value()
+							   ? substituted_alias_type_spec.value()
+							   : alias_type_spec);
+				auto& alias_type_info =
+					alias_semantic_source != nullptr
+						? add_type_alias_copy(
+							  qualified_alias_name,
+							  TypeIndex{substituted_type_index},
+							  substituted_size,
+							  alias_registration_type_spec,
+							  *alias_semantic_source)
+						: add_type_alias_copy(
+							  qualified_alias_name,
+							  TypeIndex{substituted_type_index},
+							  substituted_size,
+							  alias_registration_type_spec);
 				if (alias_registration_type_spec.is_array()) {
 					std::span<const size_t> alias_array_dimensions = alias_registration_type_spec.array_dimensions();
 					size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;
@@ -8285,6 +8355,47 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
+		const TypeInfo* alias_semantic_source =
+			tryGetTypeInfo(TypeIndex{substituted_type_index});
+		std::optional<TypeSpecifierNode> resolved_alias_type_spec_override;
+		{
+			ASTNode resolved_alias_type_node =
+				emplace_node<TypeSpecifierNode>(alias_type_spec);
+			if (resolveDependentMemberAlias(
+					resolved_alias_type_node,
+					template_params,
+					template_args_to_use) == DependentAliasResolutionStatus::Resolved) {
+				const TypeSpecifierNode& resolved_alias_type_spec =
+					resolved_alias_type_node.as<TypeSpecifierNode>();
+				substituted_type = resolved_alias_type_spec.type();
+				substituted_type_index = resolved_alias_type_spec.type_index();
+				substituted_size = resolved_alias_type_spec.size_in_bits();
+				alias_semantic_source =
+					tryGetTypeInfo(resolved_alias_type_spec.type_index());
+				resolved_alias_type_spec_override = resolved_alias_type_spec;
+			}
+		}
+		if (const TypeInfo* dependent_alias_target_info =
+				tryGetTypeInfo(TypeIndex{substituted_type_index});
+			dependent_alias_target_info != nullptr &&
+			dependent_alias_target_info->isDependentMemberType() &&
+			dependent_alias_target_info->hasDependentQualifiedName()) {
+			if (const TypeInfo* resolved_dependent_type =
+					resolveDependentMemberTypeSemantic(
+						*dependent_alias_target_info,
+						template_params,
+						template_args_to_use,
+						instantiated_name);
+				resolved_dependent_type != nullptr) {
+				substituted_type = resolved_dependent_type->typeEnum();
+				substituted_type_index =
+					resolved_dependent_type->registeredTypeIndex().withCategory(
+						resolved_dependent_type->typeEnum());
+				substituted_size = resolved_dependent_type->sizeInBits().value;
+				alias_semantic_source = resolved_dependent_type;
+			}
+		}
+
 		if (const TypeInfo* concrete_member_info =
 				materializeInstantiatedMemberAliasTarget(
 					alias_type_spec,
@@ -8296,6 +8407,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				concrete_member_info->registeredTypeIndex().withCategory(
 					concrete_member_info->typeEnum());
 			substituted_size = concrete_member_info->sizeInBits().value;
+			alias_semantic_source = concrete_member_info;
 		}
 
 		// Ensure size is computed for primitive type aliases that were substituted from template parameters.
@@ -8314,14 +8426,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Register the type alias in getTypesByNameMap()
 		std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
 			type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_to_use);
-		const TypeSpecifierNode& alias_registration_type_spec = substituted_alias_type_spec.has_value()
-																   ? substituted_alias_type_spec.value()
-																   : alias_type_spec;
-		auto& alias_type_info = add_type_alias_copy(
-			qualified_alias_name,
-			TypeIndex{substituted_type_index},
-			substituted_size,
-			alias_registration_type_spec);
+		const TypeSpecifierNode& alias_registration_type_spec =
+			resolved_alias_type_spec_override.has_value()
+				? resolved_alias_type_spec_override.value()
+				: (substituted_alias_type_spec.has_value()
+					   ? substituted_alias_type_spec.value()
+					   : alias_type_spec);
+		auto& alias_type_info =
+			alias_semantic_source != nullptr
+				? add_type_alias_copy(
+					  qualified_alias_name,
+					  TypeIndex{substituted_type_index},
+					  substituted_size,
+					  alias_registration_type_spec,
+					  *alias_semantic_source)
+				: add_type_alias_copy(
+					  qualified_alias_name,
+					  TypeIndex{substituted_type_index},
+					  substituted_size,
+					  alias_registration_type_spec);
 		if (alias_registration_type_spec.is_array()) {
 			std::span<const size_t> alias_array_dimensions = alias_registration_type_spec.array_dimensions();
 			size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;

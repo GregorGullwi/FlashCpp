@@ -1531,10 +1531,24 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						return buildTypeFromInfo(*instantiated_type_info, type_name_token, false);
 					};
+					auto aliasTemplateArgsStillDependent =
+						[](std::span<const TemplateTypeArg> args) -> bool {
+						for (const TemplateTypeArg& arg : args) {
+							if (arg.is_dependent ||
+								arg.is_pack ||
+								arg.dependent_name.isValid() ||
+								arg.dependent_expr.has_value()) {
+								return true;
+							}
+						}
+						return false;
+					};
+					const bool has_dependent_alias_args =
+						aliasTemplateArgsStillDependent(*template_args);
 
 					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
 					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
-					if (alias_node.is_deferred()) {
+					if (alias_node.is_deferred() && !has_dependent_alias_args) {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						// Route directly through the alias-specific materialization path
@@ -1577,48 +1591,53 @@ ParseResult Parser::parse_type_specifier() {
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 							*rebound_arg,
 							Token());
-					} else if (const TypeInfo* concrete_member_info =
-								   materializeInstantiatedMemberAliasTarget(
-									   instantiated_type,
-									   alias_node.template_parameters(),
-									   *template_args);
-							   concrete_member_info != nullptr) {
-						instantiated_type = resolveTypeInfoToTypeSpec(*concrete_member_info, instantiated_type);
-					} else if (const TypeInfo* alias_target_info =
-								   tryGetTypeInfo(instantiated_type.type_index());
-							   alias_target_info != nullptr &&
-							   alias_target_info->isTemplateInstantiation()) {
-						StringHandle qualified_target_template_name =
-							gNamespaceRegistry.buildQualifiedIdentifier(
-								alias_target_info->sourceNamespace(),
-								alias_target_info->baseTemplateName());
-						auto alias_target_entry =
-							gTemplateRegistry.lookup_alias_template(qualified_target_template_name);
-						if (!alias_target_entry.has_value()) {
-							alias_target_entry = gTemplateRegistry.lookup_alias_template(
-								alias_target_info->baseTemplateName());
-						}
-						if (alias_target_entry.has_value()) {
-							std::vector<TemplateTypeArg> concrete_target_args =
-								materializeTemplateArgs(
-									*alias_target_info,
+					} else if (!has_dependent_alias_args) {
+						if (const TypeInfo* concrete_member_info =
+								materializeInstantiatedMemberAliasTarget(
+									instantiated_type,
 									alias_node.template_parameters(),
 									*template_args);
-							AliasTemplateMaterializationResult materialized_target =
-								materializeTemplateInstantiationForLookup(
-									StringTable::getStringView(qualified_target_template_name),
-									concrete_target_args);
-							if (!materialized_target.resolved_type_info &&
-								qualified_target_template_name != alias_target_info->baseTemplateName()) {
-								materialized_target = materializeTemplateInstantiationForLookup(
-									StringTable::getStringView(alias_target_info->baseTemplateName()),
-									concrete_target_args);
+							concrete_member_info != nullptr) {
+							instantiated_type = resolveTypeInfoToTypeSpec(*concrete_member_info, instantiated_type);
+						} else if (const TypeInfo* alias_target_info =
+									   tryGetTypeInfo(instantiated_type.type_index());
+								   alias_target_info != nullptr &&
+								   alias_target_info->isTemplateInstantiation()) {
+							StringHandle qualified_target_template_name =
+								gNamespaceRegistry.buildQualifiedIdentifier(
+									alias_target_info->sourceNamespace(),
+									alias_target_info->baseTemplateName());
+							auto alias_target_entry =
+								gTemplateRegistry.lookup_alias_template(qualified_target_template_name);
+							if (!alias_target_entry.has_value()) {
+								alias_target_entry = gTemplateRegistry.lookup_alias_template(
+									alias_target_info->baseTemplateName());
 							}
-							if (materialized_target.resolved_type_info != nullptr) {
-								instantiated_type = resolveTypeInfoToTypeSpec(
-									*materialized_target.resolved_type_info, instantiated_type);
+							if (alias_target_entry.has_value()) {
+								std::vector<TemplateTypeArg> concrete_target_args =
+									materializeTemplateArgs(
+										*alias_target_info,
+										alias_node.template_parameters(),
+										*template_args);
+								AliasTemplateMaterializationResult materialized_target =
+									materializeTemplateInstantiationForLookup(
+										StringTable::getStringView(qualified_target_template_name),
+										concrete_target_args);
+								if (!materialized_target.resolved_type_info &&
+									qualified_target_template_name != alias_target_info->baseTemplateName()) {
+									materialized_target = materializeTemplateInstantiationForLookup(
+										StringTable::getStringView(alias_target_info->baseTemplateName()),
+										concrete_target_args);
+								}
+								if (materialized_target.resolved_type_info != nullptr) {
+									instantiated_type = resolveTypeInfoToTypeSpec(
+										*materialized_target.resolved_type_info, instantiated_type);
+								}
 							}
 						}
+					}
+					if (has_dependent_alias_args && peek() != "::"_tok) {
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 					}
 
 					if (const TypeInfo* instantiated_type_info =

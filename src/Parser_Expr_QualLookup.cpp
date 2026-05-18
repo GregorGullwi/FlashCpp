@@ -1020,7 +1020,8 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 				materializeTemplateInstantiationForLookup(
 					qualified_member_template_name,
 					*member_access.template_arguments);
-			if (materialized_member.instantiated_name.empty()) {
+			if (materialized_member.resolved_type_info == nullptr &&
+				materialized_member.instantiated_name.empty()) {
 				return nullptr;
 			}
 
