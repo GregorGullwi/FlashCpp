@@ -391,13 +391,14 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 		}
 	}
 
-	if (dependent_arg.is_value && dependent_arg.dependent_expr.has_value() && context.parser != nullptr) {
+	if (can_try_dependent_expression_substitution) {
 		const TemplateEnvironment* evaluation_environment = resolved_environment;
 		if (evaluation_environment == nullptr) {
 			evaluation_environment = select_lookup_environment();
 		}
 		if (evaluation_environment != nullptr) {
-			ExpressionSubstitutor substitutor(*evaluation_environment, *context.parser);
+			Parser& parser = *context.parser;
+			ExpressionSubstitutor substitutor(*evaluation_environment, parser);
 			ASTNode substituted_expr = substitutor.substitute(*dependent_arg.dependent_expr);
 			auto saved_template_environment = context.template_environment;
 			context.template_environment = *evaluation_environment;
@@ -1700,6 +1701,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
+		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
@@ -1716,13 +1718,13 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				mutable_bindings);
 		}
 		std::vector<TypeSpecifierNode> arg_types;
-		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
 				"Dependent unqualified call argument types are not available at point of instantiation",
 				EvalErrorType::TemplateDependentExpression);
 		}
 		std::optional<ASTNode> resolved_target =
-			context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
+			parser.resolveDependentUnqualifiedCallAtPointOfInstantiation(
 				*call_expr.dependent_unqualified_lookup_record(),
 				call_expr.arguments(),
 				arg_types);
@@ -5141,8 +5143,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 						if (depth >= kMaxOwnerArgMaterializationDepth ||
 							concrete_arg.is_value ||
-							!concrete_arg.type_index.is_valid() ||
-							context.parser == nullptr) {
+							!concrete_arg.type_index.is_valid()) {
 							return concrete_arg;
 						}
 

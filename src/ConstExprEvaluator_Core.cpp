@@ -4369,6 +4369,7 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 	if (!context.parser) {
 		return EvalResult::error("No parser available for variable template instantiation");
 	}
+	Parser& parser = *context.parser;
 
 	if (!call_expr.has_template_arguments()) {
 		return EvalResult::error("No template arguments for variable template");
@@ -4399,11 +4400,11 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		return EvalResult::error("No template arguments extracted for variable template");
 	}
 
-	auto var_node = context.parser->try_instantiate_variable_template(func_name, template_args);
+	auto var_node = parser.try_instantiate_variable_template(func_name, template_args);
 	context.normalizePendingSemanticRoots();
 
 	if (!var_node.has_value() && call_expr.has_qualified_name()) {
-		var_node = context.parser->try_instantiate_variable_template(call_expr.qualified_name(), template_args);
+		var_node = parser.try_instantiate_variable_template(call_expr.qualified_name(), template_args);
 		context.normalizePendingSemanticRoots();
 	}
 
@@ -4491,6 +4492,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
+		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
@@ -4506,13 +4508,13 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 				nullptr);
 		}
 		std::vector<TypeSpecifierNode> arg_types;
-		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
 				"Dependent unqualified call argument types are not available at point of instantiation",
 				EvalErrorType::TemplateDependentExpression);
 		}
 		std::optional<ASTNode> resolved_target =
-			context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
+			parser.resolveDependentUnqualifiedCallAtPointOfInstantiation(
 				*call_expr.dependent_unqualified_lookup_record(),
 				call_expr.arguments(),
 				arg_types);
