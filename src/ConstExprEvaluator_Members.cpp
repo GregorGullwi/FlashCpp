@@ -32,13 +32,6 @@ bool isRecoverablePointerDerefFailure(const EvalResult& result) {
 	}
 	return result.error_message.rfind("Cannot dereference constexpr pointer:", 0) == 0;
 }
-SemanticAnalysis* getSemaForMaterialization(const EvaluationContext& context, const char* operation) {
-	if (context.parser != nullptr) {
-		return &context.requireParserOwnedSema(operation);
-	}
-	return context.sema;
-}
-
 TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, std::span<const size_t> array_dimensions);
 EvalResult materializeArrayInitializer(
 	TypeIndex type_index,
@@ -2966,9 +2959,14 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
-	if (SemanticAnalysis* sema = getSemaForMaterialization(
-			context, kMemberFunctionMaterializationLookupOp); sema != nullptr) {
-		sema->parserSemanticServices().ensureMemberFunctionMaterialized(
+	if (context.parser != nullptr) {
+		context
+			.requireParserOwnedSema(kMemberFunctionMaterializationLookupOp)
+			.parserSemanticServices()
+			.ensureMemberFunctionMaterialized(
+				context.struct_info->name, function_name_handle, std::nullopt);
+	} else if (context.sema != nullptr) {
+		context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
 	}
 
@@ -2985,9 +2983,13 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		if (SemanticAnalysis* sema = getSemaForMaterialization(
-				context, kMemberFunctionMaterializationReplayOp); sema != nullptr) {
-			sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
+		if (context.parser != nullptr) {
+			context
+				.requireParserOwnedSema(kMemberFunctionMaterializationReplayOp)
+				.parserSemanticServices()
+				.ensureMemberFunctionMaterialized(owner_name, *result.function);
+		} else if (context.sema != nullptr) {
+			context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
 		}
 		result = find_member_function_candidate(
 			context.struct_info,
