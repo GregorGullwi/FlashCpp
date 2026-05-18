@@ -38,18 +38,26 @@ Useful to know before changing anything:
 - inherited dependent-base member-template alias owners now resolve through the
   shared member-chain concretization path for covered base-specifier/member-chain
   cases such as `Mid<T>::template rebind<int>`;
+- alias-selected default-NTTP qualified-id owners now canonicalize through a
+  shared owner-materialization primitive instead of local alias/default-NTTP
+  recovery logic in expression substitution;
+- deferred alias/member-chain materialization now recursively concretizes nested
+  alias-target template-instantiation arguments, so stored
+  `IsEmpty<Type>`-style args become `IsEmpty<Concrete>` before deferred-base
+  trait evaluation;
+- current-owner qualified-id substitution now resolves member aliases through the
+  same member-side lookup/materialization path used by current-instantiation
+  member-type lookup, preserving direct dependent-member-target handling and the
+  concrete member-alias cache when a concrete sibling alias must be synthesized;
 - typed NTTP identity is implemented for integral, enum, `nullptr`, object
-  pointer, reference, function pointer, null member pointer, and floating-point
-  cases that already materialize as concrete semantic values;
+  pointer, reference, function pointer, non-null/null member-data pointer, and
+  floating-point cases that already materialize as concrete semantic values;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
-Validation at this point passed the Windows sharded build. The focused
-follow-up regression for inherited member-template alias lookup now passes, and
-the remaining full-suite state is down to one runtime mismatch:
-`2427` regular tests compiled/linked, `2426` runtime pass, `1` runtime
-regression (`test_type_trait_alias_default_nttp_ret0.cpp`), `182`
-expected-fail tests.
+Validation at this point passed the Windows sharded build and the Windows
+PowerShell test workflow:
+`2437` regular tests compiled/linked/runtime-pass, `182` expected-fail tests.
 
 ## What is still wrong
 
@@ -69,12 +77,11 @@ What still needs work:
 
 Concrete follow-up already identified by recent work:
 
-- alias-selected owners in default-NTTP/qualified-id substitution must now stay
-  attached to the semantic alias result type instead of round-tripping through
-  helper owners such as `Conditional$...::value`;
-- nested alias-target template arguments still need one semantic
-  materialization pass so `IsEmpty<Type>`-style stored template-instantiation
-  arguments become `IsEmpty<Concrete>` before deferred-base trait evaluation.
+- the next concrete follow-up is the remaining dependent-base and unknown-
+  specialization member-chain work plus the declarations that still never
+  capture replay metadata at parse time; deeper current-instantiation/type-alias
+  qualified-id/member chains now reuse the shared semantic lookup path once that
+  metadata exists.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -97,12 +104,13 @@ complete.
 
 Still open:
 
-- non-null member-pointer semantic values;
+- non-null member-function-pointer semantic values;
 - structural class-type NTTPs;
 - any remaining floating-point paths that do not yet round-trip through the
   same semantic identity/mangling flow;
-- replacing remaining conservative function/member-pointer mangling fallbacks
-  such as `TODO(item-8)` in `NameMangling.h`.
+- replacing the remaining conservative function/member-pointer mangling
+  fallbacks in `TODO(item-8)` in `NameMangling.h`; the type side is richer now,
+  but value encoding still intentionally falls back conservatively.
 
 ### 4. Deduction, constraints, and overload resolution are still too coupled to instantiation
 
@@ -148,13 +156,12 @@ In priority order:
 
 1. **Finish the next two-phase lookup slice**
    - current-instantiation/type-alias follow-up work after inherited member-template
-     alias recovery;
-   - complete the remaining alias-owner/default-NTTP path so qualified-id
-     substitution, not constexpr repair logic, owns alias-selected static-member
-     lookup;
+      alias recovery, nested alias-target deferred-base materialization, and the
+      current-owner member-alias qualified-id cleanup is now complete for the
+      deeper covered member-chain cases;
    - remaining replay-metadata gaps for static-member initialization;
    - remaining dependent-base/member-chain paths that still bypass the shared
-     semantic lookup model.
+      semantic lookup model.
 
 2. **Continue dependent-name/current-instantiation modeling**
    - richer dependent-base and unknown-specialization records;
@@ -162,7 +169,7 @@ In priority order:
    - canonical dependent-expression equivalence.
 
 3. **Complete the remaining NTTP categories**
-   - non-null member-pointers;
+   - non-null member-function-pointers;
    - structural class-type NTTPs;
    - remove remaining mangling fallbacks where standard encodings are possible.
 
@@ -190,7 +197,25 @@ materially changes what future refactors can assume.
   covered base-specifier/member-chain concretization cases;
 - alias-template lookup results now expose a canonical semantic owner/result
   name and the main qualified-id substitution paths prefer that semantic owner
-  over helper instantiated names.
+  over helper instantiated names;
+- default-NTTP qualified-id substitution now reuses a shared canonical
+  owner-materialization primitive with parser-side owner lookup materialization
+  instead of bespoke alias/type-index probing in `ExpressionSubstitutor`;
+- current-owner qualified-id member-alias substitution now reuses
+  `resolveBaseClassMemberTypeChain` plus dependent-member materialization helpers
+  instead of the last open-coded local alias repair block in
+  `ExpressionSubstitutor`;
+- deeper current-instantiation/type-alias qualified-id namespace chains now also
+  resolve through that shared member-side path, and replayed qualified-ids now
+  capture current-instantiation metadata early enough that lazy/static replay no
+  longer has to depend on a repair-only fallback for those covered chains;
+- member-pointer NTTPs now preserve declaring-class identity through
+  constexpr/template-arg storage, substitute as `&Class::member` inside template
+  bodies, and distinguish same-name/same-offset members from unrelated classes;
+- member-pointer NTTP mangling now carries richer member-pointer type identity
+  (including the declaring class when recoverable), while value encoding still
+  intentionally falls back conservatively until a full Itanium external-name
+  form is wired for those values.
 
 ## Exit criteria for this audit
 

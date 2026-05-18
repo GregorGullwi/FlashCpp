@@ -36,11 +36,16 @@ TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_
 		if (!value_type_index.is_valid()) {
 			value_type_index = nativeTypeIndex(TypeCategory::MemberObjectPointer);
 		}
+		StringHandle member_class_name{};
+		if (eval_result.exact_type.has_value() && eval_result.exact_type->has_member_class()) {
+			member_class_name = eval_result.exact_type->member_class_name();
+		}
 		return TemplateTypeArg::makeValueIdentity(
 			FlashCpp::NonTypeValueIdentity::makeMemberPointer(
 				value_type_index,
 				eval_result.member_pointer_member,
-				eval_result.as_int()));
+				eval_result.as_int(),
+				member_class_name));
 	}
 	if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
 		return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
@@ -174,6 +179,147 @@ namespace {
 	return templateTypeArgFromEvalResult(eval_result);
 }
 
+	bool templateArgsStillNeedAliasLookupMaterialization(std::span<const TemplateTypeArg> template_args) {
+		for (const TemplateTypeArg& arg : template_args) {
+			if (arg.is_dependent ||
+				arg.dependent_name.isValid() ||
+				arg.dependent_expr.has_value()) {
+				return true;
+			}
+			if (!arg.is_value &&
+				arg.type_index.is_valid() &&
+				typeIndexContainsDependentPlaceholder(arg.type_index)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	template <typename MaterializeArgsFn, typename MaterializeLookupFn>
+	TemplateTypeArg recursivelyMaterializeAliasLookupTemplateArg(
+		const TemplateEnvironment& substitution_environment,
+		TemplateTypeArg concrete_arg,
+		MaterializeArgsFn&& materialize_args,
+		MaterializeLookupFn&& materialize_lookup,
+		int depth) {
+		constexpr int kMaxRecursiveTemplateArgDepth = 8;
+		if (depth >= kMaxRecursiveTemplateArgDepth ||
+			concrete_arg.is_value ||
+			!concrete_arg.type_index.is_valid()) {
+			return concrete_arg;
+		}
+
+		auto tryRebindByName = [&](StringHandle dependent_name) -> bool {
+			if (!dependent_name.isValid()) {
+				return false;
+			}
+			if (std::optional<TemplateTypeArg> rebound =
+					resolveContextBinding(
+						dependent_name,
+						substitution_environment);
+				rebound.has_value()) {
+				concrete_arg = !rebound->is_value
+					? rebindDependentTemplateTypeArg(*rebound, concrete_arg)
+					: *rebound;
+				return true;
+			}
+			return false;
+		};
+
+		if (concrete_arg.is_dependent &&
+			concrete_arg.dependent_name.isValid()) {
+			(void)tryRebindByName(concrete_arg.dependent_name);
+			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
+				return concrete_arg;
+			}
+		}
+
+		const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
+		if (concrete_type_info == nullptr) {
+			return concrete_arg;
+		}
+
+		if (concrete_type_info->name().isValid() &&
+			tryRebindByName(concrete_type_info->name())) {
+			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
+				return concrete_arg;
+			}
+			concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
+			if (concrete_type_info == nullptr) {
+				return concrete_arg;
+			}
+		}
+
+		ResolvedAliasTypeInfo resolved_arg_alias = resolveAliasTypeInfo(
+			concrete_arg.type_index.withCategory(concrete_type_info->typeEnum()));
+		if (resolved_arg_alias.terminal_type_info != nullptr &&
+			resolved_arg_alias.terminal_type_info->typeEnum() != TypeCategory::Invalid) {
+			concrete_type_info = resolved_arg_alias.terminal_type_info;
+			TemplateTypeArg resolved_alias_arg = makeTemplateTypeArgFromResolvedAlias(
+				resolved_arg_alias,
+				concrete_type_info->registeredTypeIndex().withCategory(
+					concrete_type_info->typeEnum()));
+			concrete_arg.type_index = resolved_alias_arg.type_index;
+			concrete_arg.setCategory(resolved_alias_arg.typeEnum());
+			concrete_arg.pointer_depth = resolved_alias_arg.pointer_depth;
+			concrete_arg.ref_qualifier = resolved_alias_arg.ref_qualifier;
+			concrete_arg.cv_qualifier = resolved_alias_arg.cv_qualifier;
+			concrete_arg.is_array = resolved_alias_arg.is_array;
+			concrete_arg.array_dimensions = std::move(resolved_alias_arg.array_dimensions);
+			concrete_arg.function_signature = resolved_alias_arg.function_signature;
+			if (resolved_arg_alias.member_class_name.has_value()) {
+				concrete_arg.member_class_name = *resolved_arg_alias.member_class_name;
+			}
+			concrete_arg.is_dependent = false;
+			concrete_arg.dependent_name = {};
+			concrete_arg.dependent_expr = std::nullopt;
+		}
+
+		if (!concrete_type_info->isTemplateInstantiation()) {
+			return concrete_arg;
+		}
+
+		std::vector<TemplateTypeArg> nested_concrete_args =
+			materialize_args(*concrete_type_info);
+		for (TemplateTypeArg& nested_arg : nested_concrete_args) {
+			nested_arg = recursivelyMaterializeAliasLookupTemplateArg(
+				substitution_environment,
+				std::move(nested_arg),
+				materialize_args,
+				materialize_lookup,
+				depth + 1);
+		}
+		if (templateArgsStillNeedAliasLookupMaterialization(nested_concrete_args)) {
+			return concrete_arg;
+		}
+
+		auto materialized_nested =
+			materialize_lookup(*concrete_type_info, nested_concrete_args);
+		const TypeInfo* resolved_nested_info = materialized_nested.resolved_type_info;
+		if (resolved_nested_info == nullptr) {
+			StringHandle canonical_name_handle =
+				materialized_nested.canonicalNameHandle();
+			if (canonical_name_handle.isValid()) {
+				resolved_nested_info = findTypeByName(canonical_name_handle);
+			}
+		}
+		if (resolved_nested_info == nullptr) {
+			return concrete_arg;
+		}
+
+		TypeIndex resolved_nested_index =
+			resolved_nested_info->registeredTypeIndex().withCategory(
+				resolved_nested_info->typeEnum());
+		TemplateTypeArg resolved_nested_arg =
+			makeTemplateTypeArgFromResolvedAlias(
+				resolveAliasTypeInfo(resolved_nested_index),
+				resolved_nested_index);
+		resolved_nested_arg.is_pack = concrete_arg.is_pack;
+		return rebindDependentTemplateTypeArg(
+			resolved_nested_arg,
+			concrete_arg);
+	}
+
 }  // namespace
 
 ASTNode Parser::substituteNonTypeDefaultExpression(
@@ -290,57 +436,74 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg_type.type_index());
 				arg_type_info != nullptr &&
 				arg_type_info->isTemplateInstantiation()) {
-				std::vector<TemplateTypeArg> concrete_instantiation_args = materializeTemplateArgs(
-					*arg_type_info,
-					template_parameters,
-					template_args);
 				TemplateEnvironment substitution_environment = buildTemplateEnvironment(
 					std::span<const TemplateParameterNode>(
 						template_parameters.data(),
 						template_parameters.size()),
 					template_args,
 					nullptr);
-				for (TemplateTypeArg& concrete_arg : concrete_instantiation_args) {
-					if (concrete_arg.is_value) {
-						continue;
-					}
-					if (concrete_arg.is_dependent &&
-						concrete_arg.dependent_name.isValid()) {
-						if (std::optional<TemplateTypeArg> rebound =
-								resolveContextBinding(
-									concrete_arg.dependent_name,
-									substitution_environment);
-							rebound.has_value()) {
-							concrete_arg = !rebound->is_value
-								? rebindDependentTemplateTypeArg(*rebound, concrete_arg)
-								: *rebound;
-							continue;
+				auto eval_nttp = [this](
+					const ASTNode& expr,
+					std::span<const ASTNode> params,
+					std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+					InlineVector<TemplateParameterNode, 4> typed_params;
+					typed_params.reserve(params.size());
+					for (const ASTNode& param_node : params) {
+						if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+							typed_param != nullptr) {
+							typed_params.push_back(*typed_param);
 						}
 					}
-					if (!concrete_arg.type_index.is_valid()) {
-						continue;
-					}
-					const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
-					if (concrete_type_info == nullptr || !concrete_type_info->name().isValid()) {
-						continue;
-					}
-					if (std::optional<TemplateTypeArg> rebound =
-							resolveContextBinding(
-								concrete_type_info->name(),
-								substitution_environment);
-						rebound.has_value()) {
-						concrete_arg = !rebound->is_value
-							? rebindDependentTemplateTypeArg(*rebound, concrete_arg)
-							: *rebound;
-					}
+					return this->evaluateDependentNTTPExpression(
+						expr,
+						std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+						args);
+				};
+				auto materialize_args = [&](const TypeInfo& source_type_info) {
+					return materializeTemplateArgs(
+						source_type_info,
+						template_parameters,
+						template_args,
+						eval_nttp);
+				};
+				auto materialize_lookup =
+					[this](const TypeInfo& source_type_info, std::span<const TemplateTypeArg> concrete_instantiation_args) {
+						StringHandle qualified_base_template_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								source_type_info.sourceNamespace(),
+								source_type_info.baseTemplateName());
+						std::string_view base_template_name =
+							StringTable::getStringView(qualified_base_template_name);
+						AliasTemplateMaterializationResult materialized_type;
+						if (!base_template_name.empty()) {
+							materialized_type =
+								materializeTemplateInstantiationForLookup(
+									base_template_name,
+									concrete_instantiation_args);
+						}
+						if ((materialized_type.resolved_type_info == nullptr &&
+							 materialized_type.instantiated_name.empty()) &&
+							qualified_base_template_name != source_type_info.baseTemplateName()) {
+							materialized_type =
+								materializeTemplateInstantiationForLookup(
+									StringTable::getStringView(source_type_info.baseTemplateName()),
+									concrete_instantiation_args);
+						}
+						return materialized_type;
+					};
+				std::vector<TemplateTypeArg> concrete_instantiation_args =
+					materialize_args(*arg_type_info);
+				for (TemplateTypeArg& concrete_arg : concrete_instantiation_args) {
+					concrete_arg = recursivelyMaterializeAliasLookupTemplateArg(
+						substitution_environment,
+						std::move(concrete_arg),
+						materialize_args,
+						materialize_lookup,
+						0);
 				}
-				std::string_view base_template_name =
-					StringTable::getStringView(arg_type_info->baseTemplateName());
-				if (!base_template_name.empty()) {
+				if (!StringTable::getStringView(arg_type_info->baseTemplateName()).empty()) {
 					AliasTemplateMaterializationResult materialized_type =
-						materializeTemplateInstantiationForLookup(
-							base_template_name,
-							concrete_instantiation_args);
+						materialize_lookup(*arg_type_info, concrete_instantiation_args);
 					const TypeInfo* resolved_type_info = materialized_type.resolved_type_info;
 					if (resolved_type_info == nullptr &&
 						!materialized_type.instantiated_name.empty()) {
@@ -782,103 +945,53 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
 				args);
 		};
-		std::vector<TemplateTypeArg> concrete_args =
-			materializeTemplateArgs(
-				source_type_info,
+		auto materialize_args = [&](const TypeInfo& nested_source_type_info) {
+			return materializeTemplateArgs(
+				nested_source_type_info,
 				alias_node->template_parameters(),
 				template_args,
 				eval_nttp);
-		auto recursively_materialize_type_arg =
-			[&](auto&& self,
-				TemplateTypeArg concrete_arg,
-				int depth) -> TemplateTypeArg {
-			constexpr int kMaxRecursiveTemplateArgDepth = 8;
-			if (depth >= kMaxRecursiveTemplateArgDepth ||
-				concrete_arg.is_value ||
-				!concrete_arg.type_index.is_valid()) {
-				return concrete_arg;
-			}
-
-			const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
-			if (concrete_type_info == nullptr) {
-				return concrete_arg;
-			}
-
-			ResolvedAliasTypeInfo resolved_arg_alias = resolveAliasTypeInfo(
-				concrete_arg.type_index.withCategory(concrete_type_info->typeEnum()));
-			if (resolved_arg_alias.terminal_type_info != nullptr &&
-				resolved_arg_alias.terminal_type_info->typeEnum() != TypeCategory::Invalid) {
-				concrete_type_info = resolved_arg_alias.terminal_type_info;
-				concrete_arg.type_index =
-					concrete_type_info->registeredTypeIndex().withCategory(
-						concrete_type_info->typeEnum());
-				concrete_arg.setCategory(concrete_type_info->typeEnum());
-			}
-
-			if (!concrete_type_info->isTemplateInstantiation()) {
-				return concrete_arg;
-			}
-
-			std::string_view nested_base_template_name =
-				StringTable::getStringView(concrete_type_info->baseTemplateName());
-			if (nested_base_template_name.empty()) {
-				return concrete_arg;
-			}
-
-			std::vector<TemplateTypeArg> nested_concrete_args =
-				materializeTemplateArgs(
-					*concrete_type_info,
-					alias_node->template_parameters(),
-					template_args,
-					eval_nttp);
-			for (TemplateTypeArg& nested_arg : nested_concrete_args) {
-				nested_arg = self(self, std::move(nested_arg), depth + 1);
-			}
-			bool nested_args_still_dependent = false;
-			for (const TemplateTypeArg& nested_arg : nested_concrete_args) {
-				if (nested_arg.is_dependent ||
-					nested_arg.dependent_name.isValid() ||
-					nested_arg.dependent_expr.has_value()) {
-					nested_args_still_dependent = true;
-					break;
-				}
-			}
-			if (nested_args_still_dependent) {
-				return concrete_arg;
-			}
-
-			AliasTemplateMaterializationResult materialized_nested =
-				materializeTemplateInstantiationForLookup(
-					nested_base_template_name,
-					nested_concrete_args);
-			const TypeInfo* resolved_nested_info =
-				materialized_nested.resolved_type_info;
-			if (resolved_nested_info == nullptr) {
-				StringHandle nested_name_handle =
-					materialized_nested.canonicalNameHandle();
-				if (nested_name_handle.isValid()) {
-					resolved_nested_info = findTypeByName(nested_name_handle);
-				}
-			}
-			if (resolved_nested_info == nullptr) {
-				return concrete_arg;
-			}
-
-			concrete_arg.type_index =
-				resolved_nested_info->registeredTypeIndex().withCategory(
-					resolved_nested_info->typeEnum());
-			concrete_arg.setCategory(resolved_nested_info->typeEnum());
-			concrete_arg.is_dependent = false;
-			concrete_arg.dependent_name = {};
-			concrete_arg.dependent_expr = std::nullopt;
-			return concrete_arg;
 		};
+		std::vector<TemplateTypeArg> concrete_args =
+			materialize_args(source_type_info);
+		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+			std::span<const TemplateParameterNode>(
+				alias_node->template_parameters().data(),
+				alias_node->template_parameters().size()),
+			template_args,
+			nullptr);
+		auto materialize_lookup =
+			[this](const TypeInfo& nested_type_info, std::span<const TemplateTypeArg> nested_concrete_args) {
+				StringHandle qualified_base_template_name =
+					gNamespaceRegistry.buildQualifiedIdentifier(
+						nested_type_info.sourceNamespace(),
+						nested_type_info.baseTemplateName());
+				std::string_view base_template_name =
+					StringTable::getStringView(qualified_base_template_name);
+				AliasTemplateMaterializationResult materialized_nested;
+				if (!base_template_name.empty()) {
+					materialized_nested =
+						materializeTemplateInstantiationForLookup(
+							base_template_name,
+							nested_concrete_args);
+				}
+				if ((materialized_nested.resolved_type_info == nullptr &&
+					 materialized_nested.instantiated_name.empty()) &&
+					qualified_base_template_name != nested_type_info.baseTemplateName()) {
+					materialized_nested =
+						materializeTemplateInstantiationForLookup(
+							StringTable::getStringView(nested_type_info.baseTemplateName()),
+							nested_concrete_args);
+				}
+				return materialized_nested;
+			};
 		for (TemplateTypeArg& concrete_arg : concrete_args) {
-			concrete_arg =
-				recursively_materialize_type_arg(
-					recursively_materialize_type_arg,
-					std::move(concrete_arg),
-					0);
+			concrete_arg = recursivelyMaterializeAliasLookupTemplateArg(
+				substitution_environment,
+				std::move(concrete_arg),
+				materialize_args,
+				materialize_lookup,
+				0);
 		}
 		return concrete_args;
 	};
@@ -1231,6 +1344,207 @@ Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedO
 		std::span<const TemplateTypeArg>{});
 }
 
+Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerTypeForLookup(
+	const TypeInfo& owner_type_info,
+	std::span<const TemplateTypeArg> owner_template_args) {
+	AliasTemplateMaterializationResult result;
+	result.instantiated_name = StringTable::getStringView(owner_type_info.name());
+	result.resolved_type_info = &owner_type_info;
+
+	const auto can_materialize_owner_template =
+		[&](std::string_view candidate_name) {
+		if (candidate_name.empty()) {
+			return false;
+		}
+		if (gTemplateRegistry.lookup_alias_template(candidate_name).has_value()) {
+			return true;
+		}
+		if (auto template_entry = gTemplateRegistry.lookupTemplate(candidate_name);
+			template_entry.has_value() &&
+			template_entry->is<TemplateClassDeclarationNode>()) {
+			return true;
+		}
+		return false;
+	};
+
+	const TypeInfo* canonical_owner_type_info = &owner_type_info;
+	ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
+		owner_type_info.registeredTypeIndex().withCategory(owner_type_info.typeEnum()));
+	if (resolved_owner_alias.terminal_type_info != nullptr &&
+		(resolved_owner_alias.terminal_type_info->isTemplateInstantiation() ||
+		 resolved_owner_alias.terminal_type_info->isStruct() ||
+		 resolved_owner_alias.terminal_type_info->getStructInfo() != nullptr)) {
+		canonical_owner_type_info = resolved_owner_alias.terminal_type_info;
+	} else if (resolved_owner_alias.type_index.is_valid()) {
+		if (const TypeInfo* resolved_owner_index_info =
+				tryGetTypeInfo(resolved_owner_alias.type_index);
+			resolved_owner_index_info != nullptr &&
+			(resolved_owner_index_info->isTemplateInstantiation() ||
+			 resolved_owner_index_info->isStruct() ||
+			 resolved_owner_index_info->getStructInfo() != nullptr)) {
+			canonical_owner_type_info = resolved_owner_index_info;
+		}
+	}
+
+	result.resolved_type_info = canonical_owner_type_info;
+	if (canonical_owner_type_info->name().isValid()) {
+		result.instantiated_name =
+			StringTable::getStringView(canonical_owner_type_info->name());
+	}
+	auto canonical_owner_template_names = [&]() {
+		StringHandle qualified_base_template_handle =
+			gNamespaceRegistry.buildQualifiedIdentifier(
+				canonical_owner_type_info->sourceNamespace(),
+				canonical_owner_type_info->baseTemplateName());
+		std::string_view qualified_base_template_name =
+			StringTable::getStringView(qualified_base_template_handle);
+		std::string_view base_template_name =
+			StringTable::getStringView(canonical_owner_type_info->baseTemplateName());
+		return std::tuple<StringHandle, std::string_view, std::string_view>(
+			qualified_base_template_handle,
+			qualified_base_template_name,
+			base_template_name);
+	};
+
+	auto try_materialize_exact_owner =
+		[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) -> bool {
+		std::vector<TemplateTypeArg> concrete_template_args;
+		concrete_template_args.reserve(stored_args.size());
+		for (const auto& stored_arg : stored_args) {
+			TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
+			concrete_arg.setCategory(stored_arg.category());
+			if (concrete_arg.is_dependent || stored_arg.dependent_name.isValid()) {
+				return false;
+			}
+			concrete_template_args.push_back(std::move(concrete_arg));
+		}
+		if (concrete_template_args.empty() && !stored_args.empty()) {
+			return false;
+		}
+
+		auto [qualified_base_template_handle, qualified_base_template_name, base_template_name] =
+			canonical_owner_template_names();
+		if (qualified_base_template_name.empty() && base_template_name.empty()) {
+			return false;
+		}
+
+		AliasTemplateMaterializationResult canonical_owner;
+		if (!qualified_base_template_name.empty()) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					qualified_base_template_name,
+					std::span<const TemplateTypeArg>(
+						concrete_template_args.data(),
+						concrete_template_args.size()));
+		}
+		if ((canonical_owner.instantiated_name.empty() &&
+			 canonical_owner.resolved_type_info == nullptr) &&
+			!base_template_name.empty() &&
+			qualified_base_template_handle != canonical_owner_type_info->baseTemplateName()) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					base_template_name,
+					std::span<const TemplateTypeArg>(
+						concrete_template_args.data(),
+						concrete_template_args.size()));
+		}
+		if (canonical_owner.instantiated_name.empty() &&
+			canonical_owner.resolved_type_info == nullptr) {
+			return false;
+		}
+
+		if (!canonical_owner.instantiated_name.empty()) {
+			result.instantiated_name = canonical_owner.instantiated_name;
+		}
+		if (canonical_owner.resolved_type_info != nullptr) {
+			result.resolved_type_info = canonical_owner.resolved_type_info;
+		}
+		return true;
+	};
+
+	if (!canonical_owner_type_info->isTemplateInstantiation()) {
+		if (!owner_template_args.empty() &&
+			can_materialize_owner_template(result.instantiated_name)) {
+			AliasTemplateMaterializationResult materialized_owner =
+				materializeTemplateInstantiationForLookup(
+					result.instantiated_name,
+					owner_template_args);
+			if (!materialized_owner.instantiated_name.empty() ||
+				materialized_owner.resolved_type_info != nullptr) {
+				return materialized_owner;
+			}
+		}
+		return result;
+	}
+
+	if (try_materialize_exact_owner(canonical_owner_type_info->templateArgs())) {
+		return result;
+	}
+
+	if (canonical_owner_type_info->hasInstantiationContext() &&
+		canonical_owner_type_info->instantiationContext() != nullptr &&
+		try_materialize_exact_owner(
+			canonical_owner_type_info->instantiationContext()->param_args)) {
+		return result;
+	}
+
+	auto [qualified_base_template_handle, qualified_base_template_name, base_template_name] =
+		canonical_owner_template_names();
+	if (!owner_template_args.empty() &&
+		(can_materialize_owner_template(qualified_base_template_name) ||
+		 can_materialize_owner_template(base_template_name))) {
+		AliasTemplateMaterializationResult canonical_owner;
+		if (can_materialize_owner_template(qualified_base_template_name)) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					qualified_base_template_name,
+					owner_template_args);
+		}
+		if ((canonical_owner.instantiated_name.empty() &&
+			 canonical_owner.resolved_type_info == nullptr) &&
+			can_materialize_owner_template(base_template_name) &&
+			qualified_base_template_handle != canonical_owner_type_info->baseTemplateName()) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					base_template_name,
+					owner_template_args);
+		}
+		if (!canonical_owner.instantiated_name.empty() ||
+			canonical_owner.resolved_type_info != nullptr) {
+			return canonical_owner;
+		}
+	}
+
+	return result;
+}
+
+Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerTypeForLookup(
+	const TemplateTypeArg& owner_type_arg) {
+	AliasTemplateMaterializationResult result;
+	if (!owner_type_arg.type_index.is_valid()) {
+		return result;
+	}
+
+	const TypeInfo* owner_type_info = nullptr;
+	ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
+		owner_type_arg.type_index.withCategory(owner_type_arg.typeEnum()));
+	if (resolved_owner_alias.terminal_type_info != nullptr) {
+		owner_type_info = resolved_owner_alias.terminal_type_info;
+	} else if (resolved_owner_alias.type_index.is_valid()) {
+		owner_type_info = tryGetTypeInfo(resolved_owner_alias.type_index);
+	}
+	if (owner_type_info == nullptr) {
+		owner_type_info = tryGetTypeInfo(owner_type_arg.type_index);
+	}
+	if (owner_type_info == nullptr) {
+		return result;
+	}
+
+	return materializeCanonicalOwnerTypeForLookup(
+		*owner_type_info,
+		std::span<const TemplateTypeArg>{});
+}
+
 Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedOwnerForLookup(
 	std::string_view owner_name,
 	std::span<const TemplateTypeArg> owner_template_args) {
@@ -1259,108 +1573,9 @@ Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedO
 	const StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name);
 	if (const TypeInfo* initial_owner_type_info = findTypeByName(owner_name_handle);
 		initial_owner_type_info != nullptr) {
-		const TypeInfo* owner_type_info = initial_owner_type_info;
-		result.resolved_type_info = owner_type_info;
-		if (!owner_type_info->isTemplateInstantiation()) {
-			ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
-				owner_type_info->registeredTypeIndex().withCategory(owner_type_info->typeEnum()));
-			if (resolved_owner_alias.terminal_type_info != nullptr &&
-				resolved_owner_alias.terminal_type_info != owner_type_info &&
-				resolved_owner_alias.terminal_type_info->isTemplateInstantiation()) {
-				owner_type_info = resolved_owner_alias.terminal_type_info;
-				result.resolved_type_info = owner_type_info;
-			}
-		}
-		if (!owner_type_info->isTemplateInstantiation()) {
-			if (!owner_template_args.empty() &&
-				can_materialize_owner_template(owner_name)) {
-				AliasTemplateMaterializationResult materialized_owner =
-					materializeTemplateInstantiationForLookup(owner_name, owner_template_args);
-				if (!materialized_owner.instantiated_name.empty() ||
-					materialized_owner.resolved_type_info != nullptr) {
-					return materialized_owner;
-				}
-			}
-			return result;
-		}
-
-		const std::string_view base_template_name =
-			StringTable::getStringView(owner_type_info->baseTemplateName());
-		if (base_template_name.empty()) {
-			return result;
-		}
-
-		std::vector<TemplateTypeArg> concrete_template_args;
-		concrete_template_args.reserve(owner_type_info->templateArgs().size());
-		bool has_dependent_template_arg = false;
-		for (const auto& stored_arg : owner_type_info->templateArgs()) {
-			TemplateTypeArg concrete_arg = toTemplateTypeArg(stored_arg);
-			concrete_arg.setCategory(stored_arg.category());
-			if (concrete_arg.is_dependent || stored_arg.dependent_name.isValid()) {
-				has_dependent_template_arg = true;
-				break;
-			}
-			concrete_template_args.push_back(concrete_arg);
-		}
-		if (!has_dependent_template_arg) {
-			AliasTemplateMaterializationResult canonical_owner =
-				materializeTemplateInstantiationForLookup(
-					base_template_name,
-					std::span<const TemplateTypeArg>(
-						concrete_template_args.data(),
-						concrete_template_args.size()));
-			if (!canonical_owner.instantiated_name.empty()) {
-				result.instantiated_name = canonical_owner.instantiated_name;
-			}
-			if (canonical_owner.resolved_type_info != nullptr) {
-				result.resolved_type_info = canonical_owner.resolved_type_info;
-			}
-			return result;
-		}
-
-		if (has_dependent_template_arg &&
-			owner_type_info->hasInstantiationContext() &&
-			owner_type_info->instantiationContext() != nullptr) {
-			concrete_template_args.clear();
-			has_dependent_template_arg = false;
-			for (const auto& context_arg : owner_type_info->instantiationContext()->param_args) {
-				TemplateTypeArg concrete_arg = toTemplateTypeArg(context_arg);
-				concrete_arg.setCategory(context_arg.category());
-				if (concrete_arg.is_dependent || context_arg.dependent_name.isValid()) {
-					has_dependent_template_arg = true;
-					break;
-				}
-				concrete_template_args.push_back(concrete_arg);
-			}
-			if (!has_dependent_template_arg) {
-				AliasTemplateMaterializationResult canonical_owner =
-					materializeTemplateInstantiationForLookup(
-						base_template_name,
-						std::span<const TemplateTypeArg>(
-							concrete_template_args.data(),
-							concrete_template_args.size()));
-				if (!canonical_owner.instantiated_name.empty()) {
-					result.instantiated_name = canonical_owner.instantiated_name;
-				}
-				if (canonical_owner.resolved_type_info != nullptr) {
-					result.resolved_type_info = canonical_owner.resolved_type_info;
-				}
-				return result;
-			}
-		}
-
-		if (!owner_template_args.empty() &&
-			can_materialize_owner_template(base_template_name)) {
-			AliasTemplateMaterializationResult canonical_owner =
-				materializeTemplateInstantiationForLookup(
-					base_template_name,
-					owner_template_args);
-			if (!canonical_owner.instantiated_name.empty() ||
-				canonical_owner.resolved_type_info != nullptr) {
-				return canonical_owner;
-			}
-		}
-		return result;
+		return materializeCanonicalOwnerTypeForLookup(
+			*initial_owner_type_info,
+			owner_template_args);
 	}
 
 	if (!owner_template_args.empty()) {

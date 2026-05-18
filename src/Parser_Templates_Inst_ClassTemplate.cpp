@@ -594,14 +594,18 @@ static std::optional<bool> functionDeclarationsMatchAfterTemplateSubstitution(
 // template's substitution maps are available.
 // Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.
 // The substitution maps only need to remain valid for the duration of this call.
+// `materialize_type_arg` must accept `const TypeSpecifierNode&` and return an
+// optionally more concrete `TemplateTypeArg` for nested template-instantiation
+// arguments that need full deferred-base materialization.
 // `substitute_expression` must accept `const ASTNode&` and return a substituted `ASTNode`.
 // `evaluate_constant_expression` must accept `const ASTNode&` and return
 // `std::optional<Parser::ConstantValue>` for non-type template arguments.
-template <typename SubstituteExpressionFn, typename EvaluateConstantExpressionFn>
+template <typename MaterializeTypeArgFn, typename SubstituteExpressionFn, typename EvaluateConstantExpressionFn>
 static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBaseMemberTypeChain(
 	std::span<const QualifiedTypeMemberAccess> member_type_chain,
 	const TemplateArgSubstitutionMap& name_substitution_map,
 	const TemplateArgPackSubstitutionMap& pack_substitution_map,
+	MaterializeTypeArgFn&& materialize_type_arg,
 	SubstituteExpressionFn&& substitute_expression,
 	EvaluateConstantExpressionFn&& evaluate_constant_expression) {
 	std::vector<QualifiedTypeMemberAccess> resolved_member_chain;
@@ -658,6 +662,14 @@ static std::optional<std::vector<QualifiedTypeMemberAccess>> resolveDeferredBase
 						resolved_type_arg.has_value()) {
 						resolved_args.push_back(*resolved_type_arg);
 						member_arg_resolved = true;
+					}
+					if (!member_arg_resolved) {
+						if (std::optional<TemplateTypeArg> materialized_type_arg =
+								materialize_type_arg(ts);
+							materialized_type_arg.has_value()) {
+							resolved_args.push_back(*materialized_type_arg);
+							member_arg_resolved = true;
+						}
 					}
 					if (!member_arg_resolved) {
 						resolved_args.emplace_back(ts);
@@ -3576,6 +3588,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								deferred_base.member_type_chain,
 								spec_subst_map,
 								spec_pack_subst_map,
+								[&](const TypeSpecifierNode& type_spec) {
+									return tryMaterializeDeferredBaseTypeArg(
+										type_spec,
+										template_params,
+										template_args_for_member_copy,
+										[&](std::string_view concrete_base_template_name, std::span<const TemplateTypeArg> concrete_base_args) {
+											std::vector<TemplateTypeArg> mutable_concrete_base_args(
+												concrete_base_args.begin(),
+												concrete_base_args.end());
+											return instantiateAndResolveBaseName(
+												concrete_base_template_name,
+												mutable_concrete_base_args,
+												true);
+										});
+								},
 								[&](const ASTNode& node) {
 									return substituteTemplateParameters(node, template_params, template_args);
 								},
@@ -6874,6 +6901,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						deferred_base.member_type_chain,
 						subst_map,
 						pack_substitution_map,
+						[&](const TypeSpecifierNode& type_spec) {
+							return tryMaterializeDeferredBaseTypeArg(
+								type_spec,
+								template_params,
+								template_args_to_use,
+								[this](std::string_view concrete_base_template_name, std::span<const TemplateTypeArg> concrete_base_args) {
+									return instantiate_and_register_base_template(concrete_base_template_name, concrete_base_args);
+								});
+						},
 						[&](const ASTNode& node) {
 							return member_template_arg_substitutor.substitute(node);
 						},

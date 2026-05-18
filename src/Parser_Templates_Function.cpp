@@ -1024,6 +1024,27 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	auto makeConstantValueFromCategory = [&](int64_t value, TypeCategory category) {
 		return makeConstantValue(value, category, TypeIndex{});
 	};
+	auto inferMemberPointerClassNameFromNode =
+		[&](const ASTNode& node, const auto& self) -> StringHandle {
+		if (!node.is<ExpressionNode>()) {
+			return {};
+		}
+		const ExpressionNode& expr_variant = node.as<ExpressionNode>();
+		if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr_variant)) {
+			if (unary->op() == "&") {
+				return self(unary->get_operand(), self);
+			}
+			return {};
+		}
+		if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr_variant)) {
+			std::string_view qualified_scope =
+				gNamespaceRegistry.getQualifiedName(qualified_id->namespace_handle());
+			if (!qualified_scope.empty()) {
+				return StringTable::getOrInternStringHandle(qualified_scope);
+			}
+		}
+		return {};
+	};
 	auto makeConstantValueFromEvalResult = [&](const ConstExpr::EvalResult& eval_result) {
 		TypeCategory category = TypeCategory::Int;
 		TypeIndex type_index{};
@@ -1049,10 +1070,18 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 				eval_result.pointer_offset);
 		} else if (eval_result.member_pointer_member.isValid() || eval_result.is_null_member_pointer) {
 			if (eval_result.member_pointer_member.isValid()) {
+				StringHandle member_class_name{};
+				if (eval_result.exact_type.has_value() && eval_result.exact_type->has_member_class()) {
+					member_class_name = eval_result.exact_type->member_class_name();
+				}
+				if (!member_class_name.isValid()) {
+					member_class_name = inferMemberPointerClassNameFromNode(expr_node, inferMemberPointerClassNameFromNode);
+				}
 				value.identity = FlashCpp::NonTypeValueIdentity::makeMemberPointer(
 					value.type_index,
 					eval_result.member_pointer_member,
-					eval_result.as_int());
+					eval_result.as_int(),
+					member_class_name);
 			} else {
 				// Null member pointer: emit a Nullptr-typed Integral identity (value=0)
 				// so that classifyExplicitTemplateArgumentsAgainstParameters handles it

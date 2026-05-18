@@ -2888,6 +2888,11 @@ private:
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
 		std::string_view template_name,
 		std::span<const TemplateTypeArg> template_args);
+	AliasTemplateMaterializationResult materializeCanonicalOwnerTypeForLookup(
+		const TypeInfo& owner_type_info,
+		std::span<const TemplateTypeArg> owner_template_args);
+	AliasTemplateMaterializationResult materializeCanonicalOwnerTypeForLookup(
+		const TemplateTypeArg& owner_type_arg);
 	AliasTemplateMaterializationResult resolveCanonicalInstantiatedOwnerForLookup(
 		std::string_view owner_name);
 	AliasTemplateMaterializationResult resolveCanonicalInstantiatedOwnerForLookup(

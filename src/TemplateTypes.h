@@ -211,9 +211,11 @@ struct NonTypeValueIdentity {
 	TypeIndex value_type_index = nativeTypeIndex(TypeCategory::Int);  // The full type identity of the value
 	StringHandle entity_name{};     // Named object/function for pointer/reference/function-pointer identities
 	StringHandle member_name{};     // Class member for pointer-to-member identities
+	StringHandle member_class_name{}; // Declaring class for pointer-to-member identities
 	int64_t pointer_offset = 0;     // Array-element offset for object pointer identities
 	StringHandle dependent_name{};  // Name when dependent (e.g., "N" for template<int N>)
 	std::optional<ASTNode> dependent_expression{}; // Structural dependent expression identity when no single name represents the argument
+	std::optional<FunctionSignature> function_signature{}; // Member/function pointer type identity when available
 	bool is_dependent = false;      // True if this is a dependent (not yet substituted) value
 
 	TypeCategory valueTypeCategory() const {
@@ -294,11 +296,20 @@ struct NonTypeValueIdentity {
 	}
 
 	static NonTypeValueIdentity makeMemberPointer(TypeIndex type_index, StringHandle target_member, int64_t offset) {
+		return makeMemberPointer(type_index, target_member, offset, {});
+	}
+
+	static NonTypeValueIdentity makeMemberPointer(
+		TypeIndex type_index,
+		StringHandle target_member,
+		int64_t offset,
+		StringHandle declaring_class) {
 		NonTypeValueIdentity id;
 		id.kind = NonTypeValueIdentityKind::MemberPointer;
 		id.value = offset;
 		id.value_type_index = type_index;
 		id.member_name = target_member;
+		id.member_class_name = declaring_class;
 		id.is_dependent = false;
 		id.dependent_name = {};
 		return id;
@@ -411,6 +422,10 @@ struct NonTypeValueIdentity {
 				return true;
 			}
 			return member_name == other.member_name &&
+				   member_class_name == other.member_class_name &&
+				   function_signature.has_value() == other.function_signature.has_value() &&
+				   (!function_signature.has_value() ||
+					equalFunctionSignatureIdentity(*function_signature, *other.function_signature)) &&
 				   value == other.value;
 		}
 		return false;
@@ -439,8 +454,14 @@ struct NonTypeValueIdentity {
 		} else if (kind == NonTypeValueIdentityKind::MemberPointer) {
 			h ^= std::hash<uint8_t>{}(0x5a) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
+		if (member_class_name.isValid()) {
+			h ^= std::hash<StringHandle>{}(member_class_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		if (kind == NonTypeValueIdentityKind::ObjectPointer) {
 			h ^= std::hash<int64_t>{}(pointer_offset) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		if (function_signature.has_value()) {
+			h ^= hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		return h;
@@ -481,6 +502,10 @@ struct NonTypeValueIdentity {
 		}
 		if (member_name.isValid()) {
 			std::string result = "&";
+			if (member_class_name.isValid()) {
+				result += StringTable::getStringView(member_class_name);
+				result += "::";
+			}
 			result += StringTable::getStringView(member_name);
 			return result;
 		}

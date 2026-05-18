@@ -166,6 +166,7 @@ struct TemplateTypeArg {
 	bool is_array;
 	std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
 	MemberPointerKind member_pointer_kind;
+	StringHandle member_class_name;
 
 	// For non-type template parameters
 	bool is_value;  // true if this represents a value instead of a type
@@ -218,7 +219,16 @@ struct TemplateTypeArg {
 	// when building instantiation keys, hashes, or mangled names for non-type arguments.
 	FlashCpp::NonTypeValueIdentity valueIdentity() const {
 		if (is_value && has_typed_value_identity) {
-			return typed_value_identity;
+			FlashCpp::NonTypeValueIdentity identity = typed_value_identity;
+			if (identity.kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer) {
+				if (!identity.member_class_name.isValid() && member_class_name.isValid()) {
+					identity.member_class_name = member_class_name;
+				}
+				if (!identity.function_signature.has_value() && function_signature.has_value()) {
+					identity.function_signature = function_signature;
+				}
+			}
+			return identity;
 		}
 		if (is_dependent) {
 			return FlashCpp::NonTypeValueIdentity::makeDependentExpression(dependent_expr, dependent_name, value, type_index);
@@ -235,6 +245,12 @@ struct TemplateTypeArg {
 		is_dependent = identity.is_dependent;
 		dependent_name = identity.dependent_name;
 		dependent_expr = identity.dependent_expression;
+		if (identity.member_class_name.isValid()) {
+			member_class_name = identity.member_class_name;
+		}
+		if (identity.function_signature.has_value()) {
+			function_signature = identity.function_signature;
+		}
 	}
 
 	// Builds a TypeIndex with category directly.
@@ -243,10 +259,10 @@ struct TemplateTypeArg {
 	}
 
 	TemplateTypeArg()
-		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
+		: type_index(TypeIndex{}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), dependent_name(), is_template_template_arg(false), template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
+		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()))), ref_qualifier(type_spec.reference_qualifier()), pointer_depth(type_spec.pointer_depth()), pointer_cv_qualifiers(), cv_qualifier(type_spec.cv_qualifier()), is_array(type_spec.is_array()), array_dimensions(type_spec.array_dimensions().begin(), type_spec.array_dimensions().end()), member_pointer_kind(MemberPointerKind::None), member_class_name(type_spec.has_member_class() ? type_spec.member_class_name() : StringHandle{}), is_value(false), value(0), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle(), function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
@@ -287,11 +303,11 @@ struct TemplateTypeArg {
 
 	// Constructor for non-type template parameters (default int type)
 	explicit TemplateTypeArg(int64_t val)
-		: type_index(nativeTypeIndex(TypeCategory::Int)), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
+		: type_index(nativeTypeIndex(TypeCategory::Int)), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
 	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, TypeCategory category)
-		: type_index(TypeIndex{0, category}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
+		: type_index(TypeIndex{0, category}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_dimensions(), member_pointer_kind(MemberPointerKind::None), member_class_name(), is_value(true), value(val), has_typed_value_identity(false), typed_value_identity(), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
 	// Factory methods
 	static TemplateTypeArg makeType(TypeIndex idx) {
@@ -375,6 +391,10 @@ struct TemplateTypeArg {
 			h ^= std::hash<size_t>{}(dim) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= std::hash<bool>{}(member_class_name.isValid()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (member_class_name.isValid()) {
+			h ^= std::hash<StringHandle>{}(member_class_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		h ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (is_value) {
 			h ^= valueIdentity().hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -420,6 +440,7 @@ struct TemplateTypeArg {
 			  is_array == other.is_array &&
 			  array_dimensions == other.array_dimensions &&
 			  member_pointer_kind == other.member_pointer_kind &&
+			  member_class_name == other.member_class_name &&
 			  is_value == other.is_value &&
 			  is_dependent == other.is_dependent &&
 			  // dependent_name only contributes when the arg is still dependent.
