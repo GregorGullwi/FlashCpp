@@ -201,7 +201,7 @@ namespace {
 		TemplateTypeArg concrete_arg,
 		MaterializeArgsFn&& materialize_args,
 		MaterializeLookupFn&& materialize_lookup,
-		int depth = 0) {
+		int depth) {
 		constexpr int kMaxRecursiveTemplateArgDepth = 8;
 		if (depth >= kMaxRecursiveTemplateArgDepth ||
 			concrete_arg.is_value ||
@@ -255,10 +255,21 @@ namespace {
 		if (resolved_arg_alias.terminal_type_info != nullptr &&
 			resolved_arg_alias.terminal_type_info->typeEnum() != TypeCategory::Invalid) {
 			concrete_type_info = resolved_arg_alias.terminal_type_info;
-			concrete_arg.type_index =
+			TemplateTypeArg resolved_alias_arg = makeTemplateTypeArgFromResolvedAlias(
+				resolved_arg_alias,
 				concrete_type_info->registeredTypeIndex().withCategory(
-					concrete_type_info->typeEnum());
-			concrete_arg.setCategory(concrete_type_info->typeEnum());
+					concrete_type_info->typeEnum()));
+			concrete_arg.type_index = resolved_alias_arg.type_index;
+			concrete_arg.setCategory(resolved_alias_arg.typeEnum());
+			concrete_arg.pointer_depth = resolved_alias_arg.pointer_depth;
+			concrete_arg.ref_qualifier = resolved_alias_arg.ref_qualifier;
+			concrete_arg.cv_qualifier = resolved_alias_arg.cv_qualifier;
+			concrete_arg.is_array = resolved_alias_arg.is_array;
+			concrete_arg.array_dimensions = std::move(resolved_alias_arg.array_dimensions);
+			concrete_arg.function_signature = resolved_alias_arg.function_signature;
+			if (resolved_arg_alias.member_class_name.has_value()) {
+				concrete_arg.member_class_name = *resolved_arg_alias.member_class_name;
+			}
 			concrete_arg.is_dependent = false;
 			concrete_arg.dependent_name = {};
 			concrete_arg.dependent_expr = std::nullopt;
@@ -487,7 +498,8 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 						substitution_environment,
 						std::move(concrete_arg),
 						materialize_args,
-						materialize_lookup);
+						materialize_lookup,
+						0);
 				}
 				if (!StringTable::getStringView(arg_type_info->baseTemplateName()).empty()) {
 					AliasTemplateMaterializationResult materialized_type =
@@ -978,7 +990,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 				substitution_environment,
 				std::move(concrete_arg),
 				materialize_args,
-				materialize_lookup);
+				materialize_lookup,
+				0);
 		}
 		return concrete_args;
 	};
@@ -1395,18 +1408,38 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 			return false;
 		}
 
-		std::string_view base_template_name =
+		const StringHandle qualified_base_template_handle =
+			gNamespaceRegistry.buildQualifiedIdentifier(
+				canonical_owner_type_info->sourceNamespace(),
+				canonical_owner_type_info->baseTemplateName());
+		const std::string_view qualified_base_template_name =
+			StringTable::getStringView(qualified_base_template_handle);
+		const std::string_view base_template_name =
 			StringTable::getStringView(canonical_owner_type_info->baseTemplateName());
-		if (base_template_name.empty()) {
+		if (qualified_base_template_name.empty() && base_template_name.empty()) {
 			return false;
 		}
 
-		AliasTemplateMaterializationResult canonical_owner =
-			materializeTemplateInstantiationForLookup(
-				base_template_name,
-				std::span<const TemplateTypeArg>(
-					concrete_template_args.data(),
-					concrete_template_args.size()));
+		AliasTemplateMaterializationResult canonical_owner;
+		if (!qualified_base_template_name.empty()) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					qualified_base_template_name,
+					std::span<const TemplateTypeArg>(
+						concrete_template_args.data(),
+						concrete_template_args.size()));
+		}
+		if ((canonical_owner.instantiated_name.empty() &&
+			 canonical_owner.resolved_type_info == nullptr) &&
+			!base_template_name.empty() &&
+			qualified_base_template_handle != canonical_owner_type_info->baseTemplateName()) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					base_template_name,
+					std::span<const TemplateTypeArg>(
+						concrete_template_args.data(),
+						concrete_template_args.size()));
+		}
 		if (canonical_owner.instantiated_name.empty() &&
 			canonical_owner.resolved_type_info == nullptr) {
 			return false;
@@ -1447,14 +1480,33 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 		return result;
 	}
 
+	const StringHandle qualified_base_template_handle =
+		gNamespaceRegistry.buildQualifiedIdentifier(
+			canonical_owner_type_info->sourceNamespace(),
+			canonical_owner_type_info->baseTemplateName());
+	const std::string_view qualified_base_template_name =
+		StringTable::getStringView(qualified_base_template_handle);
 	const std::string_view base_template_name =
 		StringTable::getStringView(canonical_owner_type_info->baseTemplateName());
 	if (!owner_template_args.empty() &&
-		can_materialize_owner_template(base_template_name)) {
-		AliasTemplateMaterializationResult canonical_owner =
-			materializeTemplateInstantiationForLookup(
-				base_template_name,
-				owner_template_args);
+		(can_materialize_owner_template(qualified_base_template_name) ||
+		 can_materialize_owner_template(base_template_name))) {
+		AliasTemplateMaterializationResult canonical_owner;
+		if (can_materialize_owner_template(qualified_base_template_name)) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					qualified_base_template_name,
+					owner_template_args);
+		}
+		if ((canonical_owner.instantiated_name.empty() &&
+			 canonical_owner.resolved_type_info == nullptr) &&
+			can_materialize_owner_template(base_template_name) &&
+			qualified_base_template_handle != canonical_owner_type_info->baseTemplateName()) {
+			canonical_owner =
+				materializeTemplateInstantiationForLookup(
+					base_template_name,
+					owner_template_args);
+		}
 		if (!canonical_owner.instantiated_name.empty() ||
 			canonical_owner.resolved_type_info != nullptr) {
 			return canonical_owner;

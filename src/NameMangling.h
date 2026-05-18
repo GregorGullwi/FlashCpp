@@ -351,6 +351,24 @@ template <typename OutputType>
 inline bool appendItaniumMemberPointerTypeCode(
 	OutputType& output,
 	const FlashCpp::NonTypeValueIdentity& identity) {
+	auto append_member_function_qualifiers =
+		[&](const FunctionSignature& sig) {
+		if (sig.is_const) {
+			output += 'K';
+		}
+		if (sig.is_volatile) {
+			output += 'V';
+		}
+		if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+			output += 'R';
+		} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+			output += 'O';
+		}
+		if (sig.is_noexcept) {
+			output += "Do";
+		}
+	};
+
 	if (!identity.member_class_name.isValid()) {
 		return false;
 	}
@@ -387,6 +405,7 @@ inline bool appendItaniumMemberPointerTypeCode(
 				appendItaniumTypeCode(output, param_spec, false);
 			}
 		}
+		append_member_function_qualifiers(sig);
 		output += 'E';
 		return true;
 	}
@@ -1365,6 +1384,20 @@ inline void appendItaniumTypeTemplateArgs(
 							TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
 							appendItaniumTypeCode(output, param_spec, false);
 						}
+					}
+					if (sig.is_const) {
+						output += 'K';
+					}
+					if (sig.is_volatile) {
+						output += 'V';
+					}
+					if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+						output += 'R';
+					} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+						output += 'O';
+					}
+					if (sig.is_noexcept) {
+						output += "Do";
 					}
 				} else {
 					throw InternalError("Itanium name mangling: MemberFunctionPointer template arg missing function signature");
