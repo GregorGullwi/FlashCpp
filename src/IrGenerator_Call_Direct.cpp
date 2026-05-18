@@ -403,11 +403,20 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 											: func_name_view;
 	const bool has_synthesized_template_suffix =
 		func_name_view.find('$') != std::string_view::npos;
+	auto sema_services = sema_.parserSemanticServices();
+	const FunctionDeclarationNode* const parser_resolved_direct_target =
+		getParserStoredDirectCallTarget(callExprNode);
+	const ResolvedFunctionQueryResult sema_resolved_direct_query =
+		sema_services.getResolvedDirectCallQuery(sema_call_key);
+	const FunctionDeclarationNode* const sema_resolved_direct_target =
+		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
+			? sema_resolved_direct_query.function
+			: nullptr;
 	const FunctionDeclarationNode* const pre_resolved_direct_target = [&]() -> const FunctionDeclarationNode* {
 		const FunctionDeclarationNode* target =
-			getParserStoredDirectCallTarget(callExprNode);
+			parser_resolved_direct_target;
 		if (!target) {
-			target = sema_.getResolvedDirectCall(sema_call_key);
+			target = sema_resolved_direct_target;
 		}
 		return target;
 	}();
@@ -998,7 +1007,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// instantiated members; only gate pattern-owned member descriptors.
 	if (!matched_func_decl) {
 		const FunctionDeclarationNode* callee_resolved_target =
-			getParserStoredDirectCallTarget(callExprNode);
+			parser_resolved_direct_target;
 		if (callee_resolved_target) {
 			const bool is_pattern_member_target =
 				!callee_resolved_target->parent_struct_name().empty() &&
@@ -1014,7 +1023,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// direct-call target stored by semantic analysis before attempting any
 	// duplicate symbol-table recovery work in codegen.
 	if (!matched_func_decl) {
-		consumeResolvedDirectCallTarget(sema_.getResolvedDirectCall(sema_call_key), "sema-resolved");
+		consumeResolvedDirectCallTarget(sema_resolved_direct_target, "sema-resolved");
 	}
 
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
@@ -1032,6 +1041,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// provide a sema-owned target or mark the call as unresolved.
 	const bool sema_recorded_unresolved_call =
 		sema_.hasUnresolvedCallArgs(sema_call_key);
+	if (!matched_func_decl &&
+		sema_normalized_current_function_ &&
+		!sema_recorded_unresolved_call &&
+		!parser_resolved_direct_target &&
+		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+		throw InternalError("Normalized direct-call query remained NotYetAnalyzed");
+	}
 	const bool allow_lookup_recovery =
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap

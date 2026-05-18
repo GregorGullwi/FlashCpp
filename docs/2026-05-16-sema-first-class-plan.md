@@ -124,6 +124,7 @@ Stage 6 progress so far:
 - codegen overload-argument typing in `AstToIr::buildCodegenOverloadResolutionArgType(...)` now consumes `ParserSemanticServices::getOverloadResolutionArgTypeQuery(...)` and treats `NotYetAnalyzed` as an invariant violation in sema-normalized bodies instead of silently collapsing all missing answers into parser fallback behavior.
 - binary-operator overload-argument typing in `IrGenerator_Expr_Operators.cpp` now also consumes the explicit overload-arg query API before parser fallback, so this codegen family no longer depends on nullable sema lookup plumbing.
 - `AstToIr::generateMemberFunctionCallIr(...)` now resolves callable `operator()` receivers through parser-semantic query-state APIs (`getResolvedOpCallQuery` + `getExpressionTypeQuery`), keeping legacy parser fallback for non-normalized/`AnalyzedAbsent` cases while enforcing `NotYetAnalyzed` as an invariant violation in sema-normalized bodies.
+- `AstToIr::generateFunctionCallIr(...)` now routes sema-owned direct-call target consumption through `ParserSemanticServices::getResolvedDirectCallQuery(...)` and treats `NotYetAnalyzed` as an invariant violation in sema-normalized bodies (unless sema explicitly recorded the call as unresolved), while preserving legacy parser lookup recovery for non-normalized paths.
 
 Remaining Stage 6 work:
 
