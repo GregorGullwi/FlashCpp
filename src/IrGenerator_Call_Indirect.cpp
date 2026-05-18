@@ -1628,9 +1628,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						if (!argument.is<ExpressionNode>()) {
 							return std::nullopt;
 						}
-						if (auto sema_type = sema_.getExpressionType(argument); sema_type.has_value() &&
-							!isPlaceholderAutoType(sema_type->type())) {
-							return sema_type;
+						TypeSpecifierQueryResult sema_arg_type_query =
+							sema_.parserSemanticServices().getExpressionTypeQuery(argument);
+						if (sema_arg_type_query.state == TypeSpecifierQueryResult::State::Available &&
+							!isPlaceholderAutoType(sema_arg_type_query.type->type())) {
+							return sema_arg_type_query.type;
+						}
+						if (sema_normalized_current_function_ &&
+							sema_arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+							throw InternalError("Normalized generic lambda argument type query remained NotYetAnalyzed");
 						}
 
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
