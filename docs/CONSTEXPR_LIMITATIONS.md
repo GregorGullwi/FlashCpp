@@ -128,11 +128,11 @@ struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in 
 
 `std::initializer_list<T>` construction from a braced argument list (`{e1, e2, ...}`) is now supported in constexpr evaluation via `InitializerListConstructionNode`. The evaluator synthesises a backing array, constructs begin/end pointer pair (or begin/size for the `data_`/`size_` layout), and materialises the `initializer_list` struct via its constructor or falls back to direct aggregate member assignment.
 
-**Supported:** `size()` (pointer subtraction), pointer comparison, pointer arithmetic on the stored pointer, and range-based for iteration via `begin()` / `end()` when the iterators are backed by the synthesized constexpr snapshot. See `tests/test_constexpr_initializer_list_ret0.cpp` and `tests/test_constexpr_initializer_list_range_for_ret0.cpp`.
+**Supported:** `size()` (pointer subtraction), pointer comparison, pointer arithmetic on the stored pointer, and range-based for iteration via `begin()` / `end()` when the iterators are backed by the synthesized constexpr snapshot. Struct/class elements in the synthesized backing array are now materialized with full member bindings, so direct range-for iteration over `std::initializer_list<T>` also works for aggregate object elements. See `tests/test_constexpr_initializer_list_ret0.cpp`, `tests/test_constexpr_initializer_list_range_for_ret0.cpp`, and `tests/test_constexpr_initializer_list_struct_elements_ret0.cpp`.
 
 **Recent improvement:** Arrow-member resolution in constexpr evaluation now dereferences binding-backed pointers before falling back to symbol-table reconstruction. This improves behavior when synthesized iterator/backing pointers are still available in active bindings.
 
-**Still limited:** Direct element iteration only works while the iterator pointer keeps its synthesized snapshot. If user code stores the iterator in another object and later reloads it in a way that discards the snapshot metadata, dereference can still fail. The remaining work is to preserve snapshot-backed pointer state across every struct/member round-trip, not just through the range-for evaluator's direct `begin()`/`end()` path.
+**Still limited:** Direct element iteration still depends on the iterator pointer retaining its synthesized snapshot. If user code stores the iterator in another object and later reloads it in a way that discards the snapshot metadata, dereference can still fail. The remaining work is to preserve snapshot-backed pointer state across every struct/member round-trip, not just through the direct `begin()`/`end()` iteration path.
 
 ```cpp
 constexpr unsigned long count(std::initializer_list<int> lst) {
@@ -196,14 +196,14 @@ Key design constraint: the evaluator is a tree-walk interpreter with no heap or 
 4. **`constexpr` lambdas and returned lambda values are supported**, including `constexpr auto fn = make_fn(); static_assert(fn(...));`.
 5. **Dynamic allocation works** — `new`/`delete` in constexpr follow C++20 rules; all allocations must be freed before the constant expression returns.
 6. **`const char*` string operations work** — subscript, `while (*s != '\0')` traversal, and string-literal return values are all supported.
-7. **Prefer `size()` over element iteration for `std::initializer_list`** — `size()` (pointer subtraction) works; direct element access via a stored pointer member does not yet propagate the snapshot across struct round-trips.
+7. **Direct `std::initializer_list` iteration works best when you iterate immediately** — `size()` and direct/range-for iteration over the list itself work, including struct elements, but stored pointer members can still lose the snapshot across extra struct round-trips.
 8. **Local struct references are supported** — `T& ref = obj; ref.method();` now behaves as an alias in constexpr evaluation.
 
 ### For Contributors
 
 The most impactful next improvements in rough priority order:
 
-1. **`std::initializer_list` element iteration** — propagate `pointer_value_snapshot` across struct member round-trips so that `*p` where `p = il.begin()` works in constexpr context.
+1. **`std::initializer_list` stored-iterator round-trips** — propagate `pointer_value_snapshot` across struct member round-trips so that `*p` where `p = il.begin()` keeps working after extra object hops.
 2. **Fold expressions in un-instantiated contexts** — trigger on-demand pack expansion when the evaluator encounters an unexpanded `FoldExprNode`.
 3. **Unsigned wrapping for template-dependent types** — propagate `exact_type` through arithmetic so width truncation applies even when the declared type is opaque.
 
@@ -221,6 +221,7 @@ The most impactful next improvements in rough priority order:
 - `tests/test_constexpr_new_scalar_brace_narrowing_fail.cpp` — scalar `new T{arg}` rejects narrowing
 - `tests/test_constexpr_try_catch_ret0.cpp` — `try`/`catch` inside constexpr (C++20)
 - `tests/test_constexpr_initializer_list_ret0.cpp` — `std::initializer_list<T>` size in constexpr
+- `tests/test_constexpr_initializer_list_struct_elements_ret0.cpp` — `std::initializer_list<T>` range-for over struct elements in constexpr
 - `tests/test_constexpr_new_scalar_paren_narrowing_ret0.cpp` — scalar `new T(arg)` uses normal conversions
 - `tests/test_constexpr_new_leak_fail.cpp` — constexpr heap leak detection (expected failure)
 - `tests/test_constexpr_new_default_init_scalar_fail.cpp` / `_array_fail.cpp` / `_aggregate_fail.cpp` — bare `new T` indeterminate-read rejection
