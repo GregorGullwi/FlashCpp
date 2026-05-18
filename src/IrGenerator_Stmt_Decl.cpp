@@ -179,8 +179,11 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return parser_type;
 	};
 
-	if (auto sema_type = sema_.getOverloadResolutionArgType(arg); sema_type.has_value()) {
-		return sema_type;
+	TypeSpecifierQueryResult sema_type_query =
+		sema_.parserSemanticServices().getOverloadResolutionArgTypeQuery(arg);
+	if (sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
+		sema_type_query.type.has_value()) {
+		return sema_type_query.type;
 	}
 	const bool has_exact_sema_type_slot = [&]() {
 		if (!arg.is<ExpressionNode>()) {
@@ -192,10 +195,16 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 	if (sema_normalized_current_function_ &&
 		has_exact_sema_type_slot &&
 		!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
-		throw InternalError(std::string(StringBuilder()
-			.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
-			.append(describeOverloadArgExprShape(arg))
-			.commit()));
+		const bool missing_sema_overload_arg_type =
+			sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed ||
+			(sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
+			 !sema_type_query.type.has_value());
+		if (missing_sema_overload_arg_type) {
+			throw InternalError(std::string(StringBuilder()
+				.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
+				.append(describeOverloadArgExprShape(arg))
+				.commit()));
+		}
 	}
 
 	if (!arg.is<ExpressionNode>()) {

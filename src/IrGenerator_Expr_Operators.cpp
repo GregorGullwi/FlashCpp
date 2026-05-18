@@ -1797,15 +1797,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
 		auto tryGetOperandTypeSpec = [&](const ASTNode& operand) -> std::optional<TypeSpecifierNode> {
-			if (auto sema_type_spec = sema_.getOverloadResolutionArgType(operand)) {
-				return sema_type_spec;
-			}
-
-			auto parser_type_spec = parser_.get_expression_type(operand);
-			if (parser_type_spec.has_value()) {
-				adjust_argument_type_for_overload_resolution(operand, *parser_type_spec);
-			}
-			return parser_type_spec;
+			return buildCodegenOverloadResolutionArgType(operand);
 		};
 
 		auto left_type_spec = tryGetOperandTypeSpec(binaryOperatorNode.get_lhs());

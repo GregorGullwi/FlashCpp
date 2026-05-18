@@ -1514,7 +1514,12 @@ void AstToIr::generateStaticMemberDeclarations() {
 								if (referenced_static_member != nullptr &&
 									(!referenced_static_member->initializer.has_value()) &&
 									struct_info != nullptr) {
-									parser_.instantiateLazyStaticMember(static_member_owner_name, member_name_handle);
+									StringHandle instantiate_owner = referenced_owner_struct
+										? referenced_owner_struct->name
+										: static_member_owner_name;
+									sema_.parserSemanticServices().tryInstantiateLazyStaticMember(
+										instantiate_owner,
+										member_name_handle);
 									normalizePendingSemanticRoots();
 									auto refreshed_lookup = struct_info->findStaticMemberRecursive(member_name_handle);
 									referenced_static_member = refreshed_lookup.first;
@@ -1670,7 +1675,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 								// Try triggering lazy instantiation for template static members
 								// The initializer may contain unsubstituted template parameters
 								bool resolved_via_lazy = false;
-								parser_.instantiateLazyStaticMember(static_member_owner_name, static_member.getName());
+								sema_.parserSemanticServices().tryInstantiateLazyStaticMember(
+									static_member_owner_name,
+									static_member.getName());
 								normalizePendingSemanticRoots();
 								// Re-lookup the member after lazy instantiation may have updated it
 								const StructStaticMember* updated = struct_info->findStaticMember(static_member.getName());

@@ -3061,7 +3061,10 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 		if ((!resolved_static_initializer.initializer || !resolved_static_initializer.initializer->has_value()) &&
 			context.parser && context.struct_info &&
-			context.parser->instantiateLazyStaticMember(context.struct_info->name, name_handle)) {
+			context
+				.requireParserOwnedSema("static member materialization")
+				.parserSemanticServices()
+				.tryInstantiateLazyStaticMember(context.struct_info->name, name_handle)) {
 			context.normalizePendingSemanticRoots();
 			resolved_static_initializer = resolve_current_struct_static_initializer(
 				&identifier,

@@ -5506,8 +5506,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					// The lazy system will substitute them and update the initializer.
 					// If the member is not in the lazy registry, this is a fast no-op.
 					if (context.parser != nullptr) {
-						bool did_lazy = context.parser->instantiateLazyStaticMember(
-							owner_struct->name, member_handle);
+						bool did_lazy = context
+											.requireParserOwnedSema("qualified static member materialization")
+											.parserSemanticServices()
+											.tryInstantiateLazyStaticMember(
+												owner_struct->name,
+												member_handle);
 						if (did_lazy) {
 							context.normalizePendingSemanticRoots();
 							// Re-lookup the static member after instantiation
