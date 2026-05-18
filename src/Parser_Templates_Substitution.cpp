@@ -15,6 +15,20 @@ struct NamedPackBinding {
 	std::optional<std::vector<TemplateTypeArg>> template_args;
 };
 
+std::string buildMemberPointerOwnerReconstructionErrorMessage(
+	const TemplateTypeArg& arg,
+	std::string_view stage) {
+	return std::string(
+		StringBuilder()
+			.append("Failed to reconstruct member-pointer owner during ")
+			.append(stage)
+			.append(" substitution for ")
+			.append(StringTable::getStringView(arg.valueIdentity().member_class_name))
+			.append("::")
+			.append(StringTable::getStringView(arg.typed_value_identity.member_name))
+			.commit());
+}
+
 size_t getSubstitutedTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	if (arg.pointer_depth > 0 ||
 		arg.category() == TypeCategory::FunctionPointer ||
@@ -476,6 +490,23 @@ ASTNode Parser::substituteTemplateParameters(
 			CallMetadataCopyOptions{});
 		return substituteWithExpressionSubstitutor(ASTNode(&substituted_call));
 	};
+	auto substituteTernaryOperator = [&](const TernaryOperatorNode& ternary, bool wrap_in_expression) -> ASTNode {
+		ASTNode substituted_condition = substituteTemplateParameters(ternary.condition(), template_params, template_args);
+		ASTNode substituted_true = substituteTemplateParameters(ternary.true_expr(), template_params, template_args);
+		ASTNode substituted_false = substituteTemplateParameters(ternary.false_expr(), template_params, template_args);
+		if (wrap_in_expression) {
+			return emplace_node<ExpressionNode>(TernaryOperatorNode(
+				substituted_condition,
+				substituted_true,
+				substituted_false,
+				ternary.get_token()));
+		}
+		return emplace_node<TernaryOperatorNode>(
+			substituted_condition,
+			substituted_true,
+			substituted_false,
+			ternary.get_token());
+	};
 
 	// Handle different node types
 	if (node.is<ExpressionNode>()) {
@@ -564,12 +595,7 @@ ASTNode Parser::substituteTemplateParameters(
 									substituted_template_param_ref = true;
 									return;
 								}
-								throw InternalError(StringBuilder()
-														.append("Failed to reconstruct member-pointer owner during template substitution for ")
-														.append(StringTable::getStringView(arg.valueIdentity().member_class_name))
-														.append("::")
-														.append(StringTable::getStringView(arg.typed_value_identity.member_name))
-														.commit());
+								throw InternalError(buildMemberPointerOwnerReconstructionErrorMessage(arg, "template"));
 							}
 						}
 						TypeCategory value_type = arg.typeEnum();
@@ -655,12 +681,7 @@ ASTNode Parser::substituteTemplateParameters(
 									substituted_identifier = true;
 									return;
 								}
-								throw InternalError(StringBuilder()
-														.append("Failed to reconstruct member-pointer owner during identifier substitution for ")
-														.append(StringTable::getStringView(arg.valueIdentity().member_class_name))
-														.append("::")
-														.append(StringTable::getStringView(arg.typed_value_identity.member_name))
-														.commit());
+								throw InternalError(buildMemberPointerOwnerReconstructionErrorMessage(arg, "identifier"));
 							}
 						}
 						TypeCategory value_type = arg.typeEnum();
@@ -768,15 +789,7 @@ ASTNode Parser::substituteTemplateParameters(
 			annotateConcreteBinaryOperatorOverload(substituted_binop);
 			return emplace_node<ExpressionNode>(substituted_binop);
 		} else if (const auto* ternary_operator = std::get_if<TernaryOperatorNode>(&expr)) {
-			const TernaryOperatorNode& ternary = *ternary_operator;
-			ASTNode substituted_condition = substituteTemplateParameters(ternary.condition(), template_params, template_args);
-			ASTNode substituted_true = substituteTemplateParameters(ternary.true_expr(), template_params, template_args);
-			ASTNode substituted_false = substituteTemplateParameters(ternary.false_expr(), template_params, template_args);
-			return emplace_node<ExpressionNode>(TernaryOperatorNode(
-				substituted_condition,
-				substituted_true,
-				substituted_false,
-				ternary.get_token()));
+			return substituteTernaryOperator(*ternary_operator, true);
 		} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 			return substituteWithExpressionSubstitutor(node);
 		} else if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr)) {
@@ -1482,15 +1495,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<BinaryOperatorNode>(substituted_binop);
 
 	} else if (node.is<TernaryOperatorNode>()) {
-		const TernaryOperatorNode& ternary = node.as<TernaryOperatorNode>();
-		ASTNode substituted_condition = substituteTemplateParameters(ternary.condition(), template_params, template_args);
-		ASTNode substituted_true = substituteTemplateParameters(ternary.true_expr(), template_params, template_args);
-		ASTNode substituted_false = substituteTemplateParameters(ternary.false_expr(), template_params, template_args);
-		return emplace_node<TernaryOperatorNode>(
-			substituted_condition,
-			substituted_true,
-			substituted_false,
-			ternary.get_token());
+		return substituteTernaryOperator(node.as<TernaryOperatorNode>(), false);
 
 	} else if (node.is<PointerToMemberAccessNode>()) {
 		const PointerToMemberAccessNode& member_access = node.as<PointerToMemberAccessNode>();

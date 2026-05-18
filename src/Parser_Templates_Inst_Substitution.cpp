@@ -1391,6 +1391,20 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 		result.instantiated_name =
 			StringTable::getStringView(canonical_owner_type_info->name());
 	}
+	auto canonical_owner_template_names = [&]() {
+		StringHandle qualified_base_template_handle =
+			gNamespaceRegistry.buildQualifiedIdentifier(
+				canonical_owner_type_info->sourceNamespace(),
+				canonical_owner_type_info->baseTemplateName());
+		std::string_view qualified_base_template_name =
+			StringTable::getStringView(qualified_base_template_handle);
+		std::string_view base_template_name =
+			StringTable::getStringView(canonical_owner_type_info->baseTemplateName());
+		return std::tuple<StringHandle, std::string_view, std::string_view>(
+			qualified_base_template_handle,
+			qualified_base_template_name,
+			base_template_name);
+	};
 
 	auto try_materialize_exact_owner =
 		[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) -> bool {
@@ -1408,14 +1422,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 			return false;
 		}
 
-		const StringHandle qualified_base_template_handle =
-			gNamespaceRegistry.buildQualifiedIdentifier(
-				canonical_owner_type_info->sourceNamespace(),
-				canonical_owner_type_info->baseTemplateName());
-		const std::string_view qualified_base_template_name =
-			StringTable::getStringView(qualified_base_template_handle);
-		const std::string_view base_template_name =
-			StringTable::getStringView(canonical_owner_type_info->baseTemplateName());
+		auto [qualified_base_template_handle, qualified_base_template_name, base_template_name] =
+			canonical_owner_template_names();
 		if (qualified_base_template_name.empty() && base_template_name.empty()) {
 			return false;
 		}
@@ -1480,14 +1488,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 		return result;
 	}
 
-	const StringHandle qualified_base_template_handle =
-		gNamespaceRegistry.buildQualifiedIdentifier(
-			canonical_owner_type_info->sourceNamespace(),
-			canonical_owner_type_info->baseTemplateName());
-	const std::string_view qualified_base_template_name =
-		StringTable::getStringView(qualified_base_template_handle);
-	const std::string_view base_template_name =
-		StringTable::getStringView(canonical_owner_type_info->baseTemplateName());
+	auto [qualified_base_template_handle, qualified_base_template_name, base_template_name] =
+		canonical_owner_template_names();
 	if (!owner_template_args.empty() &&
 		(can_materialize_owner_template(qualified_base_template_name) ||
 		 can_materialize_owner_template(base_template_name))) {
