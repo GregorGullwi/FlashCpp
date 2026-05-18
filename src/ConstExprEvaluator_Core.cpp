@@ -862,8 +862,8 @@ EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& tar
 // Main evaluation entry point
 // Evaluates a constant expression and returns the result
 EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& context) {
-	if (context.parser != nullptr && context.sema == nullptr) {
-		throw InternalError("ConstExpr evaluate requires sema-backed EvaluationContext when parser is set");
+	if (context.parser != nullptr) {
+		(void)context.requireParserOwnedSema("evaluate");
 	}
 
 	// Check complexity limit
