@@ -1112,8 +1112,16 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 	} else {
 		const ASTNode& operand_node = typeidNode.operand();
 		const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
+		TypeSpecifierQueryResult static_expr_type_query =
+			sema_.parserSemanticServices().getExpressionTypeQuery(operand_node);
 		std::optional<TypeSpecifierNode> static_expr_type =
-			sema_.getExpressionType(operand_node);
+			static_expr_type_query.state == TypeSpecifierQueryResult::State::Available
+				? static_expr_type_query.type
+				: std::nullopt;
+		if (sema_normalized_current_function_ &&
+			static_expr_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+			throw InternalError("Normalized typeid(expr) operand type query remained NotYetAnalyzed");
+		}
 		auto resolveExprTypeIndex = [&](const ExpressionNode& expr, TypeIndex fallback_type_index) -> TypeIndex {
 			if (fallback_type_index.category() == TypeCategory::Struct && fallback_type_index.is_valid()) {
 				return fallback_type_index;

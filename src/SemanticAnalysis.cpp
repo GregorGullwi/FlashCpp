@@ -7805,7 +7805,7 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
-	parser().normalizePendingSemanticRootsIfAvailable();
+	parser().normalizePendingSemanticRoots();
 	return instantiated;
 }
 
@@ -7821,7 +7821,7 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
-	parser().normalizePendingSemanticRootsIfAvailable();
+	parser().normalizePendingSemanticRoots();
 	return instantiated;
 }
 
@@ -7855,7 +7855,7 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	if (!instantiated.has_value()) {
 		return std::nullopt;
 	}
-	parser().normalizePendingSemanticRootsIfAvailable();
+	parser().normalizePendingSemanticRoots();
 	return instantiated;
 }
 
@@ -7922,7 +7922,7 @@ size_t SemanticAnalysis::drainLazyMemberRegistry() {
 					entry.registry_key));
 			if (result.has_value()) {
 				++total_materialized;
-				parser().normalizePendingSemanticRootsIfAvailable();
+				parser().normalizePendingSemanticRoots();
 				// Same rationale as the AST-walk pass: annotate the freshly-
 				// substituted body so its internal calls route through
 				// `markOdrUsed` and get picked up by the next fixpoint iteration

@@ -634,7 +634,7 @@ Parser::Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic
 	ast_nodes_.reserve(default_ast_tree_size_);
 }
 
-void Parser::normalizePendingSemanticRootsIfAvailable() {
+void Parser::normalizePendingSemanticRoots() {
 	semantic_analysis_.parserSemanticServices().normalizePendingSemanticRoots();
 }
 

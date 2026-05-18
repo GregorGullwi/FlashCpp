@@ -2087,12 +2087,38 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	}
 	if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-		if (operand_pointer_depth == 0) {
-			std::optional<TypeSpecifierNode> operand_type_opt;
-			operand_type_opt = sema_.getExpressionType(unaryOperatorNode.get_operand());
-			if (!operand_type_opt.has_value()) {
-				operand_type_opt = parser_.get_expression_type(unaryOperatorNode.get_operand());
+		auto queryExprTypeWithParserFallback = [&](const ASTNode& node,
+												   bool allow_not_yet_analyzed_recovery,
+												   const char* normalized_not_yet_analyzed_message) -> std::optional<TypeSpecifierNode> {
+			TypeSpecifierQueryResult sema_type_query =
+				sema_.parserSemanticServices().getExpressionTypeQuery(node);
+			std::optional<TypeSpecifierNode> sema_type =
+				sema_type_query.state == TypeSpecifierQueryResult::State::Available
+					? sema_type_query.type
+					: std::nullopt;
+			const bool needs_parser_fallback =
+				!sema_type.has_value() ||
+				sema_type->type() == TypeCategory::Invalid ||
+				isPlaceholderAutoType(sema_type->type());
+			if (!needs_parser_fallback) {
+				return sema_type;
 			}
+			if (sema_normalized_current_function_ &&
+				sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed &&
+				!allow_not_yet_analyzed_recovery) {
+				throw InternalError(normalized_not_yet_analyzed_message);
+			}
+			return parser_.get_expression_type(node);
+		};
+		if (operand_pointer_depth == 0) {
+			const bool allow_identifier_or_member_recovery =
+				(operandHandledAsIdentifier && std::holds_alternative<IdentifierNode>(operandExpr)) ||
+				std::holds_alternative<MemberAccessNode>(operandExpr) ||
+				std::holds_alternative<UnaryOperatorNode>(operandExpr);
+			std::optional<TypeSpecifierNode> operand_type_opt = queryExprTypeWithParserFallback(
+				unaryOperatorNode.get_operand(),
+				allow_identifier_or_member_recovery,
+				"Normalized builtin ++/-- operand type query remained NotYetAnalyzed");
 			if (operand_type_opt.has_value()) {
 				applyPointerTypeInfo(*operand_type_opt);
 			}
@@ -2119,10 +2145,10 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				}
 			}
 			if (!object_type_opt.has_value()) {
-				object_type_opt = sema_.getExpressionType(member_access.object());
-			}
-			if (!object_type_opt.has_value()) {
-				object_type_opt = parser_.get_expression_type(member_access.object());
+				object_type_opt = queryExprTypeWithParserFallback(
+					member_access.object(),
+					false,
+					"Normalized builtin ++/-- member object type query remained NotYetAnalyzed");
 			}
 			if (object_type_opt.has_value() &&
 				isIrStructType(toIrType(object_type_opt->type())) &&

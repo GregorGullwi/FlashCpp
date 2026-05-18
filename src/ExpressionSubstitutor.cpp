@@ -1001,7 +1001,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 	};
 	auto normalizePendingSemanticRoots = [&]() {
-		parser_.normalizePendingSemanticRootsIfAvailable();
+		parser_.normalizePendingSemanticRoots();
 	};
 	auto materializeSubstitutedUnresolvedCall = [&](ChunkedVector<ASTNode>&& substituted_args) -> ASTNode {
 		CallExprNode substituted_call(

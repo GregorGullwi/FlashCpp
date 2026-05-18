@@ -1025,7 +1025,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 		AliasTemplateMaterializationResult alias_result =
 			materializeAliasTemplateInstantiation(template_name, template_args);
 		if (!alias_result.instantiated_name.empty()) {
-			normalizePendingSemanticRootsIfAvailable();
+			normalizePendingSemanticRoots();
 			if (alias_result.resolved_type_info == nullptr) {
 				alias_result.resolved_type_info =
 					findTypeByName(StringTable::getOrInternStringHandle(alias_result.instantiated_name));
@@ -1039,7 +1039,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 	result.instantiated_name =
 		instantiate_and_register_base_template(template_name_to_instantiate, template_args);
 	if (!result.instantiated_name.empty()) {
-		normalizePendingSemanticRootsIfAvailable();
+		normalizePendingSemanticRoots();
 	} else {
 		auto registry_hit = gTemplateRegistry.getInstantiation(
 			StringTable::getOrInternStringHandle(template_name), template_args);
@@ -1251,7 +1251,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(
 			owner_name,
 			"::",
 			member_name);
-		normalizePendingSemanticRootsIfAvailable();
+		normalizePendingSemanticRoots();
 	}
 	return instantiated;
 }
@@ -3011,7 +3011,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			registerLateMaterializedTopLevelNode(new_func_node);
 		}
 	}
-	normalizePendingSemanticRootsIfAvailable();
+	normalizePendingSemanticRoots();
 
 	// If no constructor was defined, we should synthesize a default one
 	// For now, mark that we need one and it will be generated in codegen
