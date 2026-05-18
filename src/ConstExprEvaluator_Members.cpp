@@ -2959,14 +2959,15 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
-	if (context.parser != nullptr) {
-		context
-			.requireParserOwnedSema(kMemberFunctionMaterializationLookupOp)
-			.parserSemanticServices()
-			.ensureMemberFunctionMaterialized(
-				context.struct_info->name, function_name_handle, std::nullopt);
-	} else if (context.sema != nullptr) {
-		context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(
+	auto resolveMaterializationSema = [&](const char* operation) -> SemanticAnalysis* {
+		if (context.parser != nullptr) {
+			return &context.requireParserOwnedSema(operation);
+		}
+		return context.sema;
+	};
+	if (SemanticAnalysis* sema = resolveMaterializationSema(
+			kMemberFunctionMaterializationLookupOp); sema != nullptr) {
+		sema->parserSemanticServices().ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
 	}
 
@@ -2983,13 +2984,9 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		if (context.parser != nullptr) {
-			context
-				.requireParserOwnedSema(kMemberFunctionMaterializationReplayOp)
-				.parserSemanticServices()
-				.ensureMemberFunctionMaterialized(owner_name, *result.function);
-		} else if (context.sema != nullptr) {
-			context.sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
+		if (SemanticAnalysis* sema = resolveMaterializationSema(
+				kMemberFunctionMaterializationReplayOp); sema != nullptr) {
+			sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
 		}
 		result = find_member_function_candidate(
 			context.struct_info,
