@@ -103,8 +103,7 @@ void AstToIr::normalizePendingSemanticRoots() {
 }
 
 ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols) const {
-	ConstExpr::EvaluationContext ctx(symbols);
-	ctx.attachParserOwnedSema(parser_);
+	ConstExpr::EvaluationContext ctx(symbols, parser_);
 	return ctx;
 }
 

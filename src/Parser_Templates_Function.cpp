@@ -1208,13 +1208,12 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 	// is_speculative = true disables short-circuit && / || so that a truthy LHS of `||`
 	// does not give a false-positive result during template-argument disambiguation.
 	auto makeConstExprContext = [&]() {
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
+		ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 		if (!struct_parsing_context_stack_.empty()) {
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
 			ctx.struct_node = struct_ctx.struct_node;
 			ctx.struct_info = struct_ctx.local_struct_info;
 		}
-		ctx.attachParserOwnedSema(*this);
 		ctx.is_speculative = true;
 		return ctx;
 	};

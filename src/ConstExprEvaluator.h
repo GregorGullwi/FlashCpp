@@ -505,8 +505,9 @@ struct EvaluationContext {
 	}
 
 	// Constructor requires symbol table to prevent missing it
-	explicit EvaluationContext(const SymbolTable& symbol_table)
-		: symbols(&symbol_table) {}
+	explicit EvaluationContext(const SymbolTable& symbol_table);
+	EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner);
+	EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner);
 };
 
 // Main constant expression evaluator class

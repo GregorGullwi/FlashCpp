@@ -8,6 +8,18 @@
 
 namespace ConstExpr {
 
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table)
+	: symbols(&symbol_table) {}
+
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner)
+	: symbols(&symbol_table),
+	  parser(&parser_owner),
+	  sema(&parser_owner.semanticAnalysis()) {}
+
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner)
+	: symbols(&symbol_table),
+	  sema(&sema_owner) {}
+
 void EvaluationContext::attachSemaOnly(SemanticAnalysis& sema_owner) {
 	parser = nullptr;
 	sema = &sema_owner;

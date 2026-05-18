@@ -158,8 +158,7 @@ namespace {
 		return std::nullopt;
 	}
 
-	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-	eval_ctx.attachParserOwnedSema(parser);
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, parser);
 	eval_ctx.template_environment = buildTemplateEnvironment(
 		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 		template_args,

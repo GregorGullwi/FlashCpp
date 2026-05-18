@@ -1279,9 +1279,8 @@ static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext
 	const StructTypeInfo* struct_info,
 	const TemplateParamsContainer& template_params,
 	std::span<const TemplateTypeArg> template_args) {
-	ConstExpr::EvaluationContext eval_ctx(symbol_table);
+	ConstExpr::EvaluationContext eval_ctx(symbol_table, parser);
 	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
-	eval_ctx.attachParserOwnedSema(parser);
 	eval_ctx.struct_info = struct_info;
 	if (struct_info && struct_info->own_type_index_.has_value()) {
 		eval_ctx.struct_type_index = *struct_info->own_type_index_;
