@@ -348,6 +348,26 @@ inline void appendItaniumVendorExtendedTypeCode(
 }
 
 template <typename OutputType>
+inline void appendItaniumMemberFunctionQualifiers(
+	OutputType& output,
+	const FunctionSignature& sig) {
+	if (sig.is_const) {
+		output += 'K';
+	}
+	if (sig.is_volatile) {
+		output += 'V';
+	}
+	if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+		output += 'R';
+	} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+		output += 'O';
+	}
+	if (sig.is_noexcept) {
+		output += "Do";
+	}
+}
+
+template <typename OutputType>
 inline bool appendItaniumMemberPointerTypeCode(
 	OutputType& output,
 	const FlashCpp::NonTypeValueIdentity& identity) {
@@ -387,6 +407,7 @@ inline bool appendItaniumMemberPointerTypeCode(
 				appendItaniumTypeCode(output, param_spec, false);
 			}
 		}
+		appendItaniumMemberFunctionQualifiers(output, sig);
 		output += 'E';
 		return true;
 	}
@@ -1366,6 +1387,7 @@ inline void appendItaniumTypeTemplateArgs(
 							appendItaniumTypeCode(output, param_spec, false);
 						}
 					}
+					appendItaniumMemberFunctionQualifiers(output, sig);
 				} else {
 					throw InternalError("Itanium name mangling: MemberFunctionPointer template arg missing function signature");
 				}

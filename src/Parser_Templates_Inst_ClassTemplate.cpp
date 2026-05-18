@@ -3592,7 +3592,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									return tryMaterializeDeferredBaseTypeArg(
 										type_spec,
 										template_params,
-										template_args,
+										template_args_for_member_copy,
 										[&](std::string_view concrete_base_template_name, std::span<const TemplateTypeArg> concrete_base_args) {
 											std::vector<TemplateTypeArg> mutable_concrete_base_args(
 												concrete_base_args.begin(),

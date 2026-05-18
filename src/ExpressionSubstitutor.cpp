@@ -155,7 +155,7 @@ std::vector<size_t> concatenateArrayDimensions(std::vector<size_t> prefix_dimens
 	return prefix_dimensions;
 }
 
-std::vector<QualifiedTypeMemberAccess> buildQualifiedMemberAccessChain(std::string_view qualified_name) {
+static std::vector<QualifiedTypeMemberAccess> buildQualifiedMemberAccessChain(std::string_view qualified_name) {
 	std::vector<QualifiedTypeMemberAccess> member_chain;
 	for (std::string_view component : splitQualifiedNamespace(qualified_name)) {
 		if (component.empty()) {
@@ -1093,8 +1093,7 @@ const TypeInfo* ExpressionSubstitutor::resolveMaterializedMemberAliasLookup(
 	}
 
 	if (!lookup.terminal_member_name.isValid() ||
-		StringTable::getStringView(lookup.resolved_type->name()) !=
-			StringTable::getStringView(lookup.terminal_member_name)) {
+		lookup.resolved_type->name() != lookup.terminal_member_name) {
 		return lookup.resolved_type;
 	}
 
