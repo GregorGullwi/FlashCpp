@@ -760,7 +760,7 @@ inline void populateSubstitutionsFromClassContext(
 // Append Itanium-style type encoding for basic types
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template <typename OutputType>
-inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter = false) {
+inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter) {
 	TypeSpecifierNode parameter_adjusted_type =
 		is_function_parameter ? type_node.adjusted_function_parameter_type() : type_node;
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(parameter_adjusted_type);
@@ -920,14 +920,14 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
 				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
 			TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-			appendItaniumTypeCode(output, ret_spec);
+			appendItaniumTypeCode(output, ret_spec, false);
 				// Encode parameter types
 			if (sig.parameter_type_indices.empty()) {
 				output += 'v';  // void parameter list
 			} else {
 				for (const TypeIndex& pt : sig.parameter_type_indices) {
 					TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);	 // explicit ctor: see above
-					appendItaniumTypeCode(output, param_spec);
+					appendItaniumTypeCode(output, param_spec, false);
 				}
 			}
 		} else {
@@ -1334,13 +1334,13 @@ inline void appendItaniumTypeTemplateArgs(
 				if (arg.function_signature.has_value()) {
 					const auto& sig = *arg.function_signature;
 					TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-					appendItaniumTypeCode(output, ret_spec);
+					appendItaniumTypeCode(output, ret_spec, false);
 					if (sig.parameter_type_indices.empty()) {
 						output += 'v';
 					} else {
 						for (const TypeIndex& pt : sig.parameter_type_indices) {
 							TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-							appendItaniumTypeCode(output, param_spec);
+							appendItaniumTypeCode(output, param_spec, false);
 						}
 					}
 				} else {
@@ -1357,13 +1357,13 @@ inline void appendItaniumTypeTemplateArgs(
 				if (arg.function_signature.has_value()) {
 					const auto& sig = *arg.function_signature;
 					TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-					appendItaniumTypeCode(output, ret_spec);
+					appendItaniumTypeCode(output, ret_spec, false);
 					if (sig.parameter_type_indices.empty()) {
 						output += 'v';
 					} else {
 						for (const TypeIndex& pt : sig.parameter_type_indices) {
 							TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-							appendItaniumTypeCode(output, param_spec);
+							appendItaniumTypeCode(output, param_spec, false);
 						}
 					}
 				} else {

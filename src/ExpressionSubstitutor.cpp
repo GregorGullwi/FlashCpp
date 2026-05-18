@@ -157,22 +157,14 @@ std::vector<size_t> concatenateArrayDimensions(std::vector<size_t> prefix_dimens
 
 std::vector<QualifiedTypeMemberAccess> buildQualifiedMemberAccessChain(std::string_view qualified_name) {
 	std::vector<QualifiedTypeMemberAccess> member_chain;
-	size_t start = 0;
-	while (start < qualified_name.size()) {
-		size_t separator = qualified_name.find("::", start);
-		std::string_view component = separator == std::string_view::npos
-			? qualified_name.substr(start)
-			: qualified_name.substr(start, separator - start);
-		if (!component.empty()) {
-			QualifiedTypeMemberAccess member_access;
-			member_access.member_name =
-				StringTable::getOrInternStringHandle(component);
-			member_chain.push_back(std::move(member_access));
+	for (std::string_view component : splitQualifiedNamespace(qualified_name)) {
+		if (component.empty()) {
+			continue;
 		}
-		if (separator == std::string_view::npos) {
-			break;
-		}
-		start = separator + 2;
+		QualifiedTypeMemberAccess member_access;
+		member_access.member_name =
+			StringTable::getOrInternStringHandle(component);
+		member_chain.push_back(std::move(member_access));
 	}
 	return member_chain;
 }
@@ -972,23 +964,16 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 					member_chain);
 			if (resolved_type != nullptr) {
 				if (!dependent_name->member_chain.empty()) {
-					StringBuilder member_path_builder;
-					for (size_t member_index = 0; member_index < dependent_name->member_chain.size();
-						 ++member_index) {
-						if (member_index != 0) {
-							member_path_builder.append("::");
-						}
-						member_path_builder.append(
-							StringTable::getStringView(
-								dependent_name->member_chain[member_index].name));
+					StringBuilder full_path_builder;
+					full_path_builder.append(materialized_owner_name);
+					for (const auto& member_record : dependent_name->member_chain) {
+						full_path_builder.append("::");
+						full_path_builder.append(
+							StringTable::getStringView(member_record.name));
 					}
 					lookup.materialized_member_handle =
 						StringTable::getOrInternStringHandle(
-							StringBuilder()
-								.append(materialized_owner_name)
-								.append("::")
-								.append(member_path_builder.commit())
-								.commit());
+							full_path_builder.commit());
 					lookup.terminal_member_name =
 						dependent_name->member_chain.back().name;
 				}

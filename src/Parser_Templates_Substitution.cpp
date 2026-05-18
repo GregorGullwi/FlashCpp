@@ -533,24 +533,17 @@ ASTNode Parser::substituteTemplateParameters(
 							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
 								arg.typed_value_identity.member_name.isValid() &&
 								arg.valueIdentity().member_class_name.isValid()) {
-								InlineVector<StringHandle, 4> owner_components;
-								std::string_view owner_name_view =
-									StringTable::getStringView(arg.valueIdentity().member_class_name);
-								size_t owner_start = 0;
-								while (owner_start < owner_name_view.size()) {
-									size_t owner_end = owner_name_view.find("::", owner_start);
-									if (owner_end == std::string_view::npos) {
-										owner_end = owner_name_view.size();
-									}
-									owner_components.push_back(StringTable::getOrInternStringHandle(
-										owner_name_view.substr(owner_start, owner_end - owner_start)));
-									owner_start = owner_end == owner_name_view.size() ? owner_end : owner_end + 2;
-								}
+								std::vector<std::string_view> owner_components =
+									splitQualifiedNamespace(
+										StringTable::getStringView(
+											arg.valueIdentity().member_class_name));
 								NamespaceHandle owner_scope = owner_components.empty()
 									? NamespaceRegistry::GLOBAL_NAMESPACE
 									: gNamespaceRegistry.getOrCreatePath(
 										NamespaceRegistry::GLOBAL_NAMESPACE,
-										std::span<const StringHandle>(owner_components.data(), owner_components.size()));
+										std::span<const std::string_view>(
+											owner_components.data(),
+											owner_components.size()));
 								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
 									Token member_token(
 										Token::Type::Identifier,
@@ -630,24 +623,17 @@ ASTNode Parser::substituteTemplateParameters(
 							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
 								arg.typed_value_identity.member_name.isValid() &&
 								arg.valueIdentity().member_class_name.isValid()) {
-								InlineVector<StringHandle, 4> owner_components;
-								std::string_view owner_name_view =
-									StringTable::getStringView(arg.valueIdentity().member_class_name);
-								size_t owner_start = 0;
-								while (owner_start < owner_name_view.size()) {
-									size_t owner_end = owner_name_view.find("::", owner_start);
-									if (owner_end == std::string_view::npos) {
-										owner_end = owner_name_view.size();
-									}
-									owner_components.push_back(StringTable::getOrInternStringHandle(
-										owner_name_view.substr(owner_start, owner_end - owner_start)));
-									owner_start = owner_end == owner_name_view.size() ? owner_end : owner_end + 2;
-								}
+								std::vector<std::string_view> owner_components =
+									splitQualifiedNamespace(
+										StringTable::getStringView(
+											arg.valueIdentity().member_class_name));
 								NamespaceHandle owner_scope = owner_components.empty()
 									? NamespaceRegistry::GLOBAL_NAMESPACE
 									: gNamespaceRegistry.getOrCreatePath(
 										NamespaceRegistry::GLOBAL_NAMESPACE,
-										std::span<const StringHandle>(owner_components.data(), owner_components.size()));
+										std::span<const std::string_view>(
+											owner_components.data(),
+											owner_components.size()));
 								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
 									Token member_token(
 										Token::Type::Identifier,
