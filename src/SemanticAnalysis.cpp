@@ -7863,7 +7863,8 @@ bool SemanticAnalysis::tryInstantiateLazyStaticMember(
 	StringHandle struct_name,
 	StringHandle member_name) {
 	if (!struct_name.isValid() || !member_name.isValid()) {
-		return false;
+		throw InternalError(
+			"SemanticAnalysis::tryInstantiateLazyStaticMember requires valid struct_name and member_name");
 	}
 	return parser().instantiateLazyStaticMember(struct_name, member_name);
 }

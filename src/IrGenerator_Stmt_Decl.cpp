@@ -193,13 +193,18 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return slot.has_value() && slot->has_type();
 	}();
 	if (sema_normalized_current_function_ &&
-		sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed &&
 		has_exact_sema_type_slot &&
 		!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
-		throw InternalError(std::string(StringBuilder()
-			.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
-			.append(describeOverloadArgExprShape(arg))
-			.commit()));
+		const bool missing_sema_overload_arg_type =
+			sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed ||
+			(sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
+			 !sema_type_query.type.has_value());
+		if (missing_sema_overload_arg_type) {
+			throw InternalError(std::string(StringBuilder()
+				.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
+				.append(describeOverloadArgExprShape(arg))
+				.commit()));
+		}
 	}
 
 	if (!arg.is<ExpressionNode>()) {
