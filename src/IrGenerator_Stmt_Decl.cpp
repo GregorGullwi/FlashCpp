@@ -179,8 +179,11 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return parser_type;
 	};
 
-	if (auto sema_type = sema_.getOverloadResolutionArgType(arg); sema_type.has_value()) {
-		return sema_type;
+	TypeSpecifierQueryResult sema_type_query =
+		sema_.parserSemanticServices().getOverloadResolutionArgTypeQuery(arg);
+	if (sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
+		sema_type_query.type.has_value()) {
+		return sema_type_query.type;
 	}
 	const bool has_exact_sema_type_slot = [&]() {
 		if (!arg.is<ExpressionNode>()) {
@@ -190,6 +193,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return slot.has_value() && slot->has_type();
 	}();
 	if (sema_normalized_current_function_ &&
+		sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed &&
 		has_exact_sema_type_slot &&
 		!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
 		throw InternalError(std::string(StringBuilder()
