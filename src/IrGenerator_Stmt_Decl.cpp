@@ -1397,7 +1397,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// Calculate total element count as product of all dimensions
 				array_count = 1;
 				for (const auto& dim_expr : dims) {
-					ConstExpr::EvaluationContext ctx(symbol_table);
+					ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 					auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 
 					if (eval_result.success()) {
@@ -2900,7 +2900,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								auto size_expr = decl.array_size();
 								if (size_expr.has_value()) {
 										// Evaluate the array size expression using ConstExprEvaluator
-									ConstExpr::EvaluationContext array_ctx(symbol_table);
+									ConstExpr::EvaluationContext array_ctx = makeEvalContext(symbol_table);
 									auto eval_result = ConstExpr::Evaluator::evaluate(*size_expr, array_ctx);
 									if (eval_result.success()) {
 										ctor_array_count = static_cast<size_t>(eval_result.as_int());

@@ -3270,7 +3270,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			ExprResult arg_result = visitExpressionNode(first_arg.as<ExpressionNode>());
 			if (BuiltinListInitNarrowing::isBraceConstructedBuiltin(constructorCallNode)) {
 				std::optional<ConstExpr::EvalResult> constant_value;
-				ConstExpr::EvaluationContext ctx(symbol_table);
+				ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 				if (global_symbol_table_) {
 					ctx.global_symbols = global_symbol_table_;
 				}
