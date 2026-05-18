@@ -858,7 +858,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 		}
 
 		registerLateMaterializedOwningStructRoot(instantiated_struct_name);
-		normalizePendingSemanticRootsIfAvailable();
+		normalizePendingSemanticRoots();
 		return &instantiated_ctor;
 	};
 

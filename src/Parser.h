@@ -589,7 +589,7 @@ public:
 	const SemanticAnalysis& semanticAnalysis() const {
 		return semantic_analysis_;
 	}
-	void normalizePendingSemanticRootsIfAvailable();
+	void normalizePendingSemanticRoots();
 	ASTNode get_inner_node(ASTNode node) const {
 		return node;
 	}
@@ -2715,7 +2715,7 @@ public:
 	//   2. **Register** - Call registerLateMaterializedTopLevelNode() to:
 	//      - Add the node to ast_nodes_ (so codegen can find it)
 	//      - Enqueue it in pending_semantic_roots_ (so sema can normalize it)
-	//   3. **Normalize** - Call normalizePendingSemanticRootsIfAvailable() to:
+	//   3. **Normalize** - Call normalizePendingSemanticRoots() to:
 	//      - Let SemanticAnalysis process all pending roots
 	//      - Resolve forward declarations, auto types, etc.
 	//
@@ -2725,13 +2725,13 @@ public:
 	//
 	// **Batched Instantiation** (multiple members of same class):
 	//   Call `registerLateMaterializedTopLevelNode(node)` for each member,
-	//   then call `normalizePendingSemanticRootsIfAvailable()` once at the
+	//   then call `normalizePendingSemanticRoots()` once at the
 	//   end. This is more efficient than normalizing after each node.
 	//
 	// **Callers of parser materialization helpers** (from codegen/constexpr):
 	//   If the helper returns a newly-instantiated node but doesn't normalize,
 	//   the caller must call the appropriate normalize function:
-	//   - Parser callers: normalizePendingSemanticRootsIfAvailable()
+	//   - Parser callers: normalizePendingSemanticRoots()
 	//   - AstToIr callers: normalizePendingSemanticRoots()
 	//   - ConstExpr callers: context.normalizePendingSemanticRoots()
 	//
@@ -2767,7 +2767,7 @@ public:
 
 	/// Register a late-materialized AST node for codegen and sema processing.
 	/// Does NOT normalize immediately - use for batched registration.
-	/// After batched registration, call normalizePendingSemanticRootsIfAvailable().
+	/// After batched registration, call normalizePendingSemanticRoots().
 	///
 	/// Idempotent: if `node` has already been registered as a late-materialized
 	/// top-level node (same ASTNode::raw_pointer()), this is a no-op. Multiple
@@ -2810,14 +2810,14 @@ public:
 	/// This is the preferred entry point for single-node instantiation.
 	void registerAndNormalizeLateMaterializedTopLevelNode(const ASTNode& node) {
 		registerLateMaterializedTopLevelNode(node);
-		normalizePendingSemanticRootsIfAvailable();
+		normalizePendingSemanticRoots();
 	}
 
 	/// Register AND normalize a single late-materialized AST node at the front.
 	/// Use for dependencies that must be processed first and immediately visible.
 	void registerAndNormalizeLateMaterializedTopLevelNodeFront(const ASTNode& node) {
 		registerLateMaterializedTopLevelNodeFront(node);
-		normalizePendingSemanticRootsIfAvailable();
+		normalizePendingSemanticRoots();
 	}
 	void registerLateMaterializedOwningStructRoot(StringHandle struct_name) {
 		if (!struct_name.isValid()) {

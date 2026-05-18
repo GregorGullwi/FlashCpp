@@ -391,7 +391,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		pack_param_info_.resize(saved_ctor_pack_info);
 
 		registerLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
-		normalizePendingSemanticRootsIfAvailable();
+		normalizePendingSemanticRoots();
 
 		auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 		if (struct_it != getTypesByNameMap().end()) {
@@ -1363,7 +1363,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 		FLASH_LOG(Templates, Debug, "Completed Full phase for: ", instantiated_name);
 	}
 
-	normalizePendingSemanticRootsIfAvailable();
+	normalizePendingSemanticRoots();
 
 	return true;
 }

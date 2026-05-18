@@ -1547,7 +1547,7 @@ ParseResult Parser::parse_type_specifier() {
 						AliasTemplateMaterializationResult materialized_alias =
 							materializeAliasTemplateInstantiation(type_name, *template_args);
 						if (!materialized_alias.instantiated_name.empty()) {
-							normalizePendingSemanticRootsIfAvailable();
+							normalizePendingSemanticRoots();
 							if (materialized_alias.resolved_type_info == nullptr) {
 								materialized_alias.resolved_type_info =
 									findTypeByName(StringTable::getOrInternStringHandle(materialized_alias.instantiated_name));
