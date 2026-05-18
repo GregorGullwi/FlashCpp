@@ -308,7 +308,10 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 											 ExpressionContext context) {
 	// If sema resolved this subscript to operator[], dispatch to member function call IR.
-	if (const FunctionDeclarationNode* op_subscript = sema_.getResolvedOpSubscript(&arraySubscriptNode)) {
+	ResolvedFunctionQueryResult op_subscript_query =
+		sema_.parserSemanticServices().getResolvedOpSubscriptQuery(&arraySubscriptNode);
+	if (op_subscript_query.state == ResolvedFunctionQueryResult::State::Available) {
+		const FunctionDeclarationNode* op_subscript = op_subscript_query.function;
 		ChunkedVector<ASTNode> args;
 		args.push_back(arraySubscriptNode.index_expr());
 		CallExprNode member_call = makeResolvedMemberCallExpr(
@@ -317,6 +320,10 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			std::move(args),
 			arraySubscriptNode.bracket_token());
 		return generateMemberFunctionCallIr(member_call, context);
+	}
+	if (sema_normalized_current_function_ &&
+		op_subscript_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+		throw InternalError("Normalized operator[] query remained NotYetAnalyzed");
 	}
 
 	auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {

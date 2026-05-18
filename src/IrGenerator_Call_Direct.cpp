@@ -562,8 +562,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	if (func_ptr_decl) {
 		const auto& func_type = func_ptr_decl->type_specifier_node();
+		const ResolvedFunctionQueryResult resolved_operator_call_query =
+			sema_services.getResolvedOpCallQuery(sema_call_key);
 		const FunctionDeclarationNode* resolved_operator_call =
-			sema_.getResolvedOpCall(sema_call_key);
+			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::Available
+				? resolved_operator_call_query.function
+				: nullptr;
 
 		if (resolved_operator_call) {
 			ChunkedVector<ASTNode> member_args;
@@ -579,6 +583,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				std::move(member_args),
 				callExprNode.called_from());
 			return generateMemberFunctionCallIr(member_call, context, sema_call_key);
+		}
+		if (sema_normalized_current_function_ &&
+			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+			throw InternalError("Normalized direct operator() query remained NotYetAnalyzed");
 		}
 
 		// Check if this is a function pointer or a substituted function type carrying
