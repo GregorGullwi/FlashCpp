@@ -5058,11 +5058,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			!ns_handle.isGlobal() &&
 			context.symbols->has_namespace_symbols(ns_handle);
 
-		if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
-			FLASH_LOG(ConstExpr, Debug, "ns_handle.isGlobal()=", ns_handle.isGlobal(),
-					  ", qualified_id='", qualified_id.full_name(), "'");
-		}
-
 		if (!ns_handle.isGlobal()) {
 			struct_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
 			if (!struct_handle.isValid()) {

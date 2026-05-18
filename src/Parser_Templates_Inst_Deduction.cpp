@@ -696,24 +696,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 		template_params,
 		std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
 		nullptr);
-	auto buildSubstitutionMaps = [&]() {
-		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
-		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
-		auto sub_map = buildSubstitutionParamMap(default_arg_environment);
-		type_sub_map.reserve(sub_map.param_map.size());
-		nontype_sub_map.reserve(sub_map.param_map.size());
-		for (const auto& [param_name, arg] : sub_map.param_map) {
-			if (!arg.is_value) {
-				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(param_name));
-				if (type_it != getTypesByNameMap().end()) {
-					type_sub_map[type_it->second->type_index_] = arg;
-				}
-				continue;
-			}
-			nontype_sub_map[param_name] = arg.value;
-		}
-		return std::pair(std::move(type_sub_map), std::move(nontype_sub_map));
-	};
+
 	auto appendEvaluatedNonTypeArg = [&](const ASTNode& expr) -> bool {
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.attachParserOwnedSema(*this);
@@ -734,7 +717,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 			if (eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression &&
 				failure_policy == TemplateSubstitutionFailurePolicy::ShapeOnly) {
 				if (!param.has_type()) {
-					throw InternalError("ShapeOnly non-type template parameter default requires declared type");
+					throw InternalError("Non-type template parameter with a dependent default value must declare an explicit type");
 				}
 				TemplateTypeArg dependent_default = TemplateTypeArg::makeDependentValue(
 					param.nameHandle(),
@@ -742,10 +725,6 @@ bool Parser::tryAppendDefaultTemplateArg(
 				dependent_default.dependent_expr = expr;
 				template_args.push_back(std::move(dependent_default));
 				return true;
-			}
-			if (failure_policy == TemplateSubstitutionFailurePolicy::HardUse &&
-				eval_result.error_type != ConstExpr::EvalErrorType::TemplateDependentExpression) {
-				throw CompileError("Failed to evaluate default non-type template argument for '" + std::string(param.name()) + "': " + eval_result.error_message);
 			}
 			return false;
 		}
@@ -880,9 +859,10 @@ bool Parser::tryAppendDefaultTemplateArg(
 	}
 
 	if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-		auto [type_sub_map, nontype_sub_map] = buildSubstitutionMaps();
-		ASTNode substituted_default =
-			substitute_template_params_in_expression(default_node, type_sub_map, nontype_sub_map, StringHandle{});
+		InlineVector<TemplateParameterNode, 4> params_vec(template_params);
+		ASTNode substituted_default = substituteNonTypeDefaultExpression(
+			default_node, params_vec,
+			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 		if (appendEvaluatedNonTypeArg(substituted_default)) {
 			return true;
 		}

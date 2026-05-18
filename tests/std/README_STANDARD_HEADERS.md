@@ -15,7 +15,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
-| `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~639ms. The header still compiles, but `std::ratio_less` remains blocked because non-type default template arguments that depend on qualified constexpr members (for example `__ratio_less_impl`'s bool defaults) are still not fully instantiated/evaluated. |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~587ms (retested 2026-04-28, Linux/libstdc++-14). The dependent `decltype` alias target in `__do_common_type_impl::__cond_t` is no longer collapsed to concrete `auto`, so the full targeted header compiles. Regression: `tests/test_dependent_decltype_alias_template_ret0.cpp`. |
@@ -202,6 +202,25 @@ Pre-fix hot-path interpretation:
    older snapshot) is now a large overestimate; the actual active-save count
    after this fix should be much lower.
 6. **Preprocessing and type preallocation remain low priority** for `<limits>`.
+
+### 2026-05-17 Linux/libstdc++ ratio default-NTTP alias-owner follow-up
+
+Fix landed:
+
+- **Qualified-id substitution for template-parameter owners now resolves alias chains before checking for struct/class ownership.**  
+  In `ExpressionSubstitutor`, `_R1::num` / `_R2::num` inside default non-type template arguments can now recover the terminal type through `resolveAliasTypeInfo(...)` when the bound argument arrives as an alias/indirect type wrapper.
+- **Hard-use fallback for dependent bool NTTP defaults is now narrowly enabled** in `tryAppendDefaultTemplateArg(...)` to keep libstdc++ ratio bool-default paths moving when substitution still carries dependent qualified-id fragments.
+
+Regression coverage:
+
+- `tests/std/test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` | ✅ Compiled | ~1630ms | New regression now instantiates `std::ratio_less<std::remove_cv_t<const ratio<...>>, ...>` as a concrete type without the previous `__ratio_less_impl` parameter-2 default-evaluation hard stop. |
+| `<ratio>` (`test_std_ratio.cpp`) | ❌ Compile Error | ~1562ms | First hard stop moved later: `Failed to evaluate default non-type template argument for '__anon_param_18': Undefined qualified identifier in constant expression: ratio_less$...::value` (from `__ratio_add_impl`). |
 
 ### 2026-05-12 Linux/libstdc++ template-instantiation depth guard follow-up
 
