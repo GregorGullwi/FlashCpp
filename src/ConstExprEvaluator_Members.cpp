@@ -391,13 +391,14 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 		}
 	}
 
-	if (dependent_arg.is_value && dependent_arg.dependent_expr.has_value() && context.parser != nullptr) {
+	if (can_try_dependent_expression_substitution) {
 		const TemplateEnvironment* evaluation_environment = resolved_environment;
 		if (evaluation_environment == nullptr) {
 			evaluation_environment = select_lookup_environment();
 		}
 		if (evaluation_environment != nullptr) {
-			ExpressionSubstitutor substitutor(*evaluation_environment, *context.parser);
+			Parser& parser = *context.parser;
+			ExpressionSubstitutor substitutor(*evaluation_environment, parser);
 			ASTNode substituted_expr = substitutor.substitute(*dependent_arg.dependent_expr);
 			auto saved_template_environment = context.template_environment;
 			context.template_environment = *evaluation_environment;
@@ -421,9 +422,11 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 	if (!resolved_binding.has_value()) {
 		if (lookup_name.isValid() &&
 			owner_type_info != nullptr &&
-			owner_type_info->isTemplateInstantiation()) {
+			owner_type_info->isTemplateInstantiation() &&
+			context.parser != nullptr) {
+			Parser& parser = *context.parser;
 			InlineVector<TemplateParameterNode, 4> owner_template_params =
-				getTemplateParametersForTypeInfo(*owner_type_info, *context.parser);
+				getTemplateParametersForTypeInfo(*owner_type_info, parser);
 			const size_t owner_pair_count = std::min(
 				owner_template_params.size(),
 				owner_type_info->templateArgs().size());
@@ -1700,6 +1703,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
+		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
@@ -1716,13 +1720,13 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				mutable_bindings);
 		}
 		std::vector<TypeSpecifierNode> arg_types;
-		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
 				"Dependent unqualified call argument types are not available at point of instantiation",
 				EvalErrorType::TemplateDependentExpression);
 		}
 		std::optional<ASTNode> resolved_target =
-			context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
+			parser.resolveDependentUnqualifiedCallAtPointOfInstantiation(
 				*call_expr.dependent_unqualified_lookup_record(),
 				call_expr.arguments(),
 				arg_types);
@@ -2959,17 +2963,11 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 	// Phase 5 Slice D: route lazy member-function materialization through the
 	// sema-owned helper so the evaluator no longer drives the
 	// instantiate/normalize/mark bookkeeping directly.
-	auto resolveMaterializationSema = [&](const char* operation) -> SemanticAnalysis* {
-		if (context.parser != nullptr) {
-			return &context.requireParserOwnedSema(operation);
-		}
-		return context.sema;
-	};
-	if (SemanticAnalysis* sema = resolveMaterializationSema(
-			kMemberFunctionMaterializationLookupOp); sema != nullptr) {
-		sema->parserSemanticServices().ensureMemberFunctionMaterialized(
+	context
+		.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
+		.parserSemanticServices()
+		.ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
-	}
 
 	result = find_member_function_candidate(
 		context.struct_info,
@@ -2984,10 +2982,10 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		if (!result.function->parent_struct_name().empty()) {
 			owner_name = StringTable::getOrInternStringHandle(result.function->parent_struct_name());
 		}
-		if (SemanticAnalysis* sema = resolveMaterializationSema(
-				kMemberFunctionMaterializationReplayOp); sema != nullptr) {
-			sema->parserSemanticServices().ensureMemberFunctionMaterialized(owner_name, *result.function);
-		}
+		context
+			.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
+			.parserSemanticServices()
+			.ensureMemberFunctionMaterialized(owner_name, *result.function);
 		result = find_member_function_candidate(
 			context.struct_info,
 			function_name_handle,
@@ -5122,6 +5120,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (type_info->isTemplateInstantiation() &&
 					type_info->getStructInfo() == nullptr &&
 					context.parser != nullptr) {
+					Parser& parser = *context.parser;
 					auto materialize_template_arg_for_owner =
 						[&](auto&& self,
 							const TemplateTypeArg& source_arg,
@@ -5141,8 +5140,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 						if (depth >= kMaxOwnerArgMaterializationDepth ||
 							concrete_arg.is_value ||
-							!concrete_arg.type_index.is_valid() ||
-							context.parser == nullptr) {
+							!concrete_arg.type_index.is_valid()) {
 							return concrete_arg;
 						}
 
@@ -5170,7 +5168,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 
 						Parser::AliasTemplateMaterializationResult nested_materialized_type =
-							context.parser->materializeTemplateInstantiationForLookup(
+							parser.materializeTemplateInstantiationForLookup(
 								nested_base_template_name,
 								nested_concrete_args);
 						const TypeInfo* nested_resolved_info =
@@ -5209,7 +5207,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 
 						Parser::AliasTemplateMaterializationResult materialized_type =
-							context.parser->materializeTemplateInstantiationForLookup(
+							parser.materializeTemplateInstantiationForLookup(
 								base_template_name,
 								concrete_args);
 						if (materialized_type.resolved_type_info != nullptr) {
@@ -5385,6 +5383,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							nested_target_info->isTemplateInstantiation() &&
 							nested_target_info->getStructInfo() == nullptr &&
 							context.parser != nullptr) {
+							Parser& parser = *context.parser;
 							const TypeInfo* nested_lookup_owner = nested_target_info;
 							if (resolved_type_info != nullptr &&
 								resolved_type_info->hasInstantiationContext()) {
@@ -5432,7 +5431,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									concrete_nested_args.push_back(std::move(concrete_nested_arg));
 								}
 								Parser::AliasTemplateMaterializationResult concrete_materialized =
-									context.parser->materializeTemplateInstantiationForLookup(
+									parser.materializeTemplateInstantiationForLookup(
 										concrete_base_name,
 										concrete_nested_args);
 								const TypeInfo* concrete_resolved_info = concrete_materialized.resolved_type_info;
@@ -5466,7 +5465,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 								StringTable::getStringView(nested_target_info->baseTemplateName());
 							if (!nested_base_name.empty()) {
 								Parser::AliasTemplateMaterializationResult materialized_target =
-									context.parser->materializeTemplateInstantiationForLookup(
+									parser.materializeTemplateInstantiationForLookup(
 										nested_base_name,
 										nested_template_args);
 								if (materialized_target.resolved_type_info != nullptr) {

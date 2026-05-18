@@ -8,9 +8,31 @@
 
 namespace ConstExpr {
 
+void EvaluationContext::attachSemaOnly(SemanticAnalysis& sema_owner) {
+	parser = nullptr;
+	sema = &sema_owner;
+}
+
 void EvaluationContext::attachParserOwnedSema(Parser& parser_owner) {
 	parser = &parser_owner;
 	sema = &parser_owner.semanticAnalysis();
+}
+
+SemanticAnalysis& EvaluationContext::requireSema(std::string_view operation) const {
+	if (sema == nullptr) {
+		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
+							" requires a sema-backed EvaluationContext");
+	}
+	return *sema;
+}
+
+SemanticAnalysis& EvaluationContext::requireParserAttachedSema(std::string_view operation) const {
+	SemanticAnalysis& sema_ref = requireSema(operation);
+	if (!sema_ref.isParserAttached()) {
+		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
+							" requires parser-attached semantic analysis");
+	}
+	return sema_ref;
 }
 
 SemanticAnalysis& EvaluationContext::requireParserOwnedSema(std::string_view operation) const {
@@ -18,11 +40,12 @@ SemanticAnalysis& EvaluationContext::requireParserOwnedSema(std::string_view ope
 		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
 							" requires a parser-owned EvaluationContext");
 	}
-	if (sema == nullptr) {
+	SemanticAnalysis& sema_ref = requireParserAttachedSema(operation);
+	if (&parser->semanticAnalysis() != &sema_ref) {
 		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
-							" requires a sema-backed EvaluationContext");
+							" requires parser and sema from the same owner");
 	}
-	return *sema;
+	return sema_ref;
 }
 
 void EvaluationContext::normalizePendingSemanticRoots() const {
@@ -32,9 +55,9 @@ void EvaluationContext::normalizePendingSemanticRoots() const {
 			.normalizePendingSemanticRoots();
 		return;
 	}
-	if (sema != nullptr) {
-		sema->parserSemanticServices().normalizePendingSemanticRoots();
-	}
+	requireParserAttachedSema("normalize pending semantic roots")
+		.parserSemanticServices()
+		.normalizePendingSemanticRoots();
 }
 
 namespace {
@@ -862,8 +885,10 @@ EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& tar
 // Main evaluation entry point
 // Evaluates a constant expression and returns the result
 EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& context) {
-	if (context.parser != nullptr && context.sema == nullptr) {
-		throw InternalError("ConstExpr evaluate requires sema-backed EvaluationContext when parser is set");
+	if (context.parser != nullptr) {
+		(void)context.requireParserOwnedSema("evaluate");
+	} else {
+		(void)context.requireSema("evaluate");
 	}
 
 	// Check complexity limit
@@ -1887,6 +1912,10 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						// Look up the array identifier in the symbol table
 						if (context.symbols) {
 							auto symbol = context.symbols->lookup(id_node.name());
+							if (!symbol.has_value() && context.global_symbols != nullptr &&
+								context.global_symbols != context.symbols) {
+								symbol = context.global_symbols->lookup(id_node.name());
+							}
 							if (symbol.has_value()) {
 								const DeclarationNode* decl = get_decl_from_symbol(*symbol);
 								if (decl && decl->is_array()) {
@@ -4369,6 +4398,7 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 	if (!context.parser) {
 		return EvalResult::error("No parser available for variable template instantiation");
 	}
+	Parser& parser = *context.parser;
 
 	if (!call_expr.has_template_arguments()) {
 		return EvalResult::error("No template arguments for variable template");
@@ -4399,11 +4429,11 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		return EvalResult::error("No template arguments extracted for variable template");
 	}
 
-	auto var_node = context.parser->try_instantiate_variable_template(func_name, template_args);
+	auto var_node = parser.try_instantiate_variable_template(func_name, template_args);
 	context.normalizePendingSemanticRoots();
 
 	if (!var_node.has_value() && call_expr.has_qualified_name()) {
-		var_node = context.parser->try_instantiate_variable_template(call_expr.qualified_name(), template_args);
+		var_node = parser.try_instantiate_variable_template(call_expr.qualified_name(), template_args);
 		context.normalizePendingSemanticRoots();
 	}
 
@@ -4491,6 +4521,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		if (!context.parser) {
 			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
 		}
+		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
@@ -4506,13 +4537,13 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 				nullptr);
 		}
 		std::vector<TypeSpecifierNode> arg_types;
-		if (!context.parser->tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
+		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
 				"Dependent unqualified call argument types are not available at point of instantiation",
 				EvalErrorType::TemplateDependentExpression);
 		}
 		std::optional<ASTNode> resolved_target =
-			context.parser->resolveDependentUnqualifiedCallAtPointOfInstantiation(
+			parser.resolveDependentUnqualifiedCallAtPointOfInstantiation(
 				*call_expr.dependent_unqualified_lookup_record(),
 				call_expr.arguments(),
 				arg_types);

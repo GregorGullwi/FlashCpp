@@ -2622,6 +2622,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		std::vector<size_t> resolved_dims;
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		eval_ctx.attachParserOwnedSema(*this);
 		for (const auto& dim_expr : type_alias.array_dimensions) {
 			FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: substituting dim_expr, params.size()=", params.size(),
 					  ", args.size()=", args.size());

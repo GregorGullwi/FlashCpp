@@ -11,7 +11,10 @@
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
-void applyDeclarationArrayBoundsToTypeSpec(const DeclarationNode& decl, TypeSpecifierNode& type_spec);
+void applyDeclarationArrayBoundsToTypeSpec(
+	const DeclarationNode& decl,
+	TypeSpecifierNode& type_spec,
+	const Parser& parser);
 
 namespace {
 bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<TemplateTypeArg, 4>& template_args) {
@@ -626,7 +629,7 @@ void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpe
 		return;
 	}
 	if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-		applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node);
+		applyDeclarationArrayBoundsToTypeSpec(*decl, arg_type_node, *this);
 	}
 }
 
@@ -4576,7 +4579,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										// Preserve the full TypeSpecifierNode to retain type_index for structs
 										const auto& type_spec = decl->type_specifier_node();
 										arg_type_node_opt = type_spec;
-										applyDeclarationArrayBoundsToTypeSpec(*decl, *arg_type_node_opt);
+										applyDeclarationArrayBoundsToTypeSpec(*decl, *arg_type_node_opt, *this);
 										arg_type = type_spec.type();
 										// Named variables are lvalues
 										is_lvalue = true;
