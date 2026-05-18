@@ -556,15 +556,25 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 		if (std::optional<TypeIndex> lazy_alias_type =
 				evaluateLazyTypeAlias(struct_name, member_name);
 			lazy_alias_type.has_value()) {
-			auto direct_register_it = getTypesByNameMap().find(qualified_name_handle);
-			if (direct_register_it == getTypesByNameMap().end()) {
-				uint32_t size_bits = 0;
-				if (const TypeInfo* lazy_type_info = tryGetTypeInfo(*lazy_alias_type)) {
-					SizeInBits lazy_size_bits = lazy_type_info->sizeInBits();
-					if (lazy_size_bits.is_set()) {
-						size_bits = lazy_size_bits.value;
-					}
+			uint32_t size_bits = 0;
+			const TypeInfo* lazy_type_info = tryGetTypeInfo(*lazy_alias_type);
+			if (lazy_type_info != nullptr) {
+				SizeInBits lazy_size_bits = lazy_type_info->sizeInBits();
+				if (lazy_size_bits.is_set()) {
+					size_bits = lazy_size_bits.value;
 				}
+			}
+
+			auto direct_register_it = getTypesByNameMap().find(qualified_name_handle);
+			if (direct_register_it != getTypesByNameMap().end() &&
+				direct_register_it->second != nullptr) {
+				update_type_alias_copy(
+					*direct_register_it->second,
+					*lazy_alias_type,
+					size_bits,
+					nullptr,
+					lazy_type_info);
+			} else {
 				add_type_alias_copy(qualified_name_handle, *lazy_alias_type, size_bits);
 			}
 		}
@@ -821,12 +831,11 @@ std::string_view Parser::lookup_direct_member_template_name(
 	}
 
 	if (owner_type_info->isTemplateInstantiation()) {
-		StringHandle primary_member_name = StringTable::getOrInternStringHandle(
-			StringBuilder()
-				.append(StringTable::getStringView(owner_type_info->baseTemplateName()))
-				.append("::")
-				.append(StringTable::getStringView(member_name))
-				.commit());
+		StringHandle primary_owner_name = gNamespaceRegistry.buildQualifiedIdentifier(
+			owner_type_info->sourceNamespace(),
+			owner_type_info->baseTemplateName());
+		StringHandle primary_member_name =
+			buildQualifiedMemberNameHandle(primary_owner_name, member_name);
 		if (has_registered_member_template(primary_member_name)) {
 			return StringTable::getStringView(primary_member_name);
 		}
@@ -850,9 +859,9 @@ std::string_view Parser::lookup_inherited_member_template_name(
 		return {};
 	}
 
-	if (auto direct_it = getTypesByNameMap().find(struct_name);
-		direct_it != getTypesByNameMap().end() &&
-		direct_it->second != nullptr) {
+	auto struct_it = getTypesByNameMap().find(struct_name);
+	if (struct_it != getTypesByNameMap().end() &&
+		struct_it->second != nullptr) {
 		if (std::string_view direct_name =
 				lookup_direct_member_template_name(struct_name, member_name);
 			!direct_name.empty()) {
@@ -860,7 +869,6 @@ std::string_view Parser::lookup_inherited_member_template_name(
 		}
 	}
 
-	auto struct_it = getTypesByNameMap().find(struct_name);
 	if (struct_it == getTypesByNameMap().end()) {
 		return {};
 	}
@@ -871,6 +879,50 @@ std::string_view Parser::lookup_inherited_member_template_name(
 	}
 
 	if (!struct_type_info->struct_info_) {
+		if (struct_type_info->isTemplateInstantiation()) {
+			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				struct_type_info->sourceNamespace(),
+				struct_type_info->baseTemplateName());
+			TemplateNameLookupResult alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+				buildTemplateNameLookupRequest(
+					alias_template_name,
+					TemplateNameLookupKind::Qualified,
+					false));
+			if (!alias_template_lookup.hasAliasTemplate()) {
+				alias_template_lookup = gTemplateRegistry.lookupTemplateName(
+					buildTemplateNameLookupRequest(
+						struct_type_info->baseTemplateName(),
+						TemplateNameLookupKind::Ordinary,
+						false));
+			}
+			std::optional<ASTNode> alias_template_entry =
+				alias_template_lookup.firstDeclarationOfKind(TemplateDeclarationKind::AliasTemplate);
+			if (alias_template_entry.has_value() && alias_template_entry->is<TemplateAliasNode>()) {
+				std::vector<TemplateTypeArg> concrete_args;
+				concrete_args.reserve(struct_type_info->templateArgs().size());
+				for (const auto& arg_info : struct_type_info->templateArgs()) {
+					TemplateTypeArg concrete_arg = toTemplateTypeArg(arg_info);
+					concrete_arg.setCategory(arg_info.category());
+					concrete_args.push_back(concrete_arg);
+				}
+
+				if (std::optional<TemplateTypeArg> rebound_arg =
+						tryRebindAliasTargetTemplateArg(
+							alias_template_entry->as<TemplateAliasNode>(),
+							concrete_args);
+					rebound_arg.has_value() &&
+					!rebound_arg->is_value &&
+					rebound_arg->type_index.is_valid()) {
+					if (const TypeInfo* rebound_type = tryGetTypeInfo(rebound_arg->type_index)) {
+						return lookup_inherited_member_template_name(
+							rebound_type->name(),
+							member_name,
+							depth + 1);
+					}
+				}
+			}
+		}
+
 		if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
 			if (underlying_type != struct_type_info && underlying_type->struct_info_) {
 				return lookup_inherited_member_template_name(
