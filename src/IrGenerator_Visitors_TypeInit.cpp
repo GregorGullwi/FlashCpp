@@ -29,8 +29,23 @@ TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec
 // ============================================================================
 
 std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
-	std::optional<TypeSpecifierNode> result = sema_.getExpressionType(callNode);
-	if ((!result.has_value() || isPlaceholderAutoType(result->type()))) {
+	auto sema_services = sema_.parserSemanticServices();
+	TypeSpecifierQueryResult sema_type_query = sema_services.getExpressionTypeQuery(callNode);
+	if (sema_normalized_current_function_ &&
+		sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+		throw InternalError("Normalized call expression return-type query remained NotYetAnalyzed");
+	}
+
+	std::optional<TypeSpecifierNode> result;
+	if (sema_type_query.state == TypeSpecifierQueryResult::State::Available) {
+		result = sema_type_query.type;
+	}
+
+	const bool requires_recovery_fallback =
+		!result.has_value() ||
+		result->type() == TypeCategory::Invalid ||
+		isPlaceholderAutoType(result->type());
+	if (requires_recovery_fallback) {
 		result = parser_.get_expression_type(callNode);
 	}
 	return result;
