@@ -457,10 +457,26 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		auto arg_node = callExprNode.arguments()[0];
 		if (arg_node.is<ExpressionNode>()) {
 			auto getInlineAlwaysArgType = [&]() -> std::optional<TypeSpecifierNode> {
-				if (auto sema_type = sema_.getExpressionType(arg_node); sema_type.has_value()) {
-					return sema_type;
+				TypeSpecifierQueryResult sema_arg_type_query =
+					sema_.parserSemanticServices().getExpressionTypeQuery(arg_node);
+				if (sema_normalized_current_function_ &&
+					sema_arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+					throw InternalError("Normalized inline_always argument type query remained NotYetAnalyzed");
 				}
-				return parser_.get_expression_type(arg_node);
+
+				std::optional<TypeSpecifierNode> sema_arg_type;
+				if (sema_arg_type_query.state == TypeSpecifierQueryResult::State::Available) {
+					sema_arg_type = sema_arg_type_query.type;
+				}
+
+				const bool requires_recovery_fallback =
+					!sema_arg_type.has_value() ||
+					sema_arg_type->type() == TypeCategory::Invalid ||
+					isPlaceholderAutoType(sema_arg_type->type());
+				if (requires_recovery_fallback) {
+					return parser_.get_expression_type(arg_node);
+				}
+				return sema_arg_type;
 			};
 			auto inlineAlwaysTypeMatches = [&](const TypeSpecifierNode& arg_type) {
 				if (!returns_reference) {

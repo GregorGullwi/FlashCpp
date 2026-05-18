@@ -126,6 +126,7 @@ Stage 6 progress so far:
 - `AstToIr::generateMemberFunctionCallIr(...)` now resolves callable `operator()` receivers through parser-semantic query-state APIs (`getResolvedOpCallQuery` + `getExpressionTypeQuery`), keeping legacy parser fallback for non-normalized/`AnalyzedAbsent` cases while enforcing `NotYetAnalyzed` as an invariant violation in sema-normalized bodies.
 - `AstToIr::generateFunctionCallIr(...)` now routes sema-owned direct-call target consumption through `ParserSemanticServices::getResolvedDirectCallQuery(...)` and treats `NotYetAnalyzed` as an invariant violation in sema-normalized bodies (unless sema explicitly recorded the call as unresolved), while preserving legacy parser lookup recovery for non-normalized paths.
 - `AstToIr::getCallExpressionReturnType(...)` now consumes `ParserSemanticServices::getExpressionTypeQuery(...)`; sema-normalized bodies hard-fail on `NotYetAnalyzed`, while parser fallback is retained for non-normalized flow and placeholder/invalid type recovery.
+- inline_always single-argument lowering in `AstToIr::generateFunctionCallIr(...)` now queries argument types through `ParserSemanticServices::getExpressionTypeQuery(...)`, hard-fails on `NotYetAnalyzed` in sema-normalized bodies, and keeps parser fallback for unavailable/placeholder/invalid-type recovery.
 
 Remaining Stage 6 work:
 
