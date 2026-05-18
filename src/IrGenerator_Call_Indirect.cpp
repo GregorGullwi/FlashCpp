@@ -241,8 +241,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	if (member_func_decl.decl_node().identifier_token().value() == "operator()"sv &&
 		object_node.is<ExpressionNode>()) {
 		std::optional<TypeSpecifierNode> callee_type;
+		auto sema_services = sema_.parserSemanticServices();
+		ResolvedFunctionQueryResult resolved_op_call_query =
+			sema_services.getResolvedOpCallQuery(sema_call_key);
 		const FunctionDeclarationNode* resolved_op_call =
-			sema_.getResolvedOpCall(sema_call_key);
+			resolved_op_call_query.state == ResolvedFunctionQueryResult::State::Available
+				? resolved_op_call_query.function
+				: nullptr;
 		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
 		const auto* object_ident = std::get_if<IdentifierNode>(&object_expr);
 		auto isInconclusiveCallableType = [](const std::optional<TypeSpecifierNode>& candidate) {
@@ -251,13 +256,19 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					!candidate->is_function_pointer() &&
 					!candidate->has_function_signature());
 		};
-		callee_type = sema_.getExpressionType(object_node);
+		TypeSpecifierQueryResult callee_type_query = sema_services.getExpressionTypeQuery(object_node);
+		if (callee_type_query.state == TypeSpecifierQueryResult::State::Available) {
+			callee_type = callee_type_query.type;
+		}
 		const bool needs_parser_fallback =
 			isInconclusiveCallableType(callee_type) &&
 			!resolved_op_call;
 		if (needs_parser_fallback) {
-			if (sema_normalized_current_function_) {
-				throw InternalError("Normalized callable operator() receiver is missing sema-resolved target/type");
+			const bool sema_query_not_yet_analyzed =
+				resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
+				callee_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
+			if (sema_normalized_current_function_ && sema_query_not_yet_analyzed) {
+				throw InternalError("Normalized callable operator() receiver query remained NotYetAnalyzed");
 			}
 			callee_type = parser_.get_expression_type(object_node);
 		}
