@@ -420,10 +420,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
 		if (receiver_node.is<ExpressionNode>()) {
-			if (auto sema_type = sema_.getExpressionType(receiver_node); sema_type.has_value()) {
-				if (auto resolved_sema_type = normalizeResolvedStructType(*sema_type); resolved_sema_type.has_value()) {
+			TypeSpecifierQueryResult receiver_type_query =
+				sema_.parserSemanticServices().getExpressionTypeQuery(receiver_node);
+			if (receiver_type_query.state == TypeSpecifierQueryResult::State::Available) {
+				if (auto resolved_sema_type = normalizeResolvedStructType(*receiver_type_query.type); resolved_sema_type.has_value()) {
 					return resolved_sema_type;
 				}
+			}
+			if (sema_normalized_current_function_ &&
+				receiver_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+				throw InternalError("Normalized member-call receiver type query remained NotYetAnalyzed");
 			}
 
 			const ExpressionNode& receiver_expr = receiver_node.as<ExpressionNode>();
