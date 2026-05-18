@@ -1152,6 +1152,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 	auto resolve_builtin_type_info_by_name = [](std::string_view builtin_name) -> const TypeInfo* {
 		constexpr TypeCategory builtin_categories[] = {
 			TypeCategory::Void,
+			TypeCategory::Nullptr,
 			TypeCategory::Bool,
 			TypeCategory::Char,
 			TypeCategory::UnsignedChar,
@@ -1657,7 +1658,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 			StringBuilder()
 				.append(materialized_alias_base_name)
 				.append("::")
-				.append(dependent_member_name)
+				.append(dependent_member_path)
 				.commit());
 	auto concrete_member_it = getTypesByNameMap().find(concrete_member_handle);
 	if (concrete_member_it != getTypesByNameMap().end() &&

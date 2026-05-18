@@ -505,6 +505,18 @@ void update_type_alias_copy(
 	alias_type_info.registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
 	alias_type_info.fallback_size_bits_ = size_bits;
 	alias_type_info.is_type_alias_ = true;
+	alias_type_info.setEnumInfo(nullptr);
+	const TypeInfo* enum_source_type_info = semantic_source_type_info;
+	if (enum_source_type_info == nullptr &&
+		alias_type_spec != nullptr &&
+		alias_type_spec->type_index().is_valid()) {
+		enum_source_type_info = tryGetTypeInfo(alias_type_spec->type_index());
+	}
+	if (enum_source_type_info != nullptr) {
+		if (const EnumTypeInfo* enum_info = enum_source_type_info->getEnumInfo()) {
+			alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+		}
+	}
 	resetTypeAliasSemanticMetadata(alias_type_info);
 	if (semantic_source_type_info != nullptr) {
 		copyTypeAliasSemanticMetadata(alias_type_info, *semantic_source_type_info);
