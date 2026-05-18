@@ -1481,6 +1481,13 @@ std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
 	return owner_->ensureMemberFunctionMaterialized(struct_name, member_name, is_const_member);
 }
 
+bool ParserSemanticServices::tryInstantiateLazyStaticMember(
+	StringHandle struct_name,
+	StringHandle member_name) {
+	requireParserSemanticServicesAttachment(*owner_, "tryInstantiateLazyStaticMember");
+	return owner_->tryInstantiateLazyStaticMember(struct_name, member_name);
+}
+
 void ParserSemanticServices::markResolvedOperatorOverloadOdrUsed(
 	const StructMemberFunction& member_overload) {
 	owner_->markResolvedOperatorOverloadOdrUsed(member_overload);
@@ -7850,6 +7857,15 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	}
 	parser().normalizePendingSemanticRootsIfAvailable();
 	return instantiated;
+}
+
+bool SemanticAnalysis::tryInstantiateLazyStaticMember(
+	StringHandle struct_name,
+	StringHandle member_name) {
+	if (!struct_name.isValid() || !member_name.isValid()) {
+		return false;
+	}
+	return parser().instantiateLazyStaticMember(struct_name, member_name);
 }
 
 size_t SemanticAnalysis::drainLazyMemberRegistry() {

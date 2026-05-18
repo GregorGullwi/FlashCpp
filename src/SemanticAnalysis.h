@@ -98,6 +98,9 @@ public:
 		StringHandle struct_name,
 		StringHandle member_name,
 		std::optional<bool> is_const_member);
+	bool tryInstantiateLazyStaticMember(
+		StringHandle struct_name,
+		StringHandle member_name);
 
 	void markResolvedOperatorOverloadOdrUsed(
 		const StructMemberFunction& member_overload);
@@ -318,6 +321,9 @@ public:
 		StringHandle struct_name,
 		StringHandle member_name,
 		std::optional<bool> is_const_member);
+	bool tryInstantiateLazyStaticMember(
+		StringHandle struct_name,
+		StringHandle member_name);
 
 	// Phase 5 Slice G item #4: mark a resolved operator overload (member
 	// function) as ODR-used in the lazy-member registry so the end-of-sema
