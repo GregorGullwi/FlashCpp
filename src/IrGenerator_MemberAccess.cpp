@@ -150,7 +150,7 @@ static size_t getEffectiveArrayDimensionCountForCodegen(const DeclarationNode& d
 	return decl.array_dimension_count();
 }
 
-static std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) {
+std::vector<size_t> AstToIr::getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const {
 	{
 		const TypeSpecifierNode& type_node = decl.type_specifier_node();
 		if (type_node.is_array() && !type_node.array_dimensions().empty()) {
@@ -161,7 +161,7 @@ static std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const Declarati
 
 	std::vector<size_t> dim_sizes;
 	dim_sizes.reserve(decl.array_dimension_count());
-	ConstExpr::EvaluationContext ctx(gSymbolTable);
+	ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
 	for (const auto& dim_expr : decl.array_dimensions()) {
 		auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 		if (!eval_result.success() || eval_result.as_int() <= 0) {

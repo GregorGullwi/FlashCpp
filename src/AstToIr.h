@@ -376,6 +376,7 @@ private:
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
+	std::vector<size_t> getEffectiveArrayDimensionsForCodegen(const DeclarationNode& decl) const;
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 										ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
