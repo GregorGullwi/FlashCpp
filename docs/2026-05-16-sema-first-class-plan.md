@@ -158,13 +158,13 @@ Stage 6 progress so far:
 - normalized codegen now hardens several remaining fallback families: `IrGenerator_NewDeleteCast.cpp` rejects `typeid(expr)` when sema-normalized codegen still lacks an operand type, `IrGenerator_Visitors_Decl.cpp` now requires sema to annotate user-declared constructor calls instead of warning and recomputing, and `IrGenerator_Expr_Operators.cpp` no longer recomputes recorded operator-overload failures in sema-normalized bodies.
 - builtin `++/--` codegen in `IrGenerator_Expr_Conversions.cpp` now treats nested-unary operand type queries as finalized in sema-normalized bodies; identifier/member recovery remains temporarily allowed after this pass exposed an existing normalized gap in `test_duffs_device_ret20.cpp`.
 - base-constructor materialization in `IrGenerator_Visitors_TypeInit.cpp` now goes through `sema_.ensureMemberFunctionMaterialized(...)` instead of calling `parser_.instantiateLazyMemberIfNeeded(...)` directly from codegen.
+- switch `case`/`default` bodies now flow through `SemanticAnalysis::normalizeStatement(...)` just like the rest of function bodies, closing the missing sema-owned normalization seam that left Duff's-device expressions (`*dst++`, `*src++`, `--n`) at `NotYetAnalyzed` inside sema-normalized codegen. With that feature in place, builtin `++/--` codegen no longer needs the temporary identifier/member query-state recovery in normalized bodies.
 
 Remaining Stage 6 work:
 
 - `EvaluationContext` still has a raw symbol-table constructor for any future genuinely mode-delayed construction, but the last live parser-owned construct-then-attach path is now gone
 - decide whether to retire the remaining pointer/boolean query adapters (`getResolvedDirectCall(...)`, `getResolvedOpCall(...)`, `resolveOrGetMemberAccess(...)`) now that query-result forms are in active use across the hot paths
 - tighten the remaining codegen recovery seam in `AstToIr::getCallExpressionReturnType(...)`, which still falls back to `parser_.get_expression_type(...)` after a sema query reports an unusable result
-- revisit builtin `++/--` identifier/member operand recovery once sema guarantees those operand-type annotations in all sema-normalized bodies
 - struct-without-conversion-operator codegen fallback removed; sema return-conversion is now fully enforced for struct returns ✅
 - `parser_` in `AstToIr` is now `Parser&` — no more defensive null guards in codegen ✅
 - codegen-side `EvaluationContext` construction is now further centralised via `makeEvalContext`, and the converted call sites carry parser + sema by construction

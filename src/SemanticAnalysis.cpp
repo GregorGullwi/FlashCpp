@@ -2838,6 +2838,19 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		if (has_condition_decl) {
 			popScope();
 		}
+	} else if (node.is<CaseLabelNode>()) {
+		const auto& case_node = node.as<CaseLabelNode>();
+		if (case_node.get_case_value().is<ExpressionNode>()) {
+			normalizeExpression(case_node.get_case_value(), ctx);
+		}
+		if (case_node.has_statement()) {
+			normalizeStatement(*case_node.get_statement(), ctx);
+		}
+	} else if (node.is<DefaultLabelNode>()) {
+		const auto& default_node = node.as<DefaultLabelNode>();
+		if (default_node.has_statement()) {
+			normalizeStatement(*default_node.get_statement(), ctx);
+		}
 	} else if (node.is<RangedForStatementNode>()) {
 		const auto& stmt = node.as<RangedForStatementNode>();
 		pushScope();
