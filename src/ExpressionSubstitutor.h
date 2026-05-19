@@ -4,6 +4,7 @@
 #include "TemplateEnvironment.h"
 #include "TemplateRegistry.h"
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -170,4 +171,12 @@ private:
 	std::vector<std::string_view> template_param_order_;
 	TemplateEnvironment environment_;
 	StringHandle current_owner_type_name_{};
+	// Cycle-detection guard for materializeStoredTemplateArgs:
+	// tracks TypeInfo pointers currently being materialized to prevent
+	// infinite mutual recursion with substituteQualifiedIdentifier.
+	std::unordered_set<const TypeInfo*> materializing_type_infos_;
+	// Cycle-detection guard for substituteQualifiedIdentifier:
+	// tracks (namespace_handle << 32 | member_name_handle) keys to prevent
+	// re-entrant substitution of the same qualified identifier.
+	std::unordered_set<uint64_t> substituting_qual_ids_;
 };

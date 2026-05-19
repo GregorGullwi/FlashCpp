@@ -524,6 +524,20 @@ ExpressionSubstitutor::MaterializedStoredTemplateArgs ExpressionSubstitutor::mat
 	const TypeInfo& template_instantiation_info,
 	bool evaluate_dependent_member_values,
 	int depth) {
+	// Cycle-detection: prevent infinite mutual recursion between
+	// materializeStoredTemplateArgs and substituteQualifiedIdentifier.
+	// If we are already materializing this TypeInfo on the call stack,
+	// return the raw (unsubstituted) args to break the cycle.
+	if (!materializing_type_infos_.insert(&template_instantiation_info).second) {
+		MaterializedStoredTemplateArgs cycle_result;
+		const auto& raw_args = template_instantiation_info.templateArgs();
+		cycle_result.args.reserve(raw_args.size());
+		for (const auto& arg : raw_args) {
+			cycle_result.args.push_back(toTemplateTypeArg(arg));
+		}
+		return cycle_result;
+	}
+	ScopeGuard guard([&]() { materializing_type_infos_.erase(&template_instantiation_info); });
 	MaterializedStoredTemplateArgs result;
 	const auto& stored_args = template_instantiation_info.templateArgs();
 	result.args.reserve(stored_args.size());
@@ -2156,6 +2170,20 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 
 ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIdentifierNode& qual_id) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing qualified identifier: ", qual_id.full_name());
+
+	// Cycle-detection guard: prevent re-entrant substitution of the same
+	// qualified identifier (namespace × member-name), which can arise when
+	// a dependent template arg's expression refers back to the same qualified
+	// identifier currently being resolved.
+	const uint64_t qual_id_key =
+		(static_cast<uint64_t>(qual_id.namespace_handle().index) << 32) |
+		static_cast<uint64_t>(qual_id.nameHandle().handle);
+	if (!substituting_qual_ids_.insert(qual_id_key).second) {
+		ExpressionNode& deferred_expr =
+			gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+		return ASTNode(&deferred_expr);
+	}
+	ScopeGuard qual_id_guard([&]() { substituting_qual_ids_.erase(qual_id_key); });
 
 	// Qualified identifiers like R1_T::num need template parameter substitution in the namespace part
 	// The namespace is stored as a mangled template name like "R1_T" (template R1 with parameter T)

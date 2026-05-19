@@ -4787,6 +4787,59 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 		// No pre-instantiated version found - try to instantiate on-demand if parser is available
 		if (context.parser) {
+			// When the call carries explicit template arguments (e.g. f<T1,T2>()) try
+			// instantiation via try_instantiate_template_explicit first, before the
+			// argument-type-deduction path (which cannot deduce type params from an
+			// empty argument list).
+			if (call_expr.has_template_arguments()) {
+				std::vector<TemplateTypeArg> explicit_args;
+				bool all_concrete = true;
+				for (const ASTNode& arg_node : call_expr.template_arguments()) {
+					if (arg_node.is<TypeSpecifierNode>()) {
+						TemplateTypeArg targ(arg_node.as<TypeSpecifierNode>());
+						if (targ.is_dependent) {
+							all_concrete = false;
+							break;
+						}
+						explicit_args.push_back(std::move(targ));
+					} else if (arg_node.is<ExpressionNode>()) {
+						EvalResult arg_val = evaluate(arg_node, context);
+						if (!arg_val.success()) {
+							all_concrete = false;
+							break;
+						}
+						TypeCategory arg_type = TypeCategory::Int;
+						if (std::holds_alternative<bool>(arg_val.value)) {
+							arg_type = TypeCategory::Bool;
+						} else if (arg_val.is_uint()) {
+							arg_type = TypeCategory::UnsignedLongLong;
+						}
+						explicit_args.emplace_back(arg_val.as_int(), arg_type);
+					} else {
+						all_concrete = false;
+						break;
+					}
+				}
+				if (all_concrete && !explicit_args.empty()) {
+					std::optional<ASTNode> explicit_opt =
+						context.parser->try_instantiate_template_explicit(
+							qualified_name, explicit_args, arguments.size());
+					if (!explicit_opt.has_value() && qualified_name != func_name) {
+						explicit_opt = context.parser->try_instantiate_template_explicit(
+							func_name, explicit_args, arguments.size());
+					}
+					if (explicit_opt.has_value()) {
+						context.normalizePendingSemanticRoots();
+					}
+					if (explicit_opt.has_value() && explicit_opt->is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& instantiated_func =
+							explicit_opt->as<FunctionDeclarationNode>();
+						return evaluate_resolved_function_call(
+							instantiated_func, arguments, context, nullptr);
+					}
+				}
+			}
+
 			std::optional<ASTNode> instantiated_opt = context.parser->tryInstantiateTemplateFromCallArguments(
 				qualified_name,
 				func_name,
