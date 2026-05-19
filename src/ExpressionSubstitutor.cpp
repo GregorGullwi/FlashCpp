@@ -2214,9 +2214,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 					std::optional<ASTNode> instantiated_member =
 						parser_.instantiateLazyMemberForCanonicalOwner(
-						materialized_owner_name,
-						member_name,
-						std::span<const TemplateTypeArg>{});
+							materialized_owner_name,
+							member_name,
+							std::span<const TemplateTypeArg>{});
 					if (instantiated_member.has_value() &&
 						instantiated_member->is<FunctionDeclarationNode>()) {
 						target_func =

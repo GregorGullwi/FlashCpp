@@ -5851,6 +5851,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								return buildTTPQualifiedIdentifier(ttp_name_view);
 							}
 
+							const bool materialized_owner_names_current_instantiation =
+								tryResolveCurrentInstantiationTemplateOwner(
+									template_name,
+									*explicit_template_args).has_value();
 							AliasTemplateMaterializationResult materialized_owner =
 								materializePrimaryTemplateOwnerForLookup(
 									template_name,
@@ -5930,7 +5934,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										member_segment.has_template_keyword = has_template_keyword;
 										advance(); // consume member name
 										std::vector<ASTNode> member_template_arg_nodes;
-										if (has_template_keyword && peek() == "<"_tok) {
+										if ((has_template_keyword ||
+											 materialized_owner_names_current_instantiation) &&
+											peek() == "<"_tok) {
 											auto member_template_args =
 												parse_explicit_template_arguments(
 													&member_template_arg_nodes);
@@ -5988,7 +5994,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										makeExpressionDependentQualifiedNameRecord(
 											StringTable::getOrInternStringHandle(qualified_template_name),
 											lookupRecordedDependentOwnerType(dependent_owner_handle),
-											TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+											materialized_owner_names_current_instantiation
+												? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
+												: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 											toTemplateArgInfoList(*explicit_template_args),
 											dependent_member_segments));
 									if (has_deferred_member_call) {
@@ -6073,7 +6081,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									member_segment.has_template_keyword = has_template_keyword;
 									advance(); // consume member name
 									std::vector<ASTNode> member_template_arg_nodes;
-									if (has_template_keyword && peek() == "<"_tok) {
+									if ((has_template_keyword ||
+										 materialized_owner_names_current_instantiation) &&
+										peek() == "<"_tok) {
 										auto member_template_args =
 											parse_explicit_template_arguments(&member_template_arg_nodes);
 										if (!member_template_args.has_value()) {
@@ -6132,7 +6142,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											StringTable::getOrInternStringHandle(template_name),
 											lookupRecordedDependentOwnerType(
 												StringTable::getOrInternStringHandle(instantiated_name)),
-											TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+											materialized_owner_names_current_instantiation
+												? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
+												: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 											toTemplateArgInfoList(*explicit_template_args),
 											deferred_member_segments));
 									if (has_deferred_member_call) {
@@ -7071,6 +7083,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return buildTTPQualifiedIdentifier(ttp_name_view);
 					}
 
+					const bool materialized_owner_names_current_instantiation =
+						tryResolveCurrentInstantiationTemplateOwner(
+							identifier_token.value(),
+							*explicit_template_args).has_value();
 					Parser::AliasTemplateMaterializationResult materialized_owner =
 						materializePrimaryTemplateOwnerForLookup(
 							identifier_token.value(),
@@ -7144,7 +7160,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								member_segment.has_template_keyword = has_template_keyword;
 								advance(); // consume member name
 								std::vector<ASTNode> member_template_arg_nodes;
-								if (has_template_keyword && peek() == "<"_tok) {
+								if ((has_template_keyword ||
+									 materialized_owner_names_current_instantiation) &&
+									peek() == "<"_tok) {
 									auto member_template_args =
 										parse_explicit_template_arguments(
 											&member_template_arg_nodes);
@@ -7202,7 +7220,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								makeExpressionDependentQualifiedNameRecord(
 									StringTable::getOrInternStringHandle(qualified_template_name),
 									lookupRecordedDependentOwnerType(dependent_owner_handle),
-									TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+									materialized_owner_names_current_instantiation
+										? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
+										: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 									toTemplateArgInfoList(*explicit_template_args),
 									dependent_member_segments));
 							if (has_deferred_member_call) {
@@ -7285,7 +7305,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							member_segment.has_template_keyword = has_template_keyword;
 							advance(); // consume member name
 							std::vector<ASTNode> member_template_arg_nodes;
-							if (has_template_keyword && peek() == "<"_tok) {
+							if ((has_template_keyword ||
+								 materialized_owner_names_current_instantiation) &&
+								peek() == "<"_tok) {
 								auto member_template_args =
 									parse_explicit_template_arguments(&member_template_arg_nodes);
 								if (!member_template_args.has_value()) {
@@ -7344,7 +7366,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									StringTable::getOrInternStringHandle(identifier_token.value()),
 									lookupRecordedDependentOwnerType(
 										StringTable::getOrInternStringHandle(instantiated_class_name)),
-									TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+									materialized_owner_names_current_instantiation
+										? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
+										: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 									toTemplateArgInfoList(*explicit_template_args),
 									deferred_member_segments));
 							if (has_deferred_member_call) {

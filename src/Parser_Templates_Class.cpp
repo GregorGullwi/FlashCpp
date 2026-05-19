@@ -4768,6 +4768,38 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			advance();
 		}
 	};
+	auto skipStaticMemberTemplateFunctionTail =
+		[&](FunctionDeclarationNode& member_func_ref) -> ParseResult {
+		if (peek() == "requires"_tok) {
+			skip_trailing_requires_clause();
+		}
+		if (peek() == "try"_tok || peek() == "{"_tok) {
+			SaveHandle body_start = save_token_position();
+			member_func_ref.set_template_body_position(body_start);
+			if (peek() == "try"_tok) {
+				skip_function_body();
+			} else {
+				skip_balanced_braces();
+			}
+			return ParseResult::success();
+		}
+		if (peek() == "="_tok) {
+			advance();
+			if (peek() != "default"_tok && peek() != "delete"_tok) {
+				return ParseResult::error("Expected default or delete after '=' in static member function declaration", current_token_);
+			}
+			advance();
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after static member function declaration", current_token_);
+			}
+			return ParseResult::success();
+		}
+		if (peek() == ";"_tok) {
+			advance();
+			return ParseResult::success();
+		}
+		return ParseResult::error("Expected static member function body, requires-clause, '= default', '= delete', or ';'", current_token_);
+	};
 
 	auto skipMemberStructTemplateConstructor = [&]() {
 		if (peek() == "("_tok) {
@@ -5214,6 +5246,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						for (const auto& param : func_decl.parameter_nodes()) {
 							member_func_ref.add_parameter_node(param);
 						}
+						member_func_ref.set_is_variadic(func_decl.is_variadic());
 						member_func_ref.set_is_static(true);
 						if (is_constexpr) {
 							member_func_ref.set_is_constexpr(true);
@@ -5238,12 +5271,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 								member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
 							}
 						}
-						if (peek() == "{"_tok) {
-							SaveHandle body_start = save_token_position();
-							member_func_ref.set_template_body_position(body_start);
-							skip_balanced_braces();
-						} else if (peek() == ";"_tok) {
-							advance();
+						ParseResult tail_result =
+							skipStaticMemberTemplateFunctionTail(member_func_ref);
+						if (tail_result.is_error()) {
+							return tail_result;
 						}
 						member_struct_ref.add_member_function(
 							member_func_node,
@@ -5681,6 +5712,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					for (const auto& param : func_decl.parameter_nodes()) {
 						member_func_ref.add_parameter_node(param);
 					}
+					member_func_ref.set_is_variadic(func_decl.is_variadic());
 					member_func_ref.set_is_static(true);
 					if (is_static_constexpr) {
 						member_func_ref.set_is_constexpr(true);
@@ -5705,12 +5737,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							member_func_ref.set_noexcept_expression(*func_specs.noexcept_expr);
 						}
 					}
-					if (peek() == "{"_tok) {
-						SaveHandle body_start = save_token_position();
-						member_func_ref.set_template_body_position(body_start);
-						skip_balanced_braces();
-					} else if (peek() == ";"_tok) {
-						advance();
+					ParseResult tail_result =
+						skipStaticMemberTemplateFunctionTail(member_func_ref);
+					if (tail_result.is_error()) {
+						return tail_result;
 					}
 					member_struct_ref.add_member_function(
 						member_func_node,
