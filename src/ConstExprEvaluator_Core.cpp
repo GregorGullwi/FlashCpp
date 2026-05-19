@@ -1189,8 +1189,10 @@ EvalResult Evaluator::evaluate_binary_operator(const BinaryOperatorNode& binary_
 	const ASTNode& lhs_node = binary_operator.get_lhs();
 	const ASTNode& rhs_node = binary_operator.get_rhs();
 	const std::string_view op = binary_operator.op();
-	// Eagerly evaluate LHS first. For built-in &&/|| outside speculative mode we may
-	// still short-circuit, but overloaded logical operators must evaluate both operands.
+	// Evaluate LHS first so built-in &&/|| can still short-circuit in non-speculative
+	// mode. In speculative mode we avoid early short-circuit to keep both operands
+	// visible to template-argument disambiguation, and overloaded operator&&/operator||
+	// must always evaluate both operands.
 	auto lhs_result = evaluate(lhs_node, context);
 	if (!lhs_result.success()) {
 		return lhs_result;
