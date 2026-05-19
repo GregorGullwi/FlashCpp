@@ -2173,6 +2173,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								std::holds_alternative<MemberAccessNode>(expr) ||
 								std::holds_alternative<NoexceptExprNode>(expr) ||
 								std::holds_alternative<SizeofExprNode>(expr) ||
+								std::holds_alternative<SizeofPackNode>(expr) ||
 								std::holds_alternative<AlignofExprNode>(expr) ||
 								std::holds_alternative<OffsetofExprNode>(expr) ||
 								std::holds_alternative<TypeTraitExprNode>(expr) ||
@@ -2188,14 +2189,15 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								// so it can be re-evaluated during template instantiation
 								std::optional<ASTNode> stored_expr = std::nullopt;
 								if ((std::holds_alternative<IdentifierNode>(expr) ||
-									 std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
-									 std::holds_alternative<QualifiedIdentifierNode>(expr) ||
-									 std::holds_alternative<MemberAccessNode>(expr) ||
-									 std::holds_alternative<SizeofExprNode>(expr) ||
-									 std::holds_alternative<AlignofExprNode>(expr) ||
-									 std::holds_alternative<OffsetofExprNode>(expr) ||
-									 std::holds_alternative<NoexceptExprNode>(expr) ||
-									 std::holds_alternative<TypeTraitExprNode>(expr) ||
+								 std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
+								 std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+								 std::holds_alternative<MemberAccessNode>(expr) ||
+								 std::holds_alternative<SizeofExprNode>(expr) ||
+								 std::holds_alternative<SizeofPackNode>(expr) ||
+								 std::holds_alternative<AlignofExprNode>(expr) ||
+								 std::holds_alternative<OffsetofExprNode>(expr) ||
+								 std::holds_alternative<NoexceptExprNode>(expr) ||
+								 std::holds_alternative<TypeTraitExprNode>(expr) ||
 									 std::holds_alternative<BinaryOperatorNode>(expr) ||
 									 std::holds_alternative<TernaryOperatorNode>(expr) ||
 									 std::holds_alternative<UnaryOperatorNode>(expr) ||
