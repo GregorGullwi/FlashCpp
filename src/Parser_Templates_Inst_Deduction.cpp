@@ -759,7 +759,21 @@ bool Parser::tryAppendDefaultTemplateArg(
 			}
 			return false;
 		}
-		template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+		if (param.has_type()) {
+			ASTNode substituted_type_node = substituteTemplateParameters(
+				ASTNode::emplace_node<TypeSpecifierNode>(param.type_specifier_node()),
+				template_params,
+				std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
+			if (substituted_type_node.is<TypeSpecifierNode>()) {
+				template_args.push_back(templateTypeArgFromEvalResult(
+					eval_result,
+					substituted_type_node.as<TypeSpecifierNode>()));
+			} else {
+				template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+			}
+		} else {
+			template_args.push_back(templateTypeArgFromEvalResult(eval_result));
+		}
 		default_arg_environment = buildTemplateEnvironment(
 			template_params,
 			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
