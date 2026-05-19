@@ -3741,6 +3741,9 @@ bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 			.append("'")
 			.commit()));
 	}
+	if (sema_normalized_current_function_) {
+		return false;
+	}
 	if (!sema_normalized_current_function_ &&
 		member_access_query.state == ResolvedMemberAccessQueryResult::State::NotYetAnalyzed) {
 		if (sema_.resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {

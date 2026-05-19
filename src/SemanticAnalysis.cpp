@@ -3619,14 +3619,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				tryAnnotateConstructorCallArgConversions(e);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
-				const void* member_access_key = static_cast<const void*>(&e);
-				analyzed_member_access_queries_.insert(member_access_key);
-				ResolvedMemberAccessInfo member_info;
-				if (tryResolveMemberAccessInfo(e, member_info)) {
-					resolved_member_access_table_[member_access_key] = member_info;
-				} else {
-					resolved_member_access_table_.erase(member_access_key);
-				}
+				const StructTypeInfo* resolved_owner_struct = nullptr;
+				const StructMember* resolved_member = nullptr;
+				resolveOrGetMemberAccess(e, resolved_owner_struct, resolved_member);
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				normalizeExpression(e.member_pointer(), ctx);
@@ -4928,14 +4923,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Fallback for pre-analysis flows where this path may run before
 				// expression normalization has visited the MemberAccessNode.
 				if (member_access_query.state == ResolvedMemberAccessQueryResult::State::NotYetAnalyzed) {
-					ResolvedMemberAccessInfo member_info;
-					if (tryResolveMemberAccessInfo(e, member_info)) {
-						const TypeInfo* owner_type_info = tryGetTypeInfo(member_info.owner_type_index);
-						const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
-						if (owner_struct_info && member_info.member_index < owner_struct_info->members.size()) {
-							return type_context_.intern(canonicalTypeDescFromStructMember(
-								owner_struct_info->members[member_info.member_index], object_info->object_desc.base_cv));
-						}
+					const StructTypeInfo* owner_struct_info = nullptr;
+					const StructMember* member = nullptr;
+					if (resolveOrGetMemberAccess(e, owner_struct_info, member)) {
+						return type_context_.intern(canonicalTypeDescFromStructMember(
+							*member, object_info->object_desc.base_cv));
 					}
 				}
 
