@@ -697,19 +697,31 @@ std::optional<size_t> resolveSizeofPackCount(
 	if (const TemplateBinding* pack_binding =
 			findTemplatePackBinding(pack_name_handle, context.template_environment);
 		pack_binding != nullptr) {
+		if (context.parser != nullptr &&
+			pack_binding->args.size() == 1 &&
+			pack_binding->args.front().is_pack) {
+			if (auto parser_pack_size = context.parser->resolveSizeofPackCount(pack_name)) {
+				return *parser_pack_size;
+			}
+		}
 		return pack_binding->args.size();
 	}
 
 	if (context.parser != nullptr) {
-		if (auto pack_size = context.parser->get_template_param_pack_size(pack_name)) {
-			return *pack_size;
+		if (auto parser_pack_size = context.parser->resolveSizeofPackCount(pack_name)) {
+			return *parser_pack_size;
 		}
-		if (auto pack_size = context.parser->get_pack_size(pack_name)) {
-			return *pack_size;
+	}
+
+	for (size_t i = 0; i < context.template_param_names.size(); ++i) {
+		if (context.template_param_names[i] != pack_name) {
+			continue;
 		}
-		if (auto pack_size = context.parser->get_class_template_pack_size(pack_name)) {
-			return *pack_size;
+		const size_t required_after = context.template_param_names.size() - (i + 1);
+		if (context.template_args.size() < i + required_after) {
+			return std::nullopt;
 		}
+		return context.template_args.size() - i - required_after;
 	}
 
 	return std::nullopt;

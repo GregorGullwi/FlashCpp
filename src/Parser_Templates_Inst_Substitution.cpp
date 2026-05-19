@@ -767,6 +767,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 	InlineVector<TemplateTypeArg, 4> substituted_args;
 	const auto& param_names = alias_node.template_param_names();
 	std::span<const ASTNode> target_template_args = alias_node.target_template_args();
+	std::span<const TemplateParameterNode> alias_params_span(
+		alias_node.template_parameters().data(),
+		alias_node.template_parameters().size());
 	const auto target_template_params =
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
 	substituted_args.reserve(target_template_args.size());
@@ -783,8 +786,30 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 
 	for (size_t i = 0; i < target_template_args.size(); ++i) {
 		const TemplateParameterNode* target_template_param = getTargetTemplateParam(i);
+		const ASTNode& target_arg_node = target_template_args[i];
+		if (target_arg_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& target_arg_type = target_arg_node.as<TypeSpecifierNode>();
+			if (target_arg_type.is_pack_expansion() &&
+				target_arg_type.token().type() == Token::Type::Identifier) {
+				const std::string_view pack_name = target_arg_type.token().value();
+				if (auto pack_range = findPackArgRangeFromParams(
+						pack_name,
+						alias_params_span,
+						template_args.size());
+					pack_range.has_value()) {
+					for (size_t offset = 0; offset < pack_range->second; ++offset) {
+						const size_t arg_index = pack_range->first + offset;
+						if (arg_index >= template_args.size()) {
+							break;
+						}
+						substituted_args.push_back(template_args[arg_index]);
+					}
+					continue;
+				}
+			}
+		}
 		auto materialized_arg = materializeDeferredAliasTemplateArg(
-			target_template_args[i],
+			target_arg_node,
 			alias_node.template_parameters(),
 			param_names,
 			template_args,

@@ -3033,6 +3033,18 @@ public:	// Public methods for template instantiation
 	TemplateNameLookupResult lookupTemplateName(const TemplateNameLookupRequest& request) const {
 		return gTemplateRegistry.lookupTemplateName(request);
 	}
+	std::optional<size_t> resolveSizeofPackCount(std::string_view pack_name) const {
+		if (auto pack_size = get_template_param_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		if (auto pack_size = get_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		if (auto pack_size = get_class_template_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		return std::nullopt;
+	}
 
 private:	 // Resume private methods
 
@@ -3153,6 +3165,18 @@ private:	 // Resume private methods
 		std::string_view pack_name,
 		std::span<const TemplateParameterNode> template_params,
 		size_t total_args) {
+		if (auto pack_range = findPackArgRangeFromParams(pack_name, template_params, total_args)) {
+			return pack_range->second;
+		}
+		return std::nullopt;
+	}
+	// Static helper for deferred materialization and substitution paths.
+	// Returns {start_index, count} for the concrete arguments attributed to
+	// the named variadic parameter pack in `template_params`.
+	static std::optional<std::pair<size_t, size_t>> findPackArgRangeFromParams(
+		std::string_view pack_name,
+		std::span<const TemplateParameterNode> template_params,
+		size_t total_args) {
 		size_t arg_cursor = 0;
 		for (size_t pi = 0; pi < template_params.size(); ++pi) {
 			const TemplateParameterNode& param = template_params[pi];
@@ -3169,7 +3193,7 @@ private:	 // Resume private methods
 			size_t remaining = arg_cursor < total_args ? total_args - arg_cursor : 0;
 			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
 			if (param.name() == pack_name) {
-				return pack_size;
+				return std::pair<size_t, size_t>{arg_cursor, pack_size};
 			}
 			arg_cursor += pack_size;
 		}
