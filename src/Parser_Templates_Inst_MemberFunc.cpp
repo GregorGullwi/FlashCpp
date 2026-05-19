@@ -137,8 +137,7 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 		return true;
 	}
 	if (param.kind() == TemplateParameterKind::NonType && substituted_default.is<ExpressionNode>()) {
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.attachParserOwnedSema(*this);
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		eval_ctx.template_environment = combined_environment;
 		auto eval_sub_map = buildSubstitutionParamMap(combined_environment);
 		eval_ctx.template_param_names.assign(

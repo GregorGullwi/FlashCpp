@@ -510,8 +510,7 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 
 				if (!condition_result.is_error() && condition_result.node().has_value()) {
 					// Evaluate the constant expression using ConstExprEvaluator
-					ConstExpr::EvaluationContext ctx(gSymbolTable);
-					ctx.attachParserOwnedSema(*this);  // Enable template function instantiation if needed
+					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);  // Enable template function instantiation if needed
 
 					auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 

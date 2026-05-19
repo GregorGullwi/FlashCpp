@@ -1022,8 +1022,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			// Validate the initializer is a constant expression.
 			// For InitializerListNode (aggregate/array init), validate each element individually
 			// since the evaluator works on expression nodes, not initializer lists directly.
-			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			eval_ctx.attachParserOwnedSema(*this);
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 			eval_ctx.storage_duration = ConstExpr::StorageDuration::Global;
 			eval_ctx.is_constinit = is_constinit;
 

@@ -3571,7 +3571,7 @@ private:	 // Resume private methods
 	// If an argument is a plain identifier naming an array declaration, propagate its
 	// declared array bounds into the provided type specifier so overload resolution and
 	// template deduction can observe the real extent information.
-	void applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) const;
+	void applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node);
 
 	// Check if a template name is a template-template parameter in the current template context
 	bool isTemplateTemplateParameter(StringHandle template_name_handle) const;

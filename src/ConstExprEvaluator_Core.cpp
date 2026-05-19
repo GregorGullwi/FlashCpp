@@ -8,15 +8,17 @@
 
 namespace ConstExpr {
 
-void EvaluationContext::attachSemaOnly(SemanticAnalysis& sema_owner) {
-	parser = nullptr;
-	sema = &sema_owner;
-}
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table)
+	: symbols(&symbol_table) {}
 
-void EvaluationContext::attachParserOwnedSema(Parser& parser_owner) {
-	parser = &parser_owner;
-	sema = &parser_owner.semanticAnalysis();
-}
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner)
+	: symbols(&symbol_table),
+	  parser(&parser_owner),
+	  sema(&parser_owner.semanticAnalysis()) {}
+
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner)
+	: symbols(&symbol_table),
+	  sema(&sema_owner) {}
 
 SemanticAnalysis& EvaluationContext::requireSema(std::string_view operation) const {
 	if (sema == nullptr) {
@@ -4395,9 +4397,7 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 
 
 EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context) {
-	if (!context.parser) {
-		return EvalResult::error("No parser available for variable template instantiation");
-	}
+	(void)context.requireParserOwnedSema("variable template instantiation");
 	Parser& parser = *context.parser;
 
 	if (!call_expr.has_template_arguments()) {
@@ -4514,19 +4514,15 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	}
 
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
-		// POI resolution requires the parser.  If context.parser is null here it
-		// means the evaluator was invoked without a parser in a context where a
-		// dependent-unqualified call survived template instantiation, which is a
-		// compiler bug.
-		if (!context.parser) {
-			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
-		}
+		// POI resolution requires parser-owned context. Missing parser/sema is a
+		// contract violation and must hard-fail.
+		SemanticAnalysis& sema_ref =
+			context.requireParserOwnedSema("dependent unqualified call POI resolution");
 		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
-			context
-				.requireParserOwnedSema("dependent unqualified call reuse")
+			sema_ref
 				.parserSemanticServices()
 				.getResolvedDirectCallQuery(&call_expr);
 		if (sema_query.hasValue()) {
@@ -4787,6 +4783,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 		// No pre-instantiated version found - try to instantiate on-demand if parser is available
 		if (context.parser) {
+			(void)context.requireParserOwnedSema("template call argument instantiation");
+			Parser& parser = *context.parser;
+
 			// When the call carries explicit template arguments (e.g. f<T1,T2>()) try
 			// instantiation via try_instantiate_template_explicit first, before the
 			// argument-type-deduction path (which cannot deduce type params from an
@@ -4816,10 +4815,10 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 				}
 				if (all_concrete && !explicit_args.empty()) {
 					std::optional<ASTNode> explicit_opt =
-						context.parser->try_instantiate_template_explicit(
+						parser.try_instantiate_template_explicit(
 							qualified_name, explicit_args, arguments.size());
 					if (!explicit_opt.has_value() && qualified_name != func_name) {
-						explicit_opt = context.parser->try_instantiate_template_explicit(
+						explicit_opt = parser.try_instantiate_template_explicit(
 							func_name, explicit_args, arguments.size());
 					}
 					if (explicit_opt.has_value()) {
@@ -4834,7 +4833,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 				}
 			}
 
-			std::optional<ASTNode> instantiated_opt = context.parser->tryInstantiateTemplateFromCallArguments(
+			std::optional<ASTNode> instantiated_opt = parser.tryInstantiateTemplateFromCallArguments(
 				qualified_name,
 				func_name,
 				arguments);
