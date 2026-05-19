@@ -672,6 +672,49 @@ const TemplateTypeArg* findTemplateValueParameterBinding(StringHandle param_name
 	return findTemplateValueParameterBindingCompatibility(param_name_handle, context);
 }
 
+const TemplateBinding* findTemplatePackBinding(
+	StringHandle pack_name_handle,
+	const TemplateEnvironment& environment) {
+	for (const TemplateBinding& binding : environment.bindings) {
+		if (binding.name == pack_name_handle && binding.is_pack) {
+			return &binding;
+		}
+	}
+	if (environment.parent != nullptr) {
+		return findTemplatePackBinding(pack_name_handle, *environment.parent);
+	}
+	return nullptr;
+}
+
+std::optional<size_t> resolveSizeofPackCount(
+	std::string_view pack_name,
+	const EvaluationContext& context) {
+	if (pack_name.empty()) {
+		return std::nullopt;
+	}
+
+	StringHandle pack_name_handle = StringTable::getOrInternStringHandle(pack_name);
+	if (const TemplateBinding* pack_binding =
+			findTemplatePackBinding(pack_name_handle, context.template_environment);
+		pack_binding != nullptr) {
+		return pack_binding->args.size();
+	}
+
+	if (context.parser != nullptr) {
+		if (auto pack_size = context.parser->get_template_param_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		if (auto pack_size = context.parser->get_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		if (auto pack_size = context.parser->get_class_template_pack_size(pack_name)) {
+			return *pack_size;
+		}
+	}
+
+	return std::nullopt;
+}
+
 std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
 	if (!arg.is_value) {
 		return std::nullopt;
@@ -934,22 +977,13 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	if (std::holds_alternative<SizeofPackNode>(expr)) {
 		const auto& sizeof_pack = std::get<SizeofPackNode>(expr);
 		std::string_view pack_name = sizeof_pack.pack_name();
-
-		// Try to get pack size from the parser's pack parameter info
-		if (context.parser) {
-			auto pack_size = context.parser->get_pack_size(pack_name);
-			if (pack_size.has_value()) {
-				return EvalResult::from_int(static_cast<long long>(*pack_size));
-			}
-			// Also check class template pack context
-			auto class_pack_size = context.parser->get_class_template_pack_size(pack_name);
-			if (class_pack_size.has_value()) {
-				return EvalResult::from_int(static_cast<long long>(*class_pack_size));
-			}
-			return EvalResult::error("sizeof... requires template instantiation context for pack: " + std::string(pack_name), EvalErrorType::TemplateDependentExpression);
+		if (auto pack_size = resolveSizeofPackCount(pack_name, context)) {
+			return EvalResult::from_uint(static_cast<unsigned long long>(*pack_size));
 		}
 
-		return EvalResult::error("sizeof... operator requires template context");
+		return EvalResult::error(
+			"sizeof... requires template instantiation context for pack: " + std::string(pack_name),
+			EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For AlignofExprNode
