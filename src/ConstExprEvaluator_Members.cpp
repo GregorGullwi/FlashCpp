@@ -1700,7 +1700,6 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		// contract violation and must hard-fail.
 		SemanticAnalysis& sema_ref =
 			context.requireParserOwnedSema("dependent unqualified member call POI resolution");
-		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		auto sema_services = sema_ref.parserSemanticServices();
@@ -1726,6 +1725,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		case ResolvedFunctionQueryResult::State::AnalyzedAbsent:
 			break;
 		}
+		// Sema query was absent or not yet analyzed — fall back to parser POI lookup.
+		Parser& parser = *context.parser;
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(
