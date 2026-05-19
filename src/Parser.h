@@ -1470,11 +1470,12 @@ private:
 #endif
 	};
 
-	// SaveHandle values are monotonically increasing dense indices during one
-	// parse, so vector-indexed storage avoids hash lookup/allocation overhead in
-	// speculative parser save/restore hot paths.
+	// Save handles index into saved_tokens_ for O(1) save/restore lookups.
+	// We reuse released handles via free_save_handles_ to avoid unbounded growth
+	// and reduce save/discard churn in speculative parser hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
-	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
+	size_t next_save_handle_ = 0;  // Next new handle when free list is empty
+	std::vector<SaveHandle> free_save_handles_;
 	std::optional<Token> lookahead_token_1_cache_;
 #if WITH_PARSER_RUNTIME_STATS
 	bool runtime_stats_enabled_ = false;
