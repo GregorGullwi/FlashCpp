@@ -2163,11 +2163,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 										qualified_owner_name,
 										member_args);
 							} else {
-								StringHandle chained_owner_handle =
+								const StringHandle chained_owner_lookup_handle =
 									StringTable::getOrInternStringHandle(
 										chained_owner_name);
 								auto chained_owner_it =
-									getTypesByNameMap().find(chained_owner_handle);
+									getTypesByNameMap().find(chained_owner_lookup_handle);
 								if (chained_owner_it == getTypesByNameMap().end() ||
 									chained_owner_it->second == nullptr) {
 									std::string_view instantiated_owner_name =
