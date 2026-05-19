@@ -1509,6 +1509,30 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			}
 
 			if (peek() == ">"_tok || peek() == ","_tok) {
+				if (parsing_alias_type_id_ &&
+					(gTemplateRegistry.lookup_alias_template(identifier_handle).has_value() ||
+					 gTemplateRegistry.lookupTemplate(identifier_handle).has_value() ||
+					 gTemplateRegistry.isClassTemplate(identifier_handle) ||
+					 (currentTemplateParamKind(identifier_handle).has_value() &&
+					  *currentTemplateParamKind(identifier_handle) == TemplateParameterKind::Template))) {
+					TemplateTypeArg template_arg = TemplateTypeArg::makeTemplate(identifier_handle);
+					template_arg.is_pack = is_pack_expansion;
+					template_args.push_back(template_arg);
+					if (out_type_nodes) {
+						out_type_nodes->push_back(ASTNode::emplace_node<ExpressionNode>(IdentifierNode(identifier_token)));
+					}
+					discard_saved_token(identifier_saved_pos);
+					discard_saved_token(arg_saved_pos);
+
+					if (peek() == ">"_tok) {
+						advance();
+						break;
+					}
+
+					advance();
+					continue;
+				}
+
 				auto [simple_identifier_kind, prebuilt_arg] = classifySimpleTemplateArgName(identifier_handle);
 				if (simple_identifier_kind == SimpleTemplateArgKind::ValueLike) {
 					// Use the concrete arg returned by the classify call (avoids a second loop over

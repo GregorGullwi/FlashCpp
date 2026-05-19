@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-18
+**Last updated:** 2026-05-19
 
 This document is the execution plan for moving FlashCpp's template
 infrastructure toward C++20 conformance. It intentionally focuses on remaining
@@ -66,11 +66,14 @@ Future work should assume these are already in place:
 - typed NTTP identity already exists for integral, enum, `nullptr`, object
   pointer, reference, function pointer, non-null/null member-data pointer, and
   covered floating-point cases;
+- default NTTP values use the substituted declared parameter type in the shared
+  default-evaluation paths for covered scalar/enum cases, so
+  `template<class T, T V = 1>` preserves the `T` identity after substitution;
 - selected free/member function-template overload paths already rank
   signatures before materializing bodies.
 
 Latest validation on Windows sharded build:
-`2437` regular tests compiled/linked/runtime-pass, `182` expected-fail tests.
+`2450` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -95,13 +98,14 @@ Most concrete next subtask:
   qualified-call records now preserve the instantiated placeholder `owner_type`
   instead of dropping it at parse time. Deferred non-call qualified expressions
   now also preserve deeper member-template segment arguments such as
-  `Traits<T>::template Box<T>::value`. The next concrete gap is still the
-  remaining call-shaped member-template/member-chain cases and the declarations
-  that never capture replay metadata in the first place; current-
-  instantiation/type-alias qualified-id/member chains already reuse the shared
-  member-side lookup/materialization path, and covered replayed qualified-id
-  parsing now preserves both current-instantiation and explicit-template owner
-  identity plus non-call member-template segment metadata.
+  `Traits<T>::template Box<T>::value`, and call-shaped expressions preserve
+  `Traits<T>::template Box<T>::get()`. The next concrete gap is the remaining
+  declarations that never capture replay metadata in the first place, plus
+  dependent-base/unknown-specialization member-chain cases outside the covered
+  replayed static-initializer flows. The current `<ratio>` blocker is also a
+  useful bounded target because parsing now reaches the older `std::ratio_less`
+  value-propagation frontier rather than stopping in the fixed default NTTP
+  declared-type materialization or dependent member-template argument paths.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 

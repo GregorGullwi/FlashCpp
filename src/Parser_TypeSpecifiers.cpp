@@ -561,8 +561,12 @@ ParseResult Parser::parse_type_specifier() {
 
 	auto diagnoseMissingTypenameForDependentOwner =
 		[&](TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
-			const Token& diagnostic_token) -> std::optional<ParseResult> {
-		if (saw_typename_keyword || !dependentQualifiedOwnerNeedsTypename(owner_kind)) {
+			const Token& diagnostic_token,
+			bool allow_member_template_type_id) -> std::optional<ParseResult> {
+		if (saw_typename_keyword ||
+			parsing_alias_type_id_ ||
+			allow_member_template_type_id ||
+			!dependentQualifiedOwnerNeedsTypename(owner_kind)) {
 			return std::nullopt;
 		}
 		StringBuilder message_builder;
@@ -1235,7 +1239,8 @@ ParseResult Parser::parse_type_specifier() {
 				if (is_dependent_qualified_type) {
 					if (auto typename_error = diagnoseMissingTypenameForDependentOwner(
 							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
-							last_qualified_token);
+							last_qualified_token,
+							false);
 						typename_error.has_value()) {
 						return *typename_error;
 					}
@@ -2258,7 +2263,8 @@ ParseResult Parser::parse_type_specifier() {
 						if (auto typename_error =
 								diagnoseMissingTypenameForDependentOwner(
 									owner_kind,
-									type_name_token);
+									type_name_token,
+									had_template_keyword && dependent_member_template_args.has_value());
 							typename_error.has_value()) {
 							return *typename_error;
 						}

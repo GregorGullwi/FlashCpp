@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-18
+**Last updated:** 2026-05-19
 
 This document is the short audit for FlashCpp's template infrastructure. Its
 main purpose is to describe what is still structurally wrong, what the next
@@ -52,12 +52,16 @@ Useful to know before changing anything:
 - typed NTTP identity is implemented for integral, enum, `nullptr`, object
   pointer, reference, function pointer, non-null/null member-data pointer, and
   floating-point cases that already materialize as concrete semantic values;
+- default non-type template arguments now materialize with their substituted
+  declared parameter type for covered scalar/enum cases, so
+  `template<class T, T V = 1>` preserves `T=short` instead of storing `V` as
+  `int`;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
 Validation at this point passed the Windows sharded build and the Windows
 PowerShell test workflow:
-`2437` regular tests compiled/linked/runtime-pass, `182` expected-fail tests.
+`2450` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## What is still wrong
 
@@ -84,9 +88,12 @@ Concrete follow-up already identified by recent work:
   qualified expressions now also keep member-template segment arguments such as
   `Traits<T>::template Box<T>::value` and
   `Traits<T>::template Box<T>::get()` instead of dropping the `Box<T>` segment
-  at parse time. The next concrete follow-up is the remaining dependent-base and
+  at parse time.
+- default NTTP declared-type materialization is now covered for scalar/enum
+  cases. The next concrete follow-up is either the remaining dependent-base and
   unknown-specialization member-chain work in declarations that still never
-  capture replay metadata at parse time.
+  capture replay metadata at parse time, or the current `<ratio>` blocker where
+  parsing now reaches the older `std::ratio_less` value-propagation frontier.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -223,7 +230,10 @@ materially changes what future refactors can assume.
 - member-pointer NTTP mangling now carries richer member-pointer type identity
   (including the declaring class when recoverable), while value encoding still
   intentionally falls back conservatively until a full Itanium external-name
-  form is wired for those values.
+  form is wired for those values;
+- default NTTP values now use the substituted declared parameter type when
+  materialized through the shared default-evaluation paths, preserving identity
+  for cases like `template<class T, T V = 1>` instantiated as `T=short`.
 
 ## Exit criteria for this audit
 

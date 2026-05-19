@@ -33,9 +33,10 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
    the constexpr evaluator (`ConstExprEvaluator_Core.cpp`).
 
 **Current frontier**: The previous `__ratio_less_impl` / remove-cv alias
-instantiation stop is fixed. The first hard blocker has moved later to
-`__ratio_add_impl` default-NTTP evaluation, currently surfacing as unresolved
-`ratio_less$...::value` during constant evaluation.
+instantiation stop, default-NTTP declared-type materialization issue, MSVC
+`type_traits` dependent member-template argument parse failure, and deferred-base
+call-expression invariant are fixed. The first hard blocker currently reaches
+the `std::ratio_less<third, half>` assertion in `test_std_ratio.cpp`.
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
@@ -52,21 +53,17 @@ instantiation stop is fixed. The first hard blocker has moved later to
   default-NTTP/value propagation in ratio arithmetic.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
-### 2b) Residual substitution cycle/default-NTTP value loss in partially-dependent `ratio` instances
+### 2b) Residual ratio comparison value propagation
 
-- **Symptom**: Repeated DEBUG log lines cycling between `_R1::num` and `__static_abs$xxx::value`
-  lookups during depth=2 `ratio` template processing.
-- **Root cause**: When `__ratio_multiply<ratio<N1,D1>, ratio<N2,D2>>::type` is computed, intermediate
-  partially-substituted `ratio<expr, expr>` instances store their `num`/`den` as still-dependent
-  expressions pointing to `__static_abs` helper types. Those helpers in turn store the original
-  `_R1::num`/`_R2::num` as their template arg. The two cycle guards (keyed on TypeInfo* and
-  qualified-id key) detect each individual back-edge but the two-node cycle
-  (`"_R1::num"` ↔ `"__static_abs$xxx::value"`) uses distinct keys, so substitution terminates
-  by returning raw/unresolved args rather than resolved numeric values.
-- **Affected path**: `ExpressionSubstitutor::substituteQualifiedIdentifier` /
-  `materializeStoredTemplateArgs` for intermediate instantiation contexts.
-- **Impact**: `ratio<N,D>::num` and `::den` remain as unresolved dependent expressions in
-  `__ratio_multiply` results; `ratio_equal`, `ratio_less`, etc. cannot be evaluated.
-  This prevents `.o` output for `tests/std/test_std_ratio.cpp` (codegen requires resolved types).
-- **Fix direction**: Track the full two-node cycle by keying both nodes together, or resolve
-  numeric NTTP values eagerly when concrete integer template args are available.
+- **Symptom**: `tests/std/test_std_ratio.cpp` now parses the MSVC `type_traits`
+  helpers and reaches `static_assert(std::ratio_less<third, half>::value)`,
+  where the assertion fails.
+- **Root cause**: Still under investigation. The remaining hard stop is now in
+  ratio comparison value propagation after the dependent member-template
+  argument parsing and deferred-base call-expression blockers are cleared.
+- **Affected path**: ratio comparison constexpr/value propagation for
+  `std::ratio_less` over concrete `ratio<N,D>` instances.
+- **Impact**: `tests/std/test_std_ratio.cpp` still does not produce `.o` output.
+- **Fix direction**: Reproduce the smallest `ratio_less<ratio<1,3>, ratio<1,2>>`
+  value-propagation failure, then fix the remaining concrete ratio comparison
+  evaluation path without reintroducing local parser recovery.
