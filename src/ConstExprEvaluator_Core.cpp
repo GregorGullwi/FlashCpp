@@ -4400,6 +4400,7 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 	if (!context.parser) {
 		return EvalResult::error("No parser available for variable template instantiation");
 	}
+	(void)context.requireParserOwnedSema("variable template instantiation");
 	Parser& parser = *context.parser;
 
 	if (!call_expr.has_template_arguments()) {
@@ -4785,7 +4786,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 		// No pre-instantiated version found - try to instantiate on-demand if parser is available
 		if (context.parser) {
-			std::optional<ASTNode> instantiated_opt = context.parser->tryInstantiateTemplateFromCallArguments(
+			(void)context.requireParserOwnedSema("template call argument instantiation");
+			Parser& parser = *context.parser;
+			std::optional<ASTNode> instantiated_opt = parser.tryInstantiateTemplateFromCallArguments(
 				qualified_name,
 				func_name,
 				arguments);
