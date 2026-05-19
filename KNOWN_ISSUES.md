@@ -83,3 +83,61 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
   too rigidly for dependent contexts and does not use a more canonicalized/dependent-aware type equivalence.
 - **Affected path**: `Parser::validate_signature_match`, invoked from out-of-line template member parsing.
 - **Impact**: Noisy diagnostics and increased risk of picking/validating against suboptimal overload candidates.
+
+---
+
+## 5) `tests/std/test_std_ratio.cpp` — no `.o` output and residual diagnostic noise
+
+**Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
+
+1. **Infinite mutual recursion** between `materializeStoredTemplateArgs` and
+   `substituteQualifiedIdentifier` (cycle guards added in `ExpressionSubstitutor`).
+2. **Explicit template type args ignored** for zero-param function template calls in
+   the constexpr evaluator (`ConstExprEvaluator_Core.cpp`).
+
+**Remaining blockers** (non-crashing, but prevent `.o` output):
+
+### 5a) `std::__is_complete_or_unbounded` instantiation always fails
+
+- **Symptom**: Many `[ERROR][Templates] All 2 template overload(s) failed for '__is_complete_or_unbounded'`
+  during parsing of `<ratio>` and its dependencies.
+- **Root cause**: `constexpr true_type __is_complete_or_unbounded(__type_identity<_Tp>)` is a function
+  template with a non-type default template parameter (`size_t = sizeof(_Tp)`). FlashCpp does not
+  yet support template argument deduction from a class-template-specialization argument
+  (`__type_identity<_Tp>` → deduce `_Tp`) combined with a defaulted non-type parameter that
+  depends on the deduced type.
+- **Affected path**: `Parser_Templates_Inst_Deduction.cpp` — `tryInstantiateTemplateFromCallArguments`.
+- **Impact**: Non-fatal during parsing (expressions remain dependent), but prevents correct
+  constexpr evaluation of `static_assert` checks inside `<type_traits>` and `<ratio>`.
+
+### 5b) `std::__are_both_ratios` parse-time instantiation failure (expected noise)
+
+- **Symptom**: `[WARN][Parser] Parsed template arguments but instantiation failed for 'std::__are_both_ratios'`
+  followed by `[ERROR][Templates] All 1 template overload(s) failed for '__are_both_ratios'` — appears
+  4 times during `__ratio_multiply`/`ratio_equal` template body parsing.
+- **Root cause**: The parser speculatively tries to instantiate `__are_both_ratios<_R1, _R2>` at
+  template-body parse time, when `_R1` and `_R2` are still dependent type parameters.
+  `try_instantiate_template_explicit` has an early-out for dependent args (correct behaviour).
+  The errors are non-fatal and the constexpr evaluator path correctly handles them via
+  the explicit-type-args fix (Bug 2 above), but `__is_complete_or_unbounded` failure (5a above)
+  prevents full `static_assert` evaluation.
+- **Impact**: Diagnostic noise only; not a correctness failure in isolation.
+
+### 5c) Residual substitution cycle in `ExpressionSubstitutor` for partially-dependent `ratio` instances
+
+- **Symptom**: Repeated DEBUG log lines cycling between `_R1::num` and `__static_abs$xxx::value`
+  lookups during depth=2 `ratio` template processing.
+- **Root cause**: When `__ratio_multiply<ratio<N1,D1>, ratio<N2,D2>>::type` is computed, intermediate
+  partially-substituted `ratio<expr, expr>` instances store their `num`/`den` as still-dependent
+  expressions pointing to `__static_abs` helper types. Those helpers in turn store the original
+  `_R1::num`/`_R2::num` as their template arg. The two cycle guards (keyed on TypeInfo* and
+  qualified-id key) detect each individual back-edge but the two-node cycle
+  (`"_R1::num"` ↔ `"__static_abs$xxx::value"`) uses distinct keys, so substitution terminates
+  by returning raw/unresolved args rather than resolved numeric values.
+- **Affected path**: `ExpressionSubstitutor::substituteQualifiedIdentifier` /
+  `materializeStoredTemplateArgs` for intermediate instantiation contexts.
+- **Impact**: `ratio<N,D>::num` and `::den` remain as unresolved dependent expressions in
+  `__ratio_multiply` results; `ratio_equal`, `ratio_less`, etc. cannot be evaluated.
+  This prevents `.o` output for `tests/std/test_std_ratio.cpp` (codegen requires resolved types).
+- **Fix direction**: Track the full two-node cycle by keying both nodes together, or resolve
+  numeric NTTP values eagerly when concrete integer template args are available.
