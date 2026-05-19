@@ -442,8 +442,6 @@ struct EvaluationContext {
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;
 	SemanticAnalysis* sema = nullptr;
-	void attachSemaOnly(SemanticAnalysis& sema_owner);
-	void attachParserOwnedSema(Parser& parser_owner);
 	SemanticAnalysis& requireSema(std::string_view operation) const;
 	SemanticAnalysis& requireParserAttachedSema(std::string_view operation) const;
 	SemanticAnalysis& requireParserOwnedSema(std::string_view operation) const;
@@ -505,8 +503,9 @@ struct EvaluationContext {
 	}
 
 	// Constructor requires symbol table to prevent missing it
-	explicit EvaluationContext(const SymbolTable& symbol_table)
-		: symbols(&symbol_table) {}
+	explicit EvaluationContext(const SymbolTable& symbol_table);
+	EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner);
+	EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner);
 };
 
 // Main constant expression evaluator class

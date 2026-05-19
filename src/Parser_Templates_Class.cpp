@@ -91,8 +91,7 @@ ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::
 		return width_result;
 	}
 	if (width_result.node().has_value()) {
-		ConstExpr::EvaluationContext ctx(gSymbolTable);
-		ctx.attachParserOwnedSema(*this);
+		ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 		auto eval_result = ConstExpr::Evaluator::evaluate(*width_result.node(), ctx);
 		if (!eval_result.success() || eval_result.as_int() < 0) {
 			// If caller wants deferred evaluation and the expression is not a plain literal,
@@ -2148,8 +2147,7 @@ ParseResult Parser::parse_template_declaration() {
 							dtor_ref.set_has_noexcept_specifier(true);
 							if (dtor_func_specs.noexcept_expr.has_value()) {
 								dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
-								ConstExpr::EvaluationContext ctx(gSymbolTable);
-								ctx.attachParserOwnedSema(*this);
+								ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 								auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
 								if (eval.success())
 									dtor_ref.set_noexcept(eval.as_bool());
@@ -3588,8 +3586,7 @@ ParseResult Parser::parse_template_declaration() {
 						dtor_ref.set_has_noexcept_specifier(true);
 						if (dtor_func_specs.noexcept_expr.has_value()) {
 							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
-							ConstExpr::EvaluationContext ctx(gSymbolTable);
-							ctx.attachParserOwnedSema(*this);
+							ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 							auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
 							if (eval.success())
 								dtor_ref.set_noexcept(eval.as_bool());
@@ -5223,8 +5220,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						std::vector<size_t> array_dimensions;
 						if (decl.is_array()) {
 							for (const auto& dim_expr : decl.array_dimensions()) {
-								ConstExpr::EvaluationContext ctx(gSymbolTable);
-								ctx.attachParserOwnedSema(*this);
+								ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 								if (eval_result.success() && eval_result.as_int() > 0) {
 									size_t dim_size = static_cast<size_t>(eval_result.as_int());
@@ -5652,8 +5648,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					std::vector<size_t> array_dimensions;
 					if (decl.is_array()) {
 						for (const auto& dim_expr : decl.array_dimensions()) {
-							ConstExpr::EvaluationContext ctx(gSymbolTable);
-							ctx.attachParserOwnedSema(*this);
+							ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 							auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
 							if (eval_result.success() && eval_result.as_int() > 0) {
 								size_t dim_size = static_cast<size_t>(eval_result.as_int());

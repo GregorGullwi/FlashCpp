@@ -730,8 +730,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 		nullptr);
 
 	auto appendEvaluatedNonTypeArg = [&](const ASTNode& expr) -> bool {
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.attachParserOwnedSema(*this);
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		eval_ctx.template_environment = default_arg_environment;
 		auto eval_sub_map = buildSubstitutionParamMap(default_arg_environment);
 		eval_ctx.template_param_names.assign(
@@ -1740,8 +1739,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			}
 		}
 
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		eval_ctx.attachParserOwnedSema(*this);
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		eval_ctx.template_environment.bindings.reserve(param_name_to_arg.size());
 		for (const auto& [deduced_name, deduced_arg] : param_name_to_arg) {
 			TemplateBinding binding;

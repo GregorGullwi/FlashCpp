@@ -1074,8 +1074,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		// If it succeeds, __builtin_constant_p returns 1, otherwise 0
 		int result = 0;
 		if (arg_result.node().has_value()) {
-			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			eval_ctx.attachParserOwnedSema(*this);
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 			auto eval_result = ConstExpr::Evaluator::evaluate(*arg_result.node(), eval_ctx);
 			if (eval_result.success()) {
 				result = 1;

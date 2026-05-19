@@ -8,15 +8,17 @@
 
 namespace ConstExpr {
 
-void EvaluationContext::attachSemaOnly(SemanticAnalysis& sema_owner) {
-	parser = nullptr;
-	sema = &sema_owner;
-}
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table)
+	: symbols(&symbol_table) {}
 
-void EvaluationContext::attachParserOwnedSema(Parser& parser_owner) {
-	parser = &parser_owner;
-	sema = &parser_owner.semanticAnalysis();
-}
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner)
+	: symbols(&symbol_table),
+	  parser(&parser_owner),
+	  sema(&parser_owner.semanticAnalysis()) {}
+
+EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner)
+	: symbols(&symbol_table),
+	  sema(&sema_owner) {}
 
 SemanticAnalysis& EvaluationContext::requireSema(std::string_view operation) const {
 	if (sema == nullptr) {
