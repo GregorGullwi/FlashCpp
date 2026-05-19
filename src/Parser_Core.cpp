@@ -1320,8 +1320,12 @@ void Parser::discard_saved_token(SaveHandle handle) {
 #if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			--runtime_stats_.active_saves;
-			if (kind == SaveKind::Ephemeral && runtime_stats_.active_ephemeral_saves > 0) {
-				--runtime_stats_.active_ephemeral_saves;
+			if (kind == SaveKind::Ephemeral) {
+				if (runtime_stats_.active_ephemeral_saves == 0) {
+					FLASH_LOG(Parser, Warning, "Ephemeral save counter mismatch while discarding handle ", handle);
+				} else {
+					--runtime_stats_.active_ephemeral_saves;
+				}
 			}
 			size_t holes = saved_tokens_.size() - runtime_stats_.active_saves;
 			runtime_stats_.saved_token_holes_peak = std::max(runtime_stats_.saved_token_holes_peak, holes);

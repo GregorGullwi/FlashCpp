@@ -1516,7 +1516,7 @@ private:
 		Token injected_token_;  // Phase 5: Save injected token state for >> splitting
 		size_t ast_nodes_size_ = 0;
 		TokenPosition lexer_position_;  // Store the lexer position with each save
-		SaveKind kind_ = SaveKind::Persistent;
+		SaveKind kind_;
 #if WITH_PARSER_RUNTIME_STATS
 		size_t tokens_advanced_at_save_ = 0;  // Snapshot of tokens_advanced for delta tracking
 #endif
