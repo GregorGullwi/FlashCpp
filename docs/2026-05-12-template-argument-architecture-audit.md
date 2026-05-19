@@ -77,11 +77,16 @@ What still needs work:
 
 Concrete follow-up already identified by recent work:
 
-- the next concrete follow-up is the remaining dependent-base and unknown-
-  specialization member-chain work plus the declarations that still never
-  capture replay metadata at parse time; deeper current-instantiation/type-alias
-  qualified-id/member chains now reuse the shared semantic lookup path once that
-  metadata exists.
+- the explicit-template unknown-specialization owner-record gap is now narrower:
+  replayed deferred qualified-call records keep the instantiated placeholder
+  `owner_type`, so declaration-time replay is no longer forced to recover that
+  identity from the raw owner spelling alone. Deferred non-call qualified
+  expressions now also keep member-template segment arguments such as
+  `Traits<T>::template Box<T>::value` instead of dropping the `Box<T>` segment
+  at parse time. The next concrete follow-up is the remaining dependent-base and
+  unknown-specialization member-chain work, especially call-shaped deeper
+  member-template chains and the declarations that still never capture replay
+  metadata at parse time.
 
 ### 2. Dependent names are still represented too loosely
 

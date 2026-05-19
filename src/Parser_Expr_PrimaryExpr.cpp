@@ -26,6 +26,12 @@ bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<Templat
 		});
 }
 
+struct ExpressionDependentMemberSegmentInfo {
+	StringHandle name;
+	bool has_template_keyword = false;
+	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
+};
+
 TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -45,6 +51,43 @@ TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecor
 		record.member_chain.push_back(std::move(member));
 	}
 	return record;
+}
+
+TypeInfo::DependentQualifiedNameRecord makeExpressionDependentQualifiedNameRecord(
+	StringHandle owner_name,
+	TypeIndex owner_type,
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
+	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	std::span<const ExpressionDependentMemberSegmentInfo> member_segments) {
+	TypeInfo::DependentQualifiedNameRecord record;
+	record.owner_kind = owner_kind;
+	record.owner_name = owner_name;
+	record.owner_type = owner_type;
+	record.owner_template_arguments = std::move(owner_template_arguments);
+	record.names_current_instantiation =
+		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+	for (const ExpressionDependentMemberSegmentInfo& segment_info : member_segments) {
+		TypeInfo::DependentQualifiedNameRecord::Member member;
+		member.name = segment_info.name;
+		member.has_template_keyword = segment_info.has_template_keyword;
+		if (segment_info.template_args.has_value()) {
+			member.template_arguments = *segment_info.template_args;
+			member.has_template_arguments = true;
+		}
+		record.member_chain.push_back(std::move(member));
+	}
+	return record;
+}
+
+TypeIndex lookupRecordedDependentOwnerType(StringHandle owner_handle) {
+	if (!owner_handle.isValid()) {
+		return {};
+	}
+	auto owner_it = getTypesByNameMap().find(owner_handle);
+	if (owner_it == getTypesByNameMap().end() || owner_it->second == nullptr) {
+		return {};
+	}
+	return owner_it->second->registeredTypeIndex();
 }
 
 bool isEligibleDefinitionLookupCall(
@@ -5788,9 +5831,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										NamespaceRegistry::GLOBAL_NAMESPACE,
 										dependent_owner_handle);
 									Token final_identifier{};
-									std::vector<StringHandle> dependent_member_names;
+									std::vector<ExpressionDependentMemberSegmentInfo> dependent_member_segments;
 									while (peek() == "::"_tok) {
 										advance(); // consume ::
+										const bool has_template_keyword = peek() == "template"_tok;
 										if (peek() == "template"_tok) {
 											advance(); // consume 'template' keyword
 										}
@@ -5798,12 +5842,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											return ParseResult::error("Expected identifier after '::'", peek_info());
 										}
 										final_identifier = peek_info();
-										dependent_member_names.push_back(final_identifier.handle());
+										ExpressionDependentMemberSegmentInfo member_segment;
+										member_segment.name = final_identifier.handle();
+										member_segment.has_template_keyword = has_template_keyword;
 										advance(); // consume member name
-										// Skip template arguments on member if present (e.g., ::member<T>)
-										if (peek() == "<"_tok) {
-											skip_template_arguments();
+										if (has_template_keyword && peek() == "<"_tok) {
+											std::vector<ASTNode> member_template_arg_nodes;
+											auto member_template_args =
+												parse_explicit_template_arguments(
+													&member_template_arg_nodes);
+											if (!member_template_args.has_value()) {
+												return ParseResult::error(
+													"Failed to parse dependent member template arguments",
+													final_identifier);
+											}
+											member_segment.template_args =
+												toTemplateArgInfoList(
+													*member_template_args);
 										}
+										dependent_member_segments.push_back(
+											std::move(member_segment));
 										// Skip function call arguments if present (e.g., ::member(a, b))
 										if (peek() == "("_tok) {
 											skip_balanced_parens();
@@ -5824,10 +5882,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									dependent_qual_id.setDependentQualifiedName(
 										makeExpressionDependentQualifiedNameRecord(
 											StringTable::getOrInternStringHandle(qualified_template_name),
-											TypeIndex{},
+											lookupRecordedDependentOwnerType(dependent_owner_handle),
 											TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 											toTemplateArgInfoList(*explicit_template_args),
-											dependent_member_names));
+											dependent_member_segments));
 									result = emplace_node<ExpressionNode>(dependent_qual_id);
 									return ParseResult::success(*result);
 								}
@@ -5839,6 +5897,73 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							// Parse qualified identifier after template, using the instantiated name
 							// We need to collect the :: path ourselves since we have the instantiated name
+							if (parsing_template_depth_ > 0 && peek() == "::"_tok) {
+								SaveHandle deferred_member_chain_start = save_token_position();
+								NamespaceHandle deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+									NamespaceRegistry::GLOBAL_NAMESPACE,
+									StringTable::getOrInternStringHandle(instantiated_name));
+								Token deferred_final_identifier{};
+								std::vector<ExpressionDependentMemberSegmentInfo> deferred_member_segments;
+								bool has_deferred_member_template_segment = false;
+								bool deferred_member_chain_valid = true;
+								while (peek() == "::"_tok) {
+									advance(); // consume ::
+									const bool has_template_keyword = peek() == "template"_tok;
+									if (has_template_keyword) {
+										advance(); // consume 'template'
+									}
+									if (!peek().is_identifier()) {
+										deferred_member_chain_valid = false;
+										break;
+									}
+									deferred_final_identifier = peek_info();
+									ExpressionDependentMemberSegmentInfo member_segment;
+									member_segment.name = deferred_final_identifier.handle();
+									member_segment.has_template_keyword = has_template_keyword;
+									advance(); // consume member name
+									if (has_template_keyword && peek() == "<"_tok) {
+										auto member_template_args = parse_explicit_template_arguments();
+										if (!member_template_args.has_value()) {
+											deferred_member_chain_valid = false;
+											break;
+										}
+										member_segment.template_args =
+											toTemplateArgInfoList(*member_template_args);
+										has_deferred_member_template_segment =
+											has_deferred_member_template_segment ||
+											has_template_keyword ||
+											explicitTemplateArgsRequireDeferredInstantiation(
+												*member_template_args);
+									}
+									deferred_member_segments.push_back(std::move(member_segment));
+									if (peek() == "::"_tok) {
+										deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+											deferred_ns_handle,
+											deferred_final_identifier.handle());
+									}
+								}
+								if (deferred_member_chain_valid &&
+									has_deferred_member_template_segment &&
+									deferred_final_identifier.type() == Token::Type::Identifier &&
+									peek() != "("_tok) {
+									QualifiedIdentifierNode dependent_qual_id(
+										deferred_ns_handle,
+										deferred_final_identifier);
+									dependent_qual_id.setDependentQualifiedName(
+										makeExpressionDependentQualifiedNameRecord(
+											StringTable::getOrInternStringHandle(template_name),
+											lookupRecordedDependentOwnerType(
+												StringTable::getOrInternStringHandle(instantiated_name)),
+											TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+											toTemplateArgInfoList(*explicit_template_args),
+											deferred_member_segments));
+									result = emplace_node<ExpressionNode>(dependent_qual_id);
+									pending_explicit_template_args_.reset();
+									return ParseResult::success(*result);
+								}
+								restore_token_position(deferred_member_chain_start);
+							}
+
 							std::vector<StringType<32>> namespaces;
 							Token final_identifier = identifier_token;
 
@@ -6779,9 +6904,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								NamespaceRegistry::GLOBAL_NAMESPACE,
 								dependent_owner_handle);
 							Token final_identifier{};
-							std::vector<StringHandle> dependent_member_names;
+							std::vector<ExpressionDependentMemberSegmentInfo> dependent_member_segments;
 							while (peek() == "::"_tok) {
 								advance(); // consume ::
+								const bool has_template_keyword = peek() == "template"_tok;
 								if (peek() == "template"_tok) {
 									advance(); // consume 'template' keyword
 								}
@@ -6789,12 +6915,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									return ParseResult::error("Expected identifier after '::'", peek_info());
 								}
 								final_identifier = peek_info();
-								dependent_member_names.push_back(final_identifier.handle());
+								ExpressionDependentMemberSegmentInfo member_segment;
+								member_segment.name = final_identifier.handle();
+								member_segment.has_template_keyword = has_template_keyword;
 								advance(); // consume member name
-								// Skip template arguments on member if present
-								if (peek() == "<"_tok) {
-									skip_template_arguments();
+								if (has_template_keyword && peek() == "<"_tok) {
+									std::vector<ASTNode> member_template_arg_nodes;
+									auto member_template_args =
+										parse_explicit_template_arguments(
+											&member_template_arg_nodes);
+									if (!member_template_args.has_value()) {
+										return ParseResult::error(
+											"Failed to parse dependent member template arguments",
+											final_identifier);
+									}
+									member_segment.template_args =
+										toTemplateArgInfoList(
+											*member_template_args);
 								}
+								dependent_member_segments.push_back(
+									std::move(member_segment));
 								// Skip function call arguments if present
 								if (peek() == "("_tok) {
 									skip_balanced_parens();
@@ -6815,10 +6955,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							dependent_qual_id.setDependentQualifiedName(
 								makeExpressionDependentQualifiedNameRecord(
 									StringTable::getOrInternStringHandle(qualified_template_name),
-									TypeIndex{},
+									lookupRecordedDependentOwnerType(dependent_owner_handle),
 									TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 									toTemplateArgInfoList(*explicit_template_args),
-									dependent_member_names));
+									dependent_member_segments));
 							result = emplace_node<ExpressionNode>(dependent_qual_id);
 							return ParseResult::success(*result);
 						}
@@ -6828,6 +6968,72 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 
 					// Create a token with the instantiated name to pass to parse_qualified_identifier_after_template
+					if (parsing_template_depth_ > 0 && peek() == "::"_tok) {
+						SaveHandle deferred_member_chain_start = save_token_position();
+						NamespaceHandle deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+							NamespaceRegistry::GLOBAL_NAMESPACE,
+							StringTable::getOrInternStringHandle(instantiated_class_name));
+						Token deferred_final_identifier{};
+						std::vector<ExpressionDependentMemberSegmentInfo> deferred_member_segments;
+						bool has_deferred_member_template_segment = false;
+						bool deferred_member_chain_valid = true;
+						while (peek() == "::"_tok) {
+							advance(); // consume ::
+							const bool has_template_keyword = peek() == "template"_tok;
+							if (has_template_keyword) {
+								advance(); // consume 'template'
+							}
+							if (!peek().is_identifier()) {
+								deferred_member_chain_valid = false;
+								break;
+							}
+							deferred_final_identifier = peek_info();
+							ExpressionDependentMemberSegmentInfo member_segment;
+							member_segment.name = deferred_final_identifier.handle();
+							member_segment.has_template_keyword = has_template_keyword;
+							advance(); // consume member name
+							if (has_template_keyword && peek() == "<"_tok) {
+								auto member_template_args = parse_explicit_template_arguments();
+								if (!member_template_args.has_value()) {
+									deferred_member_chain_valid = false;
+									break;
+								}
+								member_segment.template_args =
+									toTemplateArgInfoList(*member_template_args);
+								has_deferred_member_template_segment =
+									has_deferred_member_template_segment ||
+									has_template_keyword ||
+									explicitTemplateArgsRequireDeferredInstantiation(
+										*member_template_args);
+							}
+							deferred_member_segments.push_back(std::move(member_segment));
+							if (peek() == "::"_tok) {
+								deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+									deferred_ns_handle,
+									deferred_final_identifier.handle());
+							}
+						}
+						if (deferred_member_chain_valid &&
+							has_deferred_member_template_segment &&
+							deferred_final_identifier.type() == Token::Type::Identifier &&
+							peek() != "("_tok) {
+							QualifiedIdentifierNode dependent_qual_id(
+								deferred_ns_handle,
+								deferred_final_identifier);
+							dependent_qual_id.setDependentQualifiedName(
+								makeExpressionDependentQualifiedNameRecord(
+									StringTable::getOrInternStringHandle(identifier_token.value()),
+									lookupRecordedDependentOwnerType(
+										StringTable::getOrInternStringHandle(instantiated_class_name)),
+									TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+									toTemplateArgInfoList(*explicit_template_args),
+									deferred_member_segments));
+							result = emplace_node<ExpressionNode>(dependent_qual_id);
+							return ParseResult::success(*result);
+						}
+						restore_token_position(deferred_member_chain_start);
+					}
+
 					Token instantiated_token(Token::Type::Identifier, instantiated_class_name,
 											 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 
