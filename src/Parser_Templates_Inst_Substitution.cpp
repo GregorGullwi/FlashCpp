@@ -700,6 +700,42 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		}
 	}
 
+	// Handle sizeof...(Pack) directly.  The generic substituteAndEvaluateNonTypeDefault path
+	// cannot resolve the pack size here because ExpressionSubstitutor has no SizeofPackNode
+	// support and the ConstExpr evaluator only checks pack_param_info_ / class_template_pack_stack_
+	// which are empty outside a function-template instantiation body.
+	// Count the pack size from the alias template_parameters + template_args instead.
+	if (const auto* sizeof_pack = std::get_if<SizeofPackNode>(&arg_expr)) {
+		std::string_view pack_name = sizeof_pack->pack_name();
+		size_t arg_cursor = 0;
+		for (size_t pi = 0; pi < template_parameters.size(); ++pi) {
+			const TemplateParameterNode& param = template_parameters[pi];
+			if (!param.is_variadic()) {
+				++arg_cursor;
+				continue;
+			}
+			size_t required_after = 0;
+			for (size_t j = pi + 1; j < template_parameters.size(); ++j) {
+				if (!template_parameters[j].is_variadic()) {
+					++required_after;
+				}
+			}
+			size_t remaining = arg_cursor < template_args.size()
+				? template_args.size() - arg_cursor
+				: 0;
+			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
+			if (param.name() == pack_name) {
+				FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: sizeof...(", pack_name, ") = ", pack_size, " (counted from template_parameters/args)");
+				TypeCategory value_cat = TypeCategory::UnsignedLongLong;
+				if (target_template_param != nullptr && target_template_param->has_type()) {
+					value_cat = target_template_param->type_specifier_node().type();
+				}
+				return TemplateTypeArg(static_cast<int64_t>(pack_size), value_cat);
+			}
+			arg_cursor += pack_size;
+		}
+	}
+
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
 	typed_template_parameters.reserve(template_parameters.size());
 	for (const TemplateParameterNode& template_param : template_parameters) {
