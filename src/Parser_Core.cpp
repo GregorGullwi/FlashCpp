@@ -740,6 +740,7 @@ void Parser::printRuntimeStats() const {
 			  ", missing=", stats.missing_restore_count);
 	FLASH_LOG(General, Info, "  Ephemeral saves: peak-active=", stats.peak_active_ephemeral_saves,
 			  ", unreleased at parse end=", stats.active_ephemeral_saves);
+	FLASH_LOG(General, Info, "  Ephemeral counter mismatches: ", stats.ephemeral_counter_mismatch_count);
 	if (stats.active_ephemeral_saves > 0) {
 		FLASH_LOG(General, Warning, "  Ephemeral save handles still active at parse end: ", stats.active_ephemeral_saves);
 	}
@@ -1028,6 +1029,9 @@ Parser::SaveHandle Parser::save_token_position_ephemeral() {
 }
 
 Parser::SaveHandle Parser::save_token_position_impl(SaveKind kind) {
+#if !WITH_PARSER_RUNTIME_STATS
+	(void)kind;
+#endif
 #if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
@@ -1046,7 +1050,15 @@ Parser::SaveHandle Parser::save_token_position_impl(SaveKind kind) {
 	if (saved_tokens_.size() <= handle) {
 		saved_tokens_.resize(handle + 1);
 	}
-	saved_tokens_[handle] = SavedToken{current_token_, injected_token_, ast_nodes_.size(), lexer_pos, kind};
+	saved_tokens_[handle] = SavedToken{
+		current_token_,
+		injected_token_,
+		ast_nodes_.size(),
+		lexer_pos
+#if WITH_PARSER_RUNTIME_STATS
+		, kind
+#endif
+	};
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.save_count;
@@ -1233,6 +1245,7 @@ void Parser::discard_saved_token(SaveHandle handle) {
 			if (kind == SaveKind::Ephemeral) {
 				if (runtime_stats_.active_ephemeral_saves == 0) {
 					FLASH_LOG(Parser, Warning, "Ephemeral save counter mismatch while discarding handle ", handle);
+					++runtime_stats_.ephemeral_counter_mismatch_count;
 				} else {
 					--runtime_stats_.active_ephemeral_saves;
 				}
