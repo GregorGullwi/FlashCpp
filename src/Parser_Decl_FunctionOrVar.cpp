@@ -473,7 +473,8 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 
 		// Apply attributes
 		func_ref.set_calling_convention(attr_info.calling_convention);
-		if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
+		if ((attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) &&
+			func_ref.linkage() == Linkage::None) {
 			func_ref.set_linkage(attr_info.linkage);
 		}
 		func_ref.set_is_constexpr(is_constexpr);
@@ -662,7 +663,8 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Apply attribute linkage if present (calling convention already set in parse_function_declaration)
 		if (auto func_node_ptr = function_definition_result.node()) {
 			FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
-			if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
+			if ((attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) &&
+				func_node.linkage() == Linkage::None) {
 				func_node.set_linkage(attr_info.linkage);
 			}
 			func_node.set_is_constexpr(is_constexpr);

@@ -23,7 +23,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 2) `tests/std/test_std_ratio.cpp` — now reaches link-time unresolved CRT symbols
+## 2) `tests/std/test_std_ratio.cpp` — now reaches a link-time `__security_cookie` conflict
 
 **Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
 
@@ -36,10 +36,10 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 instantiation stop, default-NTTP declared-type materialization issue, MSVC
 `type_traits` dependent member-template argument parse failure, deferred-base
 call-expression invariant, `std::ratio_less<third, half>` constexpr
-comparison failure, and the later pointer/null IR-conversion failures in
-`wcsnlen_s` / `strnlen_s` are fixed. On current `main`, `test_std_ratio.cpp`
-now compiles through IR generation and instead stops at link time on unresolved
-CRT helper symbols.
+comparison failure, the later pointer/null IR-conversion failures in
+`wcsnlen_s` / `strnlen_s`, and the link-time unresolved CRT helper symbols are
+fixed. On current `main`, `test_std_ratio.cpp` now compiles and links further
+before stopping on a multiply defined `__security_cookie`.
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
@@ -56,19 +56,19 @@ CRT helper symbols.
   compilation.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
-### 2b) Link-time unresolved CRT/UCRT helper symbols
+### 2b) Link-time `__security_cookie` multiple-definition conflict
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
-  fails to link with unresolved externals such as `wcstok`, `wcspbrk`,
-  `strnlen`, and `strpbrk`.
-- **Root cause**: Still under investigation. The remaining blocker has moved
-  beyond sema/IR conversion and now appears to be missing runtime or import
-  coverage for CRT/UCRT helpers referenced by the instantiated standard-library
-  surface.
+  fails to link with `LIBCMT.lib(gs_cookie.obj) : error LNK2005:
+  __security_cookie already defined`.
+- **Root cause**: Still under investigation. After fixing the imported-CRT
+  naming issue (preserving `extern "C"` over `_ACRTIMP`/`dllimport` in parser
+  linkage precedence), the next remaining blocker is that FlashCpp's output now
+  collides with the CRT-provided GS cookie symbol.
 - **Affected path**: Link stage for the object generated from `<ratio>` and the
   headers it pulls in.
 - **Impact**: `tests/std/test_std_ratio.cpp` still does not produce a runnable
   executable, even though it now compiles.
-- **Fix direction**: Audit the unresolved functions to determine whether
-  FlashCpp should emit/import them differently or whether the Windows link step
-  is currently missing required CRT coverage for these overloads/vararg forms.
+- **Fix direction**: Audit where FlashCpp synthesizes or exports the GS cookie
+  runtime state and make it coexist with the CRT-provided definition instead of
+  emitting a second strong symbol.

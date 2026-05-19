@@ -780,7 +780,8 @@ ParseResult Parser::parse_variable_declaration() {
 				// Successfully parsed as function
 				if (auto func_node_ptr = function_result.node()) {
 					FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
-					if (attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) {
+					if ((attr_info.linkage == Linkage::DllImport || attr_info.linkage == Linkage::DllExport) &&
+						func_node.linkage() == Linkage::None) {
 						func_node.set_linkage(attr_info.linkage);
 					}
 					func_node.set_is_constexpr(is_constexpr);

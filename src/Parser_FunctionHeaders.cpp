@@ -1008,10 +1008,10 @@ ParseResult Parser::create_function_from_header(
 	func_ref.set_calling_convention(header.storage.calling_convention);
 
 	// Set linkage
-	if (header.storage.linkage != Linkage::None) {
-		func_ref.set_linkage(header.storage.linkage);
-	} else if (current_linkage_ != Linkage::None) {
+	if (current_linkage_ != Linkage::None) {
 		func_ref.set_linkage(current_linkage_);
+	} else if (header.storage.linkage != Linkage::None) {
+		func_ref.set_linkage(header.storage.linkage);
 	} else {
 		// Check if there's a forward declaration with linkage and inherit it
 		// Use lookup_all to check all overloads in case there are multiple
