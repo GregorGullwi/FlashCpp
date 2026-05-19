@@ -1884,43 +1884,69 @@ inline bool TypeSpecifierNode::matches_signature(const TypeSpecifierNode& other)
 	const TypeSpecifierNode self = adjusted_function_parameter_type();
 	const TypeSpecifierNode other_adjusted = other.adjusted_function_parameter_type();
 
-	// Check basic type
-	if (self.type_index_.category() != other_adjusted.type_index_.category()) {
-		// Be lenient for typedef/alias cases, but do not collapse distinct semantic
-		// types such as enum vs int just because they share a runtime size.
-		TypeCategory resolved_type = resolve_type_alias(self.type_index_);
-		TypeCategory other_resolved_type = resolve_type_alias(other_adjusted.type_index_);
-		if (resolved_type != other_resolved_type) {
+	struct EffectiveSignatureType {
+		TypeIndex type_index{};
+		TypeCategory category = TypeCategory::Invalid;
+		size_t pointer_depth = 0;
+		CVQualifier cv_qualifier = CVQualifier::None;
+		ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
+		std::string_view token_value;
+	};
+
+	auto makeEffectiveSignatureType = [](const TypeSpecifierNode& type_spec) {
+		EffectiveSignatureType effective;
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index_);
+		effective.type_index = resolved_alias.type_index.is_valid()
+			? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+			: type_spec.type_index_.withCategory(type_spec.type_index_.category());
+		effective.category = effective.type_index.category();
+		if (effective.category == TypeCategory::Invalid) {
+			effective.category = type_spec.type_index_.category();
+		}
+		effective.pointer_depth = type_spec.pointer_levels_.size() + resolved_alias.pointer_depth;
+		effective.cv_qualifier = type_spec.cv_qualifier_ | resolved_alias.cv_qualifier;
+		effective.reference_qualifier = type_spec.reference_qualifier_ != ReferenceQualifier::None
+			? type_spec.reference_qualifier_
+			: resolved_alias.reference_qualifier;
+		effective.token_value = type_spec.token_.value();
+		return effective;
+	};
+
+	const EffectiveSignatureType self_effective = makeEffectiveSignatureType(self);
+	const EffectiveSignatureType other_effective = makeEffectiveSignatureType(other_adjusted);
+
+	if (self_effective.category != other_effective.category) {
+		return false;
+	}
+	if (needs_type_index(self_effective.category)) {
+		if (self_effective.type_index.is_valid() && other_effective.type_index.is_valid() &&
+			self_effective.type_index != other_effective.type_index) {
 			return false;
 		}
-	}
-
-	// Check type index for user-defined types
-	if (is_struct_type(self.type_index_.category())) {
-		if (self.type_index_ != other_adjusted.type_index_) {
-			// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
-			if (self.token_.value() != other_adjusted.token_.value()) {
-				return false;
-			}
+		if ((!self_effective.type_index.is_valid() || !other_effective.type_index.is_valid()) &&
+			self_effective.token_value != other_effective.token_value) {
+			return false;
 		}
 	}
 
 	// For function signature matching, top-level CV qualifiers on value types are ignored.
 	// CV qualifiers below the top level still matter for pointers/references.
 	const bool has_indirection =
-		!self.pointer_levels_.empty() || self.reference_qualifier_ != ReferenceQualifier::None;
-	if (has_indirection && self.cv_qualifier_ != other_adjusted.cv_qualifier_) {
+		self_effective.pointer_depth != 0 || self_effective.reference_qualifier != ReferenceQualifier::None;
+	if (has_indirection && self_effective.cv_qualifier != other_effective.cv_qualifier) {
 		return false;
 	}
 
 	// Check reference qualifiers
-	if (self.reference_qualifier_ != other_adjusted.reference_qualifier_)
+	if (self_effective.reference_qualifier != other_effective.reference_qualifier)
 		return false;
 
 	// Check pointer depth and qualifiers at each level
-	if (self.pointer_levels_.size() != other_adjusted.pointer_levels_.size())
+	if (self_effective.pointer_depth != other_effective.pointer_depth)
 		return false;
-	for (size_t i = 0; i < self.pointer_levels_.size(); ++i) {
+	const size_t shared_explicit_pointer_depth =
+		std::min(self.pointer_levels_.size(), other_adjusted.pointer_levels_.size());
+	for (size_t i = 0; i < shared_explicit_pointer_depth; ++i) {
 		if (self.pointer_levels_[i].cv_qualifier != other_adjusted.pointer_levels_[i].cv_qualifier)
 			return false;
 	}
