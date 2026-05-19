@@ -3669,6 +3669,57 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
 
+	// Handle sizeof...(Pack) directly: count the args attributed to the named variadic parameter.
+	// substitute_template_params_in_expression has no pack-count information, and the generic
+	// ConstExpr evaluator only checks pack_param_info_ / class_template_pack_stack_ which are
+	// not populated during alias-template materialization.  Resolve the count here instead.
+	if (dependent_expr.is<ExpressionNode>() &&
+		std::holds_alternative<SizeofPackNode>(dependent_expr.as<ExpressionNode>())) {
+		const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(dependent_expr.as<ExpressionNode>());
+		std::string_view pack_name = sizeof_pack.pack_name();
+
+		// Walk the parameter list, tracking the arg cursor, and return the size
+		// of the pack whose name matches pack_name.
+		size_t arg_cursor = 0;
+		for (size_t pi = 0; pi < template_params.size(); ++pi) {
+			const TemplateParameterNode& param = template_params[pi];
+			if (!param.is_variadic()) {
+				++arg_cursor;
+				continue;
+			}
+			// Count required (non-variadic) params that follow this pack.
+			size_t required_after = 0;
+			for (size_t j = pi + 1; j < template_params.size(); ++j) {
+				if (!template_params[j].is_variadic()) {
+					++required_after;
+				}
+			}
+			size_t remaining = arg_cursor < template_args.size()
+				? template_args.size() - arg_cursor
+				: 0;
+			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
+			if (param.name() == pack_name) {
+				FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: sizeof...(", pack_name, ") = ", pack_size, " (from template_params/args)");
+				return TemplateTypeArg(static_cast<int64_t>(pack_size), TypeCategory::UnsignedLongLong);
+			}
+			arg_cursor += pack_size;
+		}
+
+		// Fallback: check the parser's pack-size registries set during function/member instantiation.
+		if (auto sz = get_template_param_pack_size(pack_name)) {
+			FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: sizeof...(", pack_name, ") = ", *sz, " (from template_param_pack_sizes_)");
+			return TemplateTypeArg(static_cast<int64_t>(*sz), TypeCategory::UnsignedLongLong);
+		}
+		if (auto sz = get_pack_size(pack_name)) {
+			FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: sizeof...(", pack_name, ") = ", *sz, " (from pack_param_info_)");
+			return TemplateTypeArg(static_cast<int64_t>(*sz), TypeCategory::UnsignedLongLong);
+		}
+		if (auto sz = get_class_template_pack_size(pack_name)) {
+			FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: sizeof...(", pack_name, ") = ", *sz, " (from class_template_pack_stack_)");
+			return TemplateTypeArg(static_cast<int64_t>(*sz), TypeCategory::UnsignedLongLong);
+		}
+	}
+
 	// Build type substitution map from template params to args
 	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
 	// Build non-type substitution map for value parameters
