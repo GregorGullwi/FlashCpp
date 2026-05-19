@@ -2023,10 +2023,8 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					const StructTypeInfo* base_struct_info = base_type_it->second->getStructInfo();
 					if (base_struct_info && base_struct_info->hasConstructor()) {
 						// If the base class has a lazy (unmaterialized) default constructor,
-						// materialize it via the parser before emitting the ConstructorCallOp.
-						// This constructor path still uses the parser entry point because it
-						// predates the sema-owned helper and remains coupled to parser-side
-						// lazy instantiation bookkeeping.
+						// materialize it through sema before emitting the ConstructorCallOp
+						// so codegen does not drive parser-side lazy bookkeeping directly.
 						const StructMemberFunction* base_default_ctor = base_struct_info->findDefaultConstructor();
 						if (base_default_ctor &&
 							base_default_ctor->function_decl.is<ConstructorDeclarationNode>() &&
@@ -2035,9 +2033,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 							const auto& ctor_decl = base_default_ctor->function_decl.as<ConstructorDeclarationNode>();
 							StringHandle ctor_name = ctor_decl.name();
 							if (base_name.isValid() && ctor_name.isValid()) {
-								LazyMemberKey key = LazyMemberKey::exact(base_name, ctor_decl);
-								parser_.instantiateLazyMemberIfNeeded(key);
-								normalizePendingSemanticRoots();
+								sema_.ensureMemberFunctionMaterialized(base_name, ctor_decl);
 							}
 						}
 						ConstructorCallOp call_op;

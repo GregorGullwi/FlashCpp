@@ -50,6 +50,24 @@ struct ResolvedFunctionQueryResult {
 	}
 };
 
+struct ResolvedMemberAccessQueryResult {
+	enum class State : uint8_t {
+		NotYetAnalyzed,
+		AnalyzedAbsent,
+		Available,
+	};
+
+	State state = State::NotYetAnalyzed;
+	const StructTypeInfo* owner_struct_info = nullptr;
+	const StructMember* member = nullptr;
+
+	bool hasValue() const {
+		return state == State::Available &&
+			owner_struct_info != nullptr &&
+			member != nullptr;
+	}
+};
+
 struct TypeSpecifierQueryResult {
 	enum class State : uint8_t {
 		NotYetAnalyzed,
@@ -274,6 +292,8 @@ public:
 	};
 	std::optional<ResolvedIdentifierMemberInfo> getResolvedIdentifierMember(const IdentifierNode* key) const;
 	std::optional<ResolvedQualifiedIdentifierInfo> getResolvedQualifiedIdentifier(const QualifiedIdentifierNode* key) const;
+	ResolvedMemberAccessQueryResult getResolvedMemberAccessQuery(const MemberAccessNode* key) const;
+	ResolvedMemberAccessQueryResult getResolvedMemberAccessQuery(const MemberAccessNode& key) const;
 	bool resolveOrGetMemberAccess(const MemberAccessNode& key,
 								  const StructTypeInfo*& out_struct_info,
 								  const StructMember*& out_member);
@@ -622,6 +642,7 @@ private:
 	std::unordered_set<const void*> analyzed_op_call_queries_;
 	std::unordered_set<const void*> analyzed_direct_call_queries_;
 	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
+	std::unordered_set<const void*> analyzed_member_access_queries_;
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
 	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;

@@ -378,8 +378,8 @@ std::optional<TypeSpecifierNode> tryGetConstexprPointerToMemberAccessType(
 	const PointerToMemberAccessNode& member_access,
 	EvaluationContext& context) {
 	auto object_type_opt = tryGetConstexprBoundExpressionType(member_access.object(), context);
-	if (!object_type_opt.has_value() && context.parser) {
-		object_type_opt = context.parser->get_expression_type(member_access.object());
+	if (!object_type_opt.has_value()) {
+		object_type_opt = Evaluator::tryQueryExpressionType(member_access.object(), context);
 	}
 	if (!object_type_opt.has_value()) {
 		return std::nullopt;
@@ -442,8 +442,8 @@ std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNod
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 	auto tryParserFallbackForType = [&](std::optional<TypeSpecifierNode> type_opt, const ASTNode& fallback_expr) {
-		if (!type_opt.has_value() && context.parser) {
-			type_opt = context.parser->get_expression_type(fallback_expr);
+		if (!type_opt.has_value()) {
+			type_opt = Evaluator::tryQueryExpressionType(fallback_expr, context);
 		}
 		return type_opt;
 	};
@@ -581,10 +581,7 @@ std::optional<TypeSpecifierNode> tryGetConstexprExpressionTypeForTypeTraits(cons
 	if (auto expr_type_opt = tryGetConstexprBoundExpressionType(expr_node, context); expr_type_opt.has_value()) {
 		return expr_type_opt;
 	}
-	if (context.parser) {
-		return context.parser->get_expression_type(expr_node);
-	}
-	return std::nullopt;
+	return Evaluator::tryQueryExpressionType(expr_node, context);
 }
 
 void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {
@@ -602,11 +599,7 @@ void maybe_set_exact_type_from_declaration(EvalResult& result, const Declaration
 }
 
 void maybe_set_exact_type_from_initializer(EvalResult& result, const ASTNode& initializer, EvaluationContext& context) {
-	if (!context.parser) {
-		return;
-	}
-
-	auto init_type = context.parser->get_expression_type(initializer);
+	auto init_type = Evaluator::tryQueryExpressionType(initializer, context);
 	if (init_type.has_value()) {
 		maybe_set_exact_type(result, *init_type);
 	}
@@ -2521,7 +2514,23 @@ std::optional<TypeSpecifierNode> Evaluator::tryGetExpressionType(
 	if (result.exact_type.has_value()) {
 		return result.exact_type;
 	}
-	if (context.parser) {
+	return tryQueryExpressionType(expr, context);
+}
+
+std::optional<TypeSpecifierNode> Evaluator::tryQueryExpressionType(
+	const ASTNode& expr,
+	EvaluationContext& context) {
+	if (context.sema != nullptr) {
+		TypeSpecifierQueryResult sema_type_query =
+			context.sema->parserSemanticServices().getExpressionTypeQuery(expr);
+		if (sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
+			sema_type_query.type.has_value() &&
+			sema_type_query.type->type() != TypeCategory::Invalid &&
+			!isPlaceholderAutoType(sema_type_query.type->type())) {
+			return sema_type_query.type;
+		}
+	}
+	if (context.parser != nullptr) {
 		return context.parser->get_expression_type(expr);
 	}
 	return std::nullopt;
@@ -4518,7 +4527,6 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		// contract violation and must hard-fail.
 		SemanticAnalysis& sema_ref =
 			context.requireParserOwnedSema("dependent unqualified call POI resolution");
-		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		auto sema_services = sema_ref.parserSemanticServices();
@@ -4543,6 +4551,8 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		case ResolvedFunctionQueryResult::State::AnalyzedAbsent:
 			break;
 		}
+		// Sema query was absent or not yet analyzed — fall back to parser POI lookup.
+		Parser& parser = *context.parser;
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
 			return EvalResult::error(

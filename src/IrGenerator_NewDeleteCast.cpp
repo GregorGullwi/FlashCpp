@@ -1250,6 +1250,10 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 			return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{64}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
+		if (sema_normalized_current_function_) {
+			throw InternalError("Normalized typeid(expr) is missing a sema-owned operand type");
+		}
+
 			// Fallback when semantic typing is unavailable.
 			// Extract IrValue from expression result
 		std::variant<StringHandle, TempVar> operand_value;
