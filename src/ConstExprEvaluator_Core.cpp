@@ -4516,19 +4516,15 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	}
 
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
-		// POI resolution requires the parser.  If context.parser is null here it
-		// means the evaluator was invoked without a parser in a context where a
-		// dependent-unqualified call survived template instantiation, which is a
-		// compiler bug.
-		if (!context.parser) {
-			throw InternalError("Parser required for dependent unqualified call POI resolution but is null");
-		}
+		// POI resolution requires parser-owned context. Missing parser/sema is a
+		// contract violation and must hard-fail.
+		SemanticAnalysis& sema_ref =
+			context.requireParserOwnedSema("dependent unqualified call POI resolution");
 		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
 		ResolvedFunctionQueryResult sema_query =
-			context
-				.requireParserOwnedSema("dependent unqualified call reuse")
+			sema_ref
 				.parserSemanticServices()
 				.getResolvedDirectCallQuery(&call_expr);
 		if (sema_query.hasValue()) {
