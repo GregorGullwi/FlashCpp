@@ -12,7 +12,16 @@ struct Wrap {
 	using type = Type;
 };
 
+namespace std {
+	template <class, class>
+	inline constexpr bool is_same_v = false;
+
+	template <class Type>
+	inline constexpr bool is_same_v<Type, Type> = true;
+}
+
 using Result = typename Select<true>::template Apply<Wrap, int>;
+static_assert(std::is_same_v<Result, int>);
 
 int main() {
 	return 0;

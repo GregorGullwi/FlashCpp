@@ -1769,6 +1769,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				// If the next token is a valid delimiter, accept the expression as dependent.
 				bool is_compile_time_expr = std::holds_alternative<NoexceptExprNode>(expr) ||
 											std::holds_alternative<SizeofExprNode>(expr) ||
+											std::holds_alternative<SizeofPackNode>(expr) ||
 											std::holds_alternative<AlignofExprNode>(expr) ||
 											std::holds_alternative<OffsetofExprNode>(expr) ||
 											std::holds_alternative<TypeTraitExprNode>(expr) ||
@@ -1825,6 +1826,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							std::holds_alternative<QualifiedIdentifierNode>(expr) ||
 							std::holds_alternative<MemberAccessNode>(expr) ||
 							std::holds_alternative<SizeofExprNode>(expr) ||
+							std::holds_alternative<SizeofPackNode>(expr) ||
 							std::holds_alternative<AlignofExprNode>(expr) ||
 							std::holds_alternative<OffsetofExprNode>(expr) ||
 							std::holds_alternative<NoexceptExprNode>(expr) ||

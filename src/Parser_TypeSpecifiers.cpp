@@ -2740,6 +2740,15 @@ ParseResult Parser::parse_type_specifier() {
 								instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 									*rebound_arg,
 									Token());
+							} else if (const TypeInfo* materialized_member_alias_target =
+									materializeInstantiatedMemberAliasTarget(
+										instantiated_type,
+										alias_node.template_parameters(),
+										*member_template_args);
+								materialized_member_alias_target != nullptr) {
+								instantiated_type = resolveTypeInfoToTypeSpec(
+									*materialized_member_alias_target,
+									instantiated_type);
 							}
 
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));

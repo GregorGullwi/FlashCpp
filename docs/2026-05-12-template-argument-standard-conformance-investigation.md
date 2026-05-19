@@ -69,6 +69,15 @@ Future work should assume these are already in place:
 - default NTTP values use the substituted declared parameter type in the shared
   default-evaluation paths for covered scalar/enum cases, so
   `template<class T, T V = 1>` preserves the `T` identity after substitution;
+- member alias-template type-specifier parsing now uses the shared dependent
+  member-alias materialization path before falling back to direct target
+  rebinding, so aliases like
+  `typename Select<true>::template Apply<Wrap, int>` can materialize through
+  `typename Function<Type>::type` to a concrete type for variable-template
+  constexpr checks;
+- `sizeof...(Pack)` now parses and preserves as a dependent value expression
+  inside alias-template target argument lists, covering MSVC-style
+  `index_sequence_for = make_index_sequence<sizeof...(Types)>`;
 - selected free/member function-template overload paths already rank
   signatures before materializing bodies.
 
@@ -105,8 +114,9 @@ Most concrete next subtask:
   replayed static-initializer flows. The current `<ratio>` blocker is also a
   useful bounded target because parsing and `std::ratio_less` constexpr
   comparison now progress to later IR conversion failures rather than stopping
-  in the fixed default NTTP declared-type materialization or dependent
-  member-template argument paths.
+  in the fixed default NTTP declared-type materialization, dependent
+  member-template argument paths, covered member alias-template target
+  materialization path, or alias-template `sizeof...` NTTP target arguments.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
