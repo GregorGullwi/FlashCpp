@@ -34,9 +34,10 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 **Current frontier**: The previous `__ratio_less_impl` / remove-cv alias
 instantiation stop, default-NTTP declared-type materialization issue, MSVC
-`type_traits` dependent member-template argument parse failure, and deferred-base
-call-expression invariant are fixed. The first hard blocker currently reaches
-the `std::ratio_less<third, half>` assertion in `test_std_ratio.cpp`.
+`type_traits` dependent member-template argument parse failure, deferred-base
+call-expression invariant, and `std::ratio_less<third, half>` constexpr
+comparison failure are fixed. The first hard blocker currently reaches IR
+conversion for `test_std_ratio.cpp`.
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
@@ -53,17 +54,18 @@ the `std::ratio_less<third, half>` assertion in `test_std_ratio.cpp`.
   default-NTTP/value propagation in ratio arithmetic.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
-### 2b) Residual ratio comparison value propagation
+### 2b) Residual ratio IR conversion failures
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now parses the MSVC `type_traits`
-  helpers and reaches `static_assert(std::ratio_less<third, half>::value)`,
-  where the assertion fails.
+  helpers and passes `static_assert(std::ratio_less<third, half>::value)`, then
+  fails during IR conversion with missed scalar conversion diagnostics such as
+  `wchar_t -> int`, `char -> int`, and `unsigned long long -> long long`.
 - **Root cause**: Still under investigation. The remaining hard stop is now in
-  ratio comparison value propagation after the dependent member-template
-  argument parsing and deferred-base call-expression blockers are cleared.
-- **Affected path**: ratio comparison constexpr/value propagation for
-  `std::ratio_less` over concrete `ratio<N,D>` instances.
+  IR conversion after the ratio comparison constexpr/value propagation path is
+  evaluable.
+- **Affected path**: IR conversion for standard-header helper functions and
+  namespace-scope initializers reached while compiling `<ratio>`.
 - **Impact**: `tests/std/test_std_ratio.cpp` still does not produce `.o` output.
-- **Fix direction**: Reproduce the smallest `ratio_less<ratio<1,3>, ratio<1,2>>`
-  value-propagation failure, then fix the remaining concrete ratio comparison
-  evaluation path without reintroducing local parser recovery.
+- **Fix direction**: Minimize the new conversion diagnostics from the generated
+  standard-header surface, then fix the missing sema-to-IR scalar conversion
+  handoff without adding local `<ratio>` special cases.

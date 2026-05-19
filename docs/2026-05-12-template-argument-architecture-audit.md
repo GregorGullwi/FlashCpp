@@ -61,7 +61,7 @@ Useful to know before changing anything:
 
 Validation at this point passed the Windows sharded build and the Windows
 PowerShell test workflow:
-`2450` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2453` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## What is still wrong
 
@@ -93,7 +93,8 @@ Concrete follow-up already identified by recent work:
   cases. The next concrete follow-up is either the remaining dependent-base and
   unknown-specialization member-chain work in declarations that still never
   capture replay metadata at parse time, or the current `<ratio>` blocker where
-  parsing now reaches the older `std::ratio_less` value-propagation frontier.
+  parsing and `std::ratio_less` constexpr comparison now progress to later IR
+  conversion failures.
 
 ### 2. Dependent names are still represented too loosely
 

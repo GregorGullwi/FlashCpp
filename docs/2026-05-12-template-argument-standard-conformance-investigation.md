@@ -73,7 +73,7 @@ Future work should assume these are already in place:
   signatures before materializing bodies.
 
 Latest validation on Windows sharded build:
-`2450` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2453` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -103,9 +103,10 @@ Most concrete next subtask:
   declarations that never capture replay metadata in the first place, plus
   dependent-base/unknown-specialization member-chain cases outside the covered
   replayed static-initializer flows. The current `<ratio>` blocker is also a
-  useful bounded target because parsing now reaches the older `std::ratio_less`
-  value-propagation frontier rather than stopping in the fixed default NTTP
-  declared-type materialization or dependent member-template argument paths.
+  useful bounded target because parsing and `std::ratio_less` constexpr
+  comparison now progress to later IR conversion failures rather than stopping
+  in the fixed default NTTP declared-type materialization or dependent
+  member-template argument paths.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 

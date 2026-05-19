@@ -3618,6 +3618,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		if (!rhs_result.success())
 			return rhs_result;
 
+		if (auto member_operator_result =
+				try_evaluate_constexpr_member_binary_operator(bin_op, lhs_result, rhs_result, context)) {
+			return *member_operator_result;
+		}
+
 		return apply_binary_op(lhs_result, rhs_result, bin_op.op(), &context, &bindings);
 	}
 
@@ -5258,6 +5263,15 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (type_info && type_info->isStruct()) {
 					struct_info = type_info->getStructInfo();
 					resolved_type_info = type_info;
+				} else if (type_info) {
+					if (const EnumTypeInfo* enum_info = type_info->getEnumInfo()) {
+						if (auto enum_result = tryEvaluateEnumConstant(
+								*enum_info,
+								type_info->type_index_,
+								qualified_id.nameHandle())) {
+							return *enum_result;
+						}
+					}
 				}
 			}
 

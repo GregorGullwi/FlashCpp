@@ -924,7 +924,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 
 	// For BinaryOperatorNode, we need to check if it's in the variant
 	if (const auto* bin_op = std::get_if<BinaryOperatorNode>(&expr)) {
-		return evaluate_binary_operator(bin_op->get_lhs(), bin_op->get_rhs(), bin_op->op(), context);
+		return evaluate_binary_operator(*bin_op, context);
 	}
 
 	// For UnaryOperatorNode
@@ -1185,8 +1185,10 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 	return EvalResult::error("Unknown numeric literal type");
 }
 
-EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
-											   std::string_view op, EvaluationContext& context) {
+EvalResult Evaluator::evaluate_binary_operator(const BinaryOperatorNode& binary_operator, EvaluationContext& context) {
+	const ASTNode& lhs_node = binary_operator.get_lhs();
+	const ASTNode& rhs_node = binary_operator.get_rhs();
+	const std::string_view op = binary_operator.op();
 	// Short-circuit && and || per C++ semantics when not in speculative mode.
 	// In speculative mode (template-argument disambiguation), both sides are evaluated
 	// eagerly so that a truthy LHS of `||` does not give a false-positive constant-
@@ -1218,7 +1220,55 @@ EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const AS
 		return rhs_result;
 	}
 
+	if (auto member_operator_result =
+			try_evaluate_constexpr_member_binary_operator(binary_operator, lhs_result, rhs_result, context)) {
+		return *member_operator_result;
+	}
+
 	return apply_binary_op(lhs_result, rhs_result, op, &context);
+}
+
+std::optional<EvalResult> Evaluator::try_evaluate_constexpr_member_binary_operator(
+	const BinaryOperatorNode& binary_operator,
+	const EvalResult& lhs_result,
+	const EvalResult& rhs_result,
+	EvaluationContext& context) {
+	if (lhs_result.object_type_index.is_valid()) {
+		const TypeInfo* type_info = tryGetTypeInfo(lhs_result.object_type_index);
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (struct_info) {
+			const FunctionDeclarationNode* function = nullptr;
+			if (binary_operator.has_resolved_member_operator_overload()) {
+				const StructMemberFunction* member_overload = binary_operator.resolved_member_operator_overload();
+				if (member_overload && member_overload->function_decl.is<FunctionDeclarationNode>()) {
+					function = &member_overload->function_decl.as<FunctionDeclarationNode>();
+				}
+			} else {
+				StringBuilder operator_name_builder;
+				operator_name_builder.append("operator").append(overloadableOperatorToString(binary_operator.operator_kind()));
+				StringHandle operator_name = StringTable::getOrInternStringHandle(operator_name_builder.commit());
+				ResolvedMemberFunctionCandidate candidate =
+					findConstexprOperatorOverload(struct_info, operator_name, 1, context);
+				if (candidate.ambiguous) {
+					return EvalResult::error("Ambiguous binary operator overload in constant expression");
+				}
+				function = candidate.function;
+			}
+			if (function) {
+				return invokeConstexprMemberFunction(
+					*function,
+					lhs_result.object_member_bindings,
+					lhs_result.object_type_index,
+					type_info,
+					struct_info,
+					{rhs_result},
+					context,
+					"binary operator body is not a block",
+					"binary operator did not return a value");
+			}
+		}
+	}
+	return std::nullopt;
 }
 
 EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
