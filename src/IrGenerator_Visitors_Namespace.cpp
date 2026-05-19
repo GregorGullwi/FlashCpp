@@ -253,6 +253,23 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			bool return_requires_ctor_resolution = false;
 			bool return_ctor_no_match = false;
 			std::string_view return_ctor_target_name;
+			auto isNullPointerConstantExpr = [&](const ExprResult& expr_result, const ASTNode& node) {
+				if (expr_result.category() == TypeCategory::Nullptr) {
+					return true;
+				}
+				if (const auto* ull_value = std::get_if<unsigned long long>(&expr_result.value)) {
+					return *ull_value == 0;
+				}
+				if (const auto* int_value = std::get_if<int>(&expr_result.value)) {
+					return *int_value == 0;
+				}
+				if (node.is<ExpressionNode>()) {
+					if (const auto* identifier = std::get_if<IdentifierNode>(&node.as<ExpressionNode>())) {
+						return identifier->name() == "nullptr";
+					}
+				}
+				return false;
+			};
 
 			// Check whether the semantic pass has already computed a cast annotation.
 			// When present for a non-struct conversion, apply it and skip the local policy.
@@ -312,6 +329,20 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						}
 					}
 				}
+			}
+			if (!sema_applied_conversion &&
+				currentFunctionReturnsPointer() &&
+				isNullPointerConstantExpr(operands, *expr_opt)) {
+				operands = makeExprResult(
+					return_type_index,
+					SizeInBits{return_size},
+					IrOperand{0ULL},
+					PointerDepth{1},
+					ValueStorage::ContainsData);
+				expr_type = return_type;
+				expr_category = return_category;
+				expr_size = return_size;
+				sema_applied_conversion = true;
 			}
 			if (expr_opt->is<ExpressionNode>()) {
 				const void* key = static_cast<const void*>(&expr_opt->as<ExpressionNode>());

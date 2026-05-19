@@ -23,7 +23,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 2) `tests/std/test_std_ratio.cpp` — no `.o` output and residual diagnostic noise
+## 2) `tests/std/test_std_ratio.cpp` — now reaches link-time unresolved CRT symbols
 
 **Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
 
@@ -35,37 +35,40 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 **Current frontier**: The previous `__ratio_less_impl` / remove-cv alias
 instantiation stop, default-NTTP declared-type materialization issue, MSVC
 `type_traits` dependent member-template argument parse failure, deferred-base
-call-expression invariant, and `std::ratio_less<third, half>` constexpr
-comparison failure are fixed. The first hard blocker currently reaches IR
-conversion for `test_std_ratio.cpp`.
+call-expression invariant, `std::ratio_less<third, half>` constexpr
+comparison failure, and the later pointer/null IR-conversion failures in
+`wcsnlen_s` / `strnlen_s` are fixed. On current `main`, `test_std_ratio.cpp`
+now compiles through IR generation and instead stops at link time on unresolved
+CRT helper symbols.
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
-### 2a) `std::__are_both_ratios` parse-time instantiation failure (expected noise)
+### 2a) Standard-library template-instantiation noise during `<ratio>` compile
 
-- **Symptom**: `[WARN][Parser] Parsed template arguments but instantiation failed for 'std::__are_both_ratios'`
-  followed by `[ERROR][Templates] All 1 template overload(s) failed for '__are_both_ratios'` — appears
-  4 times during `__ratio_multiply`/`ratio_equal` template body parsing.
-- **Root cause**: The parser speculatively tries to instantiate `__are_both_ratios<_R1, _R2>` at
-  template-body parse time, when `_R1` and `_R2` are still dependent type parameters.
-  `try_instantiate_template_explicit` has an early-out for dependent args (correct behaviour).
-  The errors are non-fatal and the constexpr evaluator path correctly handles
-  them via the explicit-type-args fix above; the current hard stop is later
-  IR conversion for `<ratio>` helpers after constexpr ratio comparison succeeds.
+- **Symptom**: compiling `tests/std/test_std_ratio.cpp` now emits
+  `[ERROR][Templates] [depth=1]: All 2 template overload(s) failed for 'swap'`,
+  the same error for `std::swap`, and
+  `[ERROR][Templates] [depth=1]: All 1 template overload(s) failed for '_Hash_representation'`
+  before the later IR-conversion failure.
+- **Root cause**: still under investigation. These diagnostics appear during
+  standard-header template processing after the earlier dependent member-template
+  parse failure was fixed, but they are not the first fatal stop in the
+  compilation.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
-### 2b) Residual ratio IR conversion failures
+### 2b) Link-time unresolved CRT/UCRT helper symbols
 
-- **Symptom**: `tests/std/test_std_ratio.cpp` now parses the MSVC `type_traits`
-  helpers and passes `static_assert(std::ratio_less<third, half>::value)`, then
-  fails during IR conversion with missed scalar conversion diagnostics such as
-  `wchar_t -> int`, `char -> int`, and `unsigned long long -> long long`.
-- **Root cause**: Still under investigation. The remaining hard stop is now in
-  IR conversion after the ratio comparison constexpr/value propagation path is
-  evaluable.
-- **Affected path**: IR conversion for standard-header helper functions and
-  namespace-scope initializers reached while compiling `<ratio>`.
-- **Impact**: `tests/std/test_std_ratio.cpp` still does not produce `.o` output.
-- **Fix direction**: Minimize the new conversion diagnostics from the generated
-  standard-header surface, then fix the missing sema-to-IR scalar conversion
-  handoff without adding local `<ratio>` special cases.
+- **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
+  fails to link with unresolved externals such as `wcstok`, `wcspbrk`,
+  `strnlen`, and `strpbrk`.
+- **Root cause**: Still under investigation. The remaining blocker has moved
+  beyond sema/IR conversion and now appears to be missing runtime or import
+  coverage for CRT/UCRT helpers referenced by the instantiated standard-library
+  surface.
+- **Affected path**: Link stage for the object generated from `<ratio>` and the
+  headers it pulls in.
+- **Impact**: `tests/std/test_std_ratio.cpp` still does not produce a runnable
+  executable, even though it now compiles.
+- **Fix direction**: Audit the unresolved functions to determine whether
+  FlashCpp should emit/import them differently or whether the Windows link step
+  is currently missing required CRT coverage for these overloads/vararg forms.
