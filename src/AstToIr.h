@@ -1186,6 +1186,9 @@ private:
 	static bool shouldPreferExpressionReturnType(
 		const TypeSpecifierNode& expr_type,
 		const TypeSpecifierNode& decl_type);
+	static bool isNullPointerConstantExpr(
+		const ExprResult& expr_result,
+		const ASTNode& node);
 
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
 	TempVar emitDereference(TypeCategory pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());

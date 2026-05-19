@@ -2906,6 +2906,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Try to get pointer depth for pointer arithmetic
 	int lhs_pointer_depth = 0;
 	const TypeSpecifierNode* lhs_type_node = nullptr;
+	std::optional<TypeSpecifierNode> lhs_fallback_type_node;
 	if (binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 		const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
@@ -2939,10 +2940,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	if (lhs_pointer_depth == 0) {
 		lhs_pointer_depth = lhsExprResult.pointer_depth.value;
 	}
+	if (lhs_pointer_depth == 0) {
+		TypeSpecifierQueryResult lhs_type_query = sema_.parserSemanticServices().getExpressionTypeQuery(binaryOperatorNode.get_lhs());
+		if (lhs_type_query.state == TypeSpecifierQueryResult::State::Available &&
+			lhs_type_query.type.has_value()) {
+			lhs_pointer_depth = static_cast<int>(lhs_type_query.type->pointer_depth());
+		}
+	}
 
 	// Try to get pointer depth and type node for RHS as well (for ptr - ptr and int + ptr)
 	int rhs_pointer_depth = 0;
 	const TypeSpecifierNode* rhs_type_node = nullptr;
+	std::optional<TypeSpecifierNode> rhs_fallback_type_node;
 	if (binaryOperatorNode.get_rhs().is<ExpressionNode>()) {
 		const ExpressionNode& rhs_expr = binaryOperatorNode.get_rhs().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(rhs_expr)) {
@@ -2965,6 +2974,62 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	if (rhs_pointer_depth == 0) {
 		rhs_pointer_depth = rhsExprResult.pointer_depth.value;
 	}
+	if (rhs_pointer_depth == 0) {
+		TypeSpecifierQueryResult rhs_type_query = sema_.parserSemanticServices().getExpressionTypeQuery(binaryOperatorNode.get_rhs());
+		if (rhs_type_query.state == TypeSpecifierQueryResult::State::Available &&
+			rhs_type_query.type.has_value()) {
+			rhs_pointer_depth = static_cast<int>(rhs_type_query.type->pointer_depth());
+		}
+	}
+	if (auto binary_type_specs = tryGetBinaryOperatorTypeSpecs(); binary_type_specs.has_value()) {
+		if (lhs_pointer_depth == 0 && binary_type_specs->first.pointer_depth() > 0) {
+			lhs_fallback_type_node = binary_type_specs->first;
+			lhs_pointer_depth = static_cast<int>(lhs_fallback_type_node->pointer_depth());
+			if (!lhs_type_node) {
+				lhs_type_node = &*lhs_fallback_type_node;
+			}
+		}
+		if (rhs_pointer_depth == 0 && binary_type_specs->second.pointer_depth() > 0) {
+			rhs_fallback_type_node = binary_type_specs->second;
+			rhs_pointer_depth = static_cast<int>(rhs_fallback_type_node->pointer_depth());
+			if (!rhs_type_node) {
+				rhs_type_node = &*rhs_fallback_type_node;
+			}
+		}
+	}
+
+	auto makeNullPointerExpr = [&](const ExprResult& pointer_expr, int pointer_depth) {
+		TypeIndex pointer_type_index = pointer_expr.type_index;
+		if (!pointer_type_index.is_valid()) {
+			pointer_type_index = nativeTypeIndex(pointer_expr.category());
+		}
+		return makeExprResult(
+			pointer_type_index,
+			SizeInBits{64},
+			IrOperand{0ULL},
+			PointerDepth{pointer_depth > 0 ? pointer_depth : 1},
+			ValueStorage::ContainsData);
+	};
+
+	if (op == "==" || op == "!=") {
+		const bool lhs_is_null_pointer_constant = AstToIr::isNullPointerConstantExpr(lhsExprResult, binaryOperatorNode.get_lhs());
+		const bool rhs_is_null_pointer_constant = AstToIr::isNullPointerConstantExpr(rhsExprResult, binaryOperatorNode.get_rhs());
+		if (lhs_pointer_depth > 0 && rhs_is_null_pointer_constant) {
+			rhsExprResult = makeNullPointerExpr(lhsExprResult, lhs_pointer_depth);
+			rhs_pointer_depth = lhs_pointer_depth;
+			rhsSize = rhsExprResult.size_in_bits.value;
+			rhsCat = rhsExprResult.category();
+		} else if (rhs_pointer_depth > 0 && lhs_is_null_pointer_constant) {
+			lhsExprResult = makeNullPointerExpr(rhsExprResult, rhs_pointer_depth);
+			lhs_pointer_depth = rhs_pointer_depth;
+			lhsSize = lhsExprResult.size_in_bits.value;
+			lhsCat = lhsExprResult.category();
+		}
+	}
+	const bool is_pointer_comparison =
+		(op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") &&
+		lhs_pointer_depth > 0 &&
+		rhs_pointer_depth > 0;
 
 	// Special handling for pointer subtraction (ptr - ptr)
 	// Result is ptrdiff_t (number of elements between pointers)
@@ -3316,7 +3381,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Phase 15: generate conversions — prefer sema annotations; log warning on fallback.
 	// Reuse tryGlobalSemaConv (defined above) which performs sema slot lookup, struct-type
 	// guard, expected-target verification, enum type mismatch handling, and conversion.
-	if (lhsCat != commonType) {
+	if (!is_pointer_comparison && lhsCat != commonType) {
 		if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(lhsCat) && is_standard_arithmetic_type(commonType))
 				throw InternalError(std::string(StringBuilder()
@@ -3342,7 +3407,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsCat, promoted_rhs, binaryOperatorNode.get_token());
 			}
 		}
-	} else if (rhsCat != commonType) {
+	} else if (!is_pointer_comparison && rhsCat != commonType) {
 		if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsCat) && is_standard_arithmetic_type(commonType))
 				throw InternalError(std::string(StringBuilder()
