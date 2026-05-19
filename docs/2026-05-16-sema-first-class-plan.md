@@ -147,7 +147,7 @@ Stage 6 progress so far:
 - constexpr `sizeof(array[index])` now falls back through `global_symbols` before expression-type decay, so inferred global arrays keep the correct element size during codegen folding, and `sizeof(S{0})` on a struct prvalue now stays locked in as a passing regression test instead of an expected failure; the regression now also covers mixed-layout and templated prvalue cases.
 - `EvaluationContext` now also has explicit parser-owned and sema-only constructors, and both the shared helpers and the remaining parser-owned call sites now use those constructors directly instead of constructing a raw context and attaching semantic ownership afterward. The final array-bounds parser helper now also takes `Parser&` instead of a dishonest `const Parser&`, because its constexpr evaluation can instantiate templates and normalize pending semantic roots.
 - dependent-unqualified call POI resolution in both `ConstExprEvaluator_Core.cpp` and `ConstExprEvaluator_Members.cpp` now requires parser-owned sema via `requireParserOwnedSema(...)` directly instead of first probing `context.parser` with ad-hoc null checks.
-- parser-gated constexpr template instantiation in `ConstExprEvaluator_Core.cpp` now also routes parser access through `requireParserOwnedSema(...)` once parser context exists, instead of dereferencing `context.parser` directly after nullable guards.
+- parser-gated constexpr template instantiation in `ConstExprEvaluator_Core.cpp` now routes parser access through `requireParserOwnedSema(...)` directly; the old parser-null guard/error branch in `tryEvaluateAsVariableTemplate(...)` was removed.
 
 Remaining Stage 6 work:
 

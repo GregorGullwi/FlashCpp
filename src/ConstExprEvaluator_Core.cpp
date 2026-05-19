@@ -4397,9 +4397,6 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 
 
 EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context) {
-	if (!context.parser) {
-		return EvalResult::error("No parser available for variable template instantiation");
-	}
 	(void)context.requireParserOwnedSema("variable template instantiation");
 	Parser& parser = *context.parser;
 
