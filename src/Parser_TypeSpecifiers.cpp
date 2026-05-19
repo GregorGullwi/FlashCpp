@@ -1551,10 +1551,10 @@ ParseResult Parser::parse_type_specifier() {
 					const bool has_dependent_alias_args =
 						aliasTemplateArgsStillDependent(*template_args);
 
-					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
-					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
-					if (alias_node.is_deferred() && !has_dependent_alias_args) {
-						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
+					// OPTION 1: Alias materialization for concrete arguments (preferred over
+					// placeholder fallback and string parsing), regardless of deferred metadata.
+					if (!has_dependent_alias_args) {
+						FLASH_LOG(Parser, Debug, "Using alias materialization for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						// Route directly through the alias-specific materialization path
 						// since we already know this is an alias template.
