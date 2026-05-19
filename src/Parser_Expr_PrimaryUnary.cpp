@@ -392,14 +392,10 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		SaveHandle saved_pos = save_token_position();
 		advance(); // consume '('
 
-		// Save lexer/token state and build the qualified type name for concept checking.
+		// Save the position and build the qualified type name for concept checking
 		// This is needed because parse_type_specifier() may parse a qualified name
-		// like std::__detail::__class_or_enum but only return the last component in the token.
-		// Use a lexer-level snapshot here (instead of a full parser save handle) because
-		// this probe only advances tokens and does not build AST nodes.
-		TokenPosition pre_type_lexer_pos = lexer_.save_token_position();
-		Token pre_type_current_token = current_token_;
-		Token pre_type_injected_token = injected_token_;
+		// like std::__detail::__class_or_enum but only return the last component in the token
+		SaveHandle pre_type_pos = save_token_position();
 		StringBuilder qualified_type_name;
 
 		// Build qualified name by collecting identifiers and :: tokens
@@ -420,11 +416,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		}
 		std::string_view qualified_name_view = qualified_type_name.commit();
 
-		// Restore position to parse the type properly.
-		invalidate_lookahead_cache();
-		lexer_.restore_token_position(pre_type_lexer_pos);
-		current_token_ = pre_type_current_token;
-		injected_token_ = pre_type_injected_token;
+		// Restore position to parse the type properly
+		restore_token_position(pre_type_pos);
 
 		// Try to parse as type
 		ParseResult type_result = parse_type_specifier();
