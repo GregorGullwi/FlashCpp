@@ -14,7 +14,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
-	const Parser& parser);
+	Parser& parser);
 
 namespace {
 bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<TemplateTypeArg, 4>& template_args) {
@@ -615,7 +615,7 @@ ParseResult Parser::buildTTPQualifiedIdentifier(StringHandle ttp_placeholder_nam
 	return ParseResult::success(result);
 }
 
-void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) const {
+void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) {
 	if (!arg_node.is<ExpressionNode>()) {
 		return;
 	}
