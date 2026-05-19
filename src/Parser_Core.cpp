@@ -733,10 +733,16 @@ void Parser::printRuntimeStats() const {
 	FLASH_LOG(General, Info, "  Lookahead tokens consumed: ", stats.lookahead_tokens_consumed);
 	FLASH_LOG(General, Info, "  AST node allocations (gChunkedAnyStorage slots): ", ast_nodes_allocated_total);
 	FLASH_LOG(General, Info, "  Saved-token operations: save=", stats.save_count,
+			  " (persistent=", stats.save_persistent_count, ", ephemeral=", stats.save_ephemeral_count, ")",
 			  ", restore=", stats.restore_count,
 			  ", restore-lexer-only=", stats.restore_lexer_only_count,
 			  ", discard=", stats.discard_count,
 			  ", missing=", stats.missing_restore_count);
+	FLASH_LOG(General, Info, "  Ephemeral saves: peak-active=", stats.peak_active_ephemeral_saves,
+			  ", unreleased at parse end=", stats.active_ephemeral_saves);
+	if (stats.active_ephemeral_saves > 0) {
+		FLASH_LOG(General, Warning, "  Ephemeral save handles still active at parse end: ", stats.active_ephemeral_saves);
+	}
 	FLASH_LOG(General, Info, "  Saved-token storage: peak slots=", stats.saved_token_slots_peak,
 			  ", peak capacity=", stats.saved_token_capacity_peak,
 			  ", slot-bytes=", sizeof(std::optional<SavedToken>),
@@ -825,6 +831,7 @@ void Parser::printRuntimeStats() const {
 
 Token Parser::consume_token() {
 	Token token = current_token_;
+	invalidate_lookahead_cache();
 
 	// Phase 5: Check if we have an injected token (from >> splitting)
 	if (injected_token_.type() != Token::Type::Uninitialized) {
@@ -863,8 +870,25 @@ Token Parser::peek_token(size_t lookahead) {
 	}
 #endif
 
+	if (lookahead == 1) {
+		if (lookahead_token_1_cache_.has_value()) {
+			return *lookahead_token_1_cache_;
+		}
+
+		Token result;
+		if (injected_token_.type() != Token::Type::Uninitialized) {
+			result = injected_token_;
+		} else {
+			TokenPosition saved_lexer_pos = lexer_.save_token_position();
+			result = lexer_.next_token();
+			lexer_.restore_token_position(saved_lexer_pos);
+		}
+		lookahead_token_1_cache_ = result;
+		return result;
+	}
+
 	// Save current position
-	SaveHandle saved_handle = save_token_position();
+	SaveHandle saved_handle = save_token_position_ephemeral();
 
 	// Consume tokens to reach the lookahead position
 	for (size_t i = 0; i < lookahead; ++i) {
@@ -890,6 +914,7 @@ void Parser::split_right_shift_token() {
 		FLASH_LOG(Parser, Error, "split_right_shift_token called but current token is not >>");
 		return;
 	}
+	invalidate_lookahead_cache();
 
 	FLASH_LOG(Parser, Debug, "Splitting >> token into two > tokens for nested template");
 
@@ -943,6 +968,7 @@ Token Parser::peek_info(size_t lookahead) {
 
 Token Parser::advance() {
 	Token result = current_token_;
+	invalidate_lookahead_cache();
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.tokens_advanced;
@@ -957,6 +983,10 @@ Token Parser::advance() {
 		current_token_ = lexer_.next_token();
 	}
 	return result;
+}
+
+void Parser::invalidate_lookahead_cache() {
+	lookahead_token_1_cache_.reset();
 }
 
 bool Parser::consume(TokenKind kind) {
@@ -986,6 +1016,18 @@ Token Parser::expect(TokenKind kind) {
 }
 
 Parser::SaveHandle Parser::save_token_position() {
+	return save_token_position_persistent();
+}
+
+Parser::SaveHandle Parser::save_token_position_persistent() {
+	return save_token_position_impl(SaveKind::Persistent);
+}
+
+Parser::SaveHandle Parser::save_token_position_ephemeral() {
+	return save_token_position_impl(SaveKind::Ephemeral);
+}
+
+Parser::SaveHandle Parser::save_token_position_impl(SaveKind kind) {
 #if WITH_PARSER_RUNTIME_STATS
 	std::chrono::high_resolution_clock::time_point start;
 	if (runtime_stats_enabled_) {
@@ -1004,11 +1046,18 @@ Parser::SaveHandle Parser::save_token_position() {
 	if (saved_tokens_.size() <= handle) {
 		saved_tokens_.resize(handle + 1);
 	}
-	saved_tokens_[handle] = SavedToken{current_token_, injected_token_, ast_nodes_.size(), lexer_pos};
+	saved_tokens_[handle] = SavedToken{current_token_, injected_token_, ast_nodes_.size(), lexer_pos, kind};
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
 		++runtime_stats_.save_count;
 		++runtime_stats_.active_saves;
+		if (kind == SaveKind::Persistent) {
+			++runtime_stats_.save_persistent_count;
+		} else {
+			++runtime_stats_.save_ephemeral_count;
+			++runtime_stats_.active_ephemeral_saves;
+			runtime_stats_.peak_active_ephemeral_saves = std::max(runtime_stats_.peak_active_ephemeral_saves, runtime_stats_.active_ephemeral_saves);
+		}
 		runtime_stats_.peak_active_saves = std::max(runtime_stats_.peak_active_saves, runtime_stats_.active_saves);
 		runtime_stats_.saved_token_slots_peak = std::max(runtime_stats_.saved_token_slots_peak, saved_tokens_.size());
 		if (saved_tokens_.capacity() != capacity_before) {
@@ -1053,6 +1102,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 	}
 
 	const SavedToken& saved_token = *saved_tokens_[handle];
+	invalidate_lookahead_cache();
 	{
 		std::string saved_tok = std::string(saved_token.current_token_.value());
 		std::string current_tok = std::string(current_token_.value());
@@ -1146,6 +1196,7 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
 	}
 
 	const SavedToken& saved_token = *saved_tokens_[handle];
+	invalidate_lookahead_cache();
 	lexer_.restore_token_position(saved_token.lexer_position_);
 	current_token_ = saved_token.current_token_;
 	injected_token_ = saved_token.injected_token_;
@@ -1172,10 +1223,14 @@ void Parser::discard_saved_token(SaveHandle handle) {
 	}
 #endif
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
+		SaveKind kind = saved_tokens_[handle]->kind_;
 		saved_tokens_[handle].reset();
 #if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			--runtime_stats_.active_saves;
+			if (kind == SaveKind::Ephemeral && runtime_stats_.active_ephemeral_saves > 0) {
+				--runtime_stats_.active_ephemeral_saves;
+			}
 			size_t holes = saved_tokens_.size() - runtime_stats_.active_saves;
 			runtime_stats_.saved_token_holes_peak = std::max(runtime_stats_.saved_token_holes_peak, holes);
 		}
