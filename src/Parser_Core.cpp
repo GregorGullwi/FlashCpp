@@ -1223,7 +1223,9 @@ void Parser::discard_saved_token(SaveHandle handle) {
 	}
 #endif
 	if (handle < saved_tokens_.size() && saved_tokens_[handle].has_value()) {
+#if WITH_PARSER_RUNTIME_STATS
 		SaveKind kind = saved_tokens_[handle]->kind_;
+#endif
 		saved_tokens_[handle].reset();
 #if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
