@@ -6,17 +6,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 1) Variable-template template-id fallback still treated as callable in dependent static_assert
-
-- **Symptom**: During `<string_view>` instantiation, expressions such as `is_same_v<...>` can fail with  
-  `Identifier is not a function or callable object: is_same_v`.
-- **Root cause**: When variable-template instantiation fails in dependent contexts, the evaluator still falls
-  back to call-expression semantics instead of preserving a dependent value-template expression.
-- **Affected path**: `ExpressionSubstitutor::substituteFunctionCallImpl` / variable-template instantiation +
-  constexpr call-evaluation fallback.
-- **Impact**: Blocks portions of libstdc++ headers that rely on variable templates in dependent checks.
-
-## 2) MSVC `<limits>` now stops later on `numeric_limits` constexpr member initialization
+## 1) MSVC `<limits>` now stops later on `numeric_limits` constexpr member initialization
 
 - **Symptom**: On Windows/MSVC STL, `tests/std/test_std_limits.cpp` now gets past
   the UCRT `__crt_va_start` wrappers but stops later with
@@ -33,18 +23,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 3) Out-of-line template member signature validation is too literal
-
-- **Symptom**: Parser warnings like `Parameter 1 type mismatch in out-of-line template member ...` remain for
-  valid declarations/definitions that differ only by dependent spelling/aliases.
-- **Root cause**: `validate_signature_match` compares low-level type fields (`type_index`, category, pointer/ref)
-  too rigidly for dependent contexts and does not use a more canonicalized/dependent-aware type equivalence.
-- **Affected path**: `Parser::validate_signature_match`, invoked from out-of-line template member parsing.
-- **Impact**: Noisy diagnostics and increased risk of picking/validating against suboptimal overload candidates.
-
----
-
-## 4) `tests/std/test_std_ratio.cpp` — no `.o` output and residual diagnostic noise
+## 2) `tests/std/test_std_ratio.cpp` — no `.o` output and residual diagnostic noise
 
 **Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
 
@@ -60,7 +39,7 @@ instantiation stop is fixed. The first hard blocker has moved later to
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
-### 4a) `std::__are_both_ratios` parse-time instantiation failure (expected noise)
+### 2a) `std::__are_both_ratios` parse-time instantiation failure (expected noise)
 
 - **Symptom**: `[WARN][Parser] Parsed template arguments but instantiation failed for 'std::__are_both_ratios'`
   followed by `[ERROR][Templates] All 1 template overload(s) failed for '__are_both_ratios'` — appears
@@ -73,7 +52,7 @@ instantiation stop is fixed. The first hard blocker has moved later to
   default-NTTP/value propagation in ratio arithmetic.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
-### 4b) Residual substitution cycle/default-NTTP value loss in partially-dependent `ratio` instances
+### 2b) Residual substitution cycle/default-NTTP value loss in partially-dependent `ratio` instances
 
 - **Symptom**: Repeated DEBUG log lines cycling between `_R1::num` and `__static_abs$xxx::value`
   lookups during depth=2 `ratio` template processing.

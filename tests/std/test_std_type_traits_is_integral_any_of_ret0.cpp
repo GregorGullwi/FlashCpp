@@ -1,7 +1,6 @@
-// Expected failure: distilled MSVC <type_traits> std::is_integral pattern.
+// Distilled MSVC <type_traits> std::is_integral pattern.
 // A variable-template partial specialization feeds another variable template,
 // then that value is used as a non-type template argument in a base class.
-// FlashCpp currently evaluates is_integral<int>::value as false.
 
 template <class, class>
 constexpr bool is_same_v = false;
