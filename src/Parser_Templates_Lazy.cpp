@@ -468,8 +468,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				lazy_info.template_params,
 				converted_template_args);
 			new_dtor_ref.set_noexcept_expression(substituted_noexcept);
-			ConstExpr::EvaluationContext ctx(gSymbolTable);
-			ctx.attachParserOwnedSema(*this);
+			ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 			std::optional<TemplateEnvironment> outer_environment;
 			ctx.template_environment = buildLazySubstitutionEnvironment(
 				lazy_info.outer_template_environment_snapshot,
@@ -1185,8 +1184,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		// This turns expressions like "1 * __static_sign$hash::value / __static_gcd$hash::value"
 		// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
 		if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
-			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-			eval_ctx.attachParserOwnedSema(*this);
+			ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 			// Provide struct context so the evaluator prefers same-struct member functions over globals.
 			eval_ctx.struct_info = struct_info;
 			// Provide template args so sizeof(T) etc. resolve correctly.
