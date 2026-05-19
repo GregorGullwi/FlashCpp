@@ -64,6 +64,10 @@ static_assert(castLess(2, 3));
 static_assert(castBigLess(2, 3));
 static_assert(crossBigLess(1, 3, 1, 2));
 static_assert(ratioLess(1, 3, 1, 2));
+static_assert(castLess(static_cast<char>(2), static_cast<wchar_t>(3)));
+static_assert(crossBigLess(
+	static_cast<unsigned short>(1), static_cast<unsigned short>(3),
+	static_cast<unsigned int>(1), static_cast<unsigned int>(2)));
 
 int main() {
 	return 0;

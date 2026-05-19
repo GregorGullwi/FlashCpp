@@ -2264,7 +2264,9 @@ ParseResult Parser::parse_type_specifier() {
 								diagnoseMissingTypenameForDependentOwner(
 									owner_kind,
 									type_name_token,
-									had_template_keyword && dependent_member_template_args.has_value());
+									parsing_alias_type_id_ &&
+										had_template_keyword &&
+										dependent_member_template_args.has_value());
 							typename_error.has_value()) {
 							return *typename_error;
 						}

@@ -3591,36 +3591,35 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		}
 
 		// Regular binary operators (non-assignment)
-		// Short-circuit && and || per C++ semantics: evaluate LHS first, skip RHS
-		// when the result is already determined.  This is critical for guard patterns
-		// like `p && *p` where the RHS must not be evaluated when LHS is falsy.
-		if (op == "&&" || op == "||") {
-			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
-			if (!lhs_result.success())
-				return lhs_result;
-			const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
-			if (op == "&&" && !lhs_bool)
-				return EvalResult::from_bool(false);
-			if (op == "||" && lhs_bool)
-				return EvalResult::from_bool(true);
-			auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
-			if (!rhs_result.success())
-				return rhs_result;
-			const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
-			return EvalResult::from_bool(rhs_bool);
-		}
-
 		auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
-		auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
-
 		if (!lhs_result.success())
 			return lhs_result;
+
+		if (op == "&&" || op == "||") {
+			const bool lhs_has_overloaded_logical =
+				bin_op.has_resolved_operator_overload() ||
+				lhs_result.object_type_index.is_valid();
+			if (!lhs_has_overloaded_logical) {
+				const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+				if (op == "&&" && !lhs_bool)
+					return EvalResult::from_bool(false);
+				if (op == "||" && lhs_bool)
+					return EvalResult::from_bool(true);
+			}
+		}
+
+		auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 		if (!rhs_result.success())
 			return rhs_result;
 
 		if (auto member_operator_result =
 				try_evaluate_constexpr_member_binary_operator(bin_op, lhs_result, rhs_result, context)) {
 			return *member_operator_result;
+		}
+		if (op == "&&" || op == "||") {
+			const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+			const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
+			return EvalResult::from_bool(op == "&&" ? (lhs_bool && rhs_bool) : (lhs_bool || rhs_bool));
 		}
 
 		return apply_binary_op(lhs_result, rhs_result, bin_op.op(), &context, &bindings);
@@ -3893,30 +3892,36 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
 		std::string_view op = bin_op.op();
 
-		// Short-circuit && and || per C++ semantics (see mutable-bindings path above).
-		if (op == "&&" || op == "||") {
-			auto lhs_result = recursive_eval(bin_op.get_lhs(), bindings, context);
-			if (!lhs_result.success())
-				return lhs_result;
-			const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
-			if (op == "&&" && !lhs_bool)
-				return EvalResult::from_bool(false);
-			if (op == "||" && lhs_bool)
-				return EvalResult::from_bool(true);
-			auto rhs_result = recursive_eval(bin_op.get_rhs(), bindings, context);
-			if (!rhs_result.success())
-				return rhs_result;
-			const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
-			return EvalResult::from_bool(rhs_bool);
-		}
-
 		auto lhs_result = recursive_eval(bin_op.get_lhs(), bindings, context);
-		auto rhs_result = recursive_eval(bin_op.get_rhs(), bindings, context);
-
 		if (!lhs_result.success())
 			return lhs_result;
+
+		if (op == "&&" || op == "||") {
+			const bool lhs_has_overloaded_logical =
+				bin_op.has_resolved_operator_overload() ||
+				lhs_result.object_type_index.is_valid();
+			if (!lhs_has_overloaded_logical) {
+				const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+				if (op == "&&" && !lhs_bool)
+					return EvalResult::from_bool(false);
+				if (op == "||" && lhs_bool)
+					return EvalResult::from_bool(true);
+			}
+		}
+
+		auto rhs_result = recursive_eval(bin_op.get_rhs(), bindings, context);
 		if (!rhs_result.success())
 			return rhs_result;
+
+		if (auto member_operator_result =
+				try_evaluate_constexpr_member_binary_operator(bin_op, lhs_result, rhs_result, context)) {
+			return *member_operator_result;
+		}
+		if (op == "&&" || op == "||") {
+			const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+			const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
+			return EvalResult::from_bool(op == "&&" ? (lhs_bool && rhs_bool) : (lhs_bool || rhs_bool));
+		}
 
 		return apply_binary_op(lhs_result, rhs_result, bin_op.op(), &context, &bindings);
 	}

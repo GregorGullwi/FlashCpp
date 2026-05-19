@@ -51,7 +51,7 @@ conversion for `test_std_ratio.cpp`.
   `try_instantiate_template_explicit` has an early-out for dependent args (correct behaviour).
   The errors are non-fatal and the constexpr evaluator path correctly handles
   them via the explicit-type-args fix above; the current hard stop is later
-  default-NTTP/value propagation in ratio arithmetic.
+  IR conversion for `<ratio>` helpers after constexpr ratio comparison succeeds.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
 ### 2b) Residual ratio IR conversion failures

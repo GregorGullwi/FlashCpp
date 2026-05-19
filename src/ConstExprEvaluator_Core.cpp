@@ -1189,33 +1189,27 @@ EvalResult Evaluator::evaluate_binary_operator(const BinaryOperatorNode& binary_
 	const ASTNode& lhs_node = binary_operator.get_lhs();
 	const ASTNode& rhs_node = binary_operator.get_rhs();
 	const std::string_view op = binary_operator.op();
-	// Short-circuit && and || per C++ semantics when not in speculative mode.
-	// In speculative mode (template-argument disambiguation), both sides are evaluated
-	// eagerly so that a truthy LHS of `||` does not give a false-positive constant-
-	// expression result that would confuse the `<` disambiguation heuristic.
-	if (!context.is_speculative && (op == "&&" || op == "||")) {
-		auto lhs_result = evaluate(lhs_node, context);
-		if (!lhs_result.success())
-			return lhs_result;
-		const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
-		if (op == "&&" && !lhs_bool)
-			return EvalResult::from_bool(false);
-		if (op == "||" && lhs_bool)
-			return EvalResult::from_bool(true);
-		auto rhs_result = evaluate(rhs_node, context);
-		if (!rhs_result.success())
-			return rhs_result;
-		const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
-		return EvalResult::from_bool(rhs_bool);
-	}
-
-	// Eagerly evaluate both sides (required in speculative mode, or for non-logical ops)
+	// Eagerly evaluate LHS first. For built-in &&/|| outside speculative mode we may
+	// still short-circuit, but overloaded logical operators must evaluate both operands.
 	auto lhs_result = evaluate(lhs_node, context);
-	auto rhs_result = evaluate(rhs_node, context);
-
 	if (!lhs_result.success()) {
 		return lhs_result;
 	}
+
+	if (!context.is_speculative && (op == "&&" || op == "||")) {
+		const bool lhs_has_overloaded_logical =
+			binary_operator.has_resolved_operator_overload() ||
+			lhs_result.object_type_index.is_valid();
+		if (!lhs_has_overloaded_logical) {
+			const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+			if (op == "&&" && !lhs_bool)
+				return EvalResult::from_bool(false);
+			if (op == "||" && lhs_bool)
+				return EvalResult::from_bool(true);
+		}
+	}
+
+	auto rhs_result = evaluate(rhs_node, context);
 	if (!rhs_result.success()) {
 		return rhs_result;
 	}
@@ -1223,6 +1217,11 @@ EvalResult Evaluator::evaluate_binary_operator(const BinaryOperatorNode& binary_
 	if (auto member_operator_result =
 			try_evaluate_constexpr_member_binary_operator(binary_operator, lhs_result, rhs_result, context)) {
 		return *member_operator_result;
+	}
+	if (op == "&&" || op == "||") {
+		const bool lhs_bool = lhs_result.pointer_to_var.isValid() ? true : lhs_result.as_bool();
+		const bool rhs_bool = rhs_result.pointer_to_var.isValid() ? true : rhs_result.as_bool();
+		return EvalResult::from_bool(op == "&&" ? (lhs_bool && rhs_bool) : (lhs_bool || rhs_bool));
 	}
 
 	return apply_binary_op(lhs_result, rhs_result, op, &context);
