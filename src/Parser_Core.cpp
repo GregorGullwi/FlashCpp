@@ -1128,13 +1128,9 @@ Parser::SaveHandle Parser::save_token_position_impl(SaveKind kind) {
 		start = std::chrono::high_resolution_clock::now();
 	}
 #endif
-	SaveHandle handle = 0;
-	if (!free_save_handles_.empty()) {
-		handle = free_save_handles_.back();
-		free_save_handles_.pop_back();
-	} else {
-		handle = next_save_handle_++;
-	}
+	// Generate unique handle using static incrementing counter
+	// This prevents collisions even when multiple saves happen at the same cursor position
+	SaveHandle handle = next_save_handle_++;
 
 	// Save current parser state (including injected token for >> splitting)
 	TokenPosition lexer_pos = lexer_.save_token_position();
@@ -1333,7 +1329,6 @@ void Parser::discard_saved_token(SaveHandle handle) {
 		SaveKind kind = saved_tokens_[handle]->kind_;
 #endif
 		saved_tokens_[handle].reset();
-		free_save_handles_.push_back(handle);
 #if WITH_PARSER_RUNTIME_STATS
 		if (runtime_stats_enabled_) {
 			--runtime_stats_.active_saves;
