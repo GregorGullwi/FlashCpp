@@ -805,6 +805,7 @@ private:
 		size_t peak_active_saves = 0;
 		size_t active_ephemeral_saves = 0;
 		size_t peak_active_ephemeral_saves = 0;
+		size_t ephemeral_counter_mismatch_count = 0;
 		size_t saved_token_slots_peak = 0;
 		size_t saved_token_capacity_peak = 0;
 		size_t saved_token_capacity_growths = 0;
@@ -1516,8 +1517,8 @@ private:
 		Token injected_token_;  // Phase 5: Save injected token state for >> splitting
 		size_t ast_nodes_size_ = 0;
 		TokenPosition lexer_position_;  // Store the lexer position with each save
-		SaveKind kind_;
 #if WITH_PARSER_RUNTIME_STATS
+		SaveKind kind_;
 		size_t tokens_advanced_at_save_ = 0;  // Snapshot of tokens_advanced for delta tracking
 #endif
 	};
