@@ -20,16 +20,6 @@ EvaluationContext::EvaluationContext(const SymbolTable& symbol_table, SemanticAn
 	: symbols(&symbol_table),
 	  sema(&sema_owner) {}
 
-void EvaluationContext::attachSemaOnly(SemanticAnalysis& sema_owner) {
-	parser = nullptr;
-	sema = &sema_owner;
-}
-
-void EvaluationContext::attachParserOwnedSema(Parser& parser_owner) {
-	parser = &parser_owner;
-	sema = &parser_owner.semanticAnalysis();
-}
-
 SemanticAnalysis& EvaluationContext::requireSema(std::string_view operation) const {
 	if (sema == nullptr) {
 		throw InternalError(std::string("ConstExpr ") + std::string(operation) +
