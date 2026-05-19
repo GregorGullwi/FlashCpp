@@ -91,11 +91,17 @@ Immediate targets:
 Most concrete next subtask:
 
 - finish the remaining dependent-base/unknown-specialization member-chain work
-  and the declarations that still fail to capture replay metadata at parse time;
-  deeper current-instantiation/type-alias qualified-id/member chains now reuse
-  the shared member-side lookup/materialization path, and replayed qualified-id
-  parsing now captures the current-instantiation metadata needed for covered
-  lazy/static flows.
+  after the latest replay-metadata improvement: deferred explicit-template
+  qualified-call records now preserve the instantiated placeholder `owner_type`
+  instead of dropping it at parse time. Deferred non-call qualified expressions
+  now also preserve deeper member-template segment arguments such as
+  `Traits<T>::template Box<T>::value`. The next concrete gap is still the
+  remaining call-shaped member-template/member-chain cases and the declarations
+  that never capture replay metadata in the first place; current-
+  instantiation/type-alias qualified-id/member chains already reuse the shared
+  member-side lookup/materialization path, and covered replayed qualified-id
+  parsing now preserves both current-instantiation and explicit-template owner
+  identity plus non-call member-template segment metadata.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 

@@ -2971,6 +2971,16 @@ public:
 	bool has_dependent_unqualified_lookup_record() const {
 		return dependent_unqualified_lookup_record_.has_value();
 	}
+	void set_dependent_qualified_lookup_record(
+		const TypeInfo::DependentQualifiedNameRecord& record) {
+		dependent_qualified_lookup_record_ = record;
+	}
+	const std::optional<TypeInfo::DependentQualifiedNameRecord>& dependent_qualified_lookup_record() const {
+		return dependent_qualified_lookup_record_;
+	}
+	bool has_dependent_qualified_lookup_record() const {
+		return dependent_qualified_lookup_record_.has_value();
+	}
 
 private:
 	CalleeDescriptor callee_;
@@ -2982,6 +2992,7 @@ private:
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments
 	std::optional<FunctionCallDefinitionLookupRecord> definition_lookup_record_;
 	std::optional<DependentUnqualifiedCallLookupRecord> dependent_unqualified_lookup_record_;
+	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_lookup_record_;
 };
 
 // Constructor call node - represents constructor calls like T(args)

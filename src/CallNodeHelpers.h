@@ -49,6 +49,7 @@ struct CallInfo {
 	std::span<const ASTNode> template_arguments;
 	const std::optional<FunctionCallDefinitionLookupRecord>* definition_lookup_record;
 	const std::optional<DependentUnqualifiedCallLookupRecord>* dependent_unqualified_lookup_record;
+	const std::optional<TypeInfo::DependentQualifiedNameRecord>* dependent_qualified_lookup_record;
 	bool is_indirect;
 
 	// --- Factory helpers ---------------------------------------------------
@@ -67,6 +68,8 @@ struct CallInfo {
 		info.definition_lookup_record = &node.definition_lookup_record();
 		info.dependent_unqualified_lookup_record =
 			&node.dependent_unqualified_lookup_record();
+		info.dependent_qualified_lookup_record =
+			&node.dependent_qualified_lookup_record();
 		info.is_indirect           = node.callee().is_indirect();
 		return info;
 	}
@@ -86,6 +89,7 @@ struct CallMetadataCopyOptions {
 	bool copy_template_arguments = true;
 	bool copy_definition_lookup_record = true;
 	bool copy_dependent_unqualified_lookup_record = true;
+	bool copy_dependent_qualified_lookup_record = true;
 };
 
 template <typename CallNodeT>
@@ -118,6 +122,12 @@ inline void copyCallMetadataFromInfo(
 		source.dependent_unqualified_lookup_record->has_value()) {
 		target.set_dependent_unqualified_lookup_record(
 			**source.dependent_unqualified_lookup_record);
+	}
+	if (options.copy_dependent_qualified_lookup_record &&
+		source.dependent_qualified_lookup_record != nullptr &&
+		source.dependent_qualified_lookup_record->has_value()) {
+		target.set_dependent_qualified_lookup_record(
+			**source.dependent_qualified_lookup_record);
 	}
 }
 
@@ -265,6 +275,20 @@ inline void setCallDependentUnqualifiedLookupRecord(
 	CallExprNode& call_expr,
 	const DependentUnqualifiedCallLookupRecord& record) {
 	call_expr.set_dependent_unqualified_lookup_record(record);
+}
+
+inline void setCallDependentQualifiedLookupRecord(
+	ExpressionNode& expr,
+	const TypeInfo::DependentQualifiedNameRecord& record) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_dependent_qualified_lookup_record(record);
+	}
+}
+
+inline void setCallDependentQualifiedLookupRecord(
+	CallExprNode& call_expr,
+	const TypeInfo::DependentQualifiedNameRecord& record) {
+	call_expr.set_dependent_qualified_lookup_record(record);
 }
 
 inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNode>&& template_args) {

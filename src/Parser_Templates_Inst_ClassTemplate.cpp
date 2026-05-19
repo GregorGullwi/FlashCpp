@@ -7542,6 +7542,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Qualified ids like T::value can also be template-parameter dependent.
 			if (std::holds_alternative<QualifiedIdentifierNode>(expr))
 				return true;
+			if (RebindStaticMemberAst::visitASTUntil(*initializer, [](const ASTNode& node) {
+					if (!node.is<CallExprNode>()) {
+						return false;
+					}
+					const CallExprNode& call = node.as<CallExprNode>();
+					return call.has_dependent_qualified_lookup_record() ||
+						   call.dependent_unqualified_lookup_record().has_value();
+				})) {
+				return true;
+			}
 
 			return false;
 		};
@@ -8710,13 +8720,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		instantiated_struct_ref.add_nested_class(nested_class_node);
 	}
 
+	std::vector<StructMemberFunctionDecl> effective_member_functions;
+	bool effective_has_constructor = false;
+	for (const StructMemberFunctionDecl& member_function : class_decl.member_functions()) {
+		effective_member_functions.push_back(member_function);
+		effective_has_constructor = effective_has_constructor || member_function.is_constructor;
+	}
+	if (effective_member_functions.empty() &&
+		template_struct_info != nullptr &&
+		!template_struct_info->member_functions.empty()) {
+		effective_member_functions.reserve(template_struct_info->member_functions.size());
+		for (const StructMemberFunction& member_function : template_struct_info->member_functions) {
+			StructMemberFunctionDecl member_function_decl(
+				member_function.function_decl,
+				member_function.access,
+				member_function.is_constructor,
+				member_function.is_destructor,
+				member_function.operator_kind);
+			member_function_decl.is_virtual = member_function.is_virtual;
+			member_function_decl.is_pure_virtual = member_function.is_pure_virtual;
+			member_function_decl.is_override = member_function.is_override;
+			member_function_decl.is_final = member_function.is_final;
+			member_function_decl.cv_qualifier = member_function.cv_qualifier;
+			member_function_decl.is_noexcept = member_function.is_noexcept;
+			effective_member_functions.push_back(member_function_decl);
+			effective_has_constructor = effective_has_constructor || member_function_decl.is_constructor;
+		}
+	}
+
 	// Log lazy instantiation status (already determined earlier in the function)
 	if (is_implicit_instantiation) {
 		FLASH_LOG(Templates, Debug, "Using LAZY instantiation for ", instantiated_name, " - registering ",
-				  class_decl.member_functions().size(), " member functions for on-demand instantiation");
+				  effective_member_functions.size(), " member functions for on-demand instantiation");
 	} else if (force_eager) {
 		FLASH_LOG(Templates, Debug, "Using EAGER instantiation for ", instantiated_name, " (forced by explicit instantiation) - instantiating ",
-				  class_decl.member_functions().size(), " member functions immediately");
+				  effective_member_functions.size(), " member functions immediately");
 	}
 
 	// Slice 3: map from original template member node (by raw pointer) to the instantiated stub node.
@@ -8781,7 +8819,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	};
 
 	// Copy member functions from the template
-	for (const StructMemberFunctionDecl& mem_func : class_decl.member_functions()) {
+	for (const StructMemberFunctionDecl& mem_func : effective_member_functions) {
 
 		if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
@@ -10748,15 +10786,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Check if the template class has any constructors
 	// If not, mark that we need to generate a default one for the instantiation
-	bool has_constructor = false;
-	for (const auto& mem_func : class_decl.member_functions()) {
-		if (mem_func.is_constructor) {
-			has_constructor = true;
-			break;
-		}
-	}
-	struct_info_ptr->needs_default_constructor = !has_constructor;
-	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", has_constructor,
+	struct_info_ptr->needs_default_constructor = !effective_has_constructor;
+	FLASH_LOG(Templates, Debug, "Instantiated struct ", instantiated_name, " has_constructor=", effective_has_constructor,
 			  ", needs_default_constructor=", struct_info_ptr->needs_default_constructor);
 
 	// Propagate deleted constructor flags from the template pattern to the instantiated struct.
