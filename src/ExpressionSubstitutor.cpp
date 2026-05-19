@@ -1560,6 +1560,21 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				return instantiated;
 			};
+			auto templateArgsStillDependent = [&](std::span<const TemplateTypeArg> args) {
+				for (const TemplateTypeArg& arg : args) {
+					if (arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value()) {
+						return true;
+					}
+				}
+				return false;
+			};
+			auto makeSubstitutedCallArguments = [&]() {
+				ChunkedVector<ASTNode> substituted_args;
+				for (size_t i = 0; i < call.arguments().size(); ++i) {
+					substituted_args.push_back(substitute(call.arguments()[i]));
+				}
+				return substituted_args;
+			};
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
 			if (!qualified_name.empty()) {
@@ -1661,6 +1676,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			}
 
 			// Try variable template instantiation before class template
+			const bool had_dependent_template_args =
+				templateArgsStillDependent(std::span<const TemplateTypeArg>(substituted_template_args.data(), substituted_template_args.size()));
+			const bool has_variable_template_candidate =
+				gTemplateRegistry.lookupVariableTemplate(func_name).has_value() ||
+				(call.has_qualified_name() && gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value());
 			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args);
 			if (var_template_node.has_value()) {
 				normalizePendingSemanticRoots();
@@ -1684,6 +1704,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				// If not a variable declaration or no initializer, return as-is
 				return *var_template_node;
+			}
+			if (had_dependent_template_args) {
+				FLASH_LOG(Templates, Debug,
+					"  Preserving unresolved dependent call after explicit template/variable-template instantiation miss: ",
+					!qualified_name.empty() ? qualified_name : func_name);
+				return materializeSubstitutedUnresolvedCall(makeSubstitutedCallArguments());
 			}
 
 			Parser::AliasTemplateMaterializationResult materialized_type =
@@ -1728,6 +1754,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				return ASTNode(&new_expr);
 			} else {
 				FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", func_name);
+				if (has_variable_template_candidate) {
+					FLASH_LOG(Templates, Debug,
+						"  Variable-template candidate instantiation failed; preserving explicit unresolved call");
+					return materializeSubstitutedUnresolvedCall(makeSubstitutedCallArguments());
+				}
 			}
 		}
 	}
