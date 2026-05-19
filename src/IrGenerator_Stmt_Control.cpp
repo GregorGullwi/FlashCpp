@@ -597,6 +597,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 	std::string_view range_name;
 	const DeclarationNode* range_decl_ptr = nullptr;
 	ASTNode range_object_expr = range_expr;
+	auto sema_services = sema_.parserSemanticServices();
 
 	if (std::holds_alternative<IdentifierNode>(expr_variant)) {
 		const IdentifierNode& range_ident = std::get<IdentifierNode>(expr_variant);
@@ -620,6 +621,31 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		}
 	} else {
 		std::optional<TypeSpecifierNode> inferred_range_type;
+		TypeSpecifierQueryResult sema_range_type_query =
+			sema_services.getExpressionTypeQuery(range_expr);
+		const bool sema_range_type_not_yet_analyzed =
+			sema_range_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
+		if (sema_normalized_current_function_ && sema_range_type_not_yet_analyzed) {
+			throw InternalError("Normalized range-for range-expression type query remained NotYetAnalyzed");
+		}
+
+		bool allow_parser_range_type_fallback = false;
+		if (sema_range_type_query.state == TypeSpecifierQueryResult::State::Available) {
+			const bool sema_range_type_usable =
+				sema_range_type_query.type.has_value() &&
+				sema_range_type_query.type->type() != TypeCategory::Invalid &&
+				!isPlaceholderAutoType(sema_range_type_query.type->type());
+			if (sema_range_type_usable) {
+				inferred_range_type = sema_range_type_query.type;
+			} else {
+				allow_parser_range_type_fallback = true;
+			}
+		} else if (sema_range_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
+			allow_parser_range_type_fallback = true;
+		} else if (sema_range_type_not_yet_analyzed && !sema_normalized_current_function_) {
+			allow_parser_range_type_fallback = true;
+		}
+
 		if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
@@ -645,7 +671,7 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		if (!inferred_range_type.has_value() && node.resolved_range_type().has_value()) {
 			inferred_range_type = node.resolved_range_type();
 		}
-		if (!inferred_range_type.has_value()) {
+		if (!inferred_range_type.has_value() && allow_parser_range_type_fallback) {
 			inferred_range_type = parser_.get_expression_type(range_expr);
 		}
 		if (!inferred_range_type.has_value()) {

@@ -1703,17 +1703,28 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
+		auto sema_services = sema_ref.parserSemanticServices();
 		ResolvedFunctionQueryResult sema_query =
-			sema_ref
-				.parserSemanticServices()
-				.getResolvedDirectCallQuery(&call_expr);
-		if (sema_query.hasValue()) {
+			sema_services.getResolvedDirectCallQuery(&call_expr);
+		switch (sema_query.state) {
+		case ResolvedFunctionQueryResult::State::Available:
+			if (sema_query.function == nullptr) {
+				throw InternalError(
+					"Dependent unqualified member call query reported Available without a function");
+			}
 			return evaluate_function_call_with_bindings(
 				*sema_query.function,
 				call_expr.arguments(),
 				bindings,
 				context,
 				mutable_bindings);
+		case ResolvedFunctionQueryResult::State::NotYetAnalyzed:
+			if (sema_services.hasPostParseNormalizationStarted()) {
+				throw InternalError("Normalized dependent unqualified member direct-call query remained NotYetAnalyzed");
+			}
+			break;
+		case ResolvedFunctionQueryResult::State::AnalyzedAbsent:
+			break;
 		}
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {

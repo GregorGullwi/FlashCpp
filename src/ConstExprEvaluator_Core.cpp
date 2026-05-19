@@ -4521,16 +4521,27 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		Parser& parser = *context.parser;
 		// The sema pass may have already resolved this call during annotation.
 		// Consume that pre-resolved result directly instead of re-running POI lookup.
+		auto sema_services = sema_ref.parserSemanticServices();
 		ResolvedFunctionQueryResult sema_query =
-			sema_ref
-				.parserSemanticServices()
-				.getResolvedDirectCallQuery(&call_expr);
-		if (sema_query.hasValue()) {
+			sema_services.getResolvedDirectCallQuery(&call_expr);
+		switch (sema_query.state) {
+		case ResolvedFunctionQueryResult::State::Available:
+			if (sema_query.function == nullptr) {
+				throw InternalError(
+					"Dependent unqualified call query reported Available without a function");
+			}
 			return evaluate_resolved_function_call(
 				*sema_query.function,
 				call_expr.arguments(),
 				context,
 				nullptr);
+		case ResolvedFunctionQueryResult::State::NotYetAnalyzed:
+			if (sema_services.hasPostParseNormalizationStarted()) {
+				throw InternalError("Normalized dependent unqualified direct-call query remained NotYetAnalyzed");
+			}
+			break;
+		case ResolvedFunctionQueryResult::State::AnalyzedAbsent:
+			break;
 		}
 		std::vector<TypeSpecifierNode> arg_types;
 		if (!parser.tryCollectFunctionCallArgTypes(call_expr.arguments(), arg_types)) {
@@ -4781,72 +4792,70 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			}
 		}
 
-		// No pre-instantiated version found - try to instantiate on-demand if parser is available
-		if (context.parser) {
-			(void)context.requireParserOwnedSema("template call argument instantiation");
-			Parser& parser = *context.parser;
+		// No pre-instantiated version found - on-demand instantiation requires parser-owned context.
+		(void)context.requireParserOwnedSema("template call argument instantiation");
+		Parser& parser = *context.parser;
 
-			// When the call carries explicit template arguments (e.g. f<T1,T2>()) try
-			// instantiation via try_instantiate_template_explicit first, before the
-			// argument-type-deduction path (which cannot deduce type params from an
-			// empty argument list).
-			if (call_expr.has_template_arguments() && arguments.empty()) {
-				std::vector<TemplateTypeArg> explicit_args;
-				bool all_concrete = true;
-				for (const ASTNode& arg_node : call_expr.template_arguments()) {
-					if (arg_node.is<TypeSpecifierNode>()) {
-						TemplateTypeArg targ(arg_node.as<TypeSpecifierNode>());
-						if (targ.is_dependent) {
-							all_concrete = false;
-							break;
-						}
-						explicit_args.push_back(std::move(targ));
-					} else if (arg_node.is<ExpressionNode>()) {
-						EvalResult arg_val = evaluate(arg_node, context);
-						if (!arg_val.success()) {
-							all_concrete = false;
-							break;
-						}
-						explicit_args.push_back(templateTypeArgFromEvalResult(arg_val));
-					} else {
+		// When the call carries explicit template arguments (e.g. f<T1,T2>()) try
+		// instantiation via try_instantiate_template_explicit first, before the
+		// argument-type-deduction path (which cannot deduce type params from an
+		// empty argument list).
+		if (call_expr.has_template_arguments() && arguments.empty()) {
+			std::vector<TemplateTypeArg> explicit_args;
+			bool all_concrete = true;
+			for (const ASTNode& arg_node : call_expr.template_arguments()) {
+				if (arg_node.is<TypeSpecifierNode>()) {
+					TemplateTypeArg targ(arg_node.as<TypeSpecifierNode>());
+					if (targ.is_dependent) {
 						all_concrete = false;
 						break;
 					}
-				}
-				if (all_concrete && !explicit_args.empty()) {
-					std::optional<ASTNode> explicit_opt =
-						parser.try_instantiate_template_explicit(
-							qualified_name, explicit_args, arguments.size());
-					if (!explicit_opt.has_value() && qualified_name != func_name) {
-						explicit_opt = parser.try_instantiate_template_explicit(
-							func_name, explicit_args, arguments.size());
+					explicit_args.push_back(std::move(targ));
+				} else if (arg_node.is<ExpressionNode>()) {
+					EvalResult arg_val = evaluate(arg_node, context);
+					if (!arg_val.success()) {
+						all_concrete = false;
+						break;
 					}
-					if (explicit_opt.has_value()) {
-						context.normalizePendingSemanticRoots();
-					}
-					if (explicit_opt.has_value() && explicit_opt->is<FunctionDeclarationNode>()) {
-						const FunctionDeclarationNode& instantiated_func =
-							explicit_opt->as<FunctionDeclarationNode>();
-						return evaluate_resolved_function_call(
-							instantiated_func, arguments, context, nullptr);
-					}
+					explicit_args.push_back(templateTypeArgFromEvalResult(arg_val));
+				} else {
+					all_concrete = false;
+					break;
 				}
 			}
-
-			std::optional<ASTNode> instantiated_opt = parser.tryInstantiateTemplateFromCallArguments(
-				qualified_name,
-				func_name,
-				arguments);
-			if (instantiated_opt.has_value()) {
-				context.normalizePendingSemanticRoots();
+			if (all_concrete && !explicit_args.empty()) {
+				std::optional<ASTNode> explicit_opt =
+					parser.try_instantiate_template_explicit(
+						qualified_name, explicit_args, arguments.size());
+				if (!explicit_opt.has_value() && qualified_name != func_name) {
+					explicit_opt = parser.try_instantiate_template_explicit(
+						func_name, explicit_args, arguments.size());
+				}
+				if (explicit_opt.has_value()) {
+					context.normalizePendingSemanticRoots();
+				}
+				if (explicit_opt.has_value() && explicit_opt->is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& instantiated_func =
+						explicit_opt->as<FunctionDeclarationNode>();
+					return evaluate_resolved_function_call(
+						instantiated_func, arguments, context, nullptr);
+				}
 			}
+		}
 
-			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
-				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
-				return evaluate_resolved_function_call(instantiated_func, arguments, context, nullptr);
-			} else if (instantiated_opt.has_value()) {
-				FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
-			}
+		std::optional<ASTNode> instantiated_opt = parser.tryInstantiateTemplateFromCallArguments(
+			qualified_name,
+			func_name,
+			arguments);
+		if (instantiated_opt.has_value()) {
+			context.normalizePendingSemanticRoots();
+		}
+
+		if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
+			const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
+			return evaluate_resolved_function_call(instantiated_func, arguments, context, nullptr);
+		} else if (instantiated_opt.has_value()) {
+			FLASH_LOG(Templates, Debug, "Instantiation succeeded but result is not a FunctionDeclarationNode");
 		}
 
 		// No pre-instantiated version found and couldn't instantiate on-demand

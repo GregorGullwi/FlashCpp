@@ -13,6 +13,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	irOperands.reserve(5 + callExprNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
 	const FunctionDeclarationNode& member_func_decl = *callExprNode.callee().function_declaration_or_null();
+	auto sema_services = sema_.parserSemanticServices();
 
 	FLASH_LOG(Codegen, Debug, "=== generateMemberFunctionCallIr START ===");
 
@@ -241,7 +242,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	if (member_func_decl.decl_node().identifier_token().value() == "operator()"sv &&
 		object_node.is<ExpressionNode>()) {
 		std::optional<TypeSpecifierNode> callee_type;
-		auto sema_services = sema_.parserSemanticServices();
 		ResolvedFunctionQueryResult resolved_op_call_query =
 			sema_services.getResolvedOpCallQuery(sema_call_key);
 		const FunctionDeclarationNode* resolved_op_call =
@@ -260,9 +260,22 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (callee_type_query.state == TypeSpecifierQueryResult::State::Available) {
 			callee_type = callee_type_query.type;
 		}
+		const bool callee_type_unusable_for_callable =
+			isInconclusiveCallableType(callee_type) ||
+			(callee_type.has_value() &&
+			 (callee_type->type() == TypeCategory::Invalid ||
+			  isPlaceholderAutoType(callee_type->type())));
+		const bool sema_fallback_state_allows_recovery =
+			resolved_op_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent ||
+			callee_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
+			(callee_type_query.state == TypeSpecifierQueryResult::State::Available && callee_type_unusable_for_callable) ||
+			(!sema_normalized_current_function_ &&
+			 (resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
+			  callee_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed));
 		const bool needs_parser_fallback =
-			isInconclusiveCallableType(callee_type) &&
-			!resolved_op_call;
+			callee_type_unusable_for_callable &&
+			!resolved_op_call &&
+			sema_fallback_state_allows_recovery;
 		if (needs_parser_fallback) {
 			const bool sema_query_not_yet_analyzed =
 				resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
@@ -421,15 +434,29 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
 		if (receiver_node.is<ExpressionNode>()) {
 			TypeSpecifierQueryResult receiver_type_query =
-				sema_.parserSemanticServices().getExpressionTypeQuery(receiver_node);
-			if (receiver_type_query.state == TypeSpecifierQueryResult::State::Available) {
-				if (auto resolved_sema_type = normalizeResolvedStructType(*receiver_type_query.type); resolved_sema_type.has_value()) {
-					return resolved_sema_type;
-				}
-			}
-			if (sema_normalized_current_function_ &&
-				receiver_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+				sema_services.getExpressionTypeQuery(receiver_node);
+			const bool sema_query_not_yet_analyzed =
+				receiver_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
+			if (sema_normalized_current_function_ && sema_query_not_yet_analyzed) {
 				throw InternalError("Normalized member-call receiver type query remained NotYetAnalyzed");
+			}
+
+			bool allow_parser_type_fallback = false;
+			if (receiver_type_query.state == TypeSpecifierQueryResult::State::Available) {
+				if (receiver_type_query.type.has_value()) {
+					if (auto resolved_sema_type = normalizeResolvedStructType(*receiver_type_query.type); resolved_sema_type.has_value()) {
+						return resolved_sema_type;
+					}
+				}
+				const bool sema_type_unusable_for_receiver =
+					!receiver_type_query.type.has_value() ||
+					receiver_type_query.type->type() == TypeCategory::Invalid ||
+					isPlaceholderAutoType(receiver_type_query.type->type());
+				allow_parser_type_fallback = sema_type_unusable_for_receiver;
+			} else if (receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
+				allow_parser_type_fallback = true;
+			} else if (sema_query_not_yet_analyzed && !sema_normalized_current_function_) {
+				allow_parser_type_fallback = true;
 			}
 
 			const ExpressionNode& receiver_expr = receiver_node.as<ExpressionNode>();
@@ -449,6 +476,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type()); resolved_cast_type.has_value()) {
 					return resolved_cast_type;
 				}
+			}
+
+			if (!allow_parser_type_fallback) {
+				return std::nullopt;
 			}
 		}
 
@@ -618,8 +649,31 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const DeclarationNode& decl = *call_info->declaration;
 		{
 			TypeSpecifierNode ret_type = decl.type_specifier_node();
-			if (auto expression_type = parser_.get_expression_type(object_node); expression_type.has_value()) {
-				ret_type = *expression_type;
+			TypeSpecifierQueryResult return_receiver_type_query = sema_services.getExpressionTypeQuery(object_node);
+			if (return_receiver_type_query.state == TypeSpecifierQueryResult::State::Available &&
+				return_receiver_type_query.type.has_value()) {
+				ret_type = *return_receiver_type_query.type;
+			}
+
+			const bool sema_query_not_yet_analyzed =
+				return_receiver_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
+			if (sema_normalized_current_function_ && sema_query_not_yet_analyzed) {
+				throw InternalError("Normalized call-return receiver type query remained NotYetAnalyzed");
+			}
+
+			const bool sema_return_type_unusable =
+				return_receiver_type_query.state == TypeSpecifierQueryResult::State::Available &&
+				(!return_receiver_type_query.type.has_value() ||
+				 return_receiver_type_query.type->type() == TypeCategory::Invalid ||
+				 isPlaceholderAutoType(return_receiver_type_query.type->type()));
+			const bool allow_parser_type_recovery =
+				return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
+				sema_return_type_unusable ||
+				(!sema_normalized_current_function_ && sema_query_not_yet_analyzed);
+			if (allow_parser_type_recovery) {
+				if (auto expression_type = parser_.get_expression_type(object_node); expression_type.has_value()) {
+					ret_type = *expression_type;
+				}
 			}
 			if (auto resolved_ret_type = normalizeResolvedStructType(ret_type); resolved_ret_type.has_value()) {
 				object_type = *resolved_ret_type;
