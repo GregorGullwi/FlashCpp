@@ -4791,7 +4791,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			// instantiation via try_instantiate_template_explicit first, before the
 			// argument-type-deduction path (which cannot deduce type params from an
 			// empty argument list).
-			if (call_expr.has_template_arguments()) {
+			if (call_expr.has_template_arguments() && arguments.empty()) {
 				std::vector<TemplateTypeArg> explicit_args;
 				bool all_concrete = true;
 				for (const ASTNode& arg_node : call_expr.template_arguments()) {
@@ -4808,13 +4808,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 							all_concrete = false;
 							break;
 						}
-						TypeCategory arg_type = TypeCategory::Int;
-						if (std::holds_alternative<bool>(arg_val.value)) {
-							arg_type = TypeCategory::Bool;
-						} else if (arg_val.is_uint()) {
-							arg_type = TypeCategory::UnsignedLongLong;
-						}
-						explicit_args.emplace_back(arg_val.as_int(), arg_type);
+						explicit_args.push_back(templateTypeArgFromEvalResult(arg_val));
 					} else {
 						all_concrete = false;
 						break;
