@@ -3607,6 +3607,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				const void* member_access_key = static_cast<const void*>(&e);
+				analyzed_member_access_queries_.insert(member_access_key);
 				ResolvedMemberAccessInfo member_info;
 				if (tryResolveMemberAccessInfo(e, member_info)) {
 					resolved_member_access_table_[member_access_key] = member_info;
@@ -3633,7 +3634,11 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				}
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
-				if (!getResolvedOpSubscript(&e)) {
+				const ResolvedFunctionQueryResult op_subscript_query = getResolvedOpSubscriptQuery(&e);
+				if (op_subscript_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+					throw InternalError("Array subscript query remained NotYetAnalyzed after tryResolveSubscriptOperator");
+				}
+				if (!op_subscript_query.hasValue()) {
 					const std::optional<CanonicalTypeId> pointer_conversion_target_type_id =
 						normalizeBuiltinSubscriptOperands(e);
 					const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
@@ -3647,7 +3652,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				// If sema resolved this subscript to operator[], annotate the index
 				// argument against the operator's parameter type using the shared
 				// single-argument annotation helper.
-				if (const FunctionDeclarationNode* op = getResolvedOpSubscript(&e)) {
+				if (op_subscript_query.hasValue()) {
+					const FunctionDeclarationNode* op = op_subscript_query.function;
 					const auto& params = op->parameter_nodes();
 					if (!params.empty() && params[0].is<DeclarationNode>()) {
 						const ASTNode param_type_node = params[0].as<DeclarationNode>().type_node();
@@ -4163,10 +4169,16 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
 			const FunctionDeclarationNode* func_decl = getParserStoredDirectCallTarget(inner);
 			if (!func_decl) {
-				func_decl = getResolvedDirectCall(&inner);
+				const ResolvedFunctionQueryResult direct_call_query = getResolvedDirectCallQuery(&inner);
+				if (direct_call_query.hasValue()) {
+					func_decl = direct_call_query.function;
+				}
 			}
 			if (!func_decl) {
-				func_decl = getResolvedOpCall(&inner);
+				const ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(&inner);
+				if (op_call_query.hasValue()) {
+					func_decl = op_call_query.function;
+				}
 			}
 			if (func_decl) {
 				if (auto category = getReferenceQualifiedValueCategory(func_decl->decl_node().type_node());
@@ -4195,8 +4207,8 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* key) const {
-	auto it = op_call_table_.find(key);
-	return it != op_call_table_.end() ? it->second : nullptr;
+	const ResolvedFunctionQueryResult query = getResolvedOpCallQuery(key);
+	return query.hasValue() ? query.function : nullptr;
 }
 
 ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpCallQuery(const void* key) const {
@@ -4238,8 +4250,8 @@ ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpSubscriptQuery(const 
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const void* key) const {
-	auto it = resolved_direct_call_table_.find(key);
-	return it != resolved_direct_call_table_.end() ? it->second : nullptr;
+	const ResolvedFunctionQueryResult query = getResolvedDirectCallQuery(key);
+	return query.hasValue() ? query.function : nullptr;
 }
 
 ResolvedFunctionQueryResult SemanticAnalysis::getResolvedDirectCallQuery(const void* key) const {
@@ -4279,28 +4291,64 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 bool SemanticAnalysis::resolveOrGetMemberAccess(const MemberAccessNode& key,
 												const StructTypeInfo*& out_struct_info,
 												const StructMember*& out_member) {
+	ResolvedMemberAccessQueryResult query = getResolvedMemberAccessQuery(&key);
+	if (query.hasValue()) {
+		out_struct_info = query.owner_struct_info;
+		out_member = query.member;
+		return true;
+	}
+	if (query.state == ResolvedMemberAccessQueryResult::State::AnalyzedAbsent) {
+		return false;
+	}
+
 	const void* cache_key = static_cast<const void*>(&key);
-	auto it = resolved_member_access_table_.find(cache_key);
-	if (it == resolved_member_access_table_.end()) {
-		ResolvedMemberAccessInfo member_info;
-		if (!tryResolveMemberAccessInfo(key, member_info)) {
-			return false;
-		}
-		it = resolved_member_access_table_.emplace(cache_key, member_info).first;
+	analyzed_member_access_queries_.insert(cache_key);
+	ResolvedMemberAccessInfo member_info;
+	if (!tryResolveMemberAccessInfo(key, member_info)) {
+		resolved_member_access_table_.erase(cache_key);
+		return false;
+	}
+	resolved_member_access_table_[cache_key] = member_info;
+
+	query = getResolvedMemberAccessQuery(&key);
+	if (!query.hasValue()) {
+		throw InternalError("Resolved member-access cache entry did not yield an available query result");
 	}
 
-	const TypeInfo* owner_type_info = tryGetTypeInfo(it->second.owner_type_index);
-	const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
-	if (!owner_struct_info) {
-		throw InternalError("Resolved member access owner type no longer names a struct");
-	}
-	if (it->second.member_index >= owner_struct_info->members.size()) {
-		throw InternalError("Resolved member access index out of bounds");
-	}
-
-	out_struct_info = owner_struct_info;
-	out_member = &owner_struct_info->members[it->second.member_index];
+	out_struct_info = query.owner_struct_info;
+	out_member = query.member;
 	return true;
+}
+
+ResolvedMemberAccessQueryResult SemanticAnalysis::getResolvedMemberAccessQuery(const MemberAccessNode* key) const {
+	if (key == nullptr) {
+		return {ResolvedMemberAccessQueryResult::State::NotYetAnalyzed, nullptr, nullptr};
+	}
+
+	const void* cache_key = static_cast<const void*>(key);
+	if (auto it = resolved_member_access_table_.find(cache_key); it != resolved_member_access_table_.end()) {
+		const TypeInfo* owner_type_info = tryGetTypeInfo(it->second.owner_type_index);
+		const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
+		if (!owner_struct_info) {
+			throw InternalError("Resolved member access owner type no longer names a struct");
+		}
+		if (it->second.member_index >= owner_struct_info->members.size()) {
+			throw InternalError("Resolved member access index out of bounds");
+		}
+		return {
+			ResolvedMemberAccessQueryResult::State::Available,
+			owner_struct_info,
+			&owner_struct_info->members[it->second.member_index]};
+	}
+
+	if (analyzed_member_access_queries_.count(cache_key) > 0) {
+		return {ResolvedMemberAccessQueryResult::State::AnalyzedAbsent, nullptr, nullptr};
+	}
+	return {ResolvedMemberAccessQueryResult::State::NotYetAnalyzed, nullptr, nullptr};
+}
+
+ResolvedMemberAccessQueryResult SemanticAnalysis::getResolvedMemberAccessQuery(const MemberAccessNode& key) const {
+	return getResolvedMemberAccessQuery(&key);
 }
 
 const SemanticAnalysis::MemberContext* SemanticAnalysis::getCurrentMemberContext() const {
@@ -4851,19 +4899,30 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Phase 6: parser_.get_expression_type fallback removed.
 				// Sema now resolves data members, static members, and member
 				// functions entirely through its own type infrastructure.
+				const ResolvedMemberAccessQueryResult member_access_query = getResolvedMemberAccessQuery(&e);
 				const auto object_info = resolveMemberAccessObjectInfo(e);
 				if (!object_info.has_value()) {
 					return {};
 				}
 
-				// Try data member resolution first via the existing path.
-				ResolvedMemberAccessInfo member_info;
-				if (tryResolveMemberAccessInfo(e, member_info)) {
-					const TypeInfo* owner_type_info = tryGetTypeInfo(member_info.owner_type_index);
-					const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
-					if (owner_struct_info && member_info.member_index < owner_struct_info->members.size()) {
-						return type_context_.intern(canonicalTypeDescFromStructMember(
-							owner_struct_info->members[member_info.member_index], object_info->object_desc.base_cv));
+				// Prefer sema query-state payload in finalized/normalized-sensitive
+				// paths so callers can distinguish absent from not-yet-analyzed.
+				if (member_access_query.hasValue()) {
+					return type_context_.intern(canonicalTypeDescFromStructMember(
+						*member_access_query.member, object_info->object_desc.base_cv));
+				}
+
+				// Fallback for pre-analysis flows where this path may run before
+				// expression normalization has visited the MemberAccessNode.
+				if (member_access_query.state == ResolvedMemberAccessQueryResult::State::NotYetAnalyzed) {
+					ResolvedMemberAccessInfo member_info;
+					if (tryResolveMemberAccessInfo(e, member_info)) {
+						const TypeInfo* owner_type_info = tryGetTypeInfo(member_info.owner_type_index);
+						const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
+						if (owner_struct_info && member_info.member_index < owner_struct_info->members.size()) {
+							return type_context_.intern(canonicalTypeDescFromStructMember(
+								owner_struct_info->members[member_info.member_index], object_info->object_desc.base_cv));
+						}
 					}
 				}
 
@@ -4912,7 +4971,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return type_context_.intern(result_desc);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				// If sema resolved this subscript to operator[], return the operator[]'s return type.
-				if (const FunctionDeclarationNode* op_subscript = getResolvedOpSubscript(&e)) {
+				const ResolvedFunctionQueryResult op_subscript_query = getResolvedOpSubscriptQuery(&e);
+				if (op_subscript_query.hasValue()) {
+					const FunctionDeclarationNode* op_subscript = op_subscript_query.function;
 					const ASTNode& ret_type_node = op_subscript->decl_node().type_node();
 					if (ret_type_node.is<TypeSpecifierNode>())
 						return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
@@ -5423,18 +5484,22 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				};
 
-				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedOpCall(&e))) {
+				ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(&e);
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(op_call_query.hasValue() ? op_call_query.function : nullptr)) {
 					return resolved_type_id;
 				}
-				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedDirectCall(&e))) {
+				ResolvedFunctionQueryResult direct_call_query = getResolvedDirectCallQuery(&e);
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(direct_call_query.hasValue() ? direct_call_query.function : nullptr)) {
 					return resolved_type_id;
 				}
 
 				tryResolveCallableOperator(e);
-				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedOpCall(&e))) {
+				op_call_query = getResolvedOpCallQuery(&e);
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(op_call_query.hasValue() ? op_call_query.function : nullptr)) {
 					return resolved_type_id;
 				}
-				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(getResolvedDirectCall(&e))) {
+				direct_call_query = getResolvedDirectCallQuery(&e);
+				if (const CanonicalTypeId resolved_type_id = inferCallReturnType(direct_call_query.hasValue() ? direct_call_query.function : nullptr)) {
 					return resolved_type_id;
 				}
 
@@ -7317,10 +7382,12 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 
-	const FunctionDeclarationNode* func_decl = getResolvedOpCall(call_key);
-	if (!func_decl) {
+	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
+	const FunctionDeclarationNode* func_decl = op_call_query.hasValue() ? op_call_query.function : nullptr;
+	if (!func_decl && op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 		tryResolveCallableOperatorImpl(call_info, call_key);
-		func_decl = getResolvedOpCall(call_key);
+		op_call_query = getResolvedOpCallQuery(call_key);
+		func_decl = op_call_query.hasValue() ? op_call_query.function : nullptr;
 	}
 	if (func_decl)
 		return func_decl;
@@ -7583,7 +7650,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	// codegen-side fallbacks. See `tryMaterializeLazyCallTarget` for details.
 	func_decl = tryMaterializeLazyCallTarget(func_decl, call_info);
 
-	const FunctionDeclarationNode* resolved_op_call = getResolvedOpCall(call_key);
+	const ResolvedFunctionQueryResult resolved_op_call_query = getResolvedOpCallQuery(call_key);
+	const FunctionDeclarationNode* resolved_op_call = resolved_op_call_query.hasValue() ? resolved_op_call_query.function : nullptr;
 	const bool cache_as_direct_call =
 		!resolved_op_call &&
 		(!call_info.has_receiver ||

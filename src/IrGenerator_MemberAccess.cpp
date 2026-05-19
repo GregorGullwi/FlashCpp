@@ -3727,15 +3727,25 @@ bool AstToIr::isVariableReference(std::string_view var_name) const {
 bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 									  const StructTypeInfo*& out_struct_info,
 									  const StructMember*& out_member) const {
-	if (sema_.resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
+	const ResolvedMemberAccessQueryResult member_access_query = sema_.getResolvedMemberAccessQuery(&member_access);
+	if (member_access_query.hasValue()) {
+		out_struct_info = member_access_query.owner_struct_info;
+		out_member = member_access_query.member;
 		return true;
 	}
-	if (sema_normalized_current_function_) {
+	if (sema_normalized_current_function_ &&
+		member_access_query.state == ResolvedMemberAccessQueryResult::State::NotYetAnalyzed) {
 		throw InternalError(std::string(StringBuilder()
 			.append("Missing sema-owned member access resolution in sema-normalized body for member '")
 			.append(member_access.member_name())
 			.append("'")
 			.commit()));
+	}
+	if (!sema_normalized_current_function_ &&
+		member_access_query.state == ResolvedMemberAccessQueryResult::State::NotYetAnalyzed) {
+		if (sema_.resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
+			return true;
+		}
 	}
 
 	// Get the base object expression
