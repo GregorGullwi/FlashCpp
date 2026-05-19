@@ -505,39 +505,9 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 													"Unable to extract parameter type information");
 		}
 
-		// Compare basic type properties (ignore top-level cv-qualifiers on parameters - they don't affect signature)
-		if (def_type->type() != decl_type->type() ||
-			def_type->type_index() != decl_type->type_index() ||
-			def_type->pointer_depth() != decl_type->pointer_depth() ||
-			def_type->is_reference() != decl_type->is_reference()) {
+		if (!decl_type->matches_signature(*def_type)) {
 			std::string msg = "Parameter " + std::to_string(i + 1) + " type mismatch";
 			return SignatureValidationResult::error(SignatureMismatch::ParameterType, i + 1, std::move(msg));
-		}
-
-		// For pointers, compare cv-qualifiers on pointed-to type (int* vs const int*)
-		if (def_type->pointer_depth() > 0) {
-			if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
-				std::string msg = "Parameter " + std::to_string(i + 1) + " pointer cv-qualifier mismatch";
-				return SignatureValidationResult::error(SignatureMismatch::ParameterCVQualifier, i + 1, std::move(msg));
-			}
-
-			// cv-qualifiers on pointer levels also matter: int* const vs int*
-			const auto& def_levels = def_type->pointer_levels();
-			const auto& decl_levels = decl_type->pointer_levels();
-			for (size_t p = 0; p < def_levels.size(); ++p) {
-				if (def_levels[p].cv_qualifier != decl_levels[p].cv_qualifier) {
-					std::string msg = "Parameter " + std::to_string(i + 1) + " pointer level cv-qualifier mismatch";
-					return SignatureValidationResult::error(SignatureMismatch::ParameterPointerLevel, i + 1, std::move(msg));
-				}
-			}
-		}
-
-		// For references, compare cv-qualifiers on the base type (const T& vs T&)
-		if (def_type->is_reference()) {
-			if (def_type->cv_qualifier() != decl_type->cv_qualifier()) {
-				std::string msg = "Parameter " + std::to_string(i + 1) + " reference cv-qualifier mismatch";
-				return SignatureValidationResult::error(SignatureMismatch::ParameterCVQualifier, i + 1, std::move(msg));
-			}
 		}
 	}
 
@@ -547,10 +517,7 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	const TypeSpecifierNode& decl_return_type = decl_decl.type_specifier_node();
 	const TypeSpecifierNode& def_return_type = def_decl.type_specifier_node();
 
-	if (def_return_type.type() != decl_return_type.type() ||
-		def_return_type.type_index() != decl_return_type.type_index() ||
-		def_return_type.pointer_depth() != decl_return_type.pointer_depth() ||
-		def_return_type.is_reference() != decl_return_type.is_reference()) {
+	if (!decl_return_type.matches_signature(def_return_type)) {
 		return SignatureValidationResult::error(SignatureMismatch::ReturnType, 0, "Return type mismatch");
 	}
 
