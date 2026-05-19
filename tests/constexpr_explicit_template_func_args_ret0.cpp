@@ -30,6 +30,11 @@ struct DummyType {};
 template<typename T>
 struct Wrapper {};
 
+template<int N>
+constexpr int valueOf() noexcept {
+	return N;
+}
+
 // Explicit function template call with type args (no function params)
 static_assert(check_is_int<int>(), "int should pass");
 static_assert(!check_is_int<double>(), "double should fail");
@@ -38,6 +43,7 @@ static_assert(!check_is_int<long long>(), "long long should fail");
 static_assert(!check_is_int<unsigned int>(), "unsigned int should fail");
 static_assert(!check_is_int<DummyType>(), "struct type should fail");
 static_assert(!check_is_int<Wrapper<int>>(), "template-instantiation type should fail");
+static_assert(valueOf<42>() == 42, "explicit NTTP should instantiate correctly");
 
 int main() {
 	return 0;
