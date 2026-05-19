@@ -80,13 +80,13 @@ Concrete follow-up already identified by recent work:
 - the explicit-template unknown-specialization owner-record gap is now narrower:
   replayed deferred qualified-call records keep the instantiated placeholder
   `owner_type`, so declaration-time replay is no longer forced to recover that
-  identity from the raw owner spelling alone. Deferred non-call qualified
-  expressions now also keep member-template segment arguments such as
-  `Traits<T>::template Box<T>::value` instead of dropping the `Box<T>` segment
+  identity from the raw owner spelling alone. Deferred non-call and call-shaped
+  qualified expressions now also keep member-template segment arguments such as
+  `Traits<T>::template Box<T>::value` and
+  `Traits<T>::template Box<T>::get()` instead of dropping the `Box<T>` segment
   at parse time. The next concrete follow-up is the remaining dependent-base and
-  unknown-specialization member-chain work, especially call-shaped deeper
-  member-template chains and the declarations that still never capture replay
-  metadata at parse time.
+  unknown-specialization member-chain work in declarations that still never
+  capture replay metadata at parse time.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -95,7 +95,8 @@ Concrete follow-up already identified by recent work:
 
 Still open:
 
-- deeper expression/member-template segment chains;
+- broader expression/member-template segment chains outside the covered lazy
+  static initializer paths;
 - plain dependent bases and more unknown-specialization paths;
 - injected-class-name modeling;
 - alias ordering and current-instantiation identity across all qualified-name
@@ -164,13 +165,15 @@ In priority order:
       alias recovery, nested alias-target deferred-base materialization, and the
       current-owner member-alias qualified-id cleanup is now complete for the
       deeper covered member-chain cases;
-   - remaining replay-metadata gaps for static-member initialization;
+   - remaining replay-metadata gaps for static-member initialization outside
+      the covered member-template call/non-call chains;
    - remaining dependent-base/member-chain paths that still bypass the shared
       semantic lookup model.
 
 2. **Continue dependent-name/current-instantiation modeling**
    - richer dependent-base and unknown-specialization records;
-   - deeper member-template chains;
+   - broader member-template chains outside the covered current lazy-static
+     cases;
    - canonical dependent-expression equivalence.
 
 3. **Complete the remaining NTTP categories**

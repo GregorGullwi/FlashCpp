@@ -8,6 +8,8 @@
 #include "TypeTraitEvaluator.h"
 
 #include <algorithm>
+#include <charconv>
+#include <type_traits>
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
@@ -88,6 +90,83 @@ TypeIndex lookupRecordedDependentOwnerType(StringHandle owner_handle) {
 		return {};
 	}
 	return owner_it->second->registeredTypeIndex();
+}
+
+void appendDependentTemplateArgSpelling(
+	StringBuilder& builder,
+	const TypeInfo::TemplateArgInfo& template_arg) {
+	if (template_arg.is_template_template_arg) {
+		if (template_arg.template_name.isValid()) {
+			builder.append(StringTable::getStringView(template_arg.template_name));
+		} else {
+			builder.append("template");
+		}
+		return;
+	}
+	if (template_arg.dependent_name.isValid()) {
+		builder.append(StringTable::getStringView(template_arg.dependent_name));
+		return;
+	}
+	if (template_arg.is_value) {
+		std::visit(
+			[&](const auto& value) {
+				using ValueType = std::decay_t<decltype(value)>;
+				if constexpr (std::is_same_v<ValueType, int64_t>) {
+					builder.append(value);
+				} else if constexpr (std::is_same_v<ValueType, double>) {
+					char buffer[64];
+					auto [end_ptr, err] = std::to_chars(
+						std::begin(buffer),
+						std::end(buffer),
+						value);
+					if (err == std::errc{}) {
+						builder.append(std::string_view(
+							buffer,
+							static_cast<size_t>(end_ptr - buffer)));
+					}
+				} else if constexpr (std::is_same_v<ValueType, StringHandle>) {
+					if (value.isValid()) {
+						builder.append(StringTable::getStringView(value));
+					} else {
+						builder.append("0");
+					}
+				}
+			},
+			template_arg.value);
+		return;
+	}
+	if (template_arg.type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(template_arg.type_index)) {
+			builder.append(StringTable::getStringView(type_info->name()));
+			return;
+		}
+	}
+	builder.append("auto");
+}
+
+std::string_view buildDependentQualifiedCallName(
+	std::string_view owner_name,
+	std::span<const ExpressionDependentMemberSegmentInfo> member_segments) {
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(owner_name);
+	for (const ExpressionDependentMemberSegmentInfo& member_segment : member_segments) {
+		qualified_name_builder.append("::");
+		qualified_name_builder.append(StringTable::getStringView(member_segment.name));
+		if (member_segment.template_args.has_value() &&
+			!member_segment.template_args->empty()) {
+			qualified_name_builder.append("<");
+			bool is_first = true;
+			for (const TypeInfo::TemplateArgInfo& template_arg : *member_segment.template_args) {
+				if (!is_first) {
+					qualified_name_builder.append(", ");
+				}
+				appendDependentTemplateArgSpelling(qualified_name_builder, template_arg);
+				is_first = false;
+			}
+			qualified_name_builder.append(">");
+		}
+	}
+	return qualified_name_builder.commit();
 }
 
 bool isEligibleDefinitionLookupCall(
@@ -5832,6 +5911,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										dependent_owner_handle);
 									Token final_identifier{};
 									std::vector<ExpressionDependentMemberSegmentInfo> dependent_member_segments;
+									bool has_deferred_member_call = false;
+									Token deferred_member_call_token{};
+									ChunkedVector<ASTNode> deferred_member_call_args;
+									std::vector<ASTNode> deferred_member_call_template_arg_nodes;
 									while (peek() == "::"_tok) {
 										advance(); // consume ::
 										const bool has_template_keyword = peek() == "template"_tok;
@@ -5846,8 +5929,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										member_segment.name = final_identifier.handle();
 										member_segment.has_template_keyword = has_template_keyword;
 										advance(); // consume member name
+										std::vector<ASTNode> member_template_arg_nodes;
 										if (has_template_keyword && peek() == "<"_tok) {
-											std::vector<ASTNode> member_template_arg_nodes;
 											auto member_template_args =
 												parse_explicit_template_arguments(
 													&member_template_arg_nodes);
@@ -5862,9 +5945,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 										dependent_member_segments.push_back(
 											std::move(member_segment));
-										// Skip function call arguments if present (e.g., ::member(a, b))
 										if (peek() == "("_tok) {
-											skip_balanced_parens();
+											advance(); // consume '('
+											auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+												.handle_pack_expansion = true,
+												.collect_types = true,
+												.expand_simple_packs = false});
+											if (!args_result.success) {
+												return ParseResult::error(
+													args_result.error_message,
+													args_result.error_token.value_or(current_token_));
+											}
+											if (!consume(")"_tok)) {
+												return ParseResult::error(
+													"Expected ')' after function call arguments",
+													current_token_);
+											}
+											if (peek() != "::"_tok) {
+												has_deferred_member_call = true;
+												deferred_member_call_token = final_identifier;
+												deferred_member_call_args = std::move(args_result.args);
+												if (!member_template_arg_nodes.empty()) {
+													deferred_member_call_template_arg_nodes =
+														std::move(member_template_arg_nodes);
+												}
+											}
 										}
 										if (peek() == "::"_tok) {
 											ns_handle = gNamespaceRegistry.getOrCreateNamespace(
@@ -5886,7 +5991,49 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 											toTemplateArgInfoList(*explicit_template_args),
 											dependent_member_segments));
-									result = emplace_node<ExpressionNode>(dependent_qual_id);
+									if (has_deferred_member_call) {
+										auto type_node = emplace_node<TypeSpecifierNode>(
+											TypeIndex{}.withCategory(TypeCategory::Auto),
+											0,
+											deferred_member_call_token,
+											CVQualifier::None,
+											ReferenceQualifier::None);
+										auto placeholder_decl =
+											emplace_node<DeclarationNode>(
+												type_node,
+												deferred_member_call_token);
+										std::string_view deferred_qualified_call_name =
+											buildDependentQualifiedCallName(
+												StringTable::getStringView(dependent_owner_handle),
+												dependent_member_segments);
+										Token deferred_call_token(
+											Token::Type::Identifier,
+											deferred_qualified_call_name,
+											deferred_member_call_token.line(),
+											deferred_member_call_token.column(),
+											deferred_member_call_token.file_index());
+										result = emplace_node<ExpressionNode>(
+											makeDirectCallExpr(
+												placeholder_decl.as<DeclarationNode>(),
+												std::move(deferred_member_call_args),
+												deferred_call_token));
+										setCallQualifiedName(
+											result->as<ExpressionNode>(),
+											deferred_qualified_call_name);
+										if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+												dependent_qual_id.dependentQualifiedName()) {
+											setCallDependentQualifiedLookupRecord(
+												result->as<ExpressionNode>(),
+												*dependent_record);
+										}
+										if (!deferred_member_call_template_arg_nodes.empty()) {
+											setCallTemplateArguments(
+												result->as<ExpressionNode>(),
+												std::move(deferred_member_call_template_arg_nodes));
+										}
+									} else {
+										result = emplace_node<ExpressionNode>(dependent_qual_id);
+									}
 									return ParseResult::success(*result);
 								}
 								pending_explicit_template_args_.reset();
@@ -5905,6 +6052,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								Token deferred_final_identifier{};
 								std::vector<ExpressionDependentMemberSegmentInfo> deferred_member_segments;
 								bool has_deferred_member_template_segment = false;
+								bool has_deferred_member_call = false;
+								Token deferred_member_call_token{};
+								ChunkedVector<ASTNode> deferred_member_call_args;
+								std::vector<ASTNode> deferred_member_call_template_arg_nodes;
 								bool deferred_member_chain_valid = true;
 								while (peek() == "::"_tok) {
 									advance(); // consume ::
@@ -5921,8 +6072,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									member_segment.name = deferred_final_identifier.handle();
 									member_segment.has_template_keyword = has_template_keyword;
 									advance(); // consume member name
+									std::vector<ASTNode> member_template_arg_nodes;
 									if (has_template_keyword && peek() == "<"_tok) {
-										auto member_template_args = parse_explicit_template_arguments();
+										auto member_template_args =
+											parse_explicit_template_arguments(&member_template_arg_nodes);
 										if (!member_template_args.has_value()) {
 											deferred_member_chain_valid = false;
 											break;
@@ -5935,6 +6088,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											explicitTemplateArgsRequireDeferredInstantiation(
 												*member_template_args);
 									}
+									if (peek() == "("_tok) {
+										advance(); // consume '('
+										auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+											.handle_pack_expansion = true,
+											.collect_types = true,
+											.expand_simple_packs = false});
+										if (!args_result.success) {
+											return ParseResult::error(
+												args_result.error_message,
+												args_result.error_token.value_or(current_token_));
+										}
+										if (!consume(")"_tok)) {
+											return ParseResult::error(
+												"Expected ')' after function call arguments",
+												current_token_);
+										}
+										if (peek() != "::"_tok) {
+											has_deferred_member_call = true;
+											deferred_member_call_token = deferred_final_identifier;
+											deferred_member_call_args = std::move(args_result.args);
+											if (!member_template_arg_nodes.empty()) {
+												deferred_member_call_template_arg_nodes =
+													std::move(member_template_arg_nodes);
+											}
+										}
+									}
 									deferred_member_segments.push_back(std::move(member_segment));
 									if (peek() == "::"_tok) {
 										deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
@@ -5944,8 +6123,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 								if (deferred_member_chain_valid &&
 									has_deferred_member_template_segment &&
-									deferred_final_identifier.type() == Token::Type::Identifier &&
-									peek() != "("_tok) {
+									deferred_final_identifier.type() == Token::Type::Identifier) {
 									QualifiedIdentifierNode dependent_qual_id(
 										deferred_ns_handle,
 										deferred_final_identifier);
@@ -5957,7 +6135,49 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 											toTemplateArgInfoList(*explicit_template_args),
 											deferred_member_segments));
-									result = emplace_node<ExpressionNode>(dependent_qual_id);
+									if (has_deferred_member_call) {
+										auto type_node = emplace_node<TypeSpecifierNode>(
+											TypeIndex{}.withCategory(TypeCategory::Auto),
+											0,
+											deferred_member_call_token,
+											CVQualifier::None,
+											ReferenceQualifier::None);
+										auto placeholder_decl =
+											emplace_node<DeclarationNode>(
+												type_node,
+												deferred_member_call_token);
+										std::string_view deferred_qualified_call_name =
+											buildDependentQualifiedCallName(
+												instantiated_name,
+												deferred_member_segments);
+										Token deferred_call_token(
+											Token::Type::Identifier,
+											deferred_qualified_call_name,
+											deferred_member_call_token.line(),
+											deferred_member_call_token.column(),
+											deferred_member_call_token.file_index());
+										result = emplace_node<ExpressionNode>(
+											makeDirectCallExpr(
+												placeholder_decl.as<DeclarationNode>(),
+												std::move(deferred_member_call_args),
+												deferred_call_token));
+										setCallQualifiedName(
+											result->as<ExpressionNode>(),
+											deferred_qualified_call_name);
+										if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+												dependent_qual_id.dependentQualifiedName()) {
+											setCallDependentQualifiedLookupRecord(
+												result->as<ExpressionNode>(),
+												*dependent_record);
+										}
+										if (!deferred_member_call_template_arg_nodes.empty()) {
+											setCallTemplateArguments(
+												result->as<ExpressionNode>(),
+												std::move(deferred_member_call_template_arg_nodes));
+										}
+									} else {
+										result = emplace_node<ExpressionNode>(dependent_qual_id);
+									}
 									pending_explicit_template_args_.reset();
 									return ParseResult::success(*result);
 								}
@@ -6468,7 +6688,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 						// Substitute with actual value
 						StringBuilder value_str;
-						value_str.append(subst.value);  // Directly append int64_t without std::to_string()
+						value_str.append(subst.value);
 						std::string_view value_view = value_str.commit();
 						Token num_token(Token::Type::Literal, value_view,
 										identifier_token.line(), identifier_token.column(),
@@ -6905,6 +7125,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								dependent_owner_handle);
 							Token final_identifier{};
 							std::vector<ExpressionDependentMemberSegmentInfo> dependent_member_segments;
+							bool has_deferred_member_call = false;
+							Token deferred_member_call_token{};
+							ChunkedVector<ASTNode> deferred_member_call_args;
+							std::vector<ASTNode> deferred_member_call_template_arg_nodes;
 							while (peek() == "::"_tok) {
 								advance(); // consume ::
 								const bool has_template_keyword = peek() == "template"_tok;
@@ -6919,8 +7143,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								member_segment.name = final_identifier.handle();
 								member_segment.has_template_keyword = has_template_keyword;
 								advance(); // consume member name
+								std::vector<ASTNode> member_template_arg_nodes;
 								if (has_template_keyword && peek() == "<"_tok) {
-									std::vector<ASTNode> member_template_arg_nodes;
 									auto member_template_args =
 										parse_explicit_template_arguments(
 											&member_template_arg_nodes);
@@ -6935,9 +7159,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 								dependent_member_segments.push_back(
 									std::move(member_segment));
-								// Skip function call arguments if present
 								if (peek() == "("_tok) {
-									skip_balanced_parens();
+									advance(); // consume '('
+									auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+										.handle_pack_expansion = true,
+										.collect_types = true,
+										.expand_simple_packs = false});
+									if (!args_result.success) {
+										return ParseResult::error(
+											args_result.error_message,
+											args_result.error_token.value_or(current_token_));
+									}
+									if (!consume(")"_tok)) {
+										return ParseResult::error(
+											"Expected ')' after function call arguments",
+											current_token_);
+									}
+									if (peek() != "::"_tok) {
+										has_deferred_member_call = true;
+										deferred_member_call_token = final_identifier;
+										deferred_member_call_args = std::move(args_result.args);
+										if (!member_template_arg_nodes.empty()) {
+											deferred_member_call_template_arg_nodes =
+												std::move(member_template_arg_nodes);
+										}
+									}
 								}
 								if (peek() == "::"_tok) {
 									ns_handle = gNamespaceRegistry.getOrCreateNamespace(
@@ -6959,7 +7205,49 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 									toTemplateArgInfoList(*explicit_template_args),
 									dependent_member_segments));
-							result = emplace_node<ExpressionNode>(dependent_qual_id);
+							if (has_deferred_member_call) {
+								auto type_node = emplace_node<TypeSpecifierNode>(
+									TypeIndex{}.withCategory(TypeCategory::Auto),
+									0,
+									deferred_member_call_token,
+									CVQualifier::None,
+									ReferenceQualifier::None);
+								auto placeholder_decl =
+									emplace_node<DeclarationNode>(
+										type_node,
+										deferred_member_call_token);
+								std::string_view deferred_qualified_call_name =
+									buildDependentQualifiedCallName(
+										StringTable::getStringView(dependent_owner_handle),
+										dependent_member_segments);
+								Token deferred_call_token(
+									Token::Type::Identifier,
+									deferred_qualified_call_name,
+									deferred_member_call_token.line(),
+									deferred_member_call_token.column(),
+									deferred_member_call_token.file_index());
+								result = emplace_node<ExpressionNode>(
+									makeDirectCallExpr(
+										placeholder_decl.as<DeclarationNode>(),
+										std::move(deferred_member_call_args),
+										deferred_call_token));
+								setCallQualifiedName(
+									result->as<ExpressionNode>(),
+									deferred_qualified_call_name);
+								if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+										dependent_qual_id.dependentQualifiedName()) {
+									setCallDependentQualifiedLookupRecord(
+										result->as<ExpressionNode>(),
+										*dependent_record);
+								}
+								if (!deferred_member_call_template_arg_nodes.empty()) {
+									setCallTemplateArguments(
+										result->as<ExpressionNode>(),
+										std::move(deferred_member_call_template_arg_nodes));
+								}
+							} else {
+								result = emplace_node<ExpressionNode>(dependent_qual_id);
+							}
 							return ParseResult::success(*result);
 						}
 						return ParseResult::error(
@@ -6976,6 +7264,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						Token deferred_final_identifier{};
 						std::vector<ExpressionDependentMemberSegmentInfo> deferred_member_segments;
 						bool has_deferred_member_template_segment = false;
+						bool has_deferred_member_call = false;
+						Token deferred_member_call_token{};
+						ChunkedVector<ASTNode> deferred_member_call_args;
+						std::vector<ASTNode> deferred_member_call_template_arg_nodes;
 						bool deferred_member_chain_valid = true;
 						while (peek() == "::"_tok) {
 							advance(); // consume ::
@@ -6992,8 +7284,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							member_segment.name = deferred_final_identifier.handle();
 							member_segment.has_template_keyword = has_template_keyword;
 							advance(); // consume member name
+							std::vector<ASTNode> member_template_arg_nodes;
 							if (has_template_keyword && peek() == "<"_tok) {
-								auto member_template_args = parse_explicit_template_arguments();
+								auto member_template_args =
+									parse_explicit_template_arguments(&member_template_arg_nodes);
 								if (!member_template_args.has_value()) {
 									deferred_member_chain_valid = false;
 									break;
@@ -7006,6 +7300,32 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									explicitTemplateArgsRequireDeferredInstantiation(
 										*member_template_args);
 							}
+							if (peek() == "("_tok) {
+								advance(); // consume '('
+								auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+									.handle_pack_expansion = true,
+									.collect_types = true,
+									.expand_simple_packs = false});
+								if (!args_result.success) {
+									return ParseResult::error(
+										args_result.error_message,
+										args_result.error_token.value_or(current_token_));
+								}
+								if (!consume(")"_tok)) {
+									return ParseResult::error(
+										"Expected ')' after function call arguments",
+										current_token_);
+								}
+								if (peek() != "::"_tok) {
+									has_deferred_member_call = true;
+									deferred_member_call_token = deferred_final_identifier;
+									deferred_member_call_args = std::move(args_result.args);
+									if (!member_template_arg_nodes.empty()) {
+										deferred_member_call_template_arg_nodes =
+											std::move(member_template_arg_nodes);
+									}
+								}
+							}
 							deferred_member_segments.push_back(std::move(member_segment));
 							if (peek() == "::"_tok) {
 								deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
@@ -7015,8 +7335,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 						if (deferred_member_chain_valid &&
 							has_deferred_member_template_segment &&
-							deferred_final_identifier.type() == Token::Type::Identifier &&
-							peek() != "("_tok) {
+							deferred_final_identifier.type() == Token::Type::Identifier) {
 							QualifiedIdentifierNode dependent_qual_id(
 								deferred_ns_handle,
 								deferred_final_identifier);
@@ -7028,7 +7347,49 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
 									toTemplateArgInfoList(*explicit_template_args),
 									deferred_member_segments));
-							result = emplace_node<ExpressionNode>(dependent_qual_id);
+							if (has_deferred_member_call) {
+								auto type_node = emplace_node<TypeSpecifierNode>(
+									TypeIndex{}.withCategory(TypeCategory::Auto),
+									0,
+									deferred_member_call_token,
+									CVQualifier::None,
+									ReferenceQualifier::None);
+								auto placeholder_decl =
+									emplace_node<DeclarationNode>(
+										type_node,
+										deferred_member_call_token);
+								std::string_view deferred_qualified_call_name =
+									buildDependentQualifiedCallName(
+										instantiated_class_name,
+										deferred_member_segments);
+								Token deferred_call_token(
+									Token::Type::Identifier,
+									deferred_qualified_call_name,
+									deferred_member_call_token.line(),
+									deferred_member_call_token.column(),
+									deferred_member_call_token.file_index());
+								result = emplace_node<ExpressionNode>(
+									makeDirectCallExpr(
+										placeholder_decl.as<DeclarationNode>(),
+										std::move(deferred_member_call_args),
+										deferred_call_token));
+								setCallQualifiedName(
+									result->as<ExpressionNode>(),
+									deferred_qualified_call_name);
+								if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+										dependent_qual_id.dependentQualifiedName()) {
+									setCallDependentQualifiedLookupRecord(
+										result->as<ExpressionNode>(),
+										*dependent_record);
+								}
+								if (!deferred_member_call_template_arg_nodes.empty()) {
+									setCallTemplateArguments(
+										result->as<ExpressionNode>(),
+										std::move(deferred_member_call_template_arg_nodes));
+								}
+							} else {
+								result = emplace_node<ExpressionNode>(dependent_qual_id);
+							}
 							return ParseResult::success(*result);
 						}
 						restore_token_position(deferred_member_chain_start);
