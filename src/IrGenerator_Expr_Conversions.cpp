@@ -2113,8 +2113,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (operand_pointer_depth == 0) {
 			const bool allow_identifier_or_member_recovery =
 				(operandHandledAsIdentifier && std::holds_alternative<IdentifierNode>(operandExpr)) ||
-				std::holds_alternative<MemberAccessNode>(operandExpr) ||
-				std::holds_alternative<UnaryOperatorNode>(operandExpr);
+				std::holds_alternative<MemberAccessNode>(operandExpr);
 			std::optional<TypeSpecifierNode> operand_type_opt = queryExprTypeWithParserFallback(
 				unaryOperatorNode.get_operand(),
 				allow_identifier_or_member_recovery,

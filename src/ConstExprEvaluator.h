@@ -528,6 +528,9 @@ public:
 	static EvalResult evaluate_member_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
+	static std::optional<TypeSpecifierNode> tryQueryExpressionType(
+		const ASTNode& expr,
+		EvaluationContext& context);
 
 	static const StructTypeInfo* get_struct_info_from_type(const TypeSpecifierNode& type_spec);
 	static EvalResult evaluate_nested_member_access(
@@ -1026,7 +1029,7 @@ private:
 		std::span<const size_t> array_dimensions);
 
 	// Try to obtain the source expression's type from an already-evaluated
-	// result (exact_type) or by asking the parser for the AST node's type.
+	// result (exact_type) or via the shared sema-first AST type query helper.
 	static std::optional<TypeSpecifierNode> tryGetExpressionType(
 		const EvalResult& result,
 		const ASTNode& expr,

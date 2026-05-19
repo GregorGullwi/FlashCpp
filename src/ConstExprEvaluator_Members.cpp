@@ -1108,10 +1108,8 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 	arg_types.reserve(arguments.size());
 	bool has_all_arg_types = true;
 	for (const auto& argument : arguments) {
-		std::optional<TypeSpecifierNode> arg_type_opt;
-		if (context.parser) {
-			arg_type_opt = context.parser->get_expression_type(argument);
-		}
+		std::optional<TypeSpecifierNode> arg_type_opt =
+			Evaluator::tryQueryExpressionType(argument, context);
 
 		if (!arg_type_opt.has_value() && argument.is<ExpressionNode>()) {
 			const ExpressionNode& expr = argument.as<ExpressionNode>();
@@ -2153,8 +2151,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 					}
 				}
 			}
-			if (!object_is_const && context.parser) {
-				auto expr_type = context.parser->get_expression_type(array_expr);
+			if (!object_is_const) {
+				auto expr_type = Evaluator::tryQueryExpressionType(array_expr, context);
 				object_is_const = expr_type.has_value() &&
 					expr_type->cv_qualifier() == CVQualifier::Const;
 			}
@@ -6390,10 +6388,9 @@ EvalResult Evaluator::evaluate_nested_member_access(
 				return final_member_it->second;
 			}
 			if (intermediate_result.object_member_bindings.empty() &&
-				!intermediate_result.object_type_index.is_valid() &&
-				context.parser) {
+				!intermediate_result.object_type_index.is_valid()) {
 				TypeIndex base_type_index;
-				if (auto parsed_type_opt = context.parser->get_expression_type(base_obj_expr); parsed_type_opt.has_value()) {
+				if (auto parsed_type_opt = Evaluator::tryQueryExpressionType(base_obj_expr, context); parsed_type_opt.has_value()) {
 					base_type_index = parsed_type_opt->type_index();
 				}
 				if (base_type_index.is_valid()) {
@@ -6468,8 +6465,8 @@ EvalResult Evaluator::evaluate_nested_member_access(
 					base_type_index = base_type_opt->type_index();
 				}
 			}
-			if (!base_type_index.is_valid() && context.parser) {
-				if (auto parsed_type_opt = context.parser->get_expression_type(base_obj_expr); parsed_type_opt.has_value()) {
+			if (!base_type_index.is_valid()) {
+				if (auto parsed_type_opt = Evaluator::tryQueryExpressionType(base_obj_expr, context); parsed_type_opt.has_value()) {
 					base_type_index = parsed_type_opt->type_index();
 				}
 			}
@@ -8912,8 +8909,8 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 					}
 				}
 			}
-			if (!object_is_const && context.parser) {
-				auto expr_type = context.parser->get_expression_type(array_expr);
+			if (!object_is_const) {
+				auto expr_type = Evaluator::tryQueryExpressionType(array_expr, context);
 				object_is_const = expr_type.has_value() &&
 					expr_type->cv_qualifier() == CVQualifier::Const;
 			}

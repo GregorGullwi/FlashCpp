@@ -2234,7 +2234,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Check for operator overload (member function or free function)
 		OperatorOverloadResult overload_result;
 		bool can_recompute_recorded_failure =
-			(binaryOperatorNode.has_ambiguous_operator_overload() || binaryOperatorNode.has_no_match_operator_overload()) && recorded_overload_still_relevant && (lhs_has_user_defined_identity || rhs_has_user_defined_identity);
+			!sema_normalized_current_function_ &&
+			(binaryOperatorNode.has_ambiguous_operator_overload() || binaryOperatorNode.has_no_match_operator_overload()) &&
+			recorded_overload_still_relevant &&
+			(lhs_has_user_defined_identity || rhs_has_user_defined_identity);
 
 		if (binaryOperatorNode.has_ambiguous_operator_overload() && !can_recompute_recorded_failure) {
 			overload_result = OperatorOverloadResult::ambiguous();

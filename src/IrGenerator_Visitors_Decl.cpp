@@ -3396,11 +3396,11 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			}
 			matching_ctor = nullptr;
 		} else if (require_sema_resolved_ctor) {
-			// Sema ran but did not annotate the resolved constructor.  Log a
-			// diagnostic and fall through to codegen-time overload resolution
-			// below; only fail hard if that also finds nothing.
-			FLASH_LOG(Codegen, Warning, "Sema did not annotate constructor for '",
-					  struct_info->name, "' - falling back to codegen-time resolution");
+			throw InternalError(std::string(StringBuilder()
+				.append("Sema-normalized constructor call is missing a resolved constructor for '")
+				.append(StringTable::getStringView(struct_info->name))
+				.append("'")
+				.commit()));
 		}
 		if (!matching_ctor) {
 			std::vector<TypeSpecifierNode> arg_types;
