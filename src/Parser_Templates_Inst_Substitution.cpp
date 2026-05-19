@@ -707,32 +707,15 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 	// Count the pack size from the alias template_parameters + template_args instead.
 	if (const auto* sizeof_pack = std::get_if<SizeofPackNode>(&arg_expr)) {
 		std::string_view pack_name = sizeof_pack->pack_name();
-		size_t arg_cursor = 0;
-		for (size_t pi = 0; pi < template_parameters.size(); ++pi) {
-			const TemplateParameterNode& param = template_parameters[pi];
-			if (!param.is_variadic()) {
-				++arg_cursor;
-				continue;
+		std::span<const TemplateParameterNode> params_span(
+			template_parameters.data(), template_parameters.size());
+		if (auto pack_size = countPackSizeFromParams(pack_name, params_span, template_args.size())) {
+			FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: sizeof...(", pack_name, ") = ", *pack_size, " (counted from template_parameters/args)");
+			TypeCategory value_cat = TypeCategory::UnsignedLongLong;
+			if (target_template_param != nullptr && target_template_param->has_type()) {
+				value_cat = target_template_param->type_specifier_node().type();
 			}
-			size_t required_after = 0;
-			for (size_t j = pi + 1; j < template_parameters.size(); ++j) {
-				if (!template_parameters[j].is_variadic()) {
-					++required_after;
-				}
-			}
-			size_t remaining = arg_cursor < template_args.size()
-				? template_args.size() - arg_cursor
-				: 0;
-			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
-			if (param.name() == pack_name) {
-				FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: sizeof...(", pack_name, ") = ", pack_size, " (counted from template_parameters/args)");
-				TypeCategory value_cat = TypeCategory::UnsignedLongLong;
-				if (target_template_param != nullptr && target_template_param->has_type()) {
-					value_cat = target_template_param->type_specifier_node().type();
-				}
-				return TemplateTypeArg(static_cast<int64_t>(pack_size), value_cat);
-			}
-			arg_cursor += pack_size;
+			return TemplateTypeArg(static_cast<int64_t>(*pack_size), value_cat);
 		}
 	}
 
@@ -3714,31 +3697,9 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(dependent_expr.as<ExpressionNode>());
 		std::string_view pack_name = sizeof_pack.pack_name();
 
-		// Walk the parameter list, tracking the arg cursor, and return the size
-		// of the pack whose name matches pack_name.
-		size_t arg_cursor = 0;
-		for (size_t pi = 0; pi < template_params.size(); ++pi) {
-			const TemplateParameterNode& param = template_params[pi];
-			if (!param.is_variadic()) {
-				++arg_cursor;
-				continue;
-			}
-			// Count required (non-variadic) params that follow this pack.
-			size_t required_after = 0;
-			for (size_t j = pi + 1; j < template_params.size(); ++j) {
-				if (!template_params[j].is_variadic()) {
-					++required_after;
-				}
-			}
-			size_t remaining = arg_cursor < template_args.size()
-				? template_args.size() - arg_cursor
-				: 0;
-			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
-			if (param.name() == pack_name) {
-				FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: sizeof...(", pack_name, ") = ", pack_size, " (from template_params/args)");
-				return TemplateTypeArg(static_cast<int64_t>(pack_size), TypeCategory::UnsignedLongLong);
-			}
-			arg_cursor += pack_size;
+		if (auto pack_size = countPackSizeFromParams(pack_name, template_params, template_args.size())) {
+			FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: sizeof...(", pack_name, ") = ", *pack_size, " (from template_params/args)");
+			return TemplateTypeArg(static_cast<int64_t>(*pack_size), TypeCategory::UnsignedLongLong);
 		}
 
 		// Fallback: check the parser's pack-size registries set during function/member instantiation.

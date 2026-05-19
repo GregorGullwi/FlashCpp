@@ -3145,6 +3145,37 @@ private:	 // Resume private methods
 		return std::nullopt;
 	}
 
+	// Count the number of template arguments attributed to the named variadic pack parameter.
+	// Walks template_params in order, advancing arg_cursor past each non-variadic parameter,
+	// and computes pack_size = remaining_args - required_non_variadic_after.
+	// Returns std::nullopt when the pack name is not found in template_params.
+	static std::optional<size_t> countPackSizeFromParams(
+		std::string_view pack_name,
+		std::span<const TemplateParameterNode> template_params,
+		size_t total_args) {
+		size_t arg_cursor = 0;
+		for (size_t pi = 0; pi < template_params.size(); ++pi) {
+			const TemplateParameterNode& param = template_params[pi];
+			if (!param.is_variadic()) {
+				++arg_cursor;
+				continue;
+			}
+			size_t required_after = 0;
+			for (size_t j = pi + 1; j < template_params.size(); ++j) {
+				if (!template_params[j].is_variadic()) {
+					++required_after;
+				}
+			}
+			size_t remaining = arg_cursor < total_args ? total_args - arg_cursor : 0;
+			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
+			if (param.name() == pack_name) {
+				return pack_size;
+			}
+			arg_cursor += pack_size;
+		}
+		return std::nullopt;
+	}
+
 	std::vector<ASTNode> expandPackExpressionArgument(const ASTNode& pattern);
 
 	// Replace a pack parameter identifier in an expression pattern with its expanded name
