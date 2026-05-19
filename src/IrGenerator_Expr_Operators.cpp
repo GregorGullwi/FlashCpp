@@ -2998,23 +2998,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 	}
 
-	auto isNullPointerConstantExpr = [&](const ExprResult& expr_result, const ASTNode& node) {
-		if (expr_result.category() == TypeCategory::Nullptr) {
-			return true;
-		}
-		if (const auto* ull_value = std::get_if<unsigned long long>(&expr_result.value)) {
-			return *ull_value == 0;
-		}
-		if (const auto* int_value = std::get_if<int>(&expr_result.value)) {
-			return *int_value == 0;
-		}
-		if (node.is<ExpressionNode>()) {
-			if (const auto* identifier = std::get_if<IdentifierNode>(&node.as<ExpressionNode>())) {
-				return identifier->name() == "nullptr";
-			}
-		}
-		return false;
-	};
 	auto makeNullPointerExpr = [&](const ExprResult& pointer_expr, int pointer_depth) {
 		TypeIndex pointer_type_index = pointer_expr.type_index;
 		if (!pointer_type_index.is_valid()) {
@@ -3029,8 +3012,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	};
 
 	if (op == "==" || op == "!=") {
-		const bool lhs_is_null_pointer_constant = isNullPointerConstantExpr(lhsExprResult, binaryOperatorNode.get_lhs());
-		const bool rhs_is_null_pointer_constant = isNullPointerConstantExpr(rhsExprResult, binaryOperatorNode.get_rhs());
+		const bool lhs_is_null_pointer_constant = AstToIr::isNullPointerConstantExpr(lhsExprResult, binaryOperatorNode.get_lhs());
+		const bool rhs_is_null_pointer_constant = AstToIr::isNullPointerConstantExpr(rhsExprResult, binaryOperatorNode.get_rhs());
 		if (lhs_pointer_depth > 0 && rhs_is_null_pointer_constant) {
 			rhsExprResult = makeNullPointerExpr(lhsExprResult, lhs_pointer_depth);
 			rhs_pointer_depth = lhs_pointer_depth;

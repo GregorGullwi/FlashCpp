@@ -2,6 +2,24 @@
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
+bool AstToIr::isNullPointerConstantExpr(const ExprResult& expr_result, const ASTNode& node) {
+	if (expr_result.category() == TypeCategory::Nullptr) {
+		return true;
+	}
+	if (const auto* ull_value = std::get_if<unsigned long long>(&expr_result.value)) {
+		return *ull_value == 0;
+	}
+	if (const auto* int_value = std::get_if<int>(&expr_result.value)) {
+		return *int_value == 0;
+	}
+	if (node.is<ExpressionNode>()) {
+		if (const auto* identifier = std::get_if<IdentifierNode>(&node.as<ExpressionNode>())) {
+			return identifier->name() == "nullptr";
+		}
+	}
+	return false;
+}
+
 void AstToIr::visitNamespaceDeclarationNode(const NamespaceDeclarationNode& node) {
 	// Namespace declarations themselves don't generate IR - they just provide scope
 	// Track the current namespace for proper name mangling
@@ -253,24 +271,6 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			bool return_requires_ctor_resolution = false;
 			bool return_ctor_no_match = false;
 			std::string_view return_ctor_target_name;
-			auto isNullPointerConstantExpr = [&](const ExprResult& expr_result, const ASTNode& node) {
-				if (expr_result.category() == TypeCategory::Nullptr) {
-					return true;
-				}
-				if (const auto* ull_value = std::get_if<unsigned long long>(&expr_result.value)) {
-					return *ull_value == 0;
-				}
-				if (const auto* int_value = std::get_if<int>(&expr_result.value)) {
-					return *int_value == 0;
-				}
-				if (node.is<ExpressionNode>()) {
-					if (const auto* identifier = std::get_if<IdentifierNode>(&node.as<ExpressionNode>())) {
-						return identifier->name() == "nullptr";
-					}
-				}
-				return false;
-			};
-
 			// Check whether the semantic pass has already computed a cast annotation.
 			// When present for a non-struct conversion, apply it and skip the local policy.
 			// When present as UserDefined, the source is a struct with a conversion operator.
@@ -332,7 +332,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			}
 			if (!sema_applied_conversion &&
 				currentFunctionReturnsPointer() &&
-				isNullPointerConstantExpr(operands, *expr_opt)) {
+				AstToIr::isNullPointerConstantExpr(operands, *expr_opt)) {
 				operands = makeExprResult(
 					return_type_index,
 					SizeInBits{return_size},
