@@ -1623,7 +1623,24 @@ ParseResult Parser::parse_type_specifier() {
 									materializeTemplateArgs(
 										*alias_target_info,
 										alias_node.template_parameters(),
-										*template_args);
+										*template_args,
+										[this](
+											const ASTNode& expr,
+											std::span<const ASTNode> params,
+											std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+											InlineVector<TemplateParameterNode, 4> typed_params;
+											typed_params.reserve(params.size());
+											for (const ASTNode& param_node : params) {
+												if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
+													typed_param != nullptr) {
+													typed_params.push_back(*typed_param);
+												}
+											}
+											return this->evaluateDependentNTTPExpression(
+												expr,
+												std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+												args);
+										});
 								AliasTemplateMaterializationResult materialized_target =
 									materializeTemplateInstantiationForLookup(
 										StringTable::getStringView(qualified_target_template_name),
