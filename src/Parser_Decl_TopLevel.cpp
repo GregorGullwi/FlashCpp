@@ -834,6 +834,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			SaveHandle alias_target_start = save_token_position();
 
 			// Try to parse as a type specifier (for type aliases like: using value_type = T;)
+			FlashCpp::ScopedState alias_type_id_guard(parsing_alias_type_id_);
+			parsing_alias_type_id_ = true;
 			ParseResult type_result = parse_type_specifier();
 			if (!type_result.is_error()) {
 				// Parse any pointer/reference modifiers after the type

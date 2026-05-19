@@ -271,6 +271,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		advance(); // consume '='
 
 		// Parse the type
+		FlashCpp::ScopedState alias_type_id_guard(parsing_alias_type_id_);
+		parsing_alias_type_id_ = true;
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error()) {
 			return type_result;

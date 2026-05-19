@@ -6804,6 +6804,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 
+							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
+							ASTNode substituted_node = substitutor.substitute(arg_info.node);
+							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted deferred base call to value {}", value->value);
+								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
+								continue;
+							}
+
 							throw InternalError("Deferred base arguments should be resolved by specialized handlers");
 						} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
 							// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num

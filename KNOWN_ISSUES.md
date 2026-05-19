@@ -33,9 +33,11 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
    the constexpr evaluator (`ConstExprEvaluator_Core.cpp`).
 
 **Current frontier**: The previous `__ratio_less_impl` / remove-cv alias
-instantiation stop is fixed. The first hard blocker has moved later to
-`__ratio_add_impl` default-NTTP evaluation, currently surfacing as unresolved
-`ratio_less$...::value` during constant evaluation.
+instantiation stop, default-NTTP declared-type materialization issue, MSVC
+`type_traits` dependent member-template argument parse failure, deferred-base
+call-expression invariant, and `std::ratio_less<third, half>` constexpr
+comparison failure are fixed. The first hard blocker currently reaches IR
+conversion for `test_std_ratio.cpp`.
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
@@ -49,24 +51,21 @@ instantiation stop is fixed. The first hard blocker has moved later to
   `try_instantiate_template_explicit` has an early-out for dependent args (correct behaviour).
   The errors are non-fatal and the constexpr evaluator path correctly handles
   them via the explicit-type-args fix above; the current hard stop is later
-  default-NTTP/value propagation in ratio arithmetic.
+  IR conversion for `<ratio>` helpers after constexpr ratio comparison succeeds.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
-### 2b) Residual substitution cycle/default-NTTP value loss in partially-dependent `ratio` instances
+### 2b) Residual ratio IR conversion failures
 
-- **Symptom**: Repeated DEBUG log lines cycling between `_R1::num` and `__static_abs$xxx::value`
-  lookups during depth=2 `ratio` template processing.
-- **Root cause**: When `__ratio_multiply<ratio<N1,D1>, ratio<N2,D2>>::type` is computed, intermediate
-  partially-substituted `ratio<expr, expr>` instances store their `num`/`den` as still-dependent
-  expressions pointing to `__static_abs` helper types. Those helpers in turn store the original
-  `_R1::num`/`_R2::num` as their template arg. The two cycle guards (keyed on TypeInfo* and
-  qualified-id key) detect each individual back-edge but the two-node cycle
-  (`"_R1::num"` ↔ `"__static_abs$xxx::value"`) uses distinct keys, so substitution terminates
-  by returning raw/unresolved args rather than resolved numeric values.
-- **Affected path**: `ExpressionSubstitutor::substituteQualifiedIdentifier` /
-  `materializeStoredTemplateArgs` for intermediate instantiation contexts.
-- **Impact**: `ratio<N,D>::num` and `::den` remain as unresolved dependent expressions in
-  `__ratio_multiply` results; `ratio_equal`, `ratio_less`, etc. cannot be evaluated.
-  This prevents `.o` output for `tests/std/test_std_ratio.cpp` (codegen requires resolved types).
-- **Fix direction**: Track the full two-node cycle by keying both nodes together, or resolve
-  numeric NTTP values eagerly when concrete integer template args are available.
+- **Symptom**: `tests/std/test_std_ratio.cpp` now parses the MSVC `type_traits`
+  helpers and passes `static_assert(std::ratio_less<third, half>::value)`, then
+  fails during IR conversion with missed scalar conversion diagnostics such as
+  `wchar_t -> int`, `char -> int`, and `unsigned long long -> long long`.
+- **Root cause**: Still under investigation. The remaining hard stop is now in
+  IR conversion after the ratio comparison constexpr/value propagation path is
+  evaluable.
+- **Affected path**: IR conversion for standard-header helper functions and
+  namespace-scope initializers reached while compiling `<ratio>`.
+- **Impact**: `tests/std/test_std_ratio.cpp` still does not produce `.o` output.
+- **Fix direction**: Minimize the new conversion diagnostics from the generated
+  standard-header surface, then fix the missing sema-to-IR scalar conversion
+  handoff without adding local `<ratio>` special cases.

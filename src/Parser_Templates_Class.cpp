@@ -873,6 +873,8 @@ ParseResult Parser::parse_template_declaration() {
 		auto target_type_start_pos = save_token_position();
 
 		// Parse the target type
+		FlashCpp::ScopedState alias_type_id_guard(parsing_alias_type_id_);
+		parsing_alias_type_id_ = true;
 		ParseResult type_result = parse_type_specifier();
 		if (type_result.is_error()) {
 			return type_result;

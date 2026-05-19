@@ -704,8 +704,12 @@ private:
 
 	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
-	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
-											   std::string_view op, EvaluationContext& context);
+	static EvalResult evaluate_binary_operator(const BinaryOperatorNode& binary_operator, EvaluationContext& context);
+	static std::optional<EvalResult> try_evaluate_constexpr_member_binary_operator(
+		const BinaryOperatorNode& binary_operator,
+		const EvalResult& lhs_result,
+		const EvalResult& rhs_result,
+		EvaluationContext& context);
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 											  EvaluationContext& context);
 	// Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
