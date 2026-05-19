@@ -62,6 +62,81 @@ TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_
 	return TemplateTypeArg(eval_result.as_int());
 }
 
+static int64_t convertIntegralTemplateValueToType(int64_t value, TypeCategory target_category) {
+	switch (target_category) {
+	case TypeCategory::Bool:
+		return value != 0 ? 1 : 0;
+	case TypeCategory::Char:
+		return static_cast<int64_t>(static_cast<char>(value));
+	case TypeCategory::UnsignedChar:
+		return static_cast<int64_t>(static_cast<unsigned char>(value));
+	case TypeCategory::WChar:
+		return static_cast<int64_t>(static_cast<wchar_t>(value));
+	case TypeCategory::Char8:
+		return static_cast<int64_t>(static_cast<char8_t>(value));
+	case TypeCategory::Char16:
+		return static_cast<int64_t>(static_cast<char16_t>(value));
+	case TypeCategory::Char32:
+		return static_cast<int64_t>(static_cast<char32_t>(value));
+	case TypeCategory::Short:
+		return static_cast<int64_t>(static_cast<short>(value));
+	case TypeCategory::UnsignedShort:
+		return static_cast<int64_t>(static_cast<unsigned short>(value));
+	case TypeCategory::Int:
+		return static_cast<int64_t>(static_cast<int>(value));
+	case TypeCategory::UnsignedInt:
+		return static_cast<int64_t>(static_cast<unsigned int>(value));
+	case TypeCategory::Long:
+		return static_cast<int64_t>(static_cast<long>(value));
+	case TypeCategory::UnsignedLong:
+		return static_cast<int64_t>(static_cast<unsigned long>(value));
+	case TypeCategory::LongLong:
+		return static_cast<int64_t>(static_cast<long long>(value));
+	case TypeCategory::UnsignedLongLong:
+		return static_cast<int64_t>(static_cast<unsigned long long>(value));
+	default:
+		return value;
+	}
+}
+
+TemplateTypeArg templateTypeArgFromEvalResult(
+	const ConstExpr::EvalResult& eval_result,
+	const TypeSpecifierNode& target_type) {
+	TemplateTypeArg arg = templateTypeArgFromEvalResult(eval_result);
+	if (!arg.is_value || arg.has_typed_value_identity) {
+		return arg;
+	}
+
+	const TypeCategory target_category = target_type.type();
+	if (target_category == TypeCategory::Invalid ||
+		isPlaceholderAutoType(target_category) ||
+		target_type.pointer_depth() != 0 ||
+		target_type.reference_qualifier() != ReferenceQualifier::None ||
+		target_type.has_function_signature() ||
+		target_type.has_member_class()) {
+		return arg;
+	}
+	if (!isIntegralType(target_category) && target_category != TypeCategory::Enum) {
+		return arg;
+	}
+
+	TypeIndex target_type_index = target_type.type_index().withCategory(target_type.type());
+	if (!target_type_index.is_valid() && is_builtin_type(target_type.type())) {
+		target_type_index = nativeTypeIndex(target_type.type());
+	}
+	if (target_category == TypeCategory::Enum && !target_type_index.is_valid()) {
+		return arg;
+	}
+	if (!target_type_index.is_valid()) {
+		target_type_index = TypeIndex{0, target_category};
+	}
+	if (isIntegralType(target_category)) {
+		arg.value = convertIntegralTemplateValueToType(arg.value, target_category);
+	}
+	arg.type_index = TemplateTypeArg::makeTypeIndex(target_type_index);
+	return arg;
+}
+
 namespace {
 
 	InlineVector<TemplateParameterNode, 4> getTargetTemplateParameters(StringHandle target_template_name) {
@@ -143,6 +218,24 @@ namespace {
 	return substitutor.substitute(default_node);
 }
 
+	std::optional<TypeSpecifierNode> substituteNonTypeParameterTypeImpl(
+		Parser& parser,
+		const TemplateParameterNode& param,
+		const InlineVector<TemplateParameterNode, 4>& template_params,
+		std::span<const TemplateTypeArg> template_args) {
+	if (param.kind() != TemplateParameterKind::NonType || !param.has_type()) {
+		return std::nullopt;
+	}
+	ASTNode substituted_type_node = parser.substituteTemplateParameters(
+		ASTNode::emplace_node<TypeSpecifierNode>(param.type_specifier_node()),
+		template_params,
+		template_args);
+	if (!substituted_type_node.is<TypeSpecifierNode>()) {
+		return std::nullopt;
+	}
+	return substituted_type_node.as<TypeSpecifierNode>();
+}
+
 	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
 		Parser& parser,
 		const ASTNode& default_node,
@@ -175,6 +268,18 @@ namespace {
 	}
 
 	FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: succeeded");
+	if (template_args.size() < template_params.size()) {
+		const TemplateParameterNode& param = template_params[template_args.size()];
+		if (std::optional<TypeSpecifierNode> target_type =
+				substituteNonTypeParameterTypeImpl(
+					parser,
+					param,
+					template_params,
+					template_args);
+			target_type.has_value()) {
+			return templateTypeArgFromEvalResult(eval_result, *target_type);
+		}
+	}
 	return templateTypeArgFromEvalResult(eval_result);
 }
 
@@ -2721,6 +2826,18 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 					return std::nullopt;
 				}
 
+				if (!param.has_type()) {
+					return templateTypeArgFromEvalResult(eval_result);
+				}
+				if (std::optional<TypeSpecifierNode> target_type =
+						substituteNonTypeParameterTypeImpl(
+							*this,
+							param,
+							template_params,
+							bound_args_inline);
+					target_type.has_value()) {
+					return templateTypeArgFromEvalResult(eval_result, *target_type);
+				}
 				return templateTypeArgFromEvalResult(eval_result);
 			}
 

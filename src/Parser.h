@@ -469,6 +469,9 @@ inline std::vector<std::string_view> buildTemplateParamNames(
 // Declared here (not in TemplateRegistry_Types.h) to avoid a dependency on
 // ConstExprEvaluator.h from the template-registry header.
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result);
+TemplateTypeArg templateTypeArgFromEvalResult(
+	const ConstExpr::EvalResult& eval_result,
+	const TypeSpecifierNode& target_type);
 
 // Thread-local instantiation backtrace.  Unlike current_instantiation_ctx_ (which is RAII
 // and clears during stack unwinding), this string persists through exception propagation
