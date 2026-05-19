@@ -33,49 +33,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 3) Pointer-NTTP full specialization dispatch: second lookup produces wrong arg type
-
-- **Symptom**: Given `template <int* P> struct Tag { static int value() { return -1; } };`
-  `template <> struct Tag<&ga> { static int value() { return 10; } };`, calling
-  `Tag<&ga>::value()` in `main()` returns `-1` (invokes the primary template) instead of `10`.
-  The specialization IS correctly instantiated and both symbols appear in the object file.
-
-- **Root cause (confirmed via debug instrumentation)**:
-  There are two distinct lookup paths for `Tag<&ga>`:
-  1. During parsing of `template <> struct Tag<&ga>`: `&ga` is evaluated to
-     `ObjectPointer(nativeTypeIndex(Int), "ga", 0)` → `SpecializationKey` hash matches →
-     `lookupExactSpecialization` returns the spec node ✓
-  2. During parsing of `Tag<&ga>::value()` in `main()`: `&ga` evaluates to a plain
-     `TemplateTypeArg(0, Int)` (value=0, `has_typed_value_identity=false`) → different hash →
-     `lookupExactSpecialization` returns `nullopt` → generic template is instantiated with
-     mangled name `Tag$00000a1837ced158` instead of `Tag$00a3b7d5a86c5df9` → `main` calls
-     the wrong symbol.
-
-  The second path fails to produce an `ObjectPointer` identity for the `&ga` argument. This
-  is likely because the expression-side template-argument classification in `main` context
-  either calls `parse_explicit_template_arguments()` without template params (skipping
-  `classifyExplicitTemplateArgumentsAgainstParameters`), or `try_evaluate_constant_expression`
-  returns an `EvalResult` without `pointer_to_var` set in that path, causing fallback to
-  `TemplateTypeArg::makeValue(0, Int)`.
-
-- **Affected paths**:
-  - `src/Parser_Expr_PrimaryExpr.cpp` — second call to `parse_explicit_template_arguments` /
-    `materializePrimaryTemplateOwnerForLookup` (line ~1461)
-  - `src/Parser_Templates_Params.cpp` — `makeValueArgForSyntax` / `classifyExplicitTemplateArgumentsAgainstParameters`
-  - `src/TemplateRegistry_Registry.h` — `lookupExactSpecialization`
-  - `src/Parser_Templates_Function.cpp` — `makeConstantValueFromEvalResult` (creates `ObjectPointer`)
-
-- **Recommended fix**: Ensure that wherever `Tag<&ga>` template args are parsed for the member
-  access / function call context, the path goes through `parse_explicit_template_arguments(primary_template_params)`
-  (with template params provided) and `classifyExplicitTemplateArgumentsAgainstParameters` is
-  called so `&ga` is evaluated with the declared `int*` type, giving `pointer_to_var.isValid()=true`
-  and thus `ObjectPointer` identity via `makeConstantValueFromEvalResult`.
-
-- **Impact**: All pointer-NTTP full specializations where the specialization adds/changes member
-  functions are silently not dispatched to; the generic template is called instead.
-
-- **Regression test (pending)**: `tests/test_nttp_ptr_specialization_ret0.cpp`
-
+## 3) Out-of-line template member signature validation is too literal
 
 - **Symptom**: Parser warnings like `Parameter 1 type mismatch in out-of-line template member ...` remain for
   valid declarations/definitions that differ only by dependent spelling/aliases.
@@ -86,7 +44,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 5) `tests/std/test_std_ratio.cpp` — no `.o` output and residual diagnostic noise
+## 4) `tests/std/test_std_ratio.cpp` — no `.o` output and residual diagnostic noise
 
 **Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
 
@@ -95,22 +53,14 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 2. **Explicit template type args ignored** for zero-param function template calls in
    the constexpr evaluator (`ConstExprEvaluator_Core.cpp`).
 
+**Current frontier**: The previous `__ratio_less_impl` / remove-cv alias
+instantiation stop is fixed. The first hard blocker has moved later to
+`__ratio_add_impl` default-NTTP evaluation, currently surfacing as unresolved
+`ratio_less$...::value` during constant evaluation.
+
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
-### 5a) `std::__is_complete_or_unbounded` instantiation always fails
-
-- **Symptom**: Many `[ERROR][Templates] All 2 template overload(s) failed for '__is_complete_or_unbounded'`
-  during parsing of `<ratio>` and its dependencies.
-- **Root cause**: `constexpr true_type __is_complete_or_unbounded(__type_identity<_Tp>)` is a function
-  template with a non-type default template parameter (`size_t = sizeof(_Tp)`). FlashCpp does not
-  yet support template argument deduction from a class-template-specialization argument
-  (`__type_identity<_Tp>` → deduce `_Tp`) combined with a defaulted non-type parameter that
-  depends on the deduced type.
-- **Affected path**: `Parser_Templates_Inst_Deduction.cpp` — `tryInstantiateTemplateFromCallArguments`.
-- **Impact**: Non-fatal during parsing (expressions remain dependent), but prevents correct
-  constexpr evaluation of `static_assert` checks inside `<type_traits>` and `<ratio>`.
-
-### 5b) `std::__are_both_ratios` parse-time instantiation failure (expected noise)
+### 4a) `std::__are_both_ratios` parse-time instantiation failure (expected noise)
 
 - **Symptom**: `[WARN][Parser] Parsed template arguments but instantiation failed for 'std::__are_both_ratios'`
   followed by `[ERROR][Templates] All 1 template overload(s) failed for '__are_both_ratios'` — appears
@@ -118,12 +68,12 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Root cause**: The parser speculatively tries to instantiate `__are_both_ratios<_R1, _R2>` at
   template-body parse time, when `_R1` and `_R2` are still dependent type parameters.
   `try_instantiate_template_explicit` has an early-out for dependent args (correct behaviour).
-  The errors are non-fatal and the constexpr evaluator path correctly handles them via
-  the explicit-type-args fix (Bug 2 above), but `__is_complete_or_unbounded` failure (5a above)
-  prevents full `static_assert` evaluation.
+  The errors are non-fatal and the constexpr evaluator path correctly handles
+  them via the explicit-type-args fix above; the current hard stop is later
+  default-NTTP/value propagation in ratio arithmetic.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
-### 5c) Residual substitution cycle in `ExpressionSubstitutor` for partially-dependent `ratio` instances
+### 4b) Residual substitution cycle/default-NTTP value loss in partially-dependent `ratio` instances
 
 - **Symptom**: Repeated DEBUG log lines cycling between `_R1::num` and `__static_abs$xxx::value`
   lookups during depth=2 `ratio` template processing.
