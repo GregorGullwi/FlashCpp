@@ -2462,7 +2462,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const TemplateAliasNode& alias_node,
 		const DeferredAliasMemberTemplateSegment& segment,
 		std::span<const TemplateTypeArg> template_args,
-		StringHandle member_alias_handle);
+		StringHandle owner_qualified_handle);
 	const TypeInfo* materializeDeferredAliasMemberTemplateChain(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args,

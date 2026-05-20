@@ -1070,9 +1070,9 @@ std::optional<QualifiedTypeMemberAccess> Parser::materializeDeferredAliasMemberT
 	const TemplateAliasNode& alias_node,
 	const DeferredAliasMemberTemplateSegment& segment,
 	std::span<const TemplateTypeArg> template_args,
-	StringHandle member_alias_handle) {
+	StringHandle owner_qualified_handle) {
 	if (segment.has_template_arguments &&
-		!member_alias_handle.isValid()) {
+		!owner_qualified_handle.isValid()) {
 		FLASH_LOG_FORMAT(
 			Templates,
 			Debug,
@@ -1080,7 +1080,7 @@ std::optional<QualifiedTypeMemberAccess> Parser::materializeDeferredAliasMemberT
 			StringTable::getStringView(segment.name));
 		return std::nullopt;
 	}
-	const auto member_template_params = getTargetTemplateParameters(member_alias_handle);
+	const auto member_template_params = getTargetTemplateParameters(owner_qualified_handle);
 	InlineVector<TemplateTypeArg, 4> member_args;
 	std::span<const ASTNode> member_template_args(segment.template_args.data(), segment.template_args.size());
 	member_args.reserve(member_template_args.size());
@@ -1125,7 +1125,7 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 	std::vector<QualifiedTypeMemberAccess> member_chain;
 	member_chain.reserve(alias_node.targetMemberTemplateSegments().size());
 	for (const DeferredAliasMemberTemplateSegment& segment : alias_node.targetMemberTemplateSegments()) {
-		StringHandle member_alias_handle =
+		StringHandle owner_qualified_handle =
 			getDeferredMemberAliasHandle(
 				segment.name,
 				instantiated_name,
@@ -1135,7 +1135,7 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 				alias_node,
 				segment,
 				template_args,
-				member_alias_handle);
+				owner_qualified_handle);
 		if (!materialized_segment.has_value()) {
 			return nullptr;
 		}
