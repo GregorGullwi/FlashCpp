@@ -60,12 +60,14 @@ Useful to know before changing anything:
   replay positions and definition lookup contexts, and variable-template
   instantiation prefers replay-first initializer materialization before the
   compatibility AST-substitution fallback;
+- qualified member variable-template chains now use owner-aware lookup through
+  instantiated owners and dependent bases, preserving recovered outer class
+  template bindings for cases such as `Derived<T>::template member_v<T>`;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
-Validation at this point passed the Windows sharded build and the Windows
-PowerShell test workflow:
-`2453` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Validation at this point passed the Linux sharded build and ELF test workflow:
+`2430` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## What is still wrong
 
@@ -95,10 +97,11 @@ Concrete follow-up already identified by recent work:
   at parse time.
 - default NTTP declared-type materialization and variable-template initializer
   replay metadata are now covered for the targeted scalar/member-chain cases.
-  The next concrete follow-up is the remaining dependent-base and
-  unknown-specialization member-chain work in declarations that still do not
-  preserve enough metadata, especially qualified member variable-template
-  chains, or the current `<ratio>` blocker where parsing and `std::ratio_less`
+  Qualified member variable-template chains through dependent bases are now
+  covered for the focused initializer/constexpr paths. The next concrete
+  follow-up is the remaining dependent-base and unknown-specialization
+  member-chain work in declarations that still do not preserve enough metadata,
+  plus the current `<ratio>` blocker where parsing and `std::ratio_less`
   constexpr comparison now progress to later IR conversion/link failures.
 
 ### 2. Dependent names are still represented too loosely
@@ -244,6 +247,10 @@ materially changes what future refactors can assume.
   context for namespace and member variable templates, with replay-first
   instantiation covering definition-time lookup and dependent member-template
   call chains before the older AST-substitution fallback is used.
+- qualified member variable-template chains now resolve through inherited
+  owner-aware member variable-template lookup, and member variable-template
+  instantiation folds recovered outer class-template bindings into initializer
+  replay/substitution identity.
 
 ## Exit criteria for this audit
 

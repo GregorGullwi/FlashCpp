@@ -84,9 +84,12 @@ Future work should assume these are already in place:
   positions and definition lookup contexts; instantiation uses replay-first
   materialization for covered initializer expressions before falling back to
   stored AST substitution.
+- qualified member variable-template chains through instantiated owners and
+  dependent bases now recover the canonical member variable-template owner and
+  outer class-template bindings for covered constexpr/initializer flows.
 
-Latest validation on Windows sharded build:
-`2453` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Latest validation on Linux sharded build:
+`2430` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -113,17 +116,18 @@ Most concrete next subtask:
   capture replay metadata for covered namespace/member declarations. Deferred
   non-call qualified expressions preserve deeper member-template segment
   arguments such as `Traits<T>::template Box<T>::value`, and call-shaped
-  expressions preserve `Traits<T>::template Box<T>::get()`. The next concrete
-  gap is qualified member variable-template chains, where replay can reparse the
-  initializer but expression substitution does not always recover concrete
-  explicit template arguments, plus declarations outside the covered replay
-  flows. The current `<ratio>` blocker remains a useful bounded target because
-  parsing and `std::ratio_less` constexpr comparison now progress to later IR
-  conversion/link failures rather than stopping in the fixed default NTTP
-  declared-type materialization, dependent member-template argument paths,
+  expressions preserve `Traits<T>::template Box<T>::get()`. Qualified member
+  variable-template chains now recover concrete explicit template arguments and
+  outer owner bindings for the covered initializer/constexpr paths. The next
+  concrete gap is declarations outside the covered replay flows, plus deeper
+  dependent-base/member-chain shapes that still do not carry enough semantic
+  metadata. The current `<ratio>` blocker remains a useful bounded target
+  because parsing and `std::ratio_less` constexpr comparison now progress to
+  later IR conversion/link failures rather than stopping in the fixed default
+  NTTP declared-type materialization, dependent member-template argument paths,
   covered member alias-template target materialization path, alias-template
-  `sizeof...` NTTP target arguments, or covered variable-template initializer
-  replay paths.
+  `sizeof...` NTTP target arguments, covered variable-template initializer
+  replay paths, or covered member variable-template chain recovery.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -286,8 +290,11 @@ re-solving already-solved problems.
   available.
 - variable-template initializer replay is now available for namespace and member
   variable templates, covering definition-time lookup and dependent
-  member-template call chains while leaving qualified member variable-template
-  chain recovery as the next focused follow-up.
+  member-template call chains.
+- qualified member variable-template chain recovery now covers direct,
+  dependent-owner, and inherited dependent-base cases such as
+  `Derived<T>::template member_v<T>` by resolving the owner-aware member
+  variable-template name and folding outer bindings into replay/substitution.
 
 ## Exit criteria
 
