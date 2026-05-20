@@ -672,6 +672,8 @@ const TemplateTypeArg* findTemplateValueParameterBinding(StringHandle param_name
 	return findTemplateValueParameterBindingCompatibility(param_name_handle, context);
 }
 
+// Walk the template-environment chain and return the first matching pack binding.
+// Returns nullptr when no pack with the requested name exists in the chain.
 const TemplateBinding* findTemplatePackBinding(
 	StringHandle pack_name_handle,
 	const TemplateEnvironment& environment) {
@@ -686,6 +688,9 @@ const TemplateBinding* findTemplatePackBinding(
 	return nullptr;
 }
 
+// Resolve sizeof...(Pack) count from constexpr evaluation context in priority order:
+// 1) explicit template-environment pack binding, 2) parser pack-size registries,
+// 3) compatibility fallback from template_param_names/template_args.
 std::optional<size_t> resolveSizeofPackCount(
 	std::string_view pack_name,
 	const EvaluationContext& context) {

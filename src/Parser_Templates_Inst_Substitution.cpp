@@ -193,6 +193,8 @@ namespace {
 		return std::nullopt;
 	}
 
+	// Extract pack name from a pack-expansion pattern expression.
+	// Supports identifier and template-parameter-reference patterns.
 	std::optional<std::string_view> tryExtractPackNameFromPackExpansionPattern(const ASTNode& pattern) {
 		if (!pattern.is<ExpressionNode>()) {
 			return std::nullopt;
@@ -207,6 +209,8 @@ namespace {
 		return std::nullopt;
 	}
 
+	// Detect whether an alias target argument forwards a parameter pack and return the pack name.
+	// Supports type-side `Type...` and expression-side `expr...` forwarding patterns.
 	std::optional<std::string_view> tryGetAliasPackForwardingName(const ASTNode& target_arg_node) {
 		if (target_arg_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& target_arg_type = target_arg_node.as<TypeSpecifierNode>();
@@ -724,8 +728,10 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 
 	// Handle sizeof...(Pack) directly and preserve the target NTTP category.
 	// The generic substitute/evaluate path now resolves pack size through the
-	// template evaluation environment, but this fast path keeps the explicit
-	// target-parameter type selection for alias target arguments.
+	// template evaluation environment. This fast path is still needed when alias
+	// target substitution must preserve the destination NTTP category immediately
+	// (e.g., bool/enum/non-default integral targets) instead of accepting the
+	// generic evaluator's default unsigned-long-long category.
 	if (const auto* sizeof_pack = std::get_if<SizeofPackNode>(&arg_expr)) {
 		std::string_view pack_name = sizeof_pack->pack_name();
 		std::span<const TemplateParameterNode> params_span(
@@ -3684,8 +3690,12 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	InlineVector<TemplateParameterNode, 4> typed_params =
 		collectTemplateParameterNodes(template_params);
 	if (typed_params.size() != template_params.size()) {
-		FLASH_LOG(Templates, Debug, "evaluateDependentNTTPExpression: AST template parameter list contains non-template nodes");
-		return std::nullopt;
+		throw InternalError(
+			"evaluateDependentNTTPExpression expected only TemplateParameterNode entries (found " +
+			std::to_string(typed_params.size()) +
+			" valid out of " +
+			std::to_string(template_params.size()) +
+			" total)");
 	}
 	return evaluateDependentNTTPExpression(
 		dependent_expr,

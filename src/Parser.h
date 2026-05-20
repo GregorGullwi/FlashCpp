@@ -3120,6 +3120,9 @@ private:	 // Resume private methods
 	// Count the number of template arguments attributed to the named variadic pack parameter.
 	// Walks template_params in order, advancing arg_cursor past each non-variadic parameter,
 	// and computes pack_size = remaining_args - required_non_variadic_after.
+	// With multiple packs, each pack consumes only what remains after reserving
+	// required non-variadic parameters to its right. If total_args are
+	// insufficient, pack_size is set to 0 for that pack.
 	// Returns std::nullopt when the pack name is not found in template_params.
 	static std::optional<size_t> countPackSizeFromParams(
 		std::string_view pack_name,

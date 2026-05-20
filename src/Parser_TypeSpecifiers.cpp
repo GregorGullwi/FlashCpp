@@ -1552,7 +1552,8 @@ ParseResult Parser::parse_type_specifier() {
 						aliasTemplateArgsStillDependent(*template_args);
 
 					// OPTION 1: Alias materialization for concrete arguments (preferred over
-					// placeholder fallback and string parsing), regardless of deferred metadata.
+					// placeholder fallback and string parsing). Deferred aliases are still
+					// handled via the same materialization entrypoint when arguments are concrete.
 					if (!has_dependent_alias_args) {
 						FLASH_LOG(Parser, Debug, "Using alias materialization for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
