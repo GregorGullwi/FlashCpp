@@ -28,6 +28,77 @@ static void buildVariableTemplateParameterReplayState(
 	}
 }
 
+static void buildEffectiveVariableTemplateSubstitutionInputs(
+	const OuterTemplateBinding* outer_binding,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> filled_args,
+	std::vector<TemplateParameterNode>& effective_template_params_storage,
+	std::vector<TemplateTypeArg>& effective_template_args_storage,
+	std::span<const TemplateParameterNode>& effective_template_params,
+	std::span<const TemplateTypeArg>& effective_template_args) {
+	effective_template_params = template_params;
+	effective_template_args = filled_args;
+	if (outer_binding == nullptr) {
+		return;
+	}
+	if (outer_binding->params.empty()) {
+		FLASH_LOG(
+			Templates,
+			Warning,
+			"OuterTemplateBinding is missing original parameter metadata; "
+			"skipping outer binding merge for variable-template substitution");
+		return;
+	}
+
+	effective_template_params_storage.clear();
+	effective_template_args_storage.clear();
+	effective_template_params_storage.reserve(
+		outer_binding->params.size() + template_params.size());
+
+	for (const ASTNode& outer_param_node : outer_binding->params) {
+		const TemplateParameterNode* outer_param =
+			tryGetTemplateParameterNode(outer_param_node);
+		if (outer_param == nullptr) {
+			continue;
+		}
+		effective_template_params_storage.push_back(*outer_param);
+	}
+	if (effective_template_params_storage.empty()) {
+		FLASH_LOG(
+			Templates,
+			Warning,
+			"OuterTemplateBinding parameter metadata contains no template "
+			"parameters; skipping outer binding merge for variable-template substitution");
+		return;
+	}
+	for (const TemplateParameterNode& param : template_params) {
+		effective_template_params_storage.push_back(param);
+	}
+
+	const std::span<const TemplateTypeArg> outer_args =
+		!outer_binding->all_args.empty()
+			? std::span<const TemplateTypeArg>(
+				outer_binding->all_args.data(),
+				outer_binding->all_args.size())
+			: std::span<const TemplateTypeArg>(
+				outer_binding->param_args.data(),
+				outer_binding->param_args.size());
+	effective_template_args_storage.reserve(outer_args.size() + filled_args.size());
+	for (const TemplateTypeArg& outer_arg : outer_args) {
+		effective_template_args_storage.push_back(outer_arg);
+	}
+	for (const TemplateTypeArg& arg : filled_args) {
+		effective_template_args_storage.push_back(arg);
+	}
+
+	effective_template_params = std::span<const TemplateParameterNode>(
+		effective_template_params_storage.data(),
+		effective_template_params_storage.size());
+	effective_template_args = std::span<const TemplateTypeArg>(
+		effective_template_args_storage.data(),
+		effective_template_args_storage.size());
+}
+
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
 	TypeIndex value_type_index = eval_result.exact_type.has_value()
 		? eval_result.exact_type->type_index().withCategory(eval_result.exact_type->category())
@@ -3058,80 +3129,16 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 				  effective_instantiation_args.size());
 	std::vector<TemplateParameterNode> effective_template_params_storage;
 	std::vector<TemplateTypeArg> effective_template_args_storage;
-	if (outer_binding != nullptr) {
-		if (!outer_binding->params.empty()) {
-			for (const ASTNode& outer_param_node : outer_binding->params) {
-				if (const TemplateParameterNode* outer_param =
-						tryGetTemplateParameterNode(outer_param_node)) {
-					effective_template_params_storage.push_back(*outer_param);
-				}
-			}
-		} else {
-			const size_t outer_param_count = std::min(
-				outer_binding->param_names.size(),
-				outer_binding->param_args.size());
-			for (size_t i = 0; i < outer_param_count; ++i) {
-				Token param_token(
-					Token::Type::Identifier,
-					StringTable::getStringView(outer_binding->param_names[i]),
-					0,
-					0,
-					0);
-				const TemplateTypeArg& param_arg = outer_binding->param_args[i];
-				if (param_arg.is_value) {
-					TypeSpecifierNode param_type(
-						nativeTypeIndex(param_arg.typeEnum()),
-						get_type_size_bits(param_arg.typeEnum()),
-						param_token,
-						CVQualifier::None,
-						ReferenceQualifier::None);
-					effective_template_params_storage.emplace_back(
-						outer_binding->param_names[i],
-						param_type,
-						param_token);
-				} else if (param_arg.is_template_template_arg) {
-					std::vector<TemplateParameterNode> nested_params;
-					effective_template_params_storage.emplace_back(
-						outer_binding->param_names[i],
-						std::move(nested_params),
-						param_token);
-				} else {
-					effective_template_params_storage.emplace_back(
-						outer_binding->param_names[i],
-						param_token);
-				}
-			}
-		}
-		if (!outer_binding->all_args.empty()) {
-			for (const TemplateTypeArg& outer_arg : outer_binding->all_args) {
-				effective_template_args_storage.push_back(outer_arg);
-			}
-		} else {
-			for (const TemplateTypeArg& outer_arg : outer_binding->param_args) {
-				effective_template_args_storage.push_back(outer_arg);
-			}
-		}
-	}
-	for (const TemplateParameterNode& param : template_params) {
-		effective_template_params_storage.push_back(param);
-	}
-	for (const TemplateTypeArg& arg : filled_args) {
-		effective_template_args_storage.push_back(arg);
-	}
-	std::span<const TemplateParameterNode> effective_template_params =
-		outer_binding != nullptr
-			? std::span<const TemplateParameterNode>(
-				  effective_template_params_storage.data(),
-				  effective_template_params_storage.size())
-			: std::span<const TemplateParameterNode>(
-				  template_params.data(),
-				  template_params.size());
-	std::span<const TemplateTypeArg> effective_template_args =
-		outer_binding != nullptr
-			? std::span<const TemplateTypeArg>(
-				  effective_template_args_storage.data(),
-				  effective_template_args_storage.size())
-			: filled_args;
+	std::span<const TemplateParameterNode> effective_template_params;
+	std::span<const TemplateTypeArg> effective_template_args;
+	buildEffectiveVariableTemplateSubstitutionInputs(
+		outer_binding,
+		template_params,
+		filled_args,
+		effective_template_params_storage,
+		effective_template_args_storage,
+		effective_template_params,
+		effective_template_args);
 
 	auto try_reparse_variable_template_initializer =
 		[&](
