@@ -167,13 +167,17 @@ std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
 			continue;
 		}
 
-		if (!arg.type_index.is_valid()) {
-			continue;
+		TypeIndex arg_type_index = arg.type_index;
+		if (!arg_type_index.is_valid()) {
+			if (arg.typeEnum() == TypeCategory::Invalid) {
+				continue;
+			}
+			arg_type_index = TypeIndex{}.withCategory(arg.typeEnum());
 		}
 
-		int size_in_bits = computeTypeSizeInBits(arg.type_index);
+		int size_in_bits = computeTypeSizeInBits(arg_type_index);
 		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.type_index,
+			arg_type_index,
 			size_in_bits,
 			source_token,
 			CVQualifier::None,
@@ -2934,6 +2938,14 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 					new_ns_handle,
 					final_token);
+			auto substituteQualIdTemplateArgs = [&]() -> std::vector<ASTNode> {
+				std::vector<ASTNode> result;
+				result.reserve(qual_id.template_arguments().size());
+				for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
+					result.push_back(substitute(template_arg_node));
+				}
+				return result;
+			};
 			if (final_member.has_template_arguments) {
 				InlineVector<TemplateTypeArg, 4> final_member_args =
 					materializeDependentRecordTemplateArgs(
@@ -2950,9 +2962,18 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 							final_member_args.data(),
 							final_member_args.size()),
 						final_token);
+				if (explicit_template_arg_nodes.empty() &&
+					qual_id.has_template_arguments()) {
+					explicit_template_arg_nodes = substituteQualIdTemplateArgs();
+				}
 				if (!explicit_template_arg_nodes.empty()) {
 					new_qual_id.set_template_arguments(
 						std::move(explicit_template_arg_nodes));
+				}
+			} else if (qual_id.has_template_arguments()) {
+				std::vector<ASTNode> substituted = substituteQualIdTemplateArgs();
+				if (!substituted.empty()) {
+					new_qual_id.set_template_arguments(std::move(substituted));
 				}
 			}
 			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
