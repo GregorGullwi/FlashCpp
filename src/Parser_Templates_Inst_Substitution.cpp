@@ -29,6 +29,7 @@ static void buildVariableTemplateParameterReplayState(
 }
 
 static void buildEffectiveVariableTemplateSubstitutionInputs(
+	std::string_view template_name,
 	const OuterTemplateBinding* outer_binding,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> filled_args,
@@ -42,11 +43,12 @@ static void buildEffectiveVariableTemplateSubstitutionInputs(
 		return;
 	}
 	if (outer_binding->params.empty()) {
-		FLASH_LOG(
+		FLASH_LOG_FORMAT(
 			Templates,
 			Warning,
-			"OuterTemplateBinding is missing original parameter metadata; "
-			"skipping outer binding merge for variable-template substitution");
+			"OuterTemplateBinding is missing original parameter metadata while instantiating '{}'; "
+			"skipping outer binding merge for variable-template substitution",
+			template_name);
 		return;
 	}
 
@@ -64,11 +66,12 @@ static void buildEffectiveVariableTemplateSubstitutionInputs(
 		effective_template_params_storage.push_back(*outer_param);
 	}
 	if (effective_template_params_storage.empty()) {
-		FLASH_LOG(
+		FLASH_LOG_FORMAT(
 			Templates,
 			Warning,
-			"OuterTemplateBinding parameter metadata contains no template "
-			"parameters; skipping outer binding merge for variable-template substitution");
+			"OuterTemplateBinding parameter metadata contains no template parameters while instantiating '{}'; "
+			"skipping outer binding merge for variable-template substitution",
+			template_name);
 		return;
 	}
 	for (const TemplateParameterNode& param : template_params) {
@@ -3132,6 +3135,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	std::span<const TemplateParameterNode> effective_template_params;
 	std::span<const TemplateTypeArg> effective_template_args;
 	buildEffectiveVariableTemplateSubstitutionInputs(
+		template_name,
 		outer_binding,
 		template_params,
 		filled_args,
