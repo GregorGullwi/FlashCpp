@@ -866,7 +866,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 					break;
 				}
 			}
-			if (is_non_type_pack && expected_pack_count <= 1 && pack_name.has_value()) {
+			if (is_non_type_pack && expected_pack_count <= 1) {
 				if (auto tracked_pack_size = get_template_param_pack_size(*pack_name);
 					tracked_pack_size.has_value() && *tracked_pack_size > expected_pack_count) {
 					expected_pack_count = *tracked_pack_size;
@@ -881,7 +881,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 			for (size_t offset = 0; offset < expected_pack_count; ++offset) {
 				const size_t arg_index = pack_range->first + offset;
 				if (arg_index >= template_args.size()) {
-					if (!is_non_type_pack || !pack_name.has_value()) {
+					if (!is_non_type_pack) {
 						break;
 					}
 					const std::string_view pack_element_name =
