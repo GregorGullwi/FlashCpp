@@ -35,13 +35,14 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 ### Codegen still contains controlled fallback in some paths
 
 - sema query APIs are consumed first in multiple lowering paths
-- parser fallback still exists in some places (for unresolved / non-normalized / legacy compatibility cases), including overload-argument typing recovery in `AstToIr::buildCodegenOverloadResolutionArgType(...)`
+- parser fallback still exists in some places (for unresolved / non-normalized / legacy compatibility cases)
 
 ## Verified codebase state
 
 - `SemanticAnalysis.cpp` no longer uses direct `parser_.get_expression_type(...)`
 - `ParserSemanticServices` exposes parser-phase-safe APIs and lifecycle checks
 - query-state APIs are in use (`NotYetAnalyzed`, `AnalyzedAbsent`, `Available`)
+- `AstToIr::buildCodegenOverloadResolutionArgType(...)` now consumes sema overload-argument typing APIs first and no longer performs codegen-local legacy type reconstruction
 - codegen still has parser expression-type fallback in selected IR paths (`src/IrGenerator_*.cpp`)
 
 ## Active backlog (high level)
