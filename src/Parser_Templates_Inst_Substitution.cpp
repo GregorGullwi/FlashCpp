@@ -3001,6 +3001,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				: nullptr;
 
 		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
+		// Replay parsing must classify dependent template tokens as if the initializer
+		// were still inside its template declaration, even when instantiation is
+		// requested from a non-template context.
 		parsing_template_depth_ = 1;
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
@@ -3047,6 +3050,30 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		return substituteTemplateParameters(
 			*reparsed_initializer,
 			substitution_context);
+	};
+
+	auto try_replay_variable_template_initializer =
+		[&](
+			const TemplateVariableDeclarationNode& template_node,
+			std::span<const TemplateParameterNode> template_params_for_substitution,
+			std::span<const TemplateTypeArg> template_args_for_substitution,
+			StringHandle instantiated_variable_name,
+			std::string_view failure_message) -> std::optional<ASTNode> {
+		try {
+			return try_reparse_variable_template_initializer(
+				template_node,
+				template_params_for_substitution,
+				template_args_for_substitution,
+				instantiated_variable_name);
+		} catch (const std::exception& ex) {
+			FLASH_LOG(
+				Templates,
+				Debug,
+				failure_message,
+				ex.what(),
+				" — falling back to AST substitution");
+			return std::nullopt;
+		}
 	};
 
 	// Structural pattern matching: find the best matching partial specialization
@@ -3098,21 +3125,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			if (!spec_params.empty()) {
 				StringHandle instantiated_var_handle =
 					StringTable::getOrInternStringHandle(persistent_name);
-				try {
-					init_expr = try_reparse_variable_template_initializer(
-						spec_template,
-						spec_params,
-						converted_args,
-						instantiated_var_handle);
-				} catch (const std::exception& ex) {
-					FLASH_LOG(
-						Templates,
-						Debug,
-						"Replay substitution failed for variable-template partial specialization initializer: ",
-						ex.what(),
-						" — falling back to AST substitution");
-					init_expr.reset();
-				}
+				init_expr = try_replay_variable_template_initializer(
+					spec_template,
+					spec_params,
+					converted_args,
+					instantiated_var_handle,
+					"Replay substitution failed for variable-template partial specialization initializer: ");
 				if (!init_expr.has_value()) {
 					init_expr = substituteTemplateParameters(
 						*spec_var_decl.initializer(), spec_params, converted_args);
@@ -3122,21 +3140,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			} else {
 				StringHandle instantiated_var_handle =
 					StringTable::getOrInternStringHandle(persistent_name);
-				try {
-					init_expr = try_reparse_variable_template_initializer(
-						spec_template,
-						spec_params,
-						converted_args,
-						instantiated_var_handle);
-				} catch (const std::exception& ex) {
-					FLASH_LOG(
-						Templates,
-						Debug,
-						"Replay parsing failed for variable-template specialization initializer: ",
-						ex.what(),
-						" — falling back to stored AST initializer");
-					init_expr.reset();
-				}
+				init_expr = try_replay_variable_template_initializer(
+					spec_template,
+					spec_params,
+					converted_args,
+					instantiated_var_handle,
+					"Replay parsing failed for variable-template specialization initializer: ");
 				if (!init_expr.has_value()) {
 					init_expr = *spec_var_decl.initializer();
 				}
@@ -3184,21 +3193,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		FLASH_LOG(Templates, Debug, "Substituting initializer expression for variable template");
 		StringHandle instantiated_var_handle =
 			StringTable::getOrInternStringHandle(persistent_name);
-		try {
-			new_initializer = try_reparse_variable_template_initializer(
-				var_template,
-				template_params,
-				filled_args_inline,
-				instantiated_var_handle);
-		} catch (const std::exception& ex) {
-			FLASH_LOG(
-				Templates,
-				Debug,
-				"Replay substitution failed for variable-template initializer: ",
-				ex.what(),
-				" — falling back to AST substitution");
-			new_initializer.reset();
-		}
+		new_initializer = try_replay_variable_template_initializer(
+			var_template,
+			template_params,
+			filled_args_inline,
+			instantiated_var_handle,
+			"Replay substitution failed for variable-template initializer: ");
 		if (!new_initializer.has_value()) {
 			new_initializer = substituteTemplateParameters(
 				orig_var_decl.initializer().value(),

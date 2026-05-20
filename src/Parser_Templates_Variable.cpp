@@ -4,6 +4,28 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefinitionLookupContext(
+	const Token& variable_name_token,
+	StringHandle current_instantiation_name) const {
+	if (current_template_definition_lookup_context_ != nullptr &&
+		current_template_definition_lookup_context_->is_valid()) {
+		return *current_template_definition_lookup_context_;
+	}
+
+	TemplateDefinitionLookupContext definition_lookup_context;
+	definition_lookup_context.definition_line =
+		variable_name_token.line();
+	definition_lookup_context.definition_file_index =
+		variable_name_token.file_index();
+	definition_lookup_context.definition_namespace =
+		gSymbolTable.get_current_namespace_handle();
+	if (current_instantiation_name.isValid()) {
+		definition_lookup_context.current_instantiation_name =
+			current_instantiation_name;
+	}
+	return definition_lookup_context;
+}
+
 // Shared alias-target capture helper implementation.
 // Parses the template-id on the right-hand side of an alias declaration from
 // the current token position.  The caller is responsible for rewinding before
@@ -339,21 +361,10 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	// Parse initializer (required for member variable templates)
 	std::optional<ASTNode> init_expr;
 	std::optional<SaveHandle> initializer_position;
-	TemplateDefinitionLookupContext initializer_definition_lookup_context;
-	if (current_template_definition_lookup_context_ != nullptr &&
-		current_template_definition_lookup_context_->is_valid()) {
-		initializer_definition_lookup_context =
-			*current_template_definition_lookup_context_;
-	} else {
-		initializer_definition_lookup_context.definition_line =
-			var_name_token.line();
-		initializer_definition_lookup_context.definition_file_index =
-			var_name_token.file_index();
-		initializer_definition_lookup_context.definition_namespace =
-			gSymbolTable.get_current_namespace_handle();
-		initializer_definition_lookup_context.current_instantiation_name =
-			struct_node.name();
-	}
+	TemplateDefinitionLookupContext initializer_definition_lookup_context =
+		buildVariableTemplateInitializerDefinitionLookupContext(
+			var_name_token,
+			struct_node.name());
 	if (peek() == "="_tok) {
 		initializer_position = save_token_position();
 		advance(); // consume '='

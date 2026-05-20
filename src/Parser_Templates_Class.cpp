@@ -1201,19 +1201,10 @@ ParseResult Parser::parse_template_declaration() {
 		// Parse initializer
 		std::optional<ASTNode> init_expr;
 		std::optional<SaveHandle> initializer_position;
-		TemplateDefinitionLookupContext initializer_definition_lookup_context;
-		if (current_template_definition_lookup_context_ != nullptr &&
-			current_template_definition_lookup_context_->is_valid()) {
-			initializer_definition_lookup_context =
-				*current_template_definition_lookup_context_;
-		} else {
-			initializer_definition_lookup_context.definition_line =
-				var_name_token.line();
-			initializer_definition_lookup_context.definition_file_index =
-				var_name_token.file_index();
-			initializer_definition_lookup_context.definition_namespace =
-				gSymbolTable.get_current_namespace_handle();
-		}
+		TemplateDefinitionLookupContext initializer_definition_lookup_context =
+			buildVariableTemplateInitializerDefinitionLookupContext(
+				var_name_token,
+				StringHandle());
 		if (peek() == "="_tok) {
 			initializer_position = save_token_position();
 			advance(); // consume '='
