@@ -1167,6 +1167,28 @@ void attachQualifiedIdentifierTemplateArguments(
 	}
 }
 
+bool qualifiedMemberTemplateIdIsKnown(
+	std::string_view owner_name,
+	StringHandle member_name) {
+	if (gTemplateRegistry.lookupTemplate(member_name).has_value() ||
+		gTemplateRegistry.lookupVariableTemplate(member_name).has_value() ||
+		gTemplateRegistry.lookup_alias_template(member_name).has_value()) {
+		return true;
+	}
+	if (owner_name.empty()) {
+		return false;
+	}
+	std::string_view member_name_view = StringTable::getStringView(member_name);
+	std::string_view qualified_member_name = StringBuilder()
+		.append(owner_name)
+		.append("::")
+		.append(member_name_view)
+		.commit();
+	return gTemplateRegistry.lookupTemplate(qualified_member_name).has_value() ||
+		   gTemplateRegistry.lookupVariableTemplate(qualified_member_name).has_value() ||
+		   gTemplateRegistry.lookup_alias_template(qualified_member_name).has_value();
+}
+
 TypeSpecifierNode normalizeAtomicBuiltinParameterType(const TypeSpecifierNode& arg_type) {
 	TypeSpecifierNode normalized = arg_type;
 	normalized.set_reference_qualifier(ReferenceQualifier::None);
@@ -3306,7 +3328,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
 						std::vector<ASTNode> member_template_arg_nodes;
-						if (current_token_.value() == "<") {
+						if (current_token_.value() == "<" &&
+							qualifiedMemberTemplateIdIsKnown(
+								gNamespaceRegistry.getQualifiedName(full_ns_handle),
+								member_token.handle())) {
 							member_template_args =
 								parse_explicit_template_arguments(
 									&member_template_arg_nodes);
@@ -6337,7 +6362,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
 							std::vector<ASTNode> member_template_arg_nodes;
-							if (peek() == "<"_tok) {
+							if (peek() == "<"_tok &&
+								qualifiedMemberTemplateIdIsKnown(
+									instantiated_name,
+									final_identifier.handle())) {
 								SaveHandle member_template_arg_start =
 									save_token_position();
 								member_template_args =

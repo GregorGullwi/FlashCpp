@@ -185,27 +185,9 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 		*had_template_keyword = encountered_template_keyword;
 	}
 
-	std::vector<ASTNode> template_arg_nodes;
-	if (peek() == "<"_tok) {
-		SaveHandle template_arg_start = save_token_position();
-		auto parsed_template_args =
-			parse_explicit_template_arguments(&template_arg_nodes);
-		if (!parsed_template_args.has_value()) {
-			restore_token_position(template_arg_start);
-			template_arg_nodes.clear();
-		} else if (peek() == "("_tok) {
-			restore_token_position(template_arg_start);
-			template_arg_nodes.clear();
-		}
-	}
-
 	// Create a QualifiedIdentifierNode wrapped in ExpressionNode
 	NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-	QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
-	if (!template_arg_nodes.empty()) {
-		qual_id.set_template_arguments(std::move(template_arg_nodes));
-	}
-	auto result = emplace_node<ExpressionNode>(qual_id);
+	auto result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
 	return ParseResult::success(result);
 }
 
