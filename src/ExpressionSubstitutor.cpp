@@ -167,13 +167,20 @@ std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
 			continue;
 		}
 
-		if (!arg.type_index.is_valid()) {
-			continue;
+		TypeIndex arg_type_index = arg.type_index;
+		if (!arg_type_index.is_valid()) {
+			if (arg.typeEnum() == TypeCategory::Invalid) {
+				continue;
+			}
+			arg_type_index = TypeIndex{}.withCategory(arg.typeEnum());
 		}
 
-		int size_in_bits = computeTypeSizeInBits(arg.type_index);
+		int size_in_bits = computeTypeSizeInBits(arg_type_index);
+		if (size_in_bits == 0) {
+			size_in_bits = get_type_size_bits(arg_type_index.category());
+		}
 		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.type_index,
+			arg_type_index,
 			size_in_bits,
 			source_token,
 			CVQualifier::None,
@@ -2950,9 +2957,30 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 							final_member_args.data(),
 							final_member_args.size()),
 						final_token);
+				if (explicit_template_arg_nodes.empty() &&
+					qual_id.has_template_arguments()) {
+					explicit_template_arg_nodes.reserve(
+						qual_id.template_arguments().size());
+					for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
+						explicit_template_arg_nodes.push_back(
+							substitute(template_arg_node));
+					}
+				}
 				if (!explicit_template_arg_nodes.empty()) {
 					new_qual_id.set_template_arguments(
 						std::move(explicit_template_arg_nodes));
+				}
+			} else if (qual_id.has_template_arguments()) {
+				std::vector<ASTNode> substituted_template_arg_nodes;
+				substituted_template_arg_nodes.reserve(
+					qual_id.template_arguments().size());
+				for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
+					substituted_template_arg_nodes.push_back(
+						substitute(template_arg_node));
+				}
+				if (!substituted_template_arg_nodes.empty()) {
+					new_qual_id.set_template_arguments(
+						std::move(substituted_template_arg_nodes));
 				}
 			}
 			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
