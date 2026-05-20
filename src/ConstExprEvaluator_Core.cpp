@@ -5626,13 +5626,13 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							// binding (which is for {member1, member2, ...} forms).
 							// Keep this before constructor/aggregate materialization so implicit
 							// copy paths do not drop nested binding metadata.
-							if (init_list.size() == 1 && init_list.initializers()[0].is<ExpressionNode>()) {
-								const ASTNode& single_initializer = init_list.initializers()[0];
-								EvalResult single_result = evaluate_expression_with_bindings(single_initializer, bindings, context);
+							if (const ASTNode* single_initializer =
+									tryGetSingleExpressionConstexprObjectReuseCandidate(init_list.initializers())) {
+								EvalResult single_result = evaluate_expression_with_bindings(*single_initializer, bindings, context);
 								if (!single_result.success()) {
 									return single_result;
 								}
-								if (single_result.object_type_index == type_spec.type_index()) {
+								if (canReuseConstexprSameTypeObjectValue(single_result, type_spec.type_index())) {
 									maybe_set_binding_result_exact_type(single_result, decl, &init_expr, context);
 									apply_uint_init_narrowing(single_result);
 									declaration_bindings[var_name] = std::move(single_result);

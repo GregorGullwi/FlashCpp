@@ -8815,16 +8815,17 @@ std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
 	// Implicit same-type copy/move constructors have no user-written member
 	// initializer list/body to execute. Materialize them by reusing the
 	// source constexpr object directly so nested member bindings are preserved.
-	if (matching_ctor->is_implicit() && args.size() == 1 && matching_ctor->parameter_nodes().size() == 1 &&
-		args[0].is<ExpressionNode>()) {
-		EvalResult source_value = outer_bindings
-			? evaluate_expression_with_bindings_const(args[0], *outer_bindings, context)
-			: evaluate(args[0], context);
-		if (!source_value.success()) {
-			return source_value;
-		}
-		if (source_value.object_type_index == type_index) {
-			return source_value;
+	if (matching_ctor->is_implicit() && matching_ctor->parameter_nodes().size() == 1) {
+		if (const ASTNode* single_initializer = tryGetSingleExpressionConstexprObjectReuseCandidate(args)) {
+			EvalResult source_value = outer_bindings
+				? evaluate_expression_with_bindings_const(*single_initializer, *outer_bindings, context)
+				: evaluate(*single_initializer, context);
+			if (!source_value.success()) {
+				return source_value;
+			}
+			if (canReuseConstexprSameTypeObjectValue(source_value, type_index)) {
+				return source_value;
+			}
 		}
 	}
 
