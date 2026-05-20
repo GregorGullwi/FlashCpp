@@ -7,7 +7,7 @@
 TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefinitionLookupContext(
 	const Token& variable_name_token,
 	StringHandle current_instantiation_name) const {
-	if (current_template_definition_lookup_context_ != nullptr &&
+	if (current_template_definition_lookup_context_ &&
 		current_template_definition_lookup_context_->is_valid()) {
 		TemplateDefinitionLookupContext definition_lookup_context =
 			*current_template_definition_lookup_context_;

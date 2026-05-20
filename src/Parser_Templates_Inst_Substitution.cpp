@@ -3003,11 +3003,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		// Capture the caller's depth before forcing replay depth so the guard restores
 		// the original instantiation context after this initializer has been reparsed.
 		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
-		// Depth 1 is the minimum "inside a template declaration" state used by token
-		// classification; replay must parse as if it were back in the original
-		// template declaration regardless of the actual instantiation nesting depth.
-		constexpr int replayTemplateParsingDepth = 1;
-		parsing_template_depth_ = replayTemplateParsingDepth;
+		// Depth 0 means non-template code; depth 1 is the minimum "inside a
+		// template declaration" state needed for dependent token classification.
+		// Replay must parse as if it were back in the original template declaration
+		// regardless of the actual instantiation nesting depth.
+		constexpr int kReplayTemplateParsingDepth = 1;
+		parsing_template_depth_ = kReplayTemplateParsingDepth;
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
 			substitution_context.definition_lookup_context);
