@@ -295,7 +295,7 @@ struct EvalResult {
 
 template <typename AstNodeContainer>
 inline const ASTNode* tryGetSingleExpressionConstexprObjectReuseCandidate(const AstNodeContainer& initializers) {
-	if (initializers.size() != 1 || !initializers[0].is<ExpressionNode>()) {
+	if (initializers.size() != 1 || !initializers[0].template is<ExpressionNode>()) {
 		return nullptr;
 	}
 	return &initializers[0];
