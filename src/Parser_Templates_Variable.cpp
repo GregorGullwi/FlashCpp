@@ -9,7 +9,14 @@ TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefiniti
 	StringHandle current_instantiation_name) const {
 	if (current_template_definition_lookup_context_ != nullptr &&
 		current_template_definition_lookup_context_->is_valid()) {
-		return *current_template_definition_lookup_context_;
+		TemplateDefinitionLookupContext definition_lookup_context =
+			*current_template_definition_lookup_context_;
+		if (current_instantiation_name.isValid() &&
+			!definition_lookup_context.current_instantiation_name.isValid()) {
+			definition_lookup_context.current_instantiation_name =
+				current_instantiation_name;
+		}
+		return definition_lookup_context;
 	}
 
 	TemplateDefinitionLookupContext definition_lookup_context;

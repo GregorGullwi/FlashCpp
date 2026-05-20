@@ -3004,7 +3004,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		// Replay parsing must classify dependent template tokens as if the initializer
 		// were still inside its template declaration, even when instantiation is
 		// requested from a non-template context.
-		parsing_template_depth_ = 1;
+		constexpr int replayTemplateParsingDepth = 1;
+		parsing_template_depth_ = replayTemplateParsingDepth;
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
 			substitution_context.definition_lookup_context);
@@ -3066,12 +3067,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				template_args_for_substitution,
 				instantiated_variable_name);
 		} catch (const std::exception& ex) {
-			FLASH_LOG(
+			FLASH_LOG_FORMAT(
 				Templates,
 				Debug,
+				"{}{} — falling back to AST substitution",
 				failure_message,
-				ex.what(),
-				" — falling back to AST substitution");
+				ex.what());
 			return std::nullopt;
 		}
 	};
