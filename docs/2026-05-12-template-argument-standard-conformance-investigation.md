@@ -87,9 +87,15 @@ Future work should assume these are already in place:
 - qualified member variable-template chains through instantiated owners and
   dependent bases now recover the canonical member variable-template owner and
   outer class-template bindings for covered constexpr/initializer flows.
+- dependent-base `this->template` member-function-template calls in inline
+  class-template bodies now keep enough deferred-base owner metadata to find
+  member templates declared in base class templates before the derived class
+  template declaration is registered.
 
 Latest validation on Linux sharded build:
 `2430` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Targeted validation for the latest dependent-base member-template slice passed
+the three focused ELF regressions after `make sharded CXX=clang++`.
 
 ## Remaining work, in priority order
 
@@ -118,16 +124,19 @@ Most concrete next subtask:
   arguments such as `Traits<T>::template Box<T>::value`, and call-shaped
   expressions preserve `Traits<T>::template Box<T>::get()`. Qualified member
   variable-template chains now recover concrete explicit template arguments and
-  outer owner bindings for the covered initializer/constexpr paths. The next
-  concrete gap is declarations outside the covered replay flows, plus deeper
-  dependent-base/member-chain shapes that still do not carry enough semantic
-  metadata. The current `<ratio>` blocker remains a useful bounded target
-  because parsing and `std::ratio_less` constexpr comparison now progress to
-  later IR conversion/link failures rather than stopping in the fixed default
-  NTTP declared-type materialization, dependent member-template argument paths,
-  covered member alias-template target materialization path, alias-template
-  `sizeof...` NTTP target arguments, covered variable-template initializer
-  replay paths, or covered member variable-template chain recovery.
+  outer owner bindings for the covered initializer/constexpr paths.
+  `this->template` member-function-template calls through dependent bases now
+  work for focused inline class-template body cases, including multilevel base
+  chains. The next concrete gap is declarations outside the covered replay
+  flows, plus deeper dependent-base/member-chain shapes that still do not carry
+  enough semantic metadata. The current `<ratio>` blocker remains a useful
+  bounded target because parsing and `std::ratio_less` constexpr comparison now
+  progress to later IR conversion/link failures rather than stopping in the
+  fixed default NTTP declared-type materialization, dependent member-template
+  argument paths, covered member alias-template target materialization path,
+  alias-template `sizeof...` NTTP target arguments, covered variable-template
+  initializer replay paths, covered member variable-template chain recovery, or
+  covered dependent-base `this->template` member-function-template lookup.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -295,6 +304,10 @@ re-solving already-solved problems.
   dependent-owner, and inherited dependent-base cases such as
   `Derived<T>::template member_v<T>` by resolving the owner-aware member
   variable-template name and folding outer bindings into replay/substitution.
+- deferred base template pattern names are now stored on `StructTypeInfo`, so
+  inline class-template body parsing can resolve `this->template member<...>()`
+  through dependent base class templates without waiting for the derived
+  `TemplateClassDeclarationNode` to be registered.
 
 ## Exit criteria
 
