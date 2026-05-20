@@ -671,8 +671,10 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		if (!inferred_range_type.has_value() && node.resolved_range_type().has_value()) {
 			inferred_range_type = node.resolved_range_type();
 		}
+		// Range-for range-expression type parser fallback. Probed 2026-05-20 across
+		// the full test corpus — never hit for any body. Replaced with InternalError.
 		if (!inferred_range_type.has_value() && allow_parser_range_type_fallback) {
-			inferred_range_type = parser_.get_expression_type(range_expr);
+			throw InternalError("Range-for range-expression type could not be resolved: sema should provide type");
 		}
 		if (!inferred_range_type.has_value()) {
 			FLASH_LOG(Codegen, Error, "Could not infer type of non-identifier range expression");

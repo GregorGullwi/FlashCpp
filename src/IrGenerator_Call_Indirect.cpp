@@ -265,26 +265,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			(callee_type.has_value() &&
 			 (callee_type->type() == TypeCategory::Invalid ||
 			  isPlaceholderAutoType(callee_type->type())));
-		const bool sema_fallback_state_allows_recovery =
-			resolved_op_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent ||
-			callee_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
-			(callee_type_query.state == TypeSpecifierQueryResult::State::Available && callee_type_unusable_for_callable) ||
-			(!sema_normalized_current_function_ &&
-			 (resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
-			  callee_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed));
-		const bool needs_parser_fallback =
-			callee_type_unusable_for_callable &&
-			!resolved_op_call &&
-			!sema_normalized_current_function_ &&
-			sema_fallback_state_allows_recovery;
-		if (needs_parser_fallback) {
+		// operator() callable type parser fallback. Probed 2026-05-20 across the full
+		// test corpus — never hit for any body. Sema now always resolves the callable type.
+		if (callee_type_unusable_for_callable && !resolved_op_call) {
 			const bool sema_query_not_yet_analyzed =
 				resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
 				callee_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
-			if (sema_normalized_current_function_ && sema_query_not_yet_analyzed) {
-				throw InternalError("Normalized callable operator() receiver query remained NotYetAnalyzed");
-			}
-			callee_type = parser_.get_expression_type(object_node);
+			if (sema_query_not_yet_analyzed)
+				throw InternalError("Callable operator() receiver query remained NotYetAnalyzed");
+			throw InternalError("Callable operator() receiver type could not be resolved: sema should provide callable type");
 		}
 		if (!callee_type.has_value()) {
 			if (object_ident) {

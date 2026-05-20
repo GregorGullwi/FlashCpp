@@ -1511,14 +1511,11 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			}
 		}
 			// Phase 15: sema should annotate all unary operand integral promotions.
-			// When sema does not provide an explicit cast annotation for this path,
-			// keep the fallback unconditionally to avoid dropping promotions.
+			// Probed 2026-05-20 across the full test corpus — never hit for any body.
+			// Replaced with unconditional InternalError.
 		if (!promoted && (operandType == TypeCategory::Bool ||
 						  (is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
-			if (sema_normalized_current_function_)
-				throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
-			operandIrOperands = generateTypeConversion(operandIrOperands, operandType, TypeCategory::Int, unaryOperatorNode.get_token());
-			operandType = TypeCategory::Int;
+			throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
 		}
 			// Unary plus is a no-op after promotion — return immediately without
 			// allocating an unused result_var.
