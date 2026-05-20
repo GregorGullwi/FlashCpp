@@ -5624,7 +5624,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							// Preserve the fully-materialized member bindings by reusing the
 							// evaluated source object directly instead of forcing aggregate-member
 							// binding (which is for {member1, member2, ...} forms).
-							if (init_list.size() == 1) {
+							// Keep this before constructor/aggregate materialization so implicit
+							// copy paths do not drop nested binding metadata.
+							if (init_list.size() == 1 && init_list.initializers()[0].is<ExpressionNode>()) {
 								const ASTNode& single_initializer = init_list.initializers()[0];
 								EvalResult single_result = evaluate_expression_with_bindings(single_initializer, bindings, context);
 								if (!single_result.success()) {
