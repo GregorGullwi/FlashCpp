@@ -5102,18 +5102,41 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						.append(qualified_id.name())
 						.commit();
 				}
+				std::string_view variable_template_lookup_name =
+					qualified_lookup_name;
+				std::optional<OuterTemplateBinding> explicit_outer_binding;
+				if (!scope_name.empty()) {
+					std::string_view member_variable_template_name =
+						parser.lookup_inherited_member_variable_template_name(
+							StringTable::getOrInternStringHandle(scope_name),
+							StringTable::getOrInternStringHandle(qualified_id.name()),
+							0);
+					if (!member_variable_template_name.empty()) {
+						variable_template_lookup_name =
+							member_variable_template_name;
+					}
+					explicit_outer_binding =
+						parser.buildOuterBindingForOwner(
+							StringTable::getOrInternStringHandle(scope_name));
+				}
 
 				auto instantiated_var =
 					parser.try_instantiate_variable_template(
-						qualified_lookup_name,
-						template_args);
+						variable_template_lookup_name,
+						template_args,
+						explicit_outer_binding.has_value()
+							? &*explicit_outer_binding
+							: nullptr);
 				context.normalizePendingSemanticRoots();
 				if (!instantiated_var.has_value() &&
-					qualified_lookup_name != qualified_id.name()) {
+					variable_template_lookup_name != qualified_id.name()) {
 					instantiated_var =
 						parser.try_instantiate_variable_template(
 							qualified_id.name(),
-							template_args);
+							template_args,
+							explicit_outer_binding.has_value()
+								? &*explicit_outer_binding
+								: nullptr);
 					context.normalizePendingSemanticRoots();
 				}
 				if (instantiated_var.has_value() &&

@@ -4545,11 +4545,11 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		return EvalResult::error("No template arguments extracted for variable template");
 	}
 
-	auto var_node = parser.try_instantiate_variable_template(func_name, template_args);
+	auto var_node = parser.try_instantiate_variable_template(func_name, template_args, nullptr);
 	context.normalizePendingSemanticRoots();
 
 	if (!var_node.has_value() && call_expr.has_qualified_name()) {
-		var_node = parser.try_instantiate_variable_template(call_expr.qualified_name(), template_args);
+		var_node = parser.try_instantiate_variable_template(call_expr.qualified_name(), template_args, nullptr);
 		context.normalizePendingSemanticRoots();
 	}
 

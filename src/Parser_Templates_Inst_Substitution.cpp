@@ -28,6 +28,80 @@ static void buildVariableTemplateParameterReplayState(
 	}
 }
 
+static void buildEffectiveVariableTemplateSubstitutionInputs(
+	std::string_view template_name,
+	const OuterTemplateBinding* outer_binding,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> filled_args,
+	std::vector<TemplateParameterNode>& effective_template_params_storage,
+	std::vector<TemplateTypeArg>& effective_template_args_storage,
+	std::span<const TemplateParameterNode>& effective_template_params,
+	std::span<const TemplateTypeArg>& effective_template_args) {
+	effective_template_params = template_params;
+	effective_template_args = filled_args;
+	if (outer_binding == nullptr) {
+		return;
+	}
+	if (outer_binding->params.empty()) {
+		FLASH_LOG_FORMAT(
+			Templates,
+			Warning,
+			"OuterTemplateBinding is missing original parameter metadata while instantiating '{}'; "
+			"skipping outer binding merge for variable-template substitution",
+			template_name);
+		return;
+	}
+
+	effective_template_params_storage.clear();
+	effective_template_args_storage.clear();
+	effective_template_params_storage.reserve(
+		outer_binding->params.size() + template_params.size());
+
+	for (const ASTNode& outer_param_node : outer_binding->params) {
+		const TemplateParameterNode* outer_param =
+			tryGetTemplateParameterNode(outer_param_node);
+		if (outer_param == nullptr) {
+			continue;
+		}
+		effective_template_params_storage.push_back(*outer_param);
+	}
+	if (effective_template_params_storage.empty()) {
+		FLASH_LOG_FORMAT(
+			Templates,
+			Warning,
+			"OuterTemplateBinding parameter metadata contains no template parameters while instantiating '{}'; "
+			"skipping outer binding merge for variable-template substitution",
+			template_name);
+		return;
+	}
+	for (const TemplateParameterNode& param : template_params) {
+		effective_template_params_storage.push_back(param);
+	}
+
+	const std::span<const TemplateTypeArg> outer_args =
+		!outer_binding->all_args.empty()
+			? std::span<const TemplateTypeArg>(
+				outer_binding->all_args.data(),
+				outer_binding->all_args.size())
+			: std::span<const TemplateTypeArg>(
+				outer_binding->param_args.data(),
+				outer_binding->param_args.size());
+	effective_template_args_storage.reserve(outer_args.size() + filled_args.size());
+	for (const TemplateTypeArg& outer_arg : outer_args) {
+		effective_template_args_storage.push_back(outer_arg);
+	}
+	for (const TemplateTypeArg& arg : filled_args) {
+		effective_template_args_storage.push_back(arg);
+	}
+
+	effective_template_params = std::span<const TemplateParameterNode>(
+		effective_template_params_storage.data(),
+		effective_template_params_storage.size());
+	effective_template_args = std::span<const TemplateTypeArg>(
+		effective_template_args_storage.data(),
+		effective_template_args_storage.size());
+}
+
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
 	TypeIndex value_type_index = eval_result.exact_type.has_value()
 		? eval_result.exact_type->type_index().withCategory(eval_result.exact_type->category())
@@ -2781,7 +2855,10 @@ ASTNode Parser::substitute_template_params_in_expression(
 // Returns the instantiated StructDeclarationNode if successful
 // Try to instantiate a variable template with the given template arguments
 // Returns the instantiated variable declaration node or nullopt if already instantiated
-std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args) {
+std::optional<ASTNode> Parser::try_instantiate_variable_template(
+	std::string_view template_name,
+	std::span<const TemplateTypeArg> template_args,
+	const OuterTemplateBinding* explicit_outer_binding) {
 	// First, try to find a partial specialization that matches the template arguments
 	// For example, is_reference_v<int&> should match is_reference_v<T&>
 	// Pattern names are: template_name_R (lvalue ref), template_name_RR (rvalue ref), template_name_P (pointer)
@@ -2874,6 +2951,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 
 	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
 	const auto& template_params = var_template.template_parameters();
+	const OuterTemplateBinding* outer_binding =
+		explicit_outer_binding != nullptr
+			? explicit_outer_binding
+			: gTemplateRegistry.getOuterTemplateBinding(template_name);
+	std::optional<TemplateEnvironment> outer_environment;
+	if (outer_binding != nullptr) {
+		outer_environment = buildTemplateEnvironment(*outer_binding);
+	}
 
 	auto fill_missing_variable_template_args =
 		[&](std::span<const TemplateTypeArg> input_args) -> std::optional<std::vector<TemplateTypeArg>> {
@@ -3025,6 +3110,39 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		return std::nullopt;
 	}
 	std::span<const TemplateTypeArg> filled_args = *filled_args_opt;
+	std::vector<TemplateTypeArg> effective_instantiation_args;
+	if (outer_binding != nullptr) {
+		const auto& outer_args =
+			!outer_binding->all_args.empty()
+				? outer_binding->all_args
+				: outer_binding->param_args;
+		effective_instantiation_args.reserve(outer_args.size() + filled_args.size());
+		for (const TemplateTypeArg& outer_arg : outer_args) {
+			effective_instantiation_args.push_back(outer_arg);
+		}
+		for (const TemplateTypeArg& filled_arg : filled_args) {
+			effective_instantiation_args.push_back(filled_arg);
+		}
+	}
+	std::span<const TemplateTypeArg> instantiation_identity_args =
+		effective_instantiation_args.empty()
+			? filled_args
+			: std::span<const TemplateTypeArg>(
+				  effective_instantiation_args.data(),
+				  effective_instantiation_args.size());
+	std::vector<TemplateParameterNode> effective_template_params_storage;
+	std::vector<TemplateTypeArg> effective_template_args_storage;
+	std::span<const TemplateParameterNode> effective_template_params;
+	std::span<const TemplateTypeArg> effective_template_args;
+	buildEffectiveVariableTemplateSubstitutionInputs(
+		template_name,
+		outer_binding,
+		template_params,
+		filled_args,
+		effective_template_params_storage,
+		effective_template_args_storage,
+		effective_template_params,
+		effective_template_args);
 
 	auto try_reparse_variable_template_initializer =
 		[&](
@@ -3046,7 +3164,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			buildTemplateInstantiationContext(
 				template_params_for_substitution,
 				template_args_for_substitution,
-				nullptr,
+				outer_environment.has_value() ? &*outer_environment : nullptr,
 				currentTemplateSubstitutionFailurePolicy());
 
 		TemplateDefinitionLookupContext definition_lookup_context =
@@ -3162,7 +3280,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		const TemplateVariableDeclarationNode& spec_template = structural_match->node.as<TemplateVariableDeclarationNode>();
 		const VariableDeclarationNode& spec_var_decl = spec_template.variable_decl_node();
 		const Token& orig_token = spec_var_decl.declaration().identifier_token();
-		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, filled_args);
+		std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, instantiation_identity_args);
 
 		if (gSymbolTable.lookup(persistent_name).has_value()) {
 			return gSymbolTable.lookup(persistent_name);
@@ -3235,7 +3353,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 
 	// Generate unique name for the instantiation using hash-based naming
 	// This ensures consistent naming with class template instantiations
-	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, filled_args);
+	std::string_view persistent_name = FlashCpp::generateInstantiatedNameFromArgs(simple_template_name, instantiation_identity_args);
 
 	// Check if already instantiated
 	if (gSymbolTable.lookup(persistent_name).has_value()) {
@@ -3246,7 +3364,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	const VariableDeclarationNode& orig_var_decl = var_template.variable_decl_node();
 	const DeclarationNode& orig_decl = orig_var_decl.declaration();
 	InlineVector<TemplateTypeArg, 4> filled_args_inline = toInlineTemplateArgs(filled_args);
-	ASTNode substituted_type = substituteTemplateParameters(orig_decl.type_node(), template_params, filled_args_inline);
+	TemplateInstantiationContext variable_template_context =
+		buildTemplateInstantiationContext(
+			effective_template_params,
+			effective_template_args,
+			nullptr,
+			currentTemplateSubstitutionFailurePolicy());
+	ASTNode substituted_type = substituteTemplateParameters(orig_decl.type_node(), variable_template_context);
 
 	// Create new declaration with substituted type and instantiated name
 	// Use original token's line/column/file info for better diagnostics
@@ -3262,15 +3386,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			StringTable::getOrInternStringHandle(persistent_name);
 		new_initializer = try_replay_variable_template_initializer(
 			var_template,
-			template_params,
-			filled_args_inline,
+			effective_template_params,
+			effective_template_args,
 			instantiated_var_handle,
 			"Replay substitution failed for variable-template initializer: ");
 		if (!new_initializer.has_value()) {
 			new_initializer = substituteTemplateParameters(
 				orig_var_decl.initializer().value(),
-				template_params,
-				filled_args_inline);
+				variable_template_context);
 		}
 		FLASH_LOG(Templates, Debug, "Initializer substitution complete");
 

@@ -749,7 +749,7 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 
 						if (any_substituted) {
-							auto result = try_instantiate_variable_template(base_template, new_args);
+							auto result = try_instantiate_variable_template(base_template, new_args, nullptr);
 							if (result.has_value()) {
 							// The variable template was instantiated. Return an IdentifierNode
 							// that references the instantiated variable (not the VariableDeclarationNode itself)

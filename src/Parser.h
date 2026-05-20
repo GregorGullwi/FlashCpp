@@ -2435,7 +2435,11 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	bool isReachableVirtualBaseInitializer(const StructTypeInfo* struct_info, std::string_view candidate_name) const;
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode& spec_node);  // Instantiate full specialization
-	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Instantiate variable template
+	std::optional<ASTNode> try_instantiate_variable_template(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> template_args,
+		const OuterTemplateBinding* explicit_outer_binding);
+	std::optional<OuterTemplateBinding> buildOuterBindingForOwner(StringHandle owner_name);
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
 		const InlineVector<TemplateParameterNode, 4>& template_parameters,
@@ -3424,6 +3428,8 @@ private:	 // Resume private methods
 	// Helper: Resolve an alias/class member-template segment including inherited bases.
 	// Returns the qualified template name to materialize, or empty when not found.
 	std::string_view lookup_inherited_member_template_name(StringHandle struct_name, StringHandle member_name, int depth);
+	std::string_view lookup_direct_member_variable_template_name(StringHandle owner_name, StringHandle member_name);
+	std::string_view lookup_inherited_member_variable_template_name(StringHandle struct_name, StringHandle member_name, int depth);
 	// Convenience overload for string_view parameters
 	const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
 		return lookup_inherited_template(

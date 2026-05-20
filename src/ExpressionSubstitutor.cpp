@@ -1762,13 +1762,13 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			const bool has_variable_template_candidate =
 				gTemplateRegistry.lookupVariableTemplate(func_name).has_value() ||
 				(call.has_qualified_name() && gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value());
-			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args);
+			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args, nullptr);
 			if (var_template_node.has_value()) {
 				normalizePendingSemanticRoots();
 			}
 			// If not found by simple name, try qualified name if available
 			if (!var_template_node.has_value() && call.has_qualified_name()) {
-				var_template_node = parser_.try_instantiate_variable_template(call.qualified_name(), substituted_template_args);
+				var_template_node = parser_.try_instantiate_variable_template(call.qualified_name(), substituted_template_args, nullptr);
 				if (var_template_node.has_value()) {
 					normalizePendingSemanticRoots();
 				}
@@ -2931,6 +2931,25 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					qual_id.identifier_token().column(),
 					qual_id.identifier_token().file_index());
 			}
+			auto substitute_qualified_id_template_args = [&]() {
+				std::vector<ASTNode> explicit_template_arg_nodes;
+				explicit_template_arg_nodes.reserve(
+					qual_id.template_arguments().size());
+				for (const ASTNode& template_arg : qual_id.template_arguments()) {
+					if (template_arg.is<TypeSpecifierNode>()) {
+						TypeSpecifierNode& substituted_type =
+							gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+								substituteInType(
+									template_arg.as<TypeSpecifierNode>()));
+						explicit_template_arg_nodes.push_back(
+							ASTNode(&substituted_type));
+					} else {
+						explicit_template_arg_nodes.push_back(
+							substitute(template_arg));
+					}
+				}
+				return explicit_template_arg_nodes;
+			};
 			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 				NamespaceRegistry::GLOBAL_NAMESPACE,
 				StringTable::getOrInternStringHandle(materialized_namespace));
@@ -2938,14 +2957,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 					new_ns_handle,
 					final_token);
-			auto substituteQualIdTemplateArgs = [&]() -> std::vector<ASTNode> {
-				std::vector<ASTNode> result;
-				result.reserve(qual_id.template_arguments().size());
-				for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
-					result.push_back(substitute(template_arg_node));
-				}
-				return result;
-			};
 			if (final_member.has_template_arguments) {
 				InlineVector<TemplateTypeArg, 4> final_member_args =
 					materializeDependentRecordTemplateArgs(
@@ -2964,16 +2975,19 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						final_token);
 				if (explicit_template_arg_nodes.empty() &&
 					qual_id.has_template_arguments()) {
-					explicit_template_arg_nodes = substituteQualIdTemplateArgs();
+					explicit_template_arg_nodes =
+						substitute_qualified_id_template_args();
 				}
 				if (!explicit_template_arg_nodes.empty()) {
 					new_qual_id.set_template_arguments(
 						std::move(explicit_template_arg_nodes));
 				}
 			} else if (qual_id.has_template_arguments()) {
-				std::vector<ASTNode> substituted = substituteQualIdTemplateArgs();
-				if (!substituted.empty()) {
-					new_qual_id.set_template_arguments(std::move(substituted));
+				std::vector<ASTNode> explicit_template_arg_nodes =
+					substitute_qualified_id_template_args();
+				if (!explicit_template_arg_nodes.empty()) {
+					new_qual_id.set_template_arguments(
+						std::move(explicit_template_arg_nodes));
 				}
 			}
 			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
