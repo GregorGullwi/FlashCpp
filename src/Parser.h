@@ -2456,7 +2456,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::span<const TemplateTypeArg> template_args);
 	StringHandle getDeferredMemberAliasHandle(
 		StringHandle member_name,
-		std::string_view instantiated_name) const;
+		std::string_view instantiated_name,
+		bool require_owner_qualified);
 	std::optional<QualifiedTypeMemberAccess> materializeDeferredAliasMemberTemplateSegment(
 		const TemplateAliasNode& alias_node,
 		const DeferredAliasMemberTemplateSegment& segment,

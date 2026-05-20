@@ -1028,7 +1028,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 
 StringHandle Parser::getDeferredMemberAliasHandle(
 	StringHandle member_name,
-	std::string_view instantiated_name) const {
+	std::string_view instantiated_name,
+	bool require_owner_qualified) {
 	StringHandle member_alias_handle =
 		StringTable::getOrInternStringHandle(
 			StringBuilder()
@@ -1039,6 +1040,17 @@ StringHandle Parser::getDeferredMemberAliasHandle(
 	if (gTemplateRegistry.lookup_alias_template(member_alias_handle).has_value()) {
 		return member_alias_handle;
 	}
+	std::string_view inherited_member_alias_name =
+		lookup_inherited_member_template_name(
+			StringTable::getOrInternStringHandle(instantiated_name),
+			member_name,
+			0);
+	if (!inherited_member_alias_name.empty()) {
+		return StringTable::getOrInternStringHandle(inherited_member_alias_name);
+	}
+	if (require_owner_qualified) {
+		return {};
+	}
 	return member_name;
 }
 
@@ -1047,6 +1059,10 @@ std::optional<QualifiedTypeMemberAccess> Parser::materializeDeferredAliasMemberT
 	const DeferredAliasMemberTemplateSegment& segment,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle member_alias_handle) {
+	if (segment.has_template_arguments &&
+		!member_alias_handle.isValid()) {
+		return std::nullopt;
+	}
 	const auto member_template_params = getTargetTemplateParameters(member_alias_handle);
 	InlineVector<TemplateTypeArg, 4> member_args;
 	std::span<const ASTNode> member_template_args(segment.template_args.data(), segment.template_args.size());
@@ -1089,11 +1105,14 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 	const TemplateAliasNode& alias_node,
 	std::span<const TemplateTypeArg> template_args,
 	std::string_view instantiated_name) {
-	std::string_view current_owner_name = instantiated_name;
-	const TypeInfo* resolved_type = nullptr;
+	std::vector<QualifiedTypeMemberAccess> member_chain;
+	member_chain.reserve(alias_node.targetMemberTemplateSegments().size());
 	for (const DeferredAliasMemberTemplateSegment& segment : alias_node.targetMemberTemplateSegments()) {
 		StringHandle member_alias_handle =
-			getDeferredMemberAliasHandle(segment.name, current_owner_name);
+			getDeferredMemberAliasHandle(
+				segment.name,
+				instantiated_name,
+				segment.has_template_arguments);
 		auto materialized_segment =
 			materializeDeferredAliasMemberTemplateSegment(
 				alias_node,
@@ -1103,16 +1122,13 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 		if (!materialized_segment.has_value()) {
 			return nullptr;
 		}
-		QualifiedTypeMemberAccess member_access = std::move(*materialized_segment);
-		resolved_type = resolveBaseClassMemberTypeChain(
-			current_owner_name,
-			std::span<QualifiedTypeMemberAccess>(&member_access, 1));
-		if (resolved_type == nullptr) {
-			return nullptr;
-		}
-		current_owner_name = StringTable::getStringView(resolved_type->name());
+		member_chain.push_back(std::move(*materialized_segment));
 	}
-	return resolved_type;
+	return resolveBaseClassMemberTypeChain(
+		instantiated_name,
+		std::span<QualifiedTypeMemberAccess>(
+			member_chain.data(),
+			member_chain.size()));
 }
 
 StringHandle Parser::getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const {
@@ -1518,8 +1534,21 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			}
 		}
 	}
+	auto has_complex_deferred_member_chain =
+		[](const TemplateAliasNode& node) {
+			const auto segments = node.targetMemberTemplateSegments();
+			if (segments.size() > 1) {
+				return true;
+			}
+			return std::ranges::any_of(
+				segments,
+				[](const DeferredAliasMemberTemplateSegment& segment) {
+					return segment.has_template_arguments;
+				});
+		};
 	if (alias_node != nullptr &&
-		alias_node->hasDeferredMemberTemplateTarget() &&
+		alias_node->hasDeferredMemberTarget() &&
+		has_complex_deferred_member_chain(*alias_node) &&
 		!result.instantiated_name.empty()) {
 		if (const TypeInfo* materialized_member =
 				materializeDeferredAliasMemberTemplateChain(
@@ -2343,7 +2372,19 @@ std::string_view Parser::instantiate_and_register_base_template(
 			std::string_view target_name(alias_node.target_template_name());
 			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
 			if (!instantiated_name.empty()) {
-				if (alias_node.hasDeferredMemberTemplateTarget()) {
+				if (alias_node.hasDeferredMemberTarget()) {
+					const auto segments = alias_node.targetMemberTemplateSegments();
+					const bool has_complex_member_chain =
+						segments.size() > 1 ||
+						std::ranges::any_of(
+							segments,
+							[](const DeferredAliasMemberTemplateSegment& segment) {
+								return segment.has_template_arguments;
+							});
+					if (!has_complex_member_chain) {
+						base_class_name = instantiated_name;
+						return instantiated_name;
+					}
 					if (const TypeInfo* materialized_member =
 							materializeDeferredAliasMemberTemplateChain(
 								alias_node,
