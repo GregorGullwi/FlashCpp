@@ -838,12 +838,90 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 		const ASTNode& target_arg_node = target_template_args[i];
 		if (auto pack_range = getForwardedPackRange(target_arg_node);
 			pack_range.has_value()) {
-			for (size_t offset = 0; offset < pack_range->second; ++offset) {
+			size_t expected_pack_count = pack_range->second;
+			std::optional<std::string_view> pack_name =
+				tryGetAliasPackForwardingName(target_arg_node);
+			std::optional<size_t> alias_pack_param_idx;
+			bool is_non_type_pack = false;
+			TypeCategory pack_value_category = TypeCategory::Int;
+			if (pack_name.has_value()) {
+				alias_pack_param_idx =
+					find_param_index(StringTable::getOrInternStringHandle(*pack_name));
+				if (alias_pack_param_idx.has_value() &&
+					*alias_pack_param_idx < alias_params_span.size()) {
+					const TemplateParameterNode& alias_pack_param =
+						alias_params_span[*alias_pack_param_idx];
+					is_non_type_pack =
+						alias_pack_param.kind() == TemplateParameterKind::NonType;
+					if (alias_pack_param.has_type()) {
+						pack_value_category =
+							alias_pack_param.type_specifier_node().type();
+					}
+				}
+			}
+			if (is_non_type_pack && expected_pack_count <= 1 && pack_name.has_value()) {
+				if (auto tracked_pack_size = get_template_param_pack_size(*pack_name);
+					tracked_pack_size.has_value() && *tracked_pack_size > expected_pack_count) {
+					expected_pack_count = *tracked_pack_size;
+				} else if (auto active_pack_size = get_pack_size(*pack_name);
+						   active_pack_size.has_value() && *active_pack_size > expected_pack_count) {
+					expected_pack_count = *active_pack_size;
+				} else if (size_t counted_pack_elements = count_pack_elements(*pack_name);
+						   counted_pack_elements > expected_pack_count) {
+					expected_pack_count = counted_pack_elements;
+				}
+			}
+			for (size_t offset = 0; offset < expected_pack_count; ++offset) {
 				const size_t arg_index = pack_range->first + offset;
 				if (arg_index >= template_args.size()) {
-					break;
+					if (!is_non_type_pack || !pack_name.has_value()) {
+						break;
+					}
+					const std::string_view pack_element_name =
+						StringBuilder()
+							.append(*pack_name)
+							.append("_")
+							.append(offset)
+							.commit();
+					StringHandle pack_element_handle =
+						StringTable::getOrInternStringHandle(pack_element_name);
+					ASTNode pack_element_expr =
+						ASTNode::emplace_node<ExpressionNode>(
+							IdentifierNode(
+								Token(Token::Type::Identifier, pack_element_name, 0, 0, 0)));
+					if (auto const_value =
+							try_evaluate_constant_expression(pack_element_expr);
+						const_value.has_value()) {
+						TemplateTypeArg recovered_arg =
+							TemplateTypeArg::makeValueIdentity(const_value->identity);
+						if (alias_pack_param_idx.has_value()) {
+							recovered_arg = normalize_alias_param_arg(
+								*alias_pack_param_idx,
+								recovered_arg);
+						}
+						substituted_args.push_back(std::move(recovered_arg));
+						continue;
+					}
+					TemplateTypeArg dependent_pack_arg =
+						TemplateTypeArg::makeDependentValue(
+							pack_element_handle,
+							pack_value_category);
+					if (alias_pack_param_idx.has_value()) {
+						dependent_pack_arg = normalize_alias_param_arg(
+							*alias_pack_param_idx,
+							dependent_pack_arg);
+					}
+					substituted_args.push_back(std::move(dependent_pack_arg));
+					continue;
 				}
-				substituted_args.push_back(template_args[arg_index]);
+				const size_t alias_param_idx_for_normalization =
+					alias_pack_param_idx.has_value()
+						? *alias_pack_param_idx
+						: arg_index;
+				substituted_args.push_back(
+					normalize_alias_param_arg(
+						alias_param_idx_for_normalization,
+						template_args[arg_index]));
 			}
 			continue;
 		}
