@@ -210,7 +210,10 @@ namespace {
 	}
 
 	// Detect whether an alias target argument forwards a parameter pack and return the pack name.
-	// Supports type-side `Type...` and expression-side `expr...` forwarding patterns.
+	// Supports type-side `Type...` and expression-side forwarding patterns.
+	// Note: parser recovery may represent `Vs...` as a plain identifier expression `Vs`
+	// in deferred alias targets, so identifier/TTP-reference spellings are also treated
+	// as potential forwarding candidates and validated against variadic parameter metadata.
 	// TODO(template-pack-forwarding): Extend detection/materialization to qualified or computed
 	// pack patterns (e.g. `const Ts...`, `(Vs + 1)...`) once deferred alias expansion supports them.
 	std::optional<std::string_view> tryGetAliasPackForwardingName(const ASTNode& target_arg_node) {
@@ -226,6 +229,12 @@ namespace {
 			return std::nullopt;
 		}
 		const ExpressionNode& target_arg_expr = target_arg_node.as<ExpressionNode>();
+		if (const auto* identifier = std::get_if<IdentifierNode>(&target_arg_expr)) {
+			return identifier->name();
+		}
+		if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&target_arg_expr)) {
+			return StringTable::getStringView(tparam_ref->param_name());
+		}
 		if (const auto* pack_expansion = std::get_if<PackExpansionExprNode>(&target_arg_expr)) {
 			return tryExtractPackNameFromPackExpansionPattern(pack_expansion->pattern());
 		}
@@ -838,10 +847,69 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 		const ASTNode& target_arg_node = target_template_args[i];
 		if (auto pack_range = getForwardedPackRange(target_arg_node);
 			pack_range.has_value()) {
-			for (size_t offset = 0; offset < pack_range->second; ++offset) {
+			size_t expected_pack_count = pack_range->second;
+			std::optional<std::string_view> pack_name =
+				tryGetAliasPackForwardingName(target_arg_node);
+			bool is_non_type_pack = false;
+			TypeCategory pack_value_category = TypeCategory::Int;
+			if (pack_name.has_value()) {
+				for (const TemplateParameterNode& alias_pack_param : alias_params_span) {
+					if (alias_pack_param.name() != *pack_name) {
+						continue;
+					}
+					is_non_type_pack =
+						alias_pack_param.kind() == TemplateParameterKind::NonType;
+					if (alias_pack_param.has_type()) {
+						pack_value_category =
+							alias_pack_param.type_specifier_node().type();
+					}
+					break;
+				}
+			}
+			if (is_non_type_pack && expected_pack_count <= 1) {
+				if (auto tracked_pack_size = get_template_param_pack_size(*pack_name);
+					tracked_pack_size.has_value() && *tracked_pack_size > expected_pack_count) {
+					expected_pack_count = *tracked_pack_size;
+				} else if (auto active_pack_size = get_pack_size(*pack_name);
+						   active_pack_size.has_value() && *active_pack_size > expected_pack_count) {
+					expected_pack_count = *active_pack_size;
+				} else if (size_t counted_pack_elements = count_pack_elements(*pack_name);
+						   counted_pack_elements > expected_pack_count) {
+					expected_pack_count = counted_pack_elements;
+				}
+			}
+			for (size_t offset = 0; offset < expected_pack_count; ++offset) {
 				const size_t arg_index = pack_range->first + offset;
 				if (arg_index >= template_args.size()) {
-					break;
+					if (!is_non_type_pack) {
+						break;
+					}
+					const std::string_view pack_element_name =
+						StringBuilder()
+							.append(*pack_name)
+							.append("_")
+							.append(offset)
+							.commit();
+					StringHandle pack_element_handle =
+						StringTable::getOrInternStringHandle(pack_element_name);
+					ASTNode pack_element_expr =
+						ASTNode::emplace_node<ExpressionNode>(
+							IdentifierNode(
+								Token(Token::Type::Identifier, pack_element_name, 0, 0, 0)));
+					if (auto const_value =
+							try_evaluate_constant_expression(pack_element_expr);
+						const_value.has_value()) {
+						TemplateTypeArg recovered_arg =
+							TemplateTypeArg::makeValueIdentity(const_value->identity);
+						substituted_args.push_back(std::move(recovered_arg));
+						continue;
+					}
+					TemplateTypeArg dependent_pack_arg =
+						TemplateTypeArg::makeDependentValue(
+							pack_element_handle,
+							pack_value_category);
+					substituted_args.push_back(std::move(dependent_pack_arg));
+					continue;
 				}
 				substituted_args.push_back(template_args[arg_index]);
 			}
