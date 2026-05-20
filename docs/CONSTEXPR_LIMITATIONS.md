@@ -132,6 +132,8 @@ struct S { int data[]; };  // ❌ (flexible array member — also ill-formed in 
 
 **Recent improvement:** Arrow-member resolution in constexpr evaluation now dereferences binding-backed pointers before falling back to symbol-table reconstruction. This improves behavior when synthesized iterator/backing pointers are still available in active bindings.
 
+**Recent improvement:** Copy-list-initialization from same-type constexpr objects now preserves fully materialized member bindings (`T b{a};`). This fixes stored-iterator round-trips where an iterator-bearing object is copied once before dereference (including nested member-call paths).
+
 **Still limited:** Direct element iteration still depends on the iterator pointer retaining its synthesized snapshot. If user code stores the iterator in another object and later reloads it in a way that discards the snapshot metadata, dereference can still fail. The remaining work is to preserve snapshot-backed pointer state across every struct/member round-trip, not just through the direct `begin()`/`end()` iteration path.
 
 ```cpp
