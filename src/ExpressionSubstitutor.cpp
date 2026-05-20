@@ -167,13 +167,17 @@ std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
 			continue;
 		}
 
-		if (!arg.type_index.is_valid()) {
-			continue;
+		TypeIndex arg_type_index = arg.type_index;
+		if (!arg_type_index.is_valid()) {
+			if (arg.typeEnum() == TypeCategory::Invalid) {
+				continue;
+			}
+			arg_type_index = TypeIndex{}.withCategory(arg.typeEnum());
 		}
 
-		int size_in_bits = computeTypeSizeInBits(arg.type_index);
+		int size_in_bits = computeTypeSizeInBits(arg_type_index);
 		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.type_index,
+			arg_type_index,
 			size_in_bits,
 			source_token,
 			CVQualifier::None,
