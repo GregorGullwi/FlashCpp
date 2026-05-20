@@ -63,6 +63,11 @@ Useful to know before changing anything:
 - qualified member variable-template chains now use owner-aware lookup through
   instantiated owners and dependent bases, preserving recovered outer class
   template bindings for cases such as `Derived<T>::template member_v<T>`;
+- `this->template` member-function-template calls can now find member templates
+  declared in dependent base class templates while parsing the derived class
+  template body, because deferred base template names are stored on
+  `StructTypeInfo` before the primary `TemplateClassDeclarationNode` is
+  registered;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
@@ -98,11 +103,13 @@ Concrete follow-up already identified by recent work:
 - default NTTP declared-type materialization and variable-template initializer
   replay metadata are now covered for the targeted scalar/member-chain cases.
   Qualified member variable-template chains through dependent bases are now
-  covered for the focused initializer/constexpr paths. The next concrete
-  follow-up is the remaining dependent-base and unknown-specialization
-  member-chain work in declarations that still do not preserve enough metadata,
-  plus the current `<ratio>` blocker where parsing and `std::ratio_less`
-  constexpr comparison now progress to later IR conversion/link failures.
+  covered for the focused initializer/constexpr paths, and dependent-base
+  `this->template` member-function-template calls are covered for the focused
+  inline class-template body paths. The next concrete follow-up is the remaining
+  dependent-base and unknown-specialization member-chain work in declarations
+  that still do not preserve enough metadata, plus the current `<ratio>` blocker
+  where parsing and `std::ratio_less` constexpr comparison now progress to later
+  IR conversion/link failures.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -181,6 +188,9 @@ In priority order:
       alias recovery, nested alias-target deferred-base materialization, and the
       current-owner member-alias qualified-id cleanup is now complete for the
       deeper covered member-chain cases;
+   - dependent-base `this->template` member-function-template calls are covered
+      for focused inline class-template body cases, including multilevel
+      dependent-base chains;
    - remaining replay-metadata gaps outside the covered static-member and
       variable-template initializer paths;
    - remaining dependent-base/member-chain paths that still bypass the shared
@@ -251,6 +261,10 @@ materially changes what future refactors can assume.
   owner-aware member variable-template lookup, and member variable-template
   instantiation folds recovered outer class-template bindings into initializer
   replay/substitution identity.
+- dependent-base member-function-template lookup now stores deferred base
+  template pattern names on `StructTypeInfo`, so inline class-template bodies can
+  resolve `this->template member<...>()` through dependent base class templates
+  before the derived `TemplateClassDeclarationNode` is registered.
 
 ## Exit criteria for this audit
 

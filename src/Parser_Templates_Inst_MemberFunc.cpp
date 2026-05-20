@@ -262,6 +262,48 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 				return {struct_name_handle, depth, std::move(lookup_result)};
 			}
 
+			{
+				// Two-phase lookup fix: member function templates are registered under the
+				// uninstantiated class name (e.g. "Base::get_n"), not under the instantiated
+				// name (e.g. "Base<int>::get_n").  When the struct is a template instantiation,
+				// retry the lookup using the base template name, then rewrite each candidate's
+				// identity.lookup_name to the instantiated qualified form (e.g. "Base<int>::get_n").
+				// This is critical because getOuterTemplateBinding("Base<int>::get_n") finds the
+				// {T=int} binding registered during class template instantiation, while
+				// getOuterTemplateBinding("Base::get_n") returns nothing.
+				auto base_tpl_struct_it = getTypesByNameMap().find(struct_name_handle);
+				if (base_tpl_struct_it != getTypesByNameMap().end()) {
+					const TypeInfo* ti = base_tpl_struct_it->second;
+					if (ti->isTemplateInstantiation() && ti->baseTemplateName().isValid()) {
+						StringHandle base_tpl_name_handle = ti->baseTemplateName();
+						TemplateNameLookupRequest base_tpl_request =
+							buildMemberFunctionTemplateLookupRequest(
+								base_tpl_name_handle, member_name_handle, false);
+						TemplateNameLookupResult base_tpl_result =
+							gTemplateRegistry.lookupTemplateName(base_tpl_request);
+						if (base_tpl_result.hasFunctionTemplate()) {
+							// Rewrite identity.lookup_name from "Base::get_n" to
+							// "Base<int>::get_n" so outer-binding and instantiation-key
+							// lookups use the concrete instantiation's qualified name.
+							StringBuilder inst_qname_sb;
+							inst_qname_sb.append(StringTable::getStringView(struct_name_handle))
+								.append("::")
+								.append(member_name);
+							StringHandle inst_qname =
+								StringTable::getOrInternStringHandle(inst_qname_sb);
+							for (auto& cand : base_tpl_result.candidates) {
+								if (cand.identity.kind ==
+									TemplateDeclarationKind::FunctionTemplate) {
+									cand.identity.lookup_name = inst_qname;
+									cand.declaring_owner_name = struct_name_handle;
+								}
+							}
+							return {struct_name_handle, depth, std::move(base_tpl_result)};
+						}
+					}
+				}
+			}
+
 			auto struct_it = getTypesByNameMap().find(struct_name_handle);
 			if (struct_it == getTypesByNameMap().end()) {
 				return {};
@@ -312,6 +354,28 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 					self(self, base_name_handle, depth + 1);
 				if (inherited_owner.owner_name.isValid()) {
 					return inherited_owner;
+				}
+			}
+
+			if (struct_info->has_deferred_base_classes) {
+				// Two-phase lookup for uninstantiated class templates with dependent bases:
+				// When struct_name is a template pattern (e.g. "Derived" from "Derived<T>"),
+				// struct_info->base_classes is empty because Base<T> is a dependent type not
+				// yet resolved to a concrete struct.  However, the TemplateClassDeclarationNode
+				// records the raw base template names in deferred_template_base_classes().
+				// Walk those deferred bases using only their template name (e.g. "Base") so
+				// we can still find "Base::get_n" in the registry and make it a candidate.
+				// This supports `this->template member<>()` calls within the body of a class
+				// template whose base is a dependent type (C++20 two-phase lookup phase 1).
+				// The deferred base template names are stored in struct_info->deferred_base_template_names
+				// so they are available even before the TemplateClassDeclarationNode is registered
+				// (which happens after the class body is fully parsed).
+				for (const StringHandle deferred_base_name : struct_info->deferred_base_template_names) {
+					InheritedOwnerMatch inherited_owner =
+						self(self, deferred_base_name, depth + 1);
+					if (inherited_owner.owner_name.isValid()) {
+						return inherited_owner;
+					}
 				}
 			}
 
