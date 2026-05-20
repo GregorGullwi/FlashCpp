@@ -135,7 +135,7 @@ Stop constructor choice from depending on codegen-side argument-type rebuilding.
 
 - [Evidence 2](#2-codegen-still-performs-its-own-expression-type-reconstruction)
 - [Recommended direction / Priority 3](#priority-3-pre-resolve-constructors-in-sema)
-- `docs/2026-03-12_IMPLICIT_CAST_SEMA_PLAN.md` Phase 18 notes about constructor matching cleanup
+- `docs/SEMANTIC_ANALYSIS_STATUS.md` (constructor/conversion ownership summary)
 
 ### Phase 4: remove codegen-to-sema callbacks
 

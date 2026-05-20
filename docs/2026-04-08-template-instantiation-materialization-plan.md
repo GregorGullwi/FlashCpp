@@ -378,6 +378,6 @@ older pass counts as today's baseline without rerunning the suite.
 ## Related Documents
 
 - `docs/2026-04-27-fallback-comments-audit.md`
-- `docs/2026-04-06-template-constexpr-sema-audit-plan.md`
+- `docs/SEMANTIC_ANALYSIS_STATUS.md`
 - `docs/2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
 - `docs/2026-04-04-codegen-name-lookup-investigation.md`
