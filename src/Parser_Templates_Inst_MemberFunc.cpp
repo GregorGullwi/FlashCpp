@@ -366,18 +366,15 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 			// we can still find "Base::get_n" in the registry and make it a candidate.
 			// This supports `this->template member<>()` calls within the body of a class
 			// template whose base is a dependent type (C++20 two-phase lookup phase 1).
+			// The deferred base template names are stored in struct_info->deferred_base_template_names
+			// so they are available even before the TemplateClassDeclarationNode is registered
+			// (which happens after the class body is fully parsed).
 			if (struct_info->has_deferred_base_classes) {
-				auto tpl_opt = gTemplateRegistry.lookupTemplate(struct_name_handle);
-				if (tpl_opt.has_value() && tpl_opt->is<TemplateClassDeclarationNode>()) {
-					const StructDeclarationNode& struct_decl =
-						tpl_opt->as<TemplateClassDeclarationNode>().class_decl_node();
-					for (const auto& deferred_base :
-						 struct_decl.deferred_template_base_classes()) {
-						InheritedOwnerMatch inherited_owner =
-							self(self, deferred_base.base_template_name, depth + 1);
-						if (inherited_owner.owner_name.isValid()) {
-							return inherited_owner;
-						}
+				for (const StringHandle deferred_base_name : struct_info->deferred_base_template_names) {
+					InheritedOwnerMatch inherited_owner =
+						self(self, deferred_base_name, depth + 1);
+					if (inherited_owner.owner_name.isValid()) {
+						return inherited_owner;
 					}
 				}
 			}
