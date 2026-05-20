@@ -1628,18 +1628,7 @@ ParseResult Parser::parse_type_specifier() {
 											const ASTNode& expr,
 											std::span<const ASTNode> params,
 											std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-											InlineVector<TemplateParameterNode, 4> typed_params;
-											typed_params.reserve(params.size());
-											for (const ASTNode& param_node : params) {
-												if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-													typed_param != nullptr) {
-													typed_params.push_back(*typed_param);
-												}
-											}
-											return this->evaluateDependentNTTPExpression(
-												expr,
-												std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-												args);
+											return this->evaluateDependentNTTPExpression(expr, params, args);
 										});
 								AliasTemplateMaterializationResult materialized_target =
 									materializeTemplateInstantiationForLookup(
