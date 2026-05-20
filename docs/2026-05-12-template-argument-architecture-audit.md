@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-19
+**Last updated:** 2026-05-20
 
 This document is the short audit for FlashCpp's template infrastructure. Its
 main purpose is to describe what is still structurally wrong, what the next
@@ -56,6 +56,10 @@ Useful to know before changing anything:
   declared parameter type for covered scalar/enum cases, so
   `template<class T, T V = 1>` preserves `T=short` instead of storing `V` as
   `int`;
+- namespace and member variable-template initializers now capture initializer
+  replay positions and definition lookup contexts, and variable-template
+  instantiation prefers replay-first initializer materialization before the
+  compatibility AST-substitution fallback;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
@@ -89,12 +93,13 @@ Concrete follow-up already identified by recent work:
   `Traits<T>::template Box<T>::value` and
   `Traits<T>::template Box<T>::get()` instead of dropping the `Box<T>` segment
   at parse time.
-- default NTTP declared-type materialization is now covered for scalar/enum
-  cases. The next concrete follow-up is either the remaining dependent-base and
-  unknown-specialization member-chain work in declarations that still never
-  capture replay metadata at parse time, or the current `<ratio>` blocker where
-  parsing and `std::ratio_less` constexpr comparison now progress to later IR
-  conversion failures.
+- default NTTP declared-type materialization and variable-template initializer
+  replay metadata are now covered for the targeted scalar/member-chain cases.
+  The next concrete follow-up is the remaining dependent-base and
+  unknown-specialization member-chain work in declarations that still do not
+  preserve enough metadata, especially qualified member variable-template
+  chains, or the current `<ratio>` blocker where parsing and `std::ratio_less`
+  constexpr comparison now progress to later IR conversion/link failures.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -173,8 +178,8 @@ In priority order:
       alias recovery, nested alias-target deferred-base materialization, and the
       current-owner member-alias qualified-id cleanup is now complete for the
       deeper covered member-chain cases;
-   - remaining replay-metadata gaps for static-member initialization outside
-      the covered member-template call/non-call chains;
+   - remaining replay-metadata gaps outside the covered static-member and
+      variable-template initializer paths;
    - remaining dependent-base/member-chain paths that still bypass the shared
       semantic lookup model.
 
@@ -235,6 +240,10 @@ materially changes what future refactors can assume.
 - default NTTP values now use the substituted declared parameter type when
   materialized through the shared default-evaluation paths, preserving identity
   for cases like `template<class T, T V = 1>` instantiated as `T=short`.
+- variable-template initializers now store replay metadata and definition lookup
+  context for namespace and member variable templates, with replay-first
+  instantiation covering definition-time lookup and dependent member-template
+  call chains before the older AST-substitution fallback is used.
 
 ## Exit criteria for this audit
 
