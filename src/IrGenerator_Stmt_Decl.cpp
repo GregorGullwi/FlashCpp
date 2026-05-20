@@ -185,9 +185,9 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		}
 	}
 
-	if (auto sema_materialized_type = sema_.parserSemanticServices().getOverloadResolutionArgType(arg);
-		sema_materialized_type.has_value()) {
-		return sema_materialized_type;
+	if (auto sema_overload_arg_type = sema_.parserSemanticServices().getOverloadResolutionArgType(arg);
+		sema_overload_arg_type.has_value()) {
+		return sema_overload_arg_type;
 	}
 	if (sema_normalized_current_function_ &&
 		has_exact_sema_type_slot &&
@@ -195,6 +195,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		throw InternalError(std::string(StringBuilder()
 			.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
 			.append(describeOverloadArgExprShape(arg))
+			.append(" (semantic normalization did not provide required overload argument typing)")
 			.commit()));
 	}
 	return tryParserFallback(arg);
