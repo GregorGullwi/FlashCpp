@@ -1519,7 +1519,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 	}
 	if (alias_node != nullptr &&
-		alias_node->hasDeferredMemberTarget() &&
+		alias_node->hasDeferredMemberTemplateTarget() &&
 		!result.instantiated_name.empty()) {
 		if (const TypeInfo* materialized_member =
 				materializeDeferredAliasMemberTemplateChain(
@@ -2343,7 +2343,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			std::string_view target_name(alias_node.target_template_name());
 			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
 			if (!instantiated_name.empty()) {
-				if (alias_node.hasDeferredMemberTarget()) {
+				if (alias_node.hasDeferredMemberTemplateTarget()) {
 					if (const TypeInfo* materialized_member =
 							materializeDeferredAliasMemberTemplateChain(
 								alias_node,

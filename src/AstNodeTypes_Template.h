@@ -278,6 +278,14 @@ public:
 	std::string_view target_template_name() const { return target_template_name_.view(); }
 	std::span<const ASTNode> target_template_args() const { return std::span<const ASTNode>(target_template_args_.data(), target_template_args_.size()); }
 	bool hasDeferredMemberTarget() const { return !target_member_template_segments_.empty(); }
+	bool hasDeferredMemberTemplateTarget() const {
+		for (const DeferredAliasMemberTemplateSegment& segment : target_member_template_segments_) {
+			if (segment.has_template_arguments) {
+				return true;
+			}
+		}
+		return false;
+	}
 	std::span<const DeferredAliasMemberTemplateSegment> targetMemberTemplateSegments() const { return std::span<const DeferredAliasMemberTemplateSegment>(target_member_template_segments_.data(), target_member_template_segments_.size()); }
 	StringHandle targetMemberTemplateNameHandle() const { return hasDeferredMemberTarget() ? target_member_template_segments_[0].name : StringHandle{}; }
 	std::string_view targetMemberTemplateName() const { return targetMemberTemplateNameHandle().view(); }
