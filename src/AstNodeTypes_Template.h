@@ -282,6 +282,15 @@ public:
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	VariableDeclarationNode& variable_declaration() { return variable_declaration_.as<VariableDeclarationNode>(); }
 	const VariableDeclarationNode& variable_declaration() const { return variable_declaration_.as<VariableDeclarationNode>(); }
+	bool has_initializer_replay_position() const { return initializer_replay_position_.has_value(); }
+	const std::optional<SaveHandle>& initializer_replay_position() const { return initializer_replay_position_; }
+	const TemplateDefinitionLookupContext& initializer_definition_lookup_context() const { return initializer_definition_lookup_context_; }
+	void set_initializer_replay_metadata(
+		SaveHandle initializer_position,
+		const TemplateDefinitionLookupContext& definition_lookup_context) {
+		initializer_replay_position_ = initializer_position;
+		initializer_definition_lookup_context_ = definition_lookup_context;
+	}
 
 	// Get the underlying VariableDeclarationNode
 	VariableDeclarationNode& variable_decl_node() { return variable_declaration_.as<VariableDeclarationNode>(); }
@@ -290,6 +299,8 @@ public:
 private:
 	InlineVector<TemplateParameterNode, 4> template_parameters_;
 	ASTNode variable_declaration_;  // VariableDeclarationNode
+	std::optional<SaveHandle> initializer_replay_position_;
+	TemplateDefinitionLookupContext initializer_definition_lookup_context_;
 };
 
 // Storage class specifiers

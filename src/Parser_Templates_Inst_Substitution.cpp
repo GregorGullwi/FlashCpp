@@ -6,6 +6,28 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+static void buildVariableTemplateParameterReplayState(
+	std::span<const TemplateParameterNode> template_params,
+	InlineVector<StringHandle, 4>& template_param_names,
+	InlineVector<TemplateParameterKind, 4>& template_param_kinds,
+	InlineVector<TypeCategory, 4>& non_type_categories) {
+	template_param_names.clear();
+	template_param_kinds.clear();
+	non_type_categories.clear();
+	template_param_names.reserve(template_params.size());
+	template_param_kinds.reserve(template_params.size());
+	non_type_categories.reserve(template_params.size());
+	for (const TemplateParameterNode& template_param : template_params) {
+		template_param_names.push_back(template_param.nameHandle());
+		template_param_kinds.push_back(template_param.kind());
+		non_type_categories.push_back(
+			template_param.kind() == TemplateParameterKind::NonType &&
+				template_param.has_type()
+				? template_param.type_specifier_node().type()
+				: TypeCategory::Invalid);
+	}
+}
+
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
 	TypeIndex value_type_index = eval_result.exact_type.has_value()
 		? eval_result.exact_type->type_index().withCategory(eval_result.exact_type->category())
@@ -2936,6 +2958,97 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	}
 	std::span<const TemplateTypeArg> filled_args = *filled_args_opt;
 
+	auto try_reparse_variable_template_initializer =
+		[&](
+			const TemplateVariableDeclarationNode& template_node,
+			std::span<const TemplateParameterNode> template_params_for_substitution,
+			std::span<const TemplateTypeArg> template_args_for_substitution,
+			StringHandle instantiated_variable_name) -> std::optional<ASTNode> {
+		const VariableDeclarationNode& pattern_var_decl =
+			template_node.variable_decl_node();
+		if (!pattern_var_decl.initializer().has_value() ||
+			!template_node.has_initializer_replay_position()) {
+			return std::nullopt;
+		}
+
+		SaveHandle current_pos = save_token_position();
+		ScopedLexerPositionRestore lexer_restore(*this, current_pos);
+
+		TemplateInstantiationContext substitution_context =
+			buildTemplateInstantiationContext(
+				template_params_for_substitution,
+				template_args_for_substitution,
+				nullptr,
+				currentTemplateSubstitutionFailurePolicy());
+
+		TemplateDefinitionLookupContext definition_lookup_context =
+			template_node.initializer_definition_lookup_context();
+		if (!definition_lookup_context.is_valid()) {
+			const DeclarationNode& declaration =
+				pattern_var_decl.declaration();
+			definition_lookup_context.definition_line =
+				declaration.identifier_token().line();
+			definition_lookup_context.definition_file_index =
+				declaration.identifier_token().file_index();
+			definition_lookup_context.definition_namespace =
+				gSymbolTable.get_current_namespace_handle();
+		}
+		definition_lookup_context.current_instantiation_name =
+			instantiated_variable_name;
+		substitution_context.definition_lookup_context =
+			definition_lookup_context.is_valid()
+				? &definition_lookup_context
+				: nullptr;
+
+		FlashCpp::TemplateDepthGuard guard_template_depth(parsing_template_depth_);
+		parsing_template_depth_ = 1;
+		ScopedDefinitionLookupContext ctx_scope(
+			current_template_definition_lookup_context_,
+			substitution_context.definition_lookup_context);
+
+		InlineVector<StringHandle, 4> template_param_names;
+		InlineVector<TemplateParameterKind, 4> template_param_kinds;
+		InlineVector<TypeCategory, 4> non_type_categories;
+		buildVariableTemplateParameterReplayState(
+			template_params_for_substitution,
+			template_param_names,
+			template_param_kinds,
+			non_type_categories);
+		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
+		setCurrentTemplateParameters(
+			template_param_names,
+			template_param_kinds,
+			non_type_categories);
+
+		restore_lexer_position_only(*template_node.initializer_replay_position());
+
+		DeclarationNode declaration_for_reparse =
+			pattern_var_decl.declaration();
+		TypeSpecifierNode& type_spec =
+			declaration_for_reparse.type_specifier_node();
+
+		std::optional<ASTNode> reparsed_initializer;
+		if (peek() == "="_tok) {
+			reparsed_initializer = parse_copy_initialization(
+				declaration_for_reparse,
+				type_spec);
+		} else if (peek() == "{"_tok) {
+			ParseResult init_result = parse_brace_initializer(type_spec);
+			if (!init_result.is_error() &&
+				init_result.node().has_value()) {
+				reparsed_initializer = *init_result.node();
+			}
+		}
+
+		if (!reparsed_initializer.has_value()) {
+			return std::nullopt;
+		}
+
+		return substituteTemplateParameters(
+			*reparsed_initializer,
+			substitution_context);
+	};
+
 	// Structural pattern matching: find the best matching partial specialization
 	// Uses TemplatePattern::matches() which handles qualifier matching, multi-arg,
 	// and proper template parameter deduction without string-based pattern keys.
@@ -2983,12 +3096,50 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		std::optional<ASTNode> init_expr;
 		if (spec_var_decl.initializer().has_value()) {
 			if (!spec_params.empty()) {
-				init_expr = substituteTemplateParameters(
-					*spec_var_decl.initializer(), spec_params, converted_args);
+				StringHandle instantiated_var_handle =
+					StringTable::getOrInternStringHandle(persistent_name);
+				try {
+					init_expr = try_reparse_variable_template_initializer(
+						spec_template,
+						spec_params,
+						converted_args,
+						instantiated_var_handle);
+				} catch (const std::exception& ex) {
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Replay substitution failed for variable-template partial specialization initializer: ",
+						ex.what(),
+						" — falling back to AST substitution");
+					init_expr.reset();
+				}
+				if (!init_expr.has_value()) {
+					init_expr = substituteTemplateParameters(
+						*spec_var_decl.initializer(), spec_params, converted_args);
+				}
 				spec_type = substituteTemplateParameters(
 					spec_type, spec_params, converted_args);
 			} else {
-				init_expr = *spec_var_decl.initializer();
+				StringHandle instantiated_var_handle =
+					StringTable::getOrInternStringHandle(persistent_name);
+				try {
+					init_expr = try_reparse_variable_template_initializer(
+						spec_template,
+						spec_params,
+						converted_args,
+						instantiated_var_handle);
+				} catch (const std::exception& ex) {
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Replay parsing failed for variable-template specialization initializer: ",
+						ex.what(),
+						" — falling back to stored AST initializer");
+					init_expr.reset();
+				}
+				if (!init_expr.has_value()) {
+					init_expr = *spec_var_decl.initializer();
+				}
 			}
 		} else if (spec_decl.type_specifier_node().category() == TypeCategory::Bool) {
 			Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
@@ -3031,10 +3182,29 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	std::optional<ASTNode> new_initializer = std::nullopt;
 	if (orig_var_decl.initializer().has_value()) {
 		FLASH_LOG(Templates, Debug, "Substituting initializer expression for variable template");
-		new_initializer = substituteTemplateParameters(
-			orig_var_decl.initializer().value(),
-			template_params,
-			filled_args_inline);
+		StringHandle instantiated_var_handle =
+			StringTable::getOrInternStringHandle(persistent_name);
+		try {
+			new_initializer = try_reparse_variable_template_initializer(
+				var_template,
+				template_params,
+				filled_args_inline,
+				instantiated_var_handle);
+		} catch (const std::exception& ex) {
+			FLASH_LOG(
+				Templates,
+				Debug,
+				"Replay substitution failed for variable-template initializer: ",
+				ex.what(),
+				" — falling back to AST substitution");
+			new_initializer.reset();
+		}
+		if (!new_initializer.has_value()) {
+			new_initializer = substituteTemplateParameters(
+				orig_var_decl.initializer().value(),
+				template_params,
+				filled_args_inline);
+		}
 		FLASH_LOG(Templates, Debug, "Initializer substitution complete");
 
 		// PHASE 3 FIX: After substitution, trigger instantiation of any class templates

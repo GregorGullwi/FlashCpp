@@ -338,11 +338,36 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 
 	// Parse initializer (required for member variable templates)
 	std::optional<ASTNode> init_expr;
+	std::optional<SaveHandle> initializer_position;
+	TemplateDefinitionLookupContext initializer_definition_lookup_context;
+	if (current_template_definition_lookup_context_ != nullptr &&
+		current_template_definition_lookup_context_->is_valid()) {
+		initializer_definition_lookup_context =
+			*current_template_definition_lookup_context_;
+	} else {
+		initializer_definition_lookup_context.definition_line =
+			var_name_token.line();
+		initializer_definition_lookup_context.definition_file_index =
+			var_name_token.file_index();
+		initializer_definition_lookup_context.definition_namespace =
+			gSymbolTable.get_current_namespace_handle();
+		initializer_definition_lookup_context.current_instantiation_name =
+			struct_node.name();
+	}
 	if (peek() == "="_tok) {
+		initializer_position = save_token_position();
 		advance(); // consume '='
 
 		// Parse the initializer expression
 		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		init_expr = init_result.node();
+	} else if (peek() == "{"_tok) {
+		initializer_position = save_token_position();
+		const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		auto init_result = parse_brace_initializer(type_spec);
 		if (init_result.is_error()) {
 			return init_result;
 		}
@@ -368,6 +393,11 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
 		template_params,
 		var_decl_node);
+	if (initializer_position.has_value()) {
+		template_var_node.as<TemplateVariableDeclarationNode>().set_initializer_replay_metadata(
+			*initializer_position,
+			initializer_definition_lookup_context);
+	}
 
 	// Build qualified name for registration
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(

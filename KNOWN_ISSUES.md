@@ -53,3 +53,21 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Fix direction**: Audit where FlashCpp synthesizes or exports the GS cookie
   runtime state and make it coexist with the CRT-provided definition instead of
   emitting a second strong symbol.
+
+---
+
+## 3) Dependent qualified member variable-template chains are not fully recovered
+
+- **Symptom**: A variable-template initializer such as
+  `Outer<T>::template member<U>` can still lower to an unresolved qualified
+  identifier when the member is itself a variable template and the owner is a
+  dependent class-template instantiation.
+- **Root cause**: Replay reparses the initializer under the definition context,
+  but the later expression substitution path does not always recover concrete
+  explicit template arguments for qualified member variable-template calls.
+- **Affected path**: `Parser::try_instantiate_variable_template` initializer
+  replay followed by `ExpressionSubstitutor` handling of unresolved qualified
+  member variable-template calls.
+- **Impact**: The new replay infrastructure covers namespace variable templates
+  and member-template function chains, but fully dependent member variable-template
+  chains need a follow-up instantiation recovery pass.
