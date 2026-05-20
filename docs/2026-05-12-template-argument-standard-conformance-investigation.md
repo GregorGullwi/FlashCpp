@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-19
+**Last updated:** 2026-05-20
 
 This document is the execution plan for moving FlashCpp's template
 infrastructure toward C++20 conformance. It intentionally focuses on remaining
@@ -80,6 +80,10 @@ Future work should assume these are already in place:
   `index_sequence_for = make_index_sequence<sizeof...(Types)>`;
 - selected free/member function-template overload paths already rank
   signatures before materializing bodies.
+- namespace and member variable-template initializers now preserve replay
+  positions and definition lookup contexts; instantiation uses replay-first
+  materialization for covered initializer expressions before falling back to
+  stored AST substitution.
 
 Latest validation on Windows sharded build:
 `2453` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
@@ -103,20 +107,23 @@ Immediate targets:
 Most concrete next subtask:
 
 - finish the remaining dependent-base/unknown-specialization member-chain work
-  after the latest replay-metadata improvement: deferred explicit-template
+  after the latest replay-metadata improvements: deferred explicit-template
   qualified-call records now preserve the instantiated placeholder `owner_type`
-  instead of dropping it at parse time. Deferred non-call qualified expressions
-  now also preserve deeper member-template segment arguments such as
-  `Traits<T>::template Box<T>::value`, and call-shaped expressions preserve
-  `Traits<T>::template Box<T>::get()`. The next concrete gap is the remaining
-  declarations that never capture replay metadata in the first place, plus
-  dependent-base/unknown-specialization member-chain cases outside the covered
-  replayed static-initializer flows. The current `<ratio>` blocker is also a
-  useful bounded target because parsing and `std::ratio_less` constexpr
-  comparison now progress to later IR conversion failures rather than stopping
-  in the fixed default NTTP declared-type materialization, dependent
-  member-template argument paths, covered member alias-template target
-  materialization path, or alias-template `sizeof...` NTTP target arguments.
+  instead of dropping it at parse time, and variable-template initializers now
+  capture replay metadata for covered namespace/member declarations. Deferred
+  non-call qualified expressions preserve deeper member-template segment
+  arguments such as `Traits<T>::template Box<T>::value`, and call-shaped
+  expressions preserve `Traits<T>::template Box<T>::get()`. The next concrete
+  gap is qualified member variable-template chains, where replay can reparse the
+  initializer but expression substitution does not always recover concrete
+  explicit template arguments, plus declarations outside the covered replay
+  flows. The current `<ratio>` blocker remains a useful bounded target because
+  parsing and `std::ratio_less` constexpr comparison now progress to later IR
+  conversion/link failures rather than stopping in the fixed default NTTP
+  declared-type materialization, dependent member-template argument paths,
+  covered member alias-template target materialization path, alias-template
+  `sizeof...` NTTP target arguments, or covered variable-template initializer
+  replay paths.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -193,7 +200,8 @@ coverage becomes sufficient.
       the covered qualified-id/member-side cases;
    - keep reusing the shared member-side lookup/materialization path in the
       remaining qualified-id spellings so local repair logic is not reintroduced;
-   - extend replay metadata capture into remaining declarations;
+   - extend replay metadata capture into remaining declarations outside the
+     covered static-member and variable-template initializer paths;
    - remove the next AST-only fallback path.
 
 2. **Dependent-name/current-instantiation expansion**
@@ -276,6 +284,10 @@ re-solving already-solved problems.
   bodies; mangling now preserves richer member-pointer type identity but still
   keeps conservative fallback value encoding until a full external-name form is
   available.
+- variable-template initializer replay is now available for namespace and member
+  variable templates, covering definition-time lookup and dependent
+  member-template call chains while leaving qualified member variable-template
+  chain recovery as the next focused follow-up.
 
 ## Exit criteria
 

@@ -4,6 +4,35 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefinitionLookupContext(
+	const Token& variable_name_token,
+	StringHandle current_instantiation_name) const {
+	if (current_template_definition_lookup_context_ &&
+		current_template_definition_lookup_context_->is_valid()) {
+		TemplateDefinitionLookupContext definition_lookup_context =
+			*current_template_definition_lookup_context_;
+		if (current_instantiation_name.isValid() &&
+			!definition_lookup_context.current_instantiation_name.isValid()) {
+			definition_lookup_context.current_instantiation_name =
+				current_instantiation_name;
+		}
+		return definition_lookup_context;
+	}
+
+	TemplateDefinitionLookupContext definition_lookup_context;
+	definition_lookup_context.definition_line =
+		variable_name_token.line();
+	definition_lookup_context.definition_file_index =
+		variable_name_token.file_index();
+	definition_lookup_context.definition_namespace =
+		gSymbolTable.get_current_namespace_handle();
+	if (current_instantiation_name.isValid()) {
+		definition_lookup_context.current_instantiation_name =
+			current_instantiation_name;
+	}
+	return definition_lookup_context;
+}
+
 // Shared alias-target capture helper implementation.
 // Parses the template-id on the right-hand side of an alias declaration from
 // the current token position.  The caller is responsible for rewinding before
@@ -338,11 +367,25 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 
 	// Parse initializer (required for member variable templates)
 	std::optional<ASTNode> init_expr;
+	std::optional<SaveHandle> initializer_position;
+	TemplateDefinitionLookupContext initializer_definition_lookup_context =
+		buildVariableTemplateInitializerDefinitionLookupContext(
+			var_name_token,
+			struct_node.name());
 	if (peek() == "="_tok) {
+		initializer_position = save_token_position();
 		advance(); // consume '='
 
 		// Parse the initializer expression
 		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		init_expr = init_result.node();
+	} else if (peek() == "{"_tok) {
+		initializer_position = save_token_position();
+		const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
+		auto init_result = parse_brace_initializer(type_spec);
 		if (init_result.is_error()) {
 			return init_result;
 		}
@@ -368,6 +411,11 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
 		template_params,
 		var_decl_node);
+	if (initializer_position.has_value()) {
+		template_var_node.as<TemplateVariableDeclarationNode>().set_initializer_replay_metadata(
+			*initializer_position,
+			initializer_definition_lookup_context);
+	}
 
 	// Build qualified name for registration
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(

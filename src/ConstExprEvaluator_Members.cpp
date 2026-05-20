@@ -5061,6 +5061,72 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 	// Try to look up the qualified name
 	auto symbol_opt = context.symbols->lookup_qualified(qualified_id.qualifiedIdentifier());
 	if (!symbol_opt.has_value()) {
+		if (qualified_id.has_template_arguments() && context.parser != nullptr) {
+			std::vector<TemplateTypeArg> template_args;
+			template_args.reserve(qualified_id.template_arguments().size());
+			for (const ASTNode& arg_node : qualified_id.template_arguments()) {
+				if (arg_node.is<TypeSpecifierNode>()) {
+					template_args.emplace_back(arg_node.as<TypeSpecifierNode>());
+					continue;
+				}
+				if (!arg_node.is<ExpressionNode>()) {
+					return EvalResult::error(
+						"Unsupported template argument type for qualified variable template");
+				}
+
+				EvalResult arg_val = evaluate(arg_node, context);
+				if (!arg_val.success()) {
+					return EvalResult::error(
+						"Failed to evaluate non-type template argument: " +
+						arg_val.error_message);
+				}
+
+				TypeCategory arg_type = TypeCategory::Int;
+				if (std::holds_alternative<bool>(arg_val.value)) {
+					arg_type = TypeCategory::Bool;
+				} else if (arg_val.is_uint()) {
+					arg_type = TypeCategory::UnsignedLongLong;
+				}
+				template_args.emplace_back(arg_val.as_int(), arg_type);
+			}
+			if (!template_args.empty()) {
+				Parser& parser = *context.parser;
+				std::string_view scope_name =
+					gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+				std::string_view qualified_lookup_name = qualified_id.name();
+				StringBuilder qualified_name_builder;
+				if (!scope_name.empty()) {
+					qualified_lookup_name = qualified_name_builder
+						.append(scope_name)
+						.append("::")
+						.append(qualified_id.name())
+						.commit();
+				}
+
+				auto instantiated_var =
+					parser.try_instantiate_variable_template(
+						qualified_lookup_name,
+						template_args);
+				context.normalizePendingSemanticRoots();
+				if (!instantiated_var.has_value() &&
+					qualified_lookup_name != qualified_id.name()) {
+					instantiated_var =
+						parser.try_instantiate_variable_template(
+							qualified_id.name(),
+							template_args);
+					context.normalizePendingSemanticRoots();
+				}
+				if (instantiated_var.has_value() &&
+					instantiated_var->is<VariableDeclarationNode>()) {
+					const auto& var_decl =
+						instantiated_var->as<VariableDeclarationNode>();
+					if (var_decl.initializer().has_value()) {
+						return evaluate(var_decl.initializer().value(), context);
+					}
+				}
+			}
+		}
+
 		// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
 		// This handles cases like is_pointer_impl<int*>::value where value is a static member
 		// Also handles type aliases like `using my_true = integral_constant<bool, true>; my_true::value`
