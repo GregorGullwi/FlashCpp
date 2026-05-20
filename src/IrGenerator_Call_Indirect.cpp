@@ -275,6 +275,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const bool needs_parser_fallback =
 			callee_type_unusable_for_callable &&
 			!resolved_op_call &&
+			!sema_normalized_current_function_ &&
 			sema_fallback_state_allows_recovery;
 		if (needs_parser_fallback) {
 			const bool sema_query_not_yet_analyzed =
