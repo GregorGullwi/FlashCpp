@@ -3086,9 +3086,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						FLASH_LOG(Templates, Debug, "Found variable template, instantiating: ", template_name_for_instantiation);
 						// Try instantiation with determined name first, fall back to simple name
-						auto instantiated_var = try_instantiate_variable_template(template_name_for_instantiation, *template_args);
+						auto instantiated_var = try_instantiate_variable_template(template_name_for_instantiation, *template_args, nullptr);
 						if (!instantiated_var.has_value()) {
-							instantiated_var = try_instantiate_variable_template(qual_id.name(), *template_args);
+							instantiated_var = try_instantiate_variable_template(qual_id.name(), *template_args, nullptr);
 						}
 						if (instantiated_var.has_value()) {
 							// Get the instantiated variable name
@@ -3355,12 +3355,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							auto instantiated_var =
 								try_instantiate_variable_template(
 									qualified_member_name,
-									*member_template_args);
+									*member_template_args,
+									nullptr);
 							if (!instantiated_var.has_value()) {
 								instantiated_var =
 									try_instantiate_variable_template(
 										member_token.value(),
-										*member_template_args);
+										*member_template_args,
+										nullptr);
 							}
 							if (instantiated_var.has_value()) {
 								std::string_view inst_name;
@@ -4356,7 +4358,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							false));
 				if (qualified_lookup_result.hasVariableTemplate()) {
 					// Instantiate the variable template
-					auto instantiated_var = try_instantiate_variable_template(qualified_template_name, *template_args);
+					auto instantiated_var = try_instantiate_variable_template(qualified_template_name, *template_args, nullptr);
 					if (instantiated_var.has_value()) {
 						// Get the instantiated variable name
 						std::string_view inst_name;
@@ -6552,7 +6554,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (var_template_opt.has_value()) {
 										FLASH_LOG_FORMAT(Parser, Debug, "Found variable template '{}' as '{}'", identifier_token.value(), qualified_name);
 										// Use the qualified name for instantiation
-										auto instantiated_var = try_instantiate_variable_template(qualified_name, *explicit_template_args);
+										auto instantiated_var = try_instantiate_variable_template(qualified_name, *explicit_template_args, nullptr);
 										if (instantiated_var.has_value()) {
 											std::string_view inst_name;
 											if (instantiated_var->is<VariableDeclarationNode>()) {
@@ -6603,7 +6605,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							if (var_template_opt.has_value()) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Found variable template '{}' with template arguments (no ::)", identifier_token.value());
-								auto instantiated_var = try_instantiate_variable_template(identifier_token.value(), *explicit_template_args);
+								auto instantiated_var = try_instantiate_variable_template(identifier_token.value(), *explicit_template_args, nullptr);
 								if (instantiated_var.has_value()) {
 									std::string_view inst_name;
 									if (instantiated_var->is<VariableDeclarationNode>()) {
@@ -7646,7 +7648,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 
 					if (var_template_opt.has_value()) {
-						auto instantiated_var = try_instantiate_variable_template(template_name_to_use, *explicit_template_args);
+						auto instantiated_var = try_instantiate_variable_template(template_name_to_use, *explicit_template_args, nullptr);
 						if (instantiated_var.has_value()) {
 							// Could be VariableDeclarationNode (first instantiation) or DeclarationNode (already instantiated)
 							std::string_view inst_name;

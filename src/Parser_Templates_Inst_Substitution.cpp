@@ -2783,15 +2783,6 @@ ASTNode Parser::substitute_template_params_in_expression(
 // Returns the instantiated variable declaration node or nullopt if already instantiated
 std::optional<ASTNode> Parser::try_instantiate_variable_template(
 	std::string_view template_name,
-	std::span<const TemplateTypeArg> template_args) {
-	return try_instantiate_variable_template(
-		template_name,
-		template_args,
-		nullptr);
-}
-
-std::optional<ASTNode> Parser::try_instantiate_variable_template(
-	std::string_view template_name,
 	std::span<const TemplateTypeArg> template_args,
 	const OuterTemplateBinding* explicit_outer_binding) {
 	// First, try to find a partial specialization that matches the template arguments

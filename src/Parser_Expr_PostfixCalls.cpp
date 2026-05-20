@@ -1224,7 +1224,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					unqualified_var_lookup.hasVariableTemplate();
 				if (has_variable_template) {
 					FLASH_LOG(Templates, Info, "Found variable template: ", variable_template_lookup_name);
-					auto instantiated_var = try_instantiate_variable_template(variable_template_lookup_name, *template_args);
+					auto instantiated_var = try_instantiate_variable_template(variable_template_lookup_name, *template_args, nullptr);
 					if (instantiated_var.has_value()) {
 						// Get the instantiated variable name
 						std::string_view inst_name;

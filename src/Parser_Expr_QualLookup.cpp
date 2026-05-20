@@ -844,6 +844,70 @@ std::string_view Parser::lookup_direct_member_template_name(
 	return {};
 }
 
+std::optional<OuterTemplateBinding> Parser::buildOuterBindingForOwner(StringHandle owner_name) {
+	auto owner_it = getTypesByNameMap().find(owner_name);
+	const TypeInfo* owner_type_info =
+		owner_it != getTypesByNameMap().end() ? owner_it->second : nullptr;
+	if (owner_type_info == nullptr || !owner_type_info->hasInstantiationContext()) {
+		return std::nullopt;
+	}
+	const TypeInfo::InstantiationContext* owner_context = owner_type_info->instantiationContext();
+	if (owner_context == nullptr) {
+		return std::nullopt;
+	}
+
+	const size_t pair_count = std::min(
+		owner_context->param_names.size(),
+		owner_context->param_args.size());
+	if (pair_count == 0) {
+		return std::nullopt;
+	}
+	if (owner_context->param_names.size() != owner_context->param_args.size()) {
+		FLASH_LOG_FORMAT(
+			Templates,
+			Warning,
+			"Outer binding size mismatch for '{}': names={}, args={}",
+			StringTable::getStringView(owner_name),
+			owner_context->param_names.size(),
+			owner_context->param_args.size());
+	}
+
+	OuterTemplateBinding binding;
+	binding.param_names.reserve(pair_count);
+	binding.param_args.reserve(pair_count);
+	binding.all_args.reserve(owner_context->param_args.size());
+	for (size_t i = 0; i < pair_count; ++i) {
+		binding.param_names.push_back(owner_context->param_names[i]);
+		TemplateTypeArg arg = toTemplateTypeArg(owner_context->param_args[i]);
+		arg.setCategory(owner_context->param_args[i].category());
+		binding.param_args.push_back(arg);
+	}
+	for (const TypeInfo::TemplateArgInfo& owner_arg : owner_context->param_args) {
+		TemplateTypeArg arg = toTemplateTypeArg(owner_arg);
+		arg.setCategory(owner_arg.category());
+		binding.all_args.push_back(arg);
+	}
+	if (owner_type_info->isTemplateInstantiation()) {
+		StringHandle base_template_name =
+			gNamespaceRegistry.buildQualifiedIdentifier(
+				owner_type_info->sourceNamespace(),
+				owner_type_info->baseTemplateName());
+		auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
+		if (!template_opt.has_value()) {
+			template_opt = gTemplateRegistry.lookupTemplate(owner_type_info->baseTemplateName());
+		}
+		if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+			const auto& template_params =
+				template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+			binding.params.reserve(template_params.size());
+			for (const TemplateParameterNode& template_param : template_params) {
+				binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(template_param));
+			}
+		}
+	}
+	return binding;
+}
+
 std::string_view Parser::lookup_direct_member_variable_template_name(
 	StringHandle owner_name,
 	StringHandle member_name) {

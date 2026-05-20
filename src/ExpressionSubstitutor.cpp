@@ -1758,13 +1758,13 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			const bool has_variable_template_candidate =
 				gTemplateRegistry.lookupVariableTemplate(func_name).has_value() ||
 				(call.has_qualified_name() && gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value());
-			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args);
+			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args, nullptr);
 			if (var_template_node.has_value()) {
 				normalizePendingSemanticRoots();
 			}
 			// If not found by simple name, try qualified name if available
 			if (!var_template_node.has_value() && call.has_qualified_name()) {
-				var_template_node = parser_.try_instantiate_variable_template(call.qualified_name(), substituted_template_args);
+				var_template_node = parser_.try_instantiate_variable_template(call.qualified_name(), substituted_template_args, nullptr);
 				if (var_template_node.has_value()) {
 					normalizePendingSemanticRoots();
 				}
