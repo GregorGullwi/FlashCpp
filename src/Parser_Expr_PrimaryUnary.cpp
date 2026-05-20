@@ -718,9 +718,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 		// Check for ellipsis to determine if this is sizeof... (parameter pack)
 		bool is_sizeof_pack = false;
-		if (!peek().is_eof() &&
-			(peek().is_operator() || peek().is_punctuator()) &&
-			peek() == "..."_tok) {
+		if (current_token_.kind() == "..."_tok) {
 			advance(); // consume '...'
 			is_sizeof_pack = true;
 		}

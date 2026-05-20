@@ -2119,18 +2119,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 				std::vector<TemplateTypeArg> concrete_base_args =
 					materializeTemplateArgs(*base_type_info, template_params, template_args,
 						[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-							InlineVector<TemplateParameterNode, 4> typed_params;
-							typed_params.reserve(params.size());
-							for (const ASTNode& param_node : params) {
-								if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-									typed_param != nullptr) {
-									typed_params.push_back(*typed_param);
-								}
-							}
-							return this->evaluateDependentNTTPExpression(
-								expr,
-								std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-								args);
+							return this->evaluateDependentNTTPExpression(expr, params, args);
 						});
 				auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
 				if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
@@ -2215,18 +2204,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			concrete_args.push_back(
 				materializeTemplateArg(arg_info, template_params, template_args,
 					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-						InlineVector<TemplateParameterNode, 4> typed_params;
-						typed_params.reserve(params.size());
-						for (const ASTNode& param_node : params) {
-							if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-								typed_param != nullptr) {
-								typed_params.push_back(*typed_param);
-							}
-						}
-						return this->evaluateDependentNTTPExpression(
-							expr,
-							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-							args);
+						return this->evaluateDependentNTTPExpression(expr, params, args);
 					}));
 		}
 
@@ -2250,18 +2228,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			std::vector<TemplateTypeArg> nested_args =
 				materializeTemplateArgs(*base_info, template_params, template_args,
 					[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-						InlineVector<TemplateParameterNode, 4> typed_params;
-						typed_params.reserve(params.size());
-						for (const ASTNode& param_node : params) {
-							if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-								typed_param != nullptr) {
-								typed_params.push_back(*typed_param);
-							}
-						}
-						return this->evaluateDependentNTTPExpression(
-							expr,
-							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-							args);
+						return this->evaluateDependentNTTPExpression(expr, params, args);
 					});
 			try_instantiate_class_template(nested_template_name, nested_args);
 			std::string_view instantiated_nested_name =
@@ -2321,18 +2288,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 					std::vector<TemplateTypeArg> exact_args =
 						materializeTemplateArgs(*concrete_type_info, template_params, template_args,
 							[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
-								InlineVector<TemplateParameterNode, 4> typed_params;
-								typed_params.reserve(params.size());
-								for (const ASTNode& param_node : params) {
-									if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-										typed_param != nullptr) {
-										typed_params.push_back(*typed_param);
-									}
-								}
-								return this->evaluateDependentNTTPExpression(
-									expr,
-									std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-									args);
+								return this->evaluateDependentNTTPExpression(expr, params, args);
 							});
 					auto specialization_ast =
 						gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
@@ -2525,6 +2481,10 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	std::optional<TemplateTypeArg> evaluateDependentNTTPExpression(
 		const ASTNode& dependent_expr,
 		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
+	std::optional<TemplateTypeArg> evaluateDependentNTTPExpression(
+		const ASTNode& dependent_expr,
+		std::span<const ASTNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Instantiate member function template
 	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, std::span<const TemplateTypeArg> template_type_args);  // NEW: Instantiate member function template with explicit args
@@ -3033,6 +2993,18 @@ public:	// Public methods for template instantiation
 	TemplateNameLookupResult lookupTemplateName(const TemplateNameLookupRequest& request) const {
 		return gTemplateRegistry.lookupTemplateName(request);
 	}
+	std::optional<size_t> resolveSizeofPackCount(std::string_view pack_name) const {
+		if (auto pack_size = get_template_param_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		if (auto pack_size = get_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		if (auto pack_size = get_class_template_pack_size(pack_name)) {
+			return *pack_size;
+		}
+		return std::nullopt;
+	}
 
 private:	 // Resume private methods
 
@@ -3143,6 +3115,69 @@ private:	 // Resume private methods
 			}
 		}
 		return std::nullopt;
+	}
+
+	// Count the number of template arguments attributed to the named variadic pack parameter.
+	// Walks template_params in order, advancing arg_cursor past each non-variadic parameter,
+	// and computes pack_size = remaining_args - required_non_variadic_after.
+	// With multiple packs, each pack consumes only what remains after reserving
+	// required non-variadic parameters to its right. If total_args are
+	// insufficient, pack_size is set to 0 for that pack.
+	// Returns std::nullopt when the pack name is not found in template_params.
+	static std::optional<size_t> countPackSizeFromParams(
+		std::string_view pack_name,
+		std::span<const TemplateParameterNode> template_params,
+		size_t total_args) {
+		if (auto pack_range = findPackArgRangeFromParams(pack_name, template_params, total_args)) {
+			return pack_range->second;
+		}
+		return std::nullopt;
+	}
+	// Static helper for deferred materialization and substitution paths.
+	// Returns {start_index, count} for the concrete arguments attributed to
+	// the named variadic parameter pack in `template_params`.
+	static std::optional<std::pair<size_t, size_t>> findPackArgRangeFromParams(
+		std::string_view pack_name,
+		std::span<const TemplateParameterNode> template_params,
+		size_t total_args) {
+		size_t total_non_variadic = 0;
+		for (const TemplateParameterNode& param : template_params) {
+			if (!param.is_variadic()) {
+				++total_non_variadic;
+			}
+		}
+
+		size_t arg_cursor = 0;
+		size_t non_variadic_seen = 0;
+		for (size_t pi = 0; pi < template_params.size(); ++pi) {
+			const TemplateParameterNode& param = template_params[pi];
+			if (!param.is_variadic()) {
+				++arg_cursor;
+				++non_variadic_seen;
+				continue;
+			}
+			size_t required_after = total_non_variadic - non_variadic_seen;
+			size_t remaining = arg_cursor < total_args ? total_args - arg_cursor : 0;
+			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
+			if (param.name() == pack_name) {
+				return std::pair<size_t, size_t>{arg_cursor, pack_size};
+			}
+			arg_cursor += pack_size;
+		}
+		return std::nullopt;
+	}
+	static InlineVector<TemplateParameterNode, 4> collectTemplateParameterNodes(
+		std::span<const ASTNode> template_parameters) {
+		InlineVector<TemplateParameterNode, 4> typed_template_parameters;
+		typed_template_parameters.reserve(template_parameters.size());
+		for (const ASTNode& template_param : template_parameters) {
+			const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(template_param);
+			if (typed_param == nullptr) {
+				continue;
+			}
+			typed_template_parameters.push_back(*typed_param);
+		}
+		return typed_template_parameters;
 	}
 
 	std::vector<ASTNode> expandPackExpressionArgument(const ASTNode& pattern);

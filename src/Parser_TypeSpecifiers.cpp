@@ -1551,10 +1551,11 @@ ParseResult Parser::parse_type_specifier() {
 					const bool has_dependent_alias_args =
 						aliasTemplateArgsStillDependent(*template_args);
 
-					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
-					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
-					if (alias_node.is_deferred() && !has_dependent_alias_args) {
-						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
+					// OPTION 1: Alias materialization for concrete arguments (preferred over
+					// placeholder fallback and string parsing). Deferred aliases are still
+					// handled via the same materialization entrypoint when arguments are concrete.
+					if (!has_dependent_alias_args) {
+						FLASH_LOG(Parser, Debug, "Using alias materialization for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						// Route directly through the alias-specific materialization path
 						// since we already know this is an alias template.
@@ -1623,7 +1624,13 @@ ParseResult Parser::parse_type_specifier() {
 									materializeTemplateArgs(
 										*alias_target_info,
 										alias_node.template_parameters(),
-										*template_args);
+										*template_args,
+										[this](
+											const ASTNode& expr,
+											std::span<const ASTNode> params,
+											std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+											return this->evaluateDependentNTTPExpression(expr, params, args);
+										});
 								AliasTemplateMaterializationResult materialized_target =
 									materializeTemplateInstantiationForLookup(
 										StringTable::getStringView(qualified_target_template_name),
@@ -2740,6 +2747,15 @@ ParseResult Parser::parse_type_specifier() {
 								instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
 									*rebound_arg,
 									Token());
+							} else if (const TypeInfo* materialized_member_alias_target =
+									materializeInstantiatedMemberAliasTarget(
+										instantiated_type,
+										alias_node.template_parameters(),
+										*member_template_args);
+								materialized_member_alias_target != nullptr) {
+								instantiated_type = resolveTypeInfoToTypeSpec(
+									*materialized_member_alias_target,
+									instantiated_type);
 							}
 
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
