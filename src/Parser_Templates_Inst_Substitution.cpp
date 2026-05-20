@@ -211,6 +211,8 @@ namespace {
 
 	// Detect whether an alias target argument forwards a parameter pack and return the pack name.
 	// Supports type-side `Type...` and expression-side `expr...` forwarding patterns.
+	// TODO(template-pack-forwarding): Extend detection/materialization to qualified or computed
+	// pack patterns (e.g. `const Ts...`, `(Vs + 1)...`) once deferred alias expansion supports them.
 	std::optional<std::string_view> tryGetAliasPackForwardingName(const ASTNode& target_arg_node) {
 		if (target_arg_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& target_arg_type = target_arg_node.as<TypeSpecifierNode>();
@@ -800,7 +802,26 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 		alias_node.template_parameters().size());
 	const auto target_template_params =
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
-	substituted_args.reserve(target_template_args.size());
+	const auto getForwardedPackRange =
+		[&](const ASTNode& target_arg_node) -> std::optional<std::pair<size_t, size_t>> {
+		if (std::optional<std::string_view> pack_name =
+				tryGetAliasPackForwardingName(target_arg_node);
+			pack_name.has_value()) {
+			return findPackArgRangeFromParams(
+				*pack_name,
+				alias_params_span,
+				template_args.size());
+		}
+		return std::nullopt;
+	};
+	size_t estimated_arg_count = target_template_args.size();
+	for (const ASTNode& target_arg_node : target_template_args) {
+		if (auto pack_range = getForwardedPackRange(target_arg_node);
+			pack_range.has_value() && pack_range->second > 1) {
+			estimated_arg_count += pack_range->second - 1;
+		}
+	}
+	substituted_args.reserve(estimated_arg_count);
 
 	auto getTargetTemplateParam = [&](size_t index) -> const TemplateParameterNode* {
 		if (index < target_template_params.size()) {
@@ -815,23 +836,16 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 	for (size_t i = 0; i < target_template_args.size(); ++i) {
 		const TemplateParameterNode* target_template_param = getTargetTemplateParam(i);
 		const ASTNode& target_arg_node = target_template_args[i];
-		if (std::optional<std::string_view> pack_name =
-				tryGetAliasPackForwardingName(target_arg_node);
-			pack_name.has_value()) {
-			if (auto pack_range = findPackArgRangeFromParams(
-					*pack_name,
-					alias_params_span,
-					template_args.size());
-				pack_range.has_value()) {
-				for (size_t offset = 0; offset < pack_range->second; ++offset) {
-					const size_t arg_index = pack_range->first + offset;
-					if (arg_index >= template_args.size()) {
-						break;
-					}
-					substituted_args.push_back(template_args[arg_index]);
+		if (auto pack_range = getForwardedPackRange(target_arg_node);
+			pack_range.has_value()) {
+			for (size_t offset = 0; offset < pack_range->second; ++offset) {
+				const size_t arg_index = pack_range->first + offset;
+				if (arg_index >= template_args.size()) {
+					break;
 				}
-				continue;
+				substituted_args.push_back(template_args[arg_index]);
 			}
+			continue;
 		}
 		auto materialized_arg = materializeDeferredAliasTemplateArg(
 			target_arg_node,

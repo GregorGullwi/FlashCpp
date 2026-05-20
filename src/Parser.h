@@ -3140,19 +3140,23 @@ private:	 // Resume private methods
 		std::string_view pack_name,
 		std::span<const TemplateParameterNode> template_params,
 		size_t total_args) {
+		size_t total_non_variadic = 0;
+		for (const TemplateParameterNode& param : template_params) {
+			if (!param.is_variadic()) {
+				++total_non_variadic;
+			}
+		}
+
 		size_t arg_cursor = 0;
+		size_t non_variadic_seen = 0;
 		for (size_t pi = 0; pi < template_params.size(); ++pi) {
 			const TemplateParameterNode& param = template_params[pi];
 			if (!param.is_variadic()) {
 				++arg_cursor;
+				++non_variadic_seen;
 				continue;
 			}
-			size_t required_after = 0;
-			for (size_t j = pi + 1; j < template_params.size(); ++j) {
-				if (!template_params[j].is_variadic()) {
-					++required_after;
-				}
-			}
+			size_t required_after = total_non_variadic - non_variadic_seen;
 			size_t remaining = arg_cursor < total_args ? total_args - arg_cursor : 0;
 			size_t pack_size = remaining > required_after ? remaining - required_after : 0;
 			if (param.name() == pack_name) {

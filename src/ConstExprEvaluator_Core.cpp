@@ -697,25 +697,30 @@ std::optional<size_t> resolveSizeofPackCount(
 	if (pack_name.empty()) {
 		return std::nullopt;
 	}
+	if (context.parser == nullptr) {
+		throw InternalError(
+			"resolveSizeofPackCount requires parser in evaluation context so pack-size registries can be queried");
+	}
+	Parser& parser = *context.parser;
 
 	StringHandle pack_name_handle = StringTable::getOrInternStringHandle(pack_name);
 	if (const TemplateBinding* pack_binding =
 			findTemplatePackBinding(pack_name_handle, context.template_environment);
 		pack_binding != nullptr) {
-		if (context.parser != nullptr &&
-			pack_binding->args.size() == 1 &&
+		// Some template environments represent a pack as a single pack-typed placeholder arg.
+		// In that shape, args.size()==1 is not the concrete expansion cardinality, so prefer
+		// parser-side pack-size registries when available.
+		if (pack_binding->args.size() == 1 &&
 			pack_binding->args.front().is_pack) {
-			if (auto parser_pack_size = context.parser->resolveSizeofPackCount(pack_name)) {
+			if (auto parser_pack_size = parser.resolveSizeofPackCount(pack_name)) {
 				return *parser_pack_size;
 			}
 		}
 		return pack_binding->args.size();
 	}
 
-	if (context.parser != nullptr) {
-		if (auto parser_pack_size = context.parser->resolveSizeofPackCount(pack_name)) {
-			return *parser_pack_size;
-		}
+	if (auto parser_pack_size = parser.resolveSizeofPackCount(pack_name)) {
+		return *parser_pack_size;
 	}
 
 	for (size_t i = 0; i < context.template_param_names.size(); ++i) {
