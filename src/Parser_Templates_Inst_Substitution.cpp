@@ -3126,33 +3126,28 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 
 		std::optional<ASTNode> init_expr;
 		if (spec_var_decl.initializer().has_value()) {
-			if (!spec_params.empty()) {
-				StringHandle instantiated_var_handle =
-					StringTable::getOrInternStringHandle(persistent_name);
-				init_expr = try_replay_variable_template_initializer(
-					spec_template,
-					spec_params,
-					converted_args,
-					instantiated_var_handle,
-					"Replay substitution failed for variable-template partial specialization initializer: ");
-				if (!init_expr.has_value()) {
+			StringHandle instantiated_var_handle =
+				StringTable::getOrInternStringHandle(persistent_name);
+			const char* failure_message = !spec_params.empty()
+				? "Replay substitution failed for variable-template partial specialization initializer: "
+				: "Replay parsing failed for variable-template specialization initializer: ";
+			init_expr = try_replay_variable_template_initializer(
+				spec_template,
+				spec_params,
+				converted_args,
+				instantiated_var_handle,
+				failure_message);
+			if (!init_expr.has_value()) {
+				if (!spec_params.empty()) {
 					init_expr = substituteTemplateParameters(
 						*spec_var_decl.initializer(), spec_params, converted_args);
-				}
-				spec_type = substituteTemplateParameters(
-					spec_type, spec_params, converted_args);
-			} else {
-				StringHandle instantiated_var_handle =
-					StringTable::getOrInternStringHandle(persistent_name);
-				init_expr = try_replay_variable_template_initializer(
-					spec_template,
-					spec_params,
-					converted_args,
-					instantiated_var_handle,
-					"Replay parsing failed for variable-template specialization initializer: ");
-				if (!init_expr.has_value()) {
+				} else {
 					init_expr = *spec_var_decl.initializer();
 				}
+			}
+			if (!spec_params.empty()) {
+				spec_type = substituteTemplateParameters(
+					spec_type, spec_params, converted_args);
 			}
 		} else if (spec_decl.type_specifier_node().category() == TypeCategory::Bool) {
 			Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
