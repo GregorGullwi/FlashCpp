@@ -3424,6 +3424,8 @@ private:	 // Resume private methods
 	// Helper: Resolve an alias/class member-template segment including inherited bases.
 	// Returns the qualified template name to materialize, or empty when not found.
 	std::string_view lookup_inherited_member_template_name(StringHandle struct_name, StringHandle member_name, int depth);
+	std::string_view lookup_direct_member_variable_template_name(StringHandle owner_name, StringHandle member_name);
+	std::string_view lookup_inherited_member_variable_template_name(StringHandle struct_name, StringHandle member_name, int depth);
 	// Convenience overload for string_view parameters
 	const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
 		return lookup_inherited_template(

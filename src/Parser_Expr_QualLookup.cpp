@@ -844,6 +844,165 @@ std::string_view Parser::lookup_direct_member_template_name(
 	return {};
 }
 
+std::string_view Parser::lookup_direct_member_variable_template_name(
+	StringHandle owner_name,
+	StringHandle member_name) {
+	auto has_registered_member_variable_template = [&](StringHandle qualified_name) {
+		return gTemplateRegistry.lookupVariableTemplate(qualified_name).has_value();
+	};
+	auto register_outer_binding = [&](StringHandle qualified_name, const TypeInfo* owner_type_info) {
+		if (owner_type_info == nullptr ||
+			!owner_type_info->hasInstantiationContext()) {
+			return;
+		}
+		const TypeInfo::InstantiationContext* context =
+			owner_type_info->instantiationContext();
+		if (context == nullptr) {
+			return;
+		}
+		OuterTemplateBinding outer_binding;
+		const size_t pair_count = std::min(
+			context->param_names.size(),
+			context->param_args.size());
+		outer_binding.param_names.reserve(pair_count);
+		outer_binding.param_args.reserve(pair_count);
+		outer_binding.all_args.reserve(context->param_args.size());
+		for (size_t i = 0; i < pair_count; ++i) {
+			outer_binding.param_names.push_back(context->param_names[i]);
+			TemplateTypeArg arg = toTemplateTypeArg(context->param_args[i]);
+			arg.setCategory(context->param_args[i].category());
+			outer_binding.param_args.push_back(arg);
+		}
+		for (const TypeInfo::TemplateArgInfo& context_arg : context->param_args) {
+			TemplateTypeArg arg = toTemplateTypeArg(context_arg);
+			arg.setCategory(context_arg.category());
+			outer_binding.all_args.push_back(arg);
+		}
+		if (!outer_binding.param_names.empty()) {
+			gTemplateRegistry.registerOuterTemplateBinding(
+				qualified_name,
+				std::move(outer_binding));
+		}
+	};
+
+	StringHandle qualified_member_template_name =
+		buildQualifiedMemberNameHandle(owner_name, member_name);
+	if (has_registered_member_variable_template(qualified_member_template_name)) {
+		return StringTable::getStringView(qualified_member_template_name);
+	}
+
+	auto owner_it = getTypesByNameMap().find(owner_name);
+	const TypeInfo* owner_type_info =
+		owner_it != getTypesByNameMap().end() ? owner_it->second : nullptr;
+	if (owner_type_info == nullptr) {
+		return {};
+	}
+
+	if (auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(owner_name);
+		pattern_name_opt.has_value()) {
+		StringHandle pattern_member_name = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(*pattern_name_opt)
+				.append("::")
+				.append(StringTable::getStringView(member_name))
+				.commit());
+		if (has_registered_member_variable_template(pattern_member_name)) {
+			register_outer_binding(pattern_member_name, owner_type_info);
+			return StringTable::getStringView(pattern_member_name);
+		}
+	}
+
+	if (owner_type_info->isTemplateInstantiation()) {
+		StringHandle primary_owner_name = gNamespaceRegistry.buildQualifiedIdentifier(
+			owner_type_info->sourceNamespace(),
+			owner_type_info->baseTemplateName());
+		StringHandle primary_member_name =
+			buildQualifiedMemberNameHandle(primary_owner_name, member_name);
+		if (has_registered_member_variable_template(primary_member_name)) {
+			register_outer_binding(primary_member_name, owner_type_info);
+			return StringTable::getStringView(primary_member_name);
+		}
+	}
+
+	return {};
+}
+
+std::string_view Parser::lookup_inherited_member_variable_template_name(
+	StringHandle struct_name,
+	StringHandle member_name,
+	int depth) {
+	constexpr int kMaxInheritanceDepth = 100;
+	if (depth > kMaxInheritanceDepth) {
+		FLASH_LOG_FORMAT(
+			Templates,
+			Warning,
+			"lookup_inherited_member_variable_template_name: max depth exceeded for '{}::{}'",
+			StringTable::getStringView(struct_name),
+			StringTable::getStringView(member_name));
+		return {};
+	}
+
+	auto struct_it = getTypesByNameMap().find(struct_name);
+	if (struct_it != getTypesByNameMap().end() &&
+		struct_it->second != nullptr) {
+		if (std::string_view direct_name =
+				lookup_direct_member_variable_template_name(struct_name, member_name);
+			!direct_name.empty()) {
+			return direct_name;
+		}
+	}
+
+	if (struct_it == getTypesByNameMap().end()) {
+		return {};
+	}
+
+	const TypeInfo* struct_type_info = struct_it->second;
+	if (struct_type_info == nullptr) {
+		return {};
+	}
+
+	if (!struct_type_info->struct_info_) {
+		if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
+			if (underlying_type != struct_type_info && underlying_type->struct_info_) {
+				return lookup_inherited_member_variable_template_name(
+					underlying_type->name(),
+					member_name,
+					depth + 1);
+			}
+		}
+		return {};
+	}
+
+	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
+	for (const auto& base_class : struct_info->base_classes) {
+		if (base_class.is_deferred) {
+			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
+			if (resolved != nullptr) {
+				if (std::string_view base_result =
+						lookup_inherited_member_variable_template_name(
+							resolved->name(),
+							member_name,
+							depth + 1);
+					!base_result.empty()) {
+					return base_result;
+				}
+			}
+			continue;
+		}
+
+		if (std::string_view base_result =
+				lookup_inherited_member_variable_template_name(
+					StringTable::getOrInternStringHandle(base_class.name),
+					member_name,
+					depth + 1);
+			!base_result.empty()) {
+			return base_result;
+		}
+	}
+
+	return {};
+}
+
 std::string_view Parser::lookup_inherited_member_template_name(
 	StringHandle struct_name,
 	StringHandle member_name,

@@ -2927,6 +2927,25 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					qual_id.identifier_token().column(),
 					qual_id.identifier_token().file_index());
 			}
+			auto substitute_qualified_id_template_args = [&]() {
+				std::vector<ASTNode> explicit_template_arg_nodes;
+				explicit_template_arg_nodes.reserve(
+					qual_id.template_arguments().size());
+				for (const ASTNode& template_arg : qual_id.template_arguments()) {
+					if (template_arg.is<TypeSpecifierNode>()) {
+						TypeSpecifierNode& substituted_type =
+							gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+								substituteInType(
+									template_arg.as<TypeSpecifierNode>()));
+						explicit_template_arg_nodes.push_back(
+							ASTNode(&substituted_type));
+					} else {
+						explicit_template_arg_nodes.push_back(
+							substitute(template_arg));
+					}
+				}
+				return explicit_template_arg_nodes;
+			};
 			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 				NamespaceRegistry::GLOBAL_NAMESPACE,
 				StringTable::getOrInternStringHandle(materialized_namespace));
@@ -2950,6 +2969,18 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 							final_member_args.data(),
 							final_member_args.size()),
 						final_token);
+				if (explicit_template_arg_nodes.empty() &&
+					qual_id.has_template_arguments()) {
+					explicit_template_arg_nodes =
+						substitute_qualified_id_template_args();
+				}
+				if (!explicit_template_arg_nodes.empty()) {
+					new_qual_id.set_template_arguments(
+						std::move(explicit_template_arg_nodes));
+				}
+			} else if (qual_id.has_template_arguments()) {
+				std::vector<ASTNode> explicit_template_arg_nodes =
+					substitute_qualified_id_template_args();
 				if (!explicit_template_arg_nodes.empty()) {
 					new_qual_id.set_template_arguments(
 						std::move(explicit_template_arg_nodes));
