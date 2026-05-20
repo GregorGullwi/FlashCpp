@@ -193,6 +193,45 @@ namespace {
 		return std::nullopt;
 	}
 
+	// Extract pack name from a pack-expansion pattern expression.
+	// Supports identifier and template-parameter-reference patterns.
+	std::optional<std::string_view> tryExtractPackNameFromPackExpansionPattern(const ASTNode& pattern) {
+		if (!pattern.is<ExpressionNode>()) {
+			return std::nullopt;
+		}
+		const ExpressionNode& pattern_expr = pattern.as<ExpressionNode>();
+		if (const auto* pattern_id = std::get_if<IdentifierNode>(&pattern_expr)) {
+			return pattern_id->name();
+		}
+		if (const auto* pattern_tparam = std::get_if<TemplateParameterReferenceNode>(&pattern_expr)) {
+			return StringTable::getStringView(pattern_tparam->param_name());
+		}
+		return std::nullopt;
+	}
+
+	// Detect whether an alias target argument forwards a parameter pack and return the pack name.
+	// Supports type-side `Type...` and expression-side `expr...` forwarding patterns.
+	// TODO(template-pack-forwarding): Extend detection/materialization to qualified or computed
+	// pack patterns (e.g. `const Ts...`, `(Vs + 1)...`) once deferred alias expansion supports them.
+	std::optional<std::string_view> tryGetAliasPackForwardingName(const ASTNode& target_arg_node) {
+		if (target_arg_node.is<TypeSpecifierNode>()) {
+			const TypeSpecifierNode& target_arg_type = target_arg_node.as<TypeSpecifierNode>();
+			if (target_arg_type.is_pack_expansion() &&
+				target_arg_type.token().type() == Token::Type::Identifier) {
+				return target_arg_type.token().value();
+			}
+			return std::nullopt;
+		}
+		if (!target_arg_node.is<ExpressionNode>()) {
+			return std::nullopt;
+		}
+		const ExpressionNode& target_arg_expr = target_arg_node.as<ExpressionNode>();
+		if (const auto* pack_expansion = std::get_if<PackExpansionExprNode>(&target_arg_expr)) {
+			return tryExtractPackNameFromPackExpansionPattern(pack_expansion->pattern());
+		}
+		return std::nullopt;
+	}
+
 	ASTNode substituteNonTypeDefaultExpressionImpl(
 		Parser& parser,
 		const ASTNode& default_node,
@@ -550,18 +589,7 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 					const ASTNode& expr,
 					std::span<const ASTNode> params,
 					std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-					InlineVector<TemplateParameterNode, 4> typed_params;
-					typed_params.reserve(params.size());
-					for (const ASTNode& param_node : params) {
-						if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-							typed_param != nullptr) {
-							typed_params.push_back(*typed_param);
-						}
-					}
-					return this->evaluateDependentNTTPExpression(
-						expr,
-						std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-						args);
+					return this->evaluateDependentNTTPExpression(expr, params, args);
 				};
 				auto materialize_args = [&](const TypeInfo& source_type_info) {
 					return materializeTemplateArgs(
@@ -700,6 +728,26 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 		}
 	}
 
+	// Handle sizeof...(Pack) directly and preserve the target NTTP category.
+	// The generic substitute/evaluate path now resolves pack size through the
+	// template evaluation environment. This fast path is still needed when alias
+	// target substitution must preserve the destination NTTP category immediately
+	// (e.g., bool/enum/non-default integral targets) instead of accepting the
+	// generic evaluator's default unsigned-long-long category.
+	if (const auto* sizeof_pack = std::get_if<SizeofPackNode>(&arg_expr)) {
+		std::string_view pack_name = sizeof_pack->pack_name();
+		std::span<const TemplateParameterNode> params_span(
+			template_parameters.data(), template_parameters.size());
+		if (auto pack_size = countPackSizeFromParams(pack_name, params_span, template_args.size())) {
+			FLASH_LOG(Templates, Debug, "materializeDeferredAliasTemplateArg: sizeof...(", pack_name, ") = ", *pack_size, " (counted from template_parameters/args)");
+			TypeCategory value_cat = TypeCategory::UnsignedLongLong;
+			if (target_template_param != nullptr && target_template_param->has_type()) {
+				value_cat = target_template_param->type_specifier_node().type();
+			}
+			return TemplateTypeArg(static_cast<int64_t>(*pack_size), value_cat);
+		}
+	}
+
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
 	typed_template_parameters.reserve(template_parameters.size());
 	for (const TemplateParameterNode& template_param : template_parameters) {
@@ -749,9 +797,31 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 	InlineVector<TemplateTypeArg, 4> substituted_args;
 	const auto& param_names = alias_node.template_param_names();
 	std::span<const ASTNode> target_template_args = alias_node.target_template_args();
+	std::span<const TemplateParameterNode> alias_params_span(
+		alias_node.template_parameters().data(),
+		alias_node.template_parameters().size());
 	const auto target_template_params =
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
-	substituted_args.reserve(target_template_args.size());
+	const auto getForwardedPackRange =
+		[&](const ASTNode& target_arg_node) -> std::optional<std::pair<size_t, size_t>> {
+		if (std::optional<std::string_view> pack_name =
+				tryGetAliasPackForwardingName(target_arg_node);
+			pack_name.has_value()) {
+			return findPackArgRangeFromParams(
+				*pack_name,
+				alias_params_span,
+				template_args.size());
+		}
+		return std::nullopt;
+	};
+	size_t estimated_arg_count = target_template_args.size();
+	for (const ASTNode& target_arg_node : target_template_args) {
+		if (auto pack_range = getForwardedPackRange(target_arg_node);
+			pack_range.has_value() && pack_range->second > 1) {
+			estimated_arg_count += pack_range->second - 1;
+		}
+	}
+	substituted_args.reserve(estimated_arg_count);
 
 	auto getTargetTemplateParam = [&](size_t index) -> const TemplateParameterNode* {
 		if (index < target_template_params.size()) {
@@ -765,8 +835,20 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 
 	for (size_t i = 0; i < target_template_args.size(); ++i) {
 		const TemplateParameterNode* target_template_param = getTargetTemplateParam(i);
+		const ASTNode& target_arg_node = target_template_args[i];
+		if (auto pack_range = getForwardedPackRange(target_arg_node);
+			pack_range.has_value()) {
+			for (size_t offset = 0; offset < pack_range->second; ++offset) {
+				const size_t arg_index = pack_range->first + offset;
+				if (arg_index >= template_args.size()) {
+					break;
+				}
+				substituted_args.push_back(template_args[arg_index]);
+			}
+			continue;
+		}
 		auto materialized_arg = materializeDeferredAliasTemplateArg(
-			target_template_args[i],
+			target_arg_node,
 			alias_node.template_parameters(),
 			param_names,
 			template_args,
@@ -934,29 +1016,12 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 	}
 }
 
-namespace {
-
-// Collect only template-parameter nodes from a mixed AST-node parameter list.
-InlineVector<TemplateParameterNode, 4> extractTemplateParameterNodes(
-	const InlineVector<ASTNode, 4>& template_parameters) {
-	InlineVector<TemplateParameterNode, 4> typed_template_parameters;
-	typed_template_parameters.reserve(template_parameters.size());
-	for (const ASTNode& template_param : template_parameters) {
-		if (!template_param.is<TemplateParameterNode>()) {
-			continue;
-		}
-		typed_template_parameters.push_back(template_param.as<TemplateParameterNode>());
-	}
-	return typed_template_parameters;
-}
-
-}
-
 void Parser::normalizeDependentNonTypeTemplateArgs(
 	const InlineVector<ASTNode, 4>& template_parameters,
 	std::vector<TemplateTypeArg>& template_args) {
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters =
-		extractTemplateParameterNodes(template_parameters);
+		collectTemplateParameterNodes(
+			std::span<const ASTNode>(template_parameters.data(), template_parameters.size()));
 	normalizeDependentNonTypeTemplateArgs(
 		typed_template_parameters,
 		template_args);
@@ -966,7 +1031,8 @@ void Parser::normalizeDependentNonTypeTemplateArgs(
 	const InlineVector<ASTNode, 4>& template_parameters,
 	InlineVector<TemplateTypeArg, 4>& template_args) {
 	InlineVector<TemplateParameterNode, 4> typed_template_parameters =
-		extractTemplateParameterNodes(template_parameters);
+		collectTemplateParameterNodes(
+			std::span<const ASTNode>(template_parameters.data(), template_parameters.size()));
 	normalizeDependentNonTypeTemplateArgs(
 		typed_template_parameters,
 		template_args);
@@ -1036,18 +1102,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			const ASTNode& expr,
 			std::span<const ASTNode> params,
 			std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-			InlineVector<TemplateParameterNode, 4> typed_params;
-			typed_params.reserve(params.size());
-			for (const ASTNode& param_node : params) {
-				if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-					typed_param != nullptr) {
-					typed_params.push_back(*typed_param);
-				}
-			}
-			return this->evaluateDependentNTTPExpression(
-				expr,
-				std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-				args);
+			return this->evaluateDependentNTTPExpression(expr, params, args);
 		};
 		auto materialize_args = [&](const TypeInfo& nested_source_type_info) {
 			return materializeTemplateArgs(
@@ -1847,20 +1902,9 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 						const ASTNode& expr,
 						std::span<const ASTNode> params,
 						std::span<const TemplateTypeArg> args) {
-						InlineVector<TemplateParameterNode, 4> typed_params;
-						typed_params.reserve(params.size());
-						for (const ASTNode& param_node : params) {
-							if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-								typed_param != nullptr) {
-								typed_params.push_back(*typed_param);
-							}
-						}
 						FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 						populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
-						return this->evaluateDependentNTTPExpression(
-							expr,
-							std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-							args);
+						return this->evaluateDependentNTTPExpression(expr, params, args);
 					});
 			}
 			concrete_args.push_back(std::move(concrete_arg));
@@ -2067,18 +2111,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 							const ASTNode& expr,
 							std::span<const ASTNode> params,
 							std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-							InlineVector<TemplateParameterNode, 4> typed_params;
-							typed_params.reserve(params.size());
-							for (const ASTNode& param_node : params) {
-								if (const TemplateParameterNode* typed_param = tryGetTemplateParameterNode(param_node);
-									typed_param != nullptr) {
-									typed_params.push_back(*typed_param);
-								}
-							}
-							return this->evaluateDependentNTTPExpression(
-								expr,
-								std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-								args);
+							return this->evaluateDependentNTTPExpression(expr, params, args);
 						});
 				StringHandle qualified_target_template_handle =
 					gNamespaceRegistry.buildQualifiedIdentifier(
@@ -3666,9 +3699,28 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 // Returns the evaluated value and its category if successful, or nullopt if evaluation fails.
 std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	const ASTNode& dependent_expr,
+	std::span<const ASTNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	InlineVector<TemplateParameterNode, 4> typed_params =
+		collectTemplateParameterNodes(template_params);
+	if (typed_params.size() != template_params.size()) {
+		throw InternalError(
+			"evaluateDependentNTTPExpression expected only TemplateParameterNode entries (found " +
+			std::to_string(typed_params.size()) +
+			" valid out of " +
+			std::to_string(template_params.size()) +
+			" total)");
+	}
+	return evaluateDependentNTTPExpression(
+		dependent_expr,
+		std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
+		template_args);
+}
+
+std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
+	const ASTNode& dependent_expr,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
-
 	// Build type substitution map from template params to args
 	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
 	// Build non-type substitution map for value parameters

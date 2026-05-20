@@ -672,6 +672,71 @@ const TemplateTypeArg* findTemplateValueParameterBinding(StringHandle param_name
 	return findTemplateValueParameterBindingCompatibility(param_name_handle, context);
 }
 
+// Walk the template-environment chain and return the first matching pack binding.
+// Returns nullptr when no pack with the requested name exists in the chain.
+const TemplateBinding* findTemplatePackBinding(
+	StringHandle pack_name_handle,
+	const TemplateEnvironment& environment) {
+	for (const TemplateBinding& binding : environment.bindings) {
+		if (binding.name == pack_name_handle && binding.is_pack) {
+			return &binding;
+		}
+	}
+	if (environment.parent != nullptr) {
+		return findTemplatePackBinding(pack_name_handle, *environment.parent);
+	}
+	return nullptr;
+}
+
+// Resolve sizeof...(Pack) count from constexpr evaluation context in priority order:
+// 1) explicit template-environment pack binding, 2) parser pack-size registries,
+// 3) compatibility fallback from template_param_names/template_args.
+std::optional<size_t> resolveSizeofPackCount(
+	std::string_view pack_name,
+	const EvaluationContext& context) {
+	if (pack_name.empty()) {
+		return std::nullopt;
+	}
+	if (context.parser == nullptr) {
+		throw InternalError(
+			"resolveSizeofPackCount requires parser in evaluation context so pack-size registries can be queried");
+	}
+	Parser& parser = *context.parser;
+
+	StringHandle pack_name_handle = StringTable::getOrInternStringHandle(pack_name);
+	if (const TemplateBinding* pack_binding =
+			findTemplatePackBinding(pack_name_handle, context.template_environment);
+		pack_binding != nullptr) {
+		// Some template environments represent a pack as a single pack-typed placeholder arg.
+		// In that shape, args.size()==1 is not the concrete expansion cardinality, so prefer
+		// parser-side pack-size registries when available.
+		if (pack_binding->args.size() == 1 &&
+			pack_binding->args.front().is_pack) {
+			if (auto parser_pack_size = parser.resolveSizeofPackCount(pack_name)) {
+				return *parser_pack_size;
+			}
+		}
+		return pack_binding->args.size();
+	}
+
+	if (auto parser_pack_size = parser.resolveSizeofPackCount(pack_name)) {
+		return *parser_pack_size;
+	}
+
+	for (size_t i = 0; i < context.template_param_names.size(); ++i) {
+		if (context.template_param_names[i] != pack_name) {
+			continue;
+		}
+		const size_t required_after = context.template_param_names.size() - (i + 1);
+		if (context.template_args.size() < i + required_after) {
+			return std::nullopt;
+		}
+		return context.template_args.size() - i - required_after;
+	}
+
+	return std::nullopt;
+}
+
 std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
 	if (!arg.is_value) {
 		return std::nullopt;
@@ -934,22 +999,13 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	if (std::holds_alternative<SizeofPackNode>(expr)) {
 		const auto& sizeof_pack = std::get<SizeofPackNode>(expr);
 		std::string_view pack_name = sizeof_pack.pack_name();
-
-		// Try to get pack size from the parser's pack parameter info
-		if (context.parser) {
-			auto pack_size = context.parser->get_pack_size(pack_name);
-			if (pack_size.has_value()) {
-				return EvalResult::from_int(static_cast<long long>(*pack_size));
-			}
-			// Also check class template pack context
-			auto class_pack_size = context.parser->get_class_template_pack_size(pack_name);
-			if (class_pack_size.has_value()) {
-				return EvalResult::from_int(static_cast<long long>(*class_pack_size));
-			}
-			return EvalResult::error("sizeof... requires template instantiation context for pack: " + std::string(pack_name), EvalErrorType::TemplateDependentExpression);
+		if (auto pack_size = resolveSizeofPackCount(pack_name, context)) {
+			return EvalResult::from_uint(static_cast<unsigned long long>(*pack_size));
 		}
 
-		return EvalResult::error("sizeof... operator requires template context");
+		return EvalResult::error(
+			"sizeof... requires template instantiation context for pack: " + std::string(pack_name),
+			EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For AlignofExprNode
