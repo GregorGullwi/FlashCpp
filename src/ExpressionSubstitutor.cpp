@@ -2938,6 +2938,14 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 					new_ns_handle,
 					final_token);
+			auto substituteQualIdTemplateArgs = [&]() -> std::vector<ASTNode> {
+				std::vector<ASTNode> result;
+				result.reserve(qual_id.template_arguments().size());
+				for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
+					result.push_back(substitute(template_arg_node));
+				}
+				return result;
+			};
 			if (final_member.has_template_arguments) {
 				InlineVector<TemplateTypeArg, 4> final_member_args =
 					materializeDependentRecordTemplateArgs(
@@ -2956,28 +2964,16 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						final_token);
 				if (explicit_template_arg_nodes.empty() &&
 					qual_id.has_template_arguments()) {
-					explicit_template_arg_nodes.reserve(
-						qual_id.template_arguments().size());
-					for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
-						explicit_template_arg_nodes.push_back(
-							substitute(template_arg_node));
-					}
+					explicit_template_arg_nodes = substituteQualIdTemplateArgs();
 				}
 				if (!explicit_template_arg_nodes.empty()) {
 					new_qual_id.set_template_arguments(
 						std::move(explicit_template_arg_nodes));
 				}
 			} else if (qual_id.has_template_arguments()) {
-				std::vector<ASTNode> substituted_template_arg_nodes;
-				substituted_template_arg_nodes.reserve(
-					qual_id.template_arguments().size());
-				for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
-					substituted_template_arg_nodes.push_back(
-						substitute(template_arg_node));
-				}
-				if (!substituted_template_arg_nodes.empty()) {
-					new_qual_id.set_template_arguments(
-						std::move(substituted_template_arg_nodes));
+				std::vector<ASTNode> substituted = substituteQualIdTemplateArgs();
+				if (!substituted.empty()) {
+					new_qual_id.set_template_arguments(std::move(substituted));
 				}
 			}
 			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
