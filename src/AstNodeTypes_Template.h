@@ -163,6 +163,20 @@ struct DeferredAliasMemberTemplateSegment {
 	bool has_template_arguments = false;
 };
 
+inline InlineVector<DeferredAliasMemberTemplateSegment, 4> makeDeferredAliasMemberTemplateSegments(
+	StringHandle target_member_template_name,
+	InlineVector<ASTNode, 4> target_member_template_args) {
+	InlineVector<DeferredAliasMemberTemplateSegment, 4> segments;
+	if (target_member_template_name.isValid()) {
+		DeferredAliasMemberTemplateSegment segment;
+		segment.name = target_member_template_name;
+		segment.has_template_arguments = !target_member_template_args.empty();
+		segment.template_args = std::move(target_member_template_args);
+		segments.push_back(std::move(segment));
+	}
+	return segments;
+}
+
 class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
@@ -200,17 +214,9 @@ public:
 			target_type,
 			target_template_name,
 			std::move(target_template_args),
-			[&]() {
-				InlineVector<DeferredAliasMemberTemplateSegment, 4> segments;
-				if (target_member_template_name.isValid()) {
-					DeferredAliasMemberTemplateSegment segment;
-					segment.name = target_member_template_name;
-					segment.has_template_arguments = !target_member_template_args.empty();
-					segment.template_args = std::move(target_member_template_args);
-					segments.push_back(std::move(segment));
-				}
-				return segments;
-			}()) {}
+			makeDeferredAliasMemberTemplateSegments(
+				target_member_template_name,
+				std::move(target_member_template_args))) {}
 	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
@@ -248,17 +254,9 @@ public:
 			target_type.as<TypeSpecifierNode>(),
 			target_template_name,
 			std::move(target_template_args),
-			[&]() {
-				InlineVector<DeferredAliasMemberTemplateSegment, 4> segments;
-				if (target_member_template_name.isValid()) {
-					DeferredAliasMemberTemplateSegment segment;
-					segment.name = target_member_template_name;
-					segment.has_template_arguments = !target_member_template_args.empty();
-					segment.template_args = std::move(target_member_template_args);
-					segments.push_back(std::move(segment));
-				}
-				return segments;
-			}()) {}
+			makeDeferredAliasMemberTemplateSegments(
+				target_member_template_name,
+				std::move(target_member_template_args))) {}
 	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,

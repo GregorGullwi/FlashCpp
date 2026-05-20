@@ -28,6 +28,18 @@ static void buildVariableTemplateParameterReplayState(
 	}
 }
 
+static bool hasComplexDeferredMemberChain(const TemplateAliasNode& node) {
+	const auto segments = node.targetMemberTemplateSegments();
+	if (segments.size() > 1) {
+		return true;
+	}
+	return std::ranges::any_of(
+		segments,
+		[](const DeferredAliasMemberTemplateSegment& segment) {
+			return segment.has_template_arguments;
+		});
+}
+
 static void buildEffectiveVariableTemplateSubstitutionInputs(
 	std::string_view template_name,
 	const OuterTemplateBinding* outer_binding,
@@ -1061,6 +1073,11 @@ std::optional<QualifiedTypeMemberAccess> Parser::materializeDeferredAliasMemberT
 	StringHandle member_alias_handle) {
 	if (segment.has_template_arguments &&
 		!member_alias_handle.isValid()) {
+		FLASH_LOG_FORMAT(
+			Templates,
+			Debug,
+			"Skipping deferred alias member-template segment '{}' because owner-qualified template lookup did not resolve",
+			StringTable::getStringView(segment.name));
 		return std::nullopt;
 	}
 	const auto member_template_params = getTargetTemplateParameters(member_alias_handle);
@@ -1534,21 +1551,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			}
 		}
 	}
-	auto has_complex_deferred_member_chain =
-		[](const TemplateAliasNode& node) {
-			const auto segments = node.targetMemberTemplateSegments();
-			if (segments.size() > 1) {
-				return true;
-			}
-			return std::ranges::any_of(
-				segments,
-				[](const DeferredAliasMemberTemplateSegment& segment) {
-					return segment.has_template_arguments;
-				});
-		};
 	if (alias_node != nullptr &&
 		alias_node->hasDeferredMemberTarget() &&
-		has_complex_deferred_member_chain(*alias_node) &&
+		hasComplexDeferredMemberChain(*alias_node) &&
 		!result.instantiated_name.empty()) {
 		if (const TypeInfo* materialized_member =
 				materializeDeferredAliasMemberTemplateChain(
@@ -2373,15 +2378,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 			std::string_view instantiated_name = instantiate_and_register_base_template(target_name, substituted_args);
 			if (!instantiated_name.empty()) {
 				if (alias_node.hasDeferredMemberTarget()) {
-					const auto segments = alias_node.targetMemberTemplateSegments();
-					const bool has_complex_member_chain =
-						segments.size() > 1 ||
-						std::ranges::any_of(
-							segments,
-							[](const DeferredAliasMemberTemplateSegment& segment) {
-								return segment.has_template_arguments;
-							});
-					if (!has_complex_member_chain) {
+					if (!hasComplexDeferredMemberChain(alias_node)) {
 						base_class_name = instantiated_name;
 						return instantiated_name;
 					}
