@@ -2781,7 +2781,19 @@ ASTNode Parser::substitute_template_params_in_expression(
 // Returns the instantiated StructDeclarationNode if successful
 // Try to instantiate a variable template with the given template arguments
 // Returns the instantiated variable declaration node or nullopt if already instantiated
-std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args) {
+std::optional<ASTNode> Parser::try_instantiate_variable_template(
+	std::string_view template_name,
+	std::span<const TemplateTypeArg> template_args) {
+	return try_instantiate_variable_template(
+		template_name,
+		template_args,
+		nullptr);
+}
+
+std::optional<ASTNode> Parser::try_instantiate_variable_template(
+	std::string_view template_name,
+	std::span<const TemplateTypeArg> template_args,
+	const OuterTemplateBinding* explicit_outer_binding) {
 	// First, try to find a partial specialization that matches the template arguments
 	// For example, is_reference_v<int&> should match is_reference_v<T&>
 	// Pattern names are: template_name_R (lvalue ref), template_name_RR (rvalue ref), template_name_P (pointer)
@@ -2875,7 +2887,9 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	const TemplateVariableDeclarationNode& var_template = template_opt->as<TemplateVariableDeclarationNode>();
 	const auto& template_params = var_template.template_parameters();
 	const OuterTemplateBinding* outer_binding =
-		gTemplateRegistry.getOuterTemplateBinding(template_name);
+		explicit_outer_binding != nullptr
+			? explicit_outer_binding
+			: gTemplateRegistry.getOuterTemplateBinding(template_name);
 	std::optional<TemplateEnvironment> outer_environment;
 	if (outer_binding != nullptr) {
 		outer_environment = buildTemplateEnvironment(*outer_binding);

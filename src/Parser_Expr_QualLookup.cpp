@@ -850,40 +850,6 @@ std::string_view Parser::lookup_direct_member_variable_template_name(
 	auto has_registered_member_variable_template = [&](StringHandle qualified_name) {
 		return gTemplateRegistry.lookupVariableTemplate(qualified_name).has_value();
 	};
-	auto register_outer_binding = [&](StringHandle qualified_name, const TypeInfo* owner_type_info) {
-		if (owner_type_info == nullptr ||
-			!owner_type_info->hasInstantiationContext()) {
-			return;
-		}
-		const TypeInfo::InstantiationContext* context =
-			owner_type_info->instantiationContext();
-		if (context == nullptr) {
-			return;
-		}
-		OuterTemplateBinding outer_binding;
-		const size_t pair_count = std::min(
-			context->param_names.size(),
-			context->param_args.size());
-		outer_binding.param_names.reserve(pair_count);
-		outer_binding.param_args.reserve(pair_count);
-		outer_binding.all_args.reserve(context->param_args.size());
-		for (size_t i = 0; i < pair_count; ++i) {
-			outer_binding.param_names.push_back(context->param_names[i]);
-			TemplateTypeArg arg = toTemplateTypeArg(context->param_args[i]);
-			arg.setCategory(context->param_args[i].category());
-			outer_binding.param_args.push_back(arg);
-		}
-		for (const TypeInfo::TemplateArgInfo& context_arg : context->param_args) {
-			TemplateTypeArg arg = toTemplateTypeArg(context_arg);
-			arg.setCategory(context_arg.category());
-			outer_binding.all_args.push_back(arg);
-		}
-		if (!outer_binding.param_names.empty()) {
-			gTemplateRegistry.registerOuterTemplateBinding(
-				qualified_name,
-				std::move(outer_binding));
-		}
-	};
 
 	StringHandle qualified_member_template_name =
 		buildQualifiedMemberNameHandle(owner_name, member_name);
@@ -907,7 +873,6 @@ std::string_view Parser::lookup_direct_member_variable_template_name(
 				.append(StringTable::getStringView(member_name))
 				.commit());
 		if (has_registered_member_variable_template(pattern_member_name)) {
-			register_outer_binding(pattern_member_name, owner_type_info);
 			return StringTable::getStringView(pattern_member_name);
 		}
 	}
@@ -919,7 +884,6 @@ std::string_view Parser::lookup_direct_member_variable_template_name(
 		StringHandle primary_member_name =
 			buildQualifiedMemberNameHandle(primary_owner_name, member_name);
 		if (has_registered_member_variable_template(primary_member_name)) {
-			register_outer_binding(primary_member_name, owner_type_info);
 			return StringTable::getStringView(primary_member_name);
 		}
 	}

@@ -2436,6 +2436,10 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode& spec_node);  // Instantiate full specialization
 	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Instantiate variable template
+	std::optional<ASTNode> try_instantiate_variable_template(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> template_args,
+		const OuterTemplateBinding* explicit_outer_binding);
 	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
 		const ASTNode& arg_node,
 		const InlineVector<TemplateParameterNode, 4>& template_parameters,
