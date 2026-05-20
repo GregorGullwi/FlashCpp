@@ -176,9 +176,6 @@ std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
 		}
 
 		int size_in_bits = computeTypeSizeInBits(arg_type_index);
-		if (size_in_bits == 0) {
-			size_in_bits = get_type_size_bits(arg_type_index.category());
-		}
 		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
 			arg_type_index,
 			size_in_bits,
