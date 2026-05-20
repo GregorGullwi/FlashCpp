@@ -8816,7 +8816,7 @@ std::optional<EvalResult> Evaluator::try_materialize_struct_from_ctor_args(
 	// initializer list/body to execute. Materialize them by reusing the
 	// source constexpr object directly so nested member bindings are preserved.
 	if (matching_ctor->is_implicit() && matching_ctor->parameter_nodes().size() == 1) {
-		if (const ASTNode* single_initializer = tryGetSingleExpressionConstexprObjectReuseCandidate(args)) {
+		if (const ASTNode* single_initializer = tryGetSingleExpressionInitializer(args)) {
 			EvalResult source_value = outer_bindings
 				? evaluate_expression_with_bindings_const(*single_initializer, *outer_bindings, context)
 				: evaluate(*single_initializer, context);

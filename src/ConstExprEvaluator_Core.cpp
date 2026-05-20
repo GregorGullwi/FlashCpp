@@ -5627,7 +5627,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							// Keep this before constructor/aggregate materialization so implicit
 							// copy paths do not drop nested binding metadata.
 							if (const ASTNode* single_initializer =
-									tryGetSingleExpressionConstexprObjectReuseCandidate(init_list.initializers())) {
+									tryGetSingleExpressionInitializer(init_list.initializers())) {
 								EvalResult single_result = evaluate_expression_with_bindings(*single_initializer, bindings, context);
 								if (!single_result.success()) {
 									return single_result;
