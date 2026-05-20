@@ -409,7 +409,14 @@ bool equalDependentExpressionIdentityImpl(const ASTNode& lhs, const ASTNode& rhs
 		if (rhs_qualified == nullptr ||
 			lhs_qualified->namespace_handle() != rhs_qualified->namespace_handle() ||
 			lhs_qualified->name() != rhs_qualified->name() ||
+			lhs_qualified->has_template_arguments() != rhs_qualified->has_template_arguments() ||
 			lhs_qualified->hasDependentQualifiedName() != rhs_qualified->hasDependentQualifiedName()) {
+			return false;
+		}
+		if (lhs_qualified->has_template_arguments() &&
+			!equalAstRange(
+				lhs_qualified->template_arguments(),
+				rhs_qualified->template_arguments())) {
 			return false;
 		}
 		if (!lhs_qualified->hasDependentQualifiedName()) {
@@ -691,6 +698,10 @@ size_t hashDependentExpressionIdentityImpl(const ASTNode& node) {
 		size_t seed = std::hash<uint8_t>{}(3);
 		hashCombine(seed, std::hash<NamespaceHandle>{}(qualified->namespace_handle()));
 		hashCombineStringView(seed, qualified->name());
+		hashCombine(seed, std::hash<bool>{}(qualified->has_template_arguments()));
+		if (qualified->has_template_arguments()) {
+			hashCombine(seed, hashAstRange(qualified->template_arguments()));
+		}
 		hashCombine(seed, std::hash<bool>{}(qualified->hasDependentQualifiedName()));
 		if (qualified->hasDependentQualifiedName()) {
 			hashCombine(seed, hashDependentQualifiedNameRecord(*qualified->dependentQualifiedName()));

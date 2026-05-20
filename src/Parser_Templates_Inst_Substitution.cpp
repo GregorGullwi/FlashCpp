@@ -3286,6 +3286,18 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 
 								// Create new qualified identifier node
 								QualifiedIdentifierNode new_qual_id(new_ns_handle, qual_id.identifier_token());
+								if (qual_id.has_template_arguments()) {
+									std::vector<ASTNode> template_argument_nodes(
+										qual_id.template_arguments().begin(),
+										qual_id.template_arguments().end());
+									new_qual_id.set_template_arguments(
+										std::move(template_argument_nodes));
+								}
+								if (const auto* dependent_record =
+										qual_id.dependentQualifiedName()) {
+									new_qual_id.setDependentQualifiedName(
+										*dependent_record);
+								}
 								new_initializer = emplace_node<ExpressionNode>(new_qual_id);
 
 								FLASH_LOG(Templates, Debug, "Phase 3: Successfully instantiated and updated qualifier in variable template initializer");

@@ -2271,6 +2271,11 @@ public:
 	void setDependentQualifiedName(TypeInfo::DependentQualifiedNameRecord record) {
 		dependent_qualified_name_ = std::move(record);
 	}
+	void set_template_arguments(std::vector<ASTNode>&& template_args) {
+		template_arguments_ = std::move(template_args);
+	}
+	std::span<const ASTNode> template_arguments() const { return template_arguments_; }
+	bool has_template_arguments() const { return !template_arguments_.empty(); }
 
 	// Convert to QualifiedIdentifier (Phase 3 bridge)
 	QualifiedIdentifier qualifiedIdentifier() const {
@@ -2293,6 +2298,7 @@ private:
 	NamespaceHandle namespace_handle_;  // Handle to namespace, e.g., handle for "std" in std::print
 	Token identifier_;				   // The final identifier (e.g., "print", "func")
 	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_name_;
+	std::vector<ASTNode> template_arguments_;
 };
 
 using NumericLiteralValue = std::variant<unsigned long long, double>;

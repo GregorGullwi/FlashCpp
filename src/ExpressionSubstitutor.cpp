@@ -112,6 +112,78 @@ int computeTypeSizeInBits(TypeIndex type_index) {
 	return struct_info ? struct_info->sizeInBits().value : 0;
 }
 
+std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
+	std::span<const TemplateTypeArg> template_args,
+	const Token& source_token) {
+	std::vector<ASTNode> result;
+	result.reserve(template_args.size());
+
+	for (const TemplateTypeArg& arg : template_args) {
+		if (arg.is_dependent || arg.dependent_name.isValid()) {
+			Token dep_token(
+				Token::Type::Identifier,
+				arg.dependent_name.view(),
+				source_token.line(),
+				source_token.column(),
+				source_token.file_index());
+			ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+				TemplateParameterReferenceNode(arg.dependent_name, dep_token));
+			result.push_back(ASTNode(&dep_expr));
+			continue;
+		}
+
+		if (arg.is_value) {
+			if (arg.typeEnum() == TypeCategory::Bool) {
+				Token bool_token(
+					Token::Type::Keyword,
+					arg.value != 0 ? "true"sv : "false"sv,
+					source_token.line(),
+					source_token.column(),
+					source_token.file_index());
+				ExpressionNode& bool_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+					BoolLiteralNode(bool_token, arg.value != 0));
+				result.push_back(ASTNode(&bool_expr));
+			} else {
+				StringBuilder text_builder;
+				std::string_view literal_text = text_builder.append(arg.value).commit();
+				TypeCategory literal_type = arg.typeEnum() == TypeCategory::Invalid
+					? TypeCategory::Int
+					: arg.typeEnum();
+				Token literal_token(
+					Token::Type::Literal,
+					literal_text,
+					source_token.line(),
+					source_token.column(),
+					source_token.file_index());
+				ExpressionNode& literal_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+					NumericLiteralNode(
+						literal_token,
+						static_cast<unsigned long long>(arg.value),
+						literal_type,
+						TypeQualifier::None,
+						get_type_size_bits(literal_type)));
+				result.push_back(ASTNode(&literal_expr));
+			}
+			continue;
+		}
+
+		if (!arg.type_index.is_valid()) {
+			continue;
+		}
+
+		int size_in_bits = computeTypeSizeInBits(arg.type_index);
+		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+			arg.type_index,
+			size_in_bits,
+			source_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		result.push_back(ASTNode(&type_node));
+	}
+
+	return result;
+}
+
 std::optional<std::string_view> tryResolveCanonicalTypeName(
 	const TypeSpecifierNode& type,
 	std::string_view type_name,
@@ -2862,6 +2934,27 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 					new_ns_handle,
 					final_token);
+			if (final_member.has_template_arguments) {
+				InlineVector<TemplateTypeArg, 4> final_member_args =
+					materializeDependentRecordTemplateArgs(
+						final_member.template_arguments,
+						kInitialDependentMemberTypeResolutionDepth);
+				if (templateArgsStillDependent(final_member_args)) {
+					ExpressionNode& deferred_expr =
+						gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
+					return ASTNode(&deferred_expr);
+				}
+				std::vector<ASTNode> explicit_template_arg_nodes =
+					materializeTemplateArgumentNodesForQualifiedId(
+						std::span<const TemplateTypeArg>(
+							final_member_args.data(),
+							final_member_args.size()),
+						final_token);
+				if (!explicit_template_arg_nodes.empty()) {
+					new_qual_id.set_template_arguments(
+						std::move(explicit_template_arg_nodes));
+				}
+			}
 			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
 					  qual_id.full_name(), " -> ", materialized_namespace, "::",
 					  final_member_name);

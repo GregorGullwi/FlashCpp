@@ -1149,6 +1149,24 @@ void syncTemplateArgumentNodeMetadata(
 	}
 }
 
+void attachQualifiedIdentifierTemplateArguments(
+	QualifiedIdentifierNode& qual_id,
+	const std::optional<InlineVector<TemplateTypeArg, 4>>& template_args,
+	std::vector<ASTNode>& template_arg_nodes) {
+	if (!template_args.has_value() || template_args->empty()) {
+		return;
+	}
+	if (template_arg_nodes.empty()) {
+		template_arg_nodes =
+			materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
+	} else {
+		syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
+	}
+	if (!template_arg_nodes.empty()) {
+		qual_id.set_template_arguments(std::move(template_arg_nodes));
+	}
+}
+
 TypeSpecifierNode normalizeAtomicBuiltinParameterType(const TypeSpecifierNode& arg_type) {
 	TypeSpecifierNode normalized = arg_type;
 	normalized.set_reference_qualifier(ReferenceQualifier::None);
@@ -2778,6 +2796,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			result = function_call_node;
 		} else {
 			// Just a qualified identifier reference (e.g., ::globalValue)
+			attachQualifiedIdentifierTemplateArguments(
+				qual_id,
+				template_args,
+				template_arg_nodes);
 			result = emplace_node<ExpressionNode>(qual_id);
 		}
 
@@ -3282,8 +3304,65 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							advance(); // consume identifier
 						}
 
+						std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
+						std::vector<ASTNode> member_template_arg_nodes;
+						if (current_token_.value() == "<") {
+							member_template_args =
+								parse_explicit_template_arguments(
+									&member_template_arg_nodes);
+							if (!member_template_args.has_value()) {
+								return ParseResult::error(
+									"Failed to parse explicit template arguments",
+									current_token_);
+							}
+						}
+
 						// Create QualifiedIdentifierNode with the complete path (stack-local; copied into ExpressionNode before returning)
 						QualifiedIdentifierNode full_qual_id(full_ns_handle, member_token);
+
+						if (member_template_args.has_value() &&
+							!member_template_args->empty() &&
+							current_token_.value() != "(") {
+							std::string_view qualified_member_name =
+								buildQualifiedNameFromHandle(
+									full_ns_handle,
+									member_token.value());
+							auto instantiated_var =
+								try_instantiate_variable_template(
+									qualified_member_name,
+									*member_template_args);
+							if (!instantiated_var.has_value()) {
+								instantiated_var =
+									try_instantiate_variable_template(
+										member_token.value(),
+										*member_template_args);
+							}
+							if (instantiated_var.has_value()) {
+								std::string_view inst_name;
+								if (instantiated_var->is<VariableDeclarationNode>()) {
+									const auto& var_decl =
+										instantiated_var->as<VariableDeclarationNode>();
+									inst_name =
+										var_decl.declaration().identifier_token().value();
+								} else if (instantiated_var->is<DeclarationNode>()) {
+									inst_name =
+										instantiated_var->as<DeclarationNode>()
+											.identifier_token()
+											.value();
+								}
+								if (!inst_name.empty()) {
+									Token inst_token(
+										Token::Type::Identifier,
+										inst_name,
+										member_token.line(),
+										member_token.column(),
+										member_token.file_index());
+									result = emplace_node<ExpressionNode>(
+										IdentifierNode(inst_token));
+									return ParseResult::success(*result);
+								}
+							}
+						}
 
 						// Look up the member in the instantiated struct's symbol table
 						auto member_lookup = gSymbolTable.lookup_qualified(full_ns_handle, member_token.value());
@@ -3369,6 +3448,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							result = emplace_node<ExpressionNode>(
 								makeCallExprFromNode(*member_lookup, std::move(args), member_token));
+							if (member_template_args.has_value() &&
+								!member_template_args->empty() &&
+								!member_template_arg_nodes.empty()) {
+								setCallTemplateArguments(
+									result->as<ExpressionNode>(),
+									std::move(member_template_arg_nodes));
+							}
 
 						// Set mangled name if available
 							if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
@@ -3381,6 +3467,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return ParseResult::success(*result);
 						}
 
+						attachQualifiedIdentifierTemplateArguments(
+							full_qual_id,
+							member_template_args,
+							member_template_arg_nodes);
 						result = emplace_node<ExpressionNode>(full_qual_id);
 						return ParseResult::success(*result);
 					}
@@ -3644,6 +3734,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			} else {
 				// Just a qualified identifier reference
+				attachQualifiedIdentifierTemplateArguments(
+					qual_id,
+					template_args,
+					template_arg_nodes);
 				result = emplace_node<ExpressionNode>(qual_id);
 			}
 
@@ -4481,6 +4575,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 				// Just a qualified identifier reference (e.g., Namespace::globalValue)
+				attachQualifiedIdentifierTemplateArguments(
+					qual_id,
+					template_args,
+					template_arg_nodes);
 				result = emplace_node<ExpressionNode>(qual_id);
 				return ParseResult::success(*result);
 			}
@@ -5919,6 +6017,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									Token deferred_member_call_token{};
 									ChunkedVector<ASTNode> deferred_member_call_args;
 									std::vector<ASTNode> deferred_member_call_template_arg_nodes;
+									std::vector<ASTNode> terminal_member_template_arg_nodes;
 									while (peek() == "::"_tok) {
 										advance(); // consume ::
 										const bool has_template_keyword = peek() == "template"_tok;
@@ -5948,6 +6047,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											member_segment.template_args =
 												toTemplateArgInfoList(
 													*member_template_args);
+											terminal_member_template_arg_nodes =
+												member_template_arg_nodes;
 										}
 										dependent_member_segments.push_back(
 											std::move(member_segment));
@@ -6040,6 +6141,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												std::move(deferred_member_call_template_arg_nodes));
 										}
 									} else {
+										if (!terminal_member_template_arg_nodes.empty()) {
+											dependent_qual_id.set_template_arguments(
+												std::move(terminal_member_template_arg_nodes));
+										}
 										result = emplace_node<ExpressionNode>(dependent_qual_id);
 									}
 									return ParseResult::success(*result);
@@ -6064,6 +6169,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								Token deferred_member_call_token{};
 								ChunkedVector<ASTNode> deferred_member_call_args;
 								std::vector<ASTNode> deferred_member_call_template_arg_nodes;
+								std::vector<ASTNode> terminal_member_template_arg_nodes;
 								bool deferred_member_chain_valid = true;
 								while (peek() == "::"_tok) {
 									advance(); // consume ::
@@ -6092,6 +6198,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 										member_segment.template_args =
 											toTemplateArgInfoList(*member_template_args);
+										terminal_member_template_arg_nodes =
+											member_template_arg_nodes;
 										has_deferred_member_template_segment =
 											has_deferred_member_template_segment ||
 											has_template_keyword ||
@@ -6188,6 +6296,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												std::move(deferred_member_call_template_arg_nodes));
 										}
 									} else {
+										if (!terminal_member_template_arg_nodes.empty()) {
+											dependent_qual_id.set_template_arguments(
+												std::move(terminal_member_template_arg_nodes));
+										}
 										result = emplace_node<ExpressionNode>(dependent_qual_id);
 									}
 									pending_explicit_template_args_.reset();
@@ -6223,6 +6335,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								advance(); // consume the identifier
 							}
 
+							std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
+							std::vector<ASTNode> member_template_arg_nodes;
+							if (peek() == "<"_tok) {
+								SaveHandle member_template_arg_start =
+									save_token_position();
+								member_template_args =
+									parse_explicit_template_arguments(
+										&member_template_arg_nodes);
+								if (!member_template_args.has_value()) {
+									restore_token_position(
+										member_template_arg_start);
+									member_template_arg_nodes.clear();
+								} else if (peek() == "("_tok) {
+									restore_token_position(
+										member_template_arg_start);
+									member_template_arg_nodes.clear();
+									member_template_args.reset();
+								}
+							}
+
 							// Try to parse member template function call: Template<T>::member<U>()
 							auto func_call_result = try_parse_member_template_function_call(
 								instantiated_name, final_identifier.value(), final_identifier);
@@ -6237,7 +6369,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							// Create a QualifiedIdentifierNode with the instantiated type name (stack-local; copied into ExpressionNode)
 							NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
-							result = emplace_node<ExpressionNode>(QualifiedIdentifierNode(ns_handle, final_identifier));
+							QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
+							attachQualifiedIdentifierTemplateArguments(
+								qual_id,
+								member_template_args,
+								member_template_arg_nodes);
+							result = emplace_node<ExpressionNode>(qual_id);
 							// Clear pending template args since they were used for this qualified identifier
 							pending_explicit_template_args_.reset();
 							return ParseResult::success(*result);
@@ -7145,6 +7282,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							Token deferred_member_call_token{};
 							ChunkedVector<ASTNode> deferred_member_call_args;
 							std::vector<ASTNode> deferred_member_call_template_arg_nodes;
+							std::vector<ASTNode> terminal_member_template_arg_nodes;
 							while (peek() == "::"_tok) {
 								advance(); // consume ::
 								const bool has_template_keyword = peek() == "template"_tok;
@@ -7174,6 +7312,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									member_segment.template_args =
 										toTemplateArgInfoList(
 											*member_template_args);
+									terminal_member_template_arg_nodes =
+										member_template_arg_nodes;
 								}
 								dependent_member_segments.push_back(
 									std::move(member_segment));
@@ -7266,6 +7406,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										std::move(deferred_member_call_template_arg_nodes));
 								}
 							} else {
+								if (!terminal_member_template_arg_nodes.empty()) {
+									dependent_qual_id.set_template_arguments(
+										std::move(terminal_member_template_arg_nodes));
+								}
 								result = emplace_node<ExpressionNode>(dependent_qual_id);
 							}
 							return ParseResult::success(*result);
@@ -7288,6 +7432,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						Token deferred_member_call_token{};
 						ChunkedVector<ASTNode> deferred_member_call_args;
 						std::vector<ASTNode> deferred_member_call_template_arg_nodes;
+						std::vector<ASTNode> terminal_member_template_arg_nodes;
 						bool deferred_member_chain_valid = true;
 						while (peek() == "::"_tok) {
 							advance(); // consume ::
@@ -7314,10 +7459,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									deferred_member_chain_valid = false;
 									break;
 								}
-								member_segment.template_args =
-									toTemplateArgInfoList(*member_template_args);
-								has_deferred_member_template_segment =
-									has_deferred_member_template_segment ||
+							member_segment.template_args =
+								toTemplateArgInfoList(*member_template_args);
+							terminal_member_template_arg_nodes =
+								member_template_arg_nodes;
+							has_deferred_member_template_segment =
+								has_deferred_member_template_segment ||
 									has_template_keyword ||
 									explicitTemplateArgsRequireDeferredInstantiation(
 										*member_template_args);
@@ -7412,6 +7559,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										std::move(deferred_member_call_template_arg_nodes));
 								}
 							} else {
+								if (!terminal_member_template_arg_nodes.empty()) {
+									dependent_qual_id.set_template_arguments(
+										std::move(terminal_member_template_arg_nodes));
+								}
 								result = emplace_node<ExpressionNode>(dependent_qual_id);
 							}
 							return ParseResult::success(*result);
