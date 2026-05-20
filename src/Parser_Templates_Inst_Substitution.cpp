@@ -210,7 +210,10 @@ namespace {
 	}
 
 	// Detect whether an alias target argument forwards a parameter pack and return the pack name.
-	// Supports type-side `Type...` and expression-side `expr...` forwarding patterns.
+	// Supports type-side `Type...` and expression-side forwarding patterns.
+	// Note: parser recovery may represent `Vs...` as a plain identifier expression `Vs`
+	// in deferred alias targets, so identifier/TTP-reference spellings are also treated
+	// as potential forwarding candidates and validated against variadic parameter metadata.
 	// TODO(template-pack-forwarding): Extend detection/materialization to qualified or computed
 	// pack patterns (e.g. `const Ts...`, `(Vs + 1)...`) once deferred alias expansion supports them.
 	std::optional<std::string_view> tryGetAliasPackForwardingName(const ASTNode& target_arg_node) {
@@ -226,6 +229,12 @@ namespace {
 			return std::nullopt;
 		}
 		const ExpressionNode& target_arg_expr = target_arg_node.as<ExpressionNode>();
+		if (const auto* identifier = std::get_if<IdentifierNode>(&target_arg_expr)) {
+			return identifier->name();
+		}
+		if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&target_arg_expr)) {
+			return StringTable::getStringView(tparam_ref->param_name());
+		}
 		if (const auto* pack_expansion = std::get_if<PackExpansionExprNode>(&target_arg_expr)) {
 			return tryExtractPackNameFromPackExpansionPattern(pack_expansion->pattern());
 		}
@@ -841,22 +850,20 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 			size_t expected_pack_count = pack_range->second;
 			std::optional<std::string_view> pack_name =
 				tryGetAliasPackForwardingName(target_arg_node);
-			std::optional<size_t> alias_pack_param_idx;
 			bool is_non_type_pack = false;
 			TypeCategory pack_value_category = TypeCategory::Int;
 			if (pack_name.has_value()) {
-				alias_pack_param_idx =
-					find_param_index(StringTable::getOrInternStringHandle(*pack_name));
-				if (alias_pack_param_idx.has_value() &&
-					*alias_pack_param_idx < alias_params_span.size()) {
-					const TemplateParameterNode& alias_pack_param =
-						alias_params_span[*alias_pack_param_idx];
+				for (const TemplateParameterNode& alias_pack_param : alias_params_span) {
+					if (alias_pack_param.name() != *pack_name) {
+						continue;
+					}
 					is_non_type_pack =
 						alias_pack_param.kind() == TemplateParameterKind::NonType;
 					if (alias_pack_param.has_type()) {
 						pack_value_category =
 							alias_pack_param.type_specifier_node().type();
 					}
+					break;
 				}
 			}
 			if (is_non_type_pack && expected_pack_count <= 1 && pack_name.has_value()) {
@@ -894,11 +901,6 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 						const_value.has_value()) {
 						TemplateTypeArg recovered_arg =
 							TemplateTypeArg::makeValueIdentity(const_value->identity);
-						if (alias_pack_param_idx.has_value()) {
-							recovered_arg = normalize_alias_param_arg(
-								*alias_pack_param_idx,
-								recovered_arg);
-						}
 						substituted_args.push_back(std::move(recovered_arg));
 						continue;
 					}
@@ -906,22 +908,10 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 						TemplateTypeArg::makeDependentValue(
 							pack_element_handle,
 							pack_value_category);
-					if (alias_pack_param_idx.has_value()) {
-						dependent_pack_arg = normalize_alias_param_arg(
-							*alias_pack_param_idx,
-							dependent_pack_arg);
-					}
 					substituted_args.push_back(std::move(dependent_pack_arg));
 					continue;
 				}
-				const size_t alias_param_idx_for_normalization =
-					alias_pack_param_idx.has_value()
-						? *alias_pack_param_idx
-						: arg_index;
-				substituted_args.push_back(
-					normalize_alias_param_arg(
-						alias_param_idx_for_normalization,
-						template_args[arg_index]));
+				substituted_args.push_back(template_args[arg_index]);
 			}
 			continue;
 		}
