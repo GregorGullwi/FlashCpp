@@ -23,7 +23,23 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 2) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict
+## 2) `tests/std/test_std_ratio.cpp` — now reaches a link-time `__security_cookie` conflict
+
+**Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
+
+1. **Infinite mutual recursion** between `materializeStoredTemplateArgs` and
+   `substituteQualifiedIdentifier` (cycle guards added in `ExpressionSubstitutor`).
+2. **Explicit template type args ignored** for zero-param function template calls in
+   the constexpr evaluator (`ConstExprEvaluator_Core.cpp`).
+
+**Current frontier**: The previous `__ratio_less_impl` / remove-cv alias
+instantiation stop, default-NTTP declared-type materialization issue, MSVC
+`type_traits` dependent member-template argument parse failure, deferred-base
+call-expression invariant, `std::ratio_less<third, half>` constexpr
+comparison failure, the later pointer/null IR-conversion failures in
+`wcsnlen_s` / `strnlen_s`, and the link-time unresolved CRT helper symbols are
+fixed. On current `main`, `test_std_ratio.cpp` now compiles and links further
+before stopping on a multiply defined `__security_cookie`.
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
@@ -33,10 +49,11 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
   `[ERROR][Templates] [depth=1]: All 2 template overload(s) failed for 'swap'`,
   the same error for `std::swap`, and
   `[ERROR][Templates] [depth=1]: All 1 template overload(s) failed for '_Hash_representation'`
-  before the later link failure.
+  before the later IR-conversion failure.
 - **Root cause**: still under investigation. These diagnostics appear during
-  standard-header template processing, but they are not the first fatal stop in
-  the compilation.
+  standard-header template processing after the earlier dependent member-template
+  parse failure was fixed, but they are not the first fatal stop in the
+  compilation.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
 ### 2b) Link-time `__security_cookie` multiple-definition conflict
@@ -44,8 +61,10 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
   fails to link with `LIBCMT.lib(gs_cookie.obj) : error LNK2005:
   __security_cookie already defined`.
-- **Root cause**: Still under investigation. FlashCpp's output now collides
-  with the CRT-provided GS cookie symbol.
+- **Root cause**: Still under investigation. After fixing the imported-CRT
+  naming issue (preserving `extern "C"` over `_ACRTIMP`/`dllimport` in parser
+  linkage precedence), the next remaining blocker is that FlashCpp's output now
+  collides with the CRT-provided GS cookie symbol.
 - **Affected path**: Link stage for the object generated from `<ratio>` and the
   headers it pulls in.
 - **Impact**: `tests/std/test_std_ratio.cpp` still does not produce a runnable
@@ -71,28 +90,3 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Impact**: The new replay infrastructure covers namespace variable templates
   and member-template function chains, but fully dependent member variable-template
   chains need a follow-up instantiation recovery pass.
-
----
-
-## 4) Sema does not annotate implicit conversions for non-standard-arithmetic binary operands
-
-- **Symptom**: Binary expressions where one or both operands are non-standard-arithmetic
-  types (unscoped enums, pointer types, function pointer types, user-defined types) fall
-  back to `generateTypeConversion` in the codegen layer instead of being annotated by sema.
-- **Root cause**: `SemanticAnalysis::normalizeBinaryOperator` (called during sema pass)
-  annotates implicit arithmetic conversions for standard arithmetic types (int, float, etc.)
-  but does not emit conversion annotations for:
-    - Unscoped enum → underlying integer type (e.g. `Status::OK == 1`)
-    - Static local / global variable pointer → value type conversions
-    - Function pointer nullptr comparisons
-- **Affected path**: `IrGenerator_Expr_Operators.cpp` Phase 15 LHS/RHS conversion block
-  in the sema-normalized binary-operator conversion logic; the existing `InternalError` guard fires only for sema-normalized +
-  both standard-arithmetic mismatches; the `generateTypeConversion` fallback handles the rest.
-- **Impact**: The fallback produces correct code today, but prevents the codegen layer from
-  being a strict "no-implicit-conversion" consumer of sema output.
-- **Fix direction**: Extend `normalizeBinaryOperator` (or a dedicated sema pass) to emit
-  `TypeConversionAnnotation` nodes for unscoped-enum-to-int and other non-arithmetic
-  implicit conversions; then promote the `generateTypeConversion` fallback at line 3394 to
-  an `InternalError`.
-
----

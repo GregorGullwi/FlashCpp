@@ -3397,12 +3397,25 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		if (!name.isValid()) {
 			return std::nullopt;
 		}
+		// Concrete templates (alias, class, or registered): not dependent.
 		if (gTemplateRegistry.lookup_alias_template(name).has_value() ||
 			gTemplateRegistry.lookupTemplate(name).has_value() ||
-			gTemplateRegistry.isClassTemplate(name) ||
-			(currentTemplateParamKind(name).has_value() &&
-			 *currentTemplateParamKind(name) == TemplateParameterKind::Template)) {
+			gTemplateRegistry.isClassTemplate(name)) {
 			return TemplateTypeArg::makeTemplate(name);
+		}
+		// Template template parameter: the name is a bound parameter, not a concrete
+		// template.  Mark the arg as dependent so that try_instantiate_class_template
+		// creates only a dependent placeholder (instead of a premature instantiation).
+		// The dependent_name is required so that the arg round-trips correctly through
+		// toTemplateArgInfo / toTemplateTypeArg and is recognized as dependent by
+		// try_materialize_exact_owner, allowing the correct concrete substitution to
+		// happen later during lazy instantiation of the enclosing template.
+		if (currentTemplateParamKind(name).has_value() &&
+			*currentTemplateParamKind(name) == TemplateParameterKind::Template) {
+			TemplateTypeArg arg = TemplateTypeArg::makeTemplate(name);
+			arg.is_dependent = true;
+			arg.dependent_name = name;
+			return arg;
 		}
 		return std::nullopt;
 	};

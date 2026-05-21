@@ -103,14 +103,23 @@ Future work should assume these are already in place:
   like `Provider<T>::Node::template Apply<T>::value` and
   `Provider<T>::Node::type::value` no longer stop in the generic postfix `::`
   path before semantic substitution/evaluation.
+- lookup-time owner materialization for concrete template instantiations now
+  reuses the shared canonical owner helper before inherited member-chain
+  resolution, covering ratio-style inherited `::type::value` lookup during
+  default-NTTP evaluation without perturbing deferred-base attachment.
 
 Latest validation on Linux sharded build:
 `2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 Targeted validation for the latest member alias-template non-template
 intermediate chain slice passed the focused ELF regressions after
 `make sharded CXX=clang++`.
-Latest Windows/MSVC full-suite validation for this slice:
-`2476` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Focused Windows/MSVC validation for this slice passed
+`test_ratio_inherited_type_default_nttp_value_ret0.cpp` plus nearby ratio and
+dependent-member regressions. Latest Windows/MSVC full-suite validation after
+adding that regression:
+`2476` regular tests compiled/linked/runtime-pass, `1` unrelated regular test
+link-fail (`template_template_with_member_ret0.cpp`), `181` expected-fail
+tests.
 
 ## Remaining work, in priority order
 
@@ -142,13 +151,12 @@ Most concrete next subtask:
   outer owner bindings for the covered initializer/constexpr paths.
   `this->template` member-function-template calls through dependent bases now
   work for focused inline class-template body cases, including multilevel base
-  chains. The next concrete gap is now after the newly covered declaration-time
-  parser stop for dependent owner template-ids in default NTTPs. The current
-  `<ratio>` blocker remains a useful bounded target, but the remaining failure
-  is later: deferred base/member-chain materialization can still leave
-  instantiated owners like `ratio_less<...>` without the inherited/member
-  metadata needed for final `::value` lookup on some libstdc++ paths.
-  Parsing/substitution now progress past the fixed default-NTTP declared-type
+  chains. The newly covered declaration-time parser stop for dependent owner
+  template-ids in default NTTPs is now joined by lookup-time canonical owner
+  materialization for the focused `<ratio>` inherited `::type::value` path, so
+  parsing/substitution/evaluation no longer lose that chain when concrete owner
+  lookup runs. Parsing/substitution now progress past the fixed default-NTTP
+  declared-type materialization, the lookup-time ratio owner gap,
   materialization, dependent member-template argument paths, covered member
   alias-template target materialization path, alias-template `sizeof...` NTTP
   target arguments, covered variable-template initializer replay paths, covered
@@ -159,9 +167,11 @@ Most concrete next subtask:
   specifiers now work as well, and covered member alias-template declarations
   now preserve non-template intermediate member segments plus enclosing
   class-template bindings for cases like `Provider<T>::Node::template Apply<U>`.
-  The next bounded alias-chain step is expanding that owner-correct path to
-  deeper dependent-base/unknown-specialization chains, especially when value or
-  static member lookups appear between type/member-alias segments.
+  The next bounded follow-up is expanding that owner-correct path to deeper
+  dependent-base/unknown-specialization chains, especially when value or static
+  member lookups appear between type/member-alias segments. Separate from this
+  slice, current Windows full-suite validation still exposes an unrelated link
+  failure in `template_template_with_member_ret0.cpp`.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -239,12 +249,14 @@ coverage becomes sufficient.
    - keep reusing the shared member-side lookup/materialization path in the
       remaining qualified-id spellings so local repair logic is not reintroduced;
    - treat dependent owner template-ids in template-parameter defaults as
-     covered for the focused member-template and nested-alias `::value` cases;
+      covered for the focused member-template and nested-alias `::value` cases;
+   - treat lookup-time canonical owner materialization as covered for the
+      focused ratio-style inherited `::type::value` default-NTTP path;
    - extend owner-correct replay/materialization into the remaining declaration
-     and deferred-base paths outside the covered static-member,
-     variable-template initializer, and default-NTTP parser flows;
-   - remove the next AST-only/deferred-base fallback path, with libstdc++
-     `<ratio>` still the best bounded target.
+      and deferred-base paths outside the covered static-member,
+      variable-template initializer, and default-NTTP parser flows;
+   - remove the next AST-only/deferred-base fallback path, with the next bounded
+      target now deeper dependent-base/unknown-specialization value-hop chains.
 
 2. **Dependent-name/current-instantiation expansion**
    - richer dependent-base and unknown-specialization records;
@@ -347,6 +359,10 @@ re-solving already-solved problems.
   `Provider<T>::Node::template Apply<T>::value` and
   `Provider<T>::Node::type::value` reach substitution/evaluation as semantic
   qualified names instead of stopping at parse time.
+- lookup-time concrete owner resolution now routes through
+  `resolveCanonicalInstantiatedOwnerForLookup` before inherited member-chain
+  resolution, covering ratio-style inherited `::type` followed by default-NTTP
+  `::value` use without introducing another fallback path.
 
 ## Exit criteria
 
