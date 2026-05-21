@@ -10317,6 +10317,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				DeclarationNode* declaration_copy_ptr =
 					get_decl_from_symbol_mut(declaration_copy);
 				if (declaration_copy_ptr == nullptr) {
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Out-of-line static initializer replay failed to recover mutable declaration for ",
+						out_of_line_var.member_name);
 					return false;
 				}
 				DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;

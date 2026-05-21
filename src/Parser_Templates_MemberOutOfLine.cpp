@@ -592,7 +592,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	std::string_view qualified_class_name = StringTable::getStringView(
 		StringTable::getOrInternStringHandle(qualified_class_name_storage));
-	auto build_out_of_line_static_replay_params = [&]() {
+	auto build_out_of_line_static_replay_params =
+		[&template_params, &inner_template_params]() {
 		InlineVector<TemplateParameterNode, 4> replay_template_params;
 		replay_template_params.reserve(
 			template_params.size() + inner_template_params.size());
