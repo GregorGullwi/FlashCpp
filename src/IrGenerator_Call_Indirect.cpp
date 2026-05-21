@@ -46,20 +46,22 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// its functions are never generated, causing linker errors.
 		ExprResult lambda_result = generateLambdaExpressionIr(lambda);
 
-		// Check if this is a generic lambda (has auto parameters)
+		// Check if this is a generic lambda (has auto parameters or an explicit
+		// C++20 lambda template parameter list).
 		bool is_generic = false;
-		std::vector<size_t> auto_param_indices;
-		size_t param_idx = 0;
 		for (const auto& param_node : lambda.parameters()) {
 			if (param_node.is<DeclarationNode>()) {
 				const auto& param_decl = param_node.as<DeclarationNode>();
 				const auto& param_type = param_decl.type_specifier_node();
 				if (isPlaceholderAutoType(param_type.type())) {
 					is_generic = true;
-					auto_param_indices.push_back(param_idx);
+				}
+				if (lambda.has_template_params() &&
+					std::find(lambda.template_params().begin(), lambda.template_params().end(),
+							  param_type.token().value()) != lambda.template_params().end()) {
+					is_generic = true;
 				}
 			}
-			param_idx++;
 		}
 
 		// For non-capturing lambdas, we can optimize by calling __invoke directly
@@ -84,8 +86,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 			// Build TypeSpecifierNodes for parameters (needed for mangling)
 			// For generic lambdas, we need to deduce auto parameters from arguments
+			using DeducedParamType = std::pair<size_t, TypeSpecifierNode>;
 			std::vector<TypeSpecifierNode> param_types;
-			std::vector<TypeSpecifierNode> deduced_param_types; // For generic lambdas
+			std::vector<DeducedParamType> deduced_param_types; // For generic lambdas
 
 			if (is_generic) {
 				// First, collect argument types
@@ -136,12 +139,17 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						const auto& param_decl = param_node.as<DeclarationNode>();
 						const auto& param_type = param_decl.type_specifier_node();
 
-						if (isPlaceholderAutoType(param_type.type()) && arg_idx < arg_types.size()) {
+						const bool is_lambda_own_template_param =
+							lambda.has_template_params() &&
+							std::find(lambda.template_params().begin(), lambda.template_params().end(),
+									  param_type.token().value()) != lambda.template_params().end();
+						if ((isPlaceholderAutoType(param_type.type()) || is_lambda_own_template_param) &&
+							arg_idx < arg_types.size()) {
 							// Deduce type from argument, preserving reference flags from auto&& parameter
 							TypeSpecifierNode deduced_type = arg_types[arg_idx];
 							// Copy reference flags from auto parameter (e.g., auto&& -> T&&)
 							deduced_type.set_reference_qualifier(param_type.reference_qualifier());
-							deduced_param_types.push_back(deduced_type);
+							deduced_param_types.push_back({arg_idx, deduced_type});
 							param_types.push_back(deduced_type);
 						} else {
 							param_types.push_back(param_type);
@@ -153,14 +161,29 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// Store deduced types directly on the collected LambdaInfo. Deferred lambda
 				// generation consumes lambda_info.deduced_auto_types via
 				// normalizeInstantiatedLambdaBody()/generateCollectedLambdas().
+				LambdaInfo* matched_lambda_info = nullptr;
 				for (auto& lambda_info : collected_lambdas_) {
 					if (lambda_info.lambda_id == lambda.lambda_id()) {
-						for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
+						for (const auto& [deduced_param_index, deduced_type] : deduced_param_types) {
 							lambda_info.setDeducedType(
-								auto_param_indices[i],
-								deduced_param_types[i]);
+								deduced_param_index,
+								deduced_type);
 						}
+						matched_lambda_info = &lambda_info;
 						break;
+					}
+				}
+				if (matched_lambda_info) {
+					sema_.normalizeInstantiatedLambdaBody(*matched_lambda_info);
+					if (!isPlaceholderAutoType(matched_lambda_info->returnType())) {
+						return_type_node = TypeSpecifierNode(
+							matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
+							matched_lambda_info->return_size,
+							matched_lambda_info->lambda_token,
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						call_op.return_type_index = return_type_node.type_index().withCategory(return_type_node.type());
+						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_node.size_in_bits())};
 					}
 				}
 			} else {
@@ -265,26 +288,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			(callee_type.has_value() &&
 			 (callee_type->type() == TypeCategory::Invalid ||
 			  isPlaceholderAutoType(callee_type->type())));
-		const bool sema_fallback_state_allows_recovery =
-			resolved_op_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent ||
-			callee_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
-			(callee_type_query.state == TypeSpecifierQueryResult::State::Available && callee_type_unusable_for_callable) ||
-			(!sema_normalized_current_function_ &&
-			 (resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
-			  callee_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed));
-		const bool needs_parser_fallback =
-			callee_type_unusable_for_callable &&
-			!resolved_op_call &&
-			!sema_normalized_current_function_ &&
-			sema_fallback_state_allows_recovery;
-		if (needs_parser_fallback) {
+		// operator() callable type parser fallback. Probed 2026-05-20 across the full
+		// test corpus — never hit for any body. Sema now always resolves the callable type.
+		if (callee_type_unusable_for_callable && !resolved_op_call) {
 			const bool sema_query_not_yet_analyzed =
 				resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
 				callee_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;
-			if (sema_normalized_current_function_ && sema_query_not_yet_analyzed) {
-				throw InternalError("Normalized callable operator() receiver query remained NotYetAnalyzed");
-			}
-			callee_type = parser_.get_expression_type(object_node);
+			if (sema_query_not_yet_analyzed)
+				throw InternalError("Callable operator() receiver query remained NotYetAnalyzed");
+			throw InternalError("Callable operator() receiver type could not be resolved: sema should provide callable type");
 		}
 		if (!callee_type.has_value()) {
 			if (object_ident) {
@@ -1637,11 +1649,19 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				// Generic lambda calls can refine this below once sema has normalized
 				// the instantiated lambda body with concrete argument types.
 				const TypeSpecifierNode* mangling_return_type = &func_for_mangling->decl_node().type_specifier_node();
+				LambdaInfo* matched_lambda_info = nullptr;
+				for (auto& lambda_info : collected_lambdas_) {
+					if (lambda_info.closure_type_name == struct_name) {
+						matched_lambda_info = &lambda_info;
+						break;
+					}
+				}
 
 				// Check if this is a generic lambda call (lambda with auto parameters).
 				// Do not infer from the lambda name alone: non-generic closures also use
 				// the __lambda_N spelling and must keep their declared parameter types.
 				bool has_auto_parameter = false;
+				bool has_own_template_parameter = matched_lambda_info && !matched_lambda_info->own_template_param_names.empty();
 				for (const auto& param_node : func_for_mangling->parameter_nodes()) {
 					if (!param_node.is<DeclarationNode>()) {
 						continue;
@@ -1653,7 +1673,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				}
 				bool is_generic_lambda =
 					StringTable::getStringView(struct_name).substr(0, 9) == "__lambda_"sv &&
-					has_auto_parameter;
+					(has_auto_parameter || has_own_template_parameter);
 				if (is_generic_lambda) {
 					// For generic lambdas, we need to deduce auto parameter types from arguments
 					// Collect argument types first
@@ -1769,21 +1789,32 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							return argument_type;
 						};
 
-					LambdaInfo* matched_lambda_info = nullptr;
-
 					// Now build param_types with deduced types for auto parameters
 					size_t arg_idx = 0;
 					for (const auto& param_node : func_for_mangling->parameter_nodes()) {
 						if (param_node.is<DeclarationNode>()) {
 							const auto& param_decl = param_node.as<DeclarationNode>();
 							const auto& param_type = param_decl.type_specifier_node();
+							const bool is_lambda_own_template_param =
+								matched_lambda_info &&
+								std::any_of(
+									matched_lambda_info->own_template_param_names.begin(),
+									matched_lambda_info->own_template_param_names.end(),
+									[&](StringHandle template_param_name) {
+										return StringTable::getStringView(template_param_name) == param_type.token().value();
+									});
 
-							if (isPlaceholderAutoType(param_type.type()) && arg_idx < arg_types.size()) {
+							if ((isPlaceholderAutoType(param_type.type()) || is_lambda_own_template_param) &&
+								arg_idx < arg_types.size()) {
 								// Deduce the instantiated parameter type from the argument.
 								// Forwarding references keep lvalue arguments as lvalue
 								// references; plain auto strips top-level cv/ref.
-								TypeSpecifierNode deduced_type =
-									applyGenericLambdaPlaceholderDeduction(param_type, arg_types[arg_idx]);
+								TypeSpecifierNode deduced_type = isPlaceholderAutoType(param_type.type())
+									? applyGenericLambdaPlaceholderDeduction(param_type, arg_types[arg_idx])
+									: arg_types[arg_idx];
+								if (is_lambda_own_template_param) {
+									deduced_type.set_reference_qualifier(param_type.reference_qualifier());
+								}
 								param_types.push_back(deduced_type);
 
 								// Also store the deduced type in LambdaInfo for use by generateLambdaOperatorCallFunction

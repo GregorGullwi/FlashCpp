@@ -104,6 +104,29 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 					  expr);
 }
 
+// Returns true when `arg` is a codegen-created overload-resolution argument that
+// sema may not yet own through an exact AST slot. Range-for/structured-binding
+// lowering still synthesizes IdentifierNode/UnaryOperatorNode expressions after
+// sema normalization; prefer sema side tables first, then allow parser fallback
+// only for this narrow expression shape.
+bool isCodegenSynthesizedOverloadArg(const ASTNode& arg) {
+	if (!arg.is<ExpressionNode>()) {
+		return false;
+	}
+
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	return std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			return true;
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			return true;
+		}
+		return false;
+	},
+					  expr);
+}
+
 std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 	if (!arg.is<ExpressionNode>()) {
 		return "non-expression";
@@ -177,6 +200,14 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 			.append(describeOverloadArgExprShape(arg))
 			.commit()));
 	}
+	if (sema_normalized_current_function_ &&
+		!has_exact_sema_type_slot &&
+		!isCodegenSynthesizedOverloadArg(arg)) {
+		throw InternalError(std::string(StringBuilder()
+			.append("Missing sema-owned overload-resolution argument type and exact sema slot in sema-normalized body for ")
+			.append(describeOverloadArgExprShape(arg))
+			.commit()));
+	}
 	return tryParserFallback(arg);
 }
 
@@ -185,7 +216,12 @@ std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& ini
 		return std::nullopt;
 	}
 
-	auto init_type_opt = buildCodegenOverloadResolutionArgType(init_node);
+	std::optional<TypeSpecifierNode> init_type_opt;
+	try {
+		init_type_opt = buildCodegenOverloadResolutionArgType(init_node);
+	} catch (const InternalError&) {
+		return std::nullopt;
+	}
 	if (!init_type_opt.has_value()) {
 		return std::nullopt;
 	}
@@ -1469,7 +1505,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										std::vector<TypeSpecifierNode> arg_types;
 										bool all_arg_types_known = true;
 										for (const auto& init_arg : initializers) {
-											auto arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
+											std::optional<TypeSpecifierNode> arg_type_opt;
+											try {
+												arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
+											} catch (const InternalError&) {
+												arg_type_opt = std::nullopt;
+											}
 											if (!arg_type_opt.has_value()) {
 												all_arg_types_known = false;
 												break;
@@ -3054,8 +3095,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 				binding_token);
 
-				// Add to symbol table
+			// Add to symbol table
 			symbol_table.insert(binding_name, binding_decl_node);
+			sema_.registerCodegenSynthesizedLocalType(binding_id, binding_type);
 
 				// Generate IR for the binding
 			if (is_reference_binding) {
@@ -3205,6 +3247,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 				binding_token);
 			symbol_table.insert(binding_name, binding_decl_node);
+			sema_.registerCodegenSynthesizedLocalType(binding_id, binding_type);
 		}
 
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", tuple_size_value, " bindings using sema tuple-like protocol");
@@ -3278,8 +3321,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 			binding_token);
 
-			// Add to symbol table
+		// Add to symbol table
 		symbol_table.insert(binding_name, binding_decl_node);
+		sema_.registerCodegenSynthesizedLocalType(binding_id, binding_type);
 
 			// Generate IR for the binding
 		if (is_reference_binding) {

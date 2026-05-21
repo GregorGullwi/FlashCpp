@@ -1811,12 +1811,37 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	TypeCategory rhsCat = rhsExprResult.category();
 
 	auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
-		auto tryGetOperandTypeSpec = [&](const ASTNode& operand) -> std::optional<TypeSpecifierNode> {
+		auto tryBuildGeneratedExprTypeSpec = [](const ExprResult& operand_result, const Token& token) -> std::optional<TypeSpecifierNode> {
+			if (operand_result.typeEnum() == TypeCategory::Invalid) {
+				return std::nullopt;
+			}
+			TypeIndex type_index = operand_result.type_index.is_valid()
+				? operand_result.type_index
+				: nativeTypeIndex(operand_result.typeEnum());
+			TypeSpecifierNode type_spec(
+				type_index.withCategory(operand_result.typeEnum()),
+				operand_result.size_in_bits.value,
+				token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			for (int i = 0; i < operand_result.pointer_depth.value; ++i) {
+				type_spec.add_pointer_level();
+			}
+			return type_spec;
+		};
+		auto tryGetOperandTypeSpec = [&](const ASTNode& operand, const ExprResult& operand_result) -> std::optional<TypeSpecifierNode> {
+			if (operand.is<ExpressionNode>() &&
+				(std::holds_alternative<CallExprNode>(operand.as<ExpressionNode>()) ||
+				 std::holds_alternative<MemberAccessNode>(operand.as<ExpressionNode>()))) {
+				if (auto generated_type = tryBuildGeneratedExprTypeSpec(operand_result, binaryOperatorNode.get_token())) {
+					return generated_type;
+				}
+			}
 			return buildCodegenOverloadResolutionArgType(operand);
 		};
 
-		auto left_type_spec = tryGetOperandTypeSpec(binaryOperatorNode.get_lhs());
-		auto right_type_spec = tryGetOperandTypeSpec(binaryOperatorNode.get_rhs());
+		auto left_type_spec = tryGetOperandTypeSpec(binaryOperatorNode.get_lhs(), lhsExprResult);
+		auto right_type_spec = tryGetOperandTypeSpec(binaryOperatorNode.get_rhs(), rhsExprResult);
 		if (!left_type_spec.has_value() || !right_type_spec.has_value()) {
 			return std::nullopt;
 		}
@@ -3391,6 +3416,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					.append(getTypeName(commonType))
 					.append(")"sv)
 					.commit()));
+			// Remaining fallback: handles legitimate non-standard-arithmetic implicit
+			// conversions that sema does not yet annotate, e.g.:
+			//   - unscoped enum vs. underlying integer type in comparisons/arithmetic
+			//   - static local / global variable address derefs (Pointer category)
+			//   - function pointer nullptr comparisons
+			// The sema-normalized + arithmetic case is already guarded above.
 			lhsExprResult = generateTypeConversion(lhsExprResult, lhsCat, commonType, binaryOperatorNode.get_token());
 		}
 	}

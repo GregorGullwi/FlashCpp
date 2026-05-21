@@ -1697,6 +1697,34 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& la
 
 		addLocalType(param_name, type_context_.intern(desc));
 	}
+
+	for (const auto& [param_index, type_node] : lambda_info.deduced_auto_types) {
+		if (param_index >= lambda_info.parameter_nodes.size()) {
+			continue;
+		}
+		const ASTNode& param_node = lambda_info.parameter_nodes[param_index];
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& original_type = param_node.as<DeclarationNode>().type_specifier_node();
+		const std::string_view original_name = original_type.token().value();
+		if (original_name.empty()) {
+			continue;
+		}
+		const bool is_own_template_param = std::any_of(
+			lambda_info.own_template_param_names.begin(),
+			lambda_info.own_template_param_names.end(),
+			[&](StringHandle template_param_name) {
+				return StringTable::getStringView(template_param_name) == original_name;
+			});
+		if (!is_own_template_param) {
+			continue;
+		}
+		const CanonicalTypeId type_id = canonicalizeType(type_node);
+		if (type_id) {
+			addLocalType(StringTable::getOrInternStringHandle(original_name), type_id);
+		}
+	}
 }
 
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const StructDeclarationNode& decl) {
@@ -4052,6 +4080,38 @@ void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg, const 
 	}
 }
 
+void SemanticAnalysis::registerCodegenSynthesizedOverloadArgType(const ASTNode& arg, const TypeSpecifierNode& type) {
+	if (!arg.is<ExpressionNode>()) {
+		return;
+	}
+	if (const void* key = getOverloadResolutionArgQueryKey(arg); key != nullptr) {
+		overload_resolution_arg_types_[key] = type;
+		analyzed_overload_resolution_arg_queries_.insert(key);
+	}
+}
+
+void SemanticAnalysis::registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type) {
+	if (!name.isValid()) {
+		return;
+	}
+	const CanonicalTypeId type_id = canonicalizeType(type);
+	if (!type_id) {
+		return;
+	}
+	codegen_synthesized_local_types_[name] = type_id;
+}
+
+CanonicalTypeId SemanticAnalysis::getCodegenSynthesizedLocalType(StringHandle name) const {
+	if (!name.isValid()) {
+		return {};
+	}
+	auto it = codegen_synthesized_local_types_.find(name);
+	if (it == codegen_synthesized_local_types_.end()) {
+		return {};
+	}
+	return it->second;
+}
+
 TypeSpecifierQueryResult SemanticAnalysis::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
 	if (!arg.is<ExpressionNode>()) {
 		if (auto literal_type = tryBuildDirectLiteralQueryType(arg); literal_type.has_value()) {
@@ -4512,6 +4572,23 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 						resolved.type = typeSpecifierFromStaticMember(*static_member, qualified_identifier.identifier_token());
 						return resolved;
 					}
+					for (TypeIndex nested_enum_index : struct_info->getNestedEnumIndices()) {
+						const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
+						if (!nested_enum_type_info || !nested_enum_type_info->isEnum()) {
+							continue;
+						}
+						const EnumTypeInfo* enum_info = nested_enum_type_info->getEnumInfo();
+						if (!enum_info || !enum_info->findEnumerator(name_handle)) {
+							continue;
+						}
+						ResolvedQualifiedIdentifierInfo resolved;
+						resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::EnumConstant;
+						resolved.constant_type = enum_info->underlying_type;
+						resolved.constant_size = enum_info->underlying_size;
+						resolved.constant_value = static_cast<unsigned long long>(enum_info->getEnumeratorValue(name_handle));
+						resolved.enum_owner_type_index = nested_enum_index;
+						return resolved;
+					}
 				}
 			} else if (owner_type_info && owner_type_info->isEnum()) {
 				const EnumTypeInfo* enum_info = owner_type_info->getEnumInfo();
@@ -4850,6 +4927,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeId local_id = lookupLocalType(e.nameHandle());
 				if (local_id)
 					return local_id;
+				if (const CanonicalTypeId synthesized_local_id = getCodegenSynthesizedLocalType(e.nameHandle())) {
+					return synthesized_local_id;
+				}
 
 				auto lookup_bound_symbol = [&]() -> std::optional<ASTNode> {
 					if (e.resolved_name().isValid()) {

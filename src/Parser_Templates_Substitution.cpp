@@ -491,9 +491,9 @@ ASTNode Parser::substituteTemplateParameters(
 		return substituteWithExpressionSubstitutor(ASTNode(&substituted_call));
 	};
 	auto substituteTernaryOperator = [&](const TernaryOperatorNode& ternary, bool wrap_in_expression) -> ASTNode {
-		ASTNode substituted_condition = substituteTemplateParameters(ternary.condition(), template_params, template_args);
-		ASTNode substituted_true = substituteTemplateParameters(ternary.true_expr(), template_params, template_args);
-		ASTNode substituted_false = substituteTemplateParameters(ternary.false_expr(), template_params, template_args);
+		ASTNode substituted_condition = substitute_nested(ternary.condition());
+		ASTNode substituted_true = substitute_nested(ternary.true_expr());
+		ASTNode substituted_false = substitute_nested(ternary.false_expr());
 		if (wrap_in_expression) {
 			return emplace_node<ExpressionNode>(TernaryOperatorNode(
 				substituted_condition,
@@ -783,8 +783,8 @@ ASTNode Parser::substituteTemplateParameters(
 		}
 		if (const auto* binary_operator = std::get_if<BinaryOperatorNode>(&expr)) {
 			const BinaryOperatorNode& bin_op = *binary_operator;
-			ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
-			ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
+			ASTNode substituted_left = substitute_nested(bin_op.get_lhs());
+			ASTNode substituted_right = substitute_nested(bin_op.get_rhs());
 			BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
 			annotateConcreteBinaryOperatorOverload(substituted_binop);
 			return emplace_node<ExpressionNode>(substituted_binop);
@@ -794,7 +794,7 @@ ASTNode Parser::substituteTemplateParameters(
 			return substituteWithExpressionSubstitutor(node);
 		} else if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr)) {
 			const UnaryOperatorNode& unary_op = *unary_operator;
-			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
+			ASTNode substituted_operand = substitute_nested(unary_op.get_operand());
 			return emplace_node<ExpressionNode>(UnaryOperatorNode(
 				unary_op.get_token(),
 				substituted_operand,
@@ -804,7 +804,7 @@ ASTNode Parser::substituteTemplateParameters(
 			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
 		} else if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
 			const MemberAccessNode& member_access = *member_access_ptr;
-			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
+			ASTNode substituted_object = substitute_nested(member_access.object());
 			return emplace_node<ExpressionNode>(MemberAccessNode(
 				substituted_object,
 				member_access.member_token(),
@@ -1467,7 +1467,8 @@ ASTNode Parser::substituteTemplateParameters(
 		ASTNode substituted_type = substituteTemplateParameters(
 			ASTNode(&constructor_call.type_node()),
 			template_params,
-			template_args);
+			template_args,
+			current_owner_type_name);
 			ChunkedVector<ASTNode> substituted_args;
 			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
 				substituteArgWithPackExpansion(
@@ -1487,8 +1488,8 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle binary operators
 		const BinaryOperatorNode& bin_op = node.as<BinaryOperatorNode>();
 
-		ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
-		ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
+		ASTNode substituted_left = substitute_nested(bin_op.get_lhs());
+		ASTNode substituted_right = substitute_nested(bin_op.get_rhs());
 
 		BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
 		annotateConcreteBinaryOperatorOverload(substituted_binop);
@@ -1499,8 +1500,8 @@ ASTNode Parser::substituteTemplateParameters(
 
 	} else if (node.is<PointerToMemberAccessNode>()) {
 		const PointerToMemberAccessNode& member_access = node.as<PointerToMemberAccessNode>();
-		ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
-		ASTNode substituted_member_pointer = substituteTemplateParameters(member_access.member_pointer(), template_params, template_args);
+		ASTNode substituted_object = substitute_nested(member_access.object());
+		ASTNode substituted_member_pointer = substitute_nested(member_access.member_pointer());
 		return makeRebuiltPointerToMemberAccessNode(
 			member_access,
 			substituted_object,
@@ -1805,7 +1806,7 @@ ASTNode Parser::substituteTemplateParameters(
 		BlockNode& new_block_ref = new_block.as<BlockNode>();
 
 		for (size_t i = 0; i < block.get_statements().size(); ++i) {
-			new_block_ref.add_statement_node(substituteTemplateParameters(block.get_statements()[i], template_params, template_args));
+			new_block_ref.add_statement_node(substitute_nested(block.get_statements()[i]));
 		}
 
 		return new_block;
@@ -1814,10 +1815,10 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle for statements
 		const ForStatementNode& for_stmt = node.as<ForStatementNode>();
 
-		auto init_stmt = for_stmt.get_init_statement().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*for_stmt.get_init_statement(), template_params, template_args)) : std::nullopt;
-		auto condition = for_stmt.get_condition().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*for_stmt.get_condition(), template_params, template_args)) : std::nullopt;
-		auto update_expr = for_stmt.get_update_expression().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*for_stmt.get_update_expression(), template_params, template_args)) : std::nullopt;
-		auto body_stmt = substituteTemplateParameters(for_stmt.get_body_statement(), template_params, template_args);
+		auto init_stmt = for_stmt.get_init_statement().has_value() ? std::optional<ASTNode>(substitute_nested(*for_stmt.get_init_statement())) : std::nullopt;
+		auto condition = for_stmt.get_condition().has_value() ? std::optional<ASTNode>(substitute_nested(*for_stmt.get_condition())) : std::nullopt;
+		auto update_expr = for_stmt.get_update_expression().has_value() ? std::optional<ASTNode>(substitute_nested(*for_stmt.get_update_expression())) : std::nullopt;
+		auto body_stmt = substitute_nested(for_stmt.get_body_statement());
 
 		return emplace_node<ForStatementNode>(init_stmt, condition, update_expr, body_stmt);
 
@@ -1825,7 +1826,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle unary operators
 		const UnaryOperatorNode& unary_op = node.as<UnaryOperatorNode>();
 
-		ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
+		ASTNode substituted_operand = substitute_nested(unary_op.get_operand());
 
 		return emplace_node<UnaryOperatorNode>(
 			unary_op.get_token(),
@@ -1836,9 +1837,9 @@ ASTNode Parser::substituteTemplateParameters(
 	} else if (node.is<VariableDeclarationNode>()) {
 		// Handle variable declarations
 		const VariableDeclarationNode& var_decl = node.as<VariableDeclarationNode>();
-		ASTNode substituted_decl = substituteTemplateParameters(var_decl.declaration_node(), template_params, template_args);
+		ASTNode substituted_decl = substitute_nested(var_decl.declaration_node());
 
-		auto initializer = var_decl.initializer().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*var_decl.initializer(), template_params, template_args)) : std::nullopt;
+		auto initializer = var_decl.initializer().has_value() ? std::optional<ASTNode>(substitute_nested(*var_decl.initializer())) : std::nullopt;
 
 		// Phase 6: for unsized arrays with pack-expanded initializers (e.g.
 		//   template<typename... Ts> f(Ts... args) { int arr[] = {args...}; }
@@ -1887,7 +1888,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle return statements
 		const ReturnStatementNode& ret_stmt = node.as<ReturnStatementNode>();
 
-		auto expr = ret_stmt.expression().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*ret_stmt.expression(), template_params, template_args)) : std::nullopt;
+		auto expr = ret_stmt.expression().has_value() ? std::optional<ASTNode>(substitute_nested(*ret_stmt.expression())) : std::nullopt;
 
 		return emplace_node<ReturnStatementNode>(expr, ret_stmt.return_token());
 
@@ -1895,7 +1896,7 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle if statements
 		const IfStatementNode& if_stmt = node.as<IfStatementNode>();
 
-		ASTNode substituted_condition = substituteTemplateParameters(if_stmt.get_condition(), template_params, template_args);
+		ASTNode substituted_condition = substitute_nested(if_stmt.get_condition());
 
 		// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
 		if (if_stmt.is_constexpr()) {
@@ -1905,9 +1906,9 @@ ASTNode Parser::substituteTemplateParameters(
 				bool condition_value = eval_result.as_int() != 0;
 				FLASH_LOG(Templates, Debug, "if constexpr condition evaluated to ", condition_value ? "true" : "false");
 				if (condition_value) {
-					return substituteTemplateParameters(if_stmt.get_then_statement(), template_params, template_args);
+					return substitute_nested(if_stmt.get_then_statement());
 				} else if (if_stmt.has_else()) {
-					return substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args);
+					return substitute_nested(*if_stmt.get_else_statement());
 				} else {
 					// No else branch and condition is false - return empty block
 					return emplace_node<BlockNode>();
@@ -1915,9 +1916,9 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 		}
 
-		ASTNode substituted_then = substituteTemplateParameters(if_stmt.get_then_statement(), template_params, template_args);
-		auto substituted_else = if_stmt.get_else_statement().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args)) : std::nullopt;
-		auto substituted_init = if_stmt.get_init_statement().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*if_stmt.get_init_statement(), template_params, template_args)) : std::nullopt;
+		ASTNode substituted_then = substitute_nested(if_stmt.get_then_statement());
+		auto substituted_else = if_stmt.get_else_statement().has_value() ? std::optional<ASTNode>(substitute_nested(*if_stmt.get_else_statement())) : std::nullopt;
+		auto substituted_init = if_stmt.get_init_statement().has_value() ? std::optional<ASTNode>(substitute_nested(*if_stmt.get_init_statement())) : std::nullopt;
 
 		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else, substituted_init, if_stmt.is_constexpr());
 
@@ -1925,8 +1926,8 @@ ASTNode Parser::substituteTemplateParameters(
 		// Handle while statements
 		const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
 
-		ASTNode substituted_condition = substituteTemplateParameters(while_stmt.get_condition(), template_params, template_args);
-		ASTNode substituted_body = substituteTemplateParameters(while_stmt.get_body_statement(), template_params, template_args);
+		ASTNode substituted_condition = substitute_nested(while_stmt.get_condition());
+		ASTNode substituted_body = substitute_nested(while_stmt.get_body_statement());
 
 		return emplace_node<WhileStatementNode>(substituted_condition, substituted_body);
 	}

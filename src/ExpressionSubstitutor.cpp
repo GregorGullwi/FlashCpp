@@ -3068,6 +3068,49 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 	}
 
+	if (current_owner_type_name_.isValid() && !ns_name.empty()) {
+		auto resolveDirectOwnerAlias = [&]() -> const TypeInfo* {
+			StringHandle direct_member_handle = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(StringTable::getStringView(current_owner_type_name_))
+					.append("::")
+					.append(ns_name)
+					.commit());
+			auto direct_it = getTypesByNameMap().find(direct_member_handle);
+			if (direct_it == getTypesByNameMap().end() || direct_it->second == nullptr) {
+				return nullptr;
+			}
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				direct_it->second->registeredTypeIndex().withCategory(direct_it->second->typeEnum()));
+			if (resolved_alias.terminal_type_info != nullptr) {
+				return resolved_alias.terminal_type_info;
+			}
+			if (resolved_alias.type_index.is_valid()) {
+				return tryGetTypeInfo(resolved_alias.type_index);
+			}
+			return direct_it->second;
+		};
+		const TypeInfo* resolved_member_info = resolveDirectOwnerAlias();
+		if (resolved_member_info == nullptr) {
+			resolved_member_info = resolveCurrentOwnerQualifiedNamespaceMember(
+				StringTable::getOrInternStringHandle(ns_name));
+		}
+		if (resolved_member_info != nullptr) {
+			StringHandle resolved_name_handle = resolved_member_info->name();
+			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+				NamespaceRegistry::GLOBAL_NAMESPACE,
+				resolved_name_handle);
+			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+				new_ns_handle,
+				qual_id.identifier_token());
+			FLASH_LOG(Templates, Debug, "  Resolved struct-local alias namespace '", ns_name,
+					  "' -> ", StringTable::getStringView(resolved_name_handle),
+					  " in owner ", StringTable::getStringView(current_owner_type_name_));
+			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+			return ASTNode(&new_expr);
+		}
+	}
+
 	// Check if the entire namespace name is a template parameter (e.g., _R1::num where _R1 is typename _R1)
 	// This handles patterns like _R1::num where _R1 is substituted with a concrete struct type
 	{
@@ -3121,26 +3164,6 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				ExpressionNode& fallback_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 				return ASTNode(&fallback_expr);
 			}
-		}
-	}
-
-	if (current_owner_type_name_.isValid() && !ns_name.empty()) {
-		if (const TypeInfo* resolved_member_info =
-				resolveCurrentOwnerQualifiedNamespaceMember(
-					StringTable::getOrInternStringHandle(ns_name));
-			resolved_member_info != nullptr) {
-			StringHandle resolved_name_handle = resolved_member_info->name();
-			NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
-				NamespaceRegistry::GLOBAL_NAMESPACE,
-				resolved_name_handle);
-			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
-				new_ns_handle,
-				qual_id.identifier_token());
-			FLASH_LOG(Templates, Debug, "  Resolved struct-local alias namespace '", ns_name,
-					  "' -> ", StringTable::getStringView(resolved_name_handle),
-					  " in owner ", StringTable::getStringView(current_owner_type_name_));
-			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
-			return ASTNode(&new_expr);
 		}
 	}
 

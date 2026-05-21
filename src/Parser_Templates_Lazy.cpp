@@ -247,7 +247,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
 				if (param_decl.has_default_value()) {
 					ASTNode substituted_default = substituteTemplateParameters(
-						param_decl.default_value(), lazy_info.template_params, lazy_info.template_args);
+						param_decl.default_value(),
+						lazy_info.template_params,
+						lazy_info.template_args,
+						lazy_info.identity.instantiated_owner_name);
 					substituted_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
 				}
 				new_ctor_ref.add_parameter_node(substituted_param_decl);
@@ -267,7 +270,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		}
 
 		auto substituteInitExpr = [&](const ASTNode& expr) -> ASTNode {
-			return substituteTemplateParameters(expr, lazy_info.template_params, converted_template_args);
+			return substituteTemplateParameters(
+				expr,
+				lazy_info.template_params,
+				converted_template_args,
+				lazy_info.identity.instantiated_owner_name);
 		};
 
 		for (const auto& init : ctor_decl.member_initializers()) {
@@ -384,7 +391,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		ASTNode substituted_body = substituteTemplateParameters(
 			*body_to_substitute,
 			lazy_info.template_params,
-			converted_template_args);
+			converted_template_args,
+			lazy_info.identity.instantiated_owner_name);
 		new_ctor_ref.set_definition(substituted_body);
 		new_ctor_ref.set_mangled_name(NameMangling::generateMangledNameFromNode(
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
@@ -466,7 +474,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			ASTNode substituted_noexcept = substituteTemplateParameters(
 				*dtor_decl.noexcept_expression(),
 				lazy_info.template_params,
-				converted_template_args);
+				converted_template_args,
+				lazy_info.identity.instantiated_owner_name);
 			new_dtor_ref.set_noexcept_expression(substituted_noexcept);
 			ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 			std::optional<TemplateEnvironment> outer_environment;
@@ -496,7 +505,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		ASTNode substituted_body = substituteTemplateParameters(
 			*dtor_decl.get_definition(),
 			lazy_info.template_params,
-			converted_template_args);
+			converted_template_args,
+			lazy_info.identity.instantiated_owner_name);
 		new_dtor_ref.set_definition(substituted_body);
 
 		registerAndNormalizeLateMaterializedTopLevelNode(new_dtor_node);
@@ -790,16 +800,21 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		current_function_ = &new_func_ref;
 		register_parameters_in_scope(new_func_ref.parameter_nodes());
 		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
+		std::optional<TemplateEnvironment> outer_environment;
+		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+			lazy_info.outer_template_environment_snapshot,
 			std::span<const TemplateParameterNode>(substitution_params.data(), substitution_params.size()),
 			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
-			nullptr);
+			outer_environment);
 		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 		ASTNode substituted_body = substituteTemplateParameters(
 			*body_to_substitute,
 			substitution_params,
 			converted_template_args,
 			lazy_info.identity.instantiated_owner_name);
+		ExpressionSubstitutor owner_substitutor(substitution_environment, *this);
+		owner_substitutor.setCurrentOwnerTypeName(lazy_info.identity.instantiated_owner_name);
+		substituted_body = owner_substitutor.substitute(substituted_body);
 		new_func_ref.set_definition(substituted_body);
 	}
 

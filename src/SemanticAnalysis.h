@@ -194,6 +194,8 @@ public:
 	// such as prvalue member access becoming an xvalue.
 	TypeSpecifierQueryResult getOverloadResolutionArgTypeQuery(const ASTNode& arg) const;
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg);
+	void registerCodegenSynthesizedOverloadArgType(const ASTNode& arg, const TypeSpecifierNode& type);
+	void registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type);
 
 	enum class StructuredBindingDecompositionKind : uint8_t {
 		Aggregate,
@@ -437,6 +439,7 @@ private:
 	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
 	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
 	const void* getOverloadResolutionArgQueryKey(const ASTNode& arg) const;
+	CanonicalTypeId getCodegenSynthesizedLocalType(StringHandle name) const;
 	void markOverloadResolutionArgQueryAnalyzed(const ASTNode& arg);
 	void cacheOverloadResolutionArgType(const ASTNode& arg, const TypeSpecifierNode& type);
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(
@@ -646,6 +649,7 @@ private:
 	std::unordered_map<const IdentifierNode*, ResolvedIdentifierMemberInfo> resolved_identifier_member_table_;
 	std::unordered_map<const QualifiedIdentifierNode*, ResolvedQualifiedIdentifierInfo> resolved_qualified_identifier_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
+	std::unordered_map<StringHandle, CanonicalTypeId> codegen_synthesized_local_types_;
 	std::unordered_set<const void*> analyzed_overload_resolution_arg_queries_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 	std::unordered_map<const TernaryOperatorNode*, CanonicalTypeId> ternary_result_types_;

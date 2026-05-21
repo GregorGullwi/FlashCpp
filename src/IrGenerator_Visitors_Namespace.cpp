@@ -494,6 +494,32 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 								}
 							}
 						} else {
+							// expr_type_index has no TypeInfo entry.
+							//
+							// Two distinct cases reach this point:
+							//
+							// 1. TypeIndex is invalid (index==0): this occurs for unresolved
+							//    template-type parameters in lambdas with their own template
+							//    parameters (e.g. []<typename T>(T value){return value;}).
+							//    FlashCpp does not yet implement per-call instantiation of
+							//    lambda-own template parameters (T is stored as TypeIndex{0,
+							//    UserDefined}).  The generateTypeConversion fallback produces
+							//    correct object code because the ABI-level value is already
+							//    the right bit pattern; the type mismatch is a metadata
+							//    artifact, not a value mismatch.  See KNOWN_ISSUES.md.
+							//
+							// 2. TypeIndex is valid but gTypeInfo has no entry: internal error.
+							if (expr_type_index.is_valid()) {
+								throw InternalError(std::string(StringBuilder()
+									.append("struct-category expr has valid TypeIndex (")
+									.append(static_cast<uint64_t>(expr_type_index.index()))
+									.append(") but no TypeInfo; sema missed this case: expr=")
+									.append(getTypeName(expr_type))
+									.append(" return=")
+									.append(getTypeName(return_type))
+									.commit()));
+							}
+							// Case 1: unresolved template-type placeholder (known limitation).
 							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 						}
 					}
