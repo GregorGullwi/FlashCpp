@@ -18,21 +18,21 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~587ms (retested 2026-04-28, Linux/libstdc++-14). The dependent `decltype` alias target in `__do_common_type_impl::__cond_t` is no longer collapsed to concrete `auto`, so the full targeted header compiles. Regression: `tests/test_dependent_decltype_alias_template_ret0.cpp`. |
+| `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~1.76s (retested 2026-05-21, Linux/libstdc++-14). The libstdc++-14 path now parses past the shared `<bits/ptr_traits.h>` member-alias-template target; current stop is IR/codegen for `std::partial_ordering` (`Sema-normalized constructor call is missing a resolved constructor`). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | Focused retest 2026-05-04 after injected-class-name fix. The `Cannot use copy initialization with explicit constructor` diagnostic for `std::reverse_iterator` is fixed; the header now progresses into existing IR/codegen gaps around unresolved `std::reverse_iterator` constructor/placeholder lowering. |
-| `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~2320ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current crash is late codegen `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
-| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~41ms (retested 2026-04-11). **NEW: Now compiles successfully!** Previous iterator/ranges codegen blockers are resolved. |
+| `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2.79s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is the multi-line CTAD deduction guide in `<array>` (`Expected ';' after deduction guide`). |
+| `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
+| `<span>` | `test_std_span.cpp` | ❌ Compile Error | ~0.06s (retested 2026-05-21, Linux/libstdc++-14). Current run does not register/instantiate `std::span<int>` and parses `s(arr, 5)` as a call expression (`No matching function for call to 's'`). |
 | `<tuple>` | `test_std_tuple.cpp` | 💥 Codegen Crash | ~2500ms (retested 2026-05-11, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker and tuple constructor pack-boundary stop are fixed; the header now reaches IR/codegen before `std::partial_ordering` unresolved semantic type category 25. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~4980ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap`, block-scope `using std::swap`, and shared `_Head_base` default-NTTP stops remain fixed; after raising template nesting limits the first hard error is now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3.47s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -80,7 +80,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ctime>` | N/A | ✅ Compiled | ~58ms |
 | `<climits>` | N/A | ✅ Compiled | ~30ms |
 | `<cfloat>` | N/A | ✅ Compiled | ~32ms |
-| `<cmath>` | `test_std_cmath.cpp` | 💥 Crash | ~5020ms (retested 2026-05-08, Linux/libstdc++-14). The `__promote` default-NTTP stop is fixed and additional C++11 math builtins are declared; the header now parses to completion and reaches codegen before a fatal `std::get: wrong index for variant` stop while lowering unresolved special-function helpers. |
+| `<cmath>` | `test_std_cmath.cpp` | ❌ Compile Error | ~16.55s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses and special-function replay goes much deeper; current first fatal stop is `std::__numeric_limits_base::has_denorm` unresolved constexpr initialization. |
 | `<system_error>` | N/A | 💥 Crash | ~4400ms (retested 2026-04-11). |
 | `<scoped_allocator>` | N/A | ❌ Compile Error | ~1868ms (retested 2026-04-11). "unsupported PackExpansionExprNode". |
 | `<charconv>` | N/A | ✅ Compiled | ~930ms |
@@ -100,6 +100,42 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-21 Linux/libstdc++ member-template alias type-id follow-up
+
+Fix landed:
+
+- **Member template alias targets now parse in alias type-id mode**, matching
+  top-level aliases, member type aliases, and namespace-scope alias templates.
+  This lets template-template arguments inside alias targets parse correctly,
+  including the libstdc++ pattern:
+  `using rebind = typename __detected_or_t<__replace_first_arg<_Ptr, _Up>, __rebind, _Ptr, _Up>::type;`
+  in `<bits/ptr_traits.h>`.
+
+Regression coverage:
+
+- `tests/test_member_template_alias_template_template_arg_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_member_template_alias_template_template_arg_ret0.cpp` | ✅ Pass | n/a | New regression verifies a member alias template target can pass a member alias template as a template-template argument. |
+| `<utility>` (`test_std_utility.cpp`) | ❌ Codegen Error | 1.76s | Progresses past the shared `ptr_traits` parse stop; current stop is IR/codegen for `std::partial_ordering` constructor metadata. |
+| `<array>` (`test_std_array.cpp`) | ❌ Parse Error | 2.79s | Progresses past `ptr_traits`; current stop is the multi-line `<array>` CTAD deduction guide (`Expected ';' after deduction guide`). |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 3.47s | Progresses past `ptr_traits`; current stop is `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
+| `<algorithm>` (`test_std_algorithm.cpp`) | 💥 Crash / Codegen Error | 4.95s | Progresses past `ptr_traits`; current run reaches late IR/codegen around `std::partial_ordering` / unresolved semantic type category 25, with a possible post-IR crash during the deep path. |
+| `<cmath>` (`test_std_cmath.cpp`) | ❌ Compile Error | 16.55s | Progresses past `ptr_traits` and through deeper special-function replay; current fatal stop is unresolved constexpr initialization of `std::__numeric_limits_base::has_denorm`. |
+| `<span>` (`test_std_span.cpp`) | ❌ Compile Error | 0.06s | Current run does not register `std::span<int>`, so the variable declaration falls through to `No matching function for call to 's'`. |
+| Full regression suite after edits | ✅ Pass | n/a | `bash tests/run_all_tests.sh`: 2464 pass / 0 fail, 181 `_fail` correct. |
+
+Retested `tests/std/test_std_*.cpp` after the fix. Headers that already compile
+in this environment include `test_std_bit.cpp` (~1.29s), `test_std_concepts.cpp`
+(~1.10s), `test_std_exception.cpp` (~1.06s), `test_std_type_traits.cpp`
+(~0.94s), `test_std_source_location.cpp` (~0.05s), `test_std_version.cpp`
+(~0.05s), `test_std_new.cpp` (~0.07s), and the focused comparison/typeinfo
+regressions. Several larger headers now share later semantic/template/codegen
+stops rather than the previous `ptr_traits` member-alias-template parse error.
 
 ### 2026-05-17 `<limits>` O(N²) lookahead fix — ~23× parse-time speedup
 
