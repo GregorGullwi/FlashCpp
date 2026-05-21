@@ -75,11 +75,22 @@ Useful to know before changing anything:
 - member alias-template declarations now preserve deferred member suffixes and
   enclosing class-template bindings for covered non-template intermediate member
   chains such as `Provider<T>::Node::template Apply<U>`;
+- template-parameter default arguments now route dependent owner template-ids
+  such as `Provider<T>::Node::template Apply<T>::value` through the same
+  deferred qualified-member-chain parser used in template bodies, instead of
+  falling through to the generic postfix `::` parser and stopping before
+  semantic substitution/evaluation;
+- direct member-template lookup on fully qualified instantiated nested owners
+  now retries shortened nested-owner spellings, so declarations that materialize
+  owners like `Outer<int>::Inner::template Apply<int>` can find member-template
+  registrations stored under nested names such as `Inner::Apply`;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
 Validation at this point passed the Linux sharded build and ELF test workflow:
 `2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Latest Windows/MSVC full-suite validation for this slice:
+`2476` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## What is still wrong
 
@@ -117,13 +128,13 @@ Concrete follow-up already identified by recent work:
   materialization. Member alias-template chains with covered non-template
   intermediate members and enclosing class-template bindings now preserve enough
   metadata for declarations such as `Provider<T>::Node::template Apply<U>`.
-  The next concrete follow-up is the remaining dependent-base and
-  unknown-specialization member-chain work in declarations that still do not
-  preserve enough metadata, especially chains that combine non-template
-  intermediates with deeper dependent bases, value/static member lookups, or
-  member-alias targets outside the newly covered alias-template materialization
-  path, plus the current `<ratio>` blocker where parsing and `std::ratio_less`
-  constexpr comparison now progress to later IR conversion/link failures.
+  The next concrete follow-up is now narrower: the parser-side declaration stop
+  for dependent owner template-ids in default NTTPs is covered, including
+  direct member-template and nested alias chains ending in `::value`. The
+  remaining `<ratio>`-class blocker is the later deferred-base/member-chain
+  materialization gap where instantiated owners like `ratio_less<...>` still
+  miss inherited base/member attachment in some libstdc++ flows, leaving
+  `::value` unresolved even after parsing/substitution carry the full chain.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -286,6 +297,11 @@ materially changes what future refactors can assume.
   register instantiated/nested aliases with recovered outer class-template
   bindings, covering non-template intermediate member chains such as
   `Provider<T>::Node::template Apply<U>`.
+- template-parameter default arguments now preserve dependent qualified
+  member-template chains ending in static-member lookups, covering focused
+  declaration-time shapes such as `Provider<T>::Node::template Apply<T>::value`
+  and `Provider<T>::Node::type::value` instead of rejecting them in the postfix
+  parser before default evaluation.
 
 ## Exit criteria for this audit
 

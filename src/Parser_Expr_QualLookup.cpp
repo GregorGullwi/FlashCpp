@@ -810,6 +810,19 @@ std::string_view Parser::lookup_direct_member_template_name(
 		return StringTable::getStringView(qualified_member_template_name);
 	}
 
+	std::string_view owner_name_view = StringTable::getStringView(owner_name);
+	for (size_t scope_pos = owner_name_view.find("::");
+		 scope_pos != std::string_view::npos;
+		 scope_pos = owner_name_view.find("::", scope_pos + 2)) {
+		StringHandle nested_owner_handle = StringTable::getOrInternStringHandle(
+			owner_name_view.substr(scope_pos + 2));
+		StringHandle nested_member_template_name =
+			buildQualifiedMemberNameHandle(nested_owner_handle, member_name);
+		if (has_registered_member_template(nested_member_template_name)) {
+			return StringTable::getStringView(nested_member_template_name);
+		}
+	}
+
 	auto owner_it = getTypesByNameMap().find(owner_name);
 	const TypeInfo* owner_type_info =
 		owner_it != getTypesByNameMap().end() ? owner_it->second : nullptr;

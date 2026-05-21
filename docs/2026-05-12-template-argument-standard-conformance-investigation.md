@@ -98,12 +98,19 @@ Future work should assume these are already in place:
   merge recovered outer class-template bindings while materializing covered
   non-template intermediate member chains such as
   `Provider<T>::Node::template Apply<U>`.
+- template-parameter default arguments now reuse the deferred qualified-member
+  chain parser for dependent owner template-ids, so declaration-time defaults
+  like `Provider<T>::Node::template Apply<T>::value` and
+  `Provider<T>::Node::type::value` no longer stop in the generic postfix `::`
+  path before semantic substitution/evaluation.
 
 Latest validation on Linux sharded build:
 `2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 Targeted validation for the latest member alias-template non-template
 intermediate chain slice passed the focused ELF regressions after
 `make sharded CXX=clang++`.
+Latest Windows/MSVC full-suite validation for this slice:
+`2476` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -135,16 +142,19 @@ Most concrete next subtask:
   outer owner bindings for the covered initializer/constexpr paths.
   `this->template` member-function-template calls through dependent bases now
   work for focused inline class-template body cases, including multilevel base
-  chains. The next concrete gap is declarations outside the covered replay
-  flows, plus deeper dependent-base/member-chain shapes that still do not carry
-  enough semantic metadata. The current `<ratio>` blocker remains a useful
-  bounded target because parsing and `std::ratio_less` constexpr comparison now
-  progress to later IR conversion/link failures rather than stopping in the
-  fixed default NTTP declared-type materialization, dependent member-template
-  argument paths, covered member alias-template target materialization path,
-  alias-template `sizeof...` NTTP target arguments, covered variable-template
-  initializer replay paths, covered member variable-template chain recovery, or
-  covered dependent-base `this->template` member-function-template lookup.
+  chains. The next concrete gap is now after the newly covered declaration-time
+  parser stop for dependent owner template-ids in default NTTPs. The current
+  `<ratio>` blocker remains a useful bounded target, but the remaining failure
+  is later: deferred base/member-chain materialization can still leave
+  instantiated owners like `ratio_less<...>` without the inherited/member
+  metadata needed for final `::value` lookup on some libstdc++ paths.
+  Parsing/substitution now progress past the fixed default-NTTP declared-type
+  materialization, dependent member-template argument paths, covered member
+  alias-template target materialization path, alias-template `sizeof...` NTTP
+  target arguments, covered variable-template initializer replay paths, covered
+  member variable-template chain recovery, covered dependent-base
+  `this->template` member-function-template lookup, and the newly covered
+  default-NTTP member-chain parser path.
   Covered deferred alias member-template suffix chains in declarations and base
   specifiers now work as well, and covered member alias-template declarations
   now preserve non-template intermediate member segments plus enclosing
@@ -228,9 +238,13 @@ coverage becomes sufficient.
       the covered qualified-id/member-side cases;
    - keep reusing the shared member-side lookup/materialization path in the
       remaining qualified-id spellings so local repair logic is not reintroduced;
-   - extend replay metadata capture into remaining declarations outside the
-     covered static-member and variable-template initializer paths;
-   - remove the next AST-only fallback path.
+   - treat dependent owner template-ids in template-parameter defaults as
+     covered for the focused member-template and nested-alias `::value` cases;
+   - extend owner-correct replay/materialization into the remaining declaration
+     and deferred-base paths outside the covered static-member,
+     variable-template initializer, and default-NTTP parser flows;
+   - remove the next AST-only/deferred-base fallback path, with libstdc++
+     `<ratio>` still the best bounded target.
 
 2. **Dependent-name/current-instantiation expansion**
    - richer dependent-base and unknown-specialization records;
@@ -327,6 +341,12 @@ re-solving already-solved problems.
   covered alias/base-specifier materialization walks each segment through
   owner-aware lookup so `Owner<T>::template Box<U>::template Rebind<T>` is not
   rejected or truncated at parse time.
+- dependent owner template-ids in template-parameter defaults now reuse the
+  deferred qualified-member parser instead of the generic postfix `::` path, so
+  focused declaration-time chains like
+  `Provider<T>::Node::template Apply<T>::value` and
+  `Provider<T>::Node::type::value` reach substitution/evaluation as semantic
+  qualified names instead of stopping at parse time.
 
 ## Exit criteria
 
