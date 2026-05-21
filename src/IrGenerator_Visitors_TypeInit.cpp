@@ -28,6 +28,18 @@ TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec
 // Shared helpers: call expression return-type resolution
 // ============================================================================
 
+static std::string_view describeTypeSpecifierQueryState(TypeSpecifierQueryResult::State state) {
+	switch (state) {
+		case TypeSpecifierQueryResult::State::Available:
+			return "Available";
+		case TypeSpecifierQueryResult::State::AnalyzedAbsent:
+			return "AnalyzedAbsent";
+		case TypeSpecifierQueryResult::State::NotYetAnalyzed:
+			return "NotYetAnalyzed";
+	}
+	return "Unknown";
+}
+
 std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
 	auto sema_services = sema_.parserSemanticServices();
 	TypeSpecifierQueryResult sema_type_query = sema_services.getExpressionTypeQuery(callNode);
@@ -61,7 +73,7 @@ std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTN
 		.append("Missing sema-owned call expression return type for ")
 		.append(call_shape)
 		.append(" (sema query state=")
-		.append(static_cast<int64_t>(sema_type_query.state))
+		.append(describeTypeSpecifierQueryState(sema_type_query.state))
 		.append(")")
 		.commit()));
 }
@@ -73,6 +85,9 @@ bool AstToIr::shouldPreferExpressionReturnType(
 	if (isPlaceholderAutoType(expr_type.type())) {
 		return false;
 	}
+	// Prefer the expression type only when sema and the declaration agree on the
+	// same concrete base identity. Any mismatch here means codegen would be
+	// masking incompatible metadata rather than resolving a harmless difference.
 	if (decl_type.type() != expr_type.type() ||
 		decl_type.category() != expr_type.category()) {
 		return false;

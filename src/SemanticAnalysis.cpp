@@ -4007,6 +4007,20 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 			}
 			return receiver_type_query.type;
 		};
+		auto applyReceiverSelfReference = [&](TypeSpecifierNode& return_type) -> bool {
+			if (call_expr.has_receiver()) {
+				const std::optional<TypeSpecifierNode> receiver_type = resolveReceiverType(call_expr.receiver());
+				if (!receiver_type.has_value()) {
+					return false;
+				}
+				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type->type_index());
+				return true;
+			}
+			if (const MemberContext* member_context = getCurrentMemberContext()) {
+				return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
+			}
+			return true;
+		};
 
 		auto tryResolveCallResultType = [&](const FunctionDeclarationNode* func_decl) -> std::optional<TypeSpecifierNode> {
 			if (!func_decl) {
@@ -4019,16 +4033,8 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 			}
 
 			TypeSpecifierNode return_type = ret_type_node.as<TypeSpecifierNode>();
-			if (call_expr.has_receiver()) {
-				const std::optional<TypeSpecifierNode> receiver_type = resolveReceiverType(call_expr.receiver());
-				if (!receiver_type.has_value()) {
-					return std::nullopt;
-				}
-				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type->type_index());
-			} else if (func_decl->is_member_function()) {
-				if (const MemberContext* member_context = getCurrentMemberContext()) {
-					return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
-				}
+			if (func_decl->is_member_function() && !applyReceiverSelfReference(return_type)) {
+				return std::nullopt;
 			}
 
 			if (return_type.type() == TypeCategory::Invalid || isPlaceholderAutoType(return_type.type())) {
@@ -4041,14 +4047,8 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 		const ASTNode callee_return_type_node = callee_decl.type_node();
 		if (callee_return_type_node.has_value() && callee_return_type_node.is<TypeSpecifierNode>()) {
 			TypeSpecifierNode return_type = callee_return_type_node.as<TypeSpecifierNode>();
-			if (call_expr.has_receiver()) {
-				const std::optional<TypeSpecifierNode> receiver_type = resolveReceiverType(call_expr.receiver());
-				if (!receiver_type.has_value()) {
-					return std::nullopt;
-				}
-				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type->type_index());
-			} else if (const MemberContext* member_context = getCurrentMemberContext()) {
-				return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
+			if (!applyReceiverSelfReference(return_type)) {
+				return std::nullopt;
 			}
 
 			if (return_type.type() != TypeCategory::Invalid && !isPlaceholderAutoType(return_type.type())) {
