@@ -104,10 +104,12 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 					  expr);
 }
 
-// True only for expression nodes synthesized by codegen during range-for and
-// structured-binding lowering, which runs after the sema pass completes.  These
-// local identifiers and dereference expressions have no exact sema slot, so the
-// remaining parser lookup is limited to this non-sema-owned legacy path.
+// Returns true when `arg` is a codegen-created overload-resolution argument that
+// sema cannot own.  This is limited to expression nodes synthesized during
+// range-for and structured-binding lowering, which runs after the sema pass
+// completes.  These local identifiers and dereference expressions have no exact
+// sema slot, so the remaining parser lookup is limited to this non-sema-owned
+// legacy path.
 bool isCodegenSynthesizedOverloadArg(const ASTNode& arg) {
 	if (!arg.is<ExpressionNode>()) {
 		return false;
@@ -221,7 +223,12 @@ std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& ini
 		return std::nullopt;
 	}
 
-	auto init_type_opt = buildCodegenOverloadResolutionArgType(init_node);
+	std::optional<TypeSpecifierNode> init_type_opt;
+	try {
+		init_type_opt = buildCodegenOverloadResolutionArgType(init_node);
+	} catch (const InternalError&) {
+		return std::nullopt;
+	}
 	if (!init_type_opt.has_value()) {
 		return std::nullopt;
 	}
@@ -1505,7 +1512,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										std::vector<TypeSpecifierNode> arg_types;
 										bool all_arg_types_known = true;
 										for (const auto& init_arg : initializers) {
-											auto arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
+											std::optional<TypeSpecifierNode> arg_type_opt;
+											try {
+												arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
+											} catch (const InternalError&) {
+												arg_type_opt = std::nullopt;
+											}
 											if (!arg_type_opt.has_value()) {
 												all_arg_types_known = false;
 												break;

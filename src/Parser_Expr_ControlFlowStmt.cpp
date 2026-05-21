@@ -896,6 +896,12 @@ ParseResult Parser::parse_lambda_expression() {
 	// AND validation that all return paths return the same type
 	if (!return_type.has_value() ||
 		(return_type->is<TypeSpecifierNode>() && isPlaceholderAutoType(return_type->as<TypeSpecifierNode>().type()))) {
+		const bool lambda_has_template_or_auto_params =
+			!template_param_names.empty() ||
+			std::any_of(parameters.begin(), parameters.end(), [](const ASTNode& param_node) {
+				return param_node.is<DeclarationNode>() &&
+					   isPlaceholderAutoType(param_node.as<DeclarationNode>().type_specifier_node().type());
+			});
 		// Search lambda body for return statements to deduce return type
 		[[maybe_unused]] const BlockNode& body = body_result.node()->as<BlockNode>();
 		std::optional<TypeSpecifierNode> deduced_type;
@@ -923,12 +929,19 @@ ParseResult Parser::parse_lambda_expression() {
 									  (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
 						}
 					} else {
-						// If we couldn't deduce (possibly due to circular dependency guard),
-						// default to int as a safe fallback
+						// If we could not deduce the return during parsing (for example
+						// because a generic/template lambda parameter is not instantiated
+						// until the call site), keep an auto placeholder for sema to
+						// re-deduce after call-site substitution.
 						if (!deduced_type.has_value()) {
-							deduced_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
+							deduced_type = lambda_has_template_or_auto_params
+								? TypeSpecifierNode(TypeCategory::Auto, TypeQualifier::None, 0, Token{}, CVQualifier::None)
+								: TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 							all_return_types.emplace_back(*deduced_type, lambda_token);
-							FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
+							FLASH_LOG(Parser, Debug,
+									  lambda_has_template_or_auto_params
+										  ? "Lambda return type kept as auto (type resolution failed)"
+										  : "Lambda return type defaulted to int (type resolution failed)");
 						}
 					}
 				}

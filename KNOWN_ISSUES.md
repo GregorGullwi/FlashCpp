@@ -74,41 +74,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 4) Template lambdas with own template parameters not instantiated at call site
-
-- **Symptom**: A template lambda such as `[]<typename T>(T value) { return value; }` compiles
-  and produces correct output for simple pass-through cases (e.g. `identity(42)` returns 42),
-  but the template parameter `T` is never properly instantiated — it is stored as
-  `TypeIndex{0, UserDefined}` (an invalid TypeIndex) throughout the compilation.
-- **Root cause**: FlashCpp does not yet implement per-call instantiation for lambdas that
-  declare their own template parameters via `[]<typename T>(...)`.  The `outer_template_param_names`
-  / `outer_template_args` mechanism in `LambdaInfo` handles template parameters from the
-  *enclosing* function template, but the lambda's *own* template parameter list (stored in
-  `LambdaExpressionNode::template_params_`) is not propagated into the call-site deduction
-  path in `IrGenerator_Call_Indirect.cpp`.
-- **Affected path**: `IrGenerator_Visitors_Namespace.cpp` → `visitReturnStatement` (the
-  `is_struct_type(expr_category) && !tryGetTypeInfo(expr_type_index)` branch); also
-  `IrGenerator_Call_Indirect.cpp` (does not call `setDeducedType` for lambda own-template params).
-- **Workaround**: The codegen fallback in `visitReturnStatement` calls `generateTypeConversion`
-  when `!expr_type_index.is_valid()`, which happens to produce correct object code for
-  simple forwarding lambdas (the ABI-level value is already the right bit pattern).
-- **Impact**: Complex lambda own-template-parameter use (non-identity body, multi-parameter
-  template lambdas, `T` used in non-trivial type positions) may produce incorrect code or
-  crash.
-- **Fix direction**:
-  - Store `LambdaExpressionNode::template_params_` in `LambdaInfo`; detect
-    at the call site in `IrGenerator_Call_Indirect.cpp` that a lambda has own template params;
-    deduce each param from the corresponding argument type (similar to the `isPlaceholderAutoType`
-    path for generic lambdas); propagate the deduced types into `resolved_param_nodes`.
-  - Replace the related parser recovery in `Parser_Expr_ControlFlowStmt.cpp`
-    during lambda auto-return deduction: when return-type deduction fails it
-    currently stores `TypeCategory::Int`; it should emit a proper
-    `TypeCategory::Auto` placeholder so sema can re-deduce after lambda template
-    parameters are instantiated.
-
----
-
-## 5) Sema does not annotate implicit conversions for non-standard-arithmetic binary operands
+## 4) Sema does not annotate implicit conversions for non-standard-arithmetic binary operands
 
 - **Symptom**: Binary expressions where one or both operands are non-standard-arithmetic
   types (unscoped enums, pointer types, function pointer types, user-defined types) fall
@@ -131,7 +97,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 6) Codegen-synthesized local expressions still need parser type lookup for overload arguments
+## 5) Codegen-synthesized local expressions still need parser type lookup for overload arguments
 
 - **Symptom**: Fully removing the final `parser_.get_expression_type` fallback
   from `AstToIr::buildCodegenOverloadResolutionArgType` still breaks normalized
@@ -143,8 +109,9 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Root cause**: These synthesized `ExpressionNode`s are not part of the
   sema-normalized AST and therefore have no exact `SemanticSlot` or cached
   overload-resolution argument type for `ParserSemanticServices` to query.
-- **Current guard**: The codegen fallback is retained only for no-exact-slot
-  `IdentifierNode` and `UnaryOperatorNode` arguments in sema-normalized bodies.
+- **Current guard**: The `src/IrGenerator_Stmt_Decl.cpp`
+  `buildCodegenOverloadResolutionArgType` codegen fallback is retained only for
+  no-exact-slot `IdentifierNode` and `UnaryOperatorNode` arguments in sema-normalized bodies.
   Sema-normalized expressions that do have an exact sema type slot still fail
   closed instead of consulting the parser.
 - **Fix direction**: Move range-for and structured-binding synthesized locals

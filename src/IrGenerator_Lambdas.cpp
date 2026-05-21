@@ -60,6 +60,13 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 	const std::span<const LambdaCaptureNode> captures = lambda.captures();
 	info.captures.assign(captures.begin(), captures.end());
 	info.is_mutable = lambda.is_mutable();
+	info.own_template_param_names.reserve(lambda.template_params().size());
+	for (std::string_view param_name : lambda.template_params()) {
+		info.own_template_param_names.push_back(StringTable::getOrInternStringHandle(param_name));
+	}
+	if (!info.own_template_param_names.empty()) {
+		info.is_generic = true;
+	}
 	if (lambda.has_outer_template_bindings()) {
 		info.outer_template_environment_snapshot = lambda.outer_template_environment_snapshot();
 		populateTemplateEnvironmentLegacyViews(
@@ -112,7 +119,7 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 	info.return_value_mode = ReturnValueMode::None;
 	if (lambda.return_type().has_value()) {
 		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-		info.return_type_index = ret_type_node.type_index();
+		info.return_type_index = ret_type_node.type_index().withCategory(ret_type_node.type());
 		info.return_size = ret_type_node.size_in_bits();
 		if (ret_type_node.pointer_depth() > 0) {
 			info.return_value_mode |= ReturnValueMode::Pointer;

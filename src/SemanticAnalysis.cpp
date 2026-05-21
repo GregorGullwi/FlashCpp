@@ -1697,6 +1697,34 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& la
 
 		addLocalType(param_name, type_context_.intern(desc));
 	}
+
+	for (const auto& [param_index, type_node] : lambda_info.deduced_auto_types) {
+		if (param_index >= lambda_info.parameter_nodes.size()) {
+			continue;
+		}
+		const ASTNode& param_node = lambda_info.parameter_nodes[param_index];
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const TypeSpecifierNode& original_type = param_node.as<DeclarationNode>().type_specifier_node();
+		const std::string_view original_name = original_type.token().value();
+		if (original_name.empty()) {
+			continue;
+		}
+		const bool is_own_template_param = std::any_of(
+			lambda_info.own_template_param_names.begin(),
+			lambda_info.own_template_param_names.end(),
+			[&](StringHandle template_param_name) {
+				return StringTable::getStringView(template_param_name) == original_name;
+			});
+		if (!is_own_template_param) {
+			continue;
+		}
+		const CanonicalTypeId type_id = canonicalizeType(type_node);
+		if (type_id) {
+			addLocalType(StringTable::getOrInternStringHandle(original_name), type_id);
+		}
+	}
 }
 
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const StructDeclarationNode& decl) {
