@@ -60,12 +60,8 @@ std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTN
 			using T = std::decay_t<decltype(inner)>;
 			if constexpr (std::is_same_v<T, CallExprNode>) {
 				return "CallExprNode";
-			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				return "MemberAccessNode";
-			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
-				return "IdentifierNode";
 			}
-			return "other-expression";
+			return "non-call-expression";
 		},
 			callNode.as<ExpressionNode>());
 	}
