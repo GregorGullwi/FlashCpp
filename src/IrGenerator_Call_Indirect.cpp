@@ -271,8 +271,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			resolved_op_call_query.state == ResolvedFunctionQueryResult::State::Available
 				? resolved_op_call_query.function
 				: nullptr;
-		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
-		const auto* object_ident = std::get_if<IdentifierNode>(&object_expr);
 		auto isInconclusiveCallableType = [](const std::optional<TypeSpecifierNode>& candidate) {
 			return !candidate.has_value() ||
 				   (candidate->category() != TypeCategory::Struct &&
@@ -297,29 +295,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (sema_query_not_yet_analyzed)
 				throw InternalError("Callable operator() receiver query remained NotYetAnalyzed");
 			throw InternalError("Callable operator() receiver type could not be resolved: sema should provide callable type");
-		}
-		if (!callee_type.has_value()) {
-			if (object_ident) {
-				if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
-					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-						callee_type = decl->type_specifier_node();
-					}
-				}
-			}
-		} else if (object_ident) {
-			if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
-				if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-					const TypeSpecifierNode& decl_type = decl->type_specifier_node();
-					const bool prefer_decl_struct_type = decl_type.category() == TypeCategory::Struct;
-					const bool missing_callee_type = callee_type->category() == TypeCategory::Invalid;
-					const bool prefer_decl_callable_type =
-						callee_type->category() != TypeCategory::Struct &&
-						(decl_type.is_function_pointer() || decl_type.has_function_signature());
-					if (prefer_decl_struct_type || missing_callee_type || prefer_decl_callable_type) {
-						callee_type = decl_type;
-					}
-				}
-			}
 		}
 		if (callee_type.has_value() &&
 			callee_type->category() != TypeCategory::Struct &&
