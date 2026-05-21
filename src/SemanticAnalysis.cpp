@@ -4091,10 +4091,21 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const Ca
 }
 
 TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode& node) const {
-	if (node.is<CallExprNode>()) {
-		if (auto call_type = resolveCallQueryType(node.as<CallExprNode>()); call_type.has_value()) {
-			return {TypeSpecifierQueryResult::State::Available, *call_type};
+	auto tryResolveCallType = [&](const ASTNode& candidate) -> std::optional<TypeSpecifierNode> {
+		if (candidate.is<CallExprNode>()) {
+			return resolveCallQueryType(candidate.as<CallExprNode>());
 		}
+		if (candidate.is<ExpressionNode>()) {
+			const ExpressionNode& expr = candidate.as<ExpressionNode>();
+			if (std::holds_alternative<CallExprNode>(expr)) {
+				return resolveCallQueryType(std::get<CallExprNode>(expr));
+			}
+		}
+		return std::nullopt;
+	};
+
+	if (auto call_type = tryResolveCallType(node); call_type.has_value()) {
+		return {TypeSpecifierQueryResult::State::Available, *call_type};
 	}
 
 	if (!node.is<ExpressionNode>()) {
@@ -4108,11 +4119,6 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 	auto slot = getSlot(key);
 	if (!slot.has_value() || !slot->has_type()) {
 		const ExpressionNode& expr = node.as<ExpressionNode>();
-		if (std::holds_alternative<CallExprNode>(expr)) {
-			if (auto call_type = resolveCallQueryType(std::get<CallExprNode>(expr)); call_type.has_value()) {
-				return {TypeSpecifierQueryResult::State::Available, *call_type};
-			}
-		}
 		if (std::holds_alternative<StringLiteralNode>(expr)) {
 			if (auto literal_type = tryBuildDirectLiteralQueryType(node); literal_type.has_value()) {
 				return {TypeSpecifierQueryResult::State::Available, *literal_type};
