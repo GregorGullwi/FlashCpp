@@ -475,11 +475,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					isPlaceholderAutoType(sema_arg_type->type());
 				if (requires_recovery_fallback) {
 					if (sema_normalized_current_function_) {
-						throw InternalError(std::string(StringBuilder()
-							.append("Sema-missing inline_always argument type in sema-normalized body for '"sv)
-							.append(func_name_view)
-							.append("'"sv)
-							.commit()));
+						throw InternalError(
+							"Sema-missing inline_always argument type in sema-normalized body for '" +
+							std::string(func_name_view) + "'");
 					}
 					return parser_.get_expression_type(arg_node);
 				}
