@@ -6669,6 +6669,36 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 	base_var_name = base_identifier->name();
 
+	// Prefer active local constexpr bindings for block-scoped objects (e.g. local
+	// variables inside constexpr functions).  Nested member access like
+	// `Outer<int> o(...); return o.inner.value;` should resolve from the current
+	// evaluation bindings before falling back to symbol-table/global lookups.
+	if (const EvalResult* local_bound = findLocalBinding(base_var_name, context)) {
+		const EvalResult* base_value = resolveReadThroughReferenceAlias(
+			*local_bound,
+			emptyEvalBindings(),
+			context);
+		if (!base_value) {
+			return EvalResult::error("Dangling reference binding in nested member access: " + std::string(base_var_name));
+		}
+
+		auto intermediate_member_it = base_value->object_member_bindings.find(intermediate_member);
+		if (intermediate_member_it == base_value->object_member_bindings.end()) {
+			return EvalResult::error(
+				std::string(StringBuilder()
+								.append("Intermediate member '"sv)
+								.append(intermediate_member)
+								.append("' has no constexpr value in the evaluated base object for nested member access"sv)
+								.commit()));
+		}
+
+		const EvalResult& intermediate_value = intermediate_member_it->second;
+		auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
+		if (final_member_it != intermediate_value.object_member_bindings.end()) {
+			return final_member_it->second;
+		}
+	}
+
 	ResolvedConstexprObject resolved_object;
 	if (auto resolve_error = resolve_constexpr_object_source(
 			base_identifier,

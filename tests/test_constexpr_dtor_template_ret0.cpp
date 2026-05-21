@@ -44,4 +44,19 @@ constexpr int test_multi_template_scope() {
 static_assert(test_multi_template_scope() == 30,
 	"Multiple template objects with constexpr dtors");
 
+// Nested template struct with constexpr destructor
+template<typename T>
+struct Outer {
+	Holder<T> inner;
+	constexpr Outer(T v) : inner(v) {}
+	constexpr ~Outer() {}
+};
+
+constexpr int test_nested_template() {
+	Outer<int> o(7);
+	return o.inner.value;
+}
+static_assert(test_nested_template() == 7,
+	"Nested template struct with constexpr destructors");
+
 int main() { return 0; }
