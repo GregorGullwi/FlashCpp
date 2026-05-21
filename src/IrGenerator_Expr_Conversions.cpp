@@ -2084,9 +2084,9 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	}
 	if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-		auto queryExprTypeWithParserFallback = [&](const ASTNode& node,
-												   bool allow_not_yet_analyzed_recovery,
-												   const char* normalized_not_yet_analyzed_message) -> std::optional<TypeSpecifierNode> {
+		auto queryExprTypeFromSema = [&](const ASTNode& node,
+										 bool allow_not_yet_analyzed_recovery,
+										 const char* normalized_not_yet_analyzed_message) -> std::optional<TypeSpecifierNode> {
 			TypeSpecifierQueryResult sema_type_query =
 				sema_.parserSemanticServices().getExpressionTypeQuery(node);
 			std::optional<TypeSpecifierNode> sema_type =
@@ -2105,10 +2105,10 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				!allow_not_yet_analyzed_recovery) {
 				throw InternalError(normalized_not_yet_analyzed_message);
 			}
-			return parser_.get_expression_type(node);
+			throw InternalError("Builtin ++/-- operand type could not be resolved: sema should provide type");
 		};
 		if (operand_pointer_depth == 0) {
-			std::optional<TypeSpecifierNode> operand_type_opt = queryExprTypeWithParserFallback(
+			std::optional<TypeSpecifierNode> operand_type_opt = queryExprTypeFromSema(
 				unaryOperatorNode.get_operand(),
 				false,
 				"Normalized builtin ++/-- operand type query remained NotYetAnalyzed");
@@ -2138,7 +2138,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				}
 			}
 			if (!object_type_opt.has_value()) {
-				object_type_opt = queryExprTypeWithParserFallback(
+				object_type_opt = queryExprTypeFromSema(
 					member_access.object(),
 					false,
 					"Normalized builtin ++/-- member object type query remained NotYetAnalyzed");

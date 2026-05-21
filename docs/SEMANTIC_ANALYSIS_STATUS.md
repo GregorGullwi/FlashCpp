@@ -45,6 +45,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - `AstToIr::buildCodegenOverloadResolutionArgType(...)` now consumes sema overload-argument typing APIs first and no longer performs codegen-local legacy type reconstruction
 - `AstToIr::generateMemberFunctionCallIr(...)` now keeps `operator()` receiver type recovery on parser-only for non-normalized bodies; normalized bodies no longer use parser expression-type fallback in that path
 - `AstToIr::getCallExpressionReturnType(...)` now hard-fails invalid sema-reported call-result types in sema-normalized bodies while keeping parser fallback for absent semantic entries
+- builtin `++/--` lowering now requires sema-owned operand/object type queries instead of codegen parser expression-type fallback
 - codegen still has parser expression-type fallback in selected IR paths (`src/IrGenerator_*.cpp`)
 
 ## Active backlog (high level)
