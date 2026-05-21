@@ -511,7 +511,9 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							// 2. TypeIndex is valid but gTypeInfo has no entry: internal error.
 							if (expr_type_index.is_valid()) {
 								throw InternalError(std::string(StringBuilder()
-									.append("struct-category expr has valid TypeIndex but no TypeInfo; sema missed this case: expr=")
+									.append("struct-category expr has valid TypeIndex (")
+									.append(static_cast<uint64_t>(expr_type_index.index()))
+									.append(") but no TypeInfo; sema missed this case: expr=")
 									.append(getTypeName(expr_type))
 									.append(" return=")
 									.append(getTypeName(return_type))
