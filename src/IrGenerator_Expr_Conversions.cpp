@@ -2105,7 +2105,13 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				!allow_not_yet_analyzed_recovery) {
 				throw InternalError(normalized_not_yet_analyzed_message);
 			}
-			throw InternalError("Builtin ++/-- operand type could not be resolved: sema should provide type");
+			if (auto sema_overload_arg_type = sema_.parserSemanticServices().getOverloadResolutionArgType(node);
+				sema_overload_arg_type.has_value() &&
+				sema_overload_arg_type->type() != TypeCategory::Invalid &&
+				!isPlaceholderAutoType(sema_overload_arg_type->type())) {
+				return sema_overload_arg_type;
+			}
+			return std::nullopt;
 		};
 		if (operand_pointer_depth == 0) {
 			std::optional<TypeSpecifierNode> operand_type_opt = queryExprTypeFromSema(
