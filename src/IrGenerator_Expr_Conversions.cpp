@@ -2084,9 +2084,9 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	}
 	if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-		auto queryExprTypeFromSema = [&](const ASTNode& node,
-										 bool allow_not_yet_analyzed_recovery,
-										 const char* normalized_not_yet_analyzed_message) -> std::optional<TypeSpecifierNode> {
+		auto getExprTypeFromSema = [&](const ASTNode& node,
+									 const char* normalized_not_yet_analyzed_message,
+									 const char* unresolved_message) -> std::optional<TypeSpecifierNode> {
 			TypeSpecifierQueryResult sema_type_query =
 				sema_.parserSemanticServices().getExpressionTypeQuery(node);
 			std::optional<TypeSpecifierNode> sema_type =
@@ -2101,23 +2101,16 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				return sema_type;
 			}
 			if (sema_normalized_current_function_ &&
-				sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed &&
-				!allow_not_yet_analyzed_recovery) {
+				sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
 				throw InternalError(normalized_not_yet_analyzed_message);
 			}
-			if (auto sema_overload_arg_type = sema_.parserSemanticServices().getOverloadResolutionArgType(node);
-				sema_overload_arg_type.has_value() &&
-				sema_overload_arg_type->type() != TypeCategory::Invalid &&
-				!isPlaceholderAutoType(sema_overload_arg_type->type())) {
-				return sema_overload_arg_type;
-			}
-			return std::nullopt;
+			throw InternalError(unresolved_message);
 		};
 		if (operand_pointer_depth == 0) {
-			std::optional<TypeSpecifierNode> operand_type_opt = queryExprTypeFromSema(
+			std::optional<TypeSpecifierNode> operand_type_opt = getExprTypeFromSema(
 				unaryOperatorNode.get_operand(),
-				false,
-				"Normalized builtin ++/-- operand type query remained NotYetAnalyzed");
+				"Normalized builtin ++/-- operand type query remained NotYetAnalyzed",
+				"Builtin ++/-- operand type could not be resolved via semantic analysis");
 			if (operand_type_opt.has_value()) {
 				applyPointerTypeInfo(*operand_type_opt);
 			}
@@ -2144,10 +2137,10 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				}
 			}
 			if (!object_type_opt.has_value()) {
-				object_type_opt = queryExprTypeFromSema(
+				object_type_opt = getExprTypeFromSema(
 					member_access.object(),
-					false,
-					"Normalized builtin ++/-- member object type query remained NotYetAnalyzed");
+					"Normalized builtin ++/-- member object type query remained NotYetAnalyzed",
+					"Builtin ++/-- member object type could not be resolved via semantic analysis");
 			}
 			if (object_type_opt.has_value() &&
 				isIrStructType(toIrType(object_type_opt->type())) &&

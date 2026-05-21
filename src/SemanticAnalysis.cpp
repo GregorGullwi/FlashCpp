@@ -4947,6 +4947,26 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
+				if (e.binding() == IdentifierBinding::StaticMember) {
+					if (const MemberContext* member_context = getCurrentMemberContext();
+						member_context && member_context->type_index.is_valid()) {
+						const StructTypeInfo* current_struct_info = tryGetStructTypeInfo(member_context->type_index);
+						if (!current_struct_info) {
+							if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
+								current_struct_info = current_type_info->getStructInfo();
+							}
+						}
+						if (current_struct_info) {
+							const StringHandle member_name = e.getOrInternNameHandle();
+							parser().instantiateLazyStaticMember(current_struct_info->name, member_name);
+							auto [static_member, owner_struct] = current_struct_info->findStaticMemberRecursive(member_name);
+							if (static_member && owner_struct) {
+								return type_context_.intern(canonicalTypeDescFromStaticMember(*static_member));
+							}
+						}
+					}
+				}
+
 				// Phase 6: move NonStaticMember sema-owned resolution before parser
 				// fallback so sema resolves implicit this->member types without
 				// needing parser_.get_expression_type for that binding category.
