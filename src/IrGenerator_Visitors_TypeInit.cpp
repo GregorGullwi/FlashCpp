@@ -46,6 +46,11 @@ std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTN
 		result->type() == TypeCategory::Invalid ||
 		isPlaceholderAutoType(result->type());
 	if (requires_recovery_fallback) {
+		const bool sema_reported_available =
+			sema_type_query.state == TypeSpecifierQueryResult::State::Available;
+		if (sema_normalized_current_function_ && sema_reported_available) {
+			throw InternalError("Sema-provided call expression return type is invalid in sema-normalized body");
+		}
 		result = parser_.get_expression_type(callNode);
 	}
 	return result;
