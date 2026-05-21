@@ -40,6 +40,54 @@ static bool hasComplexDeferredMemberChain(const TemplateAliasNode& node) {
 		});
 }
 
+static void buildEffectiveAliasTemplateSubstitutionInputs(
+	const TemplateAliasNode& alias_node,
+	const OuterTemplateBinding* outer_binding,
+	std::span<const TemplateTypeArg> template_args,
+	std::vector<TemplateParameterNode>& effective_template_params_storage,
+	std::vector<TemplateTypeArg>& effective_template_args_storage,
+	std::span<const TemplateParameterNode>& effective_template_params,
+	std::span<const TemplateTypeArg>& effective_template_args) {
+	effective_template_params_storage.clear();
+	effective_template_args_storage.clear();
+
+	if (outer_binding != nullptr) {
+		const size_t pair_count = std::min(
+			outer_binding->params.size(),
+			outer_binding->param_args.size());
+		effective_template_params_storage.reserve(
+			pair_count + alias_node.template_parameters().size());
+		effective_template_args_storage.reserve(
+			pair_count + template_args.size());
+		for (size_t i = 0; i < pair_count; ++i) {
+			const TemplateParameterNode* outer_param =
+				tryGetTemplateParameterNode(outer_binding->params[i]);
+			if (outer_param == nullptr) {
+				continue;
+			}
+			effective_template_params_storage.push_back(*outer_param);
+			effective_template_args_storage.push_back(outer_binding->param_args[i]);
+		}
+	} else {
+		effective_template_params_storage.reserve(alias_node.template_parameters().size());
+		effective_template_args_storage.reserve(template_args.size());
+	}
+
+	for (const TemplateParameterNode& template_param : alias_node.template_parameters()) {
+		effective_template_params_storage.push_back(template_param);
+	}
+	effective_template_args_storage.insert(
+		effective_template_args_storage.end(),
+		template_args.begin(),
+		template_args.end());
+	effective_template_params = std::span<const TemplateParameterNode>(
+		effective_template_params_storage.data(),
+		effective_template_params_storage.size());
+	effective_template_args = std::span<const TemplateTypeArg>(
+		effective_template_args_storage.data(),
+		effective_template_args_storage.size());
+}
+
 static void buildEffectiveVariableTemplateSubstitutionInputs(
 	std::string_view template_name,
 	const OuterTemplateBinding* outer_binding,
@@ -910,13 +958,49 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAliasTemplateArgs(
 	const TemplateAliasNode& alias_node,
-	std::span<const TemplateTypeArg> template_args) {
+	std::span<const TemplateTypeArg> template_args,
+	const OuterTemplateBinding* outer_binding) {
 	InlineVector<TemplateTypeArg, 4> substituted_args;
-	const auto& param_names = alias_node.template_param_names();
+	InlineVector<TemplateParameterNode, 4> effective_template_parameters;
+	InlineVector<StringHandle, 4> effective_param_names;
+	InlineVector<TemplateTypeArg, 4> effective_template_args;
+	if (outer_binding != nullptr) {
+		const size_t pair_count = std::min(
+			outer_binding->params.size(),
+			outer_binding->param_args.size());
+		effective_template_parameters.reserve(pair_count + alias_node.template_parameters().size());
+		effective_param_names.reserve(pair_count + alias_node.template_param_names().size());
+		effective_template_args.reserve(pair_count + template_args.size());
+		for (size_t i = 0; i < pair_count; ++i) {
+			const TemplateParameterNode* outer_param =
+				tryGetTemplateParameterNode(outer_binding->params[i]);
+			if (outer_param == nullptr) {
+				return std::nullopt;
+			}
+			effective_template_parameters.push_back(*outer_param);
+			effective_param_names.push_back(outer_param->nameHandle());
+			effective_template_args.push_back(outer_binding->param_args[i]);
+		}
+		for (const TemplateParameterNode& alias_param : alias_node.template_parameters()) {
+			effective_template_parameters.push_back(alias_param);
+		}
+		for (StringHandle alias_param_name : alias_node.template_param_names()) {
+			effective_param_names.push_back(alias_param_name);
+		}
+		for (const TemplateTypeArg& template_arg : template_args) {
+			effective_template_args.push_back(template_arg);
+		}
+	}
+	const auto& param_names = outer_binding != nullptr
+		? effective_param_names
+		: alias_node.template_param_names();
+	std::span<const TemplateTypeArg> substitution_args = outer_binding != nullptr
+		? std::span<const TemplateTypeArg>(effective_template_args.data(), effective_template_args.size())
+		: template_args;
 	std::span<const ASTNode> target_template_args = alias_node.target_template_args();
 	std::span<const TemplateParameterNode> alias_params_span(
-		alias_node.template_parameters().data(),
-		alias_node.template_parameters().size());
+		outer_binding != nullptr ? effective_template_parameters.data() : alias_node.template_parameters().data(),
+		outer_binding != nullptr ? effective_template_parameters.size() : alias_node.template_parameters().size());
 	const auto target_template_params =
 		getTargetTemplateParameters(StringTable::getOrInternStringHandle(alias_node.target_template_name()));
 	const auto getForwardedPackRange =
@@ -927,7 +1011,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 			return findPackArgRangeFromParams(
 				*pack_name,
 				alias_params_span,
-				template_args.size());
+				substitution_args.size());
 		}
 		return std::nullopt;
 	};
@@ -988,7 +1072,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 			}
 			for (size_t offset = 0; offset < expected_pack_count; ++offset) {
 				const size_t arg_index = pack_range->first + offset;
-				if (arg_index >= template_args.size()) {
+				if (arg_index >= substitution_args.size()) {
 					if (!is_non_type_pack) {
 						break;
 					}
@@ -1019,15 +1103,15 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 					substituted_args.push_back(std::move(dependent_pack_arg));
 					continue;
 				}
-				substituted_args.push_back(template_args[arg_index]);
+				substituted_args.push_back(substitution_args[arg_index]);
 			}
 			continue;
 		}
 		auto materialized_arg = materializeDeferredAliasTemplateArg(
 			target_arg_node,
-			alias_node.template_parameters(),
+			outer_binding != nullptr ? effective_template_parameters : alias_node.template_parameters(),
 			param_names,
-			template_args,
+			substitution_args,
 			target_template_param);
 		if (!materialized_arg.has_value()) {
 			return std::nullopt;
@@ -1124,11 +1208,12 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 	std::string_view instantiated_name) {
 	std::vector<QualifiedTypeMemberAccess> member_chain;
 	member_chain.reserve(alias_node.targetMemberTemplateSegments().size());
+	std::string_view accumulated_qualified_name = instantiated_name;
 	for (const DeferredAliasMemberTemplateSegment& segment : alias_node.targetMemberTemplateSegments()) {
 		StringHandle owner_qualified_handle =
 			getDeferredMemberAliasHandle(
 				segment.name,
-				instantiated_name,
+				accumulated_qualified_name,
 				segment.has_template_arguments);
 		auto materialized_segment =
 			materializeDeferredAliasMemberTemplateSegment(
@@ -1140,6 +1225,11 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 			return nullptr;
 		}
 		member_chain.push_back(std::move(*materialized_segment));
+		accumulated_qualified_name = StringBuilder()
+										 .append(accumulated_qualified_name)
+										 .append("::")
+										 .append(segment.name)
+										 .commit();
 	}
 	return resolveBaseClassMemberTypeChain(
 		instantiated_name,
@@ -1285,6 +1375,22 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		alias_entry.has_value() && alias_entry->is<TemplateAliasNode>()) {
 		alias_node = &alias_entry->as<TemplateAliasNode>();
 	}
+	const OuterTemplateBinding* outer_binding =
+		gTemplateRegistry.getOuterTemplateBinding(alias_template_name);
+	std::vector<TemplateParameterNode> effective_template_params_storage;
+	std::vector<TemplateTypeArg> effective_template_args_storage;
+	std::span<const TemplateParameterNode> effective_template_params;
+	std::span<const TemplateTypeArg> effective_template_args;
+	if (alias_node != nullptr) {
+		buildEffectiveAliasTemplateSubstitutionInputs(
+			*alias_node,
+			outer_binding,
+			template_args,
+			effective_template_params_storage,
+			effective_template_args_storage,
+			effective_template_params,
+			effective_template_args);
+	}
 	auto alias_preserves_surface_type = [](const ResolvedAliasTypeInfo& resolved_alias) {
 		return resolved_alias.cv_qualifier != CVQualifier::None ||
 			   resolved_alias.pointer_depth != 0 ||
@@ -1345,17 +1451,15 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		auto materialize_args = [&](const TypeInfo& nested_source_type_info) {
 			return materializeTemplateArgs(
 				nested_source_type_info,
-				alias_node->template_parameters(),
-				template_args,
+				effective_template_params,
+				effective_template_args,
 				eval_nttp);
 		};
 		std::vector<TemplateTypeArg> concrete_args =
 			materialize_args(source_type_info);
 		TemplateEnvironment substitution_environment = buildTemplateEnvironment(
-			std::span<const TemplateParameterNode>(
-				alias_node->template_parameters().data(),
-				alias_node->template_parameters().size()),
-			template_args,
+			effective_template_params,
+			effective_template_args,
 			nullptr);
 		auto materialize_lookup =
 			[this](const TypeInfo& nested_type_info, std::span<const TemplateTypeArg> nested_concrete_args) {
@@ -1539,7 +1643,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		alias_node->target_template_name() != alias_template_name &&
 		gTemplateRegistry.lookup_alias_template(alias_node->target_template_name()).has_value()) {
 		if (auto substituted_args_opt =
-				materializeDeferredAliasTemplateArgs(*alias_node, template_args);
+				materializeDeferredAliasTemplateArgs(*alias_node, template_args, outer_binding);
 			substituted_args_opt.has_value()) {
 			AliasTemplateMaterializationResult materialized_target_alias =
 				materializeAliasTemplateInstantiation(
@@ -1575,8 +1679,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		if (const TypeInfo* concrete_member_alias =
 				materializeInstantiatedMemberAliasTarget(
 					alias_node->target_type_node(),
-					alias_node->template_parameters(),
-					template_args);
+					effective_template_params,
+					effective_template_args);
 			concrete_member_alias != nullptr) {
 			const TypeInfo* resolved_member_info = concrete_member_alias;
 			ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(
@@ -2366,7 +2470,10 @@ std::string_view Parser::instantiate_and_register_base_template(
 		}
 
 		if (alias_node.is_deferred()) {
-			auto substituted_args_opt = materializeDeferredAliasTemplateArgs(alias_node, template_args);
+			auto substituted_args_opt = materializeDeferredAliasTemplateArgs(
+				alias_node,
+				template_args,
+				gTemplateRegistry.getOuterTemplateBinding(base_class_name));
 			if (!substituted_args_opt.has_value()) {
 				return std::string_view();
 			}

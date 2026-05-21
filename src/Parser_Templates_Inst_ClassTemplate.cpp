@@ -8130,6 +8130,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
+			if (shouldCommitTemplateInstantiationArtifacts()) {
+				std::string_view nested_alias_prefix = StringBuilder()
+														   .append(original_nested_name)
+														   .append("::")
+														   .commit();
+				for (const auto& base_alias_name : gTemplateRegistry.get_alias_templates_with_prefix(nested_alias_prefix)) {
+					std::string_view member_name = std::string_view(base_alias_name).substr(nested_alias_prefix.size());
+					StringHandle inst_alias_name = StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(qualified_name)
+							.append("::")
+							.append(member_name)
+							.commit());
+					auto alias_opt = gTemplateRegistry.lookup_alias_template(base_alias_name);
+					if (alias_opt.has_value()) {
+						gTemplateRegistry.register_alias_template(inst_alias_name, *alias_opt);
+						OuterTemplateBinding outer_binding;
+						collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
+						gTemplateRegistry.registerOuterTemplateBinding(inst_alias_name, std::move(outer_binding));
+					}
+				}
+			}
 			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
 		}
 	}
@@ -8670,6 +8692,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (alias_opt.has_value()) {
 				// Re-register with the instantiated name
 				gTemplateRegistry.register_alias_template(inst_alias_name, *alias_opt);
+				OuterTemplateBinding outer_binding;
+				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
+				gTemplateRegistry.registerOuterTemplateBinding(
+					StringTable::getOrInternStringHandle(inst_alias_name),
+					std::move(outer_binding));
 			}
 		}
 	}

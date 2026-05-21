@@ -213,17 +213,22 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	{
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);
+		constexpr bool kCaptureDependentMemberSuffix = true;
 		if (parseDeferredAliasTargetTemplateId(
 				target_template_name,
 				target_template_arg_nodes,
 				target_member_template_segments,
-				false) &&
+				kCaptureDependentMemberSuffix) &&
 			[&]() {
 				TemplateNameLookupRequest request = buildTemplateNameLookupRequest(
 					target_template_name,
 					TemplateNameLookupKind::Qualified,
 					false);
-				return gTemplateRegistry.lookupTemplateName(request).hasAliasTemplate();
+				TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(request);
+				return lookup_result.hasAliasTemplate() ||
+					   // A member alias template may be reached through a class-template
+					   // base plus suffix, e.g. Provider<T>::Node::template Apply<U>.
+					   (lookup_result.hasClassTemplate() && !target_member_template_segments.empty());
 			}()) {
 			has_deferred_target = true;
 			FLASH_LOG_FORMAT(
@@ -263,8 +268,9 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	}
 
 	// Register the alias template with qualified name (ClassName::AliasName)
+	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(
-		StringBuilder().append(struct_node.name()).append("::").append(alias_name));
+		StringBuilder().append(owner_qualified_name).append("::").append(alias_name));
 	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
 	gTemplateRegistry.register_alias_template(alias_name_token.handle(), alias_node);
 
