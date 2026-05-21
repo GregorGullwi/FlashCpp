@@ -5228,12 +5228,15 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	}
 
 	std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &local_bindings;
 	auto result = evaluate_block_with_bindings(
 		definition.value(),
 		local_bindings,
 		context,
 		"Function body is not a block",
 		std::string(kFunctionDidNotReturnValue));
+	context.local_bindings = saved_local_bindings;
 
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;

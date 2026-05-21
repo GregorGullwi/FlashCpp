@@ -1,4 +1,5 @@
-// Test constexpr destructor support in template struct contexts.
+// Test constexpr destructor support in template struct contexts, including
+// nested template member access through a global constexpr instantiation.
 // C++20 allows destructors to be constexpr.
 
 template<typename T>
@@ -52,9 +53,10 @@ struct Outer {
 	constexpr ~Outer() {}
 };
 
+constexpr Outer<int> g_outer(7);
+
 constexpr int test_nested_template() {
-	Outer<int> o(7);
-	return o.inner.value;
+	return g_outer.inner.value;
 }
 static_assert(test_nested_template() == 7,
 	"Nested template struct with constexpr destructors");

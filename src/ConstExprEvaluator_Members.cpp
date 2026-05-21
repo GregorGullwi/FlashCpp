@@ -1959,9 +1959,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 		return resolved_object.error.value();
 	}
 
+	std::optional<EvalResult> owned_object_result;
 	const EvalResult* object_result = resolved_object.value;
 	if (!object_result) {
-		return std::nullopt;
+		auto evaluated_object = evaluate_expression_with_bindings_const(object_expr, bindings, context);
+		if (!evaluated_object.success()) {
+			return evaluated_object;
+		}
+		owned_object_result = std::move(evaluated_object);
+		object_result = &owned_object_result.value();
 	}
 
 	// For arrow member access (p->x) on a heap-allocated struct, dereference the
@@ -6376,10 +6382,29 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 		return std::nullopt;
 	}
 
+	bool resolved_from_local_object = false;
 	if (const EvalResult* local_object = findLocalBinding(object_name, context);
 		local_object && local_object->object_type_index.is_valid()) {
 		resolved_object.declared_type_index = local_object->object_type_index;
 		resolved_object.materialized_value = *local_object;
+		resolved_from_local_object = true;
+	}
+
+	// For local bound objects, still try to recover the original declaration
+	// initializer as a fallback source (needed when nested members are not fully
+	// materialized in the bound value).
+	if (resolved_from_local_object) {
+		if (context.symbols) {
+			std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(object_identifier, object_name, *context.symbols);
+			if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+				symbol_opt = lookup_identifier_symbol(object_identifier, object_name, *context.global_symbols);
+			}
+			if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+				resolved_object.var_decl = &symbol_opt->as<VariableDeclarationNode>();
+				resolved_object.initializer = &resolved_object.var_decl->initializer();
+				resolved_object.declared_type_index = resolved_object.var_decl->declaration().type_specifier_node().type_index();
+			}
+		}
 		return std::nullopt;
 	}
 
@@ -6707,6 +6732,21 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			"nested member access",
 			resolved_object)) {
 		return *resolve_error;
+	}
+
+	// If the base object was already materialized from local/static constexpr
+	// bindings, resolve nested members directly from that value before requiring
+	// an AST initializer.
+	if (resolved_object.materialized_value.has_value()) {
+		const EvalResult& base_value = *resolved_object.materialized_value;
+		auto intermediate_member_it = base_value.object_member_bindings.find(intermediate_member);
+		if (intermediate_member_it != base_value.object_member_bindings.end()) {
+			const EvalResult& intermediate_value = intermediate_member_it->second;
+			auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
+			if (final_member_it != intermediate_value.object_member_bindings.end()) {
+				return final_member_it->second;
+			}
+		}
 	}
 
 	if (resolved_object.initializer == nullptr) {
