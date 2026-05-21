@@ -4080,6 +4080,38 @@ void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg, const 
 	}
 }
 
+void SemanticAnalysis::registerCodegenSynthesizedOverloadArgType(const ASTNode& arg, const TypeSpecifierNode& type) {
+	if (!arg.is<ExpressionNode>()) {
+		return;
+	}
+	if (const void* key = getOverloadResolutionArgQueryKey(arg); key != nullptr) {
+		overload_resolution_arg_types_[key] = type;
+		analyzed_overload_resolution_arg_queries_.insert(key);
+	}
+}
+
+void SemanticAnalysis::registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type) {
+	if (!name.isValid()) {
+		return;
+	}
+	const CanonicalTypeId type_id = canonicalizeType(type);
+	if (!type_id) {
+		return;
+	}
+	codegen_synthesized_local_types_[name] = type_id;
+}
+
+CanonicalTypeId SemanticAnalysis::getCodegenSynthesizedLocalType(StringHandle name) const {
+	if (!name.isValid()) {
+		return {};
+	}
+	auto it = codegen_synthesized_local_types_.find(name);
+	if (it == codegen_synthesized_local_types_.end()) {
+		return {};
+	}
+	return it->second;
+}
+
 TypeSpecifierQueryResult SemanticAnalysis::getOverloadResolutionArgTypeQuery(const ASTNode& arg) const {
 	if (!arg.is<ExpressionNode>()) {
 		if (auto literal_type = tryBuildDirectLiteralQueryType(arg); literal_type.has_value()) {
@@ -4878,6 +4910,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeId local_id = lookupLocalType(e.nameHandle());
 				if (local_id)
 					return local_id;
+				if (const CanonicalTypeId synthesized_local_id = getCodegenSynthesizedLocalType(e.nameHandle())) {
+					return synthesized_local_id;
+				}
 
 				auto lookup_bound_symbol = [&]() -> std::optional<ASTNode> {
 					if (e.resolved_name().isValid()) {

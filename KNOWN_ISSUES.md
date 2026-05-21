@@ -86,7 +86,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
     - Static local / global variable pointer → value type conversions
     - Function pointer nullptr comparisons
 - **Affected path**: `IrGenerator_Expr_Operators.cpp` Phase 15 LHS/RHS conversion block
-  (lines ~3384–3420); the existing `InternalError` guard fires only for sema-normalized +
+  in the sema-normalized binary-operator conversion logic; the existing `InternalError` guard fires only for sema-normalized +
   both standard-arithmetic mismatches; the `generateTypeConversion` fallback handles the rest.
 - **Impact**: The fallback produces correct code today, but prevents the codegen layer from
   being a strict "no-implicit-conversion" consumer of sema output.
@@ -96,24 +96,3 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
   an `InternalError`.
 
 ---
-
-## 5) Codegen-synthesized local expressions still need parser type lookup for overload arguments
-
-- **Symptom**: Fully removing the final `parser_.get_expression_type` fallback
-  from `AstToIr::buildCodegenOverloadResolutionArgType` still breaks normalized
-  function bodies that later synthesize local expressions.
-- **Confirmed cases**: range-for desugaring creates `__range_begin_N` /
-  `__range_end_N` identifiers and dereference expressions after semantic
-  normalization, and structured binding lowering creates per-binding local
-  identifiers directly in codegen.
-- **Root cause**: These synthesized `ExpressionNode`s are not part of the
-  sema-normalized AST and therefore have no exact `SemanticSlot` or cached
-  overload-resolution argument type for `ParserSemanticServices` to query.
-- **Current guard**: The `src/IrGenerator_Stmt_Decl.cpp`
-  `buildCodegenOverloadResolutionArgType` codegen fallback is retained only for
-  no-exact-slot `IdentifierNode` and `UnaryOperatorNode` arguments in sema-normalized bodies.
-  Sema-normalized expressions that do have an exact sema type slot still fail
-  closed instead of consulting the parser.
-- **Fix direction**: Move range-for and structured-binding synthesized locals
-  into a sema-owned lowering/cache path, or provide a sema side table for
-  codegen-created local declarations and their identifier uses.

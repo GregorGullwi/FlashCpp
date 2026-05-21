@@ -105,11 +105,10 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 }
 
 // Returns true when `arg` is a codegen-created overload-resolution argument that
-// sema cannot own.  This is limited to expression nodes synthesized during
-// range-for and structured-binding lowering, which runs after the sema pass
-// completes.  These local identifiers and dereference expressions have no exact
-// sema slot, so the remaining parser lookup is limited to this non-sema-owned
-// legacy path.
+// sema may not yet own through an exact AST slot. Range-for/structured-binding
+// lowering still synthesizes IdentifierNode/UnaryOperatorNode expressions after
+// sema normalization; prefer sema side tables first, then allow parser fallback
+// only for this narrow expression shape.
 bool isCodegenSynthesizedOverloadArg(const ASTNode& arg) {
 	if (!arg.is<ExpressionNode>()) {
 		return false;
@@ -119,14 +118,8 @@ bool isCodegenSynthesizedOverloadArg(const ASTNode& arg) {
 	return std::visit([](const auto& inner) -> bool {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
-			// Codegen still creates some local identifiers after sema has finished
-			// normalizing the function body (for example range-for iterator locals
-			// and structured-binding element variables).  Those nodes have no exact
-			// sema slot to query; keep the parser lookup limited to that legacy case.
 			return true;
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-			// Range-for lowering also synthesizes dereference expressions over those
-			// iterator locals when declaring the loop variable.
 			return true;
 		}
 		return false;
@@ -3102,8 +3095,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 				binding_token);
 
-				// Add to symbol table
+			// Add to symbol table
 			symbol_table.insert(binding_name, binding_decl_node);
+			sema_.registerCodegenSynthesizedLocalType(binding_id, binding_type);
 
 				// Generate IR for the binding
 			if (is_reference_binding) {
@@ -3253,6 +3247,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 				ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 				binding_token);
 			symbol_table.insert(binding_name, binding_decl_node);
+			sema_.registerCodegenSynthesizedLocalType(binding_id, binding_type);
 		}
 
 		FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", tuple_size_value, " bindings using sema tuple-like protocol");
@@ -3326,8 +3321,9 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			ASTNode::emplace_node<TypeSpecifierNode>(binding_type),
 			binding_token);
 
-			// Add to symbol table
+		// Add to symbol table
 		symbol_table.insert(binding_name, binding_decl_node);
+		sema_.registerCodegenSynthesizedLocalType(binding_id, binding_type);
 
 			// Generate IR for the binding
 		if (is_reference_binding) {
