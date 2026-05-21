@@ -1602,9 +1602,17 @@ private:
 	ParseResult parse_member_template_alias(StructDeclarationNode& struct_node, AccessSpecifier access);	 // NEW: Parse member template aliases
 	ParseResult parse_member_struct_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member struct/class templates
 	ParseResult parse_member_variable_template(StructDeclarationNode& struct_node, AccessSpecifier access);	// NEW: Parse member variable templates
+	TemplateDefinitionLookupContext buildDefinitionLookupContextFromToken(
+		const Token& definition_token,
+		StringHandle current_instantiation_name) const;
 	TemplateDefinitionLookupContext buildVariableTemplateInitializerDefinitionLookupContext(
 		const Token& variable_name_token,
 		StringHandle current_instantiation_name) const;
+	TemplateDefinitionLookupContext ensureReplayDefinitionLookupContext(
+		TemplateDefinitionLookupContext definition_lookup_context,
+		const Token& fallback_definition_token,
+		NamespaceHandle fallback_definition_namespace,
+		StringHandle fallback_current_instantiation_name) const;
 	ParseResult parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access);  // Helper: Detect and parse member template alias or function
 	StringHandle getStructQualifiedNameForRegistration(const StructDeclarationNode& struct_node) const;
 	ParseResult parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr = nullptr);	// Helper: Parse ': <const-expr>' for bitfields
@@ -3476,14 +3484,16 @@ private:	 // Resume private methods
 	void filterPhase1OrdinaryFunctionOverloads(std::vector<ASTNode>& overloads) {
 		const TemplateDefinitionLookupContext* definition_context =
 			current_template_definition_lookup_context_;
+		const SourceLocation cutoff_location =
+			definition_context != nullptr && definition_context->is_valid()
+			? definition_context->definitionLocation()
+			: SourceLocation::fromParts(phase1_cutoff_line_, 0, phase1_cutoff_file_idx_);
 		const size_t cutoff_line =
-			definition_context != nullptr && definition_context->is_valid()
-			? definition_context->definition_line
-			: phase1_cutoff_line_;
+			cutoff_location.line;
 		const size_t cutoff_file_idx =
-			definition_context != nullptr && definition_context->is_valid()
-			? definition_context->definition_file_index
-			: phase1_cutoff_file_idx_;
+			cutoff_location.file_index;
+		const size_t cutoff_column =
+			cutoff_location.column;
 		if (cutoff_line == 0) {
 			return;
 		}
@@ -3493,9 +3503,14 @@ private:	 // Resume private methods
 			}
 			size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
 			size_t cutoff_src_line = lexer_.getSourceLine(cutoff_line);
-			return (decl_src_line > 0 && cutoff_src_line > 0)
-				? decl_src_line > cutoff_src_line
-				: decl_tok.line() > cutoff_line;
+			if (decl_src_line > 0 && cutoff_src_line > 0) {
+				if (decl_src_line != cutoff_src_line) {
+					return decl_src_line > cutoff_src_line;
+				}
+			} else if (decl_tok.line() != cutoff_line) {
+				return decl_tok.line() > cutoff_line;
+			}
+			return cutoff_column != 0 && decl_tok.column() > cutoff_column;
 		};
 		overloads.erase(
 			std::remove_if(

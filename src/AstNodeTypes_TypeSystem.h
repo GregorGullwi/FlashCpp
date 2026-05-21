@@ -19,6 +19,48 @@ enum class CVQualifier : uint8_t {
 	Volatile = 1 << 1,
 	ConstVolatile = Const | Volatile
 };
+
+struct SourceLocation {
+	size_t line = 0;
+	size_t column = 0;
+	size_t file_index = SIZE_MAX;
+
+	static SourceLocation fromToken(const Token& token) {
+		return SourceLocation{
+			token.line(),
+			token.column(),
+			token.file_index()};
+	}
+
+	static SourceLocation fromParts(size_t line_value, size_t column_value, size_t file_index_value) {
+		return SourceLocation{
+			line_value,
+			column_value,
+			file_index_value};
+	}
+
+	bool is_valid() const {
+		return line != 0 && file_index != SIZE_MAX;
+	}
+};
+
+// Definition-context lookup state used by two-phase lookup records.
+// This snapshots the lexical point and namespace in which a template
+// definition was parsed, so later replay/substitution can filter ordinary
+// lookup to declarations visible at that definition point.
+struct TemplateDefinitionLookupContext {
+	SourceLocation definition_location{};
+	NamespaceHandle definition_namespace{};
+	StringHandle current_instantiation_name{};
+
+	bool is_valid() const {
+		return definition_location.is_valid();
+	}
+
+	const SourceLocation& definitionLocation() const { return definition_location; }
+	void setDefinitionLocation(SourceLocation location) { definition_location = location; }
+	void setDefinitionToken(const Token& token) { definition_location = SourceLocation::fromToken(token); }
+};
 inline CVQualifier operator|(CVQualifier a, CVQualifier b) {
 	return static_cast<CVQualifier>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
@@ -1278,6 +1320,7 @@ struct StructStaticMember {
 	std::optional<ASTNode> declaration; // Original declaration AST for replay-based substitution
 	std::optional<ASTNode> initializer;	// Optional initializer expression
 	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' or '{' for replay
+	TemplateDefinitionLookupContext initializer_definition_lookup_context;
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifiers (const, volatile)
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	bool is_array = false;
@@ -1319,6 +1362,11 @@ struct StructStaticMember {
 	bool hasInitializerPosition() const { return initializer_position.has_value(); }
 	SaveHandle initializerPosition() const { return *initializer_position; }
 	void setInitializerPosition(SaveHandle pos) { initializer_position = pos; }
+	bool hasInitializerDefinitionLookupContext() const { return initializer_definition_lookup_context.is_valid(); }
+	const TemplateDefinitionLookupContext& initializerDefinitionLookupContext() const { return initializer_definition_lookup_context; }
+	void setInitializerDefinitionLookupContext(const TemplateDefinitionLookupContext& context) {
+		initializer_definition_lookup_context = context;
+	}
 
 	StringHandle getName() const {
 		return name;

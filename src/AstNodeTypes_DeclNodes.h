@@ -493,6 +493,25 @@ struct StructTypeInfo {
 		static_members.back().is_constexpr = is_constexpr;
 	}
 
+	void addStaticMember(StringHandle member_name, TypeIndex type_index, size_t size, size_t member_alignment,
+						 AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						 ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+						 std::optional<ASTNode> declaration,
+						 std::optional<SaveHandle> initializer_position,
+						 const TemplateDefinitionLookupContext& initializer_definition_lookup_context,
+						 bool is_constexpr) {
+		static_members.push_back(StructStaticMember(member_name, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
+		if (declaration.has_value()) {
+			static_members.back().setDeclaration(*declaration);
+		}
+		if (initializer_position.has_value()) {
+			static_members.back().setInitializerPosition(*initializer_position);
+		}
+		static_members.back().setInitializerDefinitionLookupContext(initializer_definition_lookup_context);
+		static_members.back().setArrayInfo(is_array, array_dimensions);
+		static_members.back().is_constexpr = is_constexpr;
+	}
+
 	// Update an existing static member's initializer (used for lazy instantiation)
 	// Returns true if the member was found and updated, false otherwise
 	// Note: Uses linear search through static_members vector. This is acceptable because:
@@ -524,6 +543,30 @@ struct StructTypeInfo {
 				if (initializer_position.has_value()) {
 					static_member.setInitializerPosition(*initializer_position);
 				}
+				static_member.normalized_init.reset();
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool updateStaticMemberInitializerWithMetadata(StringHandle member_name,
+												   std::optional<ASTNode> initializer,
+												   std::optional<ASTNode> declaration,
+												   std::optional<SaveHandle> initializer_position,
+												   const TemplateDefinitionLookupContext& initializer_definition_lookup_context) {
+		for (auto& static_member : static_members) {
+			if (static_member.name == member_name) {
+				static_member.initializer = initializer;
+				// Metadata is optional because some update paths only have initializer AST
+				// while replay-capable paths also carry declaration/save-handle state.
+				if (declaration.has_value()) {
+					static_member.setDeclaration(*declaration);
+				}
+				if (initializer_position.has_value()) {
+					static_member.setInitializerPosition(*initializer_position);
+				}
+				static_member.setInitializerDefinitionLookupContext(initializer_definition_lookup_context);
 				static_member.normalized_init.reset();
 				return true;
 			}
@@ -2839,22 +2882,6 @@ private:
 // ============================================================================
 // Unified call-expression node (consolidation plan step 1)
 // ============================================================================
-
-// Definition-context lookup state used by the first two-phase lookup record.
-// This is intentionally small: it snapshots the lexical point and namespace in
-// which a template definition was parsed.  Consumers may re-run ordinary lookup
-// and ADL against the current symbol table only after filtering candidates to
-// declarations whose source token was visible at this definition point.
-struct TemplateDefinitionLookupContext {
-	size_t definition_line = 0;
-	size_t definition_file_index = SIZE_MAX;
-	NamespaceHandle definition_namespace{};
-	StringHandle current_instantiation_name{};
-
-	bool is_valid() const {
-		return definition_line != 0 && definition_file_index != SIZE_MAX;
-	}
-};
 
 // Per-call semantic record for non-dependent function calls whose lookup was
 // completed in the template definition context.  The callee pointer follows the

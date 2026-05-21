@@ -3393,10 +3393,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		if (!definition_lookup_context.is_valid()) {
 			const DeclarationNode& declaration =
 				pattern_var_decl.declaration();
-			definition_lookup_context.definition_line =
-				declaration.identifier_token().line();
-			definition_lookup_context.definition_file_index =
-				declaration.identifier_token().file_index();
+			definition_lookup_context.setDefinitionToken(
+				declaration.identifier_token());
 			definition_lookup_context.definition_namespace =
 				gSymbolTable.get_current_namespace_handle();
 		}
@@ -4100,6 +4098,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				static_member.array_dimensions,
 				static_member.declaration,
 				static_member.initializer_position,
+				static_member.initializerDefinitionLookupContext(),
 				static_member.is_constexpr);
 		}
 	} else {

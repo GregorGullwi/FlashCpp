@@ -43,7 +43,7 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 		const TypeIndex enum_type_index = enum_decl.type_index();
 		std::optional<ASTNode> initializer = enumerator.value();
 
-		struct_ref.add_static_member(
+		struct_ref.addStaticMember(
 			enumerator_name,
 			enum_type_index,
 			enum_size,
@@ -5232,11 +5232,30 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					// Check for initialization (e.g., = sizeof(T))
 					std::optional<ASTNode> init_expr_opt;
 					std::optional<SaveHandle> initializer_position;
+					TemplateDefinitionLookupContext static_member_definition_lookup_context;
+					const TemplateDefinitionLookupContext* initializer_definition_lookup_context =
+						current_template_definition_lookup_context_;
+					if ((initializer_definition_lookup_context == nullptr ||
+						 !initializer_definition_lookup_context->is_valid()) &&
+						type_and_name_result.node().has_value()) {
+						const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
+						static_member_definition_lookup_context =
+							buildDefinitionLookupContextFromToken(
+								decl.identifier_token(),
+								qualified_pattern_name);
+						if (static_member_definition_lookup_context.is_valid()) {
+							initializer_definition_lookup_context =
+								&static_member_definition_lookup_context;
+						}
+					}
 					if (peek() == "="_tok) {
 						initializer_position = save_token_position();
 						advance(); // consume '='
 
 						// Parse the initializer expression
+						ScopedDefinitionLookupContext ctx_scope(
+							current_template_definition_lookup_context_,
+							initializer_definition_lookup_context);
 						auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 						if (init_result.is_error()) {
 							return init_result;
@@ -5345,7 +5364,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 						// Add to struct's static members
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
-						member_struct_ref.add_static_member(
+						member_struct_ref.addStaticMember(
 							static_member_name_handle,
 							type_spec.type_index(),
 							static_member_size,
@@ -5359,6 +5378,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							array_dimensions,
 							/* declaration */ *type_and_name_result.node(),
 							initializer_position,
+							initializer_definition_lookup_context != nullptr
+								? *initializer_definition_lookup_context
+								: TemplateDefinitionLookupContext{},
 							is_constexpr);
 					}
 					continue;
@@ -5775,11 +5797,30 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				// Check for initialization (e.g., = sizeof(T))
 				std::optional<ASTNode> init_expr_opt;
 				std::optional<SaveHandle> initializer_position;
+				TemplateDefinitionLookupContext static_member_definition_lookup_context;
+				const TemplateDefinitionLookupContext* initializer_definition_lookup_context =
+					current_template_definition_lookup_context_;
+				if ((initializer_definition_lookup_context == nullptr ||
+					 !initializer_definition_lookup_context->is_valid()) &&
+					type_and_name_result.node().has_value()) {
+					const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
+					static_member_definition_lookup_context =
+						buildDefinitionLookupContextFromToken(
+							decl.identifier_token(),
+							qualified_name);
+					if (static_member_definition_lookup_context.is_valid()) {
+						initializer_definition_lookup_context =
+							&static_member_definition_lookup_context;
+					}
+				}
 				if (peek() == "="_tok) {
 					initializer_position = save_token_position();
 					advance(); // consume '='
 
 					// Parse the initializer expression
+					ScopedDefinitionLookupContext ctx_scope(
+						current_template_definition_lookup_context_,
+						initializer_definition_lookup_context);
 					auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (init_result.is_error()) {
 						return init_result;
@@ -5822,7 +5863,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						}
 					}
 
-					member_struct_ref.add_static_member(
+					member_struct_ref.addStaticMember(
 						decl.identifier_token().handle(),
 						type_spec.type_index(),
 						static_member_size,
@@ -5836,6 +5877,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						array_dimensions,
 						/* declaration */ *type_and_name_result.node(),
 						initializer_position,
+						initializer_definition_lookup_context != nullptr
+							? *initializer_definition_lookup_context
+							: TemplateDefinitionLookupContext{},
 						is_static_constexpr);
 				}
 				continue;

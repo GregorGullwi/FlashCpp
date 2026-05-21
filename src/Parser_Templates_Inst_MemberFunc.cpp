@@ -2158,8 +2158,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			// be installed -- parsing proceeds without phase-1 cutoff for this body.
 		}
 		TemplateDefinitionLookupContext definition_lookup_context;
-		definition_lookup_context.definition_line = phase1_cutoff_line_;
-		definition_lookup_context.definition_file_index = phase1_cutoff_file_idx_;
+		definition_lookup_context.setDefinitionLocation(
+			SourceLocation::fromParts(
+				phase1_cutoff_line_,
+				0,
+				phase1_cutoff_file_idx_));
 		definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
 		definition_lookup_context.current_instantiation_name =
 			StringTable::getOrInternStringHandle(struct_name);
