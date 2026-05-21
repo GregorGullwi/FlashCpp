@@ -4572,6 +4572,23 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 						resolved.type = typeSpecifierFromStaticMember(*static_member, qualified_identifier.identifier_token());
 						return resolved;
 					}
+					for (TypeIndex nested_enum_index : struct_info->getNestedEnumIndices()) {
+						const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
+						if (!nested_enum_type_info || !nested_enum_type_info->isEnum()) {
+							continue;
+						}
+						const EnumTypeInfo* enum_info = nested_enum_type_info->getEnumInfo();
+						if (!enum_info || !enum_info->findEnumerator(name_handle)) {
+							continue;
+						}
+						ResolvedQualifiedIdentifierInfo resolved;
+						resolved.kind = ResolvedQualifiedIdentifierInfo::Kind::EnumConstant;
+						resolved.constant_type = enum_info->underlying_type;
+						resolved.constant_size = enum_info->underlying_size;
+						resolved.constant_value = static_cast<unsigned long long>(enum_info->getEnumeratorValue(name_handle));
+						resolved.enum_owner_type_index = nested_enum_index;
+						return resolved;
+					}
 				}
 			} else if (owner_type_info && owner_type_info->isEnum()) {
 				const EnumTypeInfo* enum_info = owner_type_info->getEnumInfo();

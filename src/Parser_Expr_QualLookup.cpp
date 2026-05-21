@@ -1294,7 +1294,15 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 		if (!is_last_member) {
 			size_t max_alias_depth = 10;
 			while (max_alias_depth-- > 0) {
-				const TypeInfo* underlying = tryGetTypeInfo(resolved_type->type_index_);
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					resolved_type->registeredTypeIndex().withCategory(resolved_type->typeEnum()));
+				const TypeInfo* underlying = resolved_alias.terminal_type_info;
+				if (underlying == nullptr && resolved_alias.type_index.is_valid()) {
+					underlying = tryGetTypeInfo(resolved_alias.type_index);
+				}
+				if (underlying == nullptr || underlying == resolved_type) {
+					underlying = tryGetTypeInfo(resolved_type->type_index_);
+				}
 				if (underlying == nullptr || underlying == resolved_type) {
 					break;
 				}
@@ -1305,7 +1313,7 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 					"Resolving base member alias '{}::{}' -> underlying type_index={}, type={}",
 					current_base_name,
 					member_name,
-					resolved_type->type_index_,
+					underlying->registeredTypeIndex(),
 					static_cast<int>(underlying->category()));
 
 				resolved_type = underlying;

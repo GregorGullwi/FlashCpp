@@ -1489,6 +1489,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const auto& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+	const StringHandle current_owner_type_name = StringTable::getOrInternStringHandle(struct_name);
 	const OuterTemplateBinding* outer_binding =
 		gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view());
 	InlineVector<TemplateTypeArg, 4> inline_template_args;
@@ -1994,7 +1995,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			ASTNode substituted_body = substituteTemplateParameters(
 				*orig_body,
 				template_params,
-				inline_template_args);
+				inline_template_args,
+				current_owner_type_name);
 			if (func_decl.has_outer_template_bindings()) {
 				InlineVector<StringHandle, 4> outer_param_names;
 				InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
@@ -2013,7 +2015,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				substituted_body = substituteTemplateParameters(
 					substituted_body,
 					typed_outer_params,
-					outer_args);
+					outer_args,
+					current_owner_type_name);
 			}
 			new_func_ref.set_definition(substituted_body);
 			finalize_function_after_definition(new_func_ref);
@@ -2177,7 +2180,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				ASTNode substituted_body = substituteTemplateParameters(
 					*block_result.node(),
 					template_params,
-					inline_template_args);
+					inline_template_args,
+					current_owner_type_name);
 				new_func_ref.set_definition(substituted_body);
 			}
 		} // current_template_param_names_ restored here
