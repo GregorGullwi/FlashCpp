@@ -93,6 +93,16 @@ static void buildTemplateParameterReplayState(
 	}
 }
 
+static void registerAliasTemplateWithOuterBinding(
+	StringHandle alias_name,
+	const ASTNode& alias_node,
+	const OuterTemplateBinding* outer_binding) {
+	gTemplateRegistry.register_alias_template(alias_name, alias_node);
+	if (outer_binding != nullptr) {
+		gTemplateRegistry.registerOuterTemplateBinding(alias_name, *outer_binding);
+	}
+}
+
 void resetTemplateInstantiationCounters() {
 	g_template_inst_iteration_count = 0;
 	g_template_inst_iteration_limit_tripped = false;
@@ -8131,6 +8141,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			if (shouldCommitTemplateInstantiationArtifacts()) {
+				OuterTemplateBinding outer_binding;
+				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
 				StringBuilder nested_alias_prefix_builder;
 				nested_alias_prefix_builder.append(original_nested_name);
 				nested_alias_prefix_builder.append("::");
@@ -8145,10 +8157,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.commit());
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(base_alias_name);
 					if (alias_opt.has_value()) {
-						gTemplateRegistry.register_alias_template(inst_alias_name, *alias_opt);
-						OuterTemplateBinding outer_binding;
-						collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
-						gTemplateRegistry.registerOuterTemplateBinding(inst_alias_name, std::move(outer_binding));
+						registerAliasTemplateWithOuterBinding(
+							inst_alias_name,
+							*alias_opt,
+							&outer_binding);
 					}
 				}
 			}
@@ -8676,27 +8688,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		prefix_builder.reset();
 
 		// Now register each one with the instantiated name
+		OuterTemplateBinding outer_binding;
+		collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
 		for (const auto& base_alias_name : base_aliases_to_copy) {
 			// Extract the member name (everything after "template_name::")
 			std::string_view member_name = std::string_view(base_alias_name).substr(template_prefix.size());
 
 			// Build the new qualified name with the instantiated struct name
-			std::string_view inst_alias_name = StringBuilder()
-												   .append(instantiated_name)
-												   .append("::")
-												   .append(member_name)
-												   .commit();
+			StringHandle inst_alias_name = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(instantiated_name)
+					.append("::")
+					.append(member_name)
+					.commit());
 
 			// Look up the original alias node
 			auto alias_opt = gTemplateRegistry.lookup_alias_template(base_alias_name);
 			if (alias_opt.has_value()) {
 				// Re-register with the instantiated name
-				gTemplateRegistry.register_alias_template(inst_alias_name, *alias_opt);
-				OuterTemplateBinding outer_binding;
-				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
-				gTemplateRegistry.registerOuterTemplateBinding(
-					StringTable::getOrInternStringHandle(inst_alias_name),
-					std::move(outer_binding));
+				registerAliasTemplateWithOuterBinding(
+					inst_alias_name,
+					*alias_opt,
+					&outer_binding);
 			}
 		}
 	}
