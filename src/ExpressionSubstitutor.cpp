@@ -2868,6 +2868,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 					new_ns_handle,
 					final_token);
+			bool preserved_dependent_member_template_record = false;
 			if (final_member.has_template_arguments) {
 				InlineVector<TemplateTypeArg, 4> final_member_args =
 					materializeDependentRecordTemplateArgs(
@@ -2892,6 +2893,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				if (!explicit_template_arg_nodes.empty()) {
 					new_qual_id.set_template_arguments(
 						std::move(explicit_template_arg_nodes));
+				} else {
+					new_qual_id.setDependentQualifiedName(*dependent_name);
+					preserved_dependent_member_template_record = true;
 				}
 			} else if (qual_id.has_template_arguments()) {
 				std::vector<ASTNode> explicit_template_arg_nodes =
@@ -2903,7 +2907,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			}
 			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
 					  qual_id.full_name(), " -> ", materialized_namespace, "::",
-					  final_member_name);
+					  final_member_name,
+					  preserved_dependent_member_template_record
+						  ? " (preserved deferred member-template record)"
+						  : "");
 			ExpressionNode& new_expr =
 				gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 			return ASTNode(&new_expr);
