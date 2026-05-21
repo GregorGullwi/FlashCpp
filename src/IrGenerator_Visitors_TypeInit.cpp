@@ -54,19 +54,8 @@ std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTN
 		sema_normalized_current_function_) {
 		throw InternalError("Normalized call expression return-type query remained NotYetAnalyzed");
 	}
-	std::string call_shape = "unknown";
-	if (callNode.is<ExpressionNode>()) {
-		call_shape = std::visit([](const auto& inner) -> std::string {
-			using T = std::decay_t<decltype(inner)>;
-			if constexpr (std::is_same_v<T, CallExprNode>) {
-				return "CallExprNode";
-			}
-			return "non-call-expression";
-		},
-			callNode.as<ExpressionNode>());
-	}
 	throw InternalError(
-		"Missing sema-owned call expression return type for " + call_shape +
+		std::string("Missing sema-owned call expression return type for CallExprNode") +
 		" (sema query state=" + std::string(describeTypeSpecifierQueryState(sema_type_query.state)) + ")");
 }
 

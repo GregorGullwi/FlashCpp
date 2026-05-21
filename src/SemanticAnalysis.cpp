@@ -4007,7 +4007,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallReceiverType(const
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const CallExprNode& call_expr) const {
-	auto applyReceiverSelfReference = [&](TypeSpecifierNode& return_type) -> bool {
+	auto applySelfReferenceToReturnType = [&](TypeSpecifierNode& return_type) -> bool {
 		if (call_expr.has_receiver()) {
 			const std::optional<TypeSpecifierNode> receiver_type = resolveCallReceiverType(call_expr.receiver());
 			if (!receiver_type.has_value()) {
@@ -4022,7 +4022,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const Ca
 		return true;
 	};
 
-	auto tryResolveCallResultType = [&](const FunctionDeclarationNode* func_decl) -> std::optional<TypeSpecifierNode> {
+	auto tryResolveReturnTypeFromDeclaration = [&](const FunctionDeclarationNode* func_decl) -> std::optional<TypeSpecifierNode> {
 		if (!func_decl) {
 			return std::nullopt;
 		}
@@ -4033,7 +4033,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const Ca
 		}
 
 		TypeSpecifierNode return_type = ret_type_node.as<TypeSpecifierNode>();
-		if (func_decl->is_member_function() && !applyReceiverSelfReference(return_type)) {
+		if (func_decl->is_member_function() && !applySelfReferenceToReturnType(return_type)) {
 			return std::nullopt;
 		}
 
@@ -4050,7 +4050,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const Ca
 	const ASTNode callee_return_type_node = callee_decl.type_node();
 	if (callee_return_type_node.has_value() && callee_return_type_node.is<TypeSpecifierNode>()) {
 		TypeSpecifierNode return_type = callee_return_type_node.as<TypeSpecifierNode>();
-		if (!applyReceiverSelfReference(return_type)) {
+		if (!applySelfReferenceToReturnType(return_type)) {
 			return std::nullopt;
 		}
 
@@ -4061,13 +4061,13 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const Ca
 
 	if (const ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(&call_expr);
 		op_call_query.hasValue()) {
-		if (auto return_type = tryResolveCallResultType(op_call_query.function); return_type.has_value()) {
+		if (auto return_type = tryResolveReturnTypeFromDeclaration(op_call_query.function); return_type.has_value()) {
 			return return_type;
 		}
 	}
 	if (const ResolvedFunctionQueryResult direct_call_query = getResolvedDirectCallQuery(&call_expr);
 		direct_call_query.hasValue()) {
-		if (auto return_type = tryResolveCallResultType(direct_call_query.function); return_type.has_value()) {
+		if (auto return_type = tryResolveReturnTypeFromDeclaration(direct_call_query.function); return_type.has_value()) {
 			return return_type;
 		}
 	}
