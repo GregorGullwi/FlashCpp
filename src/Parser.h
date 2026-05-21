@@ -1630,9 +1630,8 @@ private:
 	bool parseDeferredAliasTargetTemplateId(
 		StringHandle& out_target_template_name,
 		InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
-		StringHandle& out_target_member_template_name,
-		InlineVector<ASTNode, 4>& out_target_member_template_arg_nodes,
-		bool consume_dependent_member_suffix);	// Supports one dependent member-template hop; rejects additional hops.
+		InlineVector<DeferredAliasMemberTemplateSegment, 4>& out_target_member_template_segments,
+		bool consume_dependent_member_suffix);
 	// Simple struct to hold constant expression evaluation results
 	// Public members are intentional for this lightweight data structure
 	struct ConstantValue {
@@ -2456,12 +2455,18 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args);
 	StringHandle getDeferredMemberAliasHandle(
+		StringHandle member_name,
+		std::string_view instantiated_name,
+		bool require_owner_qualified);
+	std::optional<QualifiedTypeMemberAccess> materializeDeferredAliasMemberTemplateSegment(
 		const TemplateAliasNode& alias_node,
-		std::string_view instantiated_name) const;
-	std::optional<InlineVector<TemplateTypeArg, 4>> materializeDeferredAliasMemberTemplateArgs(
+		const DeferredAliasMemberTemplateSegment& segment,
+		std::span<const TemplateTypeArg> template_args,
+		StringHandle owner_qualified_handle);
+	const TypeInfo* materializeDeferredAliasMemberTemplateChain(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> template_args,
-		StringHandle member_alias_handle);
+		std::string_view instantiated_name);
 	StringHandle getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const;
 	std::optional<size_t> findAliasTargetTemplateParamIndex(
 		const TemplateAliasNode& alias_node,

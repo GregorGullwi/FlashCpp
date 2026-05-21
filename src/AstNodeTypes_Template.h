@@ -157,6 +157,26 @@ inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
 }
 
 // Template alias declaration: template<typename T> using Ptr = T*;
+struct DeferredAliasMemberTemplateSegment {
+	StringHandle name;
+	InlineVector<ASTNode, 4> template_args;
+	bool has_template_arguments = false;
+};
+
+inline InlineVector<DeferredAliasMemberTemplateSegment, 4> makeDeferredAliasMemberTemplateSegments(
+	StringHandle target_member_template_name,
+	InlineVector<ASTNode, 4> target_member_template_args) {
+	InlineVector<DeferredAliasMemberTemplateSegment, 4> segments;
+	if (target_member_template_name.isValid()) {
+		DeferredAliasMemberTemplateSegment segment;
+		segment.name = target_member_template_name;
+		segment.has_template_arguments = !target_member_template_args.empty();
+		segment.template_args = std::move(target_member_template_args);
+		segments.push_back(std::move(segment));
+	}
+	return segments;
+}
+
 class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
@@ -187,6 +207,23 @@ public:
 					  InlineVector<ASTNode, 4> target_template_args,
 					  StringHandle target_member_template_name,
 					  InlineVector<ASTNode, 4> target_member_template_args)
+		: TemplateAliasNode(
+			std::move(template_params),
+			std::move(param_names),
+			alias_name,
+			target_type,
+			target_template_name,
+			std::move(target_template_args),
+			makeDeferredAliasMemberTemplateSegments(
+				target_member_template_name,
+				std::move(target_member_template_args))) {}
+	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
+					  InlineVector<StringHandle, 4> param_names,
+					  StringHandle alias_name,
+					  const TypeSpecifierNode& target_type,
+					  StringHandle target_template_name,
+					  InlineVector<ASTNode, 4> target_template_args,
+					  InlineVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments)
 		: template_parameters_(std::move(template_params)),
 		  template_param_names_(std::move(param_names)),
 		  alias_name_(alias_name),
@@ -194,8 +231,7 @@ public:
 		  is_deferred_(true),
 		  target_template_name_(target_template_name),
 		  target_template_args_(std::move(target_template_args)),
-		  target_member_template_name_(target_member_template_name),
-		  target_member_template_args_(std::move(target_member_template_args)) {}
+		  target_member_template_segments_(std::move(target_member_template_segments)) {}
 	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
@@ -211,7 +247,24 @@ public:
 					  InlineVector<ASTNode, 4> target_template_args,
 					  StringHandle target_member_template_name,
 					  InlineVector<ASTNode, 4> target_member_template_args)
-		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>(), target_template_name, std::move(target_template_args), target_member_template_name, std::move(target_member_template_args)) {}
+		: TemplateAliasNode(
+			std::move(template_params),
+			std::move(param_names),
+			alias_name,
+			target_type.as<TypeSpecifierNode>(),
+			target_template_name,
+			std::move(target_template_args),
+			makeDeferredAliasMemberTemplateSegments(
+				target_member_template_name,
+				std::move(target_member_template_args))) {}
+	TemplateAliasNode(InlineVector<TemplateParameterNode, 4> template_params,
+					  InlineVector<StringHandle, 4> param_names,
+					  StringHandle alias_name,
+					  ASTNode target_type,
+					  StringHandle target_template_name,
+					  InlineVector<ASTNode, 4> target_template_args,
+					  InlineVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments)
+		: TemplateAliasNode(std::move(template_params), std::move(param_names), alias_name, target_type.as<TypeSpecifierNode>(), target_template_name, std::move(target_template_args), std::move(target_member_template_segments)) {}
 
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
 	const InlineVector<StringHandle, 4>& template_param_names() const { return template_param_names_; }
@@ -222,10 +275,17 @@ public:
 	bool is_deferred() const { return is_deferred_; }
 	std::string_view target_template_name() const { return target_template_name_.view(); }
 	std::span<const ASTNode> target_template_args() const { return std::span<const ASTNode>(target_template_args_.data(), target_template_args_.size()); }
-	bool hasDeferredMemberTarget() const { return target_member_template_name_.isValid(); }
-	StringHandle targetMemberTemplateNameHandle() const { return target_member_template_name_; }
-	std::string_view targetMemberTemplateName() const { return target_member_template_name_.view(); }
-	std::span<const ASTNode> targetMemberTemplateArgs() const { return std::span<const ASTNode>(target_member_template_args_.data(), target_member_template_args_.size()); }
+	bool hasDeferredMemberTarget() const { return !target_member_template_segments_.empty(); }
+	std::span<const DeferredAliasMemberTemplateSegment> targetMemberTemplateSegments() const { return std::span<const DeferredAliasMemberTemplateSegment>(target_member_template_segments_.data(), target_member_template_segments_.size()); }
+	StringHandle targetMemberTemplateNameHandle() const { return hasDeferredMemberTarget() ? target_member_template_segments_[0].name : StringHandle{}; }
+	std::string_view targetMemberTemplateName() const { return targetMemberTemplateNameHandle().view(); }
+	std::span<const ASTNode> targetMemberTemplateArgs() const {
+		if (!hasDeferredMemberTarget()) {
+			return {};
+		}
+		const InlineVector<ASTNode, 4>& args = target_member_template_segments_[0].template_args;
+		return std::span<const ASTNode>(args.data(), args.size());
+	}
 
 	// Get the underlying TypeSpecifierNode
 	TypeSpecifierNode& target_type_node() { return target_type_; }
@@ -241,8 +301,7 @@ private:
 	bool is_deferred_;  // True if target is a template with unresolved parameters
 	StringHandle target_template_name_;	// Template name (e.g., "integral_constant")
 	InlineVector<ASTNode, 4> target_template_args_;	// Unevaluated argument AST nodes
-	StringHandle target_member_template_name_;	// Dependent member template name (e.g., "type")
-	InlineVector<ASTNode, 4> target_member_template_args_;	// Unevaluated member template argument AST nodes
+	InlineVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments_;	// Dependent member chain (e.g., "type::rebind")
 };
 
 // Deduction guide declaration: template<typename T> ClassName(T) -> ClassName<T>;

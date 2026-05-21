@@ -209,16 +209,14 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	bool has_deferred_target = false;
 	StringHandle target_template_name;
 	InlineVector<ASTNode, 4> target_template_arg_nodes;
-	StringHandle target_member_template_name;
-	InlineVector<ASTNode, 4> target_member_template_arg_nodes;
+	InlineVector<DeferredAliasMemberTemplateSegment, 4> target_member_template_segments;
 	{
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);
 		if (parseDeferredAliasTargetTemplateId(
 				target_template_name,
 				target_template_arg_nodes,
-				target_member_template_name,
-				target_member_template_arg_nodes,
+				target_member_template_segments,
 				false) &&
 			[&]() {
 				TemplateNameLookupRequest request = buildTemplateNameLookupRequest(
@@ -255,8 +253,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			type_result.node().value(),
 			target_template_name,
 			std::move(target_template_arg_nodes),
-			target_member_template_name,
-			std::move(target_member_template_arg_nodes));
+			std::move(target_member_template_segments));
 	} else {
 		alias_node = emplace_node<TemplateAliasNode>(
 			template_params,

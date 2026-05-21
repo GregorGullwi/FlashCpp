@@ -91,11 +91,14 @@ Future work should assume these are already in place:
   class-template bodies now keep enough deferred-base owner metadata to find
   member templates declared in base class templates before the derived class
   template declaration is registered.
+- deferred alias targets now keep multi-hop member-template suffixes and
+  materialize the covered alias/base-specifier cases through the shared
+  owner-aware member lookup path instead of storing only one suffix hop.
 
 Latest validation on Linux sharded build:
-`2430` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
-Targeted validation for the latest dependent-base member-template slice passed
-the three focused ELF regressions after `make sharded CXX=clang++`.
+`2436` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Targeted validation for the latest deferred alias member-template chain slice
+passed the focused ELF regressions after `make sharded CXX=clang++`.
 
 ## Remaining work, in priority order
 
@@ -137,6 +140,11 @@ Most concrete next subtask:
   alias-template `sizeof...` NTTP target arguments, covered variable-template
   initializer replay paths, covered member variable-template chain recovery, or
   covered dependent-base `this->template` member-function-template lookup.
+  Covered deferred alias member-template suffix chains in declarations and base
+  specifiers now work as well. The next bounded alias-chain step is preserving
+  and materializing non-template intermediate member segments and enclosing
+  class-template bindings for member-alias targets that reference an outer
+  member-template parameter.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -308,6 +316,10 @@ re-solving already-solved problems.
   inline class-template body parsing can resolve `this->template member<...>()`
   through dependent base class templates without waiting for the derived
   `TemplateClassDeclarationNode` to be registered.
+- deferred alias target capture now stores a member-template segment chain, and
+  covered alias/base-specifier materialization walks each segment through
+  owner-aware lookup so `Owner<T>::template Box<U>::template Rebind<T>` is not
+  rejected or truncated at parse time.
 
 ## Exit criteria
 

@@ -68,11 +68,15 @@ Useful to know before changing anything:
   template body, because deferred base template names are stored on
   `StructTypeInfo` before the primary `TemplateClassDeclarationNode` is
   registered;
+- deferred alias targets now preserve and materialize multi-hop member-template
+  suffixes for covered alias and base-specifier flows, so spellings like
+  `Traits<T>::template Box<U>::template Rebind<T>` are no longer truncated to a
+  single dependent member-template hop;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
 Validation at this point passed the Linux sharded build and ELF test workflow:
-`2430` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2436` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## What is still wrong
 
@@ -105,11 +109,14 @@ Concrete follow-up already identified by recent work:
   Qualified member variable-template chains through dependent bases are now
   covered for the focused initializer/constexpr paths, and dependent-base
   `this->template` member-function-template calls are covered for the focused
-  inline class-template body paths. The next concrete follow-up is the remaining
-  dependent-base and unknown-specialization member-chain work in declarations
-  that still do not preserve enough metadata, plus the current `<ratio>` blocker
-  where parsing and `std::ratio_less` constexpr comparison now progress to later
-  IR conversion/link failures.
+  inline class-template body paths. Deferred alias targets now keep covered
+  multi-hop member-template suffixes in alias declarations and base-specifier
+  materialization. The next concrete follow-up is the remaining dependent-base
+  and unknown-specialization member-chain work in declarations that still do not
+  preserve enough metadata, especially chains with non-template intermediate
+  members or member-alias targets that need enclosing class-template bindings,
+  plus the current `<ratio>` blocker where parsing and `std::ratio_less`
+  constexpr comparison now progress to later IR conversion/link failures.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -265,6 +272,9 @@ materially changes what future refactors can assume.
   template pattern names on `StructTypeInfo`, so inline class-template bodies can
   resolve `this->template member<...>()` through dependent base class templates
   before the derived `TemplateClassDeclarationNode` is registered.
+- deferred alias targets now store a member-template segment chain instead of a
+  single member hop, and covered alias/base-specifier materialization walks that
+  chain through the shared owner-aware member lookup path.
 
 ## Exit criteria for this audit
 

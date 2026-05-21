@@ -234,13 +234,11 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 bool Parser::parseDeferredAliasTargetTemplateId(
 	StringHandle& out_target_template_name,
 	InlineVector<ASTNode, 4>& out_target_template_arg_nodes,
-	StringHandle& out_target_member_template_name,
-	InlineVector<ASTNode, 4>& out_target_member_template_arg_nodes,
+	InlineVector<DeferredAliasMemberTemplateSegment, 4>& out_target_member_template_segments,
 	bool consume_dependent_member_suffix) {
 	out_target_template_name = StringHandle{};
 	out_target_template_arg_nodes.clear();
-	out_target_member_template_name = StringHandle{};
-	out_target_member_template_arg_nodes.clear();
+	out_target_member_template_segments.clear();
 
 	SaveHandle start_pos = save_token_position();
 	StringBuilder target_name_builder;
@@ -250,8 +248,7 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 		target_name_builder.reset();
 		out_target_template_name = StringHandle{};
 		out_target_template_arg_nodes.clear();
-		out_target_member_template_name = StringHandle{};
-		out_target_member_template_arg_nodes.clear();
+		out_target_member_template_segments.clear();
 		return false;
 	};
 
@@ -304,13 +301,8 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 
 	if (consume_dependent_member_suffix) {
 		while (peek() == "::"_tok) {
-			// TemplateAliasNode currently stores only one dependent member-template hop.
-			// Reject additional suffixes here so we never silently truncate the alias target.
-			if (out_target_member_template_name.isValid()) {
-				FLASH_LOG(Parser, Debug, "Rejecting deferred alias target with multiple dependent member-template hops");
-				return restore_on_failure();
-			}
 			advance();
+			DeferredAliasMemberTemplateSegment segment;
 			if (peek() == "template"_tok) {
 				advance();
 			}
@@ -319,17 +311,17 @@ bool Parser::parseDeferredAliasTargetTemplateId(
 			}
 			StringHandle member_name = peek_info().handle();
 			advance();
-			out_target_member_template_name = member_name;
+			segment.name = member_name;
 			if (peek() == "<"_tok) {
 				InlineVector<ASTNode, 4> member_arg_nodes;
 				auto member_args = parse_explicit_template_arguments(&member_arg_nodes);
 				if (!member_args.has_value()) {
 					return restore_on_failure();
 				}
-				out_target_member_template_arg_nodes = std::move(member_arg_nodes);
-			} else {
-				out_target_member_template_arg_nodes.clear();
+				segment.has_template_arguments = true;
+				segment.template_args = std::move(member_arg_nodes);
 			}
+			out_target_member_template_segments.push_back(std::move(segment));
 		}
 	}
 
