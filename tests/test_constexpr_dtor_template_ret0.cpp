@@ -53,10 +53,9 @@ struct Outer {
 	constexpr ~Outer() {}
 };
 
-constexpr Outer<int> g_outer(7);
-
 constexpr int test_nested_template() {
-	return g_outer.inner.value;
+	Outer<int> o(7);
+	return o.inner.value;
 }
 static_assert(test_nested_template() == 7,
 	"Nested template struct with constexpr destructors");

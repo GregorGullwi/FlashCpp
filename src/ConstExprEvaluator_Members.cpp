@@ -8541,6 +8541,36 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 		if (!member_result.success()) {
 			return member_result;
 		}
+		// Handle paren-init for a struct member: inner(v) where inner is a struct type.
+		// The parser stores the single argument as a plain expression, so evaluating it
+		// gives a scalar (object_type_index is invalid for scalar results).  We need to
+		// materialize the nested struct by calling its constructor with that argument so
+		// that object_member_bindings are populated for later nested member access.
+		if (struct_info && !member_result.object_type_index.is_valid() && !member_result.is_array) {
+			if (const StructMember* member_info = struct_info->findMember(mem_init.member_name)) {
+				if (!member_info->is_array && is_struct_type(member_info->type_index.category())) {
+					const TypeInfo* member_type_info = tryGetTypeInfo(member_info->type_index);
+					const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
+					if (member_struct_info) {
+						ChunkedVector<ASTNode> ctor_args;
+						ctor_args.push_back(mem_init.initializer_expr);
+						if (auto ctor_result = try_materialize_struct_from_ctor_args(
+								member_struct_info,
+								member_info->type_index,
+								ctor_args,
+								context,
+								false,
+								&ctor_param_bindings,
+								nullptr,
+								false)) {
+							if (ctor_result->success()) {
+								member_result = std::move(*ctor_result);
+							}
+						}
+					}
+				}
+			}
+		}
 		// Handle single-element brace-init for array members (e.g., arr{val} for int arr[3]).
 		// The parser stores arr{val} as a scalar (init_args[0]) because there is only one arg.
 		// C++ requires: arr[0] = val, arr[1..n-1] = zero-initialized for the element type.
