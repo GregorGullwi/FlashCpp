@@ -74,26 +74,3 @@ before stopping on a multiply defined `__security_cookie`.
   emitting a second strong symbol.
 
 ---
-
-## 4) Sema does not annotate implicit conversions for non-standard-arithmetic binary operands
-
-- **Symptom**: Binary expressions where one or both operands are non-standard-arithmetic
-  types (unscoped enums, pointer types, function pointer types, user-defined types) fall
-  back to `generateTypeConversion` in the codegen layer instead of being annotated by sema.
-- **Root cause**: `SemanticAnalysis::normalizeBinaryOperator` (called during sema pass)
-  annotates implicit arithmetic conversions for standard arithmetic types (int, float, etc.)
-  but does not emit conversion annotations for:
-    - Unscoped enum → underlying integer type (e.g. `Status::OK == 1`)
-    - Static local / global variable pointer → value type conversions
-    - Function pointer nullptr comparisons
-- **Affected path**: `IrGenerator_Expr_Operators.cpp` Phase 15 LHS/RHS conversion block
-  in the sema-normalized binary-operator conversion logic; the existing `InternalError` guard fires only for sema-normalized +
-  both standard-arithmetic mismatches; the `generateTypeConversion` fallback handles the rest.
-- **Impact**: The fallback produces correct code today, but prevents the codegen layer from
-  being a strict "no-implicit-conversion" consumer of sema output.
-- **Fix direction**: Extend `normalizeBinaryOperator` (or a dedicated sema pass) to emit
-  `TypeConversionAnnotation` nodes for unscoped-enum-to-int and other non-arithmetic
-  implicit conversions; then promote the `generateTypeConversion` fallback at line 3394 to
-  an `InternalError`.
-
----
