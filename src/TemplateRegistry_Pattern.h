@@ -43,6 +43,7 @@ struct OuterTemplateBinding {
 // Out-of-line template static member variable definition
 struct OutOfLineMemberVariable {
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters (e.g., <typename T>)
+	InlineVector<TemplateParameterNode, 4> replay_template_params; // Full replay-visible params (outer + nested member-template params)
 	StringHandle member_name; // Name of the static member variable
 	ASTNode type_node; // Type of the variable (TypeSpecifierNode)
 	std::optional<ASTNode> declaration; // Declaration node for replay-based initializer parsing
