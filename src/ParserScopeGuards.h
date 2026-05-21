@@ -177,6 +177,51 @@ private:
 };
 
 // =============================================================================
+// SymbolTableNamespaceScope
+// =============================================================================
+// RAII guard that enters a named namespace scope (using enter_namespace) and
+// exits it on destruction.  Unlike SymbolTableScope, this preloads the
+// namespace's symbols so unqualified lookup inside the guarded region finds
+// names declared in that namespace.  Passing an invalid or global handle is
+// safe: the guard is inactive and no scope is pushed.
+
+class SymbolTableNamespaceScope {
+public:
+	explicit SymbolTableNamespaceScope(NamespaceHandle handle)
+		: active_(handle.isValid() && !handle.isGlobal()) {
+		if (active_) {
+			gSymbolTable.enter_namespace(handle);
+		}
+	}
+
+	~SymbolTableNamespaceScope() {
+		if (active_) {
+			gSymbolTable.exit_scope();
+		}
+	}
+
+	SymbolTableNamespaceScope(const SymbolTableNamespaceScope&) = delete;
+	SymbolTableNamespaceScope& operator=(const SymbolTableNamespaceScope&) = delete;
+
+	SymbolTableNamespaceScope(SymbolTableNamespaceScope&& other) noexcept : active_(other.active_) {
+		other.active_ = false;
+	}
+	SymbolTableNamespaceScope& operator=(SymbolTableNamespaceScope&& other) noexcept {
+		if (this != &other) {
+			if (active_) {
+				gSymbolTable.exit_scope();
+			}
+			active_ = other.active_;
+			other.active_ = false;
+		}
+		return *this;
+	}
+
+private:
+	bool active_;
+};
+
+// =============================================================================
 // FunctionParsingScopeGuard
 // =============================================================================
 // RAII guard that owns ALL per-function parser entry/exit work:

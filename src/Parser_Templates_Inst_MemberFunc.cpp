@@ -2158,17 +2158,34 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			// be installed -- parsing proceeds without phase-1 cutoff for this body.
 		}
 		TemplateDefinitionLookupContext definition_lookup_context;
-		definition_lookup_context.setDefinitionLocation(
-			SourceLocation::fromParts(
-				phase1_cutoff_line_,
-				0,
-				phase1_cutoff_file_idx_));
-		definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
-		definition_lookup_context.current_instantiation_name =
-			StringTable::getOrInternStringHandle(struct_name);
+		// Prefer the pre-captured definition context stored at parse time (out-of-line
+		// nested member function templates).  Fall back to rebuilding from the body
+		// token's file/line when no pre-captured context is available.
+		if (func_decl.has_definition_lookup_context()) {
+			definition_lookup_context = func_decl.definition_lookup_context();
+			// Keep the instantiation name current — it is not stored on the node.
+			if (!definition_lookup_context.current_instantiation_name.isValid()) {
+				definition_lookup_context.current_instantiation_name =
+					StringTable::getOrInternStringHandle(struct_name);
+			}
+		} else {
+			definition_lookup_context.setDefinitionLocation(
+				SourceLocation::fromParts(
+					phase1_cutoff_line_,
+					0,
+					phase1_cutoff_file_idx_));
+			definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
+			definition_lookup_context.current_instantiation_name =
+				StringTable::getOrInternStringHandle(struct_name);
+		}
 		ScopedDefinitionLookupContext ctx_scope(
 			current_template_definition_lookup_context_,
 			definition_lookup_context.is_valid() ? &definition_lookup_context : nullptr);
+
+		// Push the definition namespace (e.g. namespace A for A::Box<T>::scale) so that
+		// unqualified names declared in that namespace (e.g. A::helper) are visible during
+		// body replay.  The guard is a no-op for global or invalid namespace handles.
+		FlashCpp::SymbolTableNamespaceScope definition_ns_scope(definition_lookup_context.definition_namespace);
 
 		// Parse the function body
 		{

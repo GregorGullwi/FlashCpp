@@ -8107,6 +8107,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							nested_template_func.template_parameters().size() == out_of_line_member.inner_template_params.size() &&
 							nested_func_decl->decl_node().identifier_token().value() == out_of_line_decl.identifier_token().value()) {
 							nested_func_decl->set_template_body_position(out_of_line_member.body_start);
+							nested_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 						}
 					}
 				}
@@ -8965,6 +8966,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (lazy_registry_key.isValid()) {
 					new_func_ref.set_lazy_member_registry_key(lazy_registry_key);
 				}
+				if (func_decl.has_definition_lookup_context()) {
+					new_func_ref.set_definition_lookup_context(func_decl.definition_lookup_context());
+				}
 				size_t saved_pack_info = pack_param_info_.size();
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
@@ -9813,6 +9817,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_definition(*func_decl.get_definition());
 				if (func_decl.has_template_body_position())
 					new_func_ref.set_template_body_position(func_decl.template_body_position());
+				if (func_decl.has_definition_lookup_context())
+					new_func_ref.set_definition_lookup_context(func_decl.definition_lookup_context());
 				// Copy trailing return type position for SFINAE resolution
 				if (func_decl.has_trailing_return_type_position())
 					new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
@@ -9905,6 +9911,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_definition(*func_decl.get_definition());
 				if (func_decl.has_template_body_position())
 					new_func_ref.set_template_body_position(func_decl.template_body_position());
+				if (func_decl.has_definition_lookup_context())
+					new_func_ref.set_definition_lookup_context(func_decl.definition_lookup_context());
 				if (func_decl.has_trailing_return_type_position())
 					new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
 				new_func_ref.set_is_template_pattern(true);
@@ -9981,8 +9989,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 				if (inst_func_decl->decl_node().identifier_token().value() == ool_func_name) {
-					// Set the body position from the out-of-line definition
+					// Set the body position and definition-time lookup context from the
+					// out-of-line definition so two-phase lookup uses the definition namespace.
 					inst_func_decl->set_template_body_position(out_of_line_member.body_start);
+					inst_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 					FLASH_LOG(Templates, Debug, "Set body position on nested template member: ", ool_func_name);
 					found = true;
 					break;
@@ -10003,6 +10013,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						recovered_func_decl->set_template_body_position(out_of_line_member.body_start);
+						recovered_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 						OverloadableOperator recovered_operator_kind = original_member.operator_kind;
 						if (recovered_operator_kind == OverloadableOperator::None) {
 							recovered_operator_kind = overloadableOperatorFromFunctionName(ool_func_name);
