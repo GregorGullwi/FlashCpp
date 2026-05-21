@@ -31,29 +31,39 @@ TempVar AstToIr::emitArrayToPointerDecay(const TypeSpecifierNode& elem_type_spec
 std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTNode& callNode) const {
 	auto sema_services = sema_.parserSemanticServices();
 	TypeSpecifierQueryResult sema_type_query = sema_services.getExpressionTypeQuery(callNode);
-	if (sema_normalized_current_function_ &&
-		sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+	if (sema_type_query.state == TypeSpecifierQueryResult::State::Available &&
+		sema_type_query.type.has_value() &&
+		sema_type_query.type->type() != TypeCategory::Invalid &&
+		!isPlaceholderAutoType(sema_type_query.type->type())) {
+		return sema_type_query.type;
+	}
+
+	if (sema_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed &&
+		sema_normalized_current_function_) {
 		throw InternalError("Normalized call expression return-type query remained NotYetAnalyzed");
 	}
-
-	std::optional<TypeSpecifierNode> result;
-	if (sema_type_query.state == TypeSpecifierQueryResult::State::Available) {
-		result = sema_type_query.type;
+	std::string call_shape = "unknown";
+	if (callNode.is<ExpressionNode>()) {
+		call_shape = std::visit([](const auto& inner) -> std::string {
+			using T = std::decay_t<decltype(inner)>;
+			if constexpr (std::is_same_v<T, CallExprNode>) {
+				return "CallExprNode";
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				return "MemberAccessNode";
+			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return "IdentifierNode";
+			}
+			return "other-expression";
+		},
+			callNode.as<ExpressionNode>());
 	}
-
-	const bool requires_recovery_fallback =
-		!result.has_value() ||
-		result->type() == TypeCategory::Invalid ||
-		isPlaceholderAutoType(result->type());
-	if (requires_recovery_fallback) {
-		const bool sema_reported_available =
-			sema_type_query.state == TypeSpecifierQueryResult::State::Available;
-		if (sema_normalized_current_function_ && sema_reported_available) {
-			throw InternalError("Sema-provided call expression return type is invalid in sema-normalized body");
-		}
-		result = parser_.get_expression_type(callNode);
-	}
-	return result;
+	throw InternalError(std::string(StringBuilder()
+		.append("Missing sema-owned call expression return type for ")
+		.append(call_shape)
+		.append(" (sema query state=")
+		.append(static_cast<int64_t>(sema_type_query.state))
+		.append(")")
+		.commit()));
 }
 
 /*static*/
@@ -61,6 +71,10 @@ bool AstToIr::shouldPreferExpressionReturnType(
 	const TypeSpecifierNode& expr_type,
 	const TypeSpecifierNode& decl_type) {
 	if (isPlaceholderAutoType(expr_type.type())) {
+		return false;
+	}
+	if (decl_type.type() != expr_type.type() &&
+		decl_type.category() != expr_type.category()) {
 		return false;
 	}
 	if (decl_type.pointer_depth() > expr_type.pointer_depth()) {
