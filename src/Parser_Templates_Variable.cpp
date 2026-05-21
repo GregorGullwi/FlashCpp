@@ -213,12 +213,11 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	{
 		SaveHandle after_target_pos = save_token_position();
 		restore_token_position(target_type_start_pos);
-		constexpr bool kCaptureDependentMemberSuffix = true;
 		if (parseDeferredAliasTargetTemplateId(
 				target_template_name,
 				target_template_arg_nodes,
 				target_member_template_segments,
-				kCaptureDependentMemberSuffix) &&
+				true) &&
 			[&]() {
 				TemplateNameLookupRequest request = buildTemplateNameLookupRequest(
 					target_template_name,

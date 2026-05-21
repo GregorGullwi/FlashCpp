@@ -1228,12 +1228,12 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 	std::string_view instantiated_name) {
 	std::vector<QualifiedTypeMemberAccess> member_chain;
 	member_chain.reserve(alias_node.targetMemberTemplateSegments().size());
-	std::string accumulated_qualified_name(instantiated_name);
+	std::string current_qualified_name(instantiated_name);
 	for (const DeferredAliasMemberTemplateSegment& segment : alias_node.targetMemberTemplateSegments()) {
 		StringHandle owner_qualified_handle =
 			getDeferredMemberAliasHandle(
 				segment.name,
-				std::string_view(accumulated_qualified_name),
+				std::string_view(current_qualified_name),
 				segment.has_template_arguments);
 		auto materialized_segment =
 			materializeDeferredAliasMemberTemplateSegment(
@@ -1245,8 +1245,8 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 			return nullptr;
 		}
 		member_chain.push_back(std::move(*materialized_segment));
-		accumulated_qualified_name.append("::");
-		accumulated_qualified_name.append(segment.name.view());
+		current_qualified_name.append("::");
+		current_qualified_name.append(segment.name.view());
 	}
 	return resolveBaseClassMemberTypeChain(
 		instantiated_name,
