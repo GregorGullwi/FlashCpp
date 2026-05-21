@@ -614,8 +614,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			current_template_definition_lookup_context_->is_valid()) {
 			definition_lookup_context = *current_template_definition_lookup_context_;
 		} else {
-			definition_lookup_context.definition_line = function_name_token.line();
-			definition_lookup_context.definition_file_index = function_name_token.file_index();
+			definition_lookup_context.setDefinitionToken(function_name_token);
 			definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
 			definition_lookup_context.current_instantiation_name =
 				StringTable::getOrInternStringHandle(qualified_class_name);

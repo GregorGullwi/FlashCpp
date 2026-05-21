@@ -1412,8 +1412,11 @@ void Parser::reparse_template_function_body(
 			}
 		}
 		TemplateDefinitionLookupContext definition_lookup_context;
-		definition_lookup_context.definition_line = phase1_cutoff_line_;
-		definition_lookup_context.definition_file_index = phase1_cutoff_file_idx_;
+		definition_lookup_context.setDefinitionLocation(
+			SourceLocation::fromParts(
+				phase1_cutoff_line_,
+				0,
+				phase1_cutoff_file_idx_));
 		definition_lookup_context.definition_namespace = gSymbolTable.get_current_namespace_handle();
 		if (current_function_ != nullptr && !current_function_->parent_struct_name().empty()) {
 			definition_lookup_context.current_instantiation_name =

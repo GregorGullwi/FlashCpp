@@ -84,6 +84,10 @@ Future work should assume these are already in place:
   positions and definition lookup contexts; instantiation uses replay-first
   materialization for covered initializer expressions before falling back to
   stored AST substitution.
+- in-class static-member declarations now preserve replay positions and
+  definition lookup contexts on both AST and instantiated static-member
+  carriers, and covered nested/member-template static-member instantiation now
+  reuses replay-first substitution instead of direct AST-only substitution.
 - qualified member variable-template chains through instantiated owners and
   dependent bases now recover the canonical member variable-template owner and
   outer class-template bindings for covered constexpr/initializer flows.
@@ -123,7 +127,7 @@ intermediate chain slice passed the focused ELF regressions after
 Focused Windows/MSVC validation for this slice passed the new deeper
 dependent-chain regressions plus nearby ratio and dependent-member regressions.
 Latest Windows/MSVC full-suite validation after this slice:
-`2481` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2487` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -135,7 +139,8 @@ Immediate targets:
 
 - current-instantiation and type-alias spellings that still bypass the shared
   owner-correct lookup/materialization path;
-- remaining declarations and static-member paths that never captured replay
+- remaining declarations and static-member paths outside the newly covered
+  in-class/nested static-member replay flows that never captured replay
   metadata at parse time and therefore still require AST-only fallback;
 - remaining dependent-base and deeper member-template/member-type chains;
 - remaining parser-time ADL-sensitive lookup paths outside the already-covered
@@ -166,7 +171,11 @@ Most concrete next subtask:
   target arguments, covered variable-template initializer replay paths, covered
   member variable-template chain recovery, covered dependent-base
   `this->template` member-function-template lookup, and the newly covered
-  default-NTTP member-chain parser path.
+  default-NTTP member-chain parser path. In-class static members now also keep
+  definition lookup context on stored AST/instantiated static-member carriers,
+  and covered nested/member-template static-member instantiation reuses
+  replay-first substitution with outer/inner template bindings instead of
+  immediate AST-only substitution.
   Covered deferred alias member-template suffix chains in declarations and base
   specifiers now work as well, and covered member alias-template declarations
   now preserve non-template intermediate member segments plus enclosing
@@ -178,6 +187,9 @@ Most concrete next subtask:
   substitution. The next bounded follow-up is therefore the remaining
   declaration/static-member/deferred-base paths that still never captured enough
   metadata to stay on that semantic path and still require AST-only fallback.
+  The next bounded follow-up is therefore the remaining replay users outside the
+  new in-class/nested static-member metadata path, plus broader coverage for
+  out-of-line static-member replay combined with deeper dependent owner chains.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -264,7 +276,8 @@ coverage becomes sufficient.
      paths;
    - extend owner-correct replay/materialization into the remaining
      declaration, static-member, and deferred-base paths outside the covered
-     variable-template initializer and default-NTTP parser flows;
+     variable-template initializer, in-class/nested static-member replay, and
+     default-NTTP parser flows;
    - remove the next AST-only/deferred-base fallback path, with the next bounded
      target now the remaining declaration/static-member replay gaps.
 
@@ -351,6 +364,10 @@ re-solving already-solved problems.
 - variable-template initializer replay is now available for namespace and member
   variable templates, covering definition-time lookup and dependent
   member-template call chains.
+- static-member replay metadata now includes definition lookup context on both
+  AST and instantiated static-member carriers, covering the focused nested
+  member-template static-member replay paths where outer/inner template
+  bindings and definition-time ordinary lookup must survive instantiation.
 - qualified member variable-template chain recovery now covers direct,
   dependent-owner, and inherited dependent-base cases such as
   `Derived<T>::template member_v<T>` by resolving the owner-aware member

@@ -1507,10 +1507,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const TemplateDefinitionLookupContext* initializer_definition_lookup_context =
 				current_template_definition_lookup_context_;
 			if (needs_template_initializer_lookup_context) {
-				static_member_definition_lookup_context.definition_line =
-					decl.identifier_token().line();
-				static_member_definition_lookup_context.definition_file_index =
-					decl.identifier_token().file_index();
+				static_member_definition_lookup_context.setDefinitionToken(
+					decl.identifier_token());
 				static_member_definition_lookup_context.definition_namespace =
 					gSymbolTable.get_current_namespace_handle();
 				static_member_definition_lookup_context.current_instantiation_name =
@@ -1649,6 +1647,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				array_dimensions,
 				type_and_name_result.node(),  // declaration AST for lazy re-parse
 				initializer_position,         // saved lexer position for lazy re-parse
+				initializer_definition_lookup_context != nullptr
+					? *initializer_definition_lookup_context
+					: TemplateDefinitionLookupContext{},
 				is_static_constexpr);
 
 			continue;

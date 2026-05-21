@@ -20,10 +20,7 @@ TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefiniti
 	}
 
 	TemplateDefinitionLookupContext definition_lookup_context;
-	definition_lookup_context.definition_line =
-		variable_name_token.line();
-	definition_lookup_context.definition_file_index =
-		variable_name_token.file_index();
+	definition_lookup_context.setDefinitionToken(variable_name_token);
 	definition_lookup_context.definition_namespace =
 		gSymbolTable.get_current_namespace_handle();
 	if (current_instantiation_name.isValid()) {

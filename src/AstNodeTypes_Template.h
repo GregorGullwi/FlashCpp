@@ -1033,6 +1033,7 @@ struct StaticMemberDecl {
 	int pointer_depth = 0;		   // Pointer indirection level (e.g., int* = 1, int** = 2)
 	bool is_constexpr = false;
 	std::optional<SaveHandle> initializer_position; // Saved lexer position at '=' or '{' for lazy replay
+	TemplateDefinitionLookupContext initializer_definition_lookup_context;
 
 	// Returns the legacy Type enum derived from the embedded TypeCategory.
 	TypeCategory memberType() const { return type_index.category(); }
@@ -1061,6 +1062,11 @@ struct StaticMemberDecl {
 	bool hasInitializerPosition() const { return initializer_position.has_value(); }
 	SaveHandle initializerPosition() const { return *initializer_position; }
 	void setInitializerPosition(SaveHandle pos) { initializer_position = pos; }
+	bool hasInitializerDefinitionLookupContext() const { return initializer_definition_lookup_context.is_valid(); }
+	const TemplateDefinitionLookupContext& initializerDefinitionLookupContext() const { return initializer_definition_lookup_context; }
+	void setInitializerDefinitionLookupContext(const TemplateDefinitionLookupContext& context) {
+		initializer_definition_lookup_context = context;
+	}
 	void setIsConstexpr(bool value) { is_constexpr = value; }
 };
 
@@ -1207,14 +1213,27 @@ public:
 						   std::optional<ASTNode> declaration,
 						   std::optional<SaveHandle> initializer_position, bool is_constexpr) {
 		addStaticMemberImpl(name, std::move(declaration), type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
-							is_array, array_dimensions, initializer_position, is_constexpr);
+							is_array, array_dimensions, initializer_position, TemplateDefinitionLookupContext{}, is_constexpr);
+	}
+
+	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
+						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
+						   std::optional<ASTNode> declaration,
+						   std::optional<SaveHandle> initializer_position,
+						   const TemplateDefinitionLookupContext& initializer_definition_lookup_context,
+						   bool is_constexpr) {
+		addStaticMemberImpl(name, std::move(declaration), type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth,
+							is_array, array_dimensions, initializer_position, initializer_definition_lookup_context, is_constexpr);
 	}
 
 private:
 	void addStaticMemberImpl(StringHandle name, std::optional<ASTNode> declaration, TypeIndex type_index, size_t size, size_t alignment,
 							 AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 							 ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::span<const size_t> array_dimensions,
-							 std::optional<SaveHandle> initializer_position, bool is_constexpr) {
+							 std::optional<SaveHandle> initializer_position,
+							 const TemplateDefinitionLookupContext& initializer_definition_lookup_context,
+							 bool is_constexpr) {
 		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
 		if (declaration.has_value()) {
 			static_members_.back().setDeclaration(std::move(*declaration));
@@ -1223,6 +1242,7 @@ private:
 		if (initializer_position.has_value()) {
 			static_members_.back().setInitializerPosition(*initializer_position);
 		}
+		static_members_.back().setInitializerDefinitionLookupContext(initializer_definition_lookup_context);
 		static_members_.back().setIsConstexpr(is_constexpr);
 	}
 
