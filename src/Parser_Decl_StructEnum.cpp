@@ -1979,6 +1979,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(qualified_struct_name, StringTable::getOrInternStringHandle(dtor_name));
+			dtor_ref.set_is_constexpr(member_specs & FlashCpp::MLS_Constexpr);
 
 			// Parse trailing specifiers (noexcept, override, final, __attribute__, etc.)
 			// Destructor trailing specifiers are similar to member function specifiers

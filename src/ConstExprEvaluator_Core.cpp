@@ -3155,6 +3155,12 @@ EvalResult Evaluator::evaluate_delete_expression(
 									 ? "delete[]: non-array pointer (use plain `delete`)"
 									 : "delete: array pointer (use `delete[]`)");
 	}
+	// Invoke the constexpr destructor (if any) before marking the allocation freed.
+	if (heap_it->second.value.object_type_index.is_valid()) {
+		auto dtor_result = invoke_constexpr_destructor(heap_it->second.value, context);
+		if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+			return dtor_result;
+	}
 	heap_it->second.freed = true;
 	// delete-expression yields void; return a sentinel success value.
 	return EvalResult::from_int(0LL);
@@ -5394,6 +5400,116 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 	return EvalResult::from_bool(true);
 }
 
+// Invoke the constexpr destructor of a single struct object.
+// Follows the same pattern as call_constexpr_member_fn_on_object but is
+// simplified for destructors: no parameters are bound and the result value
+// is discarded (the object is being destroyed).  Returns success when the
+// destructor is trivial/has no body, or after the body completes normally.
+EvalResult Evaluator::invoke_constexpr_destructor(
+	const EvalResult& object,
+	EvaluationContext& context) {
+	if (!object.object_type_index.is_valid())
+		return EvalResult::from_int(0LL);  // No struct type — nothing to destroy.
+
+	const TypeInfo* type_info = tryGetTypeInfo(object.object_type_index);
+	if (!type_info)
+		return EvalResult::from_int(0LL);
+
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	if (!struct_info)
+		return EvalResult::from_int(0LL);
+
+	const StructMemberFunction* dtor_member = struct_info->findDestructor();
+	if (!dtor_member)
+		return EvalResult::from_int(0LL);
+
+	const DestructorDeclarationNode& dtor_decl = dtor_member->function_decl.as<DestructorDeclarationNode>();
+
+	// Only evaluate destructors declared constexpr.
+	if (!dtor_decl.is_constexpr())
+		return EvalResult::from_int(0LL);
+
+	const std::optional<ASTNode>& body_opt = dtor_decl.get_definition();
+	if (!body_opt.has_value())
+		return EvalResult::from_int(0LL);  // Defaulted / declared only — trivial.
+
+	// Trivially empty body — skip the overhead of creating bindings.
+	if (body_opt->is<BlockNode>() && body_opt->as<BlockNode>().get_statements().empty())
+		return EvalResult::from_int(0LL);
+
+	if (context.current_depth >= context.max_recursion_depth)
+		return EvalResult::error("Constexpr recursion depth limit exceeded in destructor");
+
+	// Build member bindings from the object's current state.
+	auto member_bindings = object.object_member_bindings;
+
+	// Inject synthetic "this" binding so the destructor body can access members.
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = object.object_type_index;
+	this_binding.object_member_bindings = member_bindings;
+	member_bindings["this"] = std::move(this_binding);
+
+	// Save and restore template bindings and context state.
+	auto saved_template_param_names = context.template_param_names;
+	auto saved_template_args = context.template_args;
+	auto saved_template_environment = context.template_environment;
+	auto saved_struct_info = context.struct_info;
+	auto saved_struct_type_index = context.struct_type_index;
+	const TypeInfo* saved_return_type_info = context.return_type_info;
+
+	// Load template bindings from the struct type (handles both plain and instantiated types).
+	// This is sufficient for destructors since they belong to the enclosing class scope.
+	load_template_bindings_from_type(type_info, context);
+
+	context.struct_info = struct_info;
+	context.struct_type_index = object.object_type_index;
+	context.return_type_info = nullptr;
+	context.current_depth++;
+
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &member_bindings;
+
+	auto result = evaluate_block_with_bindings(
+		body_opt.value(),
+		member_bindings,
+		context,
+		"Destructor body is not a block",
+		kStatementExecutedWithoutReturn);
+
+	context.local_bindings = saved_local_bindings;
+	context.current_depth--;
+	context.return_type_info = saved_return_type_info;
+	context.struct_info = saved_struct_info;
+	context.struct_type_index = saved_struct_type_index;
+	context.template_param_names = std::move(saved_template_param_names);
+	context.template_args = std::move(saved_template_args);
+	context.template_environment = std::move(saved_template_environment);
+
+	// A destructor has no return value; treat both success and "no return" as OK.
+	if (result.success() || isStatementExecutedWithoutReturn(result))
+		return EvalResult::from_int(0LL);
+	return result;
+}
+
+// Invoke constexpr destructors for all struct-type variables registered in a
+// BlockScopeTracker, in reverse declaration order (LIFO per C++ [class.dtor]/8).
+EvalResult Evaluator::invoke_scope_destructors(
+	const BlockScopeTracker& scope,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	// Iterate in reverse order — last-declared variable is destroyed first.
+	const auto& entries = scope.destructor_entries;
+	for (size_t n = entries.size(); n-- > 0;) {
+		auto binding_it = bindings.find(entries[n].name);
+		if (binding_it == bindings.end())
+			continue;
+		auto dtor_result = invoke_constexpr_destructor(binding_it->second, context);
+		if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+			return dtor_result;
+	}
+	return EvalResult::from_int(0LL);
+}
+
 EvalResult Evaluator::evaluate_block_with_bindings(
 	const ASTNode& body_node,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -5419,11 +5535,26 @@ EvalResult Evaluator::evaluate_block_with_bindings(
 	for (size_t i = 0; i < statements.size(); i++) {
 		auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
 		if (result.success()) {
+			// A return statement was executed.  Run scope destructors before
+			// propagating the return value up through the call stack.
+			if (!guard.scope.destructor_entries.empty()) {
+				auto dtor_result = invoke_scope_destructors(guard.scope, decl_bindings, context);
+				if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+					return dtor_result;
+			}
 			return result;
 		}
 		if (!isStatementExecutedWithoutReturn(result)) {
 			return result;
 		}
+	}
+
+	// Block fell off the end without a return statement.  Run scope destructors
+	// before returning the "no return" sentinel to the caller.
+	if (!guard.scope.destructor_entries.empty()) {
+		auto dtor_result = invoke_scope_destructors(guard.scope, decl_bindings, context);
+		if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+			return dtor_result;
 	}
 
 	return EvalResult::error(std::string(no_return_error));
@@ -5517,6 +5648,22 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			context.current_scope->on_declare(var_name, declaration_bindings);
 		}
 
+		// Helper: store a value into declaration_bindings[var_name] and register it
+		// for destructor invocation on scope exit if it is a struct with a destructor.
+		// Returns the "Statement executed (not a return)" sentinel on success.
+		auto store_var = [&](EvalResult&& val) -> EvalResult {
+			if (context.current_scope && val.object_type_index.is_valid()) {
+				if (const TypeInfo* ti = tryGetTypeInfo(val.object_type_index)) {
+					if (const StructTypeInfo* si = ti->getStructInfo()) {
+						if (si->findDestructor())
+							context.current_scope->destructor_entries.push_back({var_name, val.object_type_index});
+					}
+				}
+			}
+			declaration_bindings[var_name] = std::move(val);
+			return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
+		};
+
 		// Evaluate the initializer if present
 		if (var_decl.initializer().has_value()) {
 			const ASTNode& init_expr = var_decl.initializer().value();
@@ -5539,8 +5686,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						return capture_result;
 					}
 				}
-				declaration_bindings[var_name] = std::move(callable_result);
-				return EvalResult::error("Statement executed (not a return)");
+				return store_var(std::move(callable_result));
 			}
 
 			const TypeSpecifierNode& decl_type_spec = decl.type_specifier_node();
@@ -5588,8 +5734,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						EvalResult reference_alias = EvalResult::from_pointer(alias_target_name);
 						reference_alias.pointer_value_snapshot = {*alias_target};
 						maybe_set_binding_result_exact_type(reference_alias, decl, &init_expr, context);
-						declaration_bindings[var_name] = std::move(reference_alias);
-						return EvalResult::error("Statement executed (not a return)");
+						return store_var(std::move(reference_alias));
 					}
 				}
 			}
@@ -5609,8 +5754,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 						return array_result;
 					}
 					maybe_set_binding_result_exact_type(array_result, decl, &init_expr, context);
-					declaration_bindings[var_name] = std::move(array_result);
-					return EvalResult::error("Statement executed (not a return)");
+					return store_var(std::move(array_result));
 				}
 
 				{
@@ -5635,8 +5779,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 								if (canReuseConstexprSameTypeObjectValue(single_result, type_spec.type_index())) {
 									maybe_set_binding_result_exact_type(single_result, decl, &init_expr, context);
 									apply_uint_init_narrowing(single_result);
-									declaration_bindings[var_name] = std::move(single_result);
-									return EvalResult::error("Statement executed (not a return)");
+									return store_var(std::move(single_result));
 								}
 							}
 							// Block-scope `Type o(a, b)` is parsed as InitializerListNode{a, b}.
@@ -5666,8 +5809,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 									}
 									maybe_set_binding_result_exact_type(*ctor_result, decl, &init_expr, context);
 									apply_uint_init_narrowing(*ctor_result);
-									declaration_bindings[var_name] = std::move(*ctor_result);
-									return EvalResult::error("Statement executed (not a return)");
+									return store_var(std::move(*ctor_result));
 								}
 								// No matching constructor found for a type with user-defined
 								// constructors: report a clear diagnostic instead of silently
@@ -5688,8 +5830,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							}
 							maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
 							apply_uint_init_narrowing(object_result);
-							declaration_bindings[var_name] = std::move(object_result);
-							return EvalResult::error("Statement executed (not a return)");
+							return store_var(std::move(object_result));
 						}
 					}
 				}
@@ -5714,8 +5855,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					}
 					maybe_set_binding_result_exact_type(object_result, decl, &init_expr, context);
 					apply_uint_init_narrowing(object_result);
-					declaration_bindings[var_name] = std::move(object_result);
-					return EvalResult::error("Statement executed (not a return)");
+					return store_var(std::move(object_result));
 				}
 			}
 
@@ -5761,8 +5901,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			apply_uint_init_narrowing(init_result);
 
 			// Add to bindings
-			declaration_bindings[var_name] = init_result;
-			return EvalResult::error("Statement executed (not a return)");
+			return store_var(std::move(init_result));
 		}
 
 		// Uninitialized variable — check if it's a struct/class type requiring default construction
@@ -5774,8 +5913,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				if (!default_result.success()) {
 					return default_result;
 				}
-				declaration_bindings[var_name] = std::move(default_result);
-				return EvalResult::error("Statement executed (not a return)");
+				return store_var(std::move(default_result));
 			}
 		}
 
@@ -5783,8 +5921,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 		if (!default_result.success()) {
 			return default_result;
 		}
-		declaration_bindings[var_name] = std::move(default_result);
-		return EvalResult::error("Statement executed (not a return)");
+		return store_var(std::move(default_result));
 	}
 
 	// Handle for loops (C++14 constexpr)

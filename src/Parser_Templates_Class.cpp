@@ -2146,6 +2146,7 @@ ParseResult Parser::parse_template_declaration() {
 						}
 
 						auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(dtor_name));
+						dtor_ref.set_is_constexpr(dtor_leading_specs & FlashCpp::MLS_Constexpr);
 
 					// Parse trailing specifiers (noexcept, override, final, = default, = delete, etc.)
 						FlashCpp::MemberQualifiers dtor_member_quals;
@@ -3588,6 +3589,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 
 					auto [dtor_node, dtor_ref] = emplace_node_ref<DestructorDeclarationNode>(instantiated_name, StringTable::getOrInternStringHandle(dtor_name));
+					dtor_ref.set_is_constexpr(partial_member_specs & FlashCpp::MLS_Constexpr);
 
 					// Parse trailing specifiers (noexcept, override, final, = default, = delete, etc.)
 					FlashCpp::MemberQualifiers dtor_member_quals;
