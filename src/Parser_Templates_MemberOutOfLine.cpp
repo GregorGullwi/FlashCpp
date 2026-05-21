@@ -252,6 +252,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					out_of_line_ctor.has_initializer_list = ctor_has_initializer_list;
 					out_of_line_ctor.is_defaulted = ctor_is_defaulted;
 					out_of_line_ctor.is_deleted = ctor_is_deleted;
+					out_of_line_ctor.definition_lookup_context =
+						buildDefinitionLookupContextFromToken(
+							ctor_name_token,
+							StringTable::getOrInternStringHandle(ctor_class_name));
 
 					gTemplateRegistry.registerOutOfLineMember(
 						makeQualifiedClassIdentifier(ctor_class_name),
@@ -944,6 +948,10 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.inner_template_param_names = inner_template_param_names;
 		out_of_line_member.is_defaulted = member_is_defaulted;
 		out_of_line_member.is_deleted = member_is_deleted;
+		out_of_line_member.definition_lookup_context =
+			buildDefinitionLookupContextFromToken(
+				function_name_token,
+				StringTable::getOrInternStringHandle(qualified_class_name));
 
 		gTemplateRegistry.registerOutOfLineMember(
 			makeQualifiedClassIdentifier(qualified_class_name),

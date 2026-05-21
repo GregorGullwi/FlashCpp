@@ -92,6 +92,10 @@ Future work should assume these are already in place:
   template-parameter list, and replay rebuilds parameter names/kinds/non-type
   categories before substitution so deeper owner/member-template chains can stay
   on the replay-first path.
+- out-of-line class-template member-function definitions now preserve
+  definition-context lookup metadata, and instantiation re-enters that context
+  before reparsing the saved body so covered non-dependent unqualified lookup in
+  those bodies stays bound to the definition point.
 - qualified member variable-template chains through instantiated owners and
   dependent bases now recover the canonical member variable-template owner and
   outer class-template bindings for covered constexpr/initializer flows.
@@ -201,9 +205,10 @@ Most concrete next subtask:
   declaration/static-member/deferred-base paths that still never captured enough
   metadata to stay on that semantic path and still require AST-only fallback.
   The next bounded follow-up is therefore the remaining replay users outside the
-  covered in-class/nested/out-of-line static-member metadata paths, with
-  priority on broader out-of-line declaration/static-member replay coverage
-  beyond the newly covered deeper member-template owner chains.
+  covered in-class/nested/out-of-line static-member metadata and out-of-line
+  member-function body metadata paths, with priority on broader out-of-line
+  member-function-template replay, constructor-initializer replay, and deferred-
+  base coverage beyond the newly covered deeper member-template owner chains.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 

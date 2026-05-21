@@ -174,12 +174,16 @@ Concrete follow-up already identified by recent work:
   lookup. General expression/lazy-static substitution now also reuses a shared
   owner-correct prefix-chain materialization path for the focused
   unknown-specialization and dependent-base `member-template -> type/alias ->
-  value/call` cases. The next concrete follow-up is therefore narrower again:
-  extend that same owner-correct replay/materialization path into the remaining
-  declaration/deferred-base paths that still never captured enough metadata to
-  avoid AST-only fallback, with the next bounded target now the still-uncovered
-  out-of-line declaration/static-member replay users beyond the newly covered
-  deeper member-template chain shape.
+  value/call` cases. Out-of-line class-template member-function definitions now
+  also preserve definition lookup context and re-install it during body replay,
+  so ordinary unqualified lookup in those reparsed bodies stays bound to the
+  definition point instead of rebinding at the point of instantiation. The next
+  concrete follow-up is therefore narrower again: extend that same owner-
+  correct replay/materialization path into the remaining declaration/deferred-
+  base paths that still never captured enough metadata to avoid AST-only
+  fallback, with the next bounded target now the still-uncovered out-of-line
+  member-function-template, constructor-initializer, and deferred-base replay
+  users beyond the newly covered member-function body path.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -272,11 +276,14 @@ In priority order:
     - remaining replay-metadata gaps outside the covered static-member and
       variable-template initializer paths, now including the newly covered
       out-of-line static-member replay path for deeper member-template chains;
+    - out-of-line class-template member-function bodies now preserve and replay
+      definition-context lookup metadata for non-dependent unqualified lookup;
     - remaining declaration/static-member/deferred-base paths that still bypass
       the shared semantic lookup model and therefore fall back to AST-only
-      repair, with the next bounded target now the still-uncovered replay users
-      outside the covered in-class/nested/out-of-line static-member metadata
-      paths.
+      repair, with the next bounded target now the still-uncovered out-of-line
+      member-function-template, constructor-initializer, and deferred-base
+      replay users beyond the covered in-class/nested/out-of-line static-member
+      and out-of-line member-function body metadata paths.
 
 2. **Continue dependent-name/current-instantiation modeling**
    - richer dependent-base and unknown-specialization records;
@@ -338,7 +345,11 @@ materially changes what future refactors can assume.
 - variable-template initializers now store replay metadata and definition lookup
   context for namespace and member variable templates, with replay-first
   instantiation covering definition-time lookup and dependent member-template
-  call chains before the older AST-substitution fallback is used.
+  chains;
+- out-of-line class-template member-function bodies now store definition lookup
+  context in the replay metadata, and instantiation re-enters that context
+  before reparsing the saved body so non-dependent unqualified calls stay
+  definition-bound in the covered non-constructor path.
 - static-member declarations now store definition lookup context alongside
   replay positions on both AST and instantiated static-member carriers, and
   covered nested/member-template static-member instantiation reuses that stored
