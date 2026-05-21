@@ -73,7 +73,7 @@ bool AstToIr::shouldPreferExpressionReturnType(
 	if (isPlaceholderAutoType(expr_type.type())) {
 		return false;
 	}
-	if (decl_type.type() != expr_type.type() &&
+	if (decl_type.type() != expr_type.type() ||
 		decl_type.category() != expr_type.category()) {
 		return false;
 	}

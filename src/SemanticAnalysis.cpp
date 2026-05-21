@@ -3999,6 +3999,15 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 
 TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode& node) const {
 	auto tryResolveCallQueryType = [&](const CallExprNode& call_expr) -> std::optional<TypeSpecifierNode> {
+		auto resolveReceiverType = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
+			const TypeSpecifierQueryResult receiver_type_query = getExpressionTypeQuery(receiver_node);
+			if (receiver_type_query.state != TypeSpecifierQueryResult::State::Available ||
+				!receiver_type_query.type.has_value()) {
+				return std::nullopt;
+			}
+			return receiver_type_query.type;
+		};
+
 		auto tryResolveCallResultType = [&](const FunctionDeclarationNode* func_decl) -> std::optional<TypeSpecifierNode> {
 			if (!func_decl) {
 				return std::nullopt;
@@ -4011,12 +4020,11 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 
 			TypeSpecifierNode return_type = ret_type_node.as<TypeSpecifierNode>();
 			if (call_expr.has_receiver()) {
-				const TypeSpecifierQueryResult receiver_type_query = getExpressionTypeQuery(call_expr.receiver());
-				if (receiver_type_query.state != TypeSpecifierQueryResult::State::Available ||
-					!receiver_type_query.type.has_value()) {
+				const std::optional<TypeSpecifierNode> receiver_type = resolveReceiverType(call_expr.receiver());
+				if (!receiver_type.has_value()) {
 					return std::nullopt;
 				}
-				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type_query.type->type_index());
+				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type->type_index());
 			} else if (func_decl->is_member_function()) {
 				if (const MemberContext* member_context = getCurrentMemberContext()) {
 					return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
@@ -4034,12 +4042,11 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 		if (callee_return_type_node.has_value() && callee_return_type_node.is<TypeSpecifierNode>()) {
 			TypeSpecifierNode return_type = callee_return_type_node.as<TypeSpecifierNode>();
 			if (call_expr.has_receiver()) {
-				const TypeSpecifierQueryResult receiver_type_query = getExpressionTypeQuery(call_expr.receiver());
-				if (receiver_type_query.state != TypeSpecifierQueryResult::State::Available ||
-					!receiver_type_query.type.has_value()) {
+				const std::optional<TypeSpecifierNode> receiver_type = resolveReceiverType(call_expr.receiver());
+				if (!receiver_type.has_value()) {
 					return std::nullopt;
 				}
-				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type_query.type->type_index());
+				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type->type_index());
 			} else if (const MemberContext* member_context = getCurrentMemberContext()) {
 				return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
 			}
