@@ -5986,16 +5986,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									{},
 									*explicit_template_args);
 							std::string_view instantiated_name = materialized_owner.instantiated_name;
-							// Detect dependent args up front (used both for the retry path and the skip/error path).
-							bool any_dependent = false;
-							if (parsing_template_depth_ > 0) {
-								for (const auto& arg : *explicit_template_args) {
-									if (arg.is_dependent || arg.is_pack) {
-										any_dependent = true;
-										break;
-									}
-								}
-							}
+							// Template parameter defaults also need the deferred qualified-member path
+							// when the owner template-id is dependent.
+							const bool any_dependent =
+								explicitTemplateArgsRequireDeferredInstantiation(
+									*explicit_template_args);
 							if (instantiated_name.empty()) {
 								// If materialization still failed, apply the original dependent args
 								// skip and defer strategy for genuinely un-instantiable expressions.
@@ -6184,7 +6179,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							// Parse qualified identifier after template, using the instantiated name
 							// We need to collect the :: path ourselves since we have the instantiated name
-							if (parsing_template_depth_ > 0 && peek() == "::"_tok) {
+							if (any_dependent && peek() == "::"_tok) {
 								SaveHandle deferred_member_chain_start = save_token_position();
 								NamespaceHandle deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 									NamespaceRegistry::GLOBAL_NAMESPACE,
@@ -7260,18 +7255,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							{},
 							*explicit_template_args);
 					std::string_view instantiated_class_name = materialized_owner.instantiated_name;
+					const bool any_dependent =
+						explicitTemplateArgsRequireDeferredInstantiation(
+							*explicit_template_args);
 					if (instantiated_class_name.empty()) {
 						// In a template body, the template arguments may be dependent on
 						// enclosing template parameters. Defer the entire qualified call.
-						bool any_dependent = false;
-						if (parsing_template_depth_ > 0) {
-							for (const auto& arg : *explicit_template_args) {
-								if (arg.is_dependent || arg.is_pack) {
-									any_dependent = true;
-									break;
-								}
-							}
-						}
 						if (any_dependent) {
 							QualifiedIdentifier dependent_owner_template =
 								QualifiedIdentifier::fromQualifiedName(
@@ -7450,7 +7439,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 
 					// Create a token with the instantiated name to pass to parse_qualified_identifier_after_template
-					if (parsing_template_depth_ > 0 && peek() == "::"_tok) {
+					if (any_dependent && peek() == "::"_tok) {
 						SaveHandle deferred_member_chain_start = save_token_position();
 						NamespaceHandle deferred_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
 							NamespaceRegistry::GLOBAL_NAMESPACE,
