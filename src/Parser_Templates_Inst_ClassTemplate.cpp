@@ -10303,7 +10303,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
 										ctor.add_member_initializer(init_name, init_list_node);
 									} else if (is_brace && substituted_args.size() == 1) {
-										ctor.add_member_initializer(init_name, substituted_args[0]);
+										// Preserve brace-init semantics for single-element braces.
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+										init_list_ref.add_initializer(substituted_args[0]);
+										ctor.add_member_initializer(init_name, init_list_node);
 									} else if (is_brace && substituted_args.size() > 1) {
 										// Multiple brace-init args (e.g., member{a, b, c}): wrap in InitializerListNode
 										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
