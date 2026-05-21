@@ -1618,12 +1618,20 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 
 		AliasTemplateMaterializationResult materialized_base =
-			materializeTemplateInstantiationForLookup(base_template_name, concrete_args);
+			resolveCanonicalInstantiatedOwnerForLookup(base_template_name, concrete_args);
 		if (materialized_base.instantiated_name.empty()) {
-			return nullptr;
+			if (materialized_base.resolved_type_info == nullptr) {
+				return nullptr;
+			}
+			materialized_base.instantiated_name =
+				StringTable::getStringView(materialized_base.resolved_type_info->name());
 		}
 		if (member_chain.empty()) {
-			return materialized_base.resolved_type_info;
+			if (materialized_base.resolved_type_info != nullptr) {
+				return materialized_base.resolved_type_info;
+			}
+			return findTypeByName(
+				StringTable::getOrInternStringHandle(materialized_base.instantiated_name));
 		}
 		if (const TypeInfo* qualified_member_type = lookupTypeInfoByName(
 				StringBuilder()
