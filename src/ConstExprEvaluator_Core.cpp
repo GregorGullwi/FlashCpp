@@ -2867,14 +2867,28 @@ EvalResult Evaluator::evaluate_new_expression(
 		}
 		EvalResult array_result = EvalResult::from_int(0LL);
 		array_result.is_array = true;
-		EvalResult element_init;
-		if (new_expr.has_value_init()) {
-			element_init = make_default_init(type_spec);
+		array_result.array_elements.reserve(static_cast<size_t>(n));
+		if (is_struct_type(type_spec.category())) {
+			// Struct/class arrays must carry full object state so member calls and
+			// delete[] destructor dispatch can operate on real object bindings.
+			// Reuse local default-init materialization for each element.
+			for (int64_t i = 0; i < n; ++i) {
+				EvalResult element_result = make_local_default_init(type_spec, context);
+				if (!element_result.success()) {
+					return element_result;
+				}
+				array_result.array_elements.push_back(std::move(element_result));
+			}
 		} else {
-			element_init = EvalResult::indeterminate();
-			element_init.set_exact_type(type_spec);
+			EvalResult element_init;
+			if (new_expr.has_value_init()) {
+				element_init = make_default_init(type_spec);
+			} else {
+				element_init = EvalResult::indeterminate();
+				element_init.set_exact_type(type_spec);
+			}
+			array_result.array_elements.assign(static_cast<size_t>(n), element_init);
 		}
-		array_result.array_elements.assign(static_cast<size_t>(n), element_init);
 		StringHandle heap_key = context.alloc_heap_slot();
 		context.constexpr_heap[heap_key] = {std::move(array_result), false, true};
 		return EvalResult::from_pointer(heap_key);
@@ -3155,8 +3169,22 @@ EvalResult Evaluator::evaluate_delete_expression(
 									 ? "delete[]: non-array pointer (use plain `delete`)"
 									 : "delete: array pointer (use `delete[]`)");
 	}
-	// Invoke the constexpr destructor (if any) before marking the allocation freed.
-	if (heap_it->second.value.object_type_index.is_valid()) {
+	// Invoke constexpr destructor(s) before marking the allocation freed.
+	if (del_expr.is_array()) {
+		EvalResult& heap_value = heap_it->second.value;
+		if (heap_value.is_array && !heap_value.array_elements.empty()) {
+			// C++ [expr.delete]: delete[] destroys array elements in reverse order.
+			for (size_t i = heap_value.array_elements.size(); i-- > 0;) {
+				EvalResult& element = heap_value.array_elements[i];
+				if (!element.object_type_index.is_valid()) {
+					continue;
+				}
+				auto dtor_result = invoke_constexpr_destructor(element, context);
+				if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+					return dtor_result;
+			}
+		}
+	} else if (heap_it->second.value.object_type_index.is_valid()) {
 		auto dtor_result = invoke_constexpr_destructor(heap_it->second.value, context);
 		if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
 			return dtor_result;
@@ -5556,28 +5584,43 @@ EvalResult Evaluator::evaluate_block_with_bindings(
 	// context.local_bindings is non-null, e.g. constructor body eval).
 	auto& decl_bindings = context.resolve_declaration_bindings(bindings);
 	BlockScopeGuard guard(decl_bindings, context.current_scope);
+	// Keep destructor cleanup explicit at each early-exit point so break/continue
+	// and error propagation paths all run the same scoped destruction logic.
+	auto run_scope_destructors_if_needed = [&]() -> EvalResult {
+		if (guard.scope.destructor_entries.empty()) {
+			return EvalResult::from_int(0LL);
+		}
+		return invoke_scope_destructors(guard.scope, decl_bindings, context);
+	};
 
 	for (size_t i = 0; i < statements.size(); i++) {
 		auto result = evaluate_statement_with_bindings(statements[i], bindings, context);
 		if (result.success()) {
 			// A return statement was executed.  Run scope destructors before
 			// propagating the return value up through the call stack.
-			if (!guard.scope.destructor_entries.empty()) {
-				auto dtor_result = invoke_scope_destructors(guard.scope, decl_bindings, context);
-				if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
-					return dtor_result;
-			}
+			auto dtor_result = run_scope_destructors_if_needed();
+			if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+				return dtor_result;
+			return result;
+		}
+		if (isBreakExecuted(result) || isContinueExecuted(result)) {
+			auto dtor_result = run_scope_destructors_if_needed();
+			if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+				return dtor_result;
 			return result;
 		}
 		if (!isStatementExecutedWithoutReturn(result)) {
+			auto dtor_result = run_scope_destructors_if_needed();
+			if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
+				return dtor_result;
 			return result;
 		}
 	}
 
 	// Block fell off the end without a return statement.  Run scope destructors
 	// before returning the "no return" sentinel to the caller.
-	if (!guard.scope.destructor_entries.empty()) {
-		auto dtor_result = invoke_scope_destructors(guard.scope, decl_bindings, context);
+	{
+		auto dtor_result = run_scope_destructors_if_needed();
 		if (!dtor_result.success() && !isStatementExecutedWithoutReturn(dtor_result))
 			return dtor_result;
 	}
