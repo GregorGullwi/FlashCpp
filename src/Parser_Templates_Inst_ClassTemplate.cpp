@@ -10224,11 +10224,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							advance();  // consume ':'
 
 							// Parse initializers until we hit '{', ';', or 'try'
-							while (peek() != "{"_tok && peek() != ";"_tok && peek() != "try"_tok && !peek().is_eof()) {
+							while (true) {
+								TokenKind next_token = peek();
+								if (next_token == "{"_tok || next_token == ";"_tok || next_token == "try"_tok || next_token.is_eof()) {
+									break;
+								}
+
 								// Parse initializer name (could be base class or member)
 								auto init_name_token = advance();
 								if (!init_name_token.kind().is_identifier()) {
-									FLASH_LOG(Templates, Error, "Expected member or base class name in constructor initializer list");
+									FLASH_LOG(Templates, Error, "Expected member or base class name in constructor initializer list, got '",
+											  init_name_token.value(), "'");
 									break;
 								}
 
@@ -10243,7 +10249,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								bool is_paren = peek() == "("_tok;
 								bool is_brace = peek() == "{"_tok;
 								if (!is_paren && !is_brace) {
-									FLASH_LOG(Templates, Error, "Expected '(' or '{' after initializer name in constructor");
+									FLASH_LOG(Templates, Error, "Expected '(' or '{' after initializer name in constructor, got '",
+											  peek_info().value(), "'");
 									break;
 								}
 
@@ -10252,7 +10259,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								std::vector<ASTNode> init_args;
 								if (peek() != close_kind) {
-									do {
+									while (true) {
 										ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (arg_result.is_error()) {
 											break;
@@ -10260,11 +10267,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (auto arg_node = arg_result.node()) {
 											init_args.push_back(*arg_node);
 										}
-									} while (peek() == ","_tok && (advance(), true));
+										if (peek() != ","_tok) {
+											break;
+										}
+										advance();
+									}
 								}
 
 								if (!consume(close_kind)) {
-									FLASH_LOG(Templates, Error, "Expected closing delimiter after initializer arguments");
+									FLASH_LOG(Templates, Error, "Expected ", is_paren ? "')'" : "'}'",
+											  " after initializer arguments, got '", peek_info().value(), "'");
 									break;
 								}
 
@@ -10284,36 +10296,48 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 								// Determine if this is a base class or member initializer
 								bool is_base_init = false;
+								StringHandle matched_base_name;
+								StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
 								if (struct_type_info.struct_info_) {
 									// Check if this is a base class by looking at the struct's base classes
 									for (const auto& base : struct_type_info.struct_info_->base_classes) {
-										if (base.name == init_name) {
+										std::string_view base_name = base.name;
+										if (base_name == init_name || extractBaseTemplateName(base_name) == init_name) {
 											is_base_init = true;
-											StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
-											ctor.add_base_initializer(init_name_handle, std::move(substituted_args));
+											matched_base_name = StringTable::getOrInternStringHandle(base_name);
 											break;
+										}
+									}
+
+									if (!is_base_init && struct_type_info.struct_info_->has_deferred_base_classes) {
+										for (StringHandle deferred_base_name : struct_type_info.struct_info_->deferred_base_template_names) {
+											if (deferred_base_name == init_name_handle) {
+												is_base_init = true;
+												matched_base_name = deferred_base_name;
+												break;
+											}
 										}
 									}
 								}
 
+								if (is_base_init) {
+									ctor.add_base_initializer(matched_base_name, std::move(substituted_args));
+								}
+
 								if (!is_base_init) {
-									// It's a member initializer
-									if (is_brace && substituted_args.empty()) {
-										// Empty brace-init (e.g., member{}): wrap in InitializerListNode
-										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-										ctor.add_member_initializer(init_name, init_list_node);
-									} else if (is_brace && substituted_args.size() == 1) {
-										// Preserve brace-init semantics for single-element braces.
-										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-										init_list_ref.add_initializer(substituted_args[0]);
-										ctor.add_member_initializer(init_name, init_list_node);
-									} else if (is_brace && substituted_args.size() > 1) {
-										// Multiple brace-init args (e.g., member{a, b, c}): wrap in InitializerListNode
-										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-										for (auto& arg : substituted_args) {
+									auto make_initializer_list = [&](InitializerListNode::InitializationStyle style) -> ASTNode {
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode(style));
+										for (const auto& arg : substituted_args) {
 											init_list_ref.add_initializer(arg);
 										}
-										ctor.add_member_initializer(init_name, init_list_node);
+										return init_list_node;
+									};
+
+									// It's a member initializer
+									if (is_brace) {
+										ctor.add_member_initializer(init_name, make_initializer_list(InitializerListNode::InitializationStyle::Brace));
+									} else if (substituted_args.size() > 1) {
+										ctor.add_member_initializer(init_name, make_initializer_list(InitializerListNode::InitializationStyle::Paren));
 									} else if (!substituted_args.empty()) {
 										ctor.add_member_initializer(init_name, substituted_args[0]);
 									}
