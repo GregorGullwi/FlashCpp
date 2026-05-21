@@ -10114,6 +10114,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					{
+						TemplateDefinitionLookupContext definition_lookup_context =
+							ensureReplayDefinitionLookupContext(
+								out_of_line_member.definition_lookup_context,
+								decl.identifier_token(),
+								gSymbolTable.get_current_namespace_handle(),
+								instantiated_name);
+						ScopedDefinitionLookupContext ctx_scope(
+							current_template_definition_lookup_context_,
+							definition_lookup_context.is_valid()
+								? &definition_lookup_context
+								: nullptr);
+
 						FlashCpp::FunctionParsingScopeGuard func_guard(
 							*this,
 							true,
@@ -10173,13 +10185,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Save current position
 					SaveHandle saved_pos = save_token_position();
 
-					// Restore to the out-of-line function body position
-					restore_lexer_position_only(out_of_line_member.body_start);
+					// Restore to the out-of-line definition position
+					// For constructors with initializer lists, restore to ':' so parse_function_body
+					// can parse the initializer list; otherwise restore to '{'.
+					if (out_of_line_member.has_initializer_list && out_of_line_member.initializer_list_start != 0) {
+						restore_lexer_position_only(out_of_line_member.initializer_list_start);
+					} else {
+						restore_lexer_position_only(out_of_line_member.body_start);
+					}
 
 					// Use setup_member_function_context for full member context:
 					// member context push, member-function registration, and 'this' injection.
 					// Constructors use ConstructorDeclarationNode (not FunctionDeclarationNode),
 					// so we manage the scope manually but delegate context to the shared helper.
+					TemplateDefinitionLookupContext definition_lookup_context =
+						ensureReplayDefinitionLookupContext(
+							out_of_line_member.definition_lookup_context,
+							decl.identifier_token(),
+							gSymbolTable.get_current_namespace_handle(),
+							instantiated_name);
+					ScopedDefinitionLookupContext ctx_scope(
+						current_template_definition_lookup_context_,
+						definition_lookup_context.is_valid()
+							? &definition_lookup_context
+							: nullptr);
+
 					gSymbolTable.enter_scope(ScopeType::Function);
 					register_parameters_in_scope(ctor.parameter_nodes());
 					setup_member_function_context(
@@ -10187,6 +10217,111 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						struct_type_info.type_index_,
 						true);
+
+					// Parse constructor initializer list if present (before parsing body)
+					if (out_of_line_member.has_initializer_list) {
+						if (peek() == ":"_tok) {
+							advance();  // consume ':'
+
+							// Parse initializers until we hit '{', ';', or 'try'
+							while (peek() != "{"_tok && peek() != ";"_tok && peek() != "try"_tok && !peek().is_eof()) {
+								// Parse initializer name (could be base class or member)
+								auto init_name_token = advance();
+								if (!init_name_token.kind().is_identifier()) {
+									FLASH_LOG(Templates, Error, "Expected member or base class name in constructor initializer list");
+									break;
+								}
+
+								std::string_view init_name = init_name_token.value();
+
+								// Check for template arguments: Base<T>(...) in base class initializer
+								if (peek() == "<"_tok) {
+									skip_template_arguments();
+								}
+
+								// Expect '(' or '{'
+								bool is_paren = peek() == "("_tok;
+								bool is_brace = peek() == "{"_tok;
+								if (!is_paren && !is_brace) {
+									FLASH_LOG(Templates, Error, "Expected '(' or '{' after initializer name in constructor");
+									break;
+								}
+
+								advance();  // consume '(' or '{'
+								TokenKind close_kind = is_paren ? ")"_tok : "}"_tok;
+
+								std::vector<ASTNode> init_args;
+								if (peek() != close_kind) {
+									do {
+										ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+										if (arg_result.is_error()) {
+											break;
+										}
+										if (auto arg_node = arg_result.node()) {
+											init_args.push_back(*arg_node);
+										}
+									} while (peek() == ","_tok && (advance(), true));
+								}
+
+								if (!consume(close_kind)) {
+									FLASH_LOG(Templates, Error, "Expected closing delimiter after initializer arguments");
+									break;
+								}
+
+								// Substitute template parameters in initializer arguments
+								std::vector<ASTNode> substituted_args;
+								for (const auto& arg : init_args) {
+									try {
+										ASTNode substituted_arg = substituteTemplateParameters(
+											arg,
+											out_of_line_member.template_params,
+											template_args_to_use);
+										substituted_args.push_back(substituted_arg);
+									} catch (const std::exception& e) {
+										FLASH_LOG(Templates, Error, "Exception during template parameter substitution in constructor initializer: ", e.what());
+									}
+								}
+
+								// Determine if this is a base class or member initializer
+								bool is_base_init = false;
+								if (struct_type_info.struct_info_) {
+									// Check if this is a base class by looking at the struct's base classes
+									for (const auto& base : struct_type_info.struct_info_->base_classes) {
+										if (base.name == init_name) {
+											is_base_init = true;
+											StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+											ctor.add_base_initializer(init_name_handle, std::move(substituted_args));
+											break;
+										}
+									}
+								}
+
+								if (!is_base_init) {
+									// It's a member initializer
+									if (is_brace && substituted_args.empty()) {
+										// Empty brace-init (e.g., member{}): wrap in InitializerListNode
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+										ctor.add_member_initializer(init_name, init_list_node);
+									} else if (is_brace && substituted_args.size() > 1) {
+										// Multiple brace-init args (e.g., member{a, b, c}): wrap in InitializerListNode
+										auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+										for (auto& arg : substituted_args) {
+											init_list_ref.add_initializer(arg);
+										}
+										ctor.add_member_initializer(init_name, init_list_node);
+									} else if (!substituted_args.empty()) {
+										ctor.add_member_initializer(init_name, substituted_args[0]);
+									}
+								}
+
+								// Continue if there's a comma
+								if (peek() != ","_tok) {
+									break;
+								}
+								advance();  // consume ','
+							}
+						}
+					}
 
 					// Parse the function body (handles function-try-blocks too)
 					// Pass true for is_ctor_or_dtor so constructor function-try-blocks

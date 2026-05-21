@@ -24,6 +24,7 @@ struct OutOfLineMemberFunction {
 	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
 	InlineVector<TemplateParameterNode, 4> inner_template_params;
 	InlineVector<StringHandle, 4> inner_template_param_names;
+	TemplateDefinitionLookupContext definition_lookup_context; // Definition-context lookup boundary for two-phase lookup
 	// Function specifiers from out-of-line definition (= default, = delete)
 	bool has_initializer_list = false;
 	bool is_defaulted = false;
