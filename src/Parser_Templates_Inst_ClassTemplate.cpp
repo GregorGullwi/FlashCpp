@@ -8131,12 +8131,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			if (shouldCommitTemplateInstantiationArtifacts()) {
-				std::string_view nested_alias_prefix = StringBuilder()
-														   .append(original_nested_name)
-														   .append("::")
-														   .commit();
-				for (const auto& base_alias_name : gTemplateRegistry.get_alias_templates_with_prefix(nested_alias_prefix)) {
-					std::string_view member_name = std::string_view(base_alias_name).substr(nested_alias_prefix.size());
+				StringBuilder nested_alias_prefix_builder;
+				nested_alias_prefix_builder.append(original_nested_name);
+				nested_alias_prefix_builder.append("::");
+				std::string_view nested_alias_lookup_prefix = nested_alias_prefix_builder.commit();
+				for (const auto& base_alias_name : gTemplateRegistry.get_alias_templates_with_prefix(nested_alias_lookup_prefix)) {
+					std::string_view member_name = std::string_view(base_alias_name).substr(nested_alias_lookup_prefix.size());
 					StringHandle inst_alias_name = StringTable::getOrInternStringHandle(
 						StringBuilder()
 							.append(qualified_name)
