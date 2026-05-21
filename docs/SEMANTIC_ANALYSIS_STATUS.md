@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-05-20
+**Last Updated:** 2026-05-21
 
 This is the consolidated status document for sema-related planning and architecture notes.
 
@@ -44,6 +44,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - query-state APIs are in use (`NotYetAnalyzed`, `AnalyzedAbsent`, `Available`)
 - `AstToIr::buildCodegenOverloadResolutionArgType(...)` now consumes sema overload-argument typing APIs first and no longer performs codegen-local legacy type reconstruction
 - `AstToIr::generateMemberFunctionCallIr(...)` now keeps `operator()` receiver type recovery on parser-only for non-normalized bodies; normalized bodies no longer use parser expression-type fallback in that path
+- `AstToIr::getCallExpressionReturnType(...)` now hard-fails invalid sema-reported call-result types in sema-normalized bodies while keeping parser fallback for absent semantic entries
 - codegen still has parser expression-type fallback in selected IR paths (`src/IrGenerator_*.cpp`)
 
 ## Active backlog (high level)
