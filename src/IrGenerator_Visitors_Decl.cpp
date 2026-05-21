@@ -2766,16 +2766,30 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									}
 									continue;  // per-element stores emitted; skip single MemberStore below
 								}
+								const InitializerListNode& init_list = init_expr_node.as<InitializerListNode>();
 								// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
-								if (init_expr_node.as<InitializerListNode>().size() == 0) {
+								if (init_list.size() == 0) {
 									member_value = isFloatingPointType(member.memberType()) ? IrValue{0.0} : IrValue{0ULL};
+								} else if (!is_struct_type(member.type_index.category()) && init_list.size() == 1 &&
+										   init_list.initializers()[0].is<ExpressionNode>()) {
+									ExprResult init_operands = visitExpressionNode(init_list.initializers()[0].as<ExpressionNode>());
+									if (const auto* temp_var = std::get_if<TempVar>(&init_operands.value)) {
+										member_value = *temp_var;
+									} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+										member_value = *ull_val;
+									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+										member_value = *d_val;
+									} else if (const auto* string = std::get_if<StringHandle>(&init_operands.value)) {
+										member_value = *string;
+									} else {
+										member_value = 0ULL;
+									}
 								} else if ((is_struct_type(member.type_index.category()))) {
 									// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
 									if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 										member_type_info && member_type_info->getStructInfo()) {
 										const StructTypeInfo* nested_info = member_type_info->getStructInfo();
-										const InitializerListNode& agg_init_list = init_expr_node.as<InitializerListNode>();
-										const auto& agg_elements = agg_init_list.initializers();
+										const auto& agg_elements = init_list.initializers();
 										const auto& nested_members = nested_info->members;
 										for (size_t i = 0; i < nested_members.size(); ++i) {
 											const StructMember& nm = nested_members[i];
