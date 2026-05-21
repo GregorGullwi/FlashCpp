@@ -89,17 +89,22 @@ Useful to know before changing anything:
   now retries shortened nested-owner spellings, so declarations that materialize
   owners like `Outer<int>::Inner::template Apply<int>` can find member-template
   registrations stored under nested names such as `Inner::Apply`;
+- dependent qualified-id and call substitution now share owner-correct prefix
+  materialization for covered unknown-specialization and dependent-base chains,
+  so general expression/lazy-static paths such as
+  `Traits<T>::template Box<T>::type::value`,
+  `Traits<T>::template Box<T>::type::get()`, and
+  `Derived<T>::template Inner<int>::type::value` stay concrete through the
+  intermediate `type` alias instead of stalling after the member-template hop;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
 Validation at this point passed the Linux sharded build and ELF test workflow:
 `2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
-Focused Windows/MSVC validation for this slice passed the new ratio-owner
-regression plus nearby ratio/dependent-member regressions. Latest Windows/MSVC
-full-suite validation after adding that regression:
-`2476` regular tests compiled/linked/runtime-pass, `1` unrelated regular test
-link-fail (`template_template_with_member_ret0.cpp`), `181` expected-fail
-tests.
+Focused Windows/MSVC validation for this slice passed the new deeper
+dependent-chain regressions plus the nearby ratio/dependent-member regressions.
+Latest Windows/MSVC full-suite validation after this slice:
+`2481` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## What is still wrong
 
@@ -141,10 +146,13 @@ Concrete follow-up already identified by recent work:
   NTTPs is now covered, including direct member-template and nested alias chains
   ending in `::value`, and the later lookup-time `<ratio>` owner gap is now
   covered by canonical owner materialization before inherited member-chain
-  lookup. The next concrete follow-up is therefore narrower again: extend that
-  owner-correct lookup path to deeper dependent-base/unknown-specialization
-  chains, especially when intermediate `::value` or other static-member hops
-  appear between type/member-alias segments.
+  lookup. General expression/lazy-static substitution now also reuses a shared
+  owner-correct prefix-chain materialization path for the focused
+  unknown-specialization and dependent-base `member-template -> type/alias ->
+  value/call` cases. The next concrete follow-up is therefore narrower again:
+  extend that same owner-correct replay/materialization path into the remaining
+  declaration/static-member paths that still never captured enough metadata to
+  avoid AST-only fallback.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -226,14 +234,19 @@ In priority order:
    - lookup-time canonical owner materialization now covers the focused
       ratio-style inherited `::type::value` default-NTTP path without mutating
       deferred-base attachment;
+   - general expression/lazy-static substitution now covers the focused
+     deeper dependent-base and unknown-specialization
+     `member-template -> type/alias -> value/call` chains via a shared
+     owner-correct prefix materialization path reused by qualified-id and call
+     substitution;
    - dependent-base `this->template` member-function-template calls are covered
      for focused inline class-template body cases, including multilevel
      dependent-base chains;
    - remaining replay-metadata gaps outside the covered static-member and
      variable-template initializer paths;
-   - remaining dependent-base/member-chain paths that still bypass the shared
-      semantic lookup model, especially deeper unknown-specialization/value-hop
-      chains.
+   - remaining declaration/static-member/deferred-base paths that still bypass
+     the shared semantic lookup model and therefore fall back to AST-only
+     repair.
 
 2. **Continue dependent-name/current-instantiation modeling**
    - richer dependent-base and unknown-specialization records;
@@ -320,6 +333,10 @@ materially changes what future refactors can assume.
   `resolveCanonicalInstantiatedOwnerForLookup` before inherited member-chain
   resolution, covering ratio-style inherited `::type` then default-NTTP
   `::value` flows without adding a new deferred-base or constexpr fallback.
+- dependent qualified-id and qualified-call substitution now share owner-
+  correct prefix-chain materialization for the covered general
+  expression/lazy-static cases where a member-template hop produces an
+  intermediate type/alias before the final static member or member call.
 
 ## Exit criteria for this audit
 

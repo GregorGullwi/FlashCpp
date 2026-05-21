@@ -2112,6 +2112,83 @@ Parser::AliasTemplateMaterializationResult Parser::resolveCanonicalInstantiatedO
 	return result;
 }
 
+OuterTemplateBinding Parser::buildAccumulatedOuterTemplateBinding(
+	const TypeInfo* owner_type_info,
+	const OuterTemplateBinding* inherited_binding,
+	StringHandle fallback_binding_lookup_name) {
+	OuterTemplateBinding binding;
+	auto overlay_binding =
+		[&](StringHandle param_name, const TemplateTypeArg& param_arg) {
+		for (size_t i = 0; i < binding.param_names.size();) {
+			if (binding.param_names[i] == param_name) {
+				binding.param_names.erase(binding.param_names.begin() + i);
+				binding.param_args.erase(binding.param_args.begin() + i);
+				continue;
+			}
+			++i;
+		}
+		binding.param_names.push_back(param_name);
+		binding.param_args.push_back(param_arg);
+	};
+	auto overlay_existing_binding =
+		[&](const OuterTemplateBinding* existing_binding) {
+		if (existing_binding == nullptr) {
+			return;
+		}
+		for (size_t i = 0;
+			 i < existing_binding->param_names.size() &&
+			 i < existing_binding->param_args.size();
+			 ++i) {
+			overlay_binding(
+				existing_binding->param_names[i],
+				existing_binding->param_args[i]);
+		}
+	};
+
+	StringHandle owner_base_binding_handle;
+	if (owner_type_info != nullptr &&
+		owner_type_info->sourceNamespace().isValid() &&
+		owner_type_info->baseTemplateName().isValid()) {
+		owner_base_binding_handle =
+			gNamespaceRegistry.buildQualifiedIdentifier(
+				owner_type_info->sourceNamespace(),
+				owner_type_info->baseTemplateName());
+	}
+
+	if (inherited_binding != nullptr) {
+		overlay_existing_binding(inherited_binding);
+	} else {
+		if (owner_base_binding_handle.isValid()) {
+			overlay_existing_binding(
+				gTemplateRegistry.getOuterTemplateBinding(
+					StringTable::getStringView(owner_base_binding_handle)));
+		}
+		if (fallback_binding_lookup_name.isValid() &&
+			fallback_binding_lookup_name != owner_base_binding_handle) {
+			overlay_existing_binding(
+				gTemplateRegistry.getOuterTemplateBinding(
+					StringTable::getStringView(fallback_binding_lookup_name)));
+		}
+	}
+
+	if (owner_type_info != nullptr &&
+		owner_type_info->hasInstantiationContext()) {
+		const TypeInfo::InstantiationContext* instantiation_context =
+			owner_type_info->instantiationContext();
+		for (size_t i = 0;
+			 instantiation_context != nullptr &&
+			 i < instantiation_context->param_names.size() &&
+			 i < instantiation_context->param_args.size();
+			 ++i) {
+			overlay_binding(
+				instantiation_context->param_names[i],
+				toTemplateTypeArg(instantiation_context->param_args[i]));
+		}
+	}
+
+	return binding;
+}
+
 std::optional<ASTNode> Parser::instantiateLazyMemberForCanonicalOwner(
 	std::string_view& owner_name,
 	std::string_view member_name,
