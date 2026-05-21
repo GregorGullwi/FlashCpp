@@ -115,6 +115,10 @@ private:
 		StringHandle materialized_member_handle{};
 		StringHandle terminal_member_name{};
 	};
+	struct MaterializedQualifiedLookupOwner {
+		const TypeInfo* owner_type = nullptr;
+		StringHandle owner_name{};
+	};
 
 	// Handlers for different expression types
 	ASTNode substituteConstructorCall(const ConstructorCallNode& ctor);
@@ -151,6 +155,15 @@ private:
 		std::span<const TypeInfo::TemplateArgInfo> stored_args,
 		int depth);
 	bool templateArgsStillDependent(std::span<const TemplateTypeArg> args) const;
+	Parser::AliasTemplateMaterializationResult materializeDependentQualifiedRecordOwner(
+		const TypeInfo::DependentQualifiedNameRecord& dependent_name,
+		int depth,
+		bool prefer_current_owner_type_name);
+	MaterializedQualifiedLookupOwner materializeDependentQualifiedMemberPrefixOwner(
+		StringHandle owner_name,
+		std::string_view recorded_owner_name,
+		std::span<const TypeInfo::DependentQualifiedNameRecord::Member> prefix_chain,
+		int depth);
 	MaterializedDependentMemberLookup lookupMaterializedDependentMember(
 		const TypeInfo& type_info,
 		int depth);

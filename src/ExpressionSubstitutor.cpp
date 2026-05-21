@@ -951,6 +951,247 @@ InlineVector<TemplateTypeArg, 4> ExpressionSubstitutor::materializeDependentReco
 	return materialized_args;
 }
 
+Parser::AliasTemplateMaterializationResult
+ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
+	const TypeInfo::DependentQualifiedNameRecord& dependent_name,
+	int depth,
+	bool prefer_current_owner_type_name) {
+	Parser::AliasTemplateMaterializationResult materialized_owner;
+	std::string_view owner_name =
+		StringTable::getStringView(dependent_name.owner_name);
+	auto assign_owner_type =
+		[&](const TypeInfo* owner_type_info) {
+		if (owner_type_info == nullptr) {
+			return;
+		}
+		materialized_owner.resolved_type_info = owner_type_info;
+		if (owner_type_info->name().isValid()) {
+			materialized_owner.instantiated_name =
+				StringTable::getStringView(owner_type_info->name());
+		}
+	};
+
+	switch (dependent_name.owner_kind) {
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+		if (prefer_current_owner_type_name &&
+			current_owner_type_name_.isValid()) {
+			materialized_owner.instantiated_name =
+				StringTable::getStringView(current_owner_type_name_);
+			materialized_owner.resolved_type_info =
+				findTypeByName(current_owner_type_name_);
+			break;
+		}
+		if (dependent_name.owner_type.is_valid()) {
+			assign_owner_type(tryGetTypeInfo(dependent_name.owner_type));
+		}
+		break;
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+		if (dependent_name.owner_template_arguments.empty()) {
+			if (auto owner_subst_it = param_map_.find(owner_name);
+				owner_subst_it != param_map_.end()) {
+				if (const TypeInfo* owner_type_info =
+						tryGetTypeInfo(owner_subst_it->second.type_index)) {
+					materialized_owner =
+						parser_.materializeCanonicalOwnerTypeForLookup(*owner_type_info, {});
+					if (materialized_owner.instantiated_name.empty() &&
+						materialized_owner.resolved_type_info == nullptr) {
+						assign_owner_type(owner_type_info);
+					}
+				}
+			}
+			break;
+		}
+		[[fallthrough]];
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
+		InlineVector<TemplateTypeArg, 4> owner_args =
+			materializeDependentRecordTemplateArgs(
+				dependent_name.owner_template_arguments,
+				depth);
+		if (owner_args.empty() && !dependent_name.owner_template_arguments.empty()) {
+			break;
+		}
+		if (templateArgsStillDependent(owner_args)) {
+			break;
+		}
+		if (auto owner_template_subst_it = param_map_.find(owner_name);
+			owner_template_subst_it != param_map_.end() &&
+			owner_template_subst_it->second.is_template_template_arg &&
+			owner_template_subst_it->second.template_name_handle.isValid()) {
+			owner_name = StringTable::getStringView(
+				owner_template_subst_it->second.template_name_handle);
+		}
+		materialized_owner =
+			parser_.resolveCanonicalInstantiatedOwnerForLookup(
+				owner_name,
+				std::span<const TemplateTypeArg>(
+					owner_args.data(),
+					owner_args.size()));
+		if (materialized_owner.instantiated_name.empty() &&
+			materialized_owner.resolved_type_info == nullptr &&
+			!owner_args.empty()) {
+			materialized_owner.instantiated_name =
+				parser_.get_instantiated_class_name(owner_name, owner_args);
+			if (!materialized_owner.instantiated_name.empty()) {
+				materialized_owner.resolved_type_info = findTypeByName(
+					StringTable::getOrInternStringHandle(
+						materialized_owner.instantiated_name));
+			}
+		}
+		break;
+	}
+	}
+
+	return materialized_owner;
+}
+
+ExpressionSubstitutor::MaterializedQualifiedLookupOwner
+ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
+	StringHandle owner_name_handle,
+	std::string_view recorded_owner_name,
+	std::span<const TypeInfo::DependentQualifiedNameRecord::Member> prefix_chain,
+	int depth) {
+	MaterializedQualifiedLookupOwner result;
+	if (!owner_name_handle.isValid()) {
+		return result;
+	}
+
+	result.owner_name = owner_name_handle;
+	result.owner_type = findTypeByName(owner_name_handle);
+
+	for (size_t i = 0; i < prefix_chain.size(); ++i) {
+		const auto& member_record = prefix_chain[i];
+		std::string_view chained_owner_name =
+			StringTable::getStringView(result.owner_name);
+		if (chained_owner_name.empty()) {
+			result = {};
+			return result;
+		}
+
+		if (member_record.has_template_arguments) {
+			InlineVector<TemplateTypeArg, 4> member_args =
+				materializeDependentRecordTemplateArgs(
+					member_record.template_arguments,
+					depth);
+			if (templateArgsStillDependent(member_args)) {
+				result = {};
+				return result;
+			}
+
+			std::string_view member_name =
+				StringTable::getStringView(member_record.name);
+			std::string_view qualified_owner_name;
+			if (i == 0 &&
+				!recorded_owner_name.empty()) {
+				std::string_view pattern_owner_name =
+					StringBuilder()
+						.append(recorded_owner_name)
+						.append("::")
+						.append(member_name)
+						.commit();
+				if (gTemplateRegistry.lookupTemplate(pattern_owner_name).has_value()) {
+					qualified_owner_name = pattern_owner_name;
+				}
+			}
+			if (qualified_owner_name.empty()) {
+				qualified_owner_name =
+					parser_.lookup_inherited_member_template_name(
+						result.owner_name,
+						member_record.name,
+						0);
+			}
+			if (qualified_owner_name.empty()) {
+				qualified_owner_name =
+					StringBuilder()
+						.append(chained_owner_name)
+						.append("::")
+						.append(member_name)
+						.commit();
+			}
+
+			if (result.owner_type != nullptr &&
+				result.owner_type->hasInstantiationContext()) {
+				const TypeInfo::InstantiationContext* parent_context =
+					result.owner_type->instantiationContext();
+				OuterTemplateBinding outer_binding;
+				for (size_t binding_i = 0;
+					 parent_context != nullptr &&
+					 binding_i < parent_context->param_names.size() &&
+					 binding_i < parent_context->param_args.size();
+					 ++binding_i) {
+					outer_binding.param_names.push_back(
+						parent_context->param_names[binding_i]);
+					outer_binding.param_args.push_back(
+						toTemplateTypeArg(parent_context->param_args[binding_i]));
+				}
+				if (!outer_binding.param_names.empty()) {
+					gTemplateRegistry.registerOuterTemplateBinding(
+						StringTable::getOrInternStringHandle(qualified_owner_name),
+						std::move(outer_binding));
+				}
+			}
+
+			if (std::optional<ASTNode> instantiated_member_template =
+					parser_.try_instantiate_class_template(
+						qualified_owner_name,
+						member_args,
+						false);
+				instantiated_member_template.has_value() &&
+				instantiated_member_template->is<StructDeclarationNode>()) {
+				parser_.registerAndNormalizeLateMaterializedTopLevelNode(
+					*instantiated_member_template);
+			}
+
+			Parser::AliasTemplateMaterializationResult materialized_member_owner =
+				parser_.resolveCanonicalInstantiatedOwnerForLookup(
+					qualified_owner_name,
+					std::span<const TemplateTypeArg>(
+						member_args.data(),
+						member_args.size()));
+			StringHandle next_owner_handle =
+				materialized_member_owner.canonicalNameHandle();
+			if (!next_owner_handle.isValid()) {
+				std::string_view instantiated_owner_name =
+					parser_.get_instantiated_class_name(
+						qualified_owner_name,
+						member_args);
+				if (!instantiated_owner_name.empty()) {
+					next_owner_handle =
+						StringTable::getOrInternStringHandle(instantiated_owner_name);
+				}
+			}
+			if (!next_owner_handle.isValid()) {
+				result = {};
+				return result;
+			}
+
+			result.owner_name = next_owner_handle;
+			result.owner_type = materialized_member_owner.resolved_type_info;
+			if (result.owner_type == nullptr) {
+				result.owner_type = findTypeByName(next_owner_handle);
+			}
+			continue;
+		}
+
+		QualifiedTypeMemberAccess member_access;
+		member_access.member_name = member_record.name;
+		const TypeInfo* resolved_owner =
+			resolveQualifiedMemberNamespaceChain(
+				chained_owner_name,
+				std::span<QualifiedTypeMemberAccess>(&member_access, 1));
+		if (resolved_owner == nullptr ||
+			!resolved_owner->name().isValid()) {
+			result = {};
+			return result;
+		}
+
+		result.owner_type = resolved_owner;
+		result.owner_name = resolved_owner->name();
+	}
+
+	return result;
+}
+
 bool ExpressionSubstitutor::templateArgsStillDependent(std::span<const TemplateTypeArg> args) const {
 	for (const TemplateTypeArg& arg : args) {
 		if (arg.is_dependent) {
@@ -980,59 +1221,13 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 
 	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
 			type_info.dependentQualifiedName()) {
-		std::string_view owner_name =
-			StringTable::getStringView(dependent_name->owner_name);
-		std::string_view materialized_owner_name;
-		switch (dependent_name->owner_kind) {
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
-			if (current_owner_type_name_.isValid()) {
-				materialized_owner_name =
-					StringTable::getStringView(current_owner_type_name_);
-				break;
-			}
-			if (dependent_name->owner_type.is_valid()) {
-				if (const TypeInfo* owner_type_info =
-						tryGetTypeInfo(dependent_name->owner_type)) {
-					materialized_owner_name =
-						StringTable::getStringView(owner_type_info->name());
-				}
-			}
-			break;
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
-			if (dependent_name->owner_template_arguments.empty()) {
-				if (auto owner_subst_it = param_map_.find(owner_name);
-					owner_subst_it != param_map_.end()) {
-					const TypeInfo* owner_type_info =
-						tryGetTypeInfo(owner_subst_it->second.type_index);
-					if (owner_type_info != nullptr) {
-						materialized_owner_name =
-							StringTable::getStringView(owner_type_info->name());
-					}
-				}
-				break;
-			}
-			[[fallthrough]];
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
-			InlineVector<TemplateTypeArg, 4> owner_args =
-				materializeDependentRecordTemplateArgs(dependent_name->owner_template_arguments, depth);
-			if (!owner_args.empty() && !templateArgsStillDependent(owner_args)) {
-				if (auto owner_template_subst_it = param_map_.find(owner_name);
-					owner_template_subst_it != param_map_.end() &&
-					owner_template_subst_it->second.is_template_template_arg) {
-					owner_name = StringTable::getStringView(
-						owner_template_subst_it->second.template_name_handle);
-				}
-				Parser::AliasTemplateMaterializationResult materialized_owner =
-					parser_.materializeTemplateInstantiationForLookup(
-						owner_name,
-						owner_args);
-				materialized_owner_name = materialized_owner.canonicalName();
-			}
-			break;
-		}
-		}
-
+		Parser::AliasTemplateMaterializationResult materialized_owner =
+			materializeDependentQualifiedRecordOwner(
+				*dependent_name,
+				depth,
+				/*prefer_current_owner_type_name=*/true);
+		std::string_view materialized_owner_name =
+			materialized_owner.canonicalName();
 		if (!materialized_owner_name.empty()) {
 			std::vector<QualifiedTypeMemberAccess> member_chain;
 			member_chain.reserve(dependent_name->member_chain.size());
@@ -2062,89 +2257,15 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 			}
 		}
-		auto materializeRecordArgs =
-			[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) {
-			std::vector<TemplateTypeArg> materialized_args;
-			materialized_args.reserve(stored_args.size());
-			for (const TypeInfo::TemplateArgInfo& stored_arg : stored_args) {
-				TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
-				if (arg.dependent_name.isValid()) {
-					auto param_it =
-						param_map_.find(StringTable::getStringView(arg.dependent_name));
-					if (param_it != param_map_.end()) {
-						arg = rebindDependentTemplateTypeArg(param_it->second, arg);
-					}
-				}
-				materialized_args.push_back(std::move(arg));
-			}
-			return materialized_args;
-		};
-		auto areTemplateArgsConcrete = [&](std::span<const TemplateTypeArg> args) {
-			for (const TemplateTypeArg& arg : args) {
-				if (arg.is_dependent) {
-					return false;
-				}
-				if (arg.is_value || !arg.type_index.is_valid()) {
-					continue;
-				}
-				const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index);
-				if (arg_type_info &&
-					(arg_type_info->is_incomplete_instantiation_ ||
-					 (arg_type_info->isTemplateInstantiation() &&
-					  arg_type_info->getStructInfo() == nullptr))) {
-					return false;
-				}
-			}
-			return true;
-		};
-
-		std::string_view materialized_owner_name;
-		std::string_view recorded_owner_name =
+		const std::string_view recorded_owner_name =
 			StringTable::getStringView(dependent_record.owner_name);
-		switch (dependent_record.owner_kind) {
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
-			if (dependent_record.owner_type.is_valid()) {
-				if (const TypeInfo* owner_type_info =
-						tryGetTypeInfo(dependent_record.owner_type)) {
-					materialized_owner_name =
-						StringTable::getStringView(owner_type_info->name());
-				}
-			}
-			break;
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
-			if (dependent_record.owner_template_arguments.empty()) {
-				auto owner_param_it = param_map_.find(recorded_owner_name);
-				if (owner_param_it != param_map_.end()) {
-					if (const TypeInfo* owner_type_info =
-							tryGetTypeInfo(owner_param_it->second.type_index)) {
-						materialized_owner_name =
-							StringTable::getStringView(owner_type_info->name());
-					}
-				}
-				break;
-			}
-			[[fallthrough]];
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
-			std::vector<TemplateTypeArg> owner_args =
-				materializeRecordArgs(dependent_record.owner_template_arguments);
-			if (areTemplateArgsConcrete(owner_args)) {
-				Parser::AliasTemplateMaterializationResult canonical_owner =
-					parser_.resolveCanonicalInstantiatedOwnerForLookup(
-						recorded_owner_name,
-						std::span<const TemplateTypeArg>(
-							owner_args.data(),
-							owner_args.size()));
-				if (!canonical_owner.instantiated_name.empty()) {
-					materialized_owner_name = canonical_owner.instantiated_name;
-				} else if (canonical_owner.resolved_type_info != nullptr) {
-					materialized_owner_name =
-						StringTable::getStringView(canonical_owner.resolved_type_info->name());
-				}
-			}
-			break;
-		}
-		}
+		Parser::AliasTemplateMaterializationResult materialized_owner =
+			materializeDependentQualifiedRecordOwner(
+				dependent_record,
+				kInitialDependentMemberTypeResolutionDepth,
+				/*prefer_current_owner_type_name=*/false);
+		std::string_view materialized_owner_name =
+			materialized_owner.canonicalName();
 
 		if (!materialized_owner_name.empty() &&
 			!dependent_record.member_chain.empty()) {
@@ -2153,166 +2274,22 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			std::string_view member_name =
 				StringTable::getStringView(
 					dependent_record.member_chain.back().name);
-			std::vector<QualifiedTypeMemberAccess> owner_member_chain;
-			owner_member_chain.reserve(
-				dependent_record.member_chain.size() > 0
-					? dependent_record.member_chain.size() - 1
-					: 0);
-			bool owner_chain_concrete = true;
-			for (size_t i = 0; i + 1 < dependent_record.member_chain.size(); ++i) {
-				const auto& member_record = dependent_record.member_chain[i];
-				QualifiedTypeMemberAccess member_access;
-				member_access.member_name = member_record.name;
-				if (member_record.has_template_arguments) {
-					std::vector<TemplateTypeArg> member_args =
-						materializeRecordArgs(member_record.template_arguments);
-					if (!areTemplateArgsConcrete(member_args)) {
-						owner_chain_concrete = false;
-						break;
-					}
-					member_access.has_template_arguments = true;
-					member_access.template_arguments =
-						&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
-							std::move(member_args));
-				}
-				owner_member_chain.push_back(std::move(member_access));
+			if (dependent_record.member_chain.size() > 1) {
+				MaterializedQualifiedLookupOwner materialized_prefix_owner =
+					materializeDependentQualifiedMemberPrefixOwner(
+						StringTable::getOrInternStringHandle(materialized_owner_name),
+						recorded_owner_name,
+						std::span<const TypeInfo::DependentQualifiedNameRecord::Member>(
+							dependent_record.member_chain.data(),
+							dependent_record.member_chain.size() - 1),
+						kInitialDependentMemberTypeResolutionDepth);
+				materialized_owner_name =
+					materialized_prefix_owner.owner_name.isValid()
+						? StringTable::getStringView(materialized_prefix_owner.owner_name)
+						: std::string_view{};
 			}
 
-			if (owner_chain_concrete) {
-				if (!owner_member_chain.empty()) {
-					std::string_view chained_owner_name = materialized_owner_name;
-					bool owner_chain_materialized = true;
-					for (size_t i = 0; i + 1 < dependent_record.member_chain.size(); ++i) {
-						const auto& member_record = dependent_record.member_chain[i];
-						const std::string_view member_name_for_owner =
-							StringTable::getStringView(member_record.name);
-						if (member_record.has_template_arguments) {
-							std::vector<TemplateTypeArg> member_args =
-								materializeRecordArgs(member_record.template_arguments);
-							if (!areTemplateArgsConcrete(member_args)) {
-								owner_chain_materialized = false;
-								break;
-							}
-							const StringHandle chained_owner_handle =
-								StringTable::getOrInternStringHandle(chained_owner_name);
-							const StringHandle member_name_handle =
-								StringTable::getOrInternStringHandle(member_name_for_owner);
-							std::string_view qualified_owner_name;
-							if (i == 0 &&
-								!recorded_owner_name.empty()) {
-								std::string_view pattern_owner_name =
-									StringBuilder()
-										.append(recorded_owner_name)
-										.append("::")
-										.append(member_name_for_owner)
-										.commit();
-								if (gTemplateRegistry.lookupTemplate(pattern_owner_name).has_value()) {
-									qualified_owner_name = pattern_owner_name;
-								}
-							}
-							if (qualified_owner_name.empty()) {
-								qualified_owner_name =
-									parser_.lookup_inherited_member_template_name(
-										chained_owner_handle,
-										member_name_handle,
-										0);
-							}
-							if (qualified_owner_name.empty()) {
-								qualified_owner_name =
-									StringBuilder()
-										.append(chained_owner_name)
-										.append("::")
-										.append(member_name_for_owner)
-										.commit();
-							}
-							if (auto owner_it = getTypesByNameMap().find(chained_owner_handle);
-								owner_it != getTypesByNameMap().end() &&
-								owner_it->second != nullptr &&
-								owner_it->second->hasInstantiationContext()) {
-								const TypeInfo::InstantiationContext* parent_context =
-									owner_it->second->instantiationContext();
-								OuterTemplateBinding outer_binding;
-								for (size_t binding_i = 0;
-									 binding_i < parent_context->param_names.size() &&
-									 binding_i < parent_context->param_args.size();
-									 ++binding_i) {
-									outer_binding.param_names.push_back(
-										parent_context->param_names[binding_i]);
-									outer_binding.param_args.push_back(
-										toTemplateTypeArg(parent_context->param_args[binding_i]));
-								}
-								if (!outer_binding.param_names.empty()) {
-									gTemplateRegistry.registerOuterTemplateBinding(
-										StringTable::getOrInternStringHandle(qualified_owner_name),
-										std::move(outer_binding));
-								}
-							}
-							if (std::optional<ASTNode> instantiated_member_template =
-									parser_.try_instantiate_class_template(
-										qualified_owner_name,
-										member_args,
-										false);
-								instantiated_member_template.has_value() &&
-								instantiated_member_template->is<StructDeclarationNode>()) {
-								parser_.registerAndNormalizeLateMaterializedTopLevelNode(
-									*instantiated_member_template);
-							}
-							Parser::AliasTemplateMaterializationResult materialized_member_owner =
-								parser_.resolveCanonicalInstantiatedOwnerForLookup(
-									qualified_owner_name,
-									std::span<const TemplateTypeArg>(
-										member_args.data(),
-										member_args.size()));
-							chained_owner_name = materialized_member_owner.canonicalName();
-							if (chained_owner_name.empty()) {
-								chained_owner_name =
-									parser_.get_instantiated_class_name(
-										qualified_owner_name,
-										member_args);
-							} else {
-								const StringHandle chained_owner_lookup_handle =
-									StringTable::getOrInternStringHandle(
-										chained_owner_name);
-								auto chained_owner_it =
-									getTypesByNameMap().find(chained_owner_lookup_handle);
-								if (chained_owner_it == getTypesByNameMap().end() ||
-									chained_owner_it->second == nullptr) {
-									std::string_view instantiated_owner_name =
-										parser_.get_instantiated_class_name(
-											qualified_owner_name,
-											member_args);
-									if (!instantiated_owner_name.empty()) {
-										chained_owner_name = instantiated_owner_name;
-									}
-								}
-							}
-							if (chained_owner_name.empty()) {
-								owner_chain_materialized = false;
-								break;
-							}
-							continue;
-						}
-						if (const TypeInfo* resolved_owner =
-								parser_.resolveBaseClassMemberTypeChain(
-									chained_owner_name,
-									std::span<QualifiedTypeMemberAccess>(
-										&owner_member_chain[i],
-										1))) {
-							chained_owner_name =
-								StringTable::getStringView(resolved_owner->name());
-						} else {
-							owner_chain_materialized = false;
-							break;
-						}
-					}
-					if (owner_chain_materialized) {
-						materialized_owner_name = chained_owner_name;
-					} else {
-						materialized_owner_name = {};
-					}
-				}
-
-				if (!materialized_owner_name.empty()) {
+			if (!materialized_owner_name.empty()) {
 					ChunkedVector<ASTNode> substituted_args;
 					for (size_t i = 0; i < call.arguments().size(); ++i) {
 						substituted_args.push_back(substitute(call.arguments()[i]));
@@ -2430,7 +2407,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 			}
 		}
-	}
 
 	// If not a template function call or instantiation failed, check for qualified owners
 	// that became concrete during substitution and need canonical owner identity rebound.
@@ -2821,102 +2797,34 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
 			qual_id.dependentQualifiedName()) {
-		std::string_view owner_name =
+		const std::string_view recorded_owner_name =
 			StringTable::getStringView(dependent_name->owner_name);
-		std::string_view materialized_owner_name;
-		switch (dependent_name->owner_kind) {
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
-			if (current_owner_type_name_.isValid()) {
-				materialized_owner_name =
-					StringTable::getStringView(current_owner_type_name_);
-			} else if (dependent_name->owner_type.is_valid()) {
-				if (const TypeInfo* owner_type_info =
-						tryGetTypeInfo(dependent_name->owner_type)) {
-					materialized_owner_name =
-						StringTable::getStringView(owner_type_info->name());
-				}
-			}
-			break;
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
-			if (dependent_name->owner_template_arguments.empty()) {
-				if (auto owner_subst_it = param_map_.find(owner_name);
-					owner_subst_it != param_map_.end()) {
-					if (const TypeInfo* owner_type_info =
-							tryGetTypeInfo(owner_subst_it->second.type_index)) {
-						materialized_owner_name =
-							StringTable::getStringView(owner_type_info->name());
-					}
-				}
-				break;
-			}
-			[[fallthrough]];
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
-		case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization: {
-			InlineVector<TemplateTypeArg, 4> owner_args =
-				materializeDependentRecordTemplateArgs(
-					dependent_name->owner_template_arguments,
-					kInitialDependentMemberTypeResolutionDepth);
-			if (!owner_args.empty() && !templateArgsStillDependent(owner_args)) {
-				if (auto owner_template_subst_it = param_map_.find(owner_name);
-					owner_template_subst_it != param_map_.end() &&
-					owner_template_subst_it->second.is_template_template_arg) {
-					owner_name = StringTable::getStringView(
-						owner_template_subst_it->second.template_name_handle);
-				}
-				Parser::AliasTemplateMaterializationResult materialized_owner =
-					parser_.materializeTemplateInstantiationForLookup(owner_name, owner_args);
-				materialized_owner_name = materialized_owner.canonicalName();
-				if (materialized_owner_name.empty()) {
-					materialized_owner_name =
-						parser_.get_instantiated_class_name(owner_name, owner_args);
-				}
-			}
-			break;
-		}
-		}
+		Parser::AliasTemplateMaterializationResult materialized_owner =
+			materializeDependentQualifiedRecordOwner(
+				*dependent_name,
+				kInitialDependentMemberTypeResolutionDepth,
+				/*prefer_current_owner_type_name=*/true);
+		std::string_view materialized_owner_name =
+			materialized_owner.canonicalName();
 
 		if (!materialized_owner_name.empty() && !dependent_name->member_chain.empty()) {
 			std::string_view materialized_namespace = materialized_owner_name;
 			if (dependent_name->member_chain.size() > 1) {
-				std::vector<QualifiedTypeMemberAccess> namespace_member_chain;
-				namespace_member_chain.reserve(
-					dependent_name->member_chain.size() - 1);
-				for (size_t member_index = 0;
-					 member_index + 1 < dependent_name->member_chain.size();
-					 ++member_index) {
-					const auto& member_record =
-						dependent_name->member_chain[member_index];
-					QualifiedTypeMemberAccess member_access;
-					member_access.member_name = member_record.name;
-					if (member_record.has_template_arguments) {
-						InlineVector<TemplateTypeArg, 4> member_args =
-							materializeDependentRecordTemplateArgs(
-								member_record.template_arguments,
-								kInitialDependentMemberTypeResolutionDepth);
-						if (templateArgsStillDependent(member_args)) {
-							ExpressionNode& deferred_expr =
-								gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
-							return ASTNode(&deferred_expr);
-						}
-						member_access.has_template_arguments = true;
-						member_access.template_arguments =
-							&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
-								member_args.toVector());
-					}
-					namespace_member_chain.push_back(std::move(member_access));
-				}
-				const TypeInfo* resolved_namespace =
-					resolveQualifiedMemberNamespaceChain(
-						materialized_owner_name,
-						namespace_member_chain);
-				if (resolved_namespace == nullptr ||
-					!resolved_namespace->name().isValid()) {
+				MaterializedQualifiedLookupOwner resolved_namespace =
+					materializeDependentQualifiedMemberPrefixOwner(
+						StringTable::getOrInternStringHandle(materialized_owner_name),
+						recorded_owner_name,
+						std::span<const TypeInfo::DependentQualifiedNameRecord::Member>(
+							dependent_name->member_chain.data(),
+							dependent_name->member_chain.size() - 1),
+						kInitialDependentMemberTypeResolutionDepth);
+				if (!resolved_namespace.owner_name.isValid()) {
 					ExpressionNode& deferred_expr =
 						gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
 					return ASTNode(&deferred_expr);
 				}
 				materialized_namespace =
-					StringTable::getStringView(resolved_namespace->name());
+					StringTable::getStringView(resolved_namespace.owner_name);
 			}
 
 			const auto& final_member = dependent_name->member_chain.back();
