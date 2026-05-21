@@ -1619,12 +1619,10 @@ TypeIndex Parser::substitute_template_parameter(
 
 		AliasTemplateMaterializationResult materialized_base =
 			resolveCanonicalInstantiatedOwnerForLookup(base_template_name, concrete_args);
-		if (materialized_base.instantiated_name.empty() &&
-			materialized_base.resolved_type_info == nullptr) {
-			return nullptr;
-		}
-		if (materialized_base.instantiated_name.empty() &&
-			materialized_base.resolved_type_info != nullptr) {
+		if (materialized_base.instantiated_name.empty()) {
+			if (materialized_base.resolved_type_info == nullptr) {
+				return nullptr;
+			}
 			materialized_base.instantiated_name =
 				StringTable::getStringView(materialized_base.resolved_type_info->name());
 		}
