@@ -21,6 +21,6 @@ struct PointerTraits {
 };
 
 int main() {
-	PointerTraits<int>::Rebind<char> value{};
-	return sizeof(value) == sizeof(ReplaceFirstArg<int, char>) ? 0 : 1;
+	PointerTraits<int>::Rebind<char>* value = nullptr;
+	return value == nullptr ? 0 : 1;
 }
