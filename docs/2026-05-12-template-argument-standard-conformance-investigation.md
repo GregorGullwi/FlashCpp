@@ -88,6 +88,10 @@ Future work should assume these are already in place:
   definition lookup contexts on both AST and instantiated static-member
   carriers, and covered nested/member-template static-member instantiation now
   reuses replay-first substitution instead of direct AST-only substitution.
+- out-of-line static-member definitions now preserve the full replay-visible
+  template-parameter list, and replay rebuilds parameter names/kinds/non-type
+  categories before substitution so deeper owner/member-template chains can stay
+  on the replay-first path.
 - qualified member variable-template chains through instantiated owners and
   dependent bases now recover the canonical member variable-template owner and
   outer class-template bindings for covered constexpr/initializer flows.
@@ -124,6 +128,11 @@ Latest validation on Linux sharded build:
 Targeted validation for the latest member alias-template non-template
 intermediate chain slice passed the focused ELF regressions after
 `make sharded CXX=clang++`.
+Latest focused Linux validation for the out-of-line static-member replay slice
+passed `test_template_out_of_line_static_member_replay_member_template_chain_ret0.cpp`,
+`test_template_out_of_line_static_member_two_phase_lookup_ret0.cpp`, and
+`test_template_out_of_line_static_member_two_phase_lookup_multi_template_ret0.cpp`
+after `make main CXX=clang++`.
 Focused Windows/MSVC validation for this slice passed the new deeper
 dependent-chain regressions plus nearby ratio and dependent-member regressions.
 Latest Windows/MSVC full-suite validation after this slice:
@@ -176,6 +185,10 @@ Most concrete next subtask:
   and covered nested/member-template static-member instantiation reuses
   replay-first substitution with outer/inner template bindings instead of
   immediate AST-only substitution.
+  Out-of-line static-member definitions now likewise preserve the full replay-
+  visible template-parameter list, and replay reconstructs names/kinds/non-type
+  categories before substitution so deeper member-template owner chains keep the
+  same semantic replay path.
   Covered deferred alias member-template suffix chains in declarations and base
   specifiers now work as well, and covered member alias-template declarations
   now preserve non-template intermediate member segments plus enclosing
@@ -188,8 +201,9 @@ Most concrete next subtask:
   declaration/static-member/deferred-base paths that still never captured enough
   metadata to stay on that semantic path and still require AST-only fallback.
   The next bounded follow-up is therefore the remaining replay users outside the
-  new in-class/nested static-member metadata path, plus broader coverage for
-  out-of-line static-member replay combined with deeper dependent owner chains.
+  covered in-class/nested/out-of-line static-member metadata paths, with
+  priority on broader out-of-line declaration/static-member replay coverage
+  beyond the newly covered deeper member-template owner chains.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -268,18 +282,22 @@ coverage becomes sufficient.
       remaining qualified-id spellings so local repair logic is not reintroduced;
    - treat dependent owner template-ids in template-parameter defaults as
       covered for the focused member-template and nested-alias `::value` cases;
-   - treat lookup-time canonical owner materialization as covered for the
+    - treat lookup-time canonical owner materialization as covered for the
       focused ratio-style inherited `::type::value` default-NTTP path;
-   - treat general expression/lazy-static deeper dependent-base and
-     unknown-specialization `member-template -> type/alias -> value/call`
-     chains as covered for the focused qualified-id and call-substitution
-     paths;
-   - extend owner-correct replay/materialization into the remaining
-     declaration, static-member, and deferred-base paths outside the covered
-     variable-template initializer, in-class/nested static-member replay, and
-     default-NTTP parser flows;
-   - remove the next AST-only/deferred-base fallback path, with the next bounded
-     target now the remaining declaration/static-member replay gaps.
+    - treat general expression/lazy-static deeper dependent-base and
+      unknown-specialization `member-template -> type/alias -> value/call`
+      chains as covered for the focused qualified-id and call-substitution
+      paths;
+    - treat out-of-line static-member replay as covered for the focused deeper
+      member-template owner chain cases once replay-visible template parameters
+      are preserved and replay reconstructs parameter kinds/non-type categories;
+    - extend owner-correct replay/materialization into the remaining
+      declaration, static-member, and deferred-base paths outside the covered
+      variable-template initializer, in-class/nested/out-of-line static-member
+      replay, and default-NTTP parser flows;
+    - remove the next AST-only/deferred-base fallback path, with the next bounded
+      target now the remaining broader out-of-line declaration/static-member
+      replay gaps.
 
 2. **Dependent-name/current-instantiation expansion**
    - richer dependent-base and unknown-specialization records;

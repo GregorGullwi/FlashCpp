@@ -65,6 +65,11 @@ Useful to know before changing anything:
   static-member carriers, and covered nested/member-template static-member
   instantiation now reuses replay-first substitution instead of AST-only
   substitution;
+- out-of-line static-member definitions now preserve the full replay-visible
+  template-parameter list, and instantiation rebuilds replay state with
+  parameter kinds/non-type categories before replay-first substitution, covering
+  deeper owner/member-template chains such as
+  `MetaFactory<T>::template Wrap<char>::template Step<N>::value`;
 - qualified member variable-template chains now use owner-aware lookup through
   instantiated owners and dependent bases, preserving recovered outer class
   template bindings for cases such as `Derived<T>::template member_v<T>`;
@@ -110,6 +115,11 @@ Focused Windows/MSVC validation for this slice passed the new deeper
 dependent-chain regressions plus the nearby ratio/dependent-member regressions.
 Latest Windows/MSVC full-suite validation after this slice:
 `2487` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Latest focused Linux validation for the out-of-line static-member replay slice
+passed `test_template_out_of_line_static_member_replay_member_template_chain_ret0.cpp`,
+`test_template_out_of_line_static_member_two_phase_lookup_ret0.cpp`, and
+`test_template_out_of_line_static_member_two_phase_lookup_multi_template_ret0.cpp`
+after `make main CXX=clang++`.
 
 ## What is still wrong
 
@@ -144,6 +154,11 @@ Concrete follow-up already identified by recent work:
   static-member carriers as well, and covered nested/member-template static-
   member instantiation now reuses replay-first substitution with outer/inner
   template bindings instead of immediate AST-only substitution.
+  Out-of-line static-member definitions now preserve the full replay-visible
+  template-parameter list as well, and replay rebuilds parameter
+  names/kinds/non-type categories before substitution so deeper
+  owner/member-template chains stay on the replay-first path instead of falling
+  back immediately to AST substitution.
   Qualified member variable-template chains through dependent bases are now
   covered for the focused initializer/constexpr paths, and dependent-base
   `this->template` member-function-template calls are covered for the focused
@@ -161,8 +176,10 @@ Concrete follow-up already identified by recent work:
   unknown-specialization and dependent-base `member-template -> type/alias ->
   value/call` cases. The next concrete follow-up is therefore narrower again:
   extend that same owner-correct replay/materialization path into the remaining
-  declaration/static-member paths that still never captured enough metadata to
-  avoid AST-only fallback.
+  declaration/deferred-base paths that still never captured enough metadata to
+  avoid AST-only fallback, with the next bounded target now the still-uncovered
+  out-of-line declaration/static-member replay users beyond the newly covered
+  deeper member-template chain shape.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -244,20 +261,22 @@ In priority order:
    - lookup-time canonical owner materialization now covers the focused
       ratio-style inherited `::type::value` default-NTTP path without mutating
       deferred-base attachment;
-   - general expression/lazy-static substitution now covers the focused
-     deeper dependent-base and unknown-specialization
-     `member-template -> type/alias -> value/call` chains via a shared
-     owner-correct prefix materialization path reused by qualified-id and call
-     substitution;
-   - dependent-base `this->template` member-function-template calls are covered
-     for focused inline class-template body cases, including multilevel
-     dependent-base chains;
-   - remaining replay-metadata gaps outside the covered static-member and
-     variable-template initializer paths;
-- remaining declaration/static-member/deferred-base paths that still bypass
-  the shared semantic lookup model and therefore fall back to AST-only
-  repair, with the next bounded target now the still-uncovered replay users
-  outside the new in-class/nested static-member metadata path.
+    - general expression/lazy-static substitution now covers the focused
+      deeper dependent-base and unknown-specialization
+      `member-template -> type/alias -> value/call` chains via a shared
+      owner-correct prefix materialization path reused by qualified-id and call
+      substitution;
+    - dependent-base `this->template` member-function-template calls are covered
+      for focused inline class-template body cases, including multilevel
+      dependent-base chains;
+    - remaining replay-metadata gaps outside the covered static-member and
+      variable-template initializer paths, now including the newly covered
+      out-of-line static-member replay path for deeper member-template chains;
+    - remaining declaration/static-member/deferred-base paths that still bypass
+      the shared semantic lookup model and therefore fall back to AST-only
+      repair, with the next bounded target now the still-uncovered replay users
+      outside the covered in-class/nested/out-of-line static-member metadata
+      paths.
 
 2. **Continue dependent-name/current-instantiation modeling**
    - richer dependent-base and unknown-specialization records;
@@ -325,6 +344,10 @@ materially changes what future refactors can assume.
   covered nested/member-template static-member instantiation reuses that stored
   metadata for replay-first substitution before falling back to AST
   substitution.
+- out-of-line static-member definitions now also store the full replay-visible
+  template parameter list, and replay rebuilds parameter names/kinds/non-type
+  categories before substitution so deeper member-template owner chains can stay
+  on the replay-first two-phase lookup path.
 - qualified member variable-template chains now resolve through inherited
   owner-aware member variable-template lookup, and member variable-template
   instantiation folds recovered outer class-template bindings into initializer
