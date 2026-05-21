@@ -4867,6 +4867,27 @@ CanonicalTypeId SemanticAnalysis::inferResolvedSymbolType(const ASTNode& symbol)
 	return {};
 }
 
+CanonicalTypeId SemanticAnalysis::inferStaticMemberTypeFromContext(const IdentifierNode& identifier) {
+	const MemberContext* member_context = getCurrentMemberContext();
+	if (!member_context || !member_context->type_index.is_valid()) {
+		return {};
+	}
+
+	const StructTypeInfo* current_struct_info = tryGetStructTypeInfo(member_context->type_index);
+	if (!current_struct_info) {
+		return {};
+	}
+
+	const StringHandle member_name = identifier.getOrInternNameHandle();
+	parser().instantiateLazyStaticMember(current_struct_info->name, member_name);
+	auto [static_member, owner_struct] = current_struct_info->findStaticMemberRecursive(member_name);
+	if (static_member && owner_struct) {
+		return type_context_.intern(canonicalTypeDescFromStaticMember(*static_member));
+	}
+
+	return {};
+}
+
 // --- Expression type inference ---
 
 CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
@@ -4946,6 +4967,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						return symbol_type_id;
 					}
 				}
+
+			if (e.binding() == IdentifierBinding::StaticMember) {
+				if (const CanonicalTypeId static_member_type_id = inferStaticMemberTypeFromContext(e)) {
+					return static_member_type_id;
+				}
+			}
 
 				// Phase 6: move NonStaticMember sema-owned resolution before parser
 				// fallback so sema resolves implicit this->member types without
