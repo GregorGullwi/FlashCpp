@@ -510,9 +510,12 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							//
 							// 2. TypeIndex is valid but gTypeInfo has no entry: internal error.
 							if (expr_type_index.is_valid()) {
-								throw InternalError(
-									std::string("struct-category expr has valid TypeIndex but no TypeInfo; sema missed this case: expr=") +
-									std::string(getTypeName(expr_type)) + " return=" + std::string(getTypeName(return_type)));
+								throw InternalError(std::string(StringBuilder()
+									.append("struct-category expr has valid TypeIndex but no TypeInfo; sema missed this case: expr=")
+									.append(getTypeName(expr_type))
+									.append(" return=")
+									.append(getTypeName(return_type))
+									.commit()));
 							}
 							// Case 1: unresolved template-type placeholder (known limitation).
 							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());

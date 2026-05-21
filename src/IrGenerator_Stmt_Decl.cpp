@@ -104,6 +104,34 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 					  expr);
 }
 
+// True only for expression nodes synthesized by codegen during range-for and
+// structured-binding lowering, which runs after the sema pass completes.  These
+// local identifiers and dereference expressions have no exact sema slot, so the
+// remaining parser lookup is limited to this non-sema-owned legacy path.
+bool isCodegenSynthesizedOverloadArg(const ASTNode& arg) {
+	if (!arg.is<ExpressionNode>()) {
+		return false;
+	}
+
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	return std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			// Codegen still creates some local identifiers after sema has finished
+			// normalizing the function body (for example range-for iterator locals
+			// and structured-binding element variables).  Those nodes have no exact
+			// sema slot to query; keep the parser lookup limited to that legacy case.
+			return true;
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			// Range-for lowering also synthesizes dereference expressions over those
+			// iterator locals when declaring the loop variable.
+			return true;
+		}
+		return false;
+	},
+					  expr);
+}
+
 std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 	if (!arg.is<ExpressionNode>()) {
 		return "non-expression";
@@ -174,6 +202,14 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
 		throw InternalError(std::string(StringBuilder()
 			.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
+			.append(describeOverloadArgExprShape(arg))
+			.commit()));
+	}
+	if (sema_normalized_current_function_ &&
+		!has_exact_sema_type_slot &&
+		!isCodegenSynthesizedOverloadArg(arg)) {
+		throw InternalError(std::string(StringBuilder()
+			.append("Missing sema-owned overload-resolution argument type and exact sema slot in sema-normalized body for ")
 			.append(describeOverloadArgExprShape(arg))
 			.commit()));
 	}

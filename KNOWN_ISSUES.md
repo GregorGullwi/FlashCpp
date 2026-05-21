@@ -56,7 +56,25 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 3) Template lambdas with own template parameters not instantiated at call site
+## 3) Dependent qualified member variable-template chains are not fully recovered
+
+- **Symptom**: A variable-template initializer such as
+  `Outer<T>::template member<U>` can still lower to an unresolved qualified
+  identifier when the member is itself a variable template and the owner is a
+  dependent class-template instantiation.
+- **Root cause**: Replay reparses the initializer under the definition context,
+  but the later expression substitution path does not always recover concrete
+  explicit template arguments for qualified member variable-template calls.
+- **Affected path**: `Parser::try_instantiate_variable_template` initializer
+  replay followed by `ExpressionSubstitutor` handling of unresolved qualified
+  member variable-template calls.
+- **Impact**: The new replay infrastructure covers namespace variable templates
+  and member-template function chains, but fully dependent member variable-template
+  chains need a follow-up instantiation recovery pass.
+
+---
+
+## 4) Template lambdas with own template parameters not instantiated at call site
 
 - **Symptom**: A template lambda such as `[]<typename T>(T value) { return value; }` compiles
   and produces correct output for simple pass-through cases (e.g. `identity(42)` returns 42),
@@ -77,17 +95,20 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Impact**: Complex lambda own-template-parameter use (non-identity body, multi-parameter
   template lambdas, `T` used in non-trivial type positions) may produce incorrect code or
   crash.
-- **Fix direction**: Store `LambdaExpressionNode::template_params_` in `LambdaInfo`; detect
-  at the call site in `IrGenerator_Call_Indirect.cpp` that a lambda has own template params;
-  deduce each param from the corresponding argument type (similar to the `isPlaceholderAutoType`
-  path for generic lambdas); propagate the deduced types into `resolved_param_nodes`.
-  Additionally, fix the parser fallback in `Parser_Expr_ControlFlowStmt.cpp` line ~929
-  which stores `TypeCategory::Int` instead of `TypeCategory::Auto` when return-type
-  deduction fails — this should emit a proper placeholder so sema can re-deduce.
+- **Fix direction**:
+  - Store `LambdaExpressionNode::template_params_` in `LambdaInfo`; detect
+    at the call site in `IrGenerator_Call_Indirect.cpp` that a lambda has own template params;
+    deduce each param from the corresponding argument type (similar to the `isPlaceholderAutoType`
+    path for generic lambdas); propagate the deduced types into `resolved_param_nodes`.
+  - Replace the related parser recovery in `Parser_Expr_ControlFlowStmt.cpp`
+    during lambda auto-return deduction: when return-type deduction fails it
+    currently stores `TypeCategory::Int`; it should emit a proper
+    `TypeCategory::Auto` placeholder so sema can re-deduce after lambda template
+    parameters are instantiated.
 
 ---
 
-## 4) Sema does not annotate implicit conversions for non-standard-arithmetic binary operands
+## 5) Sema does not annotate implicit conversions for non-standard-arithmetic binary operands
 
 - **Symptom**: Binary expressions where one or both operands are non-standard-arithmetic
   types (unscoped enums, pointer types, function pointer types, user-defined types) fall
@@ -110,18 +131,22 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 5) Dependent qualified member variable-template chains are not fully recovered
+## 6) Codegen-synthesized local expressions still need parser type lookup for overload arguments
 
-- **Symptom**: A variable-template initializer such as
-  `Outer<T>::template member<U>` can still lower to an unresolved qualified
-  identifier when the member is itself a variable template and the owner is a
-  dependent class-template instantiation.
-- **Root cause**: Replay reparses the initializer under the definition context,
-  but the later expression substitution path does not always recover concrete
-  explicit template arguments for qualified member variable-template calls.
-- **Affected path**: `Parser::try_instantiate_variable_template` initializer
-  replay followed by `ExpressionSubstitutor` handling of unresolved qualified
-  member variable-template calls.
-- **Impact**: The new replay infrastructure covers namespace variable templates
-  and member-template function chains, but fully dependent member variable-template
-  chains need a follow-up instantiation recovery pass.
+- **Symptom**: Fully removing the final `parser_.get_expression_type` fallback
+  from `AstToIr::buildCodegenOverloadResolutionArgType` still breaks normalized
+  function bodies that later synthesize local expressions.
+- **Confirmed cases**: range-for desugaring creates `__range_begin_N` /
+  `__range_end_N` identifiers and dereference expressions after semantic
+  normalization, and structured binding lowering creates per-binding local
+  identifiers directly in codegen.
+- **Root cause**: These synthesized `ExpressionNode`s are not part of the
+  sema-normalized AST and therefore have no exact `SemanticSlot` or cached
+  overload-resolution argument type for `ParserSemanticServices` to query.
+- **Current guard**: The codegen fallback is retained only for no-exact-slot
+  `IdentifierNode` and `UnaryOperatorNode` arguments in sema-normalized bodies.
+  Sema-normalized expressions that do have an exact sema type slot still fail
+  closed instead of consulting the parser.
+- **Fix direction**: Move range-for and structured-binding synthesized locals
+  into a sema-owned lowering/cache path, or provide a sema side table for
+  codegen-created local declarations and their identifier uses.
