@@ -293,6 +293,37 @@ struct EvalResult {
 	}
 };
 
+template <typename AstNodeContainer>
+inline const ASTNode* tryGetSingleExpressionInitializer(const AstNodeContainer& initializers) {
+	if (initializers.size() != 1 || !initializers[0].template is<ExpressionNode>()) {
+		return nullptr;
+	}
+	return &initializers[0];
+}
+
+inline TypeIndex canonicalizeConstexprObjectReuseTypeIndex(TypeIndex type_index) {
+	if (!type_index.is_valid()) {
+		return type_index;
+	}
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
+	if (!resolved_alias.type_index.is_valid() ||
+		resolved_alias.pointer_depth != 0 ||
+		resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+		resolved_alias.function_signature.has_value() ||
+		resolved_alias.member_class_name.has_value() ||
+		!resolved_alias.array_dimensions.empty()) {
+		return type_index;
+	}
+	return resolved_alias.type_index.withCategory(resolved_alias.typeEnum());
+}
+
+inline bool canReuseConstexprSameTypeObjectValue(
+	const EvalResult& source_value,
+	TypeIndex destination_type_index) {
+	return canonicalizeConstexprObjectReuseTypeIndex(source_value.object_type_index) ==
+		canonicalizeConstexprObjectReuseTypeIndex(destination_type_index);
+}
+
 // Storage duration for variable declarations
 enum class StorageDuration {
 	Automatic,	   // Local variables (automatic storage)
