@@ -70,6 +70,37 @@ bool matchesPatternQualifiedName(StringHandle instantiated_name, StringHandle pa
 	}
 }
 
+bool isArithmeticOrEnumType(TypeCategory category) {
+	return is_standard_arithmetic_type(category) || category == TypeCategory::Enum;
+}
+
+struct BinaryCommonTypeInfo {
+	TypeCategory lhsCategory = TypeCategory::Invalid;
+	TypeCategory rhsCategory = TypeCategory::Invalid;
+	TypeCategory commonType = TypeCategory::Invalid;
+};
+
+BinaryCommonTypeInfo computeBinaryCommonTypeInfo(TypeIndex lhs_type_index, TypeCategory lhs_category,
+												 TypeIndex rhs_type_index, TypeCategory rhs_category,
+												 bool is_shift_op) {
+	const bool lhs_is_enum = lhs_category == TypeCategory::Enum;
+	const bool rhs_is_enum = rhs_category == TypeCategory::Enum;
+	const bool enums_need_underlying_types =
+		lhs_is_enum && rhs_is_enum && lhs_type_index != rhs_type_index;
+
+	BinaryCommonTypeInfo info;
+	info.lhsCategory = (lhs_is_enum && (!rhs_is_enum || enums_need_underlying_types))
+		? resolveEnumUnderlyingTypeCategory(lhs_type_index)
+		: lhs_category;
+	info.rhsCategory = (rhs_is_enum && (!lhs_is_enum || enums_need_underlying_types))
+		? resolveEnumUnderlyingTypeCategory(rhs_type_index)
+		: rhs_category;
+	info.commonType = is_shift_op
+		? promote_integer_type(info.lhsCategory)
+		: get_common_type(info.lhsCategory, info.rhsCategory);
+	return info;
+}
+
 std::optional<bool> getSameTypeAssignmentKind(const StructTypeInfo& struct_info, const FunctionDeclarationNode& func_decl) {
 	if (func_decl.parameter_nodes().empty() || !func_decl.parameter_nodes()[0].is<DeclarationNode>()) {
 		return std::nullopt;
@@ -1526,7 +1557,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type_index.category()) &&
 					rhsExprResult.typeEnum() != gsi.bindingType() && gsi.type_index.category() != TypeCategory::Void) {
 					if (sema_normalized_current_function_ &&
-						is_standard_arithmetic_type(rhsExprResult.typeEnum()) &&
+						isArithmeticOrEnumType(rhsExprResult.typeEnum()) &&
 						is_standard_arithmetic_type(gsi.type_index.category()))
 						throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.category(), gsi.type_index.category(), binaryOperatorNode.get_token());
@@ -1590,19 +1621,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				// NOT usual arithmetic conversions. The result type is the promoted LHS type.
 				// All other operators use usual arithmetic conversions per [expr.ass]/7.
 				const bool is_shift_op = (op == "<<=" || op == ">>=");
-				// Resolve enum operands to their underlying type for common-type computation,
-				// only when the other operand is not also an enum.
-				const bool gsi_is_enum = gsi.type_index.category() == TypeCategory::Enum;
-				const bool rhs_gsi_is_enum = rhs_result.category() == TypeCategory::Enum;
-				const TypeCategory lhsCatGsiResolved = (gsi_is_enum && !rhs_gsi_is_enum)
-					? resolveEnumUnderlyingTypeCategory(gsi.type_index)
-					: gsi.type_index.category();
-				const TypeCategory rhsCatGsiResolved = (rhs_gsi_is_enum && !gsi_is_enum)
-					? resolveEnumUnderlyingTypeCategory(rhs_result.type_index)
-					: rhs_result.category();
-				const TypeCategory commonType = is_shift_op
-													? promote_integer_type(lhsCatGsiResolved)
-													: get_common_type(lhsCatGsiResolved, rhsCatGsiResolved);
+				const BinaryCommonTypeInfo commonTypeInfo =
+					computeBinaryCommonTypeInfo(gsi.type_index,
+												gsi.type_index.category(),
+												rhs_result.type_index,
+												rhs_result.category(),
+												is_shift_op);
+				const TypeCategory commonType = commonTypeInfo.commonType;
 
 				// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
 				if (is_shift_op && is_floating_point_type(gsi.type_index.category()))
@@ -1612,7 +1637,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (gsi.type_index.category() != commonType) {
 					if (!tryGlobalSemaConv(lhs_operand, binaryOperatorNode.get_lhs(), commonType)) {
 						if (sema_normalized_current_function_ &&
-							is_standard_arithmetic_type(gsi.type_index.category()) &&
+							isArithmeticOrEnumType(gsi.type_index.category()) &&
 							is_standard_arithmetic_type(commonType))
 							throw InternalError(std::string("Phase 15: sema missed compound assign global LHS (") + std::string(getTypeName(gsi.type_index.category())) + " -> " + std::string(getTypeName(commonType)) + ")");
 						lhs_operand = generateTypeConversion(lhs_operand, gsi.type_index.category(), commonType, binaryOperatorNode.get_token());
@@ -1625,11 +1650,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					// Reject float RHS before promotion to avoid unnecessary conversion work.
 					if (is_floating_point_type(rhs_result.typeEnum()))
 						throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
-					const TypeCategory promoted_rhs = promote_integer_type(rhs_result.category());
+					const TypeCategory promoted_rhs = promote_integer_type(commonTypeInfo.rhsCategory);
 					if (rhs_result.category() != promoted_rhs) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
 							if (sema_normalized_current_function_ &&
-								is_standard_arithmetic_type(rhs_result.typeEnum()))
+								isArithmeticOrEnumType(rhs_result.typeEnum()))
 								throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
 							rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), promoted_rhs, binaryOperatorNode.get_token());
 						}
@@ -1637,7 +1662,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				} else if (rhs_result.category() != commonType) {
 					if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
 						if (sema_normalized_current_function_ &&
-							is_standard_arithmetic_type(rhs_result.typeEnum()) &&
+							isArithmeticOrEnumType(rhs_result.typeEnum()) &&
 							is_standard_arithmetic_type(commonType))
 							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(commonType)) + ")");
 						rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), commonType, binaryOperatorNode.get_token());
@@ -3416,22 +3441,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// C++20 [expr.shift]: shift operands undergo independent integral promotions,
 	// NOT usual arithmetic conversions.  The result type is the promoted LHS type.
 	const bool is_shift_op = (op == "<<" || op == ">>" || op == "<<=" || op == ">>=");
-	// Resolve enum operands to their underlying integer type for common-type
-	// computation, mirroring SemanticAnalysis::tryAnnotateBinaryOperandConversions.
-	// Only resolve when the other operand is NOT also an enum: same-type enum
-	// comparisons (e.g. scoped_enum == scoped_enum) need no conversion at all
-	// and must keep commonType = Enum so that lhsCat == commonType is satisfied.
-	const bool lhs_is_enum = lhsCat == TypeCategory::Enum;
-	const bool rhs_is_enum = rhsCat == TypeCategory::Enum;
-	const TypeCategory lhsCatResolved = (lhs_is_enum && !rhs_is_enum)
-		? resolveEnumUnderlyingTypeCategory(lhsExprResult.type_index)
-		: lhsCat;
-	const TypeCategory rhsCatResolved = (rhs_is_enum && !lhs_is_enum)
-		? resolveEnumUnderlyingTypeCategory(rhsExprResult.type_index)
-		: rhsCat;
-	TypeCategory commonType = is_shift_op
-								  ? promote_integer_type(lhsCatResolved) // shift: result type = promoted LHS
-								  : get_common_type(lhsCatResolved, rhsCatResolved);
+	const BinaryCommonTypeInfo commonTypeInfo =
+		computeBinaryCommonTypeInfo(lhsExprResult.type_index,
+									lhsCat,
+									rhsExprResult.type_index,
+									rhsCat,
+									is_shift_op);
+	TypeCategory commonType = commonTypeInfo.commonType;
 
 	// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 	const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
@@ -3443,7 +3459,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	if (!is_pointer_comparison && lhsCat != commonType) {
 		if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
 			if (sema_normalized_current_function_ &&
-				is_standard_arithmetic_type(lhsCat) &&
+				isArithmeticOrEnumType(lhsCat) &&
 				is_standard_arithmetic_type(commonType))
 				throw InternalError(std::string(StringBuilder()
 					.append("Phase 15: sema missed binary LHS conversion ("sv)
@@ -3463,11 +3479,11 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// (e.g. short→int) — never widen to commonType (which is the promoted LHS type).
 	// Phase 15: if sema missed the promotion and it's needed, assert.
 	if (is_shift_op) {
-		const TypeCategory promoted_rhs = promote_integer_type(rhsExprResult.category());
+		const TypeCategory promoted_rhs = promote_integer_type(commonTypeInfo.rhsCategory);
 		if (rhsCat != promoted_rhs) {
 			if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs())) {
 				if (sema_normalized_current_function_ &&
-					is_standard_arithmetic_type(rhsCat))
+					isArithmeticOrEnumType(rhsCat))
 					throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhsCat)) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
 				rhsExprResult = generateTypeConversion(rhsExprResult, rhsCat, promoted_rhs, binaryOperatorNode.get_token());
 			}
@@ -3475,7 +3491,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	} else if (!is_pointer_comparison && rhsCat != commonType) {
 		if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
 			if (sema_normalized_current_function_ &&
-				is_standard_arithmetic_type(rhsCat) &&
+				isArithmeticOrEnumType(rhsCat) &&
 				is_standard_arithmetic_type(commonType))
 				throw InternalError(std::string(StringBuilder()
 					.append("Phase 15: sema missed binary RHS conversion ("sv)
