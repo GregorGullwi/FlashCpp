@@ -10289,16 +10289,45 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substitution_context.definition_lookup_context);
 
 				FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-				setCurrentTemplateParamNames(out_of_line_var.template_param_names);
+				InlineVector<StringHandle, 4> template_param_names;
+				InlineVector<TemplateParameterKind, 4> template_param_kinds;
+				InlineVector<TypeCategory, 4> non_type_categories;
+				const auto& replay_params_source =
+					!out_of_line_var.replay_template_params.empty()
+						? out_of_line_var.replay_template_params
+						: out_of_line_var.template_params;
+				std::span<const TemplateParameterNode> replay_template_params(
+					replay_params_source.data(),
+					replay_params_source.size());
+				buildTemplateParameterReplayState(
+					replay_template_params,
+					template_param_names,
+					template_param_kinds,
+					non_type_categories);
+				setCurrentTemplateParameters(
+					template_param_names,
+					template_param_kinds,
+					non_type_categories);
 
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
-				DeclarationNode declaration_copy = *declaration_ptr;
-				TypeSpecifierNode& type_spec = declaration_copy.type_specifier_node();
+				ASTNode declaration_copy = *out_of_line_var.declaration;
+				DeclarationNode* declaration_copy_ptr =
+					get_decl_from_symbol_mut(declaration_copy);
+				if (declaration_copy_ptr == nullptr) {
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Out-of-line static initializer replay failed to recover mutable declaration for ",
+						out_of_line_var.member_name);
+					return false;
+				}
+				DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;
+				TypeSpecifierNode& type_spec = declaration_copy_ref.type_specifier_node();
 
 				std::optional<ASTNode> reparsed_initializer;
 				if (peek() == "="_tok) {
 					reparsed_initializer = parse_copy_initialization(
-						declaration_copy,
+						declaration_copy_ref,
 						type_spec);
 				} else if (peek() == "{"_tok) {
 					ParseResult init_parse_result = parse_brace_initializer(type_spec);

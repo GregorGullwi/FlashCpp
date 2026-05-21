@@ -592,6 +592,21 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 
 	std::string_view qualified_class_name = StringTable::getStringView(
 		StringTable::getOrInternStringHandle(qualified_class_name_storage));
+	auto build_out_of_line_static_replay_params =
+		[&template_params, &inner_template_params]() {
+		InlineVector<TemplateParameterNode, 4> replay_template_params;
+		replay_template_params.reserve(
+			template_params.size() + inner_template_params.size());
+		replay_template_params.insert(
+			replay_template_params.end(),
+			template_params.begin(),
+			template_params.end());
+		replay_template_params.insert(
+			replay_template_params.end(),
+			inner_template_params.begin(),
+			inner_template_params.end());
+		return replay_template_params;
+	};
 
 	auto create_out_of_line_static_member_declaration = [&]() -> ASTNode {
 		ASTNode declaration_node = emplace_node<DeclarationNode>(return_type_node, function_name_token);
@@ -642,6 +657,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Register the static member variable definition
 		OutOfLineMemberVariable out_of_line_var;
 		out_of_line_var.template_params = template_params;
+		out_of_line_var.replay_template_params = build_out_of_line_static_replay_params();
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
 		out_of_line_var.declaration = var_declaration_node;
@@ -669,6 +685,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// This is used for providing storage for static constexpr members declared in the class
 		OutOfLineMemberVariable out_of_line_var;
 		out_of_line_var.template_params = template_params;
+		out_of_line_var.replay_template_params = build_out_of_line_static_replay_params();
 		out_of_line_var.member_name = function_name_token.handle();	// Actually the variable name
 		out_of_line_var.type_node = return_type_node;				  // Actually the variable type
 		out_of_line_var.declaration = create_out_of_line_static_member_declaration();
