@@ -65,13 +65,9 @@ std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTN
 		},
 			callNode.as<ExpressionNode>());
 	}
-	throw InternalError(std::string(StringBuilder()
-		.append("Missing sema-owned call expression return type for ")
-		.append(call_shape)
-		.append(" (sema query state=")
-		.append(describeTypeSpecifierQueryState(sema_type_query.state))
-		.append(")")
-		.commit()));
+	throw InternalError(
+		"Missing sema-owned call expression return type for " + call_shape +
+		" (sema query state=" + std::string(describeTypeSpecifierQueryState(sema_type_query.state)) + ")");
 }
 
 /*static*/

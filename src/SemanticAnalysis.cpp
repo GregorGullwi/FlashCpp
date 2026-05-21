@@ -4043,6 +4043,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const Ca
 		return return_type;
 	};
 
+	if (!call_expr.callee().function_declaration_or_null()) {
+		return std::nullopt;
+	}
 	const DeclarationNode& callee_decl = call_expr.callee().declaration();
 	const ASTNode callee_return_type_node = callee_decl.type_node();
 	if (callee_return_type_node.has_value() && callee_return_type_node.is<TypeSpecifierNode>()) {
