@@ -31,19 +31,21 @@ constexpr int test_heap_cleanup_in_dtor() {
 static_assert(test_heap_cleanup_in_dtor() == 123,
 	"constexpr destructor frees heap allocation");
 
-// delete[] with constexpr destructor (empty body)
+// delete[] with constexpr destructor
 struct Tag {
 	int id;
 	constexpr Tag() : id(0) {}
 	constexpr ~Tag() {}
 };
 
-constexpr bool test_delete_array_with_dtor() {
+constexpr int test_delete_array_with_dtor() {
 	Tag* tags = new Tag[3];
+	tags[1].id = 7;
+	int v = tags[1].id;
 	delete[] tags;
-	return true;
+	return v;
 }
-static_assert(test_delete_array_with_dtor(),
+static_assert(test_delete_array_with_dtor() == 7,
 	"delete[] invokes constexpr destructor");
 
 int main() { return 0; }

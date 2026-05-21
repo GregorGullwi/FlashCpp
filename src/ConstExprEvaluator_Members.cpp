@@ -1549,9 +1549,9 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 	}
 
 	if (const auto* subscript = tryGetNode<ArraySubscriptNode>(expr)) {
-		std::optional<BoundWriteTarget> base_target = resolveBoundWriteTarget(
-			subscript->array_expr(), bindings, context, evaluate_index_expression, resolve_error);
-		if (!base_target.has_value() || base_target->slot == nullptr || !base_target->slot->is_array) {
+		EvalResult array_result = evaluate_index_expression(subscript->array_expr(), bindings, context);
+		if (!array_result.success()) {
+			resolve_error = array_result;
 			return std::nullopt;
 		}
 
@@ -1562,6 +1562,54 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		}
 
 		long long index = index_result.as_int();
+		if (array_result.pointer_to_var.isValid()) {
+			long long final_index = array_result.pointer_offset + index;
+			if (final_index < 0) {
+				resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue");
+				return std::nullopt;
+			}
+
+			StringHandle pointer_target = array_result.pointer_to_var;
+			auto heap_it = context.constexpr_heap.find(pointer_target);
+			if (heap_it != context.constexpr_heap.end()) {
+				if (heap_it->second.freed) {
+					resolve_error = EvalResult::error("Use after free in constant expression");
+					return std::nullopt;
+				}
+				EvalResult& heap_value = heap_it->second.value;
+				if (!heap_value.is_array) {
+					resolve_error = EvalResult::error("Subscript operator applied to non-array type in constant expression");
+					return std::nullopt;
+				}
+				expandArrayElements(heap_value);
+				size_t element_index = static_cast<size_t>(final_index);
+				if (element_index >= heap_value.array_elements.size()) {
+					return failArrayIndexOutOfBounds();
+				}
+				return BoundWriteTarget{&heap_value.array_elements[element_index], {}};
+			}
+
+			std::string_view pointed_name = StringTable::getStringView(pointer_target);
+			if (EvalResult* pointed_binding = findMutableBindingValue(pointed_name, bindings, context)) {
+				if (!pointed_binding->is_array) {
+					resolve_error = EvalResult::error("Subscript operator applied to non-array type in constant expression");
+					return std::nullopt;
+				}
+				expandArrayElements(*pointed_binding);
+				size_t element_index = static_cast<size_t>(final_index);
+				if (element_index >= pointed_binding->array_elements.size()) {
+					return failArrayIndexOutOfBounds();
+				}
+				return BoundWriteTarget{&pointed_binding->array_elements[element_index], pointed_name};
+			}
+		}
+
+		std::optional<BoundWriteTarget> base_target = resolveBoundWriteTarget(
+			subscript->array_expr(), bindings, context, evaluate_index_expression, resolve_error);
+		if (!base_target.has_value() || base_target->slot == nullptr || !base_target->slot->is_array) {
+			return std::nullopt;
+		}
+
 		if (index < 0 || static_cast<size_t>(index) >= base_target->slot->array_elements.size()) {
 			resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue");
 			return std::nullopt;
