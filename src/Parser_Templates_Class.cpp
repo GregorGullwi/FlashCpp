@@ -43,7 +43,7 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 		const TypeIndex enum_type_index = enum_decl.type_index();
 		std::optional<ASTNode> initializer = enumerator.value();
 
-		struct_ref.add_static_member(
+		struct_ref.addStaticMember(
 			enumerator_name,
 			enum_type_index,
 			enum_size,
@@ -5239,12 +5239,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						 !initializer_definition_lookup_context->is_valid()) &&
 						type_and_name_result.node().has_value()) {
 						const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
-						static_member_definition_lookup_context.setDefinitionToken(
-							decl.identifier_token());
-						static_member_definition_lookup_context.definition_namespace =
-							gSymbolTable.get_current_namespace_handle();
-						static_member_definition_lookup_context.current_instantiation_name =
-							qualified_pattern_name;
+						static_member_definition_lookup_context =
+							buildDefinitionLookupContextFromToken(
+								decl.identifier_token(),
+								qualified_pattern_name);
 						if (static_member_definition_lookup_context.is_valid()) {
 							initializer_definition_lookup_context =
 								&static_member_definition_lookup_context;
@@ -5366,7 +5364,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 						// Add to struct's static members
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
-						member_struct_ref.add_static_member(
+						member_struct_ref.addStaticMember(
 							static_member_name_handle,
 							type_spec.type_index(),
 							static_member_size,
@@ -5806,12 +5804,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					 !initializer_definition_lookup_context->is_valid()) &&
 					type_and_name_result.node().has_value()) {
 					const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
-					static_member_definition_lookup_context.setDefinitionToken(
-						decl.identifier_token());
-					static_member_definition_lookup_context.definition_namespace =
-						gSymbolTable.get_current_namespace_handle();
-					static_member_definition_lookup_context.current_instantiation_name =
-						qualified_name;
+					static_member_definition_lookup_context =
+						buildDefinitionLookupContextFromToken(
+							decl.identifier_token(),
+							qualified_name);
 					if (static_member_definition_lookup_context.is_valid()) {
 						initializer_definition_lookup_context =
 							&static_member_definition_lookup_context;
@@ -5867,7 +5863,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						}
 					}
 
-					member_struct_ref.add_static_member(
+					member_struct_ref.addStaticMember(
 						decl.identifier_token().handle(),
 						type_spec.type_index(),
 						static_member_size,

@@ -4,8 +4,8 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefinitionLookupContext(
-	const Token& variable_name_token,
+TemplateDefinitionLookupContext Parser::buildDefinitionLookupContextFromToken(
+	const Token& definition_token,
 	StringHandle current_instantiation_name) const {
 	if (current_template_definition_lookup_context_ &&
 		current_template_definition_lookup_context_->is_valid()) {
@@ -20,12 +20,41 @@ TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefiniti
 	}
 
 	TemplateDefinitionLookupContext definition_lookup_context;
-	definition_lookup_context.setDefinitionToken(variable_name_token);
+	definition_lookup_context.setDefinitionToken(definition_token);
 	definition_lookup_context.definition_namespace =
 		gSymbolTable.get_current_namespace_handle();
 	if (current_instantiation_name.isValid()) {
 		definition_lookup_context.current_instantiation_name =
 			current_instantiation_name;
+	}
+	return definition_lookup_context;
+}
+
+TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefinitionLookupContext(
+	const Token& variable_name_token,
+	StringHandle current_instantiation_name) const {
+	return buildDefinitionLookupContextFromToken(
+		variable_name_token,
+		current_instantiation_name);
+}
+
+TemplateDefinitionLookupContext Parser::ensureReplayDefinitionLookupContext(
+	TemplateDefinitionLookupContext definition_lookup_context,
+	const Token& fallback_definition_token,
+	NamespaceHandle fallback_definition_namespace,
+	StringHandle fallback_current_instantiation_name) const {
+	if (!definition_lookup_context.is_valid()) {
+		definition_lookup_context.setDefinitionToken(fallback_definition_token);
+		definition_lookup_context.definition_namespace =
+			fallback_definition_namespace;
+		if (fallback_current_instantiation_name.isValid()) {
+			definition_lookup_context.current_instantiation_name =
+				fallback_current_instantiation_name;
+		}
+	} else if (!definition_lookup_context.current_instantiation_name.isValid() &&
+			   fallback_current_instantiation_name.isValid()) {
+		definition_lookup_context.current_instantiation_name =
+			fallback_current_instantiation_name;
 	}
 	return definition_lookup_context;
 }

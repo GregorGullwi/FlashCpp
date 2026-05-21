@@ -1507,12 +1507,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const TemplateDefinitionLookupContext* initializer_definition_lookup_context =
 				current_template_definition_lookup_context_;
 			if (needs_template_initializer_lookup_context) {
-				static_member_definition_lookup_context.setDefinitionToken(
-					decl.identifier_token());
-				static_member_definition_lookup_context.definition_namespace =
-					gSymbolTable.get_current_namespace_handle();
-				static_member_definition_lookup_context.current_instantiation_name =
-					qualified_struct_name;
+				static_member_definition_lookup_context =
+					buildDefinitionLookupContextFromToken(
+						decl.identifier_token(),
+						qualified_struct_name);
 				if (static_member_definition_lookup_context.is_valid()) {
 					initializer_definition_lookup_context =
 						&static_member_definition_lookup_context;

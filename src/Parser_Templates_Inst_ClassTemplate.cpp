@@ -4406,15 +4406,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									currentTemplateSubstitutionFailurePolicy());
 
 							TemplateDefinitionLookupContext definition_lookup_context =
-								static_member.initializerDefinitionLookupContext();
-							if (!definition_lookup_context.is_valid()) {
-								definition_lookup_context.setDefinitionToken(
-									declaration->identifier_token());
-								definition_lookup_context.definition_namespace =
-									spec_decl_ns;
-							}
-							definition_lookup_context.current_instantiation_name =
-								instantiated_name;
+								ensureReplayDefinitionLookupContext(
+									static_member.initializerDefinitionLookupContext(),
+									declaration->identifier_token(),
+									spec_decl_ns,
+									instantiated_name);
 							substitution_context.definition_lookup_context =
 								definition_lookup_context.is_valid()
 									? &definition_lookup_context
@@ -5018,7 +5014,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											 effective_pattern_template_args))
 									   : std::nullopt;
 						});
-				instantiated_struct_ref.add_static_member(
+				instantiated_struct_ref.addStaticMember(
 					static_member.name,
 					substituted_type_index,
 					substituted_size,
@@ -7412,15 +7408,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				currentTemplateSubstitutionFailurePolicy());
 
 		TemplateDefinitionLookupContext definition_lookup_context =
-			static_member.initializerDefinitionLookupContext();
-		if (!definition_lookup_context.is_valid()) {
-			definition_lookup_context.setDefinitionToken(
-				declaration->identifier_token());
-			definition_lookup_context.definition_namespace =
-				fallback_definition_namespace;
-		}
-		definition_lookup_context.current_instantiation_name =
-			owning_instantiated_name;
+			ensureReplayDefinitionLookupContext(
+				static_member.initializerDefinitionLookupContext(),
+				declaration->identifier_token(),
+				fallback_definition_namespace,
+				owning_instantiated_name);
 		substitution_context.definition_lookup_context =
 			definition_lookup_context.is_valid()
 				? &definition_lookup_context
@@ -8036,7 +8028,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						static_member.initializer_position,
 						static_member.initializerDefinitionLookupContext(),
 						static_member.is_constexpr);
-					instantiated_nested_struct_ref.add_static_member(
+					instantiated_nested_struct_ref.addStaticMember(
 						static_member.getName(),
 						substituted_type_index,
 						substituted_size,
@@ -8769,7 +8761,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_decl.is_no_unique_address);
 	}
 	for (const auto& static_member : struct_info_ptr->static_members) {
-		instantiated_struct_ref.add_static_member(
+		instantiated_struct_ref.addStaticMember(
 			static_member.name,
 			static_member.type_index,
 			static_member.size,
@@ -10271,11 +10263,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						nullptr,
 						currentTemplateSubstitutionFailurePolicy());
 
+				const DeclarationNode* declaration_ptr =
+					get_decl_from_symbol(*out_of_line_var.declaration);
+				if (declaration_ptr == nullptr) {
+					return false;
+				}
+
 				TemplateDefinitionLookupContext definition_lookup_context =
-					out_of_line_var.definition_lookup_context;
+					ensureReplayDefinitionLookupContext(
+						out_of_line_var.definition_lookup_context,
+						declaration_ptr->identifier_token(),
+						struct_info_ptr->getNamespaceHandle(),
+						instantiated_name);
 				const TemplateDefinitionLookupContext* active_definition_lookup_context = nullptr;
 				if (definition_lookup_context.is_valid()) {
-					definition_lookup_context.current_instantiation_name = instantiated_name;
 					active_definition_lookup_context = &definition_lookup_context;
 				}
 				substitution_context.definition_lookup_context =
@@ -10291,12 +10292,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setCurrentTemplateParamNames(out_of_line_var.template_param_names);
 
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
-
-				const DeclarationNode* declaration_ptr =
-					get_decl_from_symbol(*out_of_line_var.declaration);
-				if (declaration_ptr == nullptr) {
-					return false;
-				}
 				DeclarationNode declaration_copy = *declaration_ptr;
 				TypeSpecifierNode& type_spec = declaration_copy.type_specifier_node();
 
