@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-20
+**Last updated:** 2026-05-21
 
 This document is the short audit for FlashCpp's template infrastructure. Its
 main purpose is to describe what is still structurally wrong, what the next
@@ -72,11 +72,14 @@ Useful to know before changing anything:
   suffixes for covered alias and base-specifier flows, so spellings like
   `Traits<T>::template Box<U>::template Rebind<T>` are no longer truncated to a
   single dependent member-template hop;
+- member alias-template declarations now preserve deferred member suffixes and
+  enclosing class-template bindings for covered non-template intermediate member
+  chains such as `Provider<T>::Node::template Apply<U>`;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
 Validation at this point passed the Linux sharded build and ELF test workflow:
-`2436` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## What is still wrong
 
@@ -111,11 +114,15 @@ Concrete follow-up already identified by recent work:
   `this->template` member-function-template calls are covered for the focused
   inline class-template body paths. Deferred alias targets now keep covered
   multi-hop member-template suffixes in alias declarations and base-specifier
-  materialization. The next concrete follow-up is the remaining dependent-base
-  and unknown-specialization member-chain work in declarations that still do not
-  preserve enough metadata, especially chains with non-template intermediate
-  members or member-alias targets that need enclosing class-template bindings,
-  plus the current `<ratio>` blocker where parsing and `std::ratio_less`
+  materialization. Member alias-template chains with covered non-template
+  intermediate members and enclosing class-template bindings now preserve enough
+  metadata for declarations such as `Provider<T>::Node::template Apply<U>`.
+  The next concrete follow-up is the remaining dependent-base and
+  unknown-specialization member-chain work in declarations that still do not
+  preserve enough metadata, especially chains that combine non-template
+  intermediates with deeper dependent bases, value/static member lookups, or
+  member-alias targets outside the newly covered alias-template materialization
+  path, plus the current `<ratio>` blocker where parsing and `std::ratio_less`
   constexpr comparison now progress to later IR conversion/link failures.
 
 ### 2. Dependent names are still represented too loosely
@@ -275,6 +282,10 @@ materially changes what future refactors can assume.
 - deferred alias targets now store a member-template segment chain instead of a
   single member hop, and covered alias/base-specifier materialization walks that
   chain through the shared owner-aware member lookup path.
+- member alias-template declarations now capture deferred suffix chains and
+  register instantiated/nested aliases with recovered outer class-template
+  bindings, covering non-template intermediate member chains such as
+  `Provider<T>::Node::template Apply<U>`.
 
 ## Exit criteria for this audit
 

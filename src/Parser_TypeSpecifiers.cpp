@@ -940,7 +940,7 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 					if (resolved_type_info == nullptr && alias_node.is_deferred()) {
-						if (auto target_args = materializeDeferredAliasTemplateArgs(alias_node, *template_args);
+						if (auto target_args = materializeDeferredAliasTemplateArgs(alias_node, *template_args, nullptr);
 							target_args.has_value() && !alias_node.target_template_name().empty()) {
 							std::string_view target_instantiated_name =
 								get_instantiated_class_name(alias_node.target_template_name(), *target_args);
@@ -2382,15 +2382,19 @@ ParseResult Parser::parse_type_specifier() {
 								// Check if the member is a known template before parsing < as template arguments
 								auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 								auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+								auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
 
 								// Also check with the full qualified name
 								auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_type_name);
 								auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_type_name);
+								auto full_alias_template_opt = gTemplateRegistry.lookup_alias_template(qualified_type_name);
 
 								bool member_is_template = member_template_opt.has_value() ||
 														  member_var_template_opt.has_value() ||
+														  member_alias_template_opt.has_value() ||
 														  full_template_opt.has_value() ||
-														  full_var_template_opt.has_value();
+														  full_var_template_opt.has_value() ||
+														  full_alias_template_opt.has_value();
 
 								if (!member_is_template) {
 									// Member is NOT a known template, so < is likely a comparison operator
@@ -2733,6 +2737,20 @@ ParseResult Parser::parse_type_specifier() {
 							auto member_template_args = parse_explicit_template_arguments();
 							if (!member_template_args.has_value()) {
 								return ParseResult::error("Failed to parse template arguments for member template alias: " + member_alias_name_str, type_name_token);
+							}
+
+							// Prefer the shared alias-template materializer first: it knows how to
+							// replay deferred member suffixes and merge enclosing class-template
+							// bindings for aliases such as Owner<T>::Node::template Apply<U>.
+							AliasTemplateMaterializationResult materialized_alias =
+								materializeAliasTemplateInstantiation(
+									member_alias_name_str,
+									*member_template_args);
+							if (materialized_alias.resolved_type_info != nullptr) {
+								return ParseResult::success(emplace_node<TypeSpecifierNode>(
+									resolveTypeInfoToTypeSpec(
+										*materialized_alias.resolved_type_info,
+										alias_node.target_type_node())));
 							}
 
 							// Instantiate the member template alias with the provided arguments

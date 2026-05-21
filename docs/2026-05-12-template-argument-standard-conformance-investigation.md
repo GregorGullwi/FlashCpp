@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-20
+**Last updated:** 2026-05-21
 
 This document is the execution plan for moving FlashCpp's template
 infrastructure toward C++20 conformance. It intentionally focuses on remaining
@@ -94,11 +94,16 @@ Future work should assume these are already in place:
 - deferred alias targets now keep multi-hop member-template suffixes and
   materialize the covered alias/base-specifier cases through the shared
   owner-aware member lookup path instead of storing only one suffix hop.
+- member alias-template declarations now capture deferred suffix chains and
+  merge recovered outer class-template bindings while materializing covered
+  non-template intermediate member chains such as
+  `Provider<T>::Node::template Apply<U>`.
 
 Latest validation on Linux sharded build:
-`2436` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
-Targeted validation for the latest deferred alias member-template chain slice
-passed the focused ELF regressions after `make sharded CXX=clang++`.
+`2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Targeted validation for the latest member alias-template non-template
+intermediate chain slice passed the focused ELF regressions after
+`make sharded CXX=clang++`.
 
 ## Remaining work, in priority order
 
@@ -141,10 +146,12 @@ Most concrete next subtask:
   initializer replay paths, covered member variable-template chain recovery, or
   covered dependent-base `this->template` member-function-template lookup.
   Covered deferred alias member-template suffix chains in declarations and base
-  specifiers now work as well. The next bounded alias-chain step is preserving
-  and materializing non-template intermediate member segments and enclosing
-  class-template bindings for member-alias targets that reference an outer
-  member-template parameter.
+  specifiers now work as well, and covered member alias-template declarations
+  now preserve non-template intermediate member segments plus enclosing
+  class-template bindings for cases like `Provider<T>::Node::template Apply<U>`.
+  The next bounded alias-chain step is expanding that owner-correct path to
+  deeper dependent-base/unknown-specialization chains, especially when value or
+  static member lookups appear between type/member-alias segments.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 

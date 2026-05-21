@@ -2453,7 +2453,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const TemplateParameterNode* target_template_param);
 	std::optional<InlineVector<TemplateTypeArg, 4>> materializeDeferredAliasTemplateArgs(
 		const TemplateAliasNode& alias_node,
-		std::span<const TemplateTypeArg> template_args);
+		std::span<const TemplateTypeArg> template_args,
+		const OuterTemplateBinding* outer_binding);
 	StringHandle getDeferredMemberAliasHandle(
 		StringHandle member_name,
 		std::string_view instantiated_name,
