@@ -2875,6 +2875,10 @@ private:
 	AliasTemplateMaterializationResult resolveCanonicalInstantiatedOwnerForLookup(
 		std::string_view owner_name,
 		std::span<const TemplateTypeArg> owner_template_args);
+	OuterTemplateBinding buildAccumulatedOuterTemplateBinding(
+		const TypeInfo* owner_type_info,
+		const OuterTemplateBinding* inherited_binding,
+		StringHandle fallback_binding_lookup_name);
 	std::optional<ASTNode> instantiateLazyMemberForCanonicalOwner(
 		std::string_view& owner_name,
 		std::string_view member_name,

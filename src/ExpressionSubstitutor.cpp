@@ -1058,6 +1058,15 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 
 	result.owner_name = owner_name_handle;
 	result.owner_type = findTypeByName(owner_name_handle);
+	StringHandle recorded_owner_name_handle;
+	if (!recorded_owner_name.empty()) {
+		recorded_owner_name_handle =
+			StringTable::getOrInternStringHandle(recorded_owner_name);
+	}
+	result.outer_binding = parser_.buildAccumulatedOuterTemplateBinding(
+		result.owner_type,
+		nullptr,
+		recorded_owner_name_handle);
 
 	for (size_t i = 0; i < prefix_chain.size(); ++i) {
 		const auto& member_record = prefix_chain[i];
@@ -1109,26 +1118,15 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 						.commit();
 			}
 
-			if (result.owner_type != nullptr &&
-				result.owner_type->hasInstantiationContext()) {
-				const TypeInfo::InstantiationContext* parent_context =
-					result.owner_type->instantiationContext();
-				OuterTemplateBinding outer_binding;
-				for (size_t binding_i = 0;
-					 parent_context != nullptr &&
-					 binding_i < parent_context->param_names.size() &&
-					 binding_i < parent_context->param_args.size();
-					 ++binding_i) {
-					outer_binding.param_names.push_back(
-						parent_context->param_names[binding_i]);
-					outer_binding.param_args.push_back(
-						toTemplateTypeArg(parent_context->param_args[binding_i]));
-				}
-				if (!outer_binding.param_names.empty()) {
-					gTemplateRegistry.registerOuterTemplateBinding(
-						StringTable::getOrInternStringHandle(qualified_owner_name),
-						std::move(outer_binding));
-				}
+			OuterTemplateBinding outer_binding =
+				parser_.buildAccumulatedOuterTemplateBinding(
+					result.owner_type,
+					&result.outer_binding,
+					StringHandle{});
+			if (!outer_binding.param_names.empty()) {
+				gTemplateRegistry.registerOuterTemplateBinding(
+					StringTable::getOrInternStringHandle(qualified_owner_name),
+					std::move(outer_binding));
 			}
 
 			if (std::optional<ASTNode> instantiated_member_template =
@@ -1170,6 +1168,11 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 			if (result.owner_type == nullptr) {
 				result.owner_type = findTypeByName(next_owner_handle);
 			}
+			result.outer_binding =
+				parser_.buildAccumulatedOuterTemplateBinding(
+					result.owner_type,
+					&result.outer_binding,
+					StringHandle{});
 			continue;
 		}
 

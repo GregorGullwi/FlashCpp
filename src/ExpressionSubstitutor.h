@@ -118,6 +118,7 @@ private:
 	struct MaterializedQualifiedLookupOwner {
 		const TypeInfo* owner_type = nullptr;
 		StringHandle owner_name{};
+		OuterTemplateBinding outer_binding;
 	};
 
 	// Handlers for different expression types
