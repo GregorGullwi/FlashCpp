@@ -474,6 +474,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					sema_arg_type->type() == TypeCategory::Invalid ||
 					isPlaceholderAutoType(sema_arg_type->type());
 				if (requires_recovery_fallback) {
+					if (sema_normalized_current_function_) {
+						throw InternalError("Sema-missing inline_always argument type in sema-normalized body");
+					}
 					return parser_.get_expression_type(arg_node);
 				}
 				return sema_arg_type;

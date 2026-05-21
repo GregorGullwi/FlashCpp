@@ -3418,10 +3418,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					.commit()));
 			// Remaining fallback: handles legitimate non-standard-arithmetic implicit
 			// conversions that sema does not yet annotate, e.g.:
-			//   - unscoped enum vs. underlying integer type in comparisons/arithmetic
+			//   - enum vs. integer type in comparisons/arithmetic (unscoped and scoped)
 			//   - static local / global variable address derefs (Pointer category)
 			//   - function pointer nullptr comparisons
-			// The sema-normalized + arithmetic case is already guarded above.
+			// The sema-normalized + pure-arithmetic case is already guarded above.
+			// NOTE (Step 3 audit): enum conversions fall back here even in normalized
+			// bodies. get_common_type() uses the raw Enum TypeCategory so lhsCat
+			// stays Enum; tryGlobalSemaConv may not match the stored slot. Deferred.
 			lhsExprResult = generateTypeConversion(lhsExprResult, lhsCat, commonType, binaryOperatorNode.get_token());
 		}
 	}
