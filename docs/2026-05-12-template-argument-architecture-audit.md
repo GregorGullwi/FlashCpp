@@ -119,7 +119,7 @@ Latest focused Linux validation for the out-of-line static-member replay slice
 passed `test_template_out_of_line_static_member_replay_member_template_chain_ret0.cpp`,
 `test_template_out_of_line_static_member_two_phase_lookup_ret0.cpp`, and
 `test_template_out_of_line_static_member_two_phase_lookup_multi_template_ret0.cpp`
-after `make main CXX=clang++`.
+after `make sharded CXX=clang++`.
 
 ## What is still wrong
 
