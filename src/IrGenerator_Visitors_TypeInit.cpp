@@ -77,9 +77,6 @@ bool AstToIr::shouldPreferExpressionReturnType(
 	if (isPlaceholderAutoType(expr_type.type())) {
 		return false;
 	}
-	// Prefer the expression type only when sema and the declaration agree on the
-	// same concrete base identity. Any mismatch here means codegen would be
-	// masking incompatible metadata rather than resolving a harmless difference.
 	if (decl_type.type() != expr_type.type() ||
 		decl_type.category() != expr_type.category()) {
 		return false;
