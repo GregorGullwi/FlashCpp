@@ -940,7 +940,7 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 					if (resolved_type_info == nullptr && alias_node.is_deferred()) {
-						if (auto target_args = materializeDeferredAliasTemplateArgs(alias_node, *template_args);
+						if (auto target_args = materializeDeferredAliasTemplateArgs(alias_node, *template_args, nullptr);
 							target_args.has_value() && !alias_node.target_template_name().empty()) {
 							std::string_view target_instantiated_name =
 								get_instantiated_class_name(alias_node.target_template_name(), *target_args);
