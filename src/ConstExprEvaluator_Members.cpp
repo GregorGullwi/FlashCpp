@@ -1563,7 +1563,14 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 
 		long long index = index_result.as_int();
 		if (array_result.pointer_to_var.isValid()) {
-			long long final_index = array_result.pointer_offset + index;
+			long long final_index;
+			// Overflow-safe pointer offset + index addition
+			if ((index > 0 && array_result.pointer_offset > LLONG_MAX - index) ||
+				(index < 0 && array_result.pointer_offset < LLONG_MIN - index)) {
+				resolve_error = EvalResult::error("Signed integer overflow in constant expression", EvalErrorType::NotConstantExpression);
+				return std::nullopt;
+			}
+			final_index = array_result.pointer_offset + index;
 			if (final_index < 0) {
 				resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue");
 				return std::nullopt;
@@ -1578,8 +1585,12 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 				}
 				EvalResult& heap_value = heap_it->second.value;
 				if (!heap_value.is_array) {
-					resolve_error = EvalResult::error("Subscript operator applied to non-array type in constant expression");
-					return std::nullopt;
+					// C++ allows p[0] on a pointer to a single object.
+					if (final_index != 0) {
+						resolve_error = EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable");
+						return std::nullopt;
+					}
+					return BoundWriteTarget{&heap_value, {}};
 				}
 				expandArrayElements(heap_value);
 				size_t element_index = static_cast<size_t>(final_index);
@@ -1592,8 +1603,12 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 			std::string_view pointed_name = StringTable::getStringView(pointer_target);
 			if (EvalResult* pointed_binding = findMutableBindingValue(pointed_name, bindings, context)) {
 				if (!pointed_binding->is_array) {
-					resolve_error = EvalResult::error("Subscript operator applied to non-array type in constant expression");
-					return std::nullopt;
+					// C++ allows p[0] on a pointer to a single object.
+					if (final_index != 0) {
+						resolve_error = EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable");
+						return std::nullopt;
+					}
+					return BoundWriteTarget{pointed_binding, pointed_name};
 				}
 				expandArrayElements(*pointed_binding);
 				size_t element_index = static_cast<size_t>(final_index);
@@ -1607,9 +1622,13 @@ std::optional<BoundWriteTarget> resolveBoundWriteTarget(
 		std::optional<BoundWriteTarget> base_target = resolveBoundWriteTarget(
 			subscript->array_expr(), bindings, context, evaluate_index_expression, resolve_error);
 		if (!base_target.has_value() || base_target->slot == nullptr || !base_target->slot->is_array) {
+			if (!resolve_error.has_value() && base_target.has_value() && base_target->slot != nullptr && !base_target->slot->is_array) {
+				resolve_error = EvalResult::error("Subscript operator applied to non-array type in constant expression");
+			}
 			return std::nullopt;
 		}
 
+		expandArrayElements(*base_target->slot);
 		if (index < 0 || static_cast<size_t>(index) >= base_target->slot->array_elements.size()) {
 			resolve_error = EvalResult::error("Array index out of bounds while resolving constexpr lvalue");
 			return std::nullopt;
