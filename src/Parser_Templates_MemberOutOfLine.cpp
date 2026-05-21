@@ -597,12 +597,14 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		InlineVector<TemplateParameterNode, 4> replay_template_params;
 		replay_template_params.reserve(
 			template_params.size() + inner_template_params.size());
-		for (const TemplateParameterNode& template_param : template_params) {
-			replay_template_params.push_back(template_param);
-		}
-		for (const TemplateParameterNode& inner_template_param : inner_template_params) {
-			replay_template_params.push_back(inner_template_param);
-		}
+		replay_template_params.insert(
+			replay_template_params.end(),
+			template_params.begin(),
+			template_params.end());
+		replay_template_params.insert(
+			replay_template_params.end(),
+			inner_template_params.begin(),
+			inner_template_params.end());
 		return replay_template_params;
 	};
 

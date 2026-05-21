@@ -10292,16 +10292,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				InlineVector<StringHandle, 4> template_param_names;
 				InlineVector<TemplateParameterKind, 4> template_param_kinds;
 				InlineVector<TypeCategory, 4> non_type_categories;
-				std::span<const TemplateParameterNode> replay_template_params;
-				if (!out_of_line_var.replay_template_params.empty()) {
-					replay_template_params = std::span<const TemplateParameterNode>(
-						out_of_line_var.replay_template_params.data(),
-						out_of_line_var.replay_template_params.size());
-				} else {
-					replay_template_params = std::span<const TemplateParameterNode>(
-						out_of_line_var.template_params.data(),
-						out_of_line_var.template_params.size());
-				}
+				const auto& replay_params_source =
+					!out_of_line_var.replay_template_params.empty()
+						? out_of_line_var.replay_template_params
+						: out_of_line_var.template_params;
+				std::span<const TemplateParameterNode> replay_template_params(
+					replay_params_source.data(),
+					replay_params_source.size());
 				buildTemplateParameterReplayState(
 					replay_template_params,
 					template_param_names,

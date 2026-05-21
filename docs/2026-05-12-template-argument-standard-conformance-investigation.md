@@ -280,7 +280,7 @@ coverage becomes sufficient.
       the covered qualified-id/member-side cases;
    - keep reusing the shared member-side lookup/materialization path in the
       remaining qualified-id spellings so local repair logic is not reintroduced;
-   - treat dependent owner template-ids in template-parameter defaults as
+    - treat dependent owner template-ids in template-parameter defaults as
       covered for the focused member-template and nested-alias `::value` cases;
     - treat lookup-time canonical owner materialization as covered for the
       focused ratio-style inherited `::type::value` default-NTTP path;
