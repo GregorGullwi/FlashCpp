@@ -3997,7 +3997,117 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	return query.hasValue() ? query.type : std::nullopt;
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallReceiverType(const ASTNode& receiver_node) const {
+	const TypeSpecifierQueryResult receiver_type_query = getExpressionTypeQuery(receiver_node);
+	if (receiver_type_query.state != TypeSpecifierQueryResult::State::Available ||
+		!receiver_type_query.type.has_value()) {
+		return std::nullopt;
+	}
+	return receiver_type_query.type;
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallQueryType(const CallExprNode& call_expr) const {
+	auto applySelfReferenceToReturnType = [&](TypeSpecifierNode& return_type) {
+		if (call_expr.has_receiver()) {
+			const std::optional<TypeSpecifierNode> receiver_type = resolveCallReceiverType(call_expr.receiver());
+			if (receiver_type.has_value()) {
+				return_type = resolveTypeSpecifierForSelfReference(return_type, receiver_type->type_index());
+			}
+		} else if (const MemberContext* member_context = getCurrentMemberContext()) {
+			return_type = resolveTypeSpecifierForSelfReference(return_type, member_context->type_index);
+		}
+	};
+
+	auto tryResolveReturnTypeFromDeclaration = [&](const FunctionDeclarationNode* func_decl) -> std::optional<TypeSpecifierNode> {
+		if (!func_decl) {
+			return std::nullopt;
+		}
+
+		TypeSpecifierNode return_type = func_decl->decl_node().type_specifier_node();
+		if (isPlaceholderAutoType(return_type.type()) && return_type.has_function_signature()) {
+			const FunctionSignature& signature = return_type.function_signature();
+			TypeCategory signature_return_category = signature.returnType();
+			if (!isPlaceholderAutoType(signature_return_category) &&
+				signature_return_category != TypeCategory::Invalid &&
+				signature.return_type_index.is_valid()) {
+				return_type = TypeSpecifierNode(
+					signature.return_type_index.withCategory(signature_return_category),
+					SizeInBits{get_type_size_bits(signature_return_category)},
+					func_decl->decl_node().identifier_token(),
+					CVQualifier::None,
+					signature.return_reference_qualifier);
+				return_type.add_pointer_levels(signature.return_pointer_depth);
+				return_type.set_size_in_bits(getTypeSpecSizeBits(return_type));
+			}
+		}
+		if (func_decl->is_member_function()) {
+			applySelfReferenceToReturnType(return_type);
+		}
+
+		if (return_type.type() == TypeCategory::Invalid || isPlaceholderAutoType(return_type.type())) {
+			if (auto resolved_return = const_cast<SemanticAnalysis*>(this)->resolveCallReturnType(*func_decl, call_expr);
+				resolved_return.has_value()) {
+				return_type = *resolved_return;
+			}
+		}
+
+		if (return_type.type() == TypeCategory::Invalid || isPlaceholderAutoType(return_type.type())) {
+			return std::nullopt;
+		}
+		return return_type;
+	};
+
+	if (const ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(&call_expr);
+		op_call_query.hasValue()) {
+		if (auto return_type = tryResolveReturnTypeFromDeclaration(op_call_query.function); return_type.has_value()) {
+			return return_type;
+		}
+	}
+	if (const ResolvedFunctionQueryResult direct_call_query = getResolvedDirectCallQuery(&call_expr);
+		direct_call_query.hasValue()) {
+		if (auto return_type = tryResolveReturnTypeFromDeclaration(direct_call_query.function); return_type.has_value()) {
+			return return_type;
+		}
+	}
+
+	if (const FunctionDeclarationNode* parser_stored_target = call_expr.callee().function_declaration_or_null();
+		parser_stored_target != nullptr) {
+		if (auto return_type = tryResolveReturnTypeFromDeclaration(parser_stored_target); return_type.has_value()) {
+			return return_type;
+		}
+	}
+
+	const DeclarationNode& callee_decl = call_expr.callee().declaration();
+	const ASTNode callee_return_type_node = callee_decl.type_node();
+	if (callee_return_type_node.has_value() && callee_return_type_node.is<TypeSpecifierNode>()) {
+		TypeSpecifierNode return_type = callee_return_type_node.as<TypeSpecifierNode>();
+		applySelfReferenceToReturnType(return_type);
+
+		if (return_type.type() != TypeCategory::Invalid && !isPlaceholderAutoType(return_type.type())) {
+			return return_type;
+		}
+	}
+	return std::nullopt;
+}
+
 TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode& node) const {
+	auto tryResolveCallType = [&](const ASTNode& candidate) -> std::optional<TypeSpecifierNode> {
+		if (candidate.is<CallExprNode>()) {
+			return resolveCallQueryType(candidate.as<CallExprNode>());
+		}
+		if (candidate.is<ExpressionNode>()) {
+			const ExpressionNode& expr = candidate.as<ExpressionNode>();
+			if (std::holds_alternative<CallExprNode>(expr)) {
+				return resolveCallQueryType(std::get<CallExprNode>(expr));
+			}
+		}
+		return std::nullopt;
+	};
+
+	if (auto call_type = tryResolveCallType(node); call_type.has_value()) {
+		return {TypeSpecifierQueryResult::State::Available, *call_type};
+	}
+
 	if (!node.is<ExpressionNode>()) {
 		if (auto literal_type = tryBuildDirectLiteralQueryType(node); literal_type.has_value()) {
 			return {TypeSpecifierQueryResult::State::Available, *literal_type};
