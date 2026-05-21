@@ -54,8 +54,17 @@ std::optional<TypeSpecifierNode> AstToIr::getCallExpressionReturnType(const ASTN
 		sema_normalized_current_function_) {
 		throw InternalError("Normalized call expression return-type query remained NotYetAnalyzed");
 	}
+	if (sema_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
+		return std::nullopt;
+	}
+
+	std::string callee_name = "<unknown>";
+	if (callNode.is<CallExprNode>()) {
+		const CallExprNode& call_expr = callNode.as<CallExprNode>();
+		callee_name = std::string(call_expr.callee().declaration().identifier_token().value());
+	}
 	throw InternalError(
-		std::string("Missing sema-owned call expression return type for CallExprNode") +
+		std::string("Missing sema-owned call expression return type for CallExprNode '") + callee_name + "'" +
 		" (sema query state=" + std::string(describeTypeSpecifierQueryState(sema_type_query.state)) + ")");
 }
 
