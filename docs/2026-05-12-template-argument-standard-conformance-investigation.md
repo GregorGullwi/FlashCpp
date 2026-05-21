@@ -107,19 +107,23 @@ Future work should assume these are already in place:
   reuses the shared canonical owner helper before inherited member-chain
   resolution, covering ratio-style inherited `::type::value` lookup during
   default-NTTP evaluation without perturbing deferred-base attachment.
+- dependent qualified-id and qualified-call substitution now share owner-
+  correct prefix-chain materialization for the focused general
+  expression/lazy-static cases where a member-template hop produces an
+  intermediate type/alias before a final static value or call, covering shapes
+  such as `Traits<T>::template Box<T>::type::value`,
+  `Traits<T>::template Box<T>::type::get()`, and
+  `Derived<T>::template Inner<int>::type::value`.
 
 Latest validation on Linux sharded build:
 `2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 Targeted validation for the latest member alias-template non-template
 intermediate chain slice passed the focused ELF regressions after
 `make sharded CXX=clang++`.
-Focused Windows/MSVC validation for this slice passed
-`test_ratio_inherited_type_default_nttp_value_ret0.cpp` plus nearby ratio and
-dependent-member regressions. Latest Windows/MSVC full-suite validation after
-adding that regression:
-`2476` regular tests compiled/linked/runtime-pass, `1` unrelated regular test
-link-fail (`template_template_with_member_ret0.cpp`), `181` expected-fail
-tests.
+Focused Windows/MSVC validation for this slice passed the new deeper
+dependent-chain regressions plus nearby ratio and dependent-member regressions.
+Latest Windows/MSVC full-suite validation after this slice:
+`2481` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 ## Remaining work, in priority order
 
@@ -139,8 +143,8 @@ Immediate targets:
 
 Most concrete next subtask:
 
-- finish the remaining dependent-base/unknown-specialization member-chain work
-  after the latest replay-metadata improvements: deferred explicit-template
+- finish the remaining declaration/static-member two-phase lookup work after the
+  latest replay-metadata improvements: deferred explicit-template
   qualified-call records now preserve the instantiated placeholder `owner_type`
   instead of dropping it at parse time, and variable-template initializers now
   capture replay metadata for covered namespace/member declarations. Deferred
@@ -167,11 +171,13 @@ Most concrete next subtask:
   specifiers now work as well, and covered member alias-template declarations
   now preserve non-template intermediate member segments plus enclosing
   class-template bindings for cases like `Provider<T>::Node::template Apply<U>`.
-  The next bounded follow-up is expanding that owner-correct path to deeper
-  dependent-base/unknown-specialization chains, especially when value or static
-  member lookups appear between type/member-alias segments. Separate from this
-  slice, current Windows full-suite validation still exposes an unrelated link
-  failure in `template_template_with_member_ret0.cpp`.
+  General expression/lazy-static substitution now also covers the focused
+  deeper dependent-base/unknown-specialization
+  `member-template -> type/alias -> value/call` chains via a shared owner-
+  correct prefix materialization path reused by qualified-id and call
+  substitution. The next bounded follow-up is therefore the remaining
+  declaration/static-member/deferred-base paths that still never captured enough
+  metadata to stay on that semantic path and still require AST-only fallback.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -252,11 +258,15 @@ coverage becomes sufficient.
       covered for the focused member-template and nested-alias `::value` cases;
    - treat lookup-time canonical owner materialization as covered for the
       focused ratio-style inherited `::type::value` default-NTTP path;
-   - extend owner-correct replay/materialization into the remaining declaration
-      and deferred-base paths outside the covered static-member,
-      variable-template initializer, and default-NTTP parser flows;
+   - treat general expression/lazy-static deeper dependent-base and
+     unknown-specialization `member-template -> type/alias -> value/call`
+     chains as covered for the focused qualified-id and call-substitution
+     paths;
+   - extend owner-correct replay/materialization into the remaining
+     declaration, static-member, and deferred-base paths outside the covered
+     variable-template initializer and default-NTTP parser flows;
    - remove the next AST-only/deferred-base fallback path, with the next bounded
-      target now deeper dependent-base/unknown-specialization value-hop chains.
+     target now the remaining declaration/static-member replay gaps.
 
 2. **Dependent-name/current-instantiation expansion**
    - richer dependent-base and unknown-specialization records;
@@ -363,6 +373,10 @@ re-solving already-solved problems.
   `resolveCanonicalInstantiatedOwnerForLookup` before inherited member-chain
   resolution, covering ratio-style inherited `::type` followed by default-NTTP
   `::value` use without introducing another fallback path.
+- dependent qualified-id and qualified-call substitution now share owner-
+  correct prefix-chain materialization for the covered general
+  expression/lazy-static chains where a member-template hop feeds an
+  intermediate type/alias before the final static member or member call.
 
 ## Exit criteria
 

@@ -2528,14 +2528,12 @@ ParseResult Parser::parse_type_specifier() {
 								return ParseResult::error("Failed to parse template arguments for member class template", type_name_token);
 							}
 
-							if (parent_type_it != getTypesByNameMap().end() &&
-								parent_type_it->second->hasInstantiationContext()) {
-								const TypeInfo::InstantiationContext* parent_context = parent_type_it->second->instantiationContext();
-								OuterTemplateBinding outer_binding;
-								for (size_t i = 0; i < parent_context->param_names.size() && i < parent_context->param_args.size(); ++i) {
-									outer_binding.param_names.push_back(parent_context->param_names[i]);
-									outer_binding.param_args.push_back(toTemplateTypeArg(parent_context->param_args[i]));
-								}
+							if (parent_type_it != getTypesByNameMap().end()) {
+								OuterTemplateBinding outer_binding =
+									buildAccumulatedOuterTemplateBinding(
+										parent_type_it->second,
+										nullptr,
+										StringHandle{});
 								if (!outer_binding.param_names.empty()) {
 									gTemplateRegistry.registerOuterTemplateBinding(member_template_name_handle, std::move(outer_binding));
 								}
@@ -2606,31 +2604,11 @@ ParseResult Parser::parse_type_specifier() {
 								// must also pull in whatever outer binding was used for the chain parent.
 								StringHandle chain_template_handle = StringTable::getOrInternStringHandle(chain_template_name);
 								{
-									OuterTemplateBinding chain_outer_binding;
-									// First: carry over any outer binding that was used when the chain parent was instantiated
-									if (const OuterTemplateBinding* ancestor_binding = gTemplateRegistry.getOuterTemplateBinding(
-											StringTable::getStringView(chain_full_base_handle))) {
-										for (size_t i = 0; i < ancestor_binding->param_names.size() && i < ancestor_binding->param_args.size(); ++i) {
-											chain_outer_binding.param_names.push_back(ancestor_binding->param_names[i]);
-											chain_outer_binding.param_args.push_back(ancestor_binding->param_args[i]);
-										}
-									}
-									// Second: add the chain parent's own template params
-									if (chain_parent_it->second->hasInstantiationContext()) {
-										const TypeInfo::InstantiationContext* chain_ctx = chain_parent_it->second->instantiationContext();
-										for (size_t i = 0; i < chain_ctx->param_names.size() && i < chain_ctx->param_args.size(); ++i) {
-											for (size_t existing_i = 0; existing_i < chain_outer_binding.param_names.size();) {
-												if (chain_outer_binding.param_names[existing_i] == chain_ctx->param_names[i]) {
-													chain_outer_binding.param_names.erase(chain_outer_binding.param_names.begin() + existing_i);
-													chain_outer_binding.param_args.erase(chain_outer_binding.param_args.begin() + existing_i);
-													continue;
-												}
-												++existing_i;
-											}
-											chain_outer_binding.param_names.push_back(chain_ctx->param_names[i]);
-											chain_outer_binding.param_args.push_back(toTemplateTypeArg(chain_ctx->param_args[i]));
-										}
-									}
+									OuterTemplateBinding chain_outer_binding =
+										buildAccumulatedOuterTemplateBinding(
+											chain_parent_it->second,
+											nullptr,
+											chain_full_base_handle);
 									if (!chain_outer_binding.param_names.empty()) {
 										gTemplateRegistry.registerOuterTemplateBinding(chain_template_handle, std::move(chain_outer_binding));
 									}
