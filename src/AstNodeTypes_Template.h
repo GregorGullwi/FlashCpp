@@ -820,6 +820,9 @@ public:
 	void set_has_noexcept_specifier(bool v) { has_noexcept_specifier_ = v; }
 	bool has_noexcept_specifier() const { return has_noexcept_specifier_; }
 
+	void set_is_constexpr(bool v) { is_constexpr_ = v; }
+	bool is_constexpr() const { return is_constexpr_; }
+
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
 		outer_template_param_names_.clear();
@@ -867,6 +870,7 @@ private:
 	StringHandle mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	bool is_noexcept_ = true;  // C++11+: destructors are implicitly noexcept(true)
 	bool has_noexcept_specifier_ = false;  // True iff an explicit noexcept / noexcept(expr) was written
+	bool is_constexpr_ = false;  // True iff the destructor was declared with 'constexpr'
 	std::optional<ASTNode> noexcept_expression_;	 // For explicit noexcept(expr)
 	TemplateEnvironmentSnapshot outer_template_environment_snapshot_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;

@@ -348,6 +348,15 @@ struct BlockScopeTracker {
 	// For each name that shadowed an existing binding, the saved outer value.
 	std::unordered_map<std::string_view, EvalResult> saved_shadows;
 
+	// Struct-type variables declared in this scope that have destructors.
+	// Entries are stored in declaration order; destructors are called in
+	// reverse order (LIFO) on scope exit, per C++ [class.dtor]/8.
+	struct DestructorEntry {
+		std::string_view name;  // Variable name (view into interned string storage)
+		TypeIndex type_index;   // Type of the struct
+	};
+	InlineVector<DestructorEntry, 4> destructor_entries;
+
 	// Called by the VariableDeclarationNode handler before writing the
 	// new binding into the flat map.  Pass the current bindings so that
 	// shadowing can be detected and the old value saved.
@@ -777,6 +786,18 @@ private:
 		EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* bindings,
 		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
+	// Invoke the constexpr destructor of a single struct object.
+	// Returns success (from_int(0)) when the destructor is trivial, has no body,
+	// or completes normally.  Returns an error on destructor body evaluation failure.
+	static EvalResult invoke_constexpr_destructor(
+		const EvalResult& object,
+		EvaluationContext& context);
+	// Invoke constexpr destructors for all struct-type variables registered in a
+	// BlockScopeTracker, in reverse declaration order (LIFO per C++ semantics).
+	static EvalResult invoke_scope_destructors(
+		const BlockScopeTracker& scope,
+		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context);
 	static EvalResult evaluate_with_optional_bindings(
 		const ASTNode& expr_node,
 		EvaluationContext& context,

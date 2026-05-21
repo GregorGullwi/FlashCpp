@@ -1954,14 +1954,29 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 
 	const auto& member_access = std::get<MemberAccessNode>(expr);
 	const ASTNode& object_expr = member_access.object();
+	if (const IdentifierNode* object_id = tryGetIdentifier(object_expr);
+		object_id && object_id->name() == "this") {
+		// Prefer the current direct member bindings over the synthetic "this"
+		// object snapshot so reads after prior member mutations observe the latest state.
+		auto direct_member_it = bindings.find(member_access.member_name());
+		if (direct_member_it != bindings.end()) {
+			return validateConstexprRead(direct_member_it->second);
+		}
+	}
 	ResolvedBoundEvalResult resolved_object = resolve_bound_eval_result(object_expr, bindings, context, true);
 	if (resolved_object.error.has_value()) {
 		return resolved_object.error.value();
 	}
 
+	std::optional<EvalResult> owned_object_result;
 	const EvalResult* object_result = resolved_object.value;
 	if (!object_result) {
-		return std::nullopt;
+		auto evaluated_object = evaluate_expression_with_bindings_const(object_expr, bindings, context);
+		if (!evaluated_object.success()) {
+			return evaluated_object;
+		}
+		owned_object_result = std::move(evaluated_object);
+		object_result = &owned_object_result.value();
 	}
 
 	// For arrow member access (p->x) on a heap-allocated struct, dereference the
@@ -2605,6 +2620,10 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 		return EvalResult::error("Constexpr recursion depth limit exceeded in call to '" + std::string(func_name) + "'");
 
 	auto member_bindings = object.object_member_bindings;
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = object.object_type_index;
+	this_binding.object_member_bindings = object.object_member_bindings;
+	member_bindings["this"] = std::move(this_binding);
 
 	// Load template type bindings, preferring function-level outer bindings when present.
 	auto saved_template_param_names = context.template_param_names;
@@ -2629,9 +2648,11 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	auto saved_struct_info = context.struct_info;
 	auto saved_struct_type_index = context.struct_type_index;
 	const TypeInfo* saved_return_type_info = context.return_type_info;
+	auto* saved_local_bindings = context.local_bindings;
 	context.struct_info = struct_info;
 	context.struct_type_index = object.object_type_index;
 	context.return_type_info = nullptr;
+	context.local_bindings = &member_bindings;
 	{
 		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_specifier_node();
 		TypeIndex ret_idx = ret_spec.type_index();
@@ -2648,6 +2669,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 		"Constexpr member function did not return a value");
 
 	context.current_depth--;
+	context.local_bindings = saved_local_bindings;
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	context.struct_type_index = saved_struct_type_index;
@@ -6376,10 +6398,29 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 		return std::nullopt;
 	}
 
+	bool resolved_from_local_object = false;
 	if (const EvalResult* local_object = findLocalBinding(object_name, context);
 		local_object && local_object->object_type_index.is_valid()) {
 		resolved_object.declared_type_index = local_object->object_type_index;
 		resolved_object.materialized_value = *local_object;
+		resolved_from_local_object = true;
+	}
+
+	// For local bound objects, still try to recover the original declaration
+	// initializer as a fallback source (needed when nested members are not fully
+	// materialized in the bound value).
+	if (resolved_from_local_object) {
+		if (context.symbols) {
+			std::optional<ASTNode> symbol_opt = lookup_identifier_symbol(object_identifier, object_name, *context.symbols);
+			if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+				symbol_opt = lookup_identifier_symbol(object_identifier, object_name, *context.global_symbols);
+			}
+			if (symbol_opt.has_value() && symbol_opt->is<VariableDeclarationNode>()) {
+				resolved_object.var_decl = &symbol_opt->as<VariableDeclarationNode>();
+				resolved_object.initializer = &resolved_object.var_decl->initializer();
+				resolved_object.declared_type_index = resolved_object.var_decl->declaration().type_specifier_node().type_index();
+			}
+		}
 		return std::nullopt;
 	}
 
@@ -6669,6 +6710,36 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	}
 	base_var_name = base_identifier->name();
 
+	// Prefer active local constexpr bindings for block-scoped objects (e.g. local
+	// variables inside constexpr functions).  Nested member access like
+	// `Outer<int> o(...); return o.inner.value;` should resolve from the current
+	// evaluation bindings before falling back to symbol-table/global lookups.
+	if (const EvalResult* local_bound = findLocalBinding(base_var_name, context)) {
+		const EvalResult* base_value = resolveReadThroughReferenceAlias(
+			*local_bound,
+			emptyEvalBindings(),
+			context);
+		if (!base_value) {
+			return EvalResult::error("Dangling reference binding in nested member access: " + std::string(base_var_name));
+		}
+
+		auto intermediate_member_it = base_value->object_member_bindings.find(intermediate_member);
+		if (intermediate_member_it == base_value->object_member_bindings.end()) {
+			return EvalResult::error(
+				std::string(StringBuilder()
+								.append("Intermediate member '"sv)
+								.append(intermediate_member)
+								.append("' has no constexpr value in the evaluated base object for nested member access"sv)
+								.commit()));
+		}
+
+		const EvalResult& intermediate_value = intermediate_member_it->second;
+		auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
+		if (final_member_it != intermediate_value.object_member_bindings.end()) {
+			return final_member_it->second;
+		}
+	}
+
 	ResolvedConstexprObject resolved_object;
 	if (auto resolve_error = resolve_constexpr_object_source(
 			base_identifier,
@@ -6677,6 +6748,21 @@ EvalResult Evaluator::evaluate_nested_member_access(
 			"nested member access",
 			resolved_object)) {
 		return *resolve_error;
+	}
+
+	// If the base object was already materialized from local/static constexpr
+	// bindings, resolve nested members directly from that value before requiring
+	// an AST initializer.
+	if (resolved_object.materialized_value.has_value()) {
+		const EvalResult& base_value = *resolved_object.materialized_value;
+		auto intermediate_member_it = base_value.object_member_bindings.find(intermediate_member);
+		if (intermediate_member_it != base_value.object_member_bindings.end()) {
+			const EvalResult& intermediate_value = intermediate_member_it->second;
+			auto final_member_it = intermediate_value.object_member_bindings.find(final_member_name);
+			if (final_member_it != intermediate_value.object_member_bindings.end()) {
+				return final_member_it->second;
+			}
+		}
 	}
 
 	if (resolved_object.initializer == nullptr) {
@@ -8471,6 +8557,36 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 		if (!member_result.success()) {
 			return member_result;
 		}
+		// Handle paren-init for a struct member: inner(v) where inner is a struct type.
+		// The parser stores the single argument as a plain expression, so evaluating it
+		// gives a scalar (object_type_index is invalid for scalar results).  We need to
+		// materialize the nested struct by calling its constructor with that argument so
+		// that object_member_bindings are populated for later nested member access.
+		if (struct_info && !member_result.object_type_index.is_valid() && !member_result.is_array) {
+			if (const StructMember* member_info = struct_info->findMember(mem_init.member_name)) {
+				if (!member_info->is_array && is_struct_type(member_info->type_index.category())) {
+					const TypeInfo* member_type_info = tryGetTypeInfo(member_info->type_index);
+					const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
+					if (member_struct_info) {
+						ChunkedVector<ASTNode> ctor_args;
+						ctor_args.push_back(mem_init.initializer_expr);
+						if (auto ctor_result = try_materialize_struct_from_ctor_args(
+								member_struct_info,
+								member_info->type_index,
+								ctor_args,
+								context,
+								false,
+								&ctor_param_bindings,
+								nullptr,
+								false)) {
+							if (ctor_result->success()) {
+								member_result = std::move(*ctor_result);
+							}
+						}
+					}
+				}
+			}
+		}
 		// Handle single-element brace-init for array members (e.g., arr{val} for int arr[3]).
 		// The parser stores arr{val} as a scalar (init_args[0]) because there is only one arg.
 		// C++ requires: arr[0] = val, arr[1..n-1] = zero-initialized for the element type.
@@ -8737,6 +8853,10 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	} else if (struct_info && struct_info->own_type_index_.has_value()) {
 		context.struct_type_index = *struct_info->own_type_index_;
 	}
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = context.struct_type_index;
+	this_binding.object_member_bindings = member_bindings;
+	ctor_body_bindings["this"] = std::move(this_binding);
 
 	const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
 	for (const auto& ctor_stmt : ctor_body.get_statements()) {
@@ -8751,6 +8871,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		}
 	}
 	restoreCtorBodyContext();
+	ctor_body_bindings.erase("this");
 
 	for (const auto& member : struct_info->members) {
 		std::string_view member_name = StringTable::getStringView(member.getName());
