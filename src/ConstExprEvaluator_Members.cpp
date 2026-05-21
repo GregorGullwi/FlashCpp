@@ -5147,42 +5147,55 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		return EvalResult::error("Cannot evaluate qualified identifier: no symbol table provided");
 	}
 
-	auto collectQualifiedVariableTemplateArgs =
-		[&](const TypeInfo* lookup_owner_type) -> std::vector<TemplateTypeArg> {
+	struct QualifiedVariableTemplateArgsResult {
 		std::vector<TemplateTypeArg> template_args;
+		std::optional<EvalResult> error;
+		bool has_template_args = false;
+	};
+
+	auto collectQualifiedVariableTemplateArgs =
+		[&](const TypeInfo* lookup_owner_type) -> QualifiedVariableTemplateArgsResult {
+		QualifiedVariableTemplateArgsResult result;
 		if (qualified_id.has_template_arguments()) {
-			template_args.reserve(qualified_id.template_arguments().size());
+			result.has_template_args = true;
+			result.template_args.reserve(qualified_id.template_arguments().size());
 			for (const ASTNode& arg_node : qualified_id.template_arguments()) {
 				if (arg_node.is<TypeSpecifierNode>()) {
-					template_args.emplace_back(arg_node.as<TypeSpecifierNode>());
+					result.template_args.emplace_back(arg_node.as<TypeSpecifierNode>());
 					continue;
 				}
 				if (!arg_node.is<ExpressionNode>()) {
-					return {};
+					result.error = EvalResult::error(
+						"Unsupported template argument type for qualified variable template");
+					return result;
 				}
 
 				EvalResult arg_val = evaluate(arg_node, context);
 				if (!arg_val.success()) {
-					return {};
+					result.error = EvalResult::error(
+						"Failed to evaluate non-type template argument: " +
+						arg_val.error_message);
+					return result;
 				}
-				template_args.push_back(templateTypeArgFromEvalResult(arg_val));
+				result.template_args.push_back(templateTypeArgFromEvalResult(arg_val));
 			}
-			return template_args;
+			return result;
 		}
 
 		const TypeInfo::DependentQualifiedNameRecord* dependent_record =
 			qualified_id.dependentQualifiedName();
 		if (dependent_record == nullptr ||
 			dependent_record->member_chain.empty()) {
-			return {};
+			return result;
 		}
 
 		const auto& final_member = dependent_record->member_chain.back();
 		if (!final_member.has_template_arguments) {
-			return {};
+			return result;
 		}
 
-		template_args.reserve(final_member.template_arguments.size());
+		result.has_template_args = true;
+		result.template_args.reserve(final_member.template_arguments.size());
 		for (const TypeInfo::TemplateArgInfo& stored_arg : final_member.template_arguments) {
 			TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
 			if (std::optional<TemplateTypeArg> rebound_arg =
@@ -5197,13 +5210,16 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			if (arg.is_value && arg.dependent_expr.has_value()) {
 				EvalResult arg_val = evaluate(*arg.dependent_expr, context);
 				if (!arg_val.success()) {
-					return {};
+					result.error = EvalResult::error(
+						"Failed to evaluate non-type template argument: " +
+						arg_val.error_message);
+					return result;
 				}
 				arg = templateTypeArgFromEvalResult(arg_val);
 			}
-			template_args.push_back(std::move(arg));
+			result.template_args.push_back(std::move(arg));
 		}
-		return template_args;
+		return result;
 	};
 
 	auto tryInstantiateQualifiedMemberVariableTemplate =
@@ -5212,11 +5228,17 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			return std::nullopt;
 		}
 
-		std::vector<TemplateTypeArg> template_args =
+		QualifiedVariableTemplateArgsResult template_arg_result =
 			collectQualifiedVariableTemplateArgs(lookup_owner_type);
-		if (template_args.empty()) {
+		if (template_arg_result.error.has_value()) {
+			return *template_arg_result.error;
+		}
+		if (!template_arg_result.has_template_args ||
+			template_arg_result.template_args.empty()) {
 			return std::nullopt;
 		}
+		std::vector<TemplateTypeArg>& template_args =
+			template_arg_result.template_args;
 
 		Parser& parser = *context.parser;
 		StringHandle owner_handle{};
@@ -5236,26 +5258,28 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 			}
 		}
-		if (!owner_handle.isValid()) {
-			return std::nullopt;
+		std::string_view variable_template_lookup_name;
+		std::optional<OuterTemplateBinding> explicit_outer_binding;
+		if (owner_handle.isValid()) {
+			variable_template_lookup_name =
+				parser.lookup_inherited_member_variable_template_name(
+					owner_handle,
+					qualified_id.nameHandle(),
+					0);
+			if (variable_template_lookup_name.empty()) {
+				StringBuilder qualified_name_builder;
+				variable_template_lookup_name = qualified_name_builder
+					.append(StringTable::getStringView(owner_handle))
+					.append("::")
+					.append(qualified_id.name())
+					.commit();
+			}
+			explicit_outer_binding =
+				parser.buildOuterBindingForOwner(owner_handle);
+		} else {
+			variable_template_lookup_name = qualified_id.name();
 		}
 
-		std::string_view variable_template_lookup_name =
-			parser.lookup_inherited_member_variable_template_name(
-				owner_handle,
-				qualified_id.nameHandle(),
-				0);
-		if (variable_template_lookup_name.empty()) {
-			StringBuilder qualified_name_builder;
-			variable_template_lookup_name = qualified_name_builder
-				.append(StringTable::getStringView(owner_handle))
-				.append("::")
-				.append(qualified_id.name())
-				.commit();
-		}
-
-		std::optional<OuterTemplateBinding> explicit_outer_binding =
-			parser.buildOuterBindingForOwner(owner_handle);
 		std::optional<ASTNode> instantiated_var =
 			parser.try_instantiate_variable_template(
 				variable_template_lookup_name,
