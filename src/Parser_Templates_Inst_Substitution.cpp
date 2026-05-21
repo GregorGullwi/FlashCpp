@@ -1225,11 +1225,11 @@ const TypeInfo* Parser::materializeDeferredAliasMemberTemplateChain(
 			return nullptr;
 		}
 		member_chain.push_back(std::move(*materialized_segment));
-		accumulated_qualified_name = StringBuilder()
-										 .append(accumulated_qualified_name)
-										 .append("::")
-										 .append(segment.name)
-										 .commit();
+		StringBuilder accumulated_name_builder;
+		accumulated_name_builder.append(accumulated_qualified_name);
+		accumulated_name_builder.append("::");
+		accumulated_name_builder.append(segment.name);
+		accumulated_qualified_name = accumulated_name_builder.commit();
 	}
 	return resolveBaseClassMemberTypeChain(
 		instantiated_name,
