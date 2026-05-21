@@ -3690,7 +3690,10 @@ EvalResult Evaluator::evaluate_lambda_captures(
 		case CaptureKind::This:
 		case CaptureKind::CopyThis:
 			// [this] or [*this] - materialize the enclosing object's constexpr members.
-			if (capture.kind() == CaptureKind::CopyThis && stored_capture_bindings && !context.struct_info) {
+			// Stored closures for both capture kinds may be re-entered outside the
+			// original member-function context, so restore the saved synthetic state
+			// directly when no current struct context is available.
+			if (stored_capture_bindings && !context.struct_info) {
 				for (const auto& [member_name, member_value] : *stored_capture_bindings) {
 					bindings[member_name] = member_value;
 				}
@@ -3703,20 +3706,25 @@ EvalResult Evaluator::evaluate_lambda_captures(
 				return EvalResult::error("Capture of 'this' requires constexpr member function context");
 			}
 
+			EvalResult this_binding = EvalResult::from_int(0LL);
+			this_binding.object_type_index = context.struct_type_index;
 			for (const auto& member : context.struct_info->members) {
 				std::string_view member_name = StringTable::getStringView(member.getName());
 				if (capture.kind() == CaptureKind::CopyThis && stored_capture_bindings) {
 					auto stored_it = stored_capture_bindings->find(member_name);
 					if (stored_it != stored_capture_bindings->end()) {
 						bindings[member_name] = stored_it->second;
+						this_binding.object_member_bindings[member_name] = stored_it->second;
 						continue;
 					}
 				}
 				auto outer_it = outer_bindings->find(member_name);
 				if (outer_it != outer_bindings->end()) {
 					bindings[member_name] = outer_it->second;
+					this_binding.object_member_bindings[member_name] = outer_it->second;
 				}
 			}
+			bindings["this"] = std::move(this_binding);
 			break;
 		}
 	}
@@ -4057,6 +4065,17 @@ EvalResult Evaluator::evaluate_lambda_call(
 
 	// Increase recursion depth
 	context.current_depth++;
+	const StructTypeInfo* saved_struct_info = context.struct_info;
+	TypeIndex saved_struct_type_index = context.struct_type_index;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &bindings;
+	auto this_it = bindings.find("this");
+	if (this_it != bindings.end() && this_it->second.object_type_index.is_valid()) {
+		context.struct_type_index = this_it->second.object_type_index;
+		if (const TypeInfo* this_type_info = tryGetTypeInfo(this_it->second.object_type_index)) {
+			context.struct_info = this_type_info->getStructInfo();
+		}
+	}
 
 	// Evaluate the lambda body
 	const ASTNode& body_node = lambda.body();
@@ -4078,6 +4097,9 @@ EvalResult Evaluator::evaluate_lambda_call(
 	}
 
 	context.current_depth--;
+	context.local_bindings = saved_local_bindings;
+	context.struct_info = saved_struct_info;
+	context.struct_type_index = saved_struct_type_index;
 	// Void lambda support: reaching end-of-body without a return statement, or
 	// an explicit "return;" (no expression), is valid for void lambdas.  Convert
 	// those sentinel errors to a void success so that by-reference capture

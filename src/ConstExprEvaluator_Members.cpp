@@ -1954,6 +1954,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 
 	const auto& member_access = std::get<MemberAccessNode>(expr);
 	const ASTNode& object_expr = member_access.object();
+	if (const IdentifierNode* object_id = tryGetIdentifier(object_expr);
+		object_id && object_id->name() == "this") {
+		// Prefer the current direct member bindings over the synthetic "this"
+		// object snapshot so reads after prior member mutations observe the latest state.
+		auto direct_member_it = bindings.find(member_access.member_name());
+		if (direct_member_it != bindings.end()) {
+			return validateConstexprRead(direct_member_it->second);
+		}
+	}
 	ResolvedBoundEvalResult resolved_object = resolve_bound_eval_result(object_expr, bindings, context, true);
 	if (resolved_object.error.has_value()) {
 		return resolved_object.error.value();
@@ -2611,6 +2620,10 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 		return EvalResult::error("Constexpr recursion depth limit exceeded in call to '" + std::string(func_name) + "'");
 
 	auto member_bindings = object.object_member_bindings;
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = object.object_type_index;
+	this_binding.object_member_bindings = object.object_member_bindings;
+	member_bindings["this"] = std::move(this_binding);
 
 	// Load template type bindings, preferring function-level outer bindings when present.
 	auto saved_template_param_names = context.template_param_names;
@@ -2635,9 +2648,11 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	auto saved_struct_info = context.struct_info;
 	auto saved_struct_type_index = context.struct_type_index;
 	const TypeInfo* saved_return_type_info = context.return_type_info;
+	auto* saved_local_bindings = context.local_bindings;
 	context.struct_info = struct_info;
 	context.struct_type_index = object.object_type_index;
 	context.return_type_info = nullptr;
+	context.local_bindings = &member_bindings;
 	{
 		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_specifier_node();
 		TypeIndex ret_idx = ret_spec.type_index();
@@ -2654,6 +2669,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 		"Constexpr member function did not return a value");
 
 	context.current_depth--;
+	context.local_bindings = saved_local_bindings;
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	context.struct_type_index = saved_struct_type_index;
@@ -8837,6 +8853,10 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	} else if (struct_info && struct_info->own_type_index_.has_value()) {
 		context.struct_type_index = *struct_info->own_type_index_;
 	}
+	EvalResult this_binding = EvalResult::from_int(0LL);
+	this_binding.object_type_index = context.struct_type_index;
+	this_binding.object_member_bindings = member_bindings;
+	ctor_body_bindings["this"] = std::move(this_binding);
 
 	const BlockNode& ctor_body = ctor_definition->as<BlockNode>();
 	for (const auto& ctor_stmt : ctor_body.get_statements()) {
@@ -8851,6 +8871,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		}
 	}
 	restoreCtorBodyContext();
+	ctor_body_bindings.erase("this");
 
 	for (const auto& member : struct_info->members) {
 		std::string_view member_name = StringTable::getStringView(member.getName());
