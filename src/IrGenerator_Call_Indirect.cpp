@@ -471,11 +471,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 		}
 
-		auto deduced_type = parser_.get_expression_type(receiver_node);
-		if (!deduced_type.has_value()) {
-			return std::nullopt;
-		}
-		return normalizeResolvedStructType(*deduced_type);
+		// No parser fallback: no test ever reaches here.  Return nullopt so callers
+		// can fall back to arity-based or IR-level resolution.
+		return std::nullopt;
 	};
 
 	if (object_expr && std::holds_alternative<TernaryOperatorNode>(*object_expr)) {
@@ -663,15 +661,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				}
 				throw InternalError("Normalized member call-return receiver type was unusable");
 			}
-			const bool allow_parser_type_recovery =
-				!sema_normalized_current_function_ &&
-				(sema_missing_normalized_call_return_receiver ||
-				 sema_query_not_yet_analyzed);
-			if (allow_parser_type_recovery) {
-				if (auto expression_type = parser_.get_expression_type(object_node); expression_type.has_value()) {
-					ret_type = *expression_type;
-				}
-			}
+			// No test ever fires the parser-recovery path (non-normalized body with missing/
+			// not-yet-analyzed sema type); fall through to type normalization below.
 			if (auto resolved_ret_type = normalizeResolvedStructType(ret_type); resolved_ret_type.has_value()) {
 				object_type = *resolved_ret_type;
 				// object_name remains empty; expression will be evaluated when needed

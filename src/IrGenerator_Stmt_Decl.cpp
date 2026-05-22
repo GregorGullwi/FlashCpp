@@ -172,14 +172,6 @@ std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 } // namespace
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
-	auto tryParserFallback = [&](const ASTNode& fallback_arg) -> std::optional<TypeSpecifierNode> {
-		auto parser_type = parser_.get_expression_type(fallback_arg);
-		if (parser_type.has_value()) {
-			adjust_argument_type_for_overload_resolution(fallback_arg, *parser_type);
-		}
-		return parser_type;
-	};
-
 	const bool has_exact_sema_type_slot = [&]() {
 		if (!arg.is<ExpressionNode>()) {
 			return false;
@@ -208,7 +200,11 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 			.append(describeOverloadArgExprShape(arg))
 			.commit()));
 	}
-	return tryParserFallback(arg);
+	// Non-normalized bodies (template instantiation without sema, implicit constructors,
+	// struct-level processing) and synthesized range-for/structured-binding nodes have
+	// no sema annotations.  Signal "type unknown" to all callers, which gracefully fall
+	// back to arity-based or IR-level resolution.
+	return std::nullopt;
 }
 
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {

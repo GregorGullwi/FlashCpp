@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-05-21
+**Last Updated:** 2026-06-06
 
 This is the consolidated status document for sema-related planning and architecture notes.
 
@@ -48,7 +48,11 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - builtin `++/--` lowering now requires sema-owned operand/object type queries instead of codegen parser expression-type fallback
 - `AstToIr::generateFunctionCallIr(...)` inline-always argument typing now uses sema overload-resolution argument type APIs and no longer falls back to parser expression typing in that path
 - `AstToIr::generateMemberFunctionCallIr(...)` now requires sema-owned receiver typing for call-expression receivers in normalized bodies and no longer uses parser expression-type recovery there
-- codegen still has parser expression-type fallback in selected IR paths (`src/IrGenerator_*.cpp`)
+- **Fallback 1 (`resolveStructTypeFromReceiverNode` in `IrGenerator_Call_Indirect.cpp`)**: confirmed dead — no test fires the parser fallback. Replaced with `return std::nullopt`. All callers handle nullopt gracefully.
+- **Fallback 2 (call-return receiver recovery in `IrGenerator_Call_Indirect.cpp`)**: confirmed dead — the `allow_parser_type_recovery` guard block never fired in any test. Removed the dead guard; execution falls through to the existing type-normalization code.
+- **Fallback 4 (`buildCodegenOverloadResolutionArgType` final clause in `IrGenerator_Stmt_Decl.cpp`)**: was active for non-normalized template instantiation bodies and synthesized range-for/structured-binding nodes. Root cause: `sema_normalized_current_function_ == false` means no sema annotations on the body (e.g., implicit default constructor of a template nested struct using static constexpr members in a default member initializer). Fixed by returning `std::nullopt`; all callers handle nullopt by falling back to IR-level or arity-based resolution.
+- **Fallback 3 (binary operator LHS/RHS type conversion in `IrGenerator_Expr_Operators.cpp`)**: *not a parser API fallback*. Calls `generateTypeConversion` directly for legitimately uncovered cases (pointer arithmetic and unscoped/scoped enum operands where sema annotations are partial). Intentionally retained.
+- codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited
 
 ## Active backlog (high level)
 
