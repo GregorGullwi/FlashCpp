@@ -665,8 +665,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			}
 			const bool allow_parser_type_recovery =
 				!sema_normalized_current_function_ &&
-				(return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
-				 sema_return_type_unusable ||
+				(sema_missing_normalized_call_return_receiver ||
 				 sema_query_not_yet_analyzed);
 			if (allow_parser_type_recovery) {
 				if (auto expression_type = parser_.get_expression_type(object_node); expression_type.has_value()) {
