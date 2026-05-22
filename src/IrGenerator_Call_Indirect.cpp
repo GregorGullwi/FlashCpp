@@ -429,50 +429,30 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				throw InternalError("Normalized member-call receiver type query remained NotYetAnalyzed");
 			}
 
-			bool allow_parser_type_fallback = false;
 			if (receiver_type_query.state == TypeSpecifierQueryResult::State::Available) {
 				if (receiver_type_query.type.has_value()) {
 					if (auto resolved_sema_type = normalizeResolvedStructType(*receiver_type_query.type); resolved_sema_type.has_value()) {
 						return resolved_sema_type;
 					}
-				}
-				const bool sema_type_unusable_for_receiver =
-					!receiver_type_query.type.has_value() ||
-					receiver_type_query.type->type() == TypeCategory::Invalid ||
-					isPlaceholderAutoType(receiver_type_query.type->type());
-				allow_parser_type_fallback = sema_type_unusable_for_receiver;
-			} else if (receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
-				allow_parser_type_fallback = true;
-			} else if (sema_query_not_yet_analyzed && !sema_normalized_current_function_) {
-				allow_parser_type_fallback = true;
-			}
-
-			if (!allow_parser_type_fallback) {
-				return std::nullopt;
-			}
-
-			const ExpressionNode& receiver_expr = receiver_node.as<ExpressionNode>();
-
-			if (std::holds_alternative<IdentifierNode>(receiver_expr)) {
-				const IdentifierNode& identifier = std::get<IdentifierNode>(receiver_expr);
-				if (std::optional<ASTNode> symbol = lookupSymbol(identifier.name()); symbol.has_value()) {
-					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-						if (auto resolved_decl_type = normalizeResolvedStructType(decl->type_specifier_node()); resolved_decl_type.has_value()) {
-							return resolved_decl_type;
-						}
+					const bool sema_type_unusable_for_receiver =
+						receiver_type_query.type->type() == TypeCategory::Invalid ||
+						isPlaceholderAutoType(receiver_type_query.type->type());
+					if (sema_normalized_current_function_ && sema_type_unusable_for_receiver) {
+						throw InternalError("Normalized member-call receiver type was unusable");
 					}
+				} else if (sema_normalized_current_function_) {
+					throw InternalError("Normalized member-call receiver type query was Available without payload");
 				}
-			}
-
-			if (const auto* cast = std::get_if<StaticCastNode>(&receiver_expr)) {
-				if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type()); resolved_cast_type.has_value()) {
-					return resolved_cast_type;
+			} else if (receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
+				if (sema_normalized_current_function_) {
+					throw InternalError("Normalized member-call receiver type query was AnalyzedAbsent");
 				}
 			}
 		}
 
-		// No parser fallback: no test ever reaches here.  Return nullopt so callers
-		// can fall back to arity-based or IR-level resolution.
+		// Sema is authoritative for receiver type queries. Return nullopt when no
+		// struct type can be derived so callers can continue their existing
+		// arity-based / IR-level resolution paths.
 		return std::nullopt;
 	};
 
