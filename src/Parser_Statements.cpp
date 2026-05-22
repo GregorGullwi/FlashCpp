@@ -186,7 +186,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 								  current_token_);
 	}
 
-	auto looks_like_identifier_declaration_start = [&]() -> bool {
+	auto looksLikeIdentifierDeclarationStart = [&]() -> bool {
 		if (!peek().is_identifier()) {
 			return false;
 		}
@@ -411,7 +411,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		return false;
 	};
 
-	auto preserved_attributed_declaration_handler = [&]() -> std::optional<ParsingFunction> {
+	auto preservedAttributedDeclarationHandler = [&]() -> std::optional<ParsingFunction> {
 		if (peek().is_keyword()) {
 			static const std::unordered_set<std::string_view> declaration_or_function_keywords = {
 				"struct", "class", "union",
@@ -430,7 +430,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			return std::nullopt;
 		}
 
-		if (looks_like_identifier_declaration_start()) {
+		if (looksLikeIdentifierDeclarationStart()) {
 			return &Parser::parse_variable_declaration;
 		}
 
@@ -449,7 +449,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			return ParseResult::error("Expected a statement or declaration after attributes",
 									  current_token_);
 		}
-		auto declaration_handler = preserved_attributed_declaration_handler();
+		auto declaration_handler = preservedAttributedDeclarationHandler();
 		restore_token_position(saved);
 		if (declaration_handler.has_value()) {
 			return (this->*declaration_handler.value())();
