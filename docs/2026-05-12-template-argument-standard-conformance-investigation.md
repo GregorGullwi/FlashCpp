@@ -126,6 +126,11 @@ Future work should assume these are already in place:
   such as `Traits<T>::template Box<T>::type::value`,
   `Traits<T>::template Box<T>::type::get()`, and
   `Derived<T>::template Inner<int>::type::value`.
+- top-level out-of-line constructor templates on class templates now preserve
+  inner template-parameter metadata on the registered out-of-line stub, and
+  instantiation attaches deferred body/initializer-list replay positions to the
+  matching constructor template by unresolved inner-parameter shape before lazy
+  materialization.
 
 Latest validation on Linux sharded build:
 `2440` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
@@ -140,7 +145,13 @@ after `make sharded CXX=clang++`.
 Focused Windows/MSVC validation for this slice passed the new deeper
 dependent-chain regressions plus nearby ratio and dependent-member regressions.
 Latest Windows/MSVC full-suite validation after this slice:
-`2487` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2502` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+Latest focused Windows/MSVC validation for the out-of-line constructor-template
+replay slice passed
+`test_template_ool_ctor_template_base_member_init_replay_ret42.cpp`,
+`test_template_nested_ool_ctor_template_init_replay_ret42.cpp`,
+`test_template_nested_ool_ctor_template_base_member_init_replay_ret42.cpp`, and
+`test_template_nested_ool_ctor_template_ref_init_replay_ret42.cpp`.
 
 ## Remaining work, in priority order
 
@@ -210,9 +221,13 @@ Most concrete next subtask:
   template replay now also carries definition-time lookup context through
   eager/lazy instantiation stubs, and covered out-of-line constructor replay now
   preserves initializer-list metadata in both nested-template and generic
-  out-of-line registration paths. Priority is now broader deferred-base coverage
-  and the remaining out-of-line declaration/static-member replay gaps beyond the
-  newly covered deeper member-template owner chains.
+  out-of-line registration paths. Top-level out-of-line constructor templates on
+  class templates now also retain inner template-parameter metadata on the
+  registered stub and reattach deferred body/initializer-list replay state to
+  the instantiated constructor template before lazy materialization. Priority is
+  now broader deferred-base coverage plus the remaining out-of-line member-
+  function-template replay combinations that still need the same owner-correct
+  replay path.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -297,6 +312,11 @@ coverage becomes sufficient.
       unknown-specialization `member-template -> type/alias -> value/call`
       chains as covered for the focused qualified-id and call-substitution
       paths;
+    - treat top-level out-of-line constructor templates on class templates as
+      covered for deferred body/initializer-list replay attachment once the
+      registered stub preserves inner template-parameter metadata and
+      instantiation matches the constructor template by unresolved inner-
+      parameter shape;
     - treat out-of-line static-member replay as covered for the focused deeper
       member-template owner chain cases once replay-visible template parameters
       are preserved and replay reconstructs parameter kinds/non-type categories;
@@ -305,8 +325,9 @@ coverage becomes sufficient.
       variable-template initializer, in-class/nested/out-of-line static-member
       replay, and default-NTTP parser flows;
     - remove the next AST-only/deferred-base fallback path, with the next bounded
-      target now deferred-base replay users plus the remaining broader
-      out-of-line declaration/static-member replay gaps.
+      target now deferred-base replay users plus the remaining out-of-line
+      member-function-template replay gaps and broader declaration/static-member
+      replay users.
 
 2. **Dependent-name/current-instantiation expansion**
    - richer dependent-base and unknown-specialization records;
@@ -428,6 +449,11 @@ re-solving already-solved problems.
 - out-of-line constructor replay metadata capture now consistently preserves
   initializer-list replay positions across nested-template and generic out-of-
   line member registration paths.
+- top-level out-of-line constructor templates on class templates now preserve
+  inner template-parameter metadata on the registered stub, and the
+  instantiator attaches deferred body/initializer-list replay positions to the
+  matching constructor template using unresolved inner-parameter shape instead
+  of outer-only substituted type identity.
 
 ## Exit criteria
 

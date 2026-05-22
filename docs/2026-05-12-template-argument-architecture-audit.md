@@ -106,6 +106,12 @@ Useful to know before changing anything:
   `Traits<T>::template Box<T>::type::get()`, and
   `Derived<T>::template Inner<int>::type::value` stay concrete through the
   intermediate `type` alias instead of stalling after the member-template hop;
+- top-level out-of-line constructor templates on class templates now preserve
+  their inner template-parameter metadata on the registered out-of-line stub,
+  and instantiation attaches deferred body/initializer-list replay positions to
+  the matching constructor template by unresolved inner-parameter shape, so
+  spellings like `template<class T> template<class U> Box<T>::Box(U)` no longer
+  drop replay state before lazy constructor materialization;
 - selected free/member function-template overload paths already do
   signature-only ranking before body materialization.
 
@@ -114,12 +120,18 @@ Validation at this point passed the Linux sharded build and ELF test workflow:
 Focused Windows/MSVC validation for this slice passed the new deeper
 dependent-chain regressions plus the nearby ratio/dependent-member regressions.
 Latest Windows/MSVC full-suite validation after this slice:
-`2487` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2502` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 Latest focused Linux validation for the out-of-line static-member replay slice
 passed `test_template_out_of_line_static_member_replay_member_template_chain_ret0.cpp`,
 `test_template_out_of_line_static_member_two_phase_lookup_ret0.cpp`, and
 `test_template_out_of_line_static_member_two_phase_lookup_multi_template_ret0.cpp`
 after `make sharded CXX=clang++`.
+Latest focused Windows/MSVC validation for the out-of-line constructor-template
+replay slice passed
+`test_template_ool_ctor_template_base_member_init_replay_ret42.cpp`,
+`test_template_nested_ool_ctor_template_init_replay_ret42.cpp`,
+`test_template_nested_ool_ctor_template_base_member_init_replay_ret42.cpp`, and
+`test_template_nested_ool_ctor_template_ref_init_replay_ret42.cpp`.
 
 ## What is still wrong
 
@@ -177,13 +189,17 @@ Concrete follow-up already identified by recent work:
   value/call` cases. Out-of-line class-template member-function definitions now
   also preserve definition lookup context and re-install it during body replay,
   so ordinary unqualified lookup in those reparsed bodies stays bound to the
-  definition point instead of rebinding at the point of instantiation. The next
-  concrete follow-up is therefore narrower again: extend that same owner-
-  correct replay/materialization path into the remaining declaration/deferred-
-  base paths that still never captured enough metadata to avoid AST-only
-  fallback, with the next bounded target now the still-uncovered out-of-line
-  member-function-template, constructor-initializer, and deferred-base replay
-  users beyond the newly covered member-function body path.
+  definition point instead of rebinding at the point of instantiation.
+  Top-level out-of-line constructor templates on class templates now also keep
+  enough replay metadata to reattach their deferred body and initializer-list
+  source to the instantiated constructor template before lazy materialization.
+  The next concrete follow-up is therefore narrower again: extend that same
+  owner-correct replay/materialization path into the remaining declaration/
+  deferred-base paths that still never captured enough metadata to avoid
+  AST-only fallback, with the next bounded target now the still-uncovered
+  out-of-line member-function-template-plus-deferred-base replay combinations
+  and the broader deferred-base replay users beyond the newly covered
+  member-function body and constructor-template paths.
 
 ### 2. Dependent names are still represented too loosely
 
@@ -273,6 +289,10 @@ In priority order:
     - dependent-base `this->template` member-function-template calls are covered
       for focused inline class-template body cases, including multilevel
       dependent-base chains;
+    - top-level out-of-line constructor templates on class templates now retain
+      inner template-parameter metadata on their registered stub and reattach
+      deferred body/initializer-list replay state to the instantiated
+      constructor template before lazy materialization;
     - remaining replay-metadata gaps outside the covered static-member and
       variable-template initializer paths, now including the newly covered
       out-of-line static-member replay path for deeper member-template chains;
@@ -281,9 +301,10 @@ In priority order:
     - remaining declaration/static-member/deferred-base paths that still bypass
       the shared semantic lookup model and therefore fall back to AST-only
       repair, with the next bounded target now the broader deferred-base replay
-      users and remaining out-of-line declaration/static-member replay gaps
-      beyond the covered in-class/nested/out-of-line static-member and
-      out-of-line member-function(-template) body metadata paths.
+      users and the remaining out-of-line member-function-template replay gaps
+      beyond the covered in-class/nested/out-of-line static-member,
+      out-of-line member-function(-template) body, and top-level constructor-
+      template replay metadata paths.
 
 2. **Continue dependent-name/current-instantiation modeling**
    - richer dependent-base and unknown-specialization records;
@@ -363,6 +384,11 @@ materially changes what future refactors can assume.
   template parameter list, and replay rebuilds parameter names/kinds/non-type
   categories before substitution so deeper member-template owner chains can stay
   on the replay-first two-phase lookup path.
+- top-level out-of-line constructor templates on class templates now preserve
+  inner template-parameter metadata on the out-of-line registration stub, and
+  instantiation reattaches deferred body/initializer-list replay positions to
+  the matching constructor template using unresolved inner-parameter shape
+  instead of outer-only substituted type identity.
 - qualified member variable-template chains now resolve through inherited
   owner-aware member variable-template lookup, and member variable-template
   instantiation folds recovered outer class-template bindings into initializer
