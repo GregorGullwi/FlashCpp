@@ -841,7 +841,7 @@ static bool outOfLineConstructorTemplateMatchesCandidate(
 		});
 }
 
-static void copyDefinitionParameterIdentifiers(
+void Parser::copyDefinitionParameterIdentifiers(
 	std::span<ASTNode> instantiated_params,
 	std::span<const ASTNode> definition_params) {
 	if (instantiated_params.size() != definition_params.size()) {

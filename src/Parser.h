@@ -2066,6 +2066,9 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 			node.set_outer_template_bindings(outer_template_param_names, filtered_template_args);
 		}
 	}
+	static void copyDefinitionParameterIdentifiers(
+		std::span<ASTNode> instantiated_params,
+		std::span<const ASTNode> definition_params);
 	static StringHandle computeInstantiatedLookupName(
 		StringHandle original_name,
 		OverloadableOperator op_kind,
