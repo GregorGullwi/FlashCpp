@@ -25,7 +25,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~2.65s (retested 2026-05-22, Linux/libstdc++-14). Fold-expression template-argument parsing now accepts the multi-line CTAD deduction guide in `<array>`; current first hard stop moved to late IR/codegen (`std::partial_ordering` missing resolved constructor). |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
-| `<span>` | `test_std_span.cpp` | ❌ Compile Error | ~0.06s (retested 2026-05-21, Linux/libstdc++-14). Current run does not register/instantiate `std::span<int>` and parses `s(arr, 5)` as a call expression (`No matching function for call to 's'`). |
+| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~27ms (retested 2026-05-22, Linux/libstdc++-14). Statement/declaration disambiguation now keeps qualified class-template direct-initialization on the declaration path, so `std::span<int> s(arr, 5);` no longer falls through to a spurious call-expression parse. |
 | `<tuple>` | `test_std_tuple.cpp` | 💥 Codegen Crash | ~2500ms (retested 2026-05-11, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker and tuple constructor pack-boundary stop are fixed; the header now reaches IR/codegen before `std::partial_ordering` unresolved semantic type category 25. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
@@ -136,6 +136,29 @@ in this environment include `test_std_bit.cpp` (~1.29s), `test_std_concepts.cpp`
 (~0.05s), `test_std_new.cpp` (~0.07s), and the focused comparison/typeinfo
 regressions. Several larger headers now share later semantic/template/codegen
 stops rather than the previous `ptr_traits` member-alias-template parse error.
+
+### 2026-05-22 `<span>` qualified class-template direct-init declaration fix
+
+Fix landed:
+
+- Statement/declaration disambiguation now has a syntax-level fallback for
+  qualified template-ids that are followed by a declarator, so
+  `std::span<int> s(arr, 5);` is treated as a declaration even when the
+  registry lookup does not recognize the qualified name early enough.
+- The same lookahead now accepts keyword-token qualified-name segments while it
+  builds the candidate type name, matching the broader qualified-id parsing used
+  elsewhere in the parser.
+
+Regression coverage:
+
+- `tests/test_qualified_class_template_direct_init_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+- `bash tests/run_all_tests.sh -j1 test_qualified_class_template_direct_init_ret0.cpp`:
+  ✅ pass
+- Direct invocation for `tests/std/test_std_span.cpp` with detected system
+  include paths now compiles successfully in **27.46ms**.
 
 ### 2026-05-22 `<array>` CTAD fold-expression template-arg parse fix
 

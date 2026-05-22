@@ -53,6 +53,11 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIde
 	"%=", "&=", "|=", "^=",
 	"<<=", ">>="};
 
+static bool isTypeLikeTemplateName(StringHandle name) {
+	return gTemplateRegistry.isClassTemplate(name) ||
+		   gTemplateRegistry.lookup_alias_template(name).has_value();
+}
+
 ParseResult Parser::parse_block() {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(Block);
@@ -186,6 +191,39 @@ ParseResult Parser::parse_statement_or_declaration() {
 								  current_token_);
 	}
 
+	auto looksLikeQualifiedTemplateTypeDeclarationStart = [&]() -> bool {
+		if (!peek().is_identifier()) {
+			return false;
+		}
+
+		SaveHandle saved_pos = save_token_position();
+		ScopeGuard restore_guard([&]() { restore_token_position(saved_pos); });
+
+		advance(); // consume first identifier
+		while (peek() == "::"_tok && (peek(1).is_identifier() || peek(1).is_keyword())) {
+			advance(); // consume '::'
+			advance(); // consume qualified name part
+		}
+
+		if (peek() != "<"_tok) {
+			return false;
+		}
+		skip_template_arguments();
+
+		while (peek() == "::"_tok && (peek(1).is_identifier() || peek(1).is_keyword())) {
+			advance(); // consume '::'
+			advance(); // consume nested type/member name
+			if (peek() == "<"_tok) {
+				skip_template_arguments();
+			}
+			if (peek() == "("_tok) {
+				return false;
+			}
+		}
+
+		return peek().is_identifier() || peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok;
+	};
+
 	auto looksLikeIdentifierDeclarationStart = [&]() -> bool {
 		if (!peek().is_identifier()) {
 			return false;
@@ -208,7 +246,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		advance(); // consume first identifier
 		while (peek() == "::"_tok) {
 			advance(); // consume '::'
-			if (peek().is_identifier()) {
+			if (peek().is_identifier() || peek().is_keyword()) {
 				type_name_builder.append("::").append(peek_info().value());
 				advance(); // consume next identifier
 			} else {
@@ -308,9 +346,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			}
 		}
 
-		bool is_template = gTemplateRegistry.lookupTemplate(type_name_handle).has_value();
-		bool is_alias_template = gTemplateRegistry.lookup_alias_template(type_name_handle).has_value();
-		if (is_template || is_alias_template) {
+		if (isTypeLikeTemplateName(type_name_handle)) {
 			advance(); // consume the first identifier
 			skip_qualified_name_parts();
 			if (!peek().is_eof()) {
@@ -406,6 +442,10 @@ ParseResult Parser::parse_statement_or_declaration() {
 				restore_token_position(alias_check);
 				return true;
 			}
+		}
+
+		if (looksLikeQualifiedTemplateTypeDeclarationStart()) {
+			return true;
 		}
 
 		return false;
@@ -629,7 +669,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		advance(); // consume first identifier
 		while (peek() == "::"_tok) {
 			advance(); // consume '::'
-			if (peek().is_identifier()) {
+			if (peek().is_identifier() || peek().is_keyword()) {
 				type_name_builder.append("::").append(peek_info().value());
 				advance(); // consume next identifier
 			} else {
@@ -764,10 +804,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		// Check if this is a template identifier (e.g., Container<int>::Iterator)
 		// Templates need to be parsed as variable declarations
 		// UNLESS the next token is '(' (which indicates a function template call)
-		bool is_template = gTemplateRegistry.lookupTemplate(type_name_handle).has_value();
-		bool is_alias_template = gTemplateRegistry.lookup_alias_template(type_name_handle).has_value();
-
-		if (is_template || is_alias_template) {
+		if (isTypeLikeTemplateName(type_name_handle)) {
 			// We need to consume the full qualified name to peek at what comes after
 			advance(); // consume the first identifier
 			// If the template name is qualified (e.g., ns::myfunc), consume all :: and identifiers
@@ -819,6 +856,10 @@ ParseResult Parser::parse_statement_or_declaration() {
 			// Restore position before the identifier so parse_variable_declaration can handle it
 			restore_token_position(saved_pos);
 			// Otherwise, it's a variable declaration with a template type
+			return parse_variable_declaration();
+		}
+
+		if (looksLikeQualifiedTemplateTypeDeclarationStart()) {
 			return parse_variable_declaration();
 		}
 
