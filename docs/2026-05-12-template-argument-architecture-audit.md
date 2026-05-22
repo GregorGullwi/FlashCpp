@@ -13,9 +13,9 @@ FlashCpp now handles many practical C++20 template cases, but the main
 remaining standards gap is still two-phase lookup across replayed template
 infrastructure.
 
-The highest-impact work is no longer broad parser cleanup. It is finishing the
-owner-correct replay path for out-of-line member-function-template bodies that
-interact with dependent bases — including through partial specializations.
+The highest-impact work is no longer broad parser cleanup. It is removing the
+next replay-metadata gaps that still force template instantiation to recover
+intent from partially substituted AST state.
 
 ## Current state
 
@@ -89,6 +89,9 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Remove the next AST-only replay fallback**
+   - Start with the partial-spec non-ctor OOL case where the definition was
+     registered under the base template name instead of the instantiated
+     partial-spec name.
    - Continue with the remaining declaration/static-member/deferred-base replay
      paths that still never captured enough metadata at parse time.
    - Prefer replay-first semantic attachment over adding more repair logic.
@@ -113,6 +116,9 @@ The following are complete enough to rely on:
   covered paths;
 - nested out-of-line member-function-template replay preserves instantiated
   outer parameter types while importing definition-side parameter names;
+- partial-spec plain (non-template) out-of-line member functions now parse and
+  substitute their bodies with the correct class-template parameters and
+  definition lookup context in scope;
 - partial-spec member-function-template instantiation now builds owner-correct
   nodes, registers qualified names, and attaches outer template bindings so the
   replay path can materialize bodies with the correct class-template parameters

@@ -88,7 +88,8 @@ Still open, but not the next best slice:
 ## Recommended implementation order
 
 1. continue with the remaining declaration/static-member/deferred-base replay
-   paths that still never captured enough metadata at parse time;
+   paths that still never captured enough metadata at parse time, starting with
+   the partial-spec non-ctor OOL case registered under the base template name;
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
