@@ -1,3 +1,6 @@
+// Regression: nested out-of-line constructor templates in class templates must
+// replay initializer lists during instantiation.
+
 template <typename T>
 struct Outer {
 struct Inner {
