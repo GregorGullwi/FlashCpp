@@ -460,7 +460,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				TypeSpecifierQueryResult sema_arg_type_query =
 					sema_.parserSemanticServices().getOverloadResolutionArgTypeQuery(arg_node);
 				if (sema_normalized_current_function_ &&
-					arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+					sema_arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
 					throw InternalError("Normalized inline_always argument type query remained NotYetAnalyzed");
 				}
 
