@@ -481,7 +481,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							"Sema-missing inline_always argument type in sema-normalized body for '" +
 							std::string(func_name_view) + "'");
 					}
-					return std::nullopt;
+					throw InternalError(
+						"Sema-missing inline_always argument type in non-normalized body for '" +
+						std::string(func_name_view) + "'");
 				}
 				return sema_arg_type;
 			};
