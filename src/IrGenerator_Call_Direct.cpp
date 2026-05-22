@@ -457,16 +457,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		auto arg_node = callExprNode.arguments()[0];
 		if (arg_node.is<ExpressionNode>()) {
 			auto getInlineAlwaysArgType = [&]() -> std::optional<TypeSpecifierNode> {
-				TypeSpecifierQueryResult sema_arg_type_query =
+				TypeSpecifierQueryResult arg_type_query =
 					sema_.parserSemanticServices().getExpressionTypeQuery(arg_node);
 				if (sema_normalized_current_function_ &&
-					sema_arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
+					arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
 					throw InternalError("Normalized inline_always argument type query remained NotYetAnalyzed");
 				}
 
 				std::optional<TypeSpecifierNode> sema_arg_type;
-				if (sema_arg_type_query.state == TypeSpecifierQueryResult::State::Available) {
-					sema_arg_type = sema_arg_type_query.type;
+				if (arg_type_query.state == TypeSpecifierQueryResult::State::Available) {
+					sema_arg_type = arg_type_query.type;
 				}
 
 				const bool requires_recovery_fallback =

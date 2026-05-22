@@ -12,6 +12,10 @@ namespace demo {
 int main() {
 	int values[3] = {42, 1, 0};
 	demo::SpanLike<int> span(values, 3);
+	demo::SpanLike<int> const constSpan(values, 3);
+	::demo::SpanLike<int> globalSpan(values, 3);
 	(void)span;
+	(void)constSpan;
+	(void)globalSpan;
 	return 0;
 }

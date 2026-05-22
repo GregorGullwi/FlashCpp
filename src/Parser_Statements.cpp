@@ -191,16 +191,32 @@ ParseResult Parser::parse_statement_or_declaration() {
 								  current_token_);
 	}
 
-	auto looksLikeQualifiedTemplateDeclaration = [&]() -> bool {
-		if (!peek().is_identifier()) {
-			return false;
-		}
+	auto canStartQualifiedNamePart = [&](const Token& token) -> bool {
+		return token.type() == Token::Type::Identifier || token.type() == Token::Type::Keyword;
+	};
 
+	auto canStartDeclarator = [&](const Token& token) -> bool {
+		return token.type() == Token::Type::Identifier || token.type() == Token::Type::Keyword ||
+			   token.value() == "*"sv || token.value() == "&"sv || token.value() == "&&"sv;
+	};
+
+	auto looksLikeQualifiedTemplateDeclaration = [&]() -> bool {
 		SaveHandle saved_pos = save_token_position();
 		ScopeGuard restore_guard([&]() { restore_token_position(saved_pos); });
 
+		if (peek() == "::"_tok) {
+			if (!canStartQualifiedNamePart(peek_info(1))) {
+				return false;
+			}
+			advance(); // consume leading global-scope qualifier
+		}
+
+		if (!canStartQualifiedNamePart(peek_info())) {
+			return false;
+		}
+
 		advance(); // consume first identifier
-		while (peek() == "::"_tok && (peek(1).is_identifier() || peek(1).is_keyword())) {
+		while (peek() == "::"_tok && canStartQualifiedNamePart(peek_info(1))) {
 			advance(); // consume '::'
 			advance(); // consume qualified name part
 		}
@@ -210,7 +226,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		}
 		skip_template_arguments();
 
-		while (peek() == "::"_tok && (peek(1).is_identifier() || peek(1).is_keyword())) {
+		while (peek() == "::"_tok && canStartQualifiedNamePart(peek_info(1))) {
 			advance(); // consume '::'
 			advance(); // consume nested type/member name
 			if (peek() == "<"_tok) {
@@ -221,7 +237,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			}
 		}
 
-		return peek().is_identifier() || peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok;
+		return canStartDeclarator(peek_info());
 	};
 
 	auto looksLikeIdentifierDeclarationStart = [&]() -> bool {
@@ -512,6 +528,9 @@ ParseResult Parser::parse_statement_or_declaration() {
 		if (next_kind == "new"_tok || next_kind == "delete"_tok || next_kind == "operator"_tok) {
 			// This is a globally qualified new/delete/operator expression
 			return parse_expression_statement();
+		}
+		if (looksLikeQualifiedTemplateDeclaration()) {
+			return parse_variable_declaration();
 		}
 	}
 
