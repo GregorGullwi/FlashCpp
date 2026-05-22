@@ -541,6 +541,23 @@ static bool functionDeclarationsHaveMatchingParameterShape(
 	return true;
 }
 
+static bool isOutOfLineConstructorStubName(
+	std::string_view member_name,
+	std::string_view template_name,
+	std::string_view template_base_name) {
+	return !template_name.empty() &&
+		(member_name == template_name ||
+			(!template_base_name.empty() && member_name == template_base_name));
+}
+
+static bool functionDeclarationMatchesNameAndArity(
+	const FunctionDeclarationNode& candidate_decl,
+	std::string_view target_name,
+	size_t target_arity) {
+	return candidate_decl.decl_node().identifier_token().value() == target_name &&
+		candidate_decl.parameter_nodes().size() == target_arity;
+}
+
 static bool typeSpecifierLooksLikeDependentSignaturePlaceholder(
 	const TypeSpecifierNode& type_spec) {
 	if (type_spec.type() == TypeCategory::Template) {
@@ -5827,10 +5844,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const DeclarationNode& plain_ool_decl = plain_ool_func.decl_node();
 					const std::string_view plain_ool_name = plain_ool_decl.identifier_token().value();
 					// Skip ctor stubs — handled by the ctor path below.
-					const bool is_plain_ctor_stub =
-						!template_name.empty() &&
-						(plain_ool_name == template_name ||
-							(!template_base_name.empty() && plain_ool_name == template_base_name));
+					const bool is_plain_ctor_stub = isOutOfLineConstructorStubName(
+						plain_ool_name,
+						template_name,
+						template_base_name);
 					if (is_plain_ctor_stub) {
 						continue;
 					}
@@ -5840,10 +5857,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 						FunctionDeclarationNode& inst_func =
 							mem_func.function_declaration.as<FunctionDeclarationNode>();
-						if (inst_func.decl_node().identifier_token().value() != plain_ool_name) {
-							continue;
-						}
-						if (inst_func.parameter_nodes().size() != plain_ool_func.parameter_nodes().size()) {
+						if (!functionDeclarationMatchesNameAndArity(
+								inst_func,
+								plain_ool_name,
+								plain_ool_func.parameter_nodes().size())) {
 							continue;
 						}
 						if (inst_func.is_materialized()) {
@@ -5915,10 +5932,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					out_of_line_member.function_node.as<FunctionDeclarationNode>();
 				const DeclarationNode& ool_decl = ool_func.decl_node();
 				std::string_view ool_func_name = ool_decl.identifier_token().value();
-				const bool out_of_line_ctor_stub =
-					!template_name.empty() &&
-					(ool_func_name == template_name ||
-						(!template_base_name.empty() && ool_func_name == template_base_name));
+				const bool out_of_line_ctor_stub = isOutOfLineConstructorStubName(
+					ool_func_name,
+					template_name,
+					template_base_name);
 				if (!out_of_line_ctor_stub) {
 					// Non-ctor OOL member function template in a partial specialization:
 					// attach the body position and definition lookup context to the matching
@@ -11084,10 +11101,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const FunctionDeclarationNode& ool_func = out_of_line_member.function_node.as<FunctionDeclarationNode>();
 			const DeclarationNode& ool_decl = ool_func.decl_node();
 			std::string_view ool_func_name = ool_decl.identifier_token().value();
-			const bool out_of_line_ctor_stub =
-				!template_name.empty() &&
-				(ool_func_name == template_name ||
-				 (!template_base_name.empty() && ool_func_name == template_base_name));
+			const bool out_of_line_ctor_stub = isOutOfLineConstructorStubName(
+				ool_func_name,
+				template_name,
+				template_base_name);
 
 			FLASH_LOG(Templates, Debug, "Processing nested template out-of-line member: ", ool_func_name);
 
@@ -11309,13 +11326,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const DeclarationNode& inst_decl = inst_func.decl_node();
 
 				// Check if function names match
-				if (inst_decl.identifier_token().value() == decl.identifier_token().value()) {
-					// For overloaded members, the out-of-line definition must attach to the
-					// declaration with the same parameter arity. Matching on name alone
-					// misbinds overloads (e.g., assign/find 2-arg vs 3-arg forms).
-					if (inst_func.parameter_nodes().size() != func_decl.parameter_nodes().size()) {
-						continue;
-					}
+				if (functionDeclarationMatchesNameAndArity(
+						inst_func,
+						decl.identifier_token().value(),
+						func_decl.parameter_nodes().size())) {
 
 					std::optional<bool> signature_match =
 						declarationsMatchAfterTemplateSubstitution(
