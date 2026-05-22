@@ -2094,7 +2094,6 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 			if (resolveMemberAccessType(member_access, owner_struct_info, resolved_member) &&
 				owner_struct_info != nullptr &&
 				resolved_member != nullptr) {
-				(void)owner_struct_info;
 				if (resolved_member->is_reference()) {
 					const size_t referenced_size = resolved_member->referenced_size_bits / 8;
 					if (referenced_size > 0) {
