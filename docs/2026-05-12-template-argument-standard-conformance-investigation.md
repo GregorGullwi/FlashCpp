@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-22 (partial-spec plain-member OOL fix)
+**Last updated:** 2026-05-22 (partial-spec base-name OOL attachment fix)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -43,6 +43,10 @@ Future work can rely on these being in place:
   their bodies parsed and substituted immediately during partial-spec
   instantiation**, enabling dependent-base lookup via `this->...` through
   partial specs without relying on partially substituted AST state.
+- **partial-spec non-ctor out-of-line member attachment now checks both the
+  current template name and base template name (without duplicate replay)**,
+  covering both plain members and deferred member-function-template replay when
+  registration lands under the base template key.
 
 Latest recorded full-suite validation:
 `2484` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
@@ -52,6 +56,8 @@ Latest focused regressions added on the current branch:
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_ret0.cpp`
+- `test_template_partial_spec_ool_member_template_base_name_lookup_ret0.cpp`
+- `test_template_partial_spec_ool_plain_member_base_name_lookup_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -88,8 +94,7 @@ Still open, but not the next best slice:
 ## Recommended implementation order
 
 1. continue with the remaining declaration/static-member/deferred-base replay
-   paths that still never captured enough metadata at parse time, starting with
-   the partial-spec non-ctor OOL case registered under the base template name;
+   paths that still never captured enough metadata at parse time;
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
