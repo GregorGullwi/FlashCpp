@@ -654,10 +654,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				(!return_receiver_type_query.type.has_value() ||
 				 return_receiver_type_query.type->type() == TypeCategory::Invalid ||
 				 isPlaceholderAutoType(return_receiver_type_query.type->type()));
-			if (sema_normalized_current_function_ &&
-				(return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
-				 sema_return_type_unusable)) {
-				throw InternalError("Normalized call-return receiver type was unavailable for member call");
+			const bool sema_missing_normalized_call_return_receiver =
+				return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
+				sema_return_type_unusable;
+			if (sema_normalized_current_function_ && sema_missing_normalized_call_return_receiver) {
+				if (return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
+					throw InternalError("Normalized member call-return receiver type query was AnalyzedAbsent");
+				}
+				throw InternalError("Normalized member call-return receiver type was unusable");
 			}
 			const bool allow_parser_type_recovery =
 				!sema_normalized_current_function_ &&
