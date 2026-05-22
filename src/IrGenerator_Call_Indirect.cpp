@@ -654,10 +654,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				(!return_receiver_type_query.type.has_value() ||
 				 return_receiver_type_query.type->type() == TypeCategory::Invalid ||
 				 isPlaceholderAutoType(return_receiver_type_query.type->type()));
+			if (sema_normalized_current_function_ &&
+				(return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
+				 sema_return_type_unusable)) {
+				throw InternalError("Normalized call-return receiver type was unavailable for member call");
+			}
 			const bool allow_parser_type_recovery =
-				return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
-				sema_return_type_unusable ||
-				(!sema_normalized_current_function_ && sema_query_not_yet_analyzed);
+				!sema_normalized_current_function_ &&
+				(return_receiver_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent ||
+				 sema_return_type_unusable ||
+				 sema_query_not_yet_analyzed);
 			if (allow_parser_type_recovery) {
 				if (auto expression_type = parser_.get_expression_type(object_node); expression_type.has_value()) {
 					ret_type = *expression_type;
