@@ -5579,11 +5579,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						ctor_decl.set_template_initializer_list_position(
 							out_of_line_member.initializer_list_start);
 					}
-					StructTypeInfo* instantiated_struct_info = struct_type_info.getStructInfo();
-					if (instantiated_struct_info == nullptr) {
+					StructTypeInfo* ctor_instantiated_struct_info = struct_type_info.getStructInfo();
+					if (ctor_instantiated_struct_info == nullptr) {
 						break;
 					}
-					for (auto& info_func : instantiated_struct_info->member_functions) {
+					for (auto& info_func : ctor_instantiated_struct_info->member_functions) {
 						if (!info_func.is_constructor ||
 							!info_func.function_decl.is<ConstructorDeclarationNode>()) {
 							continue;
@@ -11084,20 +11084,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									// Check if this is a base class by looking at the struct's base classes
 									for (const auto& base : struct_type_info.struct_info_->base_classes) {
 										std::string_view base_name = base.name;
-										bool names_match =
+										bool base_names_match =
 											(base_name == init_name || extractBaseTemplateName(base_name) == init_name);
-										if (!names_match) {
+										if (!base_names_match) {
 											if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 												base_type_info && base_type_info->isTemplateInstantiation()) {
 												StringHandle qualified_base_template_name =
 													gNamespaceRegistry.buildQualifiedIdentifier(
 														base_type_info->sourceNamespace(),
 														base_type_info->baseTemplateName());
-												names_match =
+												base_names_match =
 													StringTable::getStringView(qualified_base_template_name) == init_name;
 											}
 										}
-										if (names_match) {
+										if (base_names_match) {
 											is_base_init = true;
 											matched_base_name = StringTable::getOrInternStringHandle(base_name);
 											break;
