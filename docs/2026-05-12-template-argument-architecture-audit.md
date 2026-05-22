@@ -15,7 +15,7 @@ infrastructure.
 
 The highest-impact work is no longer broad parser cleanup. It is finishing the
 owner-correct replay path for out-of-line member-function-template bodies that
-interact with dependent bases.
+interact with dependent bases — including through partial specializations.
 
 ## Current state
 
@@ -33,14 +33,19 @@ Useful assumptions before changing this area:
   and matches renamed inner template parameters in the covered paths;
 - nested out-of-line member-function-template replay now preserves
   instantiated outer parameter bindings while still copying definition-side
-  parameter names.
+  parameter names;
+- **partial-spec member-function-template instantiation now builds new
+  owner-correct nodes and registers qualified-name + outer binding entries**
+  so the existing replay path can find and replay those bodies with
+  `T→concrete` in scope, matching the primary-template path.
 
 Latest recorded full-suite validation:
-`2502` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2482` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
+- `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
 
 ## What is still wrong
 
@@ -52,8 +57,17 @@ The remaining issue is not that replay exists. The issue is that some replay
 paths still do not capture enough semantic metadata at parse time, so later
 instantiation has to recover intent from partially substituted AST state.
 
-The largest remaining uncovered surface is replayed out-of-line
-member-function-template bodies that perform dependent-base lookup.
+The next highest-value remaining surface:
+
+- replayed out-of-line **non-template** member functions on partial
+  specializations that perform dependent-base lookup — the body position and
+  outer binding are now attached for member-function templates; the same
+  treatment is needed for plain (non-template) member functions that were
+  deferred;
+- the partial-spec OOL attachment for non-ctor functions currently only loops
+  over `instantiated_struct_ref.member_functions()` in one direction; it does
+  not yet cover the case where the OOL definition is registered against the
+  base template name while the class was instantiated from a partial spec.
 
 ### 2. Dependent-name modeling is still too weak
 
@@ -64,7 +78,7 @@ replay/lookup work above.
 ### 3. Lower-priority work remains open
 
 These are still incomplete, but they are not the next best use of effort unless
-they directly block item 1:
+they directly block items 1-2:
 
 - NTTP completion for the remaining C++20 categories;
 - broader sema-owned deduction/ranking;
@@ -72,13 +86,12 @@ they directly block item 1:
 
 ## Highest-impact next steps
 
-1. **Finish out-of-line member-function-template replay through dependent bases**
-   - This is the next bounded target.
-   - Goal: replayed out-of-line member-function-template bodies should use the
-     same owner-correct deferred-base lookup path already used by the covered
-     inline and constructor-template cases.
-   - Success condition: no AST-only fallback is needed for replayed
-     `this->template ...` or equivalent dependent-base member-template lookup.
+1. **Extend the partial-spec OOL attachment to plain (non-template) member functions**
+   - Same pattern as the member-function-template fix, but for deferred-body
+     plain member functions on partial specializations.
+   - The OOL attachment loop (around line 5515 in
+     `Parser_Templates_Inst_ClassTemplate.cpp`) currently only handles
+     ctor-stubs; extend it to match non-template non-ctor OOL members.
 
 2. **Remove the next AST-only replay fallback**
    - After item 1, continue with the remaining declaration/static-member/
@@ -105,7 +118,11 @@ The following are complete enough to rely on:
   metadata and reattaches deferred body/initializer-list state correctly in the
   covered paths;
 - nested out-of-line member-function-template replay preserves instantiated
-  outer parameter types while importing definition-side parameter names.
+  outer parameter types while importing definition-side parameter names;
+- partial-spec member-function-template instantiation now builds owner-correct
+  nodes, registers qualified names, and attaches outer template bindings so the
+  replay path can materialize bodies with the correct class-template parameters
+  in scope.
 
 ## Exit criteria
 
