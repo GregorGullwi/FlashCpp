@@ -54,6 +54,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - `AstToIr::visitRangedForStatementNode(...)` now hard-fails normalized bodies on missing/unusable sema range-expression query state and relies on sema query-state typing plus sema-owned `resolved_range_type`; member-access reconstruction remains as a non-normalized compatibility path.
 - **Fallback 4 (`buildCodegenOverloadResolutionArgType` final clause in `IrGenerator_Stmt_Decl.cpp`)**: sema now owns more of the previously non-normalized implicit-constructor/default-member-initializer argument typing path; codegen keeps only the explicit `std::nullopt` "type unknown" handoff and no longer attempts parser/codegen type reconstruction there.
 - **Fallback 3 (binary operator LHS/RHS type conversion in `IrGenerator_Expr_Operators.cpp`)**: *not a parser API fallback*. Calls `generateTypeConversion` directly for legitimately uncovered cases (pointer arithmetic and unscoped/scoped enum operands where sema annotations are partial). Intentionally retained.
+- `AstToIr::visitSizeofNode(...)` now resolves `sizeof(member_access)` member sizing through `resolveMemberAccessType(...)` (sema-owned member resolution first) and no longer scans instantiated type names (`base`, `base_...`, `base$...`) as a codegen-side recovery path.
 - codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited
 
 ## Active backlog (high level)
