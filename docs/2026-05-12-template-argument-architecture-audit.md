@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-21
+**Last updated:** 2026-05-22
 
 This document is the short audit for FlashCpp's template infrastructure. Its
 main purpose is to describe what is still structurally wrong, what the next
@@ -280,10 +280,10 @@ In priority order:
       definition-context lookup metadata for non-dependent unqualified lookup;
     - remaining declaration/static-member/deferred-base paths that still bypass
       the shared semantic lookup model and therefore fall back to AST-only
-      repair, with the next bounded target now the still-uncovered out-of-line
-      member-function-template, constructor-initializer, and deferred-base
-      replay users beyond the covered in-class/nested/out-of-line static-member
-      and out-of-line member-function body metadata paths.
+      repair, with the next bounded target now the broader deferred-base replay
+      users and remaining out-of-line declaration/static-member replay gaps
+      beyond the covered in-class/nested/out-of-line static-member and
+      out-of-line member-function(-template) body metadata paths.
 
 2. **Continue dependent-name/current-instantiation modeling**
    - richer dependent-base and unknown-specialization records;
@@ -350,6 +350,10 @@ materially changes what future refactors can assume.
   context in the replay metadata, and instantiation re-enters that context
   before reparsing the saved body so non-dependent unqualified calls stay
   definition-bound in the covered non-constructor path.
+- nested out-of-line member-function-template stubs now also carry
+  definition-time lookup context through eager/lazy instantiation stubs, and
+  replay re-enters that captured namespace scope (including global namespace)
+  before reparsing.
 - static-member declarations now store definition lookup context alongside
   replay positions on both AST and instantiated static-member carriers, and
   covered nested/member-template static-member instantiation reuses that stored
@@ -387,6 +391,10 @@ materially changes what future refactors can assume.
   correct prefix-chain materialization for the covered general
   expression/lazy-static cases where a member-template hop produces an
   intermediate type/alias before the final static member or member call.
+- out-of-line template member registration now preserves constructor
+  initializer-list replay metadata in both nested-template and generic
+  out-of-line parsing paths, and covered ctor replay paths reuse that metadata
+  when materializing initializers before body parsing.
 
 ## Exit criteria for this audit
 

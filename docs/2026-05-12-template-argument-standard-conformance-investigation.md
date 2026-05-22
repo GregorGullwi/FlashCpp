@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-21
+**Last updated:** 2026-05-22
 
 This document is the execution plan for moving FlashCpp's template
 infrastructure toward C++20 conformance. It intentionally focuses on remaining
@@ -206,9 +206,13 @@ Most concrete next subtask:
   metadata to stay on that semantic path and still require AST-only fallback.
   The next bounded follow-up is therefore the remaining replay users outside the
   covered in-class/nested/out-of-line static-member metadata and out-of-line
-  member-function body metadata paths, with priority on broader out-of-line
-  member-function-template replay, constructor-initializer replay, and deferred-
-  base coverage beyond the newly covered deeper member-template owner chains.
+  member-function/body metadata paths. Nested out-of-line member-function-
+  template replay now also carries definition-time lookup context through
+  eager/lazy instantiation stubs, and covered out-of-line constructor replay now
+  preserves initializer-list metadata in both nested-template and generic
+  out-of-line registration paths. Priority is now broader deferred-base coverage
+  and the remaining out-of-line declaration/static-member replay gaps beyond the
+  newly covered deeper member-template owner chains.
 
 ### 2. Complete dependent-name and current-instantiation modeling
 
@@ -301,8 +305,8 @@ coverage becomes sufficient.
       variable-template initializer, in-class/nested/out-of-line static-member
       replay, and default-NTTP parser flows;
     - remove the next AST-only/deferred-base fallback path, with the next bounded
-      target now the remaining broader out-of-line declaration/static-member
-      replay gaps.
+      target now deferred-base replay users plus the remaining broader
+      out-of-line declaration/static-member replay gaps.
 
 2. **Dependent-name/current-instantiation expansion**
    - richer dependent-base and unknown-specialization records;
@@ -417,6 +421,13 @@ re-solving already-solved problems.
   correct prefix-chain materialization for the covered general
   expression/lazy-static chains where a member-template hop feeds an
   intermediate type/alias before the final static member or member call.
+- nested out-of-line member-function-template replay now preserves and reuses
+  definition-time lookup context in both eager and lazy instantiation stubs, and
+  replay re-enters that captured namespace scope (including global namespace)
+  before body parsing.
+- out-of-line constructor replay metadata capture now consistently preserves
+  initializer-list replay positions across nested-template and generic out-of-
+  line member registration paths.
 
 ## Exit criteria
 

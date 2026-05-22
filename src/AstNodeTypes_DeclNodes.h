@@ -2844,6 +2844,17 @@ public:
 	StringHandle lazy_member_registry_key() const { return lazy_member_registry_key_; }
 	bool has_lazy_member_registry_key() const { return lazy_member_registry_key_.isValid(); }
 
+	// Definition-time lookup context for out-of-line nested member function templates.
+	// Captured at parse time so that two-phase lookup during instantiation uses the
+	// definition namespace rather than the point-of-instantiation namespace.
+	void set_definition_lookup_context(const TemplateDefinitionLookupContext& ctx) {
+		definition_lookup_context_ = ctx;
+	}
+	const TemplateDefinitionLookupContext& definition_lookup_context() const {
+		return definition_lookup_context_;
+	}
+	bool has_definition_lookup_context() const { return definition_lookup_context_.is_valid(); }
+
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
@@ -2880,6 +2891,7 @@ private:
 	BodyStateTag body_state_tag_ = BodyStateTag::NotMaterialized;
 	StringHandle substitution_failure_reason_;  // Populated iff body_state_tag_ == FailedSubstitution
 	StringHandle lazy_member_registry_key_;
+	TemplateDefinitionLookupContext definition_lookup_context_;  // Captured at parse time for nested member function templates
 };
 
 

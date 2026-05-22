@@ -762,7 +762,12 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 
 	// Skip member initializer list (for constructors): ": member(args), ..."
+	SaveHandle initializer_list_start{};
+	bool has_initializer_list = false;
 	if (peek() == ":"_tok) {
+		// Save the position of ':' so the initializer list can be replayed during instantiation.
+		initializer_list_start = save_token_position();
+		has_initializer_list = true;
 		advance(); // consume ':'
 		// Skip entries: name(args), name{args}, name<T>(args), ...
 		// Brace-init in the list (e.g., member{value}) must be skipped as balanced
@@ -948,6 +953,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		out_of_line_member.inner_template_param_names = inner_template_param_names;
 		out_of_line_member.is_defaulted = member_is_defaulted;
 		out_of_line_member.is_deleted = member_is_deleted;
+		out_of_line_member.has_initializer_list = has_initializer_list;
+		out_of_line_member.initializer_list_start = initializer_list_start;
 		out_of_line_member.definition_lookup_context =
 			buildDefinitionLookupContextFromToken(
 				function_name_token,

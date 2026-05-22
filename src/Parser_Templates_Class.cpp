@@ -600,6 +600,10 @@ ParseResult Parser::parse_template_declaration() {
 				out_of_line_member.inner_template_params = inner_template_params;
 				out_of_line_member.inner_template_param_names = inner_template_param_names;
 				out_of_line_member.has_initializer_list = has_initializer_list;
+				out_of_line_member.definition_lookup_context =
+					buildDefinitionLookupContextFromToken(
+						nested_func_name_token,
+						StringTable::getOrInternStringHandle(nested_qualified_class_name));
 
 				gTemplateRegistry.registerOutOfLineMember(
 					QualifiedIdentifier::fromQualifiedName(
