@@ -491,6 +491,21 @@ static bool constructorDeclarationsHaveMatchingParameterShape(
 	return true;
 }
 
+static bool typeSpecifierLooksLikeDependentSignaturePlaceholder(
+	const TypeSpecifierNode& type_spec) {
+	if (type_spec.type() == TypeCategory::Template) {
+		return true;
+	}
+	if (!type_spec.type_index().is_valid()) {
+		return false;
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+		type_info != nullptr && type_info->isDependentPlaceholder()) {
+		return true;
+	}
+	return false;
+}
+
 static bool typeSpecifiersMatchForSignatureValidation(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs) {
@@ -563,9 +578,10 @@ static std::optional<TypeSpecifierNode> substituteOutOfLineSignatureType(
 	return substituted_type;
 }
 
-static std::optional<bool> functionDeclarationsMatchAfterTemplateSubstitution(
+template <typename InstantiatedDeclNode>
+static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	Parser& parser,
-	const FunctionDeclarationNode& instantiated_decl,
+	const InstantiatedDeclNode& instantiated_decl,
 	const FunctionDeclarationNode& out_of_line_decl,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
@@ -589,52 +605,23 @@ static std::optional<bool> functionDeclarationsMatchAfterTemplateSubstitution(
 			template_params,
 			template_args,
 			owner_type_name);
-		if (!substituted_param.has_value()) {
+		if (substituted_param.has_value()) {
+			if (!typeSpecifiersMatchForSignatureValidation(
+					*instantiated_param,
+					*substituted_param)) {
+				return false;
+			}
+			continue;
+		}
+
+		if (!typeSpecifierLooksLikeDependentSignaturePlaceholder(*instantiated_param) &&
+			!typeSpecifierLooksLikeDependentSignaturePlaceholder(*out_of_line_param)) {
 			return std::nullopt;
 		}
-
-		if (!typeSpecifiersMatchForSignatureValidation(
-				*instantiated_param,
-				*substituted_param)) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-static std::optional<bool> constructorDeclarationsMatchAfterTemplateSubstitution(
-	Parser& parser,
-	const ConstructorDeclarationNode& instantiated_decl,
-	const FunctionDeclarationNode& out_of_line_decl,
-	std::span<const TemplateParameterNode> template_params,
-	std::span<const TemplateTypeArg> template_args,
-	StringHandle owner_type_name) {
-	if (instantiated_decl.parameter_nodes().size() != out_of_line_decl.parameter_nodes().size()) {
-		return false;
-	}
-
-	for (size_t i = 0; i < instantiated_decl.parameter_nodes().size(); ++i) {
-		const TypeSpecifierNode* instantiated_param =
-			getDeclarationParamTypeNode(instantiated_decl.parameter_nodes()[i]);
-		const TypeSpecifierNode* out_of_line_param =
-			getDeclarationParamTypeNode(out_of_line_decl.parameter_nodes()[i]);
-		if (instantiated_param == nullptr || out_of_line_param == nullptr) {
-			return std::nullopt;
-		}
-
-		ASTNode substituted_type_node = parser.substituteTemplateParameters(
-			ASTNode::emplace_node<TypeSpecifierNode>(*out_of_line_param),
-			template_params,
-			template_args,
-			owner_type_name);
-		if (!substituted_type_node.is<TypeSpecifierNode>()) {
-			return std::nullopt;
-		}
-
-		if (!typeSpecifiersMatchForSignatureValidation(
-				*instantiated_param,
-				substituted_type_node.as<TypeSpecifierNode>())) {
+		if (instantiated_param->token().value() != out_of_line_param->token().value() ||
+			instantiated_param->pointer_depth() != out_of_line_param->pointer_depth() ||
+			instantiated_param->reference_qualifier() != out_of_line_param->reference_qualifier() ||
+			instantiated_param->cv_qualifier() != out_of_line_param->cv_qualifier()) {
 			return false;
 		}
 	}
@@ -10265,19 +10252,40 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (out_of_line_ctor_stub &&
 					mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 					auto& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
-					size_t out_of_line_template_param_count =
+					const size_t out_of_line_template_param_count =
 						out_of_line_member.inner_template_params.size();
-					const bool template_param_count_matches =
-						!ctor_decl.template_parameters().empty() &&
-						ctor_decl.template_parameters().size() == out_of_line_template_param_count;
-					const bool parameter_shape_matches =
-						ool_func.parameter_nodes().size() == ctor_decl.parameter_nodes().size() &&
-						constructorDeclarationsHaveMatchingParameterShape(
-							ctor_decl,
-							ool_func);
-					if (!ctor_decl.has_template_body_position() &&
-						template_param_count_matches &&
-						parameter_shape_matches) {
+					auto matches_out_of_line_ctor_template =
+						[&](const ConstructorDeclarationNode& candidate) -> bool {
+							if (candidate.has_template_body_position()) {
+								return false;
+							}
+							if (candidate.template_parameters().empty() ||
+								candidate.template_parameters().size() != out_of_line_template_param_count) {
+								return false;
+							}
+
+							std::optional<bool> signature_match =
+								declarationsMatchAfterTemplateSubstitution(
+									*this,
+									candidate,
+									ool_func,
+									std::span<const TemplateParameterNode>(
+										out_of_line_member.template_params.data(),
+										out_of_line_member.template_params.size()),
+									std::span<const TemplateTypeArg>(
+										template_args_to_use.data(),
+										template_args_to_use.size()),
+									instantiated_name);
+							if (signature_match.has_value()) {
+								return *signature_match;
+							}
+
+							return ool_func.parameter_nodes().size() == candidate.parameter_nodes().size() &&
+								constructorDeclarationsHaveMatchingParameterShape(
+									candidate,
+									ool_func);
+						};
+					if (matches_out_of_line_ctor_template(ctor_decl)) {
 						ctor_decl.set_template_body_position(out_of_line_member.body_start);
 						if (out_of_line_member.has_initializer_list) {
 							ctor_decl.set_template_initializer_list_position(
@@ -10295,19 +10303,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								info_ctor.template_parameters().size() != ctor_decl.template_parameters().size()) {
 								continue;
 							}
-							std::optional<bool> info_signature_match =
-								constructorDeclarationsMatchAfterTemplateSubstitution(
-									*this,
-									info_ctor,
-									ool_func,
-									std::span<const TemplateParameterNode>(
-										out_of_line_member.template_params.data(),
-										out_of_line_member.template_params.size()),
-									std::span<const TemplateTypeArg>(
-										template_args_to_use.data(),
-										template_args_to_use.size()),
-									instantiated_name);
-							if (info_signature_match.has_value() && !*info_signature_match) {
+							if (!matches_out_of_line_ctor_template(info_ctor)) {
 								continue;
 							}
 
@@ -10425,7 +10421,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					std::optional<bool> signature_match =
-						functionDeclarationsMatchAfterTemplateSubstitution(
+						declarationsMatchAfterTemplateSubstitution(
 							*this,
 							inst_func,
 							func_decl,
