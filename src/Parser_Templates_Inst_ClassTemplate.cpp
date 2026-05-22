@@ -877,6 +877,85 @@ void Parser::copyDefinitionParameterIdentifiers(
 	}
 }
 
+bool Parser::replayOutOfLineMemberBody(
+	FunctionDeclarationNode& inst_func,
+	StructDeclarationNode* instantiated_struct_decl,
+	StringHandle instantiated_name,
+	TypeIndex instantiated_type_index,
+	std::span<const ASTNode> definition_scope_params,
+	SaveHandle body_start,
+	const TemplateDefinitionLookupContext& recorded_lookup_context,
+	const Token& declaration_token,
+	std::span<const TemplateParameterNode> substitution_template_params,
+	std::span<const TemplateTypeArg> substitution_template_args,
+	std::string_view log_context,
+	std::string_view function_name) {
+	SaveHandle saved_pos = save_token_position();
+	// body_start belongs to the stored OOL registration metadata and may be reused
+	// by other replay paths; only the temporary saved_pos is restored+discarded here.
+	restore_lexer_position_only(body_start);
+
+	bool parsed_and_substituted = false;
+	{
+		TemplateDefinitionLookupContext definition_lookup_context =
+			ensureReplayDefinitionLookupContext(
+				recorded_lookup_context,
+				declaration_token,
+				gSymbolTable.get_current_namespace_handle(),
+				instantiated_name);
+		ScopedDefinitionLookupContext ctx_scope(
+			current_template_definition_lookup_context_,
+			definition_lookup_context.is_valid()
+				? &definition_lookup_context
+				: nullptr);
+
+		FlashCpp::FunctionParsingScopeGuard func_guard(
+			*this,
+			true,
+			!inst_func.is_static(),
+			instantiated_struct_decl,
+			instantiated_name,
+			instantiated_type_index,
+			definition_scope_params,
+			&inst_func);
+
+		auto body_result = parse_function_body();
+		if (!body_result.is_error() && body_result.node().has_value()) {
+			try {
+				ASTNode substituted_body = substituteTemplateParameters(
+					*body_result.node(),
+					substitution_template_params,
+					substitution_template_args);
+				inst_func.set_definition(substituted_body);
+				finalize_function_after_definition(inst_func, true);
+				parsed_and_substituted = true;
+			} catch (const std::exception& e) {
+				FLASH_LOG(
+					Templates,
+					Error,
+					"Exception substituting OOL plain member body for ",
+					log_context,
+					" '",
+					function_name,
+					"': ",
+					e.what());
+			}
+		} else {
+			FLASH_LOG(
+				Templates,
+				Error,
+				"Failed to parse OOL plain member body for ",
+				log_context,
+				": ",
+				function_name);
+		}
+	}
+
+	restore_lexer_position_only(saved_pos);
+	discard_saved_token(saved_pos);
+	return parsed_and_substituted;
+}
+
 // Resolve any stored template arguments on a deferred base member-type chain after a class
 // template's substitution maps are available.
 // Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.
@@ -5829,79 +5908,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			auto out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
 			const std::string_view template_base_name = extractBaseTemplateName(template_name);
-			auto replayOutOfLineMemberBody = [&](
-				FunctionDeclarationNode& inst_func,
-				std::span<const ASTNode> definition_scope_params,
-				SaveHandle body_start,
-				const TemplateDefinitionLookupContext& recorded_lookup_context,
-				const Token& declaration_token,
-				std::span<const TemplateParameterNode> substitution_template_params,
-				std::span<const TemplateTypeArg> substitution_template_args,
-				std::string_view log_context,
-				std::string_view function_name) -> bool {
-				SaveHandle saved_pos = save_token_position();
-				restore_lexer_position_only(body_start);
-
-				bool parsed_and_substituted = false;
-				{
-					TemplateDefinitionLookupContext definition_lookup_context =
-						ensureReplayDefinitionLookupContext(
-							recorded_lookup_context,
-							declaration_token,
-							gSymbolTable.get_current_namespace_handle(),
-							instantiated_name);
-					ScopedDefinitionLookupContext ctx_scope(
-						current_template_definition_lookup_context_,
-						definition_lookup_context.is_valid()
-							? &definition_lookup_context
-							: nullptr);
-
-					FlashCpp::FunctionParsingScopeGuard func_guard(
-						*this,
-						true,
-						!inst_func.is_static(),
-						&instantiated_struct_ref,
-						instantiated_name,
-						struct_type_info.type_index_,
-						definition_scope_params,
-						&inst_func);
-
-					auto body_result = parse_function_body();
-					if (!body_result.is_error() && body_result.node().has_value()) {
-						try {
-							ASTNode substituted_body = substituteTemplateParameters(
-								*body_result.node(),
-								substitution_template_params,
-								substitution_template_args);
-							inst_func.set_definition(substituted_body);
-							finalize_function_after_definition(inst_func, true);
-							parsed_and_substituted = true;
-						} catch (const std::exception& e) {
-							FLASH_LOG(
-								Templates,
-								Error,
-								"Exception substituting OOL plain member body for ",
-								log_context,
-								" '",
-								function_name,
-								"': ",
-								e.what());
-						}
-					} else {
-						FLASH_LOG(
-							Templates,
-							Error,
-							"Failed to parse OOL plain member body for ",
-							log_context,
-							": ",
-							function_name);
-					}
-				}
-
-				restore_lexer_position_only(saved_pos);
-				discard_saved_token(saved_pos);
-				return parsed_and_substituted;
-			};
 			FLASH_LOG(Templates, Debug, "Processing ", out_of_line_members.size(),
 				" out-of-line member functions for ", template_name);
 			for (const auto& out_of_line_member : out_of_line_members) {
@@ -5948,6 +5954,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							inst_func.parameter_nodes();
 						if (replayOutOfLineMemberBody(
 								inst_func,
+								&instantiated_struct_ref,
+								instantiated_name,
+								struct_type_info.type_index_,
 								inst_func_params,
 								out_of_line_member.body_start,
 								out_of_line_member.definition_lookup_context,
@@ -11410,6 +11419,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					found_match = replayOutOfLineMemberBody(
 						inst_func,
+						&instantiated_struct_ref,
+						instantiated_name,
+						struct_type_info.type_index_,
 						std::span<const ASTNode>(
 							definition_scope_params.data(),
 							definition_scope_params.size()),
