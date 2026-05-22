@@ -5,6 +5,84 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+template <typename StructContextRange>
+StringHandle buildNestedTypeChainName(const StructContextRange& struct_contexts, StringHandle type_name) {
+	if (struct_contexts.empty()) {
+		return type_name;
+	}
+	StringBuilder chain_builder;
+	for (const auto& ctx : struct_contexts) {
+		chain_builder.append(ctx.struct_name).append("::");
+	}
+	chain_builder.append(type_name);
+	return StringTable::getOrInternStringHandle(chain_builder.commit());
+}
+
+void registerTypeLookupAliases(
+	TypeInfo& type_info,
+	StringHandle simple_name,
+	NamespaceHandle current_namespace_handle,
+	std::string_view qualified_namespace,
+	bool is_nested_type,
+	StringHandle nested_type_chain,
+	bool register_simple_alias,
+	bool register_partial_namespace_aliases,
+	bool register_inline_namespace_aliases) {
+	auto& types_by_name = getTypesByNameMap();
+
+	if (is_nested_type) {
+		if (register_simple_alias &&
+			types_by_name.find(simple_name) == types_by_name.end()) {
+			types_by_name.emplace(simple_name, &type_info);
+		}
+
+		if (!qualified_namespace.empty() &&
+			nested_type_chain.isValid() &&
+			nested_type_chain != type_info.name() &&
+			types_by_name.find(nested_type_chain) == types_by_name.end()) {
+			types_by_name.emplace(nested_type_chain, &type_info);
+		}
+	} else if (register_simple_alias &&
+			   !qualified_namespace.empty() &&
+			   types_by_name.find(simple_name) == types_by_name.end()) {
+		types_by_name.emplace(simple_name, &type_info);
+	}
+
+	if (!qualified_namespace.empty() && register_inline_namespace_aliases) {
+		NamespaceHandle visible_namespace_handle = current_namespace_handle;
+		while (visible_namespace_handle.isValid() &&
+			   gNamespaceRegistry.isInline(visible_namespace_handle)) {
+			visible_namespace_handle =
+				gNamespaceRegistry.getParent(visible_namespace_handle);
+			StringHandle visible_handle =
+				gNamespaceRegistry.buildQualifiedIdentifier(
+					visible_namespace_handle, simple_name);
+			if (types_by_name.find(visible_handle) == types_by_name.end()) {
+				types_by_name.emplace(visible_handle, &type_info);
+			}
+		}
+	}
+
+	if (!qualified_namespace.empty() &&
+		register_partial_namespace_aliases &&
+		!is_nested_type) {
+		for (size_t pos = qualified_namespace.find("::");
+			 pos != std::string_view::npos;
+			 pos = qualified_namespace.find("::", pos + 2)) {
+			std::string_view suffix = qualified_namespace.substr(pos + 2);
+			StringBuilder partial_qualified;
+			partial_qualified.append(suffix).append("::").append(simple_name);
+			StringHandle partial_handle =
+				StringTable::getOrInternStringHandle(partial_qualified.commit());
+			if (types_by_name.find(partial_handle) == types_by_name.end()) {
+				types_by_name.emplace(partial_handle, &type_info);
+			}
+		}
+	}
+}
+} // namespace
+
 ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
 	out_func_decl = nullptr;
 	out_decl = nullptr;
@@ -138,12 +216,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		//   depth-2:  "A::B::C"   (context=[A,B], current="C")
 		// The old code only looked at back(), giving "B::C" for depth-2 which
 		// made ns::A::B::C unresolvable.
-		StringBuilder struct_chain_builder;
-		for (const auto& ctx : struct_parsing_context_stack_) {
-			struct_chain_builder.append(ctx.struct_name).append("::");
-		}
-		struct_chain_builder.append(struct_name);
-		struct_chain = StringTable::getOrInternStringHandle(struct_chain_builder.commit());
+		struct_chain = buildNestedTypeChainName(struct_parsing_context_stack_, struct_name);
 
 		if (!qualified_namespace.empty()) {
 			// Namespace + struct chain: "ns::A::B::C"
@@ -172,67 +245,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	TypeInfo& struct_type_info = add_struct_type(type_name, current_namespace_handle);
 
-	// For nested classes, also register with the simple name so it can be referenced
-	// from within the nested class itself (e.g., in constructors)
-	if (is_nested_class) {
-		getTypesByNameMap().emplace(struct_name, &struct_type_info);
-
-		// Register the struct-chain-relative name ("A::B", "A::B::C") when inside a
-		// namespace.  This allows unqualified access from within the namespace:
-		//   namespace ns { void f() { A::B b; } }
-		// Without this, only "ns::A::B" and "B" are registered.
-		if (!qualified_namespace.empty()) {
-			if (struct_chain != type_name) {
-				getTypesByNameMap().emplace(struct_chain, &struct_type_info);
-			}
-		}
-	}
-
-	// For namespace classes, also register with the simple name for 'this' pointer lookup
-	// during member function code generation. The TypeInfo's name is fully qualified (ns::Test)
-	// but parent_struct_name is just "Test", so we need this alias for lookups.
-	if (!is_nested_class && !qualified_namespace.empty()) {
-		if (getTypesByNameMap().find(struct_name) == getTypesByNameMap().end()) {
-			getTypesByNameMap().emplace(struct_name, &struct_type_info);
-		}
-	}
-
-	// If inside an inline namespace, register aliases in every enclosing namespace that
-	// transparently exposes this inline namespace (e.g. outer::Foo, outer::v1::Foo, ...).
-	if (!qualified_namespace.empty() && !parsing_template_class_) {
-		NamespaceHandle visible_namespace_handle = current_namespace_handle;
-		while (visible_namespace_handle.isValid() && gNamespaceRegistry.isInline(visible_namespace_handle)) {
-			visible_namespace_handle = gNamespaceRegistry.getParent(visible_namespace_handle);
-			StringHandle visible_handle = gNamespaceRegistry.buildQualifiedIdentifier(visible_namespace_handle, struct_name);
-			if (getTypesByNameMap().find(visible_handle) == getTypesByNameMap().end()) {
-				getTypesByNameMap().emplace(visible_handle, &struct_type_info);
-			}
-		}
-	}
-
-	// Register with namespace-qualified names for all levels of the namespace path
-	// This allows lookups like "inner::Base" when we're in namespace "ns" to find "ns::inner::Base"
-	if (!qualified_namespace.empty() && !is_nested_class) {
-		// full_qualified_name already computed above, just log if needed
-		FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name),
-				  "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
-
-		// Also register intermediate names (e.g., "inner::Base" for "ns::inner::Base")
-		// This allows sibling namespace access patterns like:
-		// namespace ns { namespace inner { struct Base {}; } struct Derived : public inner::Base {}; }
-		for (size_t pos = qualified_namespace.find("::"); pos != std::string_view::npos; pos = qualified_namespace.find("::", pos + 2)) {
-			std::string_view suffix = qualified_namespace.substr(pos + 2);
-			StringBuilder partial_qualified;
-			partial_qualified.append(suffix).append("::").append(struct_name);
-			std::string_view partial_view = partial_qualified.commit();
-			auto partial_handle = StringTable::getOrInternStringHandle(partial_view);
-			if (getTypesByNameMap().find(partial_handle) == getTypesByNameMap().end()) {
-				getTypesByNameMap().emplace(partial_handle, &struct_type_info);
-				FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name),
-						  "' with partial qualified name '", partial_view, "'");
-			}
-		}
-	}
+	// For nested classes and namespace classes, register lookup aliases that mirror
+	// C++ lookup expectations (simple names, partial namespace names, and inline
+	// namespace visibility aliases).
+	registerTypeLookupAliases(
+		struct_type_info,
+		struct_name,
+		current_namespace_handle,
+		qualified_namespace,
+		is_nested_class,
+		struct_chain,
+		true,
+		true,
+		!parsing_template_class_);
 
 	// Check for alignas specifier after struct name (if not already specified)
 	if (!custom_alignment.has_value()) {
@@ -3727,7 +3752,47 @@ ParseResult Parser::parse_enum_declaration() {
 
 	// Register the enum type in the global type system EARLY
 	NamespaceHandle enum_namespace_handle = gSymbolTable.get_current_namespace_handle();
+	const std::string_view qualified_namespace =
+		gNamespaceRegistry.getQualifiedName(enum_namespace_handle);
+	const bool is_nested_enum = !struct_parsing_context_stack_.empty();
+	const bool is_function_local_enum = current_function_ != nullptr;
+	StringHandle enum_struct_chain;
+	if (is_nested_enum) {
+		enum_struct_chain = buildNestedTypeChainName(struct_parsing_context_stack_, enum_name);
+	}
+
 	TypeInfo& enum_type_info = add_enum_type(enum_name, enum_namespace_handle);
+
+	const bool should_register_qualified_enum_aliases =
+		!is_function_local_enum &&
+		enum_namespace_handle.isValid() &&
+		!enum_namespace_handle.isGlobal();
+	if (should_register_qualified_enum_aliases) {
+		StringHandle qualified_enum_name;
+		if (is_nested_enum && enum_struct_chain.isValid()) {
+			qualified_enum_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				enum_namespace_handle, enum_struct_chain);
+		} else {
+			qualified_enum_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				enum_namespace_handle, enum_name);
+		}
+
+		if (getTypesByNameMap().find(qualified_enum_name) ==
+			getTypesByNameMap().end()) {
+			getTypesByNameMap().emplace(qualified_enum_name, &enum_type_info);
+		}
+
+		registerTypeLookupAliases(
+			enum_type_info,
+			enum_name,
+			enum_namespace_handle,
+			qualified_namespace,
+			is_nested_enum,
+			enum_struct_chain,
+			false,
+			true,
+			true);
+	}
 
 	// Create enum declaration node
 	auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
