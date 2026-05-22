@@ -458,7 +458,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (arg_node.is<ExpressionNode>()) {
 			auto getInlineAlwaysArgType = [&]() -> std::optional<TypeSpecifierNode> {
 				TypeSpecifierQueryResult sema_arg_type_query =
-					sema_.parserSemanticServices().getExpressionTypeQuery(arg_node);
+					sema_.parserSemanticServices().getOverloadResolutionArgTypeQuery(arg_node);
 				if (sema_normalized_current_function_ &&
 					sema_arg_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed) {
 					throw InternalError("Normalized inline_always argument type query remained NotYetAnalyzed");
@@ -467,6 +467,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				std::optional<TypeSpecifierNode> sema_arg_type;
 				if (sema_arg_type_query.state == TypeSpecifierQueryResult::State::Available) {
 					sema_arg_type = sema_arg_type_query.type;
+				} else {
+					sema_arg_type = sema_.parserSemanticServices().getOverloadResolutionArgType(arg_node);
 				}
 
 				const bool requires_recovery_fallback =
@@ -479,7 +481,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							"Sema-missing inline_always argument type in sema-normalized body for '" +
 							std::string(func_name_view) + "'");
 					}
-					return parser_.get_expression_type(arg_node);
+					return std::nullopt;
 				}
 				return sema_arg_type;
 			};
