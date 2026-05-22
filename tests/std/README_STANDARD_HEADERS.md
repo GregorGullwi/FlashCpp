@@ -10,7 +10,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1418ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~400ms (retested 2026-05-07, Linux/libstdc++-14). No longer stops at unresolved `auto` mangling in `std::__is_complete_or_unbounded`; targeted trait assertions compile end-to-end again. Regression coverage includes `tests/std/test_std_is_complete_or_unbounded_resolved.cpp` and `tests/std/test_std_utility_is_complete_or_unbounded_ret0.cpp`. |
-| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | ~680ms (retested 2026-05-12, Linux/libstdc++-14). Targeted test still compiles, but bare `#include <compare>` now reaches the hidden friend comparison-category operators before failing with `Sema-normalized constructor call is missing a resolved constructor for 'std::partial_ordering'`. |
+| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Semantic Error | ~1.13s for bare `#include <compare>` (retested 2026-05-22, Linux/libstdc++-14). Namespace-qualified enum casts in the comparison category constructors are now sema-typed, moving the first hard stop to `Ambiguous overload for operator==`. The targeted compatible comparison-category test still compiles in ~0.07s. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
@@ -18,12 +18,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
-| `<utility>` | `test_std_utility.cpp` | ❌ Codegen Error | ~1.76s (retested 2026-05-21, Linux/libstdc++-14). The libstdc++-14 path now parses past the shared `<bits/ptr_traits.h>` member-alias-template target; current stop is IR/codegen for `std::partial_ordering` (`Sema-normalized constructor call is missing a resolved constructor`). |
+| `<utility>` | `test_std_utility.cpp` | ❌ Semantic Error | ~1.62s (retested 2026-05-22, Linux/libstdc++-14). The namespace-qualified enum cast fix removes the `std::partial_ordering` missing-constructor stop; current first hard stop is `Ambiguous overload for operator==` in the shared `<compare>` path. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~2.65s (retested 2026-05-22, Linux/libstdc++-14). Fold-expression template-argument parsing now accepts the multi-line CTAD deduction guide in `<array>`; current first hard stop moved to late IR/codegen (`std::partial_ordering` missing resolved constructor). |
+| `<array>` | `test_std_array.cpp` | ❌ Semantic Error | ~2.66s (retested 2026-05-22, Linux/libstdc++-14). Fold-expression template-argument parsing still accepts the multi-line CTAD deduction guide in `<array>`; the namespace-qualified enum cast fix moves the first hard stop to `Ambiguous overload for operator==` in the shared `<compare>` path. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~27ms (retested 2026-05-22, Linux/libstdc++-14). Statement/declaration disambiguation now keeps qualified class-template direct-initialization on the declaration path, so `std::span<int> s(arr, 5);` no longer falls through to a spurious call-expression parse. |
 | `<tuple>` | `test_std_tuple.cpp` | 💥 Codegen Crash | ~2500ms (retested 2026-05-11, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker and tuple constructor pack-boundary stop are fixed; the header now reaches IR/codegen before `std::partial_ordering` unresolved semantic type category 25. |
@@ -60,7 +60,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Compile Error | ~1060ms (retested 2026-05-07, Linux/libstdc++-14). Regressed from earlier success; now fails in codegen with unresolved constructor call for `std::__mutex_base` plus return/argument conversion gaps (`int` → `long`). |
+| `<latch>` | `test_std_latch.cpp` | 💥 Crash | ~2.25s (retested 2026-05-22, Linux/libstdc++-14). Current run reaches `std::integral_constant` replay after `std::__atomic_ref` template-arity warnings before terminating with signal 11. |
 | `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
@@ -100,6 +100,36 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-22 Linux/libstdc++ namespace-qualified enum functional-cast follow-up
+
+Fix landed:
+
+- **Namespace-scope enums are now registered under their namespace-qualified type
+  names**, matching struct registration and making qualified enum type lookup
+  work in declarations and functional casts.
+- This unblocks the libstdc++ `<compare>` comparison-category pattern
+  `std::__cmp_cat::_Ord(-__v._M_value)` as the argument to an explicit
+  `std::partial_ordering` constructor. Semantic analysis can now resolve the
+  constructor overload instead of leaving codegen with missing constructor
+  metadata.
+
+Regression coverage:
+
+- `tests/test_qualified_enum_functional_cast_ctor_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_qualified_enum_functional_cast_ctor_ret0.cpp` | ✅ Pass | focused runner | Covers a namespace-qualified enum functional cast feeding an explicit comparison-category-style constructor. |
+| `<compare>` (bare `#include <compare>`) | ❌ Semantic Error | 1.13s | Progresses past `std::partial_ordering` missing resolved constructor; current stop is `Ambiguous overload for operator==`. |
+| `<utility>` (`test_std_utility.cpp`) | ❌ Semantic Error | 1.62s | Progresses past the previous `std::partial_ordering` constructor metadata stop; current stop is the shared `<compare>` `operator==` ambiguity. |
+| `<array>` (`test_std_array.cpp`) | ❌ Semantic Error | 2.66s | Progresses past the previous `std::partial_ordering` constructor metadata stop; current stop is the shared `<compare>` `operator==` ambiguity. |
+| `<ratio>` (`test_std_ratio.cpp`) | 💥 Crash | 2.64s | Still terminates with signal 11 in the deeper ratio path after repeated `__are_both_ratios` instantiation failures. |
+| `<latch>` (`test_std_latch.cpp`) | 💥 Crash | 2.25s | Reaches the atomic/latch path and terminates with signal 11 after `std::__atomic_ref` template-arity warnings. |
+| `<span>` (`test_std_span.cpp`) | ✅ Pass | 0.05s | Still compiles. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | 0.85s | Still compiles. |
 
 ### 2026-05-21 Linux/libstdc++ member-template alias type-id follow-up
 
