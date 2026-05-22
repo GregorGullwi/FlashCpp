@@ -5386,57 +5386,69 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-					auto buildMergedOuterTemplateBinding = [&](OuterTemplateBinding& out_binding) {
-						if (func_decl.has_outer_template_bindings()) {
-							InlineVector<TemplateParameterNode, 4> combined_params;
-							InlineVector<TemplateTypeArg, 4> combined_args;
-							combined_params.reserve(
-								func_decl.outer_template_param_names().size() + template_params.size());
-							combined_args.reserve(
-								func_decl.outer_template_args().size() + template_args_for_pattern.size());
-							for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
-								combined_params.push_back(
-									rebuildOuterTemplateParameter(
-										func_decl.outer_template_param_names()[i],
-										func_decl.outer_template_args()[i]));
-								combined_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
-							}
-							for (const auto& param : template_params) {
-								combined_params.push_back(param);
-							}
-							for (const auto& arg : template_args_for_pattern) {
-								combined_args.push_back(arg);
-							}
-							collectOuterTemplateBinding(combined_params, combined_args, out_binding);
+					// Build combined outer+class-level params/args when the pattern function
+					// already carries outer template bindings from an enclosing scope.
+					auto buildMergedOuterAndClassParams = [&](
+						InlineVector<TemplateParameterNode, 4>& out_params,
+						InlineVector<TemplateTypeArg, 4>& out_args) {
+						if (!func_decl.has_outer_template_bindings()) {
 							return;
 						}
-						collectOuterTemplateBinding(template_params, template_args_for_pattern, out_binding);
+						out_params.reserve(
+							func_decl.outer_template_param_names().size() + template_params.size());
+						out_args.reserve(
+							func_decl.outer_template_args().size() + template_args_for_pattern.size());
+						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+							out_params.push_back(
+								rebuildOuterTemplateParameter(
+									func_decl.outer_template_param_names()[i],
+									func_decl.outer_template_args()[i]));
+							out_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+						}
+						for (const auto& param : template_params) {
+							out_params.push_back(param);
+						}
+						for (const auto& arg : template_args_for_pattern) {
+							out_args.push_back(arg);
+						}
+					};
+					auto buildMergedOuterTemplateBinding = [&](OuterTemplateBinding& out_binding) {
+						InlineVector<TemplateParameterNode, 4> combined_params;
+						InlineVector<TemplateTypeArg, 4> combined_args;
+						buildMergedOuterAndClassParams(combined_params, combined_args);
+						if (!combined_params.empty()) {
+							collectOuterTemplateBinding(combined_params, combined_args, out_binding);
+						} else {
+							collectOuterTemplateBinding(template_params, template_args_for_pattern, out_binding);
+						}
 					};
 					auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
-						if (func_decl.has_outer_template_bindings()) {
-							InlineVector<TemplateParameterNode, 4> combined_params;
-							InlineVector<TemplateTypeArg, 4> combined_args;
-							combined_params.reserve(
-								func_decl.outer_template_param_names().size() + template_params.size());
-							combined_args.reserve(
-								func_decl.outer_template_args().size() + template_args_for_pattern.size());
-							for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
-								combined_params.push_back(
-									rebuildOuterTemplateParameter(
-										func_decl.outer_template_param_names()[i],
-										func_decl.outer_template_args()[i]));
-								combined_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
-							}
-							for (const auto& param : template_params) {
-								combined_params.push_back(param);
-							}
-							for (const auto& arg : template_args_for_pattern) {
-								combined_args.push_back(arg);
-							}
+						InlineVector<TemplateParameterNode, 4> combined_params;
+						InlineVector<TemplateTypeArg, 4> combined_args;
+						buildMergedOuterAndClassParams(combined_params, combined_args);
+						if (!combined_params.empty()) {
 							setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
-							return;
+						} else {
+							setOuterTemplateBindingsFromParams(target_func, template_params, template_args_for_pattern);
 						}
-						setOuterTemplateBindingsFromParams(target_func, template_params, template_args_for_pattern);
+					};
+					auto registerMemberTemplateInRegistry = [&](
+						ASTNode new_template_func_node,
+						StringHandle member_name_handle,
+						std::string_view member_name_view) {
+						StringBuilder qualified_name_builder;
+						qualified_name_builder
+							.append(StringTable::getStringView(instantiated_name))
+							.append("::")
+							.append(member_name_view);
+						StringHandle qualified_name_handle =
+							StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+						gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func_node);
+						gTemplateRegistry.registerTemplate(member_name_handle, new_template_func_node);
+						OuterTemplateBinding outer_binding;
+						buildMergedOuterTemplateBinding(outer_binding);
+						gTemplateRegistry.registerOuterTemplateBinding(
+							qualified_name_handle, std::move(outer_binding));
 					};
 
 					if (needs_substitution) {
@@ -5592,60 +5604,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_final);
 						}
 
-						StringBuilder qualified_name_builder;
-						qualified_name_builder.append(StringTable::getStringView(instantiated_name))
-							.append("::")
-							.append(decl_node.identifier_token().value());
-						StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
-
-						gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
-						gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
-
-						OuterTemplateBinding outer_binding;
-						buildMergedOuterTemplateBinding(outer_binding);
-						gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+						registerMemberTemplateInRegistry(
+							new_template_func,
+							decl_node.identifier_token().handle(),
+							decl_node.identifier_token().value());
 					} else {
-						auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
+						auto [new_decl_node_no_subst, new_decl_ref_no_subst] = emplace_node_ref<DeclarationNode>(
 							decl_node.type_node(),
 							decl_node.identifier_token());
-						auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-							new_decl_ref,
+						auto [new_func_node_no_subst, new_func_ref_no_subst] = emplace_node_ref<FunctionDeclarationNode>(
+							new_decl_ref_no_subst,
 							instantiated_name);
-						applyMergedOuterTemplateBindings(new_func_ref);
+						applyMergedOuterTemplateBindings(new_func_ref_no_subst);
 
 						for (const auto& param : func_decl.parameter_nodes()) {
-							new_func_ref.add_parameter_node(param);
+							new_func_ref_no_subst.add_parameter_node(param);
 						}
 
-						copy_function_properties(new_func_ref, func_decl);
-						new_func_ref.set_is_const_member_function(mem_func.is_const());
-						new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
+						copy_function_properties(new_func_ref_no_subst, func_decl);
+						new_func_ref_no_subst.set_is_const_member_function(mem_func.is_const());
+						new_func_ref_no_subst.set_is_volatile_member_function(mem_func.is_volatile());
 						if (func_decl.is_materialized())
-							new_func_ref.set_definition(*func_decl.get_definition());
+							new_func_ref_no_subst.set_definition(*func_decl.get_definition());
 						if (func_decl.has_template_body_position())
-							new_func_ref.set_template_body_position(func_decl.template_body_position());
+							new_func_ref_no_subst.set_template_body_position(func_decl.template_body_position());
 						if (func_decl.has_definition_lookup_context())
-							new_func_ref.set_definition_lookup_context(func_decl.definition_lookup_context());
+							new_func_ref_no_subst.set_definition_lookup_context(func_decl.definition_lookup_context());
 						if (func_decl.has_trailing_return_type_position())
-							new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
-						new_func_ref.set_is_template_pattern(true);
+							new_func_ref_no_subst.set_trailing_return_type_position(func_decl.trailing_return_type_position());
+						new_func_ref_no_subst.set_is_template_pattern(true);
 
-						auto new_template_func = emplace_node<TemplateFunctionDeclarationNode>(
+						auto new_template_func_no_subst = emplace_node<TemplateFunctionDeclarationNode>(
 							template_func.template_parameters(),
-							new_func_node,
+							new_func_node_no_subst,
 							template_func.requires_clause());
 
 						if (mem_func.operator_kind != OverloadableOperator::None) {
-							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
-							struct_type_info.getStructInfo()->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
+							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func_no_subst, mem_func.access);
+							struct_type_info.getStructInfo()->addOperatorOverload(mem_func.operator_kind, new_template_func_no_subst, mem_func.access,
 																 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 						} else {
 							instantiated_struct_ref.add_member_function(
-								new_template_func,
+								new_template_func_no_subst,
 								mem_func.access);
 							struct_type_info.getStructInfo()->addMemberFunction(
 								decl_node.identifier_token().handle(),
-								new_template_func,
+								new_template_func_no_subst,
 								mem_func.access,
 								mem_func.is_virtual,
 								mem_func.is_pure_virtual,
@@ -5653,18 +5657,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_final);
 						}
 
-						StringBuilder qualified_name_builder;
-						qualified_name_builder.append(StringTable::getStringView(instantiated_name))
-							.append("::")
-							.append(decl_node.identifier_token().value());
-						StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
-
-						gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
-						gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
-
-						OuterTemplateBinding outer_binding;
-						buildMergedOuterTemplateBinding(outer_binding);
-						gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+						registerMemberTemplateInRegistry(
+							new_template_func_no_subst,
+							decl_node.identifier_token().handle(),
+							decl_node.identifier_token().value());
 					}
 				} else {
 					FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
@@ -5836,6 +5832,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// attach the body position and definition lookup context to the matching
 					// TemplateFunctionDeclarationNode in the instantiated struct, then register
 					// the outer binding so the replay path can put T in scope.
+					// Count same-name members first to know whether we need signature
+					// disambiguation (mirrors the primary-template path at ~line 11069).
+					size_t same_name_member_template_count = 0;
+					for (const auto& mf : instantiated_struct_ref.member_functions()) {
+						const FunctionDeclarationNode* fd =
+							get_function_decl_node(mf.function_declaration);
+						if (fd && fd->decl_node().identifier_token().value() == ool_func_name) {
+							++same_name_member_template_count;
+						}
+					}
 					for (auto& mem_func : instantiated_struct_ref.member_functions()) {
 						FunctionDeclarationNode* inst_func_decl =
 							get_function_decl_node_mut(mem_func.function_declaration);
@@ -5844,6 +5850,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 						if (inst_func_decl->decl_node().identifier_token().value() != ool_func_name) {
 							continue;
+						}
+						if (same_name_member_template_count > 1) {
+							std::optional<bool> signature_match =
+								nestedOutOfLineMemberTemplateMatchesCandidate(
+									*this,
+									mem_func.function_declaration,
+									ool_func,
+									std::span<const TemplateParameterNode>(
+										template_params.data(),
+										template_params.size()),
+									std::span<const TemplateTypeArg>(
+										template_args_for_pattern.data(),
+										template_args_for_pattern.size()),
+									instantiated_name,
+									std::span<const TemplateParameterNode>(
+										out_of_line_member.inner_template_params.data(),
+										out_of_line_member.inner_template_params.size()));
+							if (!signature_match.has_value() || !*signature_match) {
+								continue;
+							}
 						}
 						inst_func_decl->set_template_body_position(out_of_line_member.body_start);
 						copyDefinitionParameterIdentifiers(
