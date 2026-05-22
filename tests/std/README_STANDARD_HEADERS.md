@@ -105,9 +105,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 Fix landed:
 
-- **Namespace-scope enums are now registered under their namespace-qualified type
-  names**, matching struct registration and making qualified enum type lookup
-  work in declarations and functional casts.
+- **Namespace-scope enums now get namespace-qualified type aliases** in the
+  type map, making qualified enum type lookup work in declarations and
+  functional casts while preserving existing unqualified enum behavior.
 - This unblocks the libstdc++ `<compare>` comparison-category pattern
   `std::__cmp_cat::_Ord(-__v._M_value)` as the argument to an explicit
   `std::partial_ordering` constructor. Semantic analysis can now resolve the
