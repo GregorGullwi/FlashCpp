@@ -5829,6 +5829,79 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			auto out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
 			const std::string_view template_base_name = extractBaseTemplateName(template_name);
+			auto replayOutOfLineMemberBody = [&](
+				FunctionDeclarationNode& inst_func,
+				std::span<const ASTNode> definition_scope_params,
+				SaveHandle body_start,
+				const TemplateDefinitionLookupContext& recorded_lookup_context,
+				const Token& declaration_token,
+				std::span<const TemplateParameterNode> substitution_template_params,
+				std::span<const TemplateTypeArg> substitution_template_args,
+				std::string_view log_context,
+				std::string_view function_name) -> bool {
+				SaveHandle saved_pos = save_token_position();
+				restore_lexer_position_only(body_start);
+
+				bool parsed_and_substituted = false;
+				{
+					TemplateDefinitionLookupContext definition_lookup_context =
+						ensureReplayDefinitionLookupContext(
+							recorded_lookup_context,
+							declaration_token,
+							gSymbolTable.get_current_namespace_handle(),
+							instantiated_name);
+					ScopedDefinitionLookupContext ctx_scope(
+						current_template_definition_lookup_context_,
+						definition_lookup_context.is_valid()
+							? &definition_lookup_context
+							: nullptr);
+
+					FlashCpp::FunctionParsingScopeGuard func_guard(
+						*this,
+						true,
+						!inst_func.is_static(),
+						&instantiated_struct_ref,
+						instantiated_name,
+						struct_type_info.type_index_,
+						definition_scope_params,
+						&inst_func);
+
+					auto body_result = parse_function_body();
+					if (!body_result.is_error() && body_result.node().has_value()) {
+						try {
+							ASTNode substituted_body = substituteTemplateParameters(
+								*body_result.node(),
+								substitution_template_params,
+								substitution_template_args);
+							inst_func.set_definition(substituted_body);
+							finalize_function_after_definition(inst_func, true);
+							parsed_and_substituted = true;
+						} catch (const std::exception& e) {
+							FLASH_LOG(
+								Templates,
+								Error,
+								"Exception substituting OOL plain member body for ",
+								log_context,
+								" '",
+								function_name,
+								"': ",
+								e.what());
+						}
+					} else {
+						FLASH_LOG(
+							Templates,
+							Error,
+							"Failed to parse OOL plain member body for ",
+							log_context,
+							": ",
+							function_name);
+					}
+				}
+
+				restore_lexer_position_only(saved_pos);
+				discard_saved_token(saved_pos);
+				return parsed_and_substituted;
+			};
 			FLASH_LOG(Templates, Debug, "Processing ", out_of_line_members.size(),
 				" out-of-line member functions for ", template_name);
 			for (const auto& out_of_line_member : out_of_line_members) {
@@ -5871,58 +5944,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							inst_func.parameter_nodes(),
 							plain_ool_func.parameter_nodes());
 
-						SaveHandle saved_pos = save_token_position();
-						restore_lexer_position_only(out_of_line_member.body_start);
-
-						{
-							TemplateDefinitionLookupContext definition_lookup_context =
-								ensureReplayDefinitionLookupContext(
-									out_of_line_member.definition_lookup_context,
-									plain_ool_decl.identifier_token(),
-									gSymbolTable.get_current_namespace_handle(),
-									instantiated_name);
-							ScopedDefinitionLookupContext ctx_scope(
-								current_template_definition_lookup_context_,
-								definition_lookup_context.is_valid()
-									? &definition_lookup_context
-									: nullptr);
-
-							FlashCpp::FunctionParsingScopeGuard func_guard(
-								*this,
-								true,
-								!inst_func.is_static(),
-								&instantiated_struct_ref,
-								instantiated_name,
-								struct_type_info.type_index_,
-								inst_func.parameter_nodes(),
-								&inst_func);
-
-							auto body_result = parse_function_body();
-							if (!body_result.is_error() && body_result.node().has_value()) {
-								try {
-									ASTNode substituted_body = substituteTemplateParameters(
-										*body_result.node(),
-										template_params,
-										template_args_for_pattern);
-									inst_func.set_definition(substituted_body);
-									finalize_function_after_definition(inst_func, true);
-									FLASH_LOG(Templates, Debug,
-										"Parsed and substituted OOL plain member body "
-										"for partial-spec: ", plain_ool_name);
-								} catch (const std::exception& e) {
-									FLASH_LOG(Templates, Error,
-										"Exception substituting OOL plain member body "
-										"for partial-spec '", plain_ool_name,
-										"': ", e.what());
-								}
-							} else {
-								FLASH_LOG(Templates, Error,
-									"Failed to parse OOL plain member body "
-									"for partial-spec: ", plain_ool_name);
-							}
-						} // func_guard dtor
-
-						restore_lexer_position_only(saved_pos);
+						const std::span<const ASTNode> inst_func_params =
+							inst_func.parameter_nodes();
+						if (replayOutOfLineMemberBody(
+								inst_func,
+								inst_func_params,
+								out_of_line_member.body_start,
+								out_of_line_member.definition_lookup_context,
+								plain_ool_decl.identifier_token(),
+								std::span<const TemplateParameterNode>(
+									template_params.data(),
+									template_params.size()),
+								std::span<const TemplateTypeArg>(
+									template_args_for_pattern.data(),
+									template_args_for_pattern.size()),
+								"partial-spec",
+								plain_ool_name)) {
+							FLASH_LOG(Templates, Debug,
+								"Parsed and substituted OOL plain member body "
+								"for partial-spec: ", plain_ool_name);
+						}
 						break;
 					}
 					continue;
@@ -11352,15 +11393,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							"'");
 					}
 
-					// Save current position
-					SaveHandle saved_pos = save_token_position();
-
-					// Restore to the out-of-line function body position
-					restore_lexer_position_only(out_of_line_member.body_start);
-
-					// Use FunctionParsingScopeGuard for full member-function context:
-					// scope, current_function_, member context push, 'this' injection,
-					// and parameter registration — matching the normal delayed-body path.
 					const std::span<const ASTNode> inst_func_params = inst_func.parameter_nodes();
 					std::vector<ASTNode> definition_scope_params(inst_func_params.begin(), inst_func_params.end());
 					const auto& definition_params = func_decl.parameter_nodes();
@@ -11376,54 +11408,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 					}
-					{
-						TemplateDefinitionLookupContext definition_lookup_context =
-							ensureReplayDefinitionLookupContext(
-								out_of_line_member.definition_lookup_context,
-								decl.identifier_token(),
-								gSymbolTable.get_current_namespace_handle(),
-								instantiated_name);
-						ScopedDefinitionLookupContext ctx_scope(
-							current_template_definition_lookup_context_,
-							definition_lookup_context.is_valid()
-								? &definition_lookup_context
-								: nullptr);
-
-						FlashCpp::FunctionParsingScopeGuard func_guard(
-							*this,
-							true,
-							!inst_func.is_static(),
-							&instantiated_struct_ref,
-							instantiated_name,
-							struct_type_info.type_index_,
-							definition_scope_params,
-							&inst_func);
-
-						// Parse the function body (handles function-try-blocks too)
-						auto body_result = parse_function_body();
-						if (body_result.is_error() || !body_result.node().has_value()) {
-							FLASH_LOG(Templates, Error, "Failed to parse out-of-line function body for ",
-									  decl.identifier_token().value());
-							restore_lexer_position_only(saved_pos);
-							continue;
-						}
-
-						// Now substitute template parameters in the parsed body
-						try {
-							ASTNode substituted_body = substituteTemplateParameters(
-								*body_result.node(),
-								out_of_line_member.template_params,
-								template_args_to_use);
-							inst_func.set_definition(substituted_body);
-							finalize_function_after_definition(inst_func, true);
-							found_match = true;
-						} catch (const std::exception& e) {
-							FLASH_LOG(Templates, Error, "Exception during template parameter substitution for out-of-line function ",
-									  decl.identifier_token().value(), ": ", e.what());
-						}
-					} // func_guard dtor: pops member ctx, restores current_function_, exits scope
-
-					restore_lexer_position_only(saved_pos);
+					found_match = replayOutOfLineMemberBody(
+						inst_func,
+						std::span<const ASTNode>(
+							definition_scope_params.data(),
+							definition_scope_params.size()),
+						out_of_line_member.body_start,
+						out_of_line_member.definition_lookup_context,
+						decl.identifier_token(),
+						std::span<const TemplateParameterNode>(
+							out_of_line_member.template_params.data(),
+							out_of_line_member.template_params.size()),
+						std::span<const TemplateTypeArg>(
+							template_args_to_use.data(),
+							template_args_to_use.size()),
+						"primary-template",
+						decl.identifier_token().value());
 
 					if (found_match) {
 						break;
