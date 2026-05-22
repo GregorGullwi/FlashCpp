@@ -3455,14 +3455,17 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
 
 	// Phase 15: generate conversions — prefer sema annotations; assert on fallback
-	// for any type that sema is expected to cover (arithmetic).
+	// for any source type that sema is expected to cover (arithmetic + enums).
 	// Reuse tryGlobalSemaConv (defined above) which performs sema slot lookup, struct-type
 	// guard, expected-target verification, enum type mismatch handling, and conversion.
+	auto isSemaOwnedBinaryConvSource = [&](TypeCategory source_cat, TypeCategory target_cat) -> bool {
+		return (is_standard_arithmetic_type(source_cat) && is_standard_arithmetic_type(target_cat)) ||
+			   source_cat == TypeCategory::Enum;
+	};
 	if (!is_pointer_comparison && lhsCat != commonType) {
 		if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
 			if (sema_normalized_current_function_ &&
-				is_standard_arithmetic_type(lhsCat) &&
-				is_standard_arithmetic_type(commonType))
+				isSemaOwnedBinaryConvSource(lhsCat, commonType))
 				throw InternalError(std::string(StringBuilder()
 					.append("Phase 15: sema missed binary LHS conversion ("sv)
 					.append(getTypeName(lhsCat))
@@ -3470,9 +3473,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					.append(getTypeName(commonType))
 					.append(")"sv)
 					.commit()));
-			// Remaining fallback: handles legitimate non-sema-covered implicit conversions:
-			//   - static local / global variable address derefs (Pointer category)
-			//   - unscoped/scoped enum operands (sema annotations are partial for these)
+			// Remaining fallback: handles legitimate non-sema-covered implicit conversions
+			// (for example static local / global variable address derefs).
 			lhsExprResult = generateTypeConversion(lhsExprResult, lhsCat, commonType, binaryOperatorNode.get_token());
 		}
 	}
@@ -3493,8 +3495,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	} else if (!is_pointer_comparison && rhsCat != commonType) {
 		if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
 			if (sema_normalized_current_function_ &&
-				is_standard_arithmetic_type(rhsCat) &&
-				is_standard_arithmetic_type(commonType))
+				isSemaOwnedBinaryConvSource(rhsCat, commonType))
 				throw InternalError(std::string(StringBuilder()
 					.append("Phase 15: sema missed binary RHS conversion ("sv)
 					.append(getTypeName(rhsCat))
