@@ -249,6 +249,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 					out_of_line_ctor.body_start = ctor_body_start;
 					out_of_line_ctor.initializer_list_start = ctor_initializer_list_start;
 					out_of_line_ctor.template_param_names = template_param_names;
+					out_of_line_ctor.inner_template_params = inner_template_params;
+					out_of_line_ctor.inner_template_param_names = inner_template_param_names;
 					out_of_line_ctor.has_initializer_list = ctor_has_initializer_list;
 					out_of_line_ctor.is_defaulted = ctor_is_defaulted;
 					out_of_line_ctor.is_deleted = ctor_is_deleted;
