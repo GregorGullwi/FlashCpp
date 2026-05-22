@@ -23,7 +23,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | ~2.79s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is the multi-line CTAD deduction guide in `<array>` (`Expected ';' after deduction guide`). |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~2.65s (retested 2026-05-22, Linux/libstdc++-14). Fold-expression template-argument parsing now accepts the multi-line CTAD deduction guide in `<array>`; current first hard stop moved to late IR/codegen (`std::partial_ordering` missing resolved constructor). |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
 | `<span>` | `test_std_span.cpp` | ❌ Compile Error | ~0.06s (retested 2026-05-21, Linux/libstdc++-14). Current run does not register/instantiate `std::span<int>` and parses `s(arr, 5)` as a call expression (`No matching function for call to 's'`). |
 | `<tuple>` | `test_std_tuple.cpp` | 💥 Codegen Crash | ~2500ms (retested 2026-05-11, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker and tuple constructor pack-boundary stop are fixed; the header now reaches IR/codegen before `std::partial_ordering` unresolved semantic type category 25. |
@@ -122,7 +122,7 @@ Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 |-------------|--------|------|-------------------------|
 | `test_member_template_alias_template_template_arg_ret0.cpp` | ✅ Pass | n/a | New regression verifies a member alias template target can pass a member alias template as a template-template argument. |
 | `<utility>` (`test_std_utility.cpp`) | ❌ Codegen Error | 1.76s | Progresses past the shared `ptr_traits` parse stop; current stop is IR/codegen for `std::partial_ordering` constructor metadata. |
-| `<array>` (`test_std_array.cpp`) | ❌ Parse Error | 2.79s | Progresses past `ptr_traits`; current stop is the multi-line `<array>` CTAD deduction guide (`Expected ';' after deduction guide`). |
+| `<array>` (`test_std_array.cpp`) | ❌ Codegen Error | 2.65s | Progresses past `ptr_traits` and `<array>` CTAD fold-expression guide parsing; current stop is late IR/codegen (`Sema-normalized constructor call is missing a resolved constructor for 'std::partial_ordering'`). |
 | `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 3.47s | Progresses past `ptr_traits`; current stop is `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
 | `<algorithm>` (`test_std_algorithm.cpp`) | 💥 Crash / Codegen Error | 4.95s | Progresses past `ptr_traits`; current run reaches late IR/codegen around `std::partial_ordering` / unresolved semantic type category 25, with a possible post-IR crash during the deep path. |
 | `<cmath>` (`test_std_cmath.cpp`) | ❌ Compile Error | 16.55s | Progresses past `ptr_traits` and through deeper special-function replay; current fatal stop is unresolved constexpr initialization of `std::__numeric_limits_base::has_denorm`. |
@@ -136,6 +136,28 @@ in this environment include `test_std_bit.cpp` (~1.29s), `test_std_concepts.cpp`
 (~0.05s), `test_std_new.cpp` (~0.07s), and the focused comparison/typeinfo
 regressions. Several larger headers now share later semantic/template/codegen
 stops rather than the previous `ptr_traits` member-alias-template parse error.
+
+### 2026-05-22 `<array>` CTAD fold-expression template-arg parse fix
+
+Fix landed:
+
+- `parse_explicit_template_arguments` now accepts `FoldExpressionNode` and
+  `PackExpansionExprNode` as dependent compile-time non-type template
+  arguments, and tracks fold-expression dependency recursively.
+- This unblocks alias targets and deduction-guide deduced types that contain
+  patterns like `enable_if_t<(is_same_v<_Tp, _Up> && ...), _Tp>`.
+
+Regression coverage:
+
+- `tests/test_alias_template_fold_expr_type_arg_ret0.cpp`
+- `tests/test_deduction_guide_fold_expr_type_arg_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+- Direct invocation for `tests/std/test_std_array.cpp` with detected system
+  include paths now parses through the previous deduction-guide stop and reaches
+  late IR/codegen in **2.65s** with first hard error:
+  `Sema-normalized constructor call is missing a resolved constructor for 'std::partial_ordering'`.
 
 ### 2026-05-17 `<limits>` O(N²) lookahead fix — ~23× parse-time speedup
 
