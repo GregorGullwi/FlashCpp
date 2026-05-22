@@ -186,15 +186,276 @@ ParseResult Parser::parse_statement_or_declaration() {
 								  current_token_);
 	}
 
-	// C++20 attributed-statement/declaration prefix:
-	// [[...]] can appear before a statement or declaration in block scope.
-	// Consume the attribute-specifier-seq here so the underlying construct is
-	// disambiguated from the actual next token (e.g., 'int' vs lambda '[').
-	if (peek() == "["_tok && peek(1) == "["_tok) {
-		skip_cpp_attributes();
-		// Keep parsing potential trailing/interleaved __declspec(...) immediately
-		// after [[...]] so declaration parsing sees the underlying statement token.
-		parse_declspec_attributes();
+	auto looks_like_identifier_declaration_start = [&]() -> bool {
+		if (!peek().is_identifier()) {
+			return false;
+		}
+
+		const Token& identifier_token = peek_info();
+
+		SaveHandle saved_pos = save_token_position();
+		advance(); // consume the identifier
+		if (!peek().is_eof() && kExpressionOnlyAfterLeadingIdentifier.count(peek_info().value())) {
+			restore_token_position(saved_pos);
+			return false;
+		}
+		restore_token_position(saved_pos);
+
+		StringBuilder type_name_builder;
+		type_name_builder.append(identifier_token.value());
+
+		saved_pos = save_token_position();
+		advance(); // consume first identifier
+		while (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (peek().is_identifier()) {
+				type_name_builder.append("::").append(peek_info().value());
+				advance(); // consume next identifier
+			} else {
+				break;
+			}
+		}
+		restore_token_position(saved_pos);
+
+		auto type_name_handle = StringTable::getOrInternStringHandle(type_name_builder);
+		auto type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
+		if (!type_info_ctx && !struct_parsing_context_stack_.empty()) {
+			const auto& struct_ctx = struct_parsing_context_stack_.back();
+			if (struct_ctx.local_struct_info && !struct_ctx.local_struct_info->base_classes.empty()) {
+				StringHandle struct_name = struct_ctx.local_struct_info->getName();
+				if (const TypeInfo* inherited = lookup_inherited_type_alias(struct_name, type_name_handle)) {
+					type_info_ctx = inherited;
+				}
+			}
+		}
+		if (!type_info_ctx && !member_function_context_stack_.empty()) {
+			const auto& mf_ctx = member_function_context_stack_.back();
+			if (mf_ctx.local_struct_info && !mf_ctx.local_struct_info->base_classes.empty()) {
+				StringHandle struct_name = mf_ctx.local_struct_info->getName();
+				if (const TypeInfo* inherited = lookup_inherited_type_alias(struct_name, type_name_handle)) {
+					type_info_ctx = inherited;
+				}
+			}
+		}
+		if (type_info_ctx) {
+			bool is_typedef = type_info_ctx->isTypeAlias() ||
+							  (type_info_ctx->fallback_size_bits_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+			if (type_info_ctx->isStruct() || type_info_ctx->isEnum() || is_typedef) {
+				SaveHandle check_pos = save_token_position();
+				advance(); // consume type name
+
+				while (peek() == "::"_tok) {
+					advance(); // consume '::'
+					if (peek().is_identifier()) {
+						advance(); // consume next identifier
+					} else if (peek() == "operator"_tok) {
+						restore_token_position(check_pos);
+						return false;
+					} else {
+						break;
+					}
+				}
+
+				if (peek() == "<"_tok) {
+					int angle_depth = 1;
+					advance(); // consume '<'
+					while (angle_depth > 0 && !peek().is_eof()) {
+						if (peek() == "<"_tok) {
+							advance();
+							angle_depth++;
+						} else if (peek() == ">"_tok) {
+							advance();
+							angle_depth--;
+						} else if (peek() == ">>"_tok) {
+							split_right_shift_token();
+							advance();
+							angle_depth--;
+						} else {
+							advance();
+						}
+					}
+				}
+
+				if (peek() == "::"_tok) {
+					SaveHandle scope_check = save_token_position();
+					advance(); // consume '::'
+					if (peek() == "operator"_tok) {
+						restore_token_position(scope_check);
+						restore_token_position(check_pos);
+						return false;
+					}
+					if (peek().is_identifier()) {
+						advance(); // consume member name
+						skip_qualified_name_parts();
+						if (peek() == "("_tok) {
+							restore_token_position(scope_check);
+							restore_token_position(check_pos);
+							return false;
+						}
+					}
+					restore_token_position(scope_check);
+				}
+
+				if (peek() == "("_tok) {
+					skip_balanced_parens();
+					if (!peek().is_eof() && kExpressionOnlyAfterParen.count(peek_info().value())) {
+						restore_token_position(check_pos);
+						return false;
+					}
+				}
+				restore_token_position(check_pos);
+				return true;
+			}
+		}
+
+		bool is_template = gTemplateRegistry.lookupTemplate(type_name_handle).has_value();
+		bool is_alias_template = gTemplateRegistry.lookup_alias_template(type_name_handle).has_value();
+		if (is_template || is_alias_template) {
+			advance(); // consume the first identifier
+			skip_qualified_name_parts();
+			if (!peek().is_eof()) {
+				if (peek() == "("_tok) {
+					restore_token_position(saved_pos);
+					return false;
+				}
+				if (peek() == "<"_tok) {
+					SaveHandle template_check = save_token_position();
+					skip_template_arguments();
+					if (peek() == "("_tok) {
+						auto tmpl_opt = gTemplateRegistry.lookupTemplate(type_name_handle);
+						if (tmpl_opt && is_function_or_template_function(*tmpl_opt)) {
+							restore_token_position(template_check);
+							restore_token_position(saved_pos);
+							return false;
+						}
+					}
+					if (peek() == "::"_tok) {
+						advance(); // consume '::'
+						if (peek().is_identifier()) {
+							advance(); // consume member name
+							skip_qualified_name_parts();
+							if (peek() == "("_tok) {
+								restore_token_position(template_check);
+								restore_token_position(saved_pos);
+								return false;
+							}
+						}
+					}
+					restore_token_position(template_check);
+				}
+			}
+			restore_token_position(saved_pos);
+			return true;
+		}
+
+		if (hasActiveTemplateParameters()) {
+			for (const auto& param_name : currentTemplateParamNames()) {
+				if (param_name == type_name_handle) {
+					if (peek(1) == "("_tok) {
+						SaveHandle tparam_check = save_token_position();
+						advance(); // consume type name
+						skip_balanced_parens();
+						if (!peek().is_eof() && kExpressionOnlyAfterParen.count(peek_info().value())) {
+							restore_token_position(tparam_check);
+							return false;
+						}
+						restore_token_position(tparam_check);
+					}
+					return true;
+				}
+			}
+		}
+
+		{
+			auto check_struct_type_alias = [&](auto* struct_node) -> bool {
+				if (!struct_node)
+					return false;
+				for (const auto& alias : struct_node->type_aliases()) {
+					if (alias.alias_name == type_name_handle) {
+						return true;
+					}
+				}
+				return false;
+			};
+
+			bool found_as_member_type_alias = false;
+			for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
+				if (check_struct_type_alias(it->struct_node)) {
+					found_as_member_type_alias = true;
+					break;
+				}
+			}
+			if (!found_as_member_type_alias) {
+				for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+					if (check_struct_type_alias(it->struct_node)) {
+						found_as_member_type_alias = true;
+						break;
+					}
+				}
+			}
+			if (found_as_member_type_alias) {
+				SaveHandle alias_check = save_token_position();
+				advance(); // consume the type alias name
+				if (peek() == "::"_tok) {
+					advance(); // consume '::'
+					if (peek() == "operator"_tok) {
+						restore_token_position(alias_check);
+						return false;
+					}
+				}
+				restore_token_position(alias_check);
+				return true;
+			}
+		}
+
+		return false;
+	};
+
+	auto preserved_attributed_declaration_handler = [&]() -> std::optional<ParsingFunction> {
+		if (peek().is_keyword()) {
+			static const std::unordered_set<std::string_view> declaration_or_function_keywords = {
+				"struct", "class", "union",
+				"static", "extern", "register", "mutable",
+				"constexpr", "constinit", "consteval",
+				"int", "float", "double", "char", "wchar_t",
+				"char8_t", "char16_t", "char32_t", "bool", "void",
+				"short", "long", "signed", "unsigned",
+				"const", "volatile", "alignas", "auto", "decltype",
+				"typename",
+				"__int8", "__int16", "__int32", "__int64"
+			};
+			if (declaration_or_function_keywords.count(peek_info().value())) {
+				return &Parser::parse_declaration_or_function_definition;
+			}
+			return std::nullopt;
+		}
+
+		if (looks_like_identifier_declaration_start()) {
+			return &Parser::parse_variable_declaration;
+		}
+
+		return std::nullopt;
+	};
+
+	bool has_statement_attribute_prefix =
+		(peek() == "["_tok && peek(1) == "["_tok) ||
+		peek() == "__declspec"_tok ||
+		peek_info().value() == "__attribute__";
+	if (has_statement_attribute_prefix) {
+		SaveHandle saved = save_token_position();
+		parse_attributes();
+		if (peek().is_eof()) {
+			restore_token_position(saved);
+			return ParseResult::error("Expected a statement or declaration after attributes",
+									  current_token_);
+		}
+		auto declaration_handler = preserved_attributed_declaration_handler();
+		restore_token_position(saved);
+		if (declaration_handler.has_value()) {
+			return (this->*declaration_handler.value())();
+		}
+
+		parse_attributes();
 		if (peek().is_eof()) {
 			return ParseResult::error("Expected a statement or declaration after attributes",
 									  current_token_);
