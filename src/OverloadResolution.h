@@ -458,13 +458,17 @@ inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
 	return min_required;
 }
 
-// Check if target_struct has a converting constructor whose first parameter accepts
-// source_type and whose remaining parameters are all defaulted, OR if source derives
-// from target (implicit derived-to-base conversion).
+// Check if target_struct has a non-explicit converting constructor whose first parameter
+// accepts source_type and whose remaining parameters are all defaulted, OR if source
+// derives from target (implicit derived-to-base conversion).
 // Used to determine if struct-to-struct conversions are viable.
 // Only checks gTypeInfo (populated at or before IR-gen time).
 // Returns false both when struct info is genuinely absent (caller should then check
 // getStructInfo() separately and fall back to UserDefined) and when no constructor is found.
+// NOTE: Constructors with is_constructor=true are always stored as ConstructorDeclarationNode
+// in practice.  The FunctionDeclarationNode branch is kept for safety but cannot check
+// is_explicit() because FunctionDeclarationNode has no such method; it therefore treats any
+// FunctionDeclarationNode constructor as non-explicit.
 inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_idx) {
 	if (!target_idx.is_valid() || !source_idx.is_valid())
 		return false;
@@ -550,6 +554,13 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 		const auto& param_spec = param_type.as<TypeSpecifierNode>();
 		if (param_spec.is_pointer() || param_spec.is_function_pointer() ||
 			param_spec.is_member_function_pointer() || param_spec.is_member_object_pointer()) {
+			// At overload-resolution time we only have type-category information; we
+			// cannot distinguish a null-pointer constant (literal 0) from a generic
+			// integer.  Accepting any integral source as potentially viable is an
+			// intentional approximation: in practice these constructors are called
+			// only with null-pointer constants (e.g. libstdc++ __cmp_cat::__unspec),
+			// and non-zero integers that slip through would be caught at codegen time
+			// or produce UB that is the programmer's responsibility.
 			if (source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category())) {
 				return true;
 			}
