@@ -447,6 +447,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				allow_parser_type_fallback = true;
 			}
 
+			if (!allow_parser_type_fallback) {
+				return std::nullopt;
+			}
+
 			const ExpressionNode& receiver_expr = receiver_node.as<ExpressionNode>();
 
 			if (std::holds_alternative<IdentifierNode>(receiver_expr)) {
@@ -464,10 +468,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type()); resolved_cast_type.has_value()) {
 					return resolved_cast_type;
 				}
-			}
-
-			if (!allow_parser_type_fallback) {
-				return std::nullopt;
 			}
 		}
 
