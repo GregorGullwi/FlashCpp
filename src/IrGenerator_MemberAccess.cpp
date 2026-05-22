@@ -2095,14 +2095,9 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				owner_struct_info != nullptr &&
 				resolved_member != nullptr) {
 				if (resolved_member->is_reference()) {
-					const size_t referenced_size = resolved_member->referenced_size_bits / 8;
-					if (referenced_size > 0) {
-						return makeSizeTExprResult(referenced_size);
-					}
+					return makeSizeTExprResult(resolved_member->referenced_size_bits / 8);
 				}
-				if (resolved_member->size > 0) {
-					return makeSizeTExprResult(resolved_member->size);
-				}
+				return makeSizeTExprResult(resolved_member->size);
 			}
 		}
 		// Special handling for array subscript: sizeof(arr[0])
