@@ -793,6 +793,59 @@ static std::optional<bool> nestedOutOfLineMemberTemplateMatchesCandidate(
 		out_of_line_inner_template_params);
 }
 
+static bool outOfLineConstructorTemplateMatchesCandidate(
+	Parser& parser,
+	const ConstructorDeclarationNode& candidate,
+	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	StringHandle owner_type_name,
+	std::span<const TemplateParameterNode> candidate_inner_template_params,
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
+		return false;
+	}
+
+	std::optional<bool> substituted_signature_match = declarationsMatchAfterTemplateSubstitution(
+		parser,
+		candidate,
+		out_of_line_decl,
+		outer_template_params,
+		outer_template_args,
+		owner_type_name,
+		candidate_inner_template_params,
+		out_of_line_inner_template_params);
+	if (substituted_signature_match.has_value()) {
+		return *substituted_signature_match;
+	}
+
+	return constructorDeclarationsHaveMatchingParameterShape(
+		candidate,
+		out_of_line_decl,
+		candidate_inner_template_params,
+		out_of_line_inner_template_params);
+}
+
+static void copyDefinitionParameterIdentifiers(
+	std::span<ASTNode> instantiated_params,
+	std::span<const ASTNode> definition_params) {
+	if (instantiated_params.size() != definition_params.size()) {
+		return;
+	}
+
+	for (size_t param_index = 0; param_index < instantiated_params.size(); ++param_index) {
+		const DeclarationNode* instantiated_decl_const = get_decl_from_symbol(instantiated_params[param_index]);
+		DeclarationNode* instantiated_decl = const_cast<DeclarationNode*>(instantiated_decl_const);
+		const DeclarationNode* definition_decl = get_decl_from_symbol(definition_params[param_index]);
+		if (!instantiated_decl || !definition_decl) {
+			continue;
+		}
+		if (!definition_decl->identifier_token().value().empty()) {
+			instantiated_decl->set_identifier_token(definition_decl->identifier_token());
+		}
+	}
+}
+
 // Resolve any stored template arguments on a deferred base member-type chain after a class
 // template's substitution maps are available.
 // Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.
@@ -8644,9 +8697,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								: nullptr;
 						const bool out_of_line_ctor_stub_matches =
 							!out_of_line_ctor_stub_decl ||
-							(out_of_line_ctor_stub_decl->parameter_nodes().size() == ctor_decl.parameter_nodes().size() &&
-							 (nested_out_of_line_members.size() == 1 ||
-							  constructorDeclarationsHaveMatchingParameterShape(ctor_decl, *out_of_line_ctor_stub_decl)));
+							(nested_out_of_line_members.size() == 1 ||
+							 outOfLineConstructorTemplateMatchesCandidate(
+								*this,
+								ctor_decl,
+								*out_of_line_ctor_stub_decl,
+								std::span<const TemplateParameterNode>(
+									template_params.data(),
+									template_params.size()),
+								std::span<const TemplateTypeArg>(
+									template_args_to_use.data(),
+									template_args_to_use.size()),
+								qualified_name,
+								std::span<const TemplateParameterNode>(
+									ctor_decl.template_parameters().data(),
+									ctor_decl.template_parameters().size()),
+								std::span<const TemplateParameterNode>(
+									out_of_line_member.inner_template_params.data(),
+									out_of_line_member.inner_template_params.size())));
 						if (!ctor_decl.is_materialized() &&
 							!ctor_decl.has_template_body_position() &&
 							template_param_count_matches &&
@@ -10577,26 +10645,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								return false;
 							}
 
-							std::optional<bool> signature_match =
-								declarationsMatchAfterTemplateSubstitution(
-									*this,
-									candidate,
-									ool_func,
-									std::span<const TemplateParameterNode>(
-										out_of_line_member.template_params.data(),
-										out_of_line_member.template_params.size()),
-									std::span<const TemplateTypeArg>(
-										template_args_to_use.data(),
-										template_args_to_use.size()),
-									instantiated_name);
-							if (signature_match.has_value()) {
-								return *signature_match;
-							}
-
-							return ool_func.parameter_nodes().size() == candidate.parameter_nodes().size() &&
-								constructorDeclarationsHaveMatchingParameterShape(
-									candidate,
-									ool_func);
+							return outOfLineConstructorTemplateMatchesCandidate(
+								*this,
+								candidate,
+								ool_func,
+								std::span<const TemplateParameterNode>(
+									out_of_line_member.template_params.data(),
+									out_of_line_member.template_params.size()),
+								std::span<const TemplateTypeArg>(
+									template_args_to_use.data(),
+									template_args_to_use.size()),
+								instantiated_name,
+								std::span<const TemplateParameterNode>(
+									candidate.template_parameters().data(),
+									candidate.template_parameters().size()),
+								std::span<const TemplateParameterNode>(
+									out_of_line_member.inner_template_params.data(),
+									out_of_line_member.inner_template_params.size()));
 						};
 					if (matches_out_of_line_ctor_template(ctor_decl)) {
 						ctor_decl.set_template_body_position(out_of_line_member.body_start);
@@ -10667,7 +10732,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Set the body position and definition-time lookup context from the
 				// out-of-line definition so two-phase lookup uses the definition namespace.
 				inst_func_decl->set_template_body_position(out_of_line_member.body_start);
-				inst_func_decl->update_parameter_nodes_from_definition(
+				copyDefinitionParameterIdentifiers(
+					inst_func_decl->parameter_nodes(),
 					ool_func.parameter_nodes());
 				inst_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 				FLASH_LOG(Templates, Debug, "Set body position on nested template member: ", ool_func_name);
@@ -10708,7 +10774,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						recovered_func_decl->set_template_body_position(out_of_line_member.body_start);
-						recovered_func_decl->update_parameter_nodes_from_definition(
+						copyDefinitionParameterIdentifiers(
+							recovered_func_decl->parameter_nodes(),
 							ool_func.parameter_nodes());
 						recovered_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 						OverloadableOperator recovered_operator_kind = original_member.operator_kind;
