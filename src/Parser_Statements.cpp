@@ -190,8 +190,10 @@ ParseResult Parser::parse_statement_or_declaration() {
 	// [[...]] can appear before a statement or declaration in block scope.
 	// Consume the attribute-specifier-seq here so the underlying construct is
 	// disambiguated from the actual next token (e.g., 'int' vs lambda '[').
-	if (peek() == "["_tok && peek_info(1).value() == "[") {
+	if (peek() == "["_tok && peek(1) == "["_tok) {
 		skip_cpp_attributes();
+		// Keep parsing potential trailing/interleaved __declspec(...) immediately
+		// after [[...]] so declaration parsing sees the underlying statement token.
 		parse_declspec_attributes();
 		if (peek().is_eof()) {
 			return ParseResult::error("Expected a statement or declaration after attributes",
