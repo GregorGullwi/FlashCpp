@@ -6781,7 +6781,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				auto trySubstituteValueTemplateParam = [&](StringHandle param_name) -> bool {
+					FLASH_LOG_FORMAT(Parser, Debug, "trySubstituteValueTemplateParam: param_name='{}', substitutions_count={}", param_name.view(), template_param_substitutions_.size());
 					for (const auto& subst : template_param_substitutions_) {
+						FLASH_LOG_FORMAT(Parser, Debug, "  checking subst: subst.param_name='{}', is_value={}, match={}", subst.param_name.view(), subst.is_value_param, subst.param_name == param_name);
 						if (subst.param_name != param_name || !subst.is_value_param) {
 							continue;
 						}
@@ -6882,6 +6884,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If this identifier resolves to a declaration but is also an active template
 				// value parameter, still apply value substitution (needed for auto NTTP callables).
+				FLASH_LOG_FORMAT(Parser, Debug, "PRE-SUBST-CHECK for '{}': identifierType={}, isTemplateClassOrActiveParameters={}, parsing_template_class_={}, hasActiveTemplateParameters={}, template_params_count={}",
+					identifier_token.value(), identifierType.has_value(), isTemplateClassOrActiveParameters(), parsing_template_class_, hasActiveTemplateParameters(), currentTemplateParamCount());
 				if (identifierType && isTemplateClassOrActiveParameters()) {
 					for (const auto& param_name : currentTemplateParamNames()) {
 						if (param_name == identifier_token.value() &&

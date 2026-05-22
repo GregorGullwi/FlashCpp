@@ -1954,7 +1954,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						false, // is_destructor
 						&ctor_ref, // ctor_node
 						nullptr, // dtor_node
-						{}, // template_param_names (empty for non-template constructors)
+						currentTemplateParamNames(), // template_param_names (class template params needed for NTTP in body)
 						false, // is_member_function_template
 						false, // is_free_function
 						has_function_try, // has_function_try
