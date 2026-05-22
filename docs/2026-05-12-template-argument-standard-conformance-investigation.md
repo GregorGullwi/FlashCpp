@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-22
+**Last updated:** 2026-05-22 (partial-spec plain-member OOL fix)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -39,34 +39,26 @@ Future work can rely on these being in place:
   bodies with `T→concrete` in scope without needing a special partial-spec
   fallback.
 
+- **partial-spec out-of-line plain (non-template) member functions now have
+  their bodies parsed and substituted immediately during partial-spec
+  instantiation**, enabling dependent-base lookup via `this->...` through
+  partial specs without relying on partially substituted AST state.
+
 Latest recorded full-suite validation:
-`2482` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2484` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
+- `test_template_partial_spec_ool_plain_member_ret0.cpp`
 
 ## Remaining work, in priority order
 
-### 1. Extend the partial-spec OOL attachment to plain (non-template) member functions
+### 1. Remove the next replay-metadata gap
 
-The member-function-template fix in the partial-spec path attached body
-positions and outer bindings for `TemplateFunctionDeclarationNode` members.
-The same treatment is still missing for deferred-body plain (non-template)
-member functions on partial specializations.
-
-Success condition:
-
-- an out-of-line non-template member function definition on a partial
-  specialization can be replayed with the correct class-template parameters
-  in scope, without relying on partially substituted AST state.
-
-### 2. Remove the next replay-metadata gap
-
-After item 1, continue with the remaining declaration/static-member/
-deferred-base replay paths that still never captured enough metadata at parse
-time.
+Continue with the remaining declaration/static-member/deferred-base replay
+paths that still never captured enough metadata at parse time.
 
 Rule for this work:
 
@@ -74,7 +66,7 @@ Rule for this work:
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
 
-### 3. Expand dependent-name/current-instantiation modeling only as needed
+### 2. Expand dependent-name/current-instantiation modeling only as needed
 
 Still open:
 
@@ -83,9 +75,9 @@ Still open:
 - deeper member-template/type chains;
 - consistent current-instantiation identity across qualified-name paths.
 
-This work should support items 1-2, not replace them as the main track.
+This work should support item 1, not replace it as the main track.
 
-### 4. Leave lower-priority tracks for later unless they block 1-3
+### 3. Leave lower-priority tracks for later unless they block 1-2
 
 Still open, but not the next best slice:
 
@@ -95,12 +87,9 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. add a narrow regression for a plain non-template deferred member function
-   on a partial specialization doing dependent-base lookup;
-2. extend the partial-spec OOL attachment loop to handle plain member functions
-   (the pattern mirrors the member-function-template loop added in this session,
-   but targets `FunctionDeclarationNode` with a deferred body position);
-3. update these docs with the next remaining replay-metadata gap.
+1. continue with the remaining declaration/static-member/deferred-base replay
+   paths that still never captured enough metadata at parse time;
+2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
 
@@ -108,8 +97,6 @@ Keep adding narrow regressions in these areas:
 
 - replayed out-of-line member-function-template bodies using `this->template`
   or equivalent dependent-base lookup — particularly through partial specs;
-- plain (non-template) deferred-body member functions on partial specs doing
-  dependent-base lookup;
 - declaration/definition attachment where inner and outer template parameters
   interact;
 - remaining declaration/static-member replay paths that still fall back to
