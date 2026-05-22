@@ -5906,10 +5906,60 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			auto out_of_line_members = gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
 			const std::string_view template_base_name = extractBaseTemplateName(template_name);
+			auto out_of_line_members =
+				gTemplateRegistry.getOutOfLineMemberFunctions(template_name);
+			auto is_out_of_line_member_record_equivalent =
+				[](const OutOfLineMemberFunction& lhs, const OutOfLineMemberFunction& rhs) {
+					if (lhs.body_start != rhs.body_start ||
+						lhs.initializer_list_start != rhs.initializer_list_start ||
+						lhs.has_initializer_list != rhs.has_initializer_list ||
+						lhs.inner_template_params.size() != rhs.inner_template_params.size() ||
+						lhs.template_params.size() != rhs.template_params.size() ||
+						lhs.function_node.type_name() != rhs.function_node.type_name()) {
+						return false;
+					}
+
+					if (lhs.function_node.is<FunctionDeclarationNode>() &&
+						rhs.function_node.is<FunctionDeclarationNode>()) {
+						const FunctionDeclarationNode& lhs_func =
+							lhs.function_node.as<FunctionDeclarationNode>();
+						const FunctionDeclarationNode& rhs_func =
+							rhs.function_node.as<FunctionDeclarationNode>();
+						return lhs_func.decl_node().identifier_token().value() ==
+								   rhs_func.decl_node().identifier_token().value() &&
+							   lhs_func.parameter_nodes().size() ==
+								   rhs_func.parameter_nodes().size();
+					}
+
+					return true;
+				};
+			auto append_unique_out_of_line_members =
+				[&](const std::vector<OutOfLineMemberFunction>& source_members) {
+					for (const auto& source_member : source_members) {
+						bool already_present = false;
+						for (const auto& existing_member : out_of_line_members) {
+							if (is_out_of_line_member_record_equivalent(
+									existing_member,
+									source_member)) {
+								already_present = true;
+								break;
+							}
+						}
+						if (!already_present) {
+							out_of_line_members.push_back(source_member);
+						}
+					}
+				};
+			if (!template_base_name.empty() && template_base_name != template_name) {
+				auto base_out_of_line_members =
+					gTemplateRegistry.getOutOfLineMemberFunctions(template_base_name);
+				append_unique_out_of_line_members(base_out_of_line_members);
+			}
+
 			FLASH_LOG(Templates, Debug, "Processing ", out_of_line_members.size(),
-				" out-of-line member functions for ", template_name);
+				" out-of-line member functions for ", template_name,
+				" (base fallback: ", template_base_name, ")");
 			for (const auto& out_of_line_member : out_of_line_members) {
 				if (out_of_line_member.inner_template_params.empty()) {
 					// Plain (non-template) OOL member on a partial specialization: parse and

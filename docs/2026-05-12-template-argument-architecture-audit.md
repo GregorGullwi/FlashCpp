@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-22 (partial-spec plain-member OOL fix)
+**Last updated:** 2026-05-22 (partial-spec base-name OOL attachment fix)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -42,6 +42,10 @@ Useful assumptions before changing this area:
   their bodies parsed and substituted immediately during partial-spec
   instantiation**, matching the primary-template OOL plain-member path and
   enabling dependent-base lookup via `this->...` through partial specs.
+- **partial-spec non-ctor out-of-line member attachment now checks both the
+  current template name and the extracted base template name (with dedupe)**,
+  so plain-member replay and member-function-template deferred replay still
+  attach when registrations land under the base template name.
 
 Latest recorded full-suite validation:
 `2484` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
@@ -51,6 +55,8 @@ Latest focused replay regressions added on the current branch:
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_ret0.cpp`
+- `test_template_partial_spec_ool_member_template_base_name_lookup_ret0.cpp`
+- `test_template_partial_spec_ool_plain_member_base_name_lookup_ret0.cpp`
 
 ## What is still wrong
 
@@ -64,10 +70,6 @@ instantiation has to recover intent from partially substituted AST state.
 
 The next highest-value remaining surface:
 
-- the partial-spec OOL attachment for non-ctor functions loops over
-  `instantiated_struct_ref.member_functions()` in one direction; it does
-  not yet cover the case where the OOL definition is registered against the
-  base template name while the class was instantiated from a partial spec;
 - remaining declaration/static-member/deferred-base replay paths that never
   captured enough replay metadata at parse time.
 
@@ -89,9 +91,6 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Remove the next AST-only replay fallback**
-   - Start with the partial-spec non-ctor OOL case where the definition was
-     registered under the base template name instead of the instantiated
-     partial-spec name.
    - Continue with the remaining declaration/static-member/deferred-base replay
      paths that still never captured enough metadata at parse time.
    - Prefer replay-first semantic attachment over adding more repair logic.
