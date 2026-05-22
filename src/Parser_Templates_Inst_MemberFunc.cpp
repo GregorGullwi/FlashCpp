@@ -2050,6 +2050,12 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 		registerTypeParamsInScope(outer_param_names, outer_args, template_scope, true);
 		FLASH_LOG(Templates, Debug, "Added ", outer_param_names.size(), " outer template param bindings for body parsing");
+	} else if (outer_binding != nullptr) {
+		// Fallback for partial-specialization OOL member function templates: the
+		// func_decl is the original partial-spec node (no outer bindings stamped
+		// on it), but the registry carries the correct T→concrete mapping.
+		registerOuterBindingInScope(*outer_binding, template_scope, nullptr);
+		FLASH_LOG(Templates, Debug, "Added outer template param bindings from registry for body parsing");
 	}
 
 	// Save current position

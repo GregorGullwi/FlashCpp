@@ -5356,14 +5356,316 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
 				} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-					// Member function template - add as-is without creating new node
-					// The template will be instantiated on demand when called
-					instantiated_struct_ref.add_member_function(
-						mem_func.function_declaration,
-						mem_func.access,
-						mem_func.is_virtual, mem_func.is_pure_virtual,
-						mem_func.is_override, mem_func.is_final,
-						mem_func.cv_qualifier);
+					const TemplateFunctionDeclarationNode& template_func =
+						mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
+					const FunctionDeclarationNode& func_decl =
+						template_func.function_declaration().as<FunctionDeclarationNode>();
+					const DeclarationNode& decl_node = func_decl.decl_node();
+
+					bool needs_substitution = false;
+					{
+						const auto& rtype = decl_node.type_specifier_node();
+						if (rtype.category() == TypeCategory::UserDefined ||
+							rtype.category() == TypeCategory::TypeAlias ||
+							rtype.category() == TypeCategory::Template) {
+							needs_substitution = true;
+						}
+					}
+					if (!needs_substitution) {
+						for (const auto& param : func_decl.parameter_nodes()) {
+							if (!param.is<DeclarationNode>()) {
+								continue;
+							}
+							const auto& ptype = param.as<DeclarationNode>().type_specifier_node();
+							if (ptype.category() == TypeCategory::UserDefined ||
+								ptype.category() == TypeCategory::TypeAlias ||
+								ptype.category() == TypeCategory::Template) {
+								needs_substitution = true;
+								break;
+							}
+						}
+					}
+
+					auto buildMergedOuterTemplateBinding = [&](OuterTemplateBinding& out_binding) {
+						if (func_decl.has_outer_template_bindings()) {
+							InlineVector<TemplateParameterNode, 4> combined_params;
+							InlineVector<TemplateTypeArg, 4> combined_args;
+							combined_params.reserve(
+								func_decl.outer_template_param_names().size() + template_params.size());
+							combined_args.reserve(
+								func_decl.outer_template_args().size() + template_args_for_pattern.size());
+							for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+								combined_params.push_back(
+									rebuildOuterTemplateParameter(
+										func_decl.outer_template_param_names()[i],
+										func_decl.outer_template_args()[i]));
+								combined_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+							}
+							for (const auto& param : template_params) {
+								combined_params.push_back(param);
+							}
+							for (const auto& arg : template_args_for_pattern) {
+								combined_args.push_back(arg);
+							}
+							collectOuterTemplateBinding(combined_params, combined_args, out_binding);
+							return;
+						}
+						collectOuterTemplateBinding(template_params, template_args_for_pattern, out_binding);
+					};
+					auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
+						if (func_decl.has_outer_template_bindings()) {
+							InlineVector<TemplateParameterNode, 4> combined_params;
+							InlineVector<TemplateTypeArg, 4> combined_args;
+							combined_params.reserve(
+								func_decl.outer_template_param_names().size() + template_params.size());
+							combined_args.reserve(
+								func_decl.outer_template_args().size() + template_args_for_pattern.size());
+							for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+								combined_params.push_back(
+									rebuildOuterTemplateParameter(
+										func_decl.outer_template_param_names()[i],
+										func_decl.outer_template_args()[i]));
+								combined_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+							}
+							for (const auto& param : template_params) {
+								combined_params.push_back(param);
+							}
+							for (const auto& arg : template_args_for_pattern) {
+								combined_args.push_back(arg);
+							}
+							setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
+							return;
+						}
+						setOuterTemplateBindingsFromParams(target_func, template_params, template_args_for_pattern);
+					};
+
+					if (needs_substitution) {
+						const TypeSpecifierNode& return_type_spec = decl_node.type_specifier_node();
+						ASTNode substituted_return_type_node = substituteTemplateParameters(
+							decl_node.type_node(), template_params, template_args_for_pattern);
+						TypeIndex ret_type_index = substitute_template_parameter(
+							return_type_spec, template_params, template_args_for_pattern);
+						ret_type_index = resolveOwnerAliasTypeIndex(
+							[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+								return substitute_template_parameter(type_spec, params, args);
+							},
+							pattern_struct,
+							return_type_spec,
+							template_params,
+							template_args_for_pattern,
+							ret_type_index);
+
+						ASTNode new_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
+							? substituted_return_type_node
+							: emplace_node<TypeSpecifierNode>(
+								  ret_type_index.category(), return_type_spec.qualifier(),
+								  get_type_size_bits(ret_type_index.category()), return_type_spec.token(), return_type_spec.cv_qualifier());
+						auto& new_return_spec = new_return_type.as<TypeSpecifierNode>();
+						new_return_spec.set_category(ret_type_index.category());
+						if (ret_type_index.is_valid()) {
+							new_return_spec.set_type_index(ret_type_index.withCategory(ret_type_index.category()));
+						}
+						if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
+							for (const auto& pl : return_type_spec.pointer_levels())
+								new_return_spec.add_pointer_level(pl.cv_qualifier);
+							new_return_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
+						}
+						if (return_type_spec.has_function_signature()) {
+							new_return_spec.set_function_signature(return_type_spec.function_signature());
+						} else if (new_return_spec.type_index().category() == TypeCategory::FunctionPointer ||
+								   new_return_spec.type_index().category() == TypeCategory::MemberFunctionPointer) {
+							if (const auto* arg = findTemplateArgByName(
+									return_type_spec.token().value(),
+									template_params,
+									template_args_for_pattern)) {
+								if (arg->function_signature.has_value()) {
+									new_return_spec.set_function_signature(*arg->function_signature);
+								}
+							}
+						}
+						normalizeSubstitutedTypeSpec(new_return_spec);
+
+						auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
+							new_return_type, decl_node.identifier_token());
+						auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+							new_decl_ref,
+							instantiated_name);
+						applyMergedOuterTemplateBindings(new_func_ref);
+
+						for (const auto& param : func_decl.parameter_nodes()) {
+							if (!param.is<DeclarationNode>()) {
+								continue;
+							}
+							const DeclarationNode& param_decl = param.as<DeclarationNode>();
+							const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
+
+							TypeCategory new_param_type = param_type_spec.type();
+							TypeIndex new_param_type_index = param_type_spec.type_index();
+							if (new_param_type == TypeCategory::UserDefined) {
+								TypeIndex subst_idx = substitute_template_parameter(
+									param_type_spec, template_params, template_args_for_pattern);
+								new_param_type = subst_idx.category();
+								new_param_type_index = subst_idx;
+							}
+
+							ASTNode new_param_type_node = emplace_node<TypeSpecifierNode>(
+								new_param_type, param_type_spec.qualifier(),
+								get_type_size_bits(new_param_type), param_type_spec.token(), param_type_spec.cv_qualifier());
+							auto& new_param_spec = new_param_type_node.as<TypeSpecifierNode>();
+							new_param_spec.set_type_index(new_param_type_index);
+							for (const auto& pl : param_type_spec.pointer_levels())
+								new_param_spec.add_pointer_level(pl.cv_qualifier);
+							new_param_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
+							if (param_type_spec.has_function_signature()) {
+								new_param_spec.set_function_signature(param_type_spec.function_signature());
+							} else if (new_param_type_index.category() == TypeCategory::FunctionPointer ||
+									   new_param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+								if (const auto* arg = findTemplateArgByName(
+										param_type_spec.token().value(),
+										template_params,
+										template_args_for_pattern)) {
+									if (arg->function_signature.has_value()) {
+										new_param_spec.set_function_signature(*arg->function_signature);
+									}
+								}
+							}
+							normalizeSubstitutedTypeSpec(new_param_spec);
+
+							auto new_param_decl = emplace_node<DeclarationNode>(
+								new_param_type_node, param_decl.identifier_token());
+							if (param_decl.has_default_value()) {
+								std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
+								std::unordered_map<std::string_view, int64_t> nontype_sub_map;
+								for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
+									const TemplateParameterNode* template_param = tryGetTemplateParameterNode(template_params[i]);
+									if (template_param == nullptr)
+										continue;
+									if (template_param->kind() == TemplateParameterKind::Type && !template_args_for_pattern[i].is_value) {
+										auto type_it = getTypesByNameMap().find(template_param->nameHandle());
+										if (type_it != getTypesByNameMap().end()) {
+											type_sub_map[type_it->second->type_index_] = template_args_for_pattern[i];
+										} else {
+											type_sub_map[TypeIndex{getTypeInfoCount() + type_sub_map.size() + 1}] = template_args_for_pattern[i];
+										}
+									} else if (template_param->kind() == TemplateParameterKind::NonType && template_args_for_pattern[i].is_value) {
+										nontype_sub_map[template_param->name()] = template_args_for_pattern[i].value;
+									}
+								}
+								ASTNode substituted_default = substitute_template_params_in_expression(
+									param_decl.default_value(), type_sub_map, nontype_sub_map, StringHandle{});
+								new_param_decl.as<DeclarationNode>().set_default_value(substituted_default);
+							}
+							new_func_ref.add_parameter_node(new_param_decl);
+						}
+
+						copy_function_properties(new_func_ref, func_decl);
+						new_func_ref.set_is_const_member_function(mem_func.is_const());
+						new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
+						if (func_decl.is_materialized())
+							new_func_ref.set_definition(*func_decl.get_definition());
+						if (func_decl.has_template_body_position())
+							new_func_ref.set_template_body_position(func_decl.template_body_position());
+						if (func_decl.has_definition_lookup_context())
+							new_func_ref.set_definition_lookup_context(func_decl.definition_lookup_context());
+						if (func_decl.has_trailing_return_type_position())
+							new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
+						new_func_ref.set_is_template_pattern(true);
+
+						auto new_template_func = emplace_node<TemplateFunctionDeclarationNode>(
+							template_func.template_parameters(),
+							new_func_node,
+							template_func.requires_clause());
+
+						if (mem_func.operator_kind != OverloadableOperator::None) {
+							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
+							struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
+																 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+						} else {
+							instantiated_struct_ref.add_member_function(new_template_func, mem_func.access);
+							struct_info_ptr->addMemberFunction(
+								decl_node.identifier_token().handle(),
+								new_template_func,
+								mem_func.access,
+								mem_func.is_virtual,
+								mem_func.is_pure_virtual,
+								mem_func.is_override,
+								mem_func.is_final);
+						}
+
+						StringBuilder qualified_name_builder;
+						qualified_name_builder.append(StringTable::getStringView(instantiated_name))
+							.append("::")
+							.append(decl_node.identifier_token().value());
+						StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+
+						gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
+						gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
+
+						OuterTemplateBinding outer_binding;
+						buildMergedOuterTemplateBinding(outer_binding);
+						gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+					} else {
+						auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
+							decl_node.type_node(),
+							decl_node.identifier_token());
+						auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+							new_decl_ref,
+							instantiated_name);
+						applyMergedOuterTemplateBindings(new_func_ref);
+
+						for (const auto& param : func_decl.parameter_nodes()) {
+							new_func_ref.add_parameter_node(param);
+						}
+
+						copy_function_properties(new_func_ref, func_decl);
+						new_func_ref.set_is_const_member_function(mem_func.is_const());
+						new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
+						if (func_decl.is_materialized())
+							new_func_ref.set_definition(*func_decl.get_definition());
+						if (func_decl.has_template_body_position())
+							new_func_ref.set_template_body_position(func_decl.template_body_position());
+						if (func_decl.has_definition_lookup_context())
+							new_func_ref.set_definition_lookup_context(func_decl.definition_lookup_context());
+						if (func_decl.has_trailing_return_type_position())
+							new_func_ref.set_trailing_return_type_position(func_decl.trailing_return_type_position());
+						new_func_ref.set_is_template_pattern(true);
+
+						auto new_template_func = emplace_node<TemplateFunctionDeclarationNode>(
+							template_func.template_parameters(),
+							new_func_node,
+							template_func.requires_clause());
+
+						if (mem_func.operator_kind != OverloadableOperator::None) {
+							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
+							struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
+																 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
+						} else {
+							instantiated_struct_ref.add_member_function(
+								new_template_func,
+								mem_func.access);
+							struct_info_ptr->addMemberFunction(
+								decl_node.identifier_token().handle(),
+								new_template_func,
+								mem_func.access,
+								mem_func.is_virtual,
+								mem_func.is_pure_virtual,
+								mem_func.is_override,
+								mem_func.is_final);
+						}
+
+						StringBuilder qualified_name_builder;
+						qualified_name_builder.append(StringTable::getStringView(instantiated_name))
+							.append("::")
+							.append(decl_node.identifier_token().value());
+						StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+
+						gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
+						gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
+
+						OuterTemplateBinding outer_binding;
+						buildMergedOuterTemplateBinding(outer_binding);
+						gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+					}
 				} else {
 					FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& orig_decl = orig_func.decl_node();
@@ -5530,6 +5832,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					(ool_func_name == template_name ||
 						(!template_base_name.empty() && ool_func_name == template_base_name));
 				if (!out_of_line_ctor_stub) {
+					// Non-ctor OOL member function template in a partial specialization:
+					// attach the body position and definition lookup context to the matching
+					// TemplateFunctionDeclarationNode in the instantiated struct, then register
+					// the outer binding so the replay path can put T in scope.
+					for (auto& mem_func : instantiated_struct_ref.member_functions()) {
+						FunctionDeclarationNode* inst_func_decl =
+							get_function_decl_node_mut(mem_func.function_declaration);
+						if (!inst_func_decl) {
+							continue;
+						}
+						if (inst_func_decl->decl_node().identifier_token().value() != ool_func_name) {
+							continue;
+						}
+						inst_func_decl->set_template_body_position(out_of_line_member.body_start);
+						copyDefinitionParameterIdentifiers(
+							inst_func_decl->parameter_nodes(),
+							ool_func.parameter_nodes());
+						inst_func_decl->set_definition_lookup_context(
+							out_of_line_member.definition_lookup_context);
+						{
+							StringBuilder qualified_name_builder;
+							qualified_name_builder
+								.append(StringTable::getStringView(instantiated_name))
+								.append("::")
+								.append(ool_func_name);
+							StringHandle qualified_name_handle =
+								StringTable::getOrInternStringHandle(qualified_name_builder.commit());
+							OuterTemplateBinding ool_outer_binding;
+							collectOuterTemplateBinding(
+								template_params, template_args_for_pattern, ool_outer_binding);
+							gTemplateRegistry.registerOuterTemplateBinding(
+								qualified_name_handle, std::move(ool_outer_binding));
+						}
+						FLASH_LOG(
+							Templates,
+							Debug,
+							"Set body position on partial-spec nested template member: ",
+							ool_func_name);
+						break;
+					}
 					continue;
 				}
 
