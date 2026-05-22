@@ -32,39 +32,35 @@ Future work can rely on these being in place:
 - top-level out-of-line constructor-template replay preserves inner template
   metadata and matches renamed inner template parameters in the covered paths;
 - nested out-of-line member-function-template replay preserves instantiated
-  outer parameter types while copying definition-side parameter identifiers.
+  outer parameter types while copying definition-side parameter identifiers;
+- **partial-spec member-function-template instantiation now produces
+  owner-correct nodes with registered qualified names and outer-template
+  bindings**, so the existing deferred-body replay path can reparse those
+  bodies with `T→concrete` in scope without needing a special partial-spec
+  fallback.
 
 Latest recorded full-suite validation:
-`2502` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2482` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
+- `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
 
 ## Remaining work, in priority order
 
-### 1. Finish the next two-phase lookup slice
+### 1. Extend the partial-spec OOL attachment to plain (non-template) member functions
 
-This is still the highest-impact track.
-
-Next bounded target:
-
-- make replayed out-of-line member-function-template bodies use the same
-  owner-correct deferred-base lookup path already used by the covered inline
-  class-template-body and constructor-template replay cases.
-
-Why this is next:
-
-- it closes a still-open standards gap in two-phase lookup;
-- it removes another AST-only replay fallback instead of adding new repair
-  logic;
-- it builds directly on the metadata-preservation work that already landed.
+The member-function-template fix in the partial-spec path attached body
+positions and outer bindings for `TemplateFunctionDeclarationNode` members.
+The same treatment is still missing for deferred-body plain (non-template)
+member functions on partial specializations.
 
 Success condition:
 
-- replayed out-of-line member-function-template bodies performing dependent-base
-  lookup no longer need special fallback behavior to find the correct member
-  template or owner.
+- an out-of-line non-template member function definition on a partial
+  specialization can be replayed with the correct class-template parameters
+  in scope, without relying on partially substituted AST state.
 
 ### 2. Remove the next replay-metadata gap
 
@@ -99,19 +95,21 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. add a narrow regression for replayed out-of-line member-function-template
-   dependent-base lookup;
-2. make that path reuse the same owner-correct replay/lookup machinery as the
-   covered inline and constructor-template cases;
-3. remove the local fallback that becomes redundant;
-4. update these docs with the next remaining replay-metadata gap.
+1. add a narrow regression for a plain non-template deferred member function
+   on a partial specialization doing dependent-base lookup;
+2. extend the partial-spec OOL attachment loop to handle plain member functions
+   (the pattern mirrors the member-function-template loop added in this session,
+   but targets `FunctionDeclarationNode` with a deferred body position);
+3. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
 
 Keep adding narrow regressions in these areas:
 
 - replayed out-of-line member-function-template bodies using `this->template`
-  or equivalent dependent-base lookup;
+  or equivalent dependent-base lookup — particularly through partial specs;
+- plain (non-template) deferred-body member functions on partial specs doing
+  dependent-base lookup;
 - declaration/definition attachment where inner and outer template parameters
   interact;
 - remaining declaration/static-member replay paths that still fall back to

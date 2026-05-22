@@ -5578,11 +5578,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						if (mem_func.operator_kind != OverloadableOperator::None) {
 							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
-							struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
+							struct_type_info.getStructInfo()->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
 																 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 						} else {
 							instantiated_struct_ref.add_member_function(new_template_func, mem_func.access);
-							struct_info_ptr->addMemberFunction(
+							struct_type_info.getStructInfo()->addMemberFunction(
 								decl_node.identifier_token().handle(),
 								new_template_func,
 								mem_func.access,
@@ -5637,13 +5637,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						if (mem_func.operator_kind != OverloadableOperator::None) {
 							instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_template_func, mem_func.access);
-							struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
+							struct_type_info.getStructInfo()->addOperatorOverload(mem_func.operator_kind, new_template_func, mem_func.access,
 																 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 						} else {
 							instantiated_struct_ref.add_member_function(
 								new_template_func,
 								mem_func.access);
-							struct_info_ptr->addMemberFunction(
+							struct_type_info.getStructInfo()->addMemberFunction(
 								decl_node.identifier_token().handle(),
 								new_template_func,
 								mem_func.access,
