@@ -7932,8 +7932,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (!concrete_type || !concrete_type->getStructInfo()) {
 							return false;
 						}
-						if (concrete_type->struct_info_ && concrete_type->struct_info_->is_final) {
-							FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type->name_, "'");
+						if (concrete_type->getStructInfo()->is_final) {
+							FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type->name(), "'");
 							return false;
 						}
 						add_nested_base_class(
@@ -8000,6 +8000,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const size_t expansion_count = base_pack_bindings.pack_bindings.empty()
 						? 1
 						: base_pack_bindings.expansion_count;
+					InlineVector<const TypeInfo*, 4> resolved_base_types;
+					bool defer_entire_base = false;
 					for (size_t expansion_index = 0; expansion_index < expansion_count; ++expansion_index) {
 						TemplateArgSubstitutionMap subst_map =
 							makeDeferredBaseExpansionSubstitutionMap(
@@ -8086,16 +8088,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						if (unresolved_arg || resolved_args.empty()) {
-							nested_struct_info->has_deferred_base_classes = true;
-							nested_struct_info->deferred_base_template_names.push_back(deferred_base.base_template_name);
-							instantiated_nested_struct_ref.add_deferred_template_base_class(
-								deferred_base.base_template_name,
-								deferred_base.template_arguments,
-								deferred_base.member_type_chain,
-								deferred_base.access,
-								deferred_base.is_virtual,
-								deferred_base.is_pack_expansion);
-							continue;
+							defer_entire_base = true;
+							break;
 						}
 
 						AliasTemplateMaterializationResult materialized_base =
@@ -8111,21 +8105,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 						if (final_base_type == nullptr || final_base_type->getStructInfo() == nullptr) {
-							nested_struct_info->has_deferred_base_classes = true;
-							nested_struct_info->deferred_base_template_names.push_back(deferred_base.base_template_name);
-							instantiated_nested_struct_ref.add_deferred_template_base_class(
-								deferred_base.base_template_name,
-								deferred_base.template_arguments,
-								deferred_base.member_type_chain,
-								deferred_base.access,
-								deferred_base.is_virtual,
-								deferred_base.is_pack_expansion);
-							continue;
+							defer_entire_base = true;
+							break;
 						}
 
+						resolved_base_types.push_back(final_base_type);
+					}
+
+					if (defer_entire_base) {
+						nested_struct_info->has_deferred_base_classes = true;
+						nested_struct_info->deferred_base_template_names.push_back(deferred_base.base_template_name);
+						instantiated_nested_struct_ref.add_deferred_template_base_class(
+							deferred_base.base_template_name,
+							deferred_base.template_arguments,
+							deferred_base.member_type_chain,
+							deferred_base.access,
+							deferred_base.is_virtual,
+							deferred_base.is_pack_expansion);
+						continue;
+					}
+
+					for (const TypeInfo* resolved_base_type : resolved_base_types) {
 						add_nested_base_class(
-							*final_base_type,
-							final_base_type->registeredTypeIndex().withCategory(final_base_type->typeEnum()),
+							*resolved_base_type,
+							resolved_base_type->registeredTypeIndex().withCategory(resolved_base_type->typeEnum()),
 							deferred_base.access,
 							deferred_base.is_virtual);
 					}
