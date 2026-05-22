@@ -3727,7 +3727,11 @@ ParseResult Parser::parse_enum_declaration() {
 
 	// Register the enum type in the global type system EARLY
 	NamespaceHandle enum_namespace_handle = gSymbolTable.get_current_namespace_handle();
-	TypeInfo& enum_type_info = add_enum_type(enum_name, enum_namespace_handle);
+	StringHandle enum_type_name = enum_name;
+	if (enum_namespace_handle.isValid() && !enum_namespace_handle.isGlobal()) {
+		enum_type_name = gNamespaceRegistry.buildQualifiedIdentifier(enum_namespace_handle, enum_name);
+	}
+	TypeInfo& enum_type_info = add_enum_type(enum_type_name, enum_namespace_handle);
 
 	// Create enum declaration node
 	auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
