@@ -1224,6 +1224,15 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 					return TypeCategory::Bool;
 				}
 			}
+			if (std::holds_alternative<FoldExpressionNode>(expr)) {
+				const auto& fold = std::get<FoldExpressionNode>(expr);
+				if (fold.op() == "==" || fold.op() == "!=" ||
+					fold.op() == "<" || fold.op() == "<=" ||
+					fold.op() == ">" || fold.op() == ">=" ||
+					fold.op() == "&&" || fold.op() == "||") {
+					return TypeCategory::Bool;
+				}
+			}
 
 		return TypeCategory::Int;
 	};
@@ -1408,6 +1417,25 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				return self(self, ternary->condition()) ||
 					   self(self, ternary->true_expr()) ||
 					   self(self, ternary->false_expr());
+			}
+			if (const auto* fold = std::get_if<FoldExpressionNode>(&dep_expr)) {
+				if (fold->has_complex_pack_expr() && fold->pack_expr().has_value() &&
+					self(self, *fold->pack_expr())) {
+					return true;
+				}
+				if (fold->init_expr().has_value() && self(self, *fold->init_expr())) {
+					return true;
+				}
+				if (!fold->pack_name().empty()) {
+					StringHandle pack_name =
+						StringTable::getOrInternStringHandle(fold->pack_name());
+					return currentTemplateParamKind(pack_name).has_value() &&
+						   !hasConcreteSubstitutionForName(pack_name);
+				}
+				return false;
+			}
+			if (const auto* pack_expansion = std::get_if<PackExpansionExprNode>(&dep_expr)) {
+				return self(self, pack_expansion->pattern());
 			}
 			return false;
 		};
@@ -1767,20 +1795,25 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				// QualifiedIdentifierNode represents patterns like is_same<T, int>::value where
 				// the expression is a static member access that depends on template parameters.
 				// If the next token is a valid delimiter, accept the expression as dependent.
-				bool is_compile_time_expr = std::holds_alternative<NoexceptExprNode>(expr) ||
-											std::holds_alternative<SizeofExprNode>(expr) ||
-											std::holds_alternative<SizeofPackNode>(expr) ||
-											std::holds_alternative<AlignofExprNode>(expr) ||
-											std::holds_alternative<OffsetofExprNode>(expr) ||
-											std::holds_alternative<TypeTraitExprNode>(expr) ||
-											std::holds_alternative<MemberAccessNode>(expr) ||
-											std::holds_alternative<QualifiedIdentifierNode>(expr) ||
-											std::holds_alternative<BinaryOperatorNode>(expr) ||
-											std::holds_alternative<TernaryOperatorNode>(expr) ||
-											std::holds_alternative<UnaryOperatorNode>(expr) ||
-											std::holds_alternative<StaticCastNode>(expr) ||
-											std::holds_alternative<CallExprNode>(expr) ||
-											std::holds_alternative<ConstructorCallNode>(expr);
+				auto isDependentCompileTimeExpr = [&](const ExpressionNode& candidate) {
+					return std::holds_alternative<NoexceptExprNode>(candidate) ||
+						   std::holds_alternative<SizeofExprNode>(candidate) ||
+						   std::holds_alternative<SizeofPackNode>(candidate) ||
+						   std::holds_alternative<AlignofExprNode>(candidate) ||
+						   std::holds_alternative<OffsetofExprNode>(candidate) ||
+						   std::holds_alternative<TypeTraitExprNode>(candidate) ||
+						   std::holds_alternative<MemberAccessNode>(candidate) ||
+						   std::holds_alternative<QualifiedIdentifierNode>(candidate) ||
+						   std::holds_alternative<BinaryOperatorNode>(candidate) ||
+						   std::holds_alternative<TernaryOperatorNode>(candidate) ||
+						   std::holds_alternative<UnaryOperatorNode>(candidate) ||
+						   std::holds_alternative<StaticCastNode>(candidate) ||
+						   std::holds_alternative<CallExprNode>(candidate) ||
+						   std::holds_alternative<ConstructorCallNode>(candidate) ||
+						   std::holds_alternative<FoldExpressionNode>(candidate) ||
+						   std::holds_alternative<PackExpansionExprNode>(candidate);
+				};
+				bool is_compile_time_expr = isDependentCompileTimeExpr(expr);
 
 				if (is_compile_time_expr && !peek().is_eof()) {
 					// Handle >> token splitting for nested templates
@@ -1823,20 +1856,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 						std::optional<ASTNode> stored_expr = std::nullopt;
 						if (std::holds_alternative<IdentifierNode>(expr) ||
 							std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
-							std::holds_alternative<QualifiedIdentifierNode>(expr) ||
-							std::holds_alternative<MemberAccessNode>(expr) ||
-							std::holds_alternative<SizeofExprNode>(expr) ||
-							std::holds_alternative<SizeofPackNode>(expr) ||
-							std::holds_alternative<AlignofExprNode>(expr) ||
-							std::holds_alternative<OffsetofExprNode>(expr) ||
-							std::holds_alternative<NoexceptExprNode>(expr) ||
-							std::holds_alternative<TypeTraitExprNode>(expr) ||
-							std::holds_alternative<BinaryOperatorNode>(expr) ||
-							std::holds_alternative<TernaryOperatorNode>(expr) ||
-							std::holds_alternative<UnaryOperatorNode>(expr) ||
-							std::holds_alternative<StaticCastNode>(expr) ||
-							std::holds_alternative<CallExprNode>(expr) ||
-							std::holds_alternative<ConstructorCallNode>(expr)) {
+							isDependentCompileTimeExpr(expr)) {
 							if (expr_result.node().has_value()) {
 								stored_expr = *expr_result.node();
 							}

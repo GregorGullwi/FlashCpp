@@ -74,3 +74,17 @@ before stopping on a multiply defined `__security_cookie`.
   emitting a second strong symbol.
 
 ---
+
+## 3) Local variable attribute `[[maybe_unused]]` misparsed as lambda introducer
+
+- **Symptom**: A local declaration such as
+  `[[maybe_unused]] int x = 0;` currently fails with
+  `Expected capture specifier in lambda`.
+- **Root cause**: The parser attribute-vs-lambda disambiguation for statement-scope
+  declarations incorrectly routes `[[...]]` into lambda parsing in this context.
+- **Impact**: Valid C++17/C++20 local attributes can fail to parse even when the
+  declaration itself is otherwise supported.
+- **Fix direction**: Handle standard attribute-specifier-seq in declaration parsing
+  before lambda-introducer logic for statement expressions/declarations.
+
+---
