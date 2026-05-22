@@ -200,10 +200,9 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 			.append(describeOverloadArgExprShape(arg))
 			.commit()));
 	}
-	// Non-normalized bodies (template instantiation without sema, implicit constructors,
-	// struct-level processing) and synthesized range-for/structured-binding nodes have
-	// no sema annotations.  Signal "type unknown" to all callers, which gracefully fall
-	// back to arity-based or IR-level resolution.
+	// Sema owns overload-argument typing. If sema has no type here, propagate
+	// "unknown" and let callers follow their existing non-overload paths;
+	// do not reconstruct argument types in codegen.
 	return std::nullopt;
 }
 
