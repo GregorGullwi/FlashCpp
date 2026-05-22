@@ -337,6 +337,8 @@ inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to)
 	return buildConversionPlan(from, to).toResult();
 }
 
+inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, const TypeSpecifierNode& to);
+
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
 // This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
@@ -442,6 +444,20 @@ inline bool isTransitivelyDerivedFromAnyAccess(TypeIndex source_idx, TypeIndex b
 	return false;
 }
 
+inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
+	size_t min_required = params.size();
+	size_t i = params.size();
+	while (i > 0) {
+		if (!params[i - 1].is<DeclarationNode>())
+			break;
+		if (!params[i - 1].as<DeclarationNode>().has_default_value())
+			break;
+		--min_required;
+		--i;
+	}
+	return min_required;
+}
+
 // Check if target_struct has a converting constructor whose first parameter accepts
 // source_type and whose remaining parameters are all defaulted, OR if source derives
 // from target (implicit derived-to-base conversion).
@@ -458,19 +474,6 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	const StructTypeInfo* target = target_type->getStructInfo();
 	if (!target)
 		return false;
-	auto count_min_required_params = [](std::span<const ASTNode> params) {
-		size_t min_required = params.size();
-		size_t i = params.size();
-		while (i > 0) {
-			if (!params[i - 1].is<DeclarationNode>())
-				break;
-			if (!params[i - 1].as<DeclarationNode>().has_default_value())
-				break;
-			--min_required;
-			--i;
-		}
-		return min_required;
-	};
 	// Check if source is a (transitively) derived class of target (derived-to-base conversion)
 	if (isTransitivelyDerivedFrom(source_idx, target_idx))
 		return true;
@@ -484,14 +487,14 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 		if (mf.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
 			params = ctor_decl.parameter_nodes();
-			min_required = count_min_required_params(params);
+			min_required = countMinRequiredParameters(params);
 		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
 			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
 			if (ctor_decl.is_explicit()) {
 				continue;
 			}
 			params = ctor_decl.parameter_nodes();
-			min_required = count_min_required_params(params);
+			min_required = countMinRequiredParameters(params);
 		}
 		if (params.empty() || min_required > 1)
 			continue;
@@ -519,19 +522,6 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 	if (!target) {
 		return false;
 	}
-	auto count_min_required_params = [](std::span<const ASTNode> params) {
-		size_t min_required = params.size();
-		size_t i = params.size();
-		while (i > 0) {
-			if (!params[i - 1].is<DeclarationNode>())
-				break;
-			if (!params[i - 1].as<DeclarationNode>().has_default_value())
-				break;
-			--min_required;
-			--i;
-		}
-		return min_required;
-	};
 	for (const auto& mf : target->member_functions) {
 		if (!mf.is_constructor) {
 			continue;
@@ -541,14 +531,14 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 		if (mf.function_decl.is<FunctionDeclarationNode>()) {
 			const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
 			params = ctor_decl.parameter_nodes();
-			min_required = count_min_required_params(params);
+			min_required = countMinRequiredParameters(params);
 		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
 			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
 			if (ctor_decl.is_explicit()) {
 				continue;
 			}
 			params = ctor_decl.parameter_nodes();
-			min_required = count_min_required_params(params);
+			min_required = countMinRequiredParameters(params);
 		}
 		if (params.empty() || min_required > 1 || !params[0].is<DeclarationNode>()) {
 			continue;
@@ -557,7 +547,29 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 		if (!param_type.is<TypeSpecifierNode>()) {
 			continue;
 		}
-		const auto conversion = can_convert_type(source_type, param_type.as<TypeSpecifierNode>());
+		const auto& param_spec = param_type.as<TypeSpecifierNode>();
+		if (param_spec.is_pointer() || param_spec.is_function_pointer() ||
+			param_spec.is_member_function_pointer() || param_spec.is_member_object_pointer()) {
+			if (source_type.category() == TypeCategory::Nullptr || isIntegralType(source_type.category())) {
+				return true;
+			}
+			const auto conversion = can_convert_type(source_type.category(), param_spec.category());
+			if (conversion.is_valid) {
+				return true;
+			}
+			continue;
+		}
+		if (param_spec.category() == TypeCategory::Struct) {
+			if (!source_type.type_index().is_valid() || !param_spec.type_index().is_valid()) {
+				continue;
+			}
+			if (source_type.type_index() == param_spec.type_index() ||
+				hasConvertingConstructorFrom(param_spec.type_index(), source_type.type_index())) {
+				return true;
+			}
+			continue;
+		}
+		const auto conversion = can_convert_type(source_type.category(), param_spec.category());
 		if (conversion.is_valid) {
 			return true;
 		}
@@ -883,16 +895,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
 	// This handles constructor conversions (not conversion operators, but similar concept)
 	if (to.category() == TypeCategory::Struct && from.category() != TypeCategory::Struct) {
-		if (!to.type_index().is_valid() ||
-			to.type_index().index() >= getTypeInfoCount() ||
-			!getTypeInfo(to.type_index()).getStructInfo()) {
-			// Struct info not yet finalized (parse-time): keep permissive fallback.
-			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
-		}
-		if (hasImplicitConvertingConstructorForArgument(to.type_index(), from)) {
-			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
-		}
-		return ConversionPlan::no_match();
+		// Could be a converting constructor in 'to' struct - accept it tentatively
+		// CodeGen will handle the actual constructor call
+		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 	}
 
 	// Handle UserDefined type aliases:
@@ -1729,6 +1734,21 @@ inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& ar
 	TypeSpecifierNode resolved_param_spec = resolveBinaryOperatorTypeForSelfReference(param_spec, enclosing_type_index);
 	if (isUserDefinedBinaryOperatorOperandType(arg_spec) && isUserDefinedBinaryOperatorOperandType(resolved_param_spec) && arg_spec.type_index().is_valid() && resolved_param_spec.type_index().is_valid() && arg_spec.type_index() != resolved_param_spec.type_index()) {
 		return ConversionRank::NoMatch;
+	}
+	if (!arg_spec.is_pointer() &&
+		!resolved_param_spec.is_pointer() &&
+		arg_spec.category() != TypeCategory::Struct &&
+		resolved_param_spec.category() == TypeCategory::Struct) {
+		if (!resolved_param_spec.type_index().is_valid() ||
+			resolved_param_spec.type_index().index() >= getTypeInfoCount() ||
+			!getTypeInfo(resolved_param_spec.type_index()).getStructInfo()) {
+			auto conversion = can_convert_type(arg_spec, resolved_param_spec);
+			return conversion.is_valid ? conversion.rank : ConversionRank::NoMatch;
+		}
+		if (!hasImplicitConvertingConstructorForArgument(resolved_param_spec.type_index(), arg_spec)) {
+			return ConversionRank::NoMatch;
+		}
+		return ConversionRank::UserDefined;
 	}
 	auto conversion = can_convert_type(arg_spec, resolved_param_spec);
 	return conversion.is_valid ? conversion.rank : ConversionRank::NoMatch;

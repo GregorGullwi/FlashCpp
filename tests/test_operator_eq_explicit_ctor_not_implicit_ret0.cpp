@@ -1,6 +1,3 @@
-struct CompareTag {
-};
-
 struct Value {
 	int v;
 	explicit Value(int x) : v(x) {}

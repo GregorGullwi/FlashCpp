@@ -10,7 +10,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1418ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~400ms (retested 2026-05-07, Linux/libstdc++-14). No longer stops at unresolved `auto` mangling in `std::__is_complete_or_unbounded`; targeted trait assertions compile end-to-end again. Regression coverage includes `tests/std/test_std_is_complete_or_unbounded_resolved.cpp` and `tests/std/test_std_utility_is_complete_or_unbounded_ret0.cpp`. |
-| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Semantic Error | ~1.13s for bare `#include <compare>` (retested 2026-05-22, Linux/libstdc++-14). Namespace-qualified enum casts in the comparison category constructors are now sema-typed, moving the first hard stop to `Ambiguous overload for operator==`. The targeted compatible comparison-category test still compiles in ~0.07s. |
+| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Semantic Error | ~1.14s for bare `#include <compare>` (retested 2026-05-22, Linux/libstdc++-14). Implicit conversion viability for user-defined `operator==` now rejects explicit constructor paths and keeps non-explicit constructor paths (e.g., `__cmp_cat::__unspec`) viable; current first hard stop moved to `Operator!= not defined for operand types`. The targeted compatible comparison-category test still compiles in ~0.06s. |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
@@ -18,12 +18,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
-| `<utility>` | `test_std_utility.cpp` | ❌ Semantic Error | ~1.62s (retested 2026-05-22, Linux/libstdc++-14). The namespace-qualified enum cast fix removes the `std::partial_ordering` missing-constructor stop; current first hard stop is `Ambiguous overload for operator==` in the shared `<compare>` path. |
+| `<utility>` | `test_std_utility.cpp` | ❌ Semantic Error | ~1.56s (retested 2026-05-22, Linux/libstdc++-14). The shared `<compare>` `operator==` ambiguity is resolved by stricter implicit-conversion viability in user-defined operator overload ranking; current first hard stop is now `Operator!= not defined for operand types` in the same comparison-category path. |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
 | `<string_view>` | `test_std_string_view.cpp` | 💥 Crash | ~2380ms (retested 2026-05-07, Linux/libstdc++-14). Progresses well past prior unresolved-`auto` stops, then aborts in codegen with `InternalError: Unresolved semantic type reached IR type conversion: category 25`. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
-| `<array>` | `test_std_array.cpp` | ❌ Semantic Error | ~2.66s (retested 2026-05-22, Linux/libstdc++-14). Fold-expression template-argument parsing still accepts the multi-line CTAD deduction guide in `<array>`; the namespace-qualified enum cast fix moves the first hard stop to `Ambiguous overload for operator==` in the shared `<compare>` path. |
+| `<array>` | `test_std_array.cpp` | ❌ Semantic Error | ~2.61s (retested 2026-05-22, Linux/libstdc++-14). Fold-expression template-argument parsing still accepts the multi-line CTAD deduction guide in `<array>`; shared `<compare>` processing now moves past the previous `operator==` ambiguity and currently stops at `Operator!= not defined for operand types`. |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~27ms (retested 2026-05-22, Linux/libstdc++-14). Statement/declaration disambiguation now keeps qualified class-template direct-initialization on the declaration path, so `std::span<int> s(arr, 5);` no longer falls through to a spurious call-expression parse. |
 | `<tuple>` | `test_std_tuple.cpp` | 💥 Codegen Crash | ~2500ms (retested 2026-05-11, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker and tuple constructor pack-boundary stop are fixed; the header now reaches IR/codegen before `std::partial_ordering` unresolved semantic type category 25. |
@@ -100,6 +100,27 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-22 Linux/libstdc++ operator `==` explicit-constructor viability follow-up
+
+Fix landed:
+
+- **Binary operator overload operand matching now gates non-struct → struct viability on implicit converting constructors (for operator overload ranking only).**
+  This prevents explicit constructors from participating in implicit user-defined conversion ranking (e.g., `partial_ordering(int)`-style paths) while preserving valid non-explicit constructor paths like `__cmp_cat::__unspec(__unspec*)`.
+- **Implicit converting-constructor probing now skips explicit constructors** in the shared helper used by overload viability checks.
+
+Regression coverage:
+
+- `tests/test_operator_eq_explicit_ctor_not_implicit_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_operator_eq_explicit_ctor_not_implicit_ret0.cpp` | ✅ Pass | focused runner | New regression verifies `operator==(S,int)` is selected over `operator==(S,S)` when `S(int)` is explicit. |
+| `<compare>` (bare `#include <compare>`) | ❌ Semantic Error | 1.14s | Shared comparison-category path no longer stops at `Ambiguous overload for operator==`; current first stop is `Operator!= not defined for operand types`. |
+| `<utility>` (`test_std_utility.cpp`) | ❌ Semantic Error | 1.56s | Progresses past the previous shared `operator==` ambiguity; current first stop is `Operator!= not defined for operand types`. |
+| `<array>` (`test_std_array.cpp`) | ❌ Semantic Error | 2.61s | Progresses past the previous shared `operator==` ambiguity; current first stop is `Operator!= not defined for operand types`. |
 
 ### 2026-05-22 Linux/libstdc++ namespace-qualified enum functional-cast follow-up
 
