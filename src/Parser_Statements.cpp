@@ -185,6 +185,20 @@ ParseResult Parser::parse_statement_or_declaration() {
 		return ParseResult::error("Expected a statement or declaration",
 								  current_token_);
 	}
+
+	// C++20 attributed-statement/declaration prefix:
+	// [[...]] can appear before a statement or declaration in block scope.
+	// Consume the attribute-specifier-seq here so the underlying construct is
+	// disambiguated from the actual next token (e.g., 'int' vs lambda '[').
+	if (peek() == "["_tok && peek_info(1).value() == "[") {
+		skip_cpp_attributes();
+		parse_declspec_attributes();
+		if (peek().is_eof()) {
+			return ParseResult::error("Expected a statement or declaration after attributes",
+									  current_token_);
+		}
+	}
+
 	const Token& current_token = peek_info();
 
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: current_token={}, type={}",
