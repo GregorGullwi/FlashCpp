@@ -3076,6 +3076,19 @@ private:	 // Resume private methods
 	ParseResult parse_try_statement();
 	ParseResult parse_throw_statement();
 	ParseResult parse_function_body(bool is_ctor_or_dtor = false);  // Parse function body: '{...}' or function-try-block 'try {...} catch...'
+	bool replayOutOfLineMemberBody(
+		FunctionDeclarationNode& inst_func,
+		StructDeclarationNode* instantiated_struct_decl,
+		StringHandle instantiated_name,
+		TypeIndex instantiated_type_index,
+		std::span<const ASTNode> definition_scope_params,
+		SaveHandle body_start,
+		const TemplateDefinitionLookupContext& recorded_lookup_context,
+		const Token& declaration_token,
+		std::span<const TemplateParameterNode> substitution_template_params,
+		std::span<const TemplateTypeArg> substitution_template_args,
+		std::string_view log_context,
+		std::string_view function_name);
 	// Parse one catch clause at the current token position into catch_clauses.
 	// Returns an error ParseResult on failure, or an empty success otherwise.
 	ParseResult parse_one_catch_clause(std::vector<ASTNode>& catch_clauses);

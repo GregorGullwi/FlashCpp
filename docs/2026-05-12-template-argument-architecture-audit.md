@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-22
+**Last updated:** 2026-05-22 (partial-spec plain-member OOL fix)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -13,9 +13,9 @@ FlashCpp now handles many practical C++20 template cases, but the main
 remaining standards gap is still two-phase lookup across replayed template
 infrastructure.
 
-The highest-impact work is no longer broad parser cleanup. It is finishing the
-owner-correct replay path for out-of-line member-function-template bodies that
-interact with dependent bases — including through partial specializations.
+The highest-impact work is no longer broad parser cleanup. It is removing the
+next replay-metadata gaps that still force template instantiation to recover
+intent from partially substituted AST state.
 
 ## Current state
 
@@ -37,15 +37,20 @@ Useful assumptions before changing this area:
 - **partial-spec member-function-template instantiation now builds new
   owner-correct nodes and registers qualified-name + outer binding entries**
   so the existing replay path can find and replay those bodies with
-  `T→concrete` in scope, matching the primary-template path.
+  `T→concrete` in scope, matching the primary-template path;
+- **partial-spec out-of-line plain (non-template) member functions now have
+  their bodies parsed and substituted immediately during partial-spec
+  instantiation**, matching the primary-template OOL plain-member path and
+  enabling dependent-base lookup via `this->...` through partial specs.
 
 Latest recorded full-suite validation:
-`2482` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2484` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
+- `test_template_partial_spec_ool_plain_member_ret0.cpp`
 
 ## What is still wrong
 
@@ -59,15 +64,12 @@ instantiation has to recover intent from partially substituted AST state.
 
 The next highest-value remaining surface:
 
-- replayed out-of-line **non-template** member functions on partial
-  specializations that perform dependent-base lookup — the body position and
-  outer binding are now attached for member-function templates; the same
-  treatment is needed for plain (non-template) member functions that were
-  deferred;
-- the partial-spec OOL attachment for non-ctor functions currently only loops
-  over `instantiated_struct_ref.member_functions()` in one direction; it does
+- the partial-spec OOL attachment for non-ctor functions loops over
+  `instantiated_struct_ref.member_functions()` in one direction; it does
   not yet cover the case where the OOL definition is registered against the
-  base template name while the class was instantiated from a partial spec.
+  base template name while the class was instantiated from a partial spec;
+- remaining declaration/static-member/deferred-base replay paths that never
+  captured enough replay metadata at parse time.
 
 ### 2. Dependent-name modeling is still too weak
 
@@ -86,20 +88,15 @@ they directly block items 1-2:
 
 ## Highest-impact next steps
 
-1. **Extend the partial-spec OOL attachment to plain (non-template) member functions**
-   - Same pattern as the member-function-template fix, but for deferred-body
-     plain member functions on partial specializations.
-   - The OOL attachment loop (around line 5515 in
-     `Parser_Templates_Inst_ClassTemplate.cpp`) currently only handles
-     ctor-stubs; extend it to match non-template non-ctor OOL members.
-
-2. **Remove the next AST-only replay fallback**
-   - After item 1, continue with the remaining declaration/static-member/
-     deferred-base replay paths that still never captured enough replay
-     metadata.
+1. **Remove the next AST-only replay fallback**
+   - Start with the partial-spec non-ctor OOL case where the definition was
+     registered under the base template name instead of the instantiated
+     partial-spec name.
+   - Continue with the remaining declaration/static-member/deferred-base replay
+     paths that still never captured enough metadata at parse time.
    - Prefer replay-first semantic attachment over adding more repair logic.
 
-3. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1-2**
+2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
    - Expand richer dependent-base and unknown-specialization records only when
      required by the replay/lookup path above.
    - Avoid broad redesign work that does not directly reduce fallback behavior.
@@ -119,6 +116,9 @@ The following are complete enough to rely on:
   covered paths;
 - nested out-of-line member-function-template replay preserves instantiated
   outer parameter types while importing definition-side parameter names;
+- partial-spec plain (non-template) out-of-line member functions now parse and
+  substitute their bodies with the correct class-template parameters and
+  definition lookup context in scope;
 - partial-spec member-function-template instantiation now builds owner-correct
   nodes, registers qualified names, and attaches outer template bindings so the
   replay path can materialize bodies with the correct class-template parameters
