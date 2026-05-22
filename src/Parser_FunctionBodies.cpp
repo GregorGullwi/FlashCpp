@@ -229,11 +229,11 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 					delayed.ctor_node->set_delegating_initializer(std::move(init_args));
 				} else {
 					// Check if it's a base class initializer
+					const StructTypeInfo* delayed_struct_info = nullptr;
+					if (const TypeInfo* delayed_type_info = tryGetTypeInfo(delayed.struct_type_index)) {
+						delayed_struct_info = delayed_type_info->getStructInfo();
+					}
 					if (delayed.struct_node) {
-						const StructTypeInfo* delayed_struct_info = nullptr;
-						if (const TypeInfo* delayed_type_info = tryGetTypeInfo(delayed.struct_type_index)) {
-							delayed_struct_info = delayed_type_info->getStructInfo();
-						}
 						for (const auto& base : delayed.struct_node->base_classes()) {
 							if (base.name == init_name) {
 								is_base_init = true;
@@ -259,23 +259,51 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
 							delayed.ctor_node->add_base_initializer(init_name_handle, std::move(init_args));
 						}
+					} else if (delayed_struct_info != nullptr) {
+						StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
+						for (const auto& base : delayed_struct_info->base_classes) {
+							std::string_view base_name = base.name;
+							if (base_name == init_name || extractBaseTemplateName(base_name) == init_name) {
+								is_base_init = true;
+								delayed.ctor_node->add_base_initializer(
+									StringTable::getOrInternStringHandle(base_name),
+									std::move(init_args));
+								break;
+							}
+						}
+						if (!is_base_init && delayed_struct_info->has_deferred_base_classes) {
+							for (StringHandle deferred_base_name : delayed_struct_info->deferred_base_template_names) {
+								if (deferred_base_name == init_name_handle) {
+									is_base_init = true;
+									delayed.ctor_node->add_base_initializer(deferred_base_name, std::move(init_args));
+									break;
+								}
+							}
+						}
+						if (!is_base_init && isReachableVirtualBaseInitializer(delayed_struct_info, init_name)) {
+							is_base_init = true;
+							delayed.ctor_node->add_base_initializer(init_name_handle, std::move(init_args));
+						}
 					}
 
 					if (!is_base_init) {
-						// It's a member initializer
-						if (is_brace && init_args.empty()) {
-							// Empty brace-init (e.g., arr{}): C++ requires value-initialization
-							// (zero-init for scalars/arrays). Store an empty InitializerListNode so
-							// the constexpr evaluator and IR generator can zero-fill correctly.
-							auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
-							delayed.ctor_node->add_member_initializer(init_name, init_list_node);
-						} else if (is_brace && init_args.size() > 1) {
-							// Multiple brace-init args (e.g., arr{a, b, c}): wrap in InitializerListNode
-							auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode());
+						auto make_initializer_list = [&](InitializerListNode::InitializationStyle style) -> ASTNode {
+							auto [init_list_node, init_list_ref] = create_node_ref(InitializerListNode(style));
 							for (auto& arg : init_args) {
 								init_list_ref.add_initializer(arg);
 							}
-							delayed.ctor_node->add_member_initializer(init_name, init_list_node);
+							return init_list_node;
+						};
+
+						// It's a member initializer
+						if (is_brace) {
+							delayed.ctor_node->add_member_initializer(
+								init_name,
+								make_initializer_list(InitializerListNode::InitializationStyle::Brace));
+						} else if (init_args.size() > 1) {
+							delayed.ctor_node->add_member_initializer(
+								init_name,
+								make_initializer_list(InitializerListNode::InitializationStyle::Paren));
 						} else if (!init_args.empty()) {
 							delayed.ctor_node->add_member_initializer(init_name, init_args[0]);
 						}
