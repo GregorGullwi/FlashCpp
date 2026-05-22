@@ -639,11 +639,9 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		}
 
 		if (sema_range_type_query.state == TypeSpecifierQueryResult::State::Available) {
-			const bool sema_range_type_usable =
-				sema_range_type_query.type.has_value() &&
+			if (sema_range_type_query.type.has_value() &&
 				sema_range_type_query.type->type() != TypeCategory::Invalid &&
-				!isPlaceholderAutoType(sema_range_type_query.type->type());
-			if (sema_range_type_usable) {
+				!isPlaceholderAutoType(sema_range_type_query.type->type())) {
 				inferred_range_type = sema_range_type_query.type;
 			} else if (sema_normalized_current_function_) {
 				throw InternalError("Normalized range-for range-expression type was unusable");
@@ -651,6 +649,28 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		} else if (sema_range_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
 			if (sema_normalized_current_function_) {
 				throw InternalError("Normalized range-for range-expression type query was AnalyzedAbsent");
+			}
+		}
+		if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
+			const StructTypeInfo* resolved_struct_info = nullptr;
+			const StructMember* resolved_member = nullptr;
+			if (resolveMemberAccessType(std::get<MemberAccessNode>(expr_variant), resolved_struct_info, resolved_member) &&
+				resolved_member) {
+				inferred_range_type.emplace(
+					resolved_member->type_index.withCategory(
+						isIrStructType(toIrType(resolved_member->memberType()))
+							? TypeCategory::Struct
+							: resolved_member->memberType()),
+					static_cast<int>(resolved_member->size * 8),
+					Token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
+				if (resolved_member->pointer_depth > 0) {
+					inferred_range_type->add_pointer_levels(resolved_member->pointer_depth);
+				}
+				if (resolved_member->reference_qualifier != ReferenceQualifier::None) {
+					inferred_range_type->set_reference_qualifier(resolved_member->reference_qualifier);
+				}
 			}
 		}
 		if (!inferred_range_type.has_value() && node.resolved_range_type().has_value()) {

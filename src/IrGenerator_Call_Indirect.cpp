@@ -434,10 +434,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					if (auto resolved_sema_type = normalizeResolvedStructType(*receiver_type_query.type); resolved_sema_type.has_value()) {
 						return resolved_sema_type;
 					}
-					const bool sema_type_unusable_for_receiver =
-						receiver_type_query.type->type() == TypeCategory::Invalid ||
-						isPlaceholderAutoType(receiver_type_query.type->type());
-					if (sema_normalized_current_function_ && sema_type_unusable_for_receiver) {
+					if (sema_normalized_current_function_ &&
+						(receiver_type_query.type->type() == TypeCategory::Invalid ||
+						 isPlaceholderAutoType(receiver_type_query.type->type()))) {
 						throw InternalError("Normalized member-call receiver type was unusable");
 					}
 				} else if (sema_normalized_current_function_) {
