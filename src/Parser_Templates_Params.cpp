@@ -5,6 +5,15 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+bool isBoolResultOperator(std::string_view op) {
+	return op == "==" || op == "!=" ||
+		   op == "<" || op == "<=" ||
+		   op == ">" || op == ">=" ||
+		   op == "&&" || op == "||";
+}
+}
+
 // Parse noexcept or noexcept(expr) specifier and return the evaluated boolean value.
 // Assumes the 'noexcept' token has already been consumed by the caller.
 // - Bare 'noexcept' (no parens) → returns true.
@@ -1217,19 +1226,13 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 
 			if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 				const auto& binary = std::get<BinaryOperatorNode>(expr);
-				if (binary.op() == "==" || binary.op() == "!=" ||
-					binary.op() == "<" || binary.op() == "<=" ||
-					binary.op() == ">" || binary.op() == ">=" ||
-					binary.op() == "&&" || binary.op() == "||") {
+				if (isBoolResultOperator(binary.op())) {
 					return TypeCategory::Bool;
 				}
 			}
 			if (std::holds_alternative<FoldExpressionNode>(expr)) {
 				const auto& fold = std::get<FoldExpressionNode>(expr);
-				if (fold.op() == "==" || fold.op() == "!=" ||
-					fold.op() == "<" || fold.op() == "<=" ||
-					fold.op() == ">" || fold.op() == ">=" ||
-					fold.op() == "&&" || fold.op() == "||") {
+				if (isBoolResultOperator(fold.op())) {
 					return TypeCategory::Bool;
 				}
 			}
@@ -1426,9 +1429,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				if (fold->init_expr().has_value() && self(self, *fold->init_expr())) {
 					return true;
 				}
-				if (!fold->pack_name().empty()) {
-					StringHandle pack_name =
-						StringTable::getOrInternStringHandle(fold->pack_name());
+				StringHandle pack_name = fold->pack_name_handle();
+				if (pack_name.isValid()) {
 					return currentTemplateParamKind(pack_name).has_value() &&
 						   !hasConcreteSubstitutionForName(pack_name);
 				}
