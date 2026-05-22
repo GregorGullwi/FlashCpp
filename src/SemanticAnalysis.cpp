@@ -2634,6 +2634,18 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 	pushScope();
 	auto cleanup = ScopeGuard([this]() { popScope(); });
 	registerOuterTemplateBindingsInScope(decl);
+	const TypeInfo* struct_type_info = findStructTypeInfoByNameFragment(StringTable::getStringView(decl.name()));
+
+	std::optional<MemberContext> member_default_init_context;
+	if (struct_type_info && struct_type_info->getStructInfo()) {
+		member_default_init_context = MemberContext{struct_type_info->type_index_, true, CVQualifier::None};
+		member_context_stack_.push_back(*member_default_init_context);
+	}
+	auto member_default_cleanup = ScopeGuard([this, &member_default_init_context]() {
+		if (member_default_init_context.has_value()) {
+			member_context_stack_.pop_back();
+		}
+	});
 
 	for (const auto& member : decl.members()) {
 		if (member.declaration.is<DeclarationNode>()) {
@@ -2655,9 +2667,8 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 	}
 
 	std::optional<MemberContext> static_member_context;
-	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(StringTable::getStringView(decl.name()));
-		type_info && type_info->getStructInfo()) {
-		static_member_context = MemberContext{type_info->type_index_, false, CVQualifier::None};
+	if (struct_type_info && struct_type_info->getStructInfo()) {
+		static_member_context = MemberContext{struct_type_info->type_index_, false, CVQualifier::None};
 		member_context_stack_.push_back(*static_member_context);
 	}
 	auto static_member_context_cleanup = ScopeGuard([this, &static_member_context]() {
