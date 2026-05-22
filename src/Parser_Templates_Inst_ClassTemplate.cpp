@@ -5816,6 +5816,98 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				" out-of-line member functions for ", template_name);
 			for (const auto& out_of_line_member : out_of_line_members) {
 				if (out_of_line_member.inner_template_params.empty()) {
+					// Plain (non-template) OOL member on a partial specialization: parse and
+					// substitute the body immediately, mirroring the primary-template OOL path
+					// at ~line 11291. (There is no inner template instantiation to defer to.)
+					if (!out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
+						continue;
+					}
+					const FunctionDeclarationNode& plain_ool_func =
+						out_of_line_member.function_node.as<FunctionDeclarationNode>();
+					const DeclarationNode& plain_ool_decl = plain_ool_func.decl_node();
+					const std::string_view plain_ool_name = plain_ool_decl.identifier_token().value();
+					// Skip ctor stubs — handled by the ctor path below.
+					const bool is_plain_ctor_stub =
+						!template_name.empty() &&
+						(plain_ool_name == template_name ||
+							(!template_base_name.empty() && plain_ool_name == template_base_name));
+					if (is_plain_ctor_stub) {
+						continue;
+					}
+					for (auto& mem_func : instantiated_struct_ref.member_functions()) {
+						if (!mem_func.function_declaration.is<FunctionDeclarationNode>()) {
+							continue;
+						}
+						FunctionDeclarationNode& inst_func =
+							mem_func.function_declaration.as<FunctionDeclarationNode>();
+						if (inst_func.decl_node().identifier_token().value() != plain_ool_name) {
+							continue;
+						}
+						if (inst_func.parameter_nodes().size() != plain_ool_func.parameter_nodes().size()) {
+							continue;
+						}
+						if (inst_func.is_materialized()) {
+							continue;
+						}
+						// Copy definition-site parameter names so the body can reference them.
+						copyDefinitionParameterIdentifiers(
+							inst_func.parameter_nodes(),
+							plain_ool_func.parameter_nodes());
+
+						SaveHandle saved_pos = save_token_position();
+						restore_lexer_position_only(out_of_line_member.body_start);
+
+						{
+							TemplateDefinitionLookupContext definition_lookup_context =
+								ensureReplayDefinitionLookupContext(
+									out_of_line_member.definition_lookup_context,
+									plain_ool_decl.identifier_token(),
+									gSymbolTable.get_current_namespace_handle(),
+									instantiated_name);
+							ScopedDefinitionLookupContext ctx_scope(
+								current_template_definition_lookup_context_,
+								definition_lookup_context.is_valid()
+									? &definition_lookup_context
+									: nullptr);
+
+							FlashCpp::FunctionParsingScopeGuard func_guard(
+								*this,
+								true,
+								!inst_func.is_static(),
+								&instantiated_struct_ref,
+								instantiated_name,
+								struct_type_info.type_index_,
+								inst_func.parameter_nodes(),
+								&inst_func);
+
+							auto body_result = parse_function_body();
+							if (!body_result.is_error() && body_result.node().has_value()) {
+								try {
+									ASTNode substituted_body = substituteTemplateParameters(
+										*body_result.node(),
+										template_params,
+										template_args_for_pattern);
+									inst_func.set_definition(substituted_body);
+									finalize_function_after_definition(inst_func, true);
+									FLASH_LOG(Templates, Debug,
+										"Parsed and substituted OOL plain member body "
+										"for partial-spec: ", plain_ool_name);
+								} catch (const std::exception& e) {
+									FLASH_LOG(Templates, Error,
+										"Exception substituting OOL plain member body "
+										"for partial-spec '", plain_ool_name,
+										"': ", e.what());
+								}
+							} else {
+								FLASH_LOG(Templates, Error,
+									"Failed to parse OOL plain member body "
+									"for partial-spec: ", plain_ool_name);
+							}
+						} // func_guard dtor
+
+						restore_lexer_position_only(saved_pos);
+						break;
+					}
 					continue;
 				}
 
