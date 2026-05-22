@@ -638,23 +638,19 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 			throw InternalError("Normalized range-for range-expression type query remained NotYetAnalyzed");
 		}
 
-		bool allow_parser_range_type_fallback = false;
 		if (sema_range_type_query.state == TypeSpecifierQueryResult::State::Available) {
-			const bool sema_range_type_usable =
-				sema_range_type_query.type.has_value() &&
+			if (sema_range_type_query.type.has_value() &&
 				sema_range_type_query.type->type() != TypeCategory::Invalid &&
-				!isPlaceholderAutoType(sema_range_type_query.type->type());
-			if (sema_range_type_usable) {
+				!isPlaceholderAutoType(sema_range_type_query.type->type())) {
 				inferred_range_type = sema_range_type_query.type;
-			} else {
-				allow_parser_range_type_fallback = true;
+			} else if (sema_normalized_current_function_) {
+				throw InternalError("Normalized range-for range-expression type was unusable");
 			}
 		} else if (sema_range_type_query.state == TypeSpecifierQueryResult::State::AnalyzedAbsent) {
-			allow_parser_range_type_fallback = true;
-		} else if (sema_range_type_not_yet_analyzed && !sema_normalized_current_function_) {
-			allow_parser_range_type_fallback = true;
+			if (sema_normalized_current_function_) {
+				throw InternalError("Normalized range-for range-expression type query was AnalyzedAbsent");
+			}
 		}
-
 		if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
@@ -680,10 +676,8 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		if (!inferred_range_type.has_value() && node.resolved_range_type().has_value()) {
 			inferred_range_type = node.resolved_range_type();
 		}
-		// Range-for range-expression type parser fallback. Probed 2026-05-20 across
-		// the full test corpus — never hit for any body. Replaced with InternalError.
-		if (!inferred_range_type.has_value() && allow_parser_range_type_fallback) {
-			throw InternalError("Range-for range-expression type could not be resolved: sema should provide type");
+		if (!inferred_range_type.has_value() && sema_normalized_current_function_) {
+			throw InternalError("Normalized range-for range-expression type could not be resolved");
 		}
 		if (!inferred_range_type.has_value()) {
 			FLASH_LOG(Codegen, Error, "Could not infer type of non-identifier range expression");
