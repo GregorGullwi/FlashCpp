@@ -495,20 +495,13 @@ static bool constructorDeclarationsHaveMatchingParameterShape(
 				ctor_param->token().value(),
 				stub_param->token().value(),
 				instantiated_template_params,
-				out_of_line_template_params) &&
-			ctor_param->token().value() != stub_param->token().value()) {
+				out_of_line_template_params)) {
 			return false;
 		}
 	}
 
 	return true;
 }
-
-static bool dependentTemplatePlaceholderNamesMatch(
-	std::string_view instantiated_name,
-	std::string_view out_of_line_name,
-	std::span<const TemplateParameterNode> instantiated_template_params,
-	std::span<const TemplateParameterNode> out_of_line_template_params);
 
 static bool functionDeclarationsHaveMatchingParameterShape(
 	const FunctionDeclarationNode& instantiated_decl,
@@ -752,56 +745,17 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	return true;
 }
 
-static std::optional<bool> nestedOutOfLineMemberTemplateMatchesCandidate(
+template <typename InstantiatedDeclNode, typename ShapeMatcherFn>
+static bool outOfLineTemplateMatchesCandidateWithFallback(
 	Parser& parser,
-	const ASTNode& candidate_member,
-	const FunctionDeclarationNode& out_of_line_decl,
-	std::span<const TemplateParameterNode> outer_template_params,
-	std::span<const TemplateTypeArg> outer_template_args,
-	StringHandle owner_type_name,
-	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
-	if (!candidate_member.is<TemplateFunctionDeclarationNode>()) {
-		return false;
-	}
-
-	const TemplateFunctionDeclarationNode& candidate_template =
-		candidate_member.as<TemplateFunctionDeclarationNode>();
-	std::span<const TemplateParameterNode> candidate_inner_template_params(
-		candidate_template.template_parameters().data(),
-		candidate_template.template_parameters().size());
-	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
-		return false;
-	}
-
-	std::optional<bool> substituted_signature_match = declarationsMatchAfterTemplateSubstitution(
-		parser,
-		candidate_template.function_decl_node(),
-		out_of_line_decl,
-		outer_template_params,
-		outer_template_args,
-		owner_type_name,
-		candidate_inner_template_params,
-		out_of_line_inner_template_params);
-	if (substituted_signature_match.has_value() && *substituted_signature_match) {
-		return true;
-	}
-
-	return functionDeclarationsHaveMatchingParameterShape(
-		candidate_template.function_decl_node(),
-		out_of_line_decl,
-		candidate_inner_template_params,
-		out_of_line_inner_template_params);
-}
-
-static bool outOfLineConstructorTemplateMatchesCandidate(
-	Parser& parser,
-	const ConstructorDeclarationNode& candidate,
+	const InstantiatedDeclNode& candidate,
 	const FunctionDeclarationNode& out_of_line_decl,
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name,
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
-	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params,
+	ShapeMatcherFn&& shape_matcher) {
 	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
 		return false;
 	}
@@ -819,11 +773,72 @@ static bool outOfLineConstructorTemplateMatchesCandidate(
 		return *substituted_signature_match;
 	}
 
-	return constructorDeclarationsHaveMatchingParameterShape(
+	return shape_matcher(candidate_inner_template_params, out_of_line_inner_template_params);
+}
+
+static std::optional<bool> nestedOutOfLineMemberTemplateMatchesCandidate(
+	Parser& parser,
+	const ASTNode& candidate_member,
+	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	StringHandle owner_type_name,
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	if (!candidate_member.is<TemplateFunctionDeclarationNode>()) {
+		return false;
+	}
+
+	const TemplateFunctionDeclarationNode& candidate_template =
+		candidate_member.as<TemplateFunctionDeclarationNode>();
+	std::span<const TemplateParameterNode> candidate_inner_template_params(
+		candidate_template.template_parameters().data(),
+		candidate_template.template_parameters().size());
+
+	return outOfLineTemplateMatchesCandidateWithFallback(
+		parser,
+		candidate_template.function_decl_node(),
+		out_of_line_decl,
+		outer_template_params,
+		outer_template_args,
+		owner_type_name,
+		candidate_inner_template_params,
+		out_of_line_inner_template_params,
+		[&](std::span<const TemplateParameterNode> instantiated_inner_template_params,
+			std::span<const TemplateParameterNode> definition_inner_template_params) {
+			return functionDeclarationsHaveMatchingParameterShape(
+				candidate_template.function_decl_node(),
+				out_of_line_decl,
+				instantiated_inner_template_params,
+				definition_inner_template_params);
+		});
+}
+
+static bool outOfLineConstructorTemplateMatchesCandidate(
+	Parser& parser,
+	const ConstructorDeclarationNode& candidate,
+	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	StringHandle owner_type_name,
+	std::span<const TemplateParameterNode> candidate_inner_template_params,
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	return outOfLineTemplateMatchesCandidateWithFallback(
+		parser,
 		candidate,
 		out_of_line_decl,
+		outer_template_params,
+		outer_template_args,
+		owner_type_name,
 		candidate_inner_template_params,
-		out_of_line_inner_template_params);
+		out_of_line_inner_template_params,
+		[&](std::span<const TemplateParameterNode> instantiated_inner_template_params,
+			std::span<const TemplateParameterNode> definition_inner_template_params) {
+			return constructorDeclarationsHaveMatchingParameterShape(
+				candidate,
+				out_of_line_decl,
+				instantiated_inner_template_params,
+				definition_inner_template_params);
+		});
 }
 
 static void copyDefinitionParameterIdentifiers(
@@ -834,8 +849,7 @@ static void copyDefinitionParameterIdentifiers(
 	}
 
 	for (size_t param_index = 0; param_index < instantiated_params.size(); ++param_index) {
-		const DeclarationNode* instantiated_decl_const = get_decl_from_symbol(instantiated_params[param_index]);
-		DeclarationNode* instantiated_decl = const_cast<DeclarationNode*>(instantiated_decl_const);
+		DeclarationNode* instantiated_decl = Parser::get_decl_from_symbol_mut(instantiated_params[param_index]);
 		const DeclarationNode* definition_decl = get_decl_from_symbol(definition_params[param_index]);
 		if (!instantiated_decl || !definition_decl) {
 			continue;
