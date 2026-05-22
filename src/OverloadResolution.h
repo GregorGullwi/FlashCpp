@@ -487,6 +487,9 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 			min_required = count_min_required_params(params);
 		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
 			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
+			if (ctor_decl.is_explicit()) {
+				continue;
+			}
 			params = ctor_decl.parameter_nodes();
 			min_required = count_min_required_params(params);
 		}
@@ -500,6 +503,64 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 		TypeIndex param_idx = param_type.as<TypeSpecifierNode>().type_index();
 		if (param_idx == source_idx)
 			return true;
+	}
+	return false;
+}
+
+inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, const TypeSpecifierNode& source_type) {
+	if (!target_idx.is_valid()) {
+		return false;
+	}
+	const TypeInfo* target_type = tryGetTypeInfo(target_idx);
+	if (!target_type) {
+		return false;
+	}
+	const StructTypeInfo* target = target_type->getStructInfo();
+	if (!target) {
+		return false;
+	}
+	auto count_min_required_params = [](std::span<const ASTNode> params) {
+		size_t min_required = params.size();
+		size_t i = params.size();
+		while (i > 0) {
+			if (!params[i - 1].is<DeclarationNode>())
+				break;
+			if (!params[i - 1].as<DeclarationNode>().has_default_value())
+				break;
+			--min_required;
+			--i;
+		}
+		return min_required;
+	};
+	for (const auto& mf : target->member_functions) {
+		if (!mf.is_constructor) {
+			continue;
+		}
+		std::span<const ASTNode> params;
+		size_t min_required = 0;
+		if (mf.function_decl.is<FunctionDeclarationNode>()) {
+			const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
+			params = ctor_decl.parameter_nodes();
+			min_required = count_min_required_params(params);
+		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
+			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
+			if (ctor_decl.is_explicit()) {
+				continue;
+			}
+			params = ctor_decl.parameter_nodes();
+			min_required = count_min_required_params(params);
+		}
+		if (params.empty() || min_required > 1 || !params[0].is<DeclarationNode>()) {
+			continue;
+		}
+		const auto& param_type = params[0].as<DeclarationNode>().type_node();
+		if (!param_type.is<TypeSpecifierNode>()) {
+			continue;
+		}
+		const auto conversion = can_convert_type(source_type, param_type.as<TypeSpecifierNode>());
+		if (conversion.is_valid) {
+			return true;
+		}
 	}
 	return false;
 }
@@ -822,9 +883,16 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
 	// This handles constructor conversions (not conversion operators, but similar concept)
 	if (to.category() == TypeCategory::Struct && from.category() != TypeCategory::Struct) {
-		// Could be a converting constructor in 'to' struct - accept it tentatively
-		// CodeGen will handle the actual constructor call
-		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		if (!to.type_index().is_valid() ||
+			to.type_index().index() >= getTypeInfoCount() ||
+			!getTypeInfo(to.type_index()).getStructInfo()) {
+			// Struct info not yet finalized (parse-time): keep permissive fallback.
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
+		if (hasImplicitConvertingConstructorForArgument(to.type_index(), from)) {
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
+		return ConversionPlan::no_match();
 	}
 
 	// Handle UserDefined type aliases:
