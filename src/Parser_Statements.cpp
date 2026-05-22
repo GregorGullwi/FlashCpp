@@ -53,7 +53,7 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIde
 	"%=", "&=", "|=", "^=",
 	"<<=", ">>="};
 
-static bool isTypeLikeTemplateName(StringHandle name) {
+static bool isClassOrAliasTemplate(StringHandle name) {
 	return gTemplateRegistry.isClassTemplate(name) ||
 		   gTemplateRegistry.lookup_alias_template(name).has_value();
 }
@@ -191,7 +191,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 								  current_token_);
 	}
 
-	auto looksLikeQualifiedTemplateTypeDeclarationStart = [&]() -> bool {
+	auto looksLikeQualifiedTemplateDeclaration = [&]() -> bool {
 		if (!peek().is_identifier()) {
 			return false;
 		}
@@ -239,23 +239,14 @@ ParseResult Parser::parse_statement_or_declaration() {
 		}
 		restore_token_position(saved_pos);
 
-		StringBuilder type_name_builder;
-		type_name_builder.append(identifier_token.value());
-
+		std::string_view base_type_name = identifier_token.value();
 		saved_pos = save_token_position();
 		advance(); // consume first identifier
-		while (peek() == "::"_tok) {
-			advance(); // consume '::'
-			if (peek().is_identifier() || peek().is_keyword()) {
-				type_name_builder.append("::").append(peek_info().value());
-				advance(); // consume next identifier
-			} else {
-				break;
-			}
-		}
+		std::string_view qualified_type_name =
+			consume_qualified_name_suffix(base_type_name);
 		restore_token_position(saved_pos);
 
-		auto type_name_handle = StringTable::getOrInternStringHandle(type_name_builder);
+		auto type_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
 		auto type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
 		if (!type_info_ctx && !struct_parsing_context_stack_.empty()) {
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
@@ -346,7 +337,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			}
 		}
 
-		if (isTypeLikeTemplateName(type_name_handle)) {
+		if (isClassOrAliasTemplate(type_name_handle)) {
 			advance(); // consume the first identifier
 			skip_qualified_name_parts();
 			if (!peek().is_eof()) {
@@ -444,7 +435,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			}
 		}
 
-		if (looksLikeQualifiedTemplateTypeDeclarationStart()) {
+		if (looksLikeQualifiedTemplateDeclaration()) {
 			return true;
 		}
 
@@ -660,25 +651,14 @@ ParseResult Parser::parse_statement_or_declaration() {
 		restore_token_position(saved_pos);
 
 		// Check if this identifier is a registered struct/class/enum/typedef type
-		StringBuilder type_name_builder;
-		type_name_builder.append(current_token.value());
-
-		// Check for qualified name (e.g., std::size_t, ns::MyClass)
-		// Need to look ahead to see if there's a :: following
+		std::string_view base_type_name = current_token.value();
 		saved_pos = save_token_position();
 		advance(); // consume first identifier
-		while (peek() == "::"_tok) {
-			advance(); // consume '::'
-			if (peek().is_identifier() || peek().is_keyword()) {
-				type_name_builder.append("::").append(peek_info().value());
-				advance(); // consume next identifier
-			} else {
-				break;
-			}
-		}
+		std::string_view qualified_type_name =
+			consume_qualified_name_suffix(base_type_name);
 		restore_token_position(saved_pos);
 
-		auto type_name_handle = StringTable::getOrInternStringHandle(type_name_builder);
+		auto type_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
 		auto type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
 		// If not found in current context, search base class typedefs
 		// This handles cases like: struct Derived : Base<int> { void f() { value_type x = 10; } }
@@ -804,7 +784,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		// Check if this is a template identifier (e.g., Container<int>::Iterator)
 		// Templates need to be parsed as variable declarations
 		// UNLESS the next token is '(' (which indicates a function template call)
-		if (isTypeLikeTemplateName(type_name_handle)) {
+		if (isClassOrAliasTemplate(type_name_handle)) {
 			// We need to consume the full qualified name to peek at what comes after
 			advance(); // consume the first identifier
 			// If the template name is qualified (e.g., ns::myfunc), consume all :: and identifiers
@@ -859,7 +839,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			return parse_variable_declaration();
 		}
 
-		if (looksLikeQualifiedTemplateTypeDeclarationStart()) {
+		if (looksLikeQualifiedTemplateDeclaration()) {
 			return parse_variable_declaration();
 		}
 
