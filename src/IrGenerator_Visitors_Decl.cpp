@@ -1681,6 +1681,19 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 	}
 }
 
+// Returns true if the given struct is a C++20 aggregate: all constructors are
+// compiler-generated (implicit). Used in multiple code paths in this file.
+static bool isC20Aggregate(const StructTypeInfo& si) {
+	for (const auto& func : si.member_functions) {
+		if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
+			if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
 	// Deduplication: if this exact constructor node was already emitted (e.g., visited
 	// during beginStructDeclarationCodegen AND later re-queued via deferred emission),
@@ -2180,16 +2193,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						base_struct_info->members.empty() &&
 						!base_struct_info->base_classes.empty() &&
 						!base_init->arguments.empty()) {
-						bool is_base_aggregate = true;
-						for (const auto& mf : base_struct_info->member_functions) {
-							if (mf.is_constructor && mf.function_decl.is<ConstructorDeclarationNode>()) {
-								if (!mf.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
-									is_base_aggregate = false;
-									break;
-								}
-							}
-						}
-						if (is_base_aggregate) {
+						if (isC20Aggregate(*base_struct_info)) {
 							for (const auto& inner_base : base_struct_info->base_classes) {
 								const TypeInfo* inner_type_info = tryGetTypeInfo(inner_base.type_index);
 								if (!inner_type_info) {
@@ -3508,19 +3512,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Helper: returns true if the given struct is a C++20 aggregate
 	// (no user-declared constructors, only implicit ones allowed).
-	auto checkIsAggregate = [](const StructTypeInfo& si) {
-		for (const auto& func : si.member_functions) {
-			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
-				if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
-					return false;
-				}
-			}
-		}
-		return true;
-	};
-
 	if (!matching_ctor && struct_info && num_args > 0 && !struct_info->members.empty()) {
-		if (checkIsAggregate(*struct_info) && num_args <= struct_info->members.size()) {
+		if (isC20Aggregate(*struct_info) && num_args <= struct_info->members.size()) {
 			// Emit default constructor call first (zero-initializes the object)
 			fillInDefaultConstructorArguments(ctor_op, *struct_info);
 			finalizeConstructorCallOp(ctor_op, *struct_info, constructorCallNode.called_from());
@@ -3620,7 +3613,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// whose constructor accepts them.
 	if (!matching_ctor && struct_info && num_args > 0 &&
 		struct_info->members.empty() && !struct_info->base_classes.empty()) {
-		if (checkIsAggregate(*struct_info)) {
+		if (isC20Aggregate(*struct_info)) {
 			for (const auto& base_spec : struct_info->base_classes) {
 				const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index);
 				if (!base_type_info) {
