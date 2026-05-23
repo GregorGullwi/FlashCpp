@@ -1681,9 +1681,10 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 	}
 }
 
-// Returns true if the given struct is a C++20 aggregate: all constructors are
-// compiler-generated (implicit). Used in multiple code paths in this file.
-static bool isC20Aggregate(const StructTypeInfo& si) {
+// Returns true when all declared constructors are compiler-generated (implicit).
+// This is a narrower predicate than full C++20 aggregate rules and is used
+// only for constructor-path branching in this file.
+static bool hasOnlyImplicitConstructors(const StructTypeInfo& si) {
 	for (const auto& func : si.member_functions) {
 		if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 			if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
@@ -2193,7 +2194,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						base_struct_info->members.empty() &&
 						!base_struct_info->base_classes.empty() &&
 						!base_init->arguments.empty()) {
-						if (isC20Aggregate(*base_struct_info)) {
+						if (hasOnlyImplicitConstructors(*base_struct_info)) {
 							for (const auto& inner_base : base_struct_info->base_classes) {
 								const TypeInfo* inner_type_info = tryGetTypeInfo(inner_base.type_index);
 								if (!inner_type_info) {
@@ -3510,10 +3511,10 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// (excluding implicit copy/move), and the struct has public members, generate direct
 	// member stores instead of a constructor call. This handles: return my_type{0}
 
-	// Helper: returns true if the given struct is a C++20 aggregate
-	// (no user-declared constructors, only implicit ones allowed).
+	// hasOnlyImplicitConstructors() is intentionally narrower than full C++20
+	// aggregate rules; this branch only needs constructor classification.
 	if (!matching_ctor && struct_info && num_args > 0 && !struct_info->members.empty()) {
-		if (isC20Aggregate(*struct_info) && num_args <= struct_info->members.size()) {
+		if (hasOnlyImplicitConstructors(*struct_info) && num_args <= struct_info->members.size()) {
 			// Emit default constructor call first (zero-initializes the object)
 			fillInDefaultConstructorArguments(ctor_op, *struct_info);
 			finalizeConstructorCallOp(ctor_op, *struct_info, constructorCallNode.called_from());
@@ -3613,7 +3614,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// whose constructor accepts them.
 	if (!matching_ctor && struct_info && num_args > 0 &&
 		struct_info->members.empty() && !struct_info->base_classes.empty()) {
-		if (isC20Aggregate(*struct_info)) {
+		if (hasOnlyImplicitConstructors(*struct_info)) {
 			for (const auto& base_spec : struct_info->base_classes) {
 				const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index);
 				if (!base_type_info) {

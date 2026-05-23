@@ -1350,7 +1350,8 @@ ambiguous_qualified_static_member:
 				for (const auto* inst_ctx = curr_type->instantiationContext();
 					 inst_ctx && !matched_func_decl;
 					 inst_ctx = inst_ctx->parent) {
-					for (size_t param_index = 0; param_index < inst_ctx->param_names.size() && param_index < inst_ctx->param_args.size(); ++param_index) {
+					const size_t param_count = std::min(inst_ctx->param_names.size(), inst_ctx->param_args.size());
+					for (size_t param_index = 0; param_index < param_count; ++param_index) {
 						if (StringTable::getStringView(inst_ctx->param_names[param_index]) != qualifier) {
 							continue;
 						}
