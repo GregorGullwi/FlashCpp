@@ -3953,7 +3953,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 	}
 
-	auto id = type_context_.intern(desc);
+		auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
 }
@@ -6572,7 +6572,26 @@ bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 		return false;
 	}
 	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
-	return expr_type_id && expr_type_id == target_type_id;
+	if (!expr_type_id) {
+		return false;
+	}
+	if (expr_type_id == target_type_id) {
+		return true;
+	}
+	// Also check by name: a template member function returning a nested struct type may
+	// have its return-type specifier holding a TypeAlias TypeIndex while the
+	// ConstructorCallNode carries the lazy-instantiated struct's TypeIndex.  Both refer
+	// to the same type, so no conversion is needed.
+	const CanonicalTypeDesc& expr_desc = type_context_.get(expr_type_id);
+	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
+	if (is_struct_type(expr_desc.category()) && is_struct_type(target_desc.category())) {
+		const TypeInfo* expr_ti = tryGetTypeInfo(expr_desc.type_index);
+		const TypeInfo* target_ti = tryGetTypeInfo(target_desc.type_index);
+		if (expr_ti && target_ti && expr_ti->name() == target_ti->name()) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
