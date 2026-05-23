@@ -9208,8 +9208,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					if (defer_entire_base) {
 						nested_struct_info->has_deferred_base_classes = true;
-						nested_struct_info->deferred_base_template_names.push_back(deferred_base.base_template_name);
-						nested_struct_info->deferred_template_base_specs.push_back(deferred_base);
+						nested_struct_info->deferred_template_bases.push_back(
+							StructTypeInfo::DeferredTemplateBaseEntry(deferred_base));
 						instantiated_nested_struct_ref.add_deferred_template_base_class(
 							deferred_base.base_template_name,
 							deferred_base.template_arguments,
@@ -11778,10 +11778,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 
 									if (!is_base_init && struct_type_info.struct_info_->has_deferred_base_classes) {
-										for (StringHandle deferred_base_name : struct_type_info.struct_info_->deferred_base_template_names) {
-											if (deferred_base_name == init_name_handle) {
+										for (const auto& deferred_base_entry : struct_type_info.struct_info_->deferred_template_bases) {
+											if (deferred_base_entry.base_template_name == init_name_handle) {
 												is_base_init = true;
-												matched_base_name = deferred_base_name;
+												matched_base_name = deferred_base_entry.base_template_name;
 												break;
 											}
 										}

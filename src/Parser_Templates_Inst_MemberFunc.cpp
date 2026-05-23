@@ -359,7 +359,7 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 
 			if (struct_info->has_deferred_base_classes) {
 				// Two-phase lookup for uninstantiated class templates with dependent bases.
-				// Prefer full deferred-base metadata when available so member-chain owners
+				// Use full deferred-base metadata so member-chain owners
 				// (e.g. Base<T>::template rebind<U>::type) can participate in owner walk.
 				std::unordered_set<StringHandle> visited_deferred_owners;
 				auto try_deferred_owner = [&](StringHandle deferred_owner_name)
@@ -378,9 +378,10 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 					return std::nullopt;
 				};
 
-				for (const auto& deferred_base : struct_info->deferred_template_base_specs) {
+				for (const auto& deferred_base_entry : struct_info->deferred_template_bases) {
+					const DeferredTemplateBaseClassSpecifier& deferred_base = deferred_base_entry.spec;
 					if (std::optional<InheritedOwnerMatch> owner_match =
-							try_deferred_owner(deferred_base.base_template_name);
+							try_deferred_owner(deferred_base_entry.base_template_name);
 						owner_match.has_value()) {
 						return *owner_match;
 					}
@@ -391,7 +392,7 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 
 					std::string owner_chain =
 						std::string(StringTable::getStringView(
-							deferred_base.base_template_name));
+							deferred_base_entry.base_template_name));
 					for (const auto& member_access :
 						 deferred_base.member_type_chain) {
 						owner_chain += "::";
@@ -404,16 +405,6 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 							owner_match.has_value()) {
 							return *owner_match;
 						}
-					}
-				}
-
-				// Backward-compatible fallback for legacy struct-info records that only
-				// persisted deferred base names.
-				for (const StringHandle deferred_base_name : struct_info->deferred_base_template_names) {
-					if (std::optional<InheritedOwnerMatch> owner_match =
-							try_deferred_owner(deferred_base_name);
-						owner_match.has_value()) {
-						return *owner_match;
 					}
 				}
 			}

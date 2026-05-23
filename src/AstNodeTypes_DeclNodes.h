@@ -48,14 +48,28 @@ struct StructTypeInfo {
 	bool has_vtable = false;	 // True if this struct has virtual functions
 	bool is_abstract = false;	  // True if this struct has pure virtual functions
 	bool has_deferred_base_classes = false;	// True if base classes depend on unresolved template parameters
-	// When has_deferred_base_classes is true, these are the template pattern names
-	// (e.g. "Base" for Base<T>) stored at struct_info creation time so they are
-	// reachable even before the TemplateClassDeclarationNode is registered.
-	std::vector<StringHandle> deferred_base_template_names;	// Pattern names of template-dependent bases
-	// Full deferred-template-base metadata captured at parse time. This keeps
-	// member-chain information (e.g. Base<T>::template rebind<U>::type) available
-	// to replay and inherited-lookup paths that need more than just the base name.
-	std::vector<DeferredTemplateBaseClassSpecifier> deferred_template_base_specs;
+	struct DeferredTemplateBaseEntry {
+		StringHandle base_template_name;
+		DeferredTemplateBaseClassSpecifier spec;
+
+		DeferredTemplateBaseEntry()
+			: base_template_name{},
+			  spec(
+				  StringHandle{},
+				  {},
+				  {},
+				  AccessSpecifier::Public,
+				  false,
+				  false,
+				  std::nullopt,
+				  TemplateDefinitionLookupContext{},
+				  TemplateReplayParameterState{}) {}
+		explicit DeferredTemplateBaseEntry(const DeferredTemplateBaseClassSpecifier& base_spec)
+			: base_template_name(base_spec.base_template_name), spec(base_spec) {}
+	};
+	// Full deferred-template-base metadata captured at parse time.
+	// Name and rich spec stay in one record to avoid parallel-container drift.
+	InlineVector<DeferredTemplateBaseEntry, 4> deferred_template_bases;
 	bool vtable_defined_in_tu = false;	// True when the backend has compiled a member function body for this class in the current TU
 	std::vector<const StructMemberFunction*> vtable;	 // Virtual function table (pointers to member functions)
 	std::string_view vtable_symbol;	// MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable
@@ -461,6 +475,14 @@ struct StructTypeInfo {
 	// Add a base class
 	void addBaseClass(std::string_view base_name, TypeIndex base_type_index, AccessSpecifier access, bool is_virtual = false, bool is_deferred = false) {
 		base_classes.emplace_back(base_name, base_type_index, access, is_virtual, 0, is_deferred);
+	}
+
+	void setDeferredTemplateBases(std::span<const DeferredTemplateBaseClassSpecifier> deferred_bases) {
+		has_deferred_base_classes = !deferred_bases.empty();
+		deferred_template_bases.clear();
+		for (const auto& deferred_base : deferred_bases) {
+			deferred_template_bases.push_back(DeferredTemplateBaseEntry(deferred_base));
+		}
 	}
 
 	// Find static member by name

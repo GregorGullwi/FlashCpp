@@ -272,10 +272,12 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 							}
 						}
 						if (!is_base_init && delayed_struct_info->has_deferred_base_classes) {
-							for (StringHandle deferred_base_name : delayed_struct_info->deferred_base_template_names) {
-								if (deferred_base_name == init_name_handle) {
+							for (const auto& deferred_base_entry : delayed_struct_info->deferred_template_bases) {
+								if (deferred_base_entry.base_template_name == init_name_handle) {
 									is_base_init = true;
-									delayed.ctor_node->add_base_initializer(deferred_base_name, std::move(init_args));
+									delayed.ctor_node->add_base_initializer(
+										deferred_base_entry.base_template_name,
+										std::move(init_args));
 									break;
 								}
 							}

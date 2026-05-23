@@ -3599,13 +3599,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Finalize struct layout (add padding)
 	// Use finalizeWithBases() if there are base classes, otherwise use finalize()
 	bool finalize_success;
-	struct_info->has_deferred_base_classes = !struct_ref.deferred_template_base_classes().empty();
-	struct_info->deferred_base_template_names.clear();
-	struct_info->deferred_template_base_specs.clear();
-	for (const auto& deferred_base : struct_ref.deferred_template_base_classes()) {
-		struct_info->deferred_base_template_names.push_back(deferred_base.base_template_name);
-		struct_info->deferred_template_base_specs.push_back(deferred_base);
-	}
+	struct_info->setDeferredTemplateBases(struct_ref.deferred_template_base_classes());
 	if (!struct_info->base_classes.empty()) {
 		finalize_success = struct_info->finalizeWithBases();
 	} else {
