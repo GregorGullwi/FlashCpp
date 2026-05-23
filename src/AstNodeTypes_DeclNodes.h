@@ -52,6 +52,10 @@ struct StructTypeInfo {
 	// (e.g. "Base" for Base<T>) stored at struct_info creation time so they are
 	// reachable even before the TemplateClassDeclarationNode is registered.
 	std::vector<StringHandle> deferred_base_template_names;	// Pattern names of template-dependent bases
+	// Full deferred-template-base metadata captured at parse time. This keeps
+	// member-chain information (e.g. Base<T>::template rebind<U>::type) available
+	// to replay and inherited-lookup paths that need more than just the base name.
+	std::vector<DeferredTemplateBaseClassSpecifier> deferred_template_base_specs;
 	bool vtable_defined_in_tu = false;	// True when the backend has compiled a member function body for this class in the current TU
 	std::vector<const StructMemberFunction*> vtable;	 // Virtual function table (pointers to member functions)
 	std::string_view vtable_symbol;	// MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable

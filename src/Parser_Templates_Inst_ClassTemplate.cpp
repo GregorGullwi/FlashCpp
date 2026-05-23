@@ -9209,6 +9209,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (defer_entire_base) {
 						nested_struct_info->has_deferred_base_classes = true;
 						nested_struct_info->deferred_base_template_names.push_back(deferred_base.base_template_name);
+						nested_struct_info->deferred_template_base_specs.push_back(deferred_base);
 						instantiated_nested_struct_ref.add_deferred_template_base_class(
 							deferred_base.base_template_name,
 							deferred_base.template_arguments,

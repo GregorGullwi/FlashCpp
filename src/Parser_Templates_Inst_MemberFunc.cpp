@@ -358,23 +358,62 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 			}
 
 			if (struct_info->has_deferred_base_classes) {
-				// Two-phase lookup for uninstantiated class templates with dependent bases:
-				// When struct_name is a template pattern (e.g. "Derived" from "Derived<T>"),
-				// struct_info->base_classes is empty because Base<T> is a dependent type not
-				// yet resolved to a concrete struct.  However, the TemplateClassDeclarationNode
-				// records the raw base template names in deferred_template_base_classes().
-				// Walk those deferred bases using only their template name (e.g. "Base") so
-				// we can still find "Base::get_n" in the registry and make it a candidate.
-				// This supports `this->template member<>()` calls within the body of a class
-				// template whose base is a dependent type (C++20 two-phase lookup phase 1).
-				// The deferred base template names are stored in struct_info->deferred_base_template_names
-				// so they are available even before the TemplateClassDeclarationNode is registered
-				// (which happens after the class body is fully parsed).
-				for (const StringHandle deferred_base_name : struct_info->deferred_base_template_names) {
+				// Two-phase lookup for uninstantiated class templates with dependent bases.
+				// Prefer full deferred-base metadata when available so member-chain owners
+				// (e.g. Base<T>::template rebind<U>::type) can participate in owner walk.
+				std::unordered_set<StringHandle> visited_deferred_owners;
+				auto try_deferred_owner = [&](StringHandle deferred_owner_name)
+					-> std::optional<InheritedOwnerMatch> {
+					if (!deferred_owner_name.isValid()) {
+						return std::nullopt;
+					}
+					if (!visited_deferred_owners.insert(deferred_owner_name).second) {
+						return std::nullopt;
+					}
 					InheritedOwnerMatch inherited_owner =
-						self(self, deferred_base_name, depth + 1);
+						self(self, deferred_owner_name, depth + 1);
 					if (inherited_owner.owner_name.isValid()) {
 						return inherited_owner;
+					}
+					return std::nullopt;
+				};
+
+				for (const auto& deferred_base : struct_info->deferred_template_base_specs) {
+					if (std::optional<InheritedOwnerMatch> owner_match =
+							try_deferred_owner(deferred_base.base_template_name);
+						owner_match.has_value()) {
+						return *owner_match;
+					}
+
+					if (deferred_base.member_type_chain.empty()) {
+						continue;
+					}
+
+					std::string owner_chain =
+						std::string(StringTable::getStringView(
+							deferred_base.base_template_name));
+					for (const auto& member_access :
+						 deferred_base.member_type_chain) {
+						owner_chain += "::";
+						owner_chain += StringTable::getStringView(
+							member_access.member_name);
+						StringHandle owner_chain_handle =
+							StringTable::getOrInternStringHandle(owner_chain);
+						if (std::optional<InheritedOwnerMatch> owner_match =
+								try_deferred_owner(owner_chain_handle);
+							owner_match.has_value()) {
+							return *owner_match;
+						}
+					}
+				}
+
+				// Backward-compatible fallback for legacy struct-info records that only
+				// persisted deferred base names.
+				for (const StringHandle deferred_base_name : struct_info->deferred_base_template_names) {
+					if (std::optional<InheritedOwnerMatch> owner_match =
+							try_deferred_owner(deferred_base_name);
+						owner_match.has_value()) {
+						return *owner_match;
 					}
 				}
 			}
