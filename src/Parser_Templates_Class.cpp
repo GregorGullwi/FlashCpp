@@ -495,39 +495,30 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			if (found_nested_def && peek() == "("_tok) {
+				auto merge_template_metadata = []<typename T>(
+					InlineVector<T, 4>& dest,
+					const InlineVector<T, 4>& outer_values,
+					const InlineVector<T, 4>& inner_values) {
+					dest.reserve(outer_values.size() + inner_values.size());
+					dest.insert(dest.end(), outer_values.begin(), outer_values.end());
+					dest.insert(dest.end(), inner_values.begin(), inner_values.end());
+				};
+
 				InlineVector<StringHandle, 4> nested_template_param_names;
 				InlineVector<TemplateParameterKind, 4> nested_template_param_kinds;
 				InlineVector<TypeCategory, 4> nested_template_param_non_type_categories;
-				nested_template_param_names.reserve(
-					template_param_metadata.names.size() + inner_template_param_metadata.names.size());
-				nested_template_param_kinds.reserve(
-					template_param_metadata.kinds.size() + inner_template_param_metadata.kinds.size());
-				nested_template_param_non_type_categories.reserve(
-					template_param_metadata.non_type_categories.size() + inner_template_param_metadata.non_type_categories.size());
-				nested_template_param_names.insert(
-					nested_template_param_names.end(),
-					template_param_metadata.names.begin(),
-					template_param_metadata.names.end());
-				nested_template_param_names.insert(
-					nested_template_param_names.end(),
-					inner_template_param_metadata.names.begin(),
-					inner_template_param_metadata.names.end());
-				nested_template_param_kinds.insert(
-					nested_template_param_kinds.end(),
-					template_param_metadata.kinds.begin(),
-					template_param_metadata.kinds.end());
-				nested_template_param_kinds.insert(
-					nested_template_param_kinds.end(),
-					inner_template_param_metadata.kinds.begin(),
-					inner_template_param_metadata.kinds.end());
-				nested_template_param_non_type_categories.insert(
-					nested_template_param_non_type_categories.end(),
-					template_param_metadata.non_type_categories.begin(),
-					template_param_metadata.non_type_categories.end());
-				nested_template_param_non_type_categories.insert(
-					nested_template_param_non_type_categories.end(),
-					inner_template_param_metadata.non_type_categories.begin(),
-					inner_template_param_metadata.non_type_categories.end());
+				merge_template_metadata(
+					nested_template_param_names,
+					template_param_metadata.names,
+					inner_template_param_metadata.names);
+				merge_template_metadata(
+					nested_template_param_kinds,
+					template_param_metadata.kinds,
+					inner_template_param_metadata.kinds);
+				merge_template_metadata(
+					nested_template_param_non_type_categories,
+					template_param_metadata.non_type_categories,
+					inner_template_param_metadata.non_type_categories);
 				setCurrentTemplateParameters(
 					nested_template_param_names,
 					nested_template_param_kinds,

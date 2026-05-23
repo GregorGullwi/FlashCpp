@@ -245,17 +245,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 				auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
-				substituted_param_decl.as<DeclarationNode>().set_custom_alignment(param_decl.custom_alignment());
-				substituted_param_decl.as<DeclarationNode>().set_parameter_pack(param_decl.is_parameter_pack());
-				substituted_param_decl.as<DeclarationNode>().set_unsized_array(param_decl.is_unsized_array());
-				if (!param_decl.array_dimensions().empty()) {
-					std::vector<ASTNode> copied_dims;
-					copied_dims.reserve(param_decl.array_dimensions().size());
-					for (const ASTNode& dim : param_decl.array_dimensions()) {
-						copied_dims.push_back(dim);
-					}
-					substituted_param_decl.as<DeclarationNode>().set_array_dimensions(std::move(copied_dims));
-				}
+				substituted_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 				if (param_decl.has_default_value()) {
 					ASTNode substituted_default = substituteTemplateParameters(
 						param_decl.default_value(),

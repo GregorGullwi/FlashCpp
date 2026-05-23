@@ -2357,20 +2357,7 @@ bool Parser::materializeTemplateFunctionParameters(
 			}
 			ASTNode param_type = buildMaterializedParamType(param_decl, flat_subst_params, flat_subst_args);
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-			new_param_decl.as<DeclarationNode>().set_custom_alignment(param_decl.custom_alignment());
-			new_param_decl.as<DeclarationNode>().set_parameter_pack(param_decl.is_parameter_pack());
-			new_param_decl.as<DeclarationNode>().set_unsized_array(param_decl.is_unsized_array());
-			if (!param_decl.array_dimensions().empty()) {
-				std::vector<ASTNode> copied_dims;
-				copied_dims.reserve(param_decl.array_dimensions().size());
-				for (const ASTNode& dim : param_decl.array_dimensions()) {
-					copied_dims.push_back(dim);
-				}
-				new_param_decl.as<DeclarationNode>().set_array_dimensions(std::move(copied_dims));
-			}
-			if (param_decl.has_default_value()) {
-				new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-			}
+			new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 			new_func_ref.add_parameter_node(new_param_decl);
 			arg_type_index++;
 		}
@@ -2536,20 +2523,7 @@ bool Parser::materializeTemplateFunctionParameters(
 		}
 
 		auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-		new_param_decl.as<DeclarationNode>().set_custom_alignment(param_decl.custom_alignment());
-		new_param_decl.as<DeclarationNode>().set_parameter_pack(param_decl.is_parameter_pack());
-		new_param_decl.as<DeclarationNode>().set_unsized_array(param_decl.is_unsized_array());
-		if (!param_decl.array_dimensions().empty()) {
-			std::vector<ASTNode> copied_dims;
-			copied_dims.reserve(param_decl.array_dimensions().size());
-			for (const ASTNode& dim : param_decl.array_dimensions()) {
-				copied_dims.push_back(dim);
-			}
-			new_param_decl.as<DeclarationNode>().set_array_dimensions(std::move(copied_dims));
-		}
-		if (param_decl.has_default_value()) {
-			new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-		}
+		new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 		new_func_ref.add_parameter_node(new_param_decl);
 		if (arg_type_index < arg_types->size()) {
 			arg_type_index++;

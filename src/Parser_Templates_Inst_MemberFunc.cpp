@@ -1967,17 +1967,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
-			new_param_decl.as<DeclarationNode>().set_custom_alignment(param_decl.custom_alignment());
-			new_param_decl.as<DeclarationNode>().set_parameter_pack(param_decl.is_parameter_pack());
-			new_param_decl.as<DeclarationNode>().set_unsized_array(param_decl.is_unsized_array());
-			if (!param_decl.array_dimensions().empty()) {
-				std::vector<ASTNode> copied_dims;
-				copied_dims.reserve(param_decl.array_dimensions().size());
-				for (const ASTNode& dim : param_decl.array_dimensions()) {
-					copied_dims.push_back(dim);
-				}
-				new_param_decl.as<DeclarationNode>().set_array_dimensions(std::move(copied_dims));
-			}
+			new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 			if (param_decl.has_default_value()) {
 				ExpressionSubstitutor substitutor(default_environment, *this);
 				ASTNode substituted_default = substitutor.substitute(param_decl.default_value());
