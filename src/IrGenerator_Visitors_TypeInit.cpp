@@ -965,6 +965,18 @@ void AstToIr::generateStaticMemberDeclarations() {
 						// it's likely an unsubstituted template parameter - skip it
 						// Instantiated templates will have NumericLiteralNode or other concrete expressions
 						auto symbol = global_symbol_table_->lookup(id.name());
+						// Also try resolved name (e.g. qualified name set by sema binding)
+						if (!symbol.has_value() && id.resolved_name().isValid()) {
+							symbol = global_symbol_table_->lookup(id.resolved_name());
+						}
+						// Also try namespace-qualified lookup for identifiers from the struct's namespace
+						// (e.g. enum enumerators like 'denorm_absent' that live in the same namespace as the struct)
+						if (!symbol.has_value() && struct_info != nullptr) {
+							NamespaceHandle ns_handle = struct_info->getNamespaceHandle();
+							if (ns_handle.isValid() && !ns_handle.isGlobal()) {
+								symbol = global_symbol_table_->lookup_qualified(ns_handle, id.name());
+							}
+						}
 						if (!symbol.has_value()) {
 							bool is_current_struct_static_member = false;
 							if (struct_info != nullptr) {

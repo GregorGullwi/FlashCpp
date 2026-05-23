@@ -140,6 +140,18 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 				if (should_try_fold) {
 					auto const_result = tryEvaluateAsConstExpr(expr);
 					if (const_result.effectiveIrType() != IrType::Void) {
+						// The constexpr evaluator only sees the taken branch, so its
+						// exact_type may reflect the branch type rather than the
+						// common type of both branches (e.g. int instead of wchar_t).
+						// Override with sema's result type so downstream consumers see
+						// the correct type per usual arithmetic conversions.
+						if (auto sema_type = sema_.getTernaryResultType(expr)) {
+							const TypeCategory sema_cat = sema_type->category();
+							if (const_result.typeEnum() != sema_cat) {
+								const_result = generateTypeConversion(
+									const_result, const_result.category(), sema_cat, expr.get_token());
+							}
+						}
 						return const_result;
 					}
 				}

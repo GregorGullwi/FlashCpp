@@ -8,8 +8,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~1418ms (retested 2026-05-04, Linux/libstdc++-14); wchar_t/char32_t Phase 15 blocker fixed. See latest dated section. |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~400ms (retested 2026-05-07, Linux/libstdc++-14). No longer stops at unresolved `auto` mangling in `std::__is_complete_or_unbounded`; targeted trait assertions compile end-to-end again. Regression coverage includes `tests/std/test_std_is_complete_or_unbounded_resolved.cpp` and `tests/std/test_std_utility_is_complete_or_unbounded_ret0.cpp`. |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5755ms (retested 2026-05-23, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~795ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -18,9 +18,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1.58s (retested 2026-05-23, Linux/libstdc++-14). |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1518ms (retested 2026-04-20). The line 254 requires-expression pack expansion blocker is fixed by `tests/test_std_concepts_pack_expansion_ret42.cpp`. The compile still logs recoverable `is_integral_v` instantiation warnings, tracked separately under `<type_traits>`. |
-| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~625ms |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1499ms (retested 2026-05-23, Linux/libstdc++-14). |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
+| `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~4.44s (retested 2026-05-23, Linux/libstdc++-14). Progressed past earlier wide-literal type mismatch and now stops later in IR conversion at `Type with no runtime size reached codegen in direct call return size (type=25)` in the `find` path. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~2.64s (retested 2026-05-23, Linux/libstdc++-14). |
@@ -47,7 +47,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~9408ms (retested 2026-05-04, Linux/libstdc++-14). No longer crashes; the `Cannot use copy initialization with explicit constructor` diagnostic is also fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
-| `<numeric>` | `test_std_numeric.cpp` | ❌ Compile Error | ~2210ms (retested 2026-05-07, Linux/libstdc++-14). Unresolved-`auto` mangling stop is gone; current blockers are IR failures in `numeric_limits` members (`infinity` / `quiet_NaN` / `signaling_NaN`) due unresolved semantic type category 25. |
+| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7513ms (retested 2026-05-23, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |

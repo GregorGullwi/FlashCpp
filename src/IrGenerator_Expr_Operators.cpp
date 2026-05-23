@@ -4092,6 +4092,52 @@ std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_
 		return generateAbnormalTerminationIntrinsic(callExprNode);
 	}
 
+	// Floating-point infinity/NaN compiler builtins — return compile-time constants.
+	// These are used by <limits> specializations for float/double/long double.
+	if (func_name == "__builtin_huge_valf") {
+		// +inf as float: bit pattern 0x7F800000 reinterpreted
+		constexpr unsigned long long inf_f = 0x7F800000ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::Float), SizeInBits{32}, IrOperand{inf_f}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_huge_val" || func_name == "__builtin_huge_val__") {
+		// +inf as double: bit pattern 0x7FF0000000000000
+		constexpr unsigned long long inf_d = 0x7FF0000000000000ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::Double), SizeInBits{64}, IrOperand{inf_d}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_huge_vall") {
+		// +inf as long double — use double-precision bit pattern for 64-bit codegen
+		constexpr unsigned long long inf_ld = 0x7FF0000000000000ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::LongDouble), SizeInBits{64}, IrOperand{inf_ld}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_nanf" || func_name == "__builtin_nanf__") {
+		// quiet NaN as float: 0x7FC00000
+		constexpr unsigned long long nan_f = 0x7FC00000ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::Float), SizeInBits{32}, IrOperand{nan_f}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_nan" || func_name == "__builtin_nan__") {
+		// quiet NaN as double: 0x7FF8000000000000
+		constexpr unsigned long long nan_d = 0x7FF8000000000000ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::Double), SizeInBits{64}, IrOperand{nan_d}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_nanl" || func_name == "__builtin_nanl__") {
+		constexpr unsigned long long nan_ld = 0x7FF8000000000000ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::LongDouble), SizeInBits{64}, IrOperand{nan_ld}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_nansf" || func_name == "__builtin_nansf__") {
+		// signaling NaN as float: 0x7F800001
+		constexpr unsigned long long snan_f = 0x7F800001ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::Float), SizeInBits{32}, IrOperand{snan_f}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_nans" || func_name == "__builtin_nans__") {
+		// signaling NaN as double: 0x7FF0000000000001
+		constexpr unsigned long long snan_d = 0x7FF0000000000001ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::Double), SizeInBits{64}, IrOperand{snan_d}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+	if (func_name == "__builtin_nansl" || func_name == "__builtin_nansl__") {
+		constexpr unsigned long long snan_ld = 0x7FF0000000000001ULL;
+		return makeExprResult(nativeTypeIndex(TypeCategory::LongDouble), SizeInBits{64}, IrOperand{snan_ld}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+
 	return std::nullopt; // Not an intrinsic
 }
 
