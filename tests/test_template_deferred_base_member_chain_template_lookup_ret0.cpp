@@ -1,7 +1,6 @@
 template<typename T>
 struct BaseCarrier {
-	template<typename U>
-	struct Rebind {
+	struct Mid {
 		template<typename X>
 		static int value() {
 			return sizeof(X) == sizeof(int) ? 0 : 7;
@@ -10,7 +9,7 @@ struct BaseCarrier {
 };
 
 template<typename T>
-struct Derived : BaseCarrier<T>::template Rebind<int> {
+struct Derived : BaseCarrier<T>::Mid {
 	int run() {
 		return this->template value<int>();
 	}
