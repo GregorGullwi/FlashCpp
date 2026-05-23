@@ -380,31 +380,31 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 
 				for (const auto& deferred_base_entry : struct_info->deferred_template_bases) {
 					const DeferredTemplateBaseClassSpecifier& deferred_base = deferred_base_entry.spec;
-					if (std::optional<InheritedOwnerMatch> owner_match =
-							try_deferred_owner(deferred_base_entry.base_template_name);
-						owner_match.has_value()) {
-						return *owner_match;
-					}
-
-					if (deferred_base.member_type_chain.empty()) {
+					if (!deferred_base_entry.base_template_name.isValid()) {
 						continue;
 					}
 
-					std::string owner_chain =
-						std::string(StringTable::getStringView(
-							deferred_base_entry.base_template_name));
-					for (const auto& member_access :
-						 deferred_base.member_type_chain) {
-						owner_chain += "::";
-						owner_chain += StringTable::getStringView(
-							member_access.member_name);
-						StringHandle owner_chain_handle =
-							StringTable::getOrInternStringHandle(owner_chain);
+					if (deferred_base.member_type_chain.empty()) {
 						if (std::optional<InheritedOwnerMatch> owner_match =
-								try_deferred_owner(owner_chain_handle);
+								try_deferred_owner(deferred_base_entry.base_template_name);
 							owner_match.has_value()) {
 							return *owner_match;
 						}
+						continue;
+					}
+
+					const TypeInfo* resolved_owner_type =
+						resolveBaseClassMemberTypeChain(
+							StringTable::getStringView(deferred_base_entry.base_template_name),
+							deferred_base.member_type_chain);
+					if (resolved_owner_type == nullptr) {
+						continue;
+					}
+
+					if (std::optional<InheritedOwnerMatch> owner_match =
+							try_deferred_owner(resolved_owner_type->name());
+						owner_match.has_value()) {
+						return *owner_match;
 					}
 				}
 			}

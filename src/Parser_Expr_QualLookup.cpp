@@ -1217,7 +1217,7 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 
 const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 	std::string_view base_class_name,
-	std::span<QualifiedTypeMemberAccess> member_type_chain) {
+	std::span<const QualifiedTypeMemberAccess> member_type_chain) {
 	if (member_type_chain.empty()) {
 		return findTypeByName(StringTable::getOrInternStringHandle(base_class_name));
 	}

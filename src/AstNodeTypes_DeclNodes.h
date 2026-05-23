@@ -52,18 +52,7 @@ struct StructTypeInfo {
 		StringHandle base_template_name;
 		DeferredTemplateBaseClassSpecifier spec;
 
-		DeferredTemplateBaseEntry()
-			: base_template_name{},
-			  spec(
-				  StringHandle{},
-				  {},
-				  {},
-				  AccessSpecifier::Public,
-				  false,
-				  false,
-				  std::nullopt,
-				  TemplateDefinitionLookupContext{},
-				  TemplateReplayParameterState{}) {}
+		DeferredTemplateBaseEntry() = default;
 		explicit DeferredTemplateBaseEntry(const DeferredTemplateBaseClassSpecifier& base_spec)
 			: base_template_name(base_spec.base_template_name), spec(base_spec) {}
 	};

@@ -1069,6 +1069,18 @@ struct DeferredTemplateBaseClassSpecifier {
 	TemplateDefinitionLookupContext replay_definition_lookup_context;
 	TemplateReplayParameterState replay_template_parameters;
 
+	DeferredTemplateBaseClassSpecifier()
+		: DeferredTemplateBaseClassSpecifier(
+			  StringHandle{},
+			  {},
+			  {},
+			  AccessSpecifier::Public,
+			  false,
+			  false,
+			  std::nullopt,
+			  TemplateDefinitionLookupContext{},
+			  TemplateReplayParameterState{}) {}
+
 	DeferredTemplateBaseClassSpecifier(StringHandle name,
 									   std::vector<TemplateArgumentNodeInfo> args,
 									   std::vector<QualifiedTypeMemberAccess> member_chain,
