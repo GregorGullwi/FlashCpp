@@ -2299,6 +2299,19 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 																						  ? concrete_operands_require_user_defined_operator
 																						  : (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));
 	bool can_try_spaceship_rewrite = false;
+	bool equality_rewrite_negate = binaryOperatorNode.has_recorded_equality_rewrite_negate();
+
+	// Helper: emit !(result_var == 0) to negate a bool result for the C++20 != -> !(==) rewrite
+	auto emitEqualityRewriteNegate = [&](TempVar result_var) -> ExprResult {
+		TempVar negate_var = var_counter.next();
+		BinaryOp negate_op{
+			.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, result_var),
+			.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, 0ULL),
+			.result = negate_var,
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(negate_op), binaryOperatorNode.get_token()));
+		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{negate_var}, PointerDepth{}, ValueStorage::ContainsData);
+	};
 
 	if (should_attempt_operator_overload) {
 		// Check for operator overload (member function or free function)
@@ -2342,6 +2355,33 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					rhsCat);
 			}
 		}
+
+		// C++20 [over.match.oper]/9: for a!=b, if no operator!= found, try !(a==b) rewrite.
+		// The spaceship operator is NOT a rewrite candidate for !=; only operator== is.
+		if (!overload_result.has_match && !overload_result.is_ambiguous && op == "!=") {
+			SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
+			OperatorOverloadResult eq_overload;
+			if (concrete_type_specs.has_value()) {
+				eq_overload = findBinaryOperatorOverloadWithFreeFunction(
+					concrete_type_specs->first,
+					concrete_type_specs->second,
+					OverloadableOperator::Equal,
+					sym_table);
+			} else {
+				eq_overload = findBinaryOperatorOverloadWithFreeFunction(
+					lhs_type_index,
+					rhs_type_index,
+					OverloadableOperator::Equal,
+					sym_table,
+					rhsCat);
+			}
+			if (eq_overload.has_match && !eq_overload.is_ambiguous) {
+				overload_result = eq_overload;
+				equality_rewrite_negate = true;
+				FLASH_LOG(Codegen, Debug, "C++20 equality rewrite: != -> !(==) for struct type");
+			}
+		}
+
 		if (overload_result.is_ambiguous) {
 			throw CompileError("Ambiguous overload for operator" + std::string(op));
 		}
@@ -2410,7 +2450,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				}
 
 				StringBuilder op_name_sb;
-				op_name_sb.append("operator").append(op);
+				// When doing C++20 equality rewrite (!=  -> !(==)), use "==" for the function name
+				std::string_view mangle_op = equality_rewrite_negate ? std::string_view("==") : op;
+				op_name_sb.append("operator").append(mangle_op);
 				std::string_view operator_func_name = op_name_sb.commit();
 				mangled_name = NameMangling::generateMangledName(
 					operator_func_name,
@@ -2467,6 +2509,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			TypeIndex result_type_index = call_op.return_type_index;
 			SizeInBits return_size = call_op.return_size_in_bits;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+
+			if (equality_rewrite_negate)
+				return emitEqualityRewriteNegate(result_var);
+
 			return makeExprResult(result_type_index, return_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
@@ -2518,8 +2564,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			// Generate mangled name for the operator
+			// When doing C++20 equality rewrite (!= -> !(==)), use "==" for the function name
 			std::string operator_func_name = "operator";
-			operator_func_name += op;
+			std::string_view mangle_op_member = equality_rewrite_negate ? std::string_view("==") : op;
+			operator_func_name += mangle_op_member;
 			std::vector<std::string_view> empty_namespace;
 			auto mangled_name = NameMangling::generateMangledName(
 				operator_func_name,
@@ -2629,6 +2677,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			TypeIndex result_type_index = call_op.return_type_index;
 			SizeInBits result_size = call_op.return_size_in_bits;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+
+			if (equality_rewrite_negate)
+				return emitEqualityRewriteNegate(result_var);
 
 			// Return the result with resolved types
 			return makeExprResult(result_type_index, result_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
