@@ -959,12 +959,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (lhs.type() == rhs.type() && lhs.type_index() == rhs.type_index()) {
 			return true;
 		}
-		if (!lhs.type_index().is_valid() || !rhs.type_index().is_valid()) {
-			return false;
-		}
-		if (!is_struct_type(lhs.type()) || !is_struct_type(rhs.type())) {
-			return false;
-		}
 		return sema_.isLogicallySameStructType(lhs.type_index(), rhs.type_index());
 	};
 	auto matchesSelectedMemberDecl = [&](const FunctionDeclarationNode& candidate) {
