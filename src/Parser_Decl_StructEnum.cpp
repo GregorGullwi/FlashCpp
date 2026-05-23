@@ -336,6 +336,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				is_virtual_base = true;
 				advance();
 			}
+			SaveHandle base_specifier_replay_position = save_token_position();
 
 			// Parse base class name (or decltype expression)
 			// Check if this is a decltype base class (e.g., : decltype(expr))
@@ -394,9 +395,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Could not evaluate now - must be template-dependent, so defer it
 					FLASH_LOG(Templates, Debug, "Deferring decltype base class - will be resolved during template instantiation");
 					is_decltype_base = true;
+					auto [replay_definition_lookup_context, replay_template_parameters] =
+						buildDeferredBaseReplayMetadata(
+							base_name_token,
+							qualified_struct_name);
 
 					// Add deferred base class to struct node with the unevaluated expression
-					struct_ref.add_deferred_base_class(*expr_result.node(), base_access, is_virtual_base);
+					struct_ref.add_deferred_base_class(
+						*expr_result.node(),
+						base_access,
+						is_virtual_base,
+						base_specifier_replay_position,
+						replay_definition_lookup_context,
+						std::move(replay_template_parameters));
 
 					// Continue to next base class - skip the rest of the loop body
 					continue;
@@ -507,7 +518,20 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							}
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(full_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
+							auto [replay_definition_lookup_context, replay_template_parameters] =
+								buildDeferredBaseReplayMetadata(
+									base_name_token,
+									qualified_struct_name);
+							struct_ref.add_deferred_template_base_class(
+								template_name_handle,
+								std::move(arg_infos),
+								std::move(post_info.member_type_chain),
+								base_access,
+								is_virtual_base,
+								post_info.is_pack_expansion,
+								base_specifier_replay_position,
+								replay_definition_lookup_context,
+								std::move(replay_template_parameters));
 
 							continue; // Skip to next base class or exit loop
 						}
@@ -698,7 +722,20 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 
 					StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-					struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
+					auto [replay_definition_lookup_context, replay_template_parameters] =
+						buildDeferredBaseReplayMetadata(
+							base_name_token,
+							qualified_struct_name);
+					struct_ref.add_deferred_template_base_class(
+						template_name_handle,
+						std::move(arg_infos),
+						std::move(post_info.member_type_chain),
+						base_access,
+						is_virtual_base,
+						post_info.is_pack_expansion,
+						base_specifier_replay_position,
+						replay_definition_lookup_context,
+						std::move(replay_template_parameters));
 
 					continue; // Skip to next base class or exit loop
 				}

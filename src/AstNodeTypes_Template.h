@@ -1110,23 +1110,41 @@ public:
 		base_classes_.emplace_back(base_name, base_type_index, access, is_virtual, 0, is_deferred);
 	}
 
-	void add_deferred_base_class(ASTNode decltype_expr, AccessSpecifier access, bool is_virtual = false) {
-		deferred_base_classes_.emplace_back(decltype_expr, access, is_virtual);
+	void add_deferred_base_class(
+		ASTNode decltype_expr,
+		AccessSpecifier access,
+		bool is_virtual,
+		std::optional<SaveHandle> replay_position,
+		const TemplateDefinitionLookupContext& replay_definition_lookup_context,
+		TemplateReplayParameterState replay_template_parameters) {
+		deferred_base_classes_.emplace_back(
+			std::move(decltype_expr),
+			access,
+			is_virtual,
+			replay_position,
+			replay_definition_lookup_context,
+			std::move(replay_template_parameters));
 	}
 
 	void add_deferred_template_base_class(StringHandle base_template_name,
 										  std::vector<TemplateArgumentNodeInfo> args,
 										  std::vector<QualifiedTypeMemberAccess> member_type_chain,
 										  AccessSpecifier access,
-										  bool is_virtual = false,
-										  bool is_pack_expansion = false) {
+										  bool is_virtual,
+										  bool is_pack_expansion,
+										  std::optional<SaveHandle> replay_position,
+										  const TemplateDefinitionLookupContext& replay_definition_lookup_context,
+										  TemplateReplayParameterState replay_template_parameters) {
 		deferred_template_base_classes_.emplace_back(
 			base_template_name,
 			std::move(args),
 			std::move(member_type_chain),
 			access,
 			is_virtual,
-			is_pack_expansion);
+			is_pack_expansion,
+			replay_position,
+			replay_definition_lookup_context,
+			std::move(replay_template_parameters));
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,
