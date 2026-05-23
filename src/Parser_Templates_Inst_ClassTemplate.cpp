@@ -8473,15 +8473,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (!initializer.has_value()) {
 			return false;
 		}
+		std::unordered_set<StringHandle, StringHandleHash> template_param_names;
+		template_param_names.reserve(template_params_for_substitution.size());
+		for (const TemplateParameterNode& param : template_params_for_substitution) {
+			template_param_names.insert(param.nameHandle());
+		}
 		const auto matches_template_param_name =
 			[&](StringHandle candidate) -> bool {
-			for (const TemplateParameterNode& param :
-				 template_params_for_substitution) {
-				if (param.nameHandle() == candidate) {
-					return true;
-				}
-			}
-			return false;
+			return template_param_names.contains(candidate);
 		};
 		return RebindStaticMemberAst::visitASTUntil(
 			*initializer,
