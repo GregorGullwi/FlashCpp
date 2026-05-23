@@ -309,6 +309,16 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							return false;
 						};
 						if (auto arg_type_opt = buildCodegenOverloadResolutionArgType(*expr_opt)) {
+							// NOTE: This fallback legitimately fires for sema-normalized template
+							// bodies when the return expression is a nested template type whose
+							// codegen type_index differs from the return type's type_index
+							// (template pattern vs. instantiated form).  Sema correctly emits no
+							// conversion annotation in those cases (same logical type, no user-
+							// defined conversion needed), but codegen must still resolve the
+							// copy/construct path to reconcile the type_index mismatch.
+							// Probe-verified 2026-05-24: 6 template tests fire this path for
+							// same-type nested-struct returns (e.g. return Entry{}, return __tmp).
+							// Root-cause fix tracked in KNOWN_ISSUES.md.
 							std::vector<TypeSpecifierNode> arg_types;
 							arg_types.push_back(*arg_type_opt);
 							auto resolution = resolve_constructor_overload(*target_struct_info, arg_types, true);
