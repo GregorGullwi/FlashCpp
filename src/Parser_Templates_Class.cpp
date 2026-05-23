@@ -495,6 +495,44 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			if (found_nested_def && peek() == "("_tok) {
+				InlineVector<StringHandle, 4> nested_template_param_names;
+				InlineVector<TemplateParameterKind, 4> nested_template_param_kinds;
+				InlineVector<TypeCategory, 4> nested_template_param_non_type_categories;
+				nested_template_param_names.reserve(
+					template_param_metadata.names.size() + inner_template_param_metadata.names.size());
+				nested_template_param_kinds.reserve(
+					template_param_metadata.kinds.size() + inner_template_param_metadata.kinds.size());
+				nested_template_param_non_type_categories.reserve(
+					template_param_metadata.non_type_categories.size() + inner_template_param_metadata.non_type_categories.size());
+				nested_template_param_names.insert(
+					nested_template_param_names.end(),
+					template_param_metadata.names.begin(),
+					template_param_metadata.names.end());
+				nested_template_param_names.insert(
+					nested_template_param_names.end(),
+					inner_template_param_metadata.names.begin(),
+					inner_template_param_metadata.names.end());
+				nested_template_param_kinds.insert(
+					nested_template_param_kinds.end(),
+					template_param_metadata.kinds.begin(),
+					template_param_metadata.kinds.end());
+				nested_template_param_kinds.insert(
+					nested_template_param_kinds.end(),
+					inner_template_param_metadata.kinds.begin(),
+					inner_template_param_metadata.kinds.end());
+				nested_template_param_non_type_categories.insert(
+					nested_template_param_non_type_categories.end(),
+					template_param_metadata.non_type_categories.begin(),
+					template_param_metadata.non_type_categories.end());
+				nested_template_param_non_type_categories.insert(
+					nested_template_param_non_type_categories.end(),
+					inner_template_param_metadata.non_type_categories.begin(),
+					inner_template_param_metadata.non_type_categories.end());
+				setCurrentTemplateParameters(
+					nested_template_param_names,
+					nested_template_param_kinds,
+					nested_template_param_non_type_categories);
+
 				// Create a stub function declaration for registration
 				auto void_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, nested_func_name_token, CVQualifier::None);
 				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, nested_func_name_token);

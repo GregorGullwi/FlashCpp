@@ -18,6 +18,38 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Save position in case this isn't an out-of-line definition
 	SaveHandle saved_pos = save_token_position();
 
+	InlineVector<StringHandle, 4> combined_template_param_names;
+	InlineVector<TemplateParameterKind, 4> combined_template_param_kinds;
+	InlineVector<TypeCategory, 4> combined_template_param_non_type_categories;
+	combined_template_param_names.reserve(template_params.size() + inner_template_params.size());
+	combined_template_param_kinds.reserve(template_params.size() + inner_template_params.size());
+	combined_template_param_non_type_categories.reserve(template_params.size() + inner_template_params.size());
+
+	auto append_template_param_state = [&](
+		const InlineVector<TemplateParameterNode, 4>& params) {
+		for (const auto& param : params) {
+			combined_template_param_names.push_back(param.nameHandle());
+			combined_template_param_kinds.push_back(param.kind());
+			combined_template_param_non_type_categories.push_back(
+				param.kind() == TemplateParameterKind::NonType && param.has_type()
+					? param.type_specifier_node().type()
+					: TypeCategory::Invalid);
+		}
+	};
+	append_template_param_state(template_params);
+	append_template_param_state(inner_template_params);
+
+	std::optional<FlashCpp::ScopedState<ActiveTemplateParameterState>> template_param_state_guard;
+	std::optional<FlashCpp::TemplateDepthGuard> parsing_template_depth_guard;
+	if (!combined_template_param_names.empty()) {
+		template_param_state_guard.emplace(currentTemplateParamState());
+		setCurrentTemplateParameters(
+			combined_template_param_names,
+			combined_template_param_kinds,
+			combined_template_param_non_type_categories);
+		parsing_template_depth_guard.emplace(parsing_template_depth_);
+	}
+
 	// Check for out-of-line constructor/destructor pattern first:
 	// ClassName<Args>::ClassName(...)  (constructor)
 	// ClassName<Args>::~ClassName()    (destructor)
