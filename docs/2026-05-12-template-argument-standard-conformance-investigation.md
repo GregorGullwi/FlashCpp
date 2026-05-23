@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (NTTP deferred constructor body fix)
+**Last updated:** 2026-05-23 (C++20 aggregate-base ctor forwarding; P::method template-param qualified call lifted to sema)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -52,9 +52,25 @@ Future work can rely on these being in place:
   integral NTTPs in those bodies are substituted directly to `NumericLiteralNode`
   at replay time instead of falling through to a runtime `IdentifierNode` that
   codegen cannot resolve.
+- **`P::method()` qualified calls where P is a template type parameter are now
+  resolved at sema level**: `resolveQualifiedOwnerType` in `tryRecoverCallDeclFromStructMembers`
+  now walks `InstantiationContext::param_names`/`param_args` when the qualifier
+  is a simple name that matches a template type parameter. This covers the
+  policy-dispatch pattern (`template<typename Policy> struct S { void f() { Policy::method(); } }`)
+  without requiring a codegen-only recovery path. A parallel codegen safety net
+  is retained.
+- **C++20 extended aggregate initialization through base-class-only intermediates
+  is handled at codegen level**: when `resolveCodegenConstructorFromArgs` returns
+  null for an aggregate struct with no direct members but with base classes,
+  codegen emits a default-construct for the aggregate and a forwarded
+  ConstructorCallOp for the first matching inner base constructor. Sema cannot
+  represent this at the `ConstructorCallNode` level today (single
+  `resolved_constructor` pointer). This is tracked as a lower-priority open item:
+  extend `ConstructorCallNode` to carry aggregate-forwarding metadata so sema can
+  own the two-call sequence.
 
 Latest recorded full-suite validation:
-`2489` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2496` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -64,6 +80,8 @@ Latest focused regressions added on the current branch:
 - `test_template_partial_spec_ool_member_template_base_name_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_base_name_lookup_ret0.cpp`
 - `test_template_nttp_deferred_ctor_body_ret0.cpp`
+- `test_template_aggregate_base_class_ctor_ret0.cpp`
+- `test_template_type_param_qualified_static_call_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -98,7 +116,14 @@ Still open, but not the next best slice:
   at instantiation time instead of parse-time substitution — works but is inconsistent
   with the integral NTTP path);
 - broader sema-owned deduction and ranking;
-- final conversion of repair paths into invariants/diagnostics.
+- final conversion of repair paths into invariants/diagnostics;
+- **C++20 extended aggregate initialization at sema level**: `ConstructorCallNode`
+  holds a single `resolved_constructor` pointer, which cannot model the
+  two-constructor sequence (default-init the aggregate, then forwarded-init the
+  inner base). Codegen fallback in `IrGenerator_Visitors_Decl.cpp` handles the
+  pattern correctly today. Uplift to sema requires extending `ConstructorCallNode`
+  to carry aggregate-forwarding metadata (inner base ctor reference + combined
+  offset).
 
 ## Recommended implementation order
 

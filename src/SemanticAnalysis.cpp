@@ -7555,6 +7555,16 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 														 .append(owner_name)
 														 .commit());
 				type_info = resolve_type_info(qualified_alias_name);
+
+				// C++20: if the qualifier is a template type parameter name (e.g. P in
+				// P::scale()), resolve it via the current instantiation's bindings.
+				// This handles the policy-pattern: template<typename P> struct UsePolicy
+				// { void f() { P::scale(x); } }; when instantiated with P=ScaleByTwo.
+				if (!type_info) {
+					if (const TypeInfo::TemplateArgInfo* bound_arg = current_type_info->findLegacyInstantiationArgByName(owner_name)) {
+						type_info = tryGetTypeInfo(bound_arg->type_index);
+					}
+				}
 			}
 		}
 

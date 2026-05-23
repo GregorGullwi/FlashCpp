@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (NTTP deferred constructor body fix)
+**Last updated:** 2026-05-23 (C++20 aggregate-base ctor forwarding; P::method template-param qualified call lifted to sema)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -51,9 +51,23 @@ Useful assumptions before changing this area:
   NTTPs referenced inside such bodies are now substituted directly to
   `NumericLiteralNode` during replay instead of falling through to a runtime
   `IdentifierNode` that codegen cannot resolve.
+- **C++20 extended aggregate initialization through base-class-only intermediates
+  now works at codegen level**: when a base initializer resolves to an aggregate
+  struct with no direct members but one or more base classes, codegen emits a
+  default-construct for the aggregate followed by a forwarded ConstructorCallOp
+  to the first inner base whose constructor accepts the given arguments. This is
+  a codegen-level fallback appropriate to the current AST model (a single
+  `resolved_constructor` pointer on `ConstructorCallNode` cannot represent the
+  two-call pattern at sema level without additional node metadata).
+- **`P::method()` qualified calls where P is a template type parameter are now
+  resolved at sema level**: `SemanticAnalysis::tryRecoverCallDeclFromStructMembers`
+  extended `resolveQualifiedOwnerType` to walk the current member context's
+  `InstantiationContext::param_names`/`param_args` when the qualifier is a
+  simple name that matches a template type parameter. Codegen retains a parallel
+  fallback via `InstantiationContext` for cases sema does not yet reach.
 
 Latest recorded full-suite validation:
-`2489` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2496` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -63,6 +77,8 @@ Latest focused replay regressions added on the current branch:
 - `test_template_partial_spec_ool_member_template_base_name_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_base_name_lookup_ret0.cpp`
 - `test_template_nttp_deferred_ctor_body_ret0.cpp`
+- `test_template_aggregate_base_class_ctor_ret0.cpp`
+- `test_template_type_param_qualified_static_call_ret0.cpp`
 
 ## What is still wrong
 
@@ -97,6 +113,13 @@ they directly block items 1-2:
 - NTTP completion for the remaining C++20 categories;
 - broader sema-owned deduction/ranking;
 - final removal of repair-oriented fallback paths.
+- **C++20 extended aggregate initialization at sema level**: `ConstructorCallNode`
+  carries a single `resolved_constructor` pointer which cannot represent the
+  two-call pattern (default-init outer aggregate + forwarded-init inner base).
+  Until the AST is extended, this remains a codegen-only fallback
+  (`IrGenerator_Visitors_Decl.cpp`). A proper sema fix would require extending
+  `ConstructorCallNode` to carry aggregate-forwarding metadata (inner base
+  constructor reference + combined offset).
 
 ## Highest-impact next steps
 
@@ -136,6 +159,19 @@ The following are complete enough to rely on:
   at parse time, so replay sets `hasActiveTemplateParameters() = true`; integral
   NTTPs referenced inside such bodies are substituted to `NumericLiteralNode`
   during replay, preventing "symbol not found" codegen failures.
+- **`P::method()` qualified calls where P is a template type parameter are now
+  resolved at sema level**: `SemanticAnalysis::resolveQualifiedOwnerType` walks
+  the current member context's `InstantiationContext::param_names`/`param_args`
+  when the qualifier is a simple name matching a template type parameter.
+  A parallel codegen fallback is retained as a safety net.
+- **C++20 aggregate initialization through base-class-only intermediate structs
+  is handled at codegen level** (`IrGenerator_Visitors_Decl.cpp`): when
+  `resolveCodegenConstructorFromArgs` returns null for an aggregate struct with
+  no direct members but with base classes, codegen emits a default-construct for
+  the aggregate followed by a forwarded ConstructorCallOp to the first inner base
+  whose constructor accepts the given arguments. Moving this to sema level would
+  require extending `ConstructorCallNode` to carry two-call aggregate-forwarding
+  metadata; tracked as a lower-priority open item.
 
 ## Exit criteria
 

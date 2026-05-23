@@ -1254,9 +1254,23 @@ struct TypeInfo {
 	bool hasDependentQualifiedName() const { return dependent_qualified_name_.has_value(); }
 	const DependentQualifiedNameRecord* dependentQualifiedName() const { return dependent_qualified_name_ ? &*dependent_qualified_name_ : nullptr; }
 
- // Access the type-owned instantiation context (may be null).
+	// Access the type-owned instantiation context (may be null).
 	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
 	bool hasInstantiationContext() const { return instantiation_context_ != nullptr; }
+	const TemplateArgInfo* findLegacyInstantiationArgByName(std::string_view param_name) const {
+		for (const auto* inst_ctx = instantiation_context_.get(); inst_ctx; inst_ctx = inst_ctx->parent) {
+			size_t param_count = inst_ctx->param_names.size();
+			if (inst_ctx->param_args.size() < param_count) {
+				param_count = inst_ctx->param_args.size();
+			}
+			for (size_t param_index = 0; param_index < param_count; ++param_index) {
+				if (StringTable::getStringView(inst_ctx->param_names[param_index]) == param_name) {
+					return &inst_ctx->param_args[param_index];
+				}
+			}
+		}
+		return nullptr;
+	}
 	TypeIndex registeredTypeIndex() const { return registered_type_index_.is_valid() ? registered_type_index_ : type_index_; }
 	const TypeSpecifierNode* aliasTypeSpecifier() const { return alias_type_spec_.get(); }
 
@@ -1271,7 +1285,7 @@ struct TypeInfo {
 		dependent_qualified_name_ = std::move(record);
 	}
 
- // Set the type-owned instantiation context for template instantiations.
+	// Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
 								 InlineVector<TemplateArgInfo, 4> param_args,
 								 const InstantiationContext* parent);

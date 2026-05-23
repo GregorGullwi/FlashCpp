@@ -1335,6 +1335,45 @@ ambiguous_qualified_static_member:
 				}
 			}
 		}
+
+		// Resolve P::method(args) where P is a template type parameter in the current struct.
+		// e.g., template<typename P> struct UsePolicy { int process(int x) { return P::scale(x); } };
+		if (!matched_func_decl && current_struct_name_.isValid() &&
+			callExprNode.has_qualified_name() && scope_pos != std::string_view::npos) {
+			std::string_view qualifier = lookup_name_view.substr(0, scope_pos);
+			std::string_view member_name_local = lookup_name_view.substr(scope_pos + 2);
+
+			const auto curr_type_it = getTypesByNameMap().find(current_struct_name_);
+			if (curr_type_it != getTypesByNameMap().end() && curr_type_it->second) {
+				const TypeInfo* curr_type = curr_type_it->second;
+				// Walk instantiation context to find a type-parameter binding matching the qualifier
+				if (const TypeInfo::TemplateArgInfo* bound_arg = curr_type->findLegacyInstantiationArgByName(qualifier)) {
+					const TypeInfo* concrete_type = tryGetTypeInfo(bound_arg->type_index);
+					if (concrete_type && concrete_type->isStruct()) {
+						const StructTypeInfo* concrete_struct = concrete_type->getStructInfo();
+						if (concrete_struct) {
+							for (const auto& member_func : concrete_struct->member_functions) {
+								if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+									continue;
+								}
+								const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+								if (func_decl.decl_node().identifier_token().value() == member_name_local) {
+									matched_func_decl = &func_decl;
+									resolveMangledName(matched_func_decl, concrete_type->name());
+									queueDeferredMemberFunctions(concrete_type->name(), concrete_struct, lookup_name_view);
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Resolved template-param qualified call '{}' -> '{}::{}'",
+										lookup_name_view,
+										StringTable::getStringView(concrete_type->name()),
+										member_name_local);
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		}
 	}
 
