@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-06-06
+**Last Updated:** 2026-05-24
 
 This is the consolidated status document for sema-related planning and architecture notes.
 
@@ -52,7 +52,13 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - **Fallback 2 (call-return receiver recovery in `IrGenerator_Call_Indirect.cpp`)**: confirmed dead — the `allow_parser_type_recovery` guard block never fired in any test. Removed the dead guard; execution falls through to the existing type-normalization code.
 - `SemanticAnalysis::normalizeStructDeclaration(...)` now normalizes non-static member default initializers under an implicit-`this` member context, so unqualified member/static-member identifiers in those expressions receive sema-owned type information.
 - `AstToIr::visitRangedForStatementNode(...)` now hard-fails normalized bodies on missing/unusable sema range-expression query state and relies on sema query-state typing plus sema-owned `resolved_range_type`; member-access reconstruction remains as a non-normalized compatibility path.
-- **Fallback 4 (`buildCodegenOverloadResolutionArgType` final clause in `IrGenerator_Stmt_Decl.cpp`)**: sema now owns more of the previously non-normalized implicit-constructor/default-member-initializer argument typing path; codegen keeps only the explicit `std::nullopt` "type unknown" handoff and no longer attempts parser/codegen type reconstruction there.
+- **Constructor annotation hard-fail (IrGenerator_Stmt_Decl.cpp)**: Converted two `FLASH_LOG(Warning, ...)` / fallthrough paths to `throw InternalError(...)` in sema-normalized bodies:
+  - Brace-init path (~line 1487): when `require_sema_resolved_ctor` is true and `init_list.resolved_constructor()` is null — now throws `InternalError("Sema did not annotate brace-init constructor for normalized body")`.
+  - Direct constructor call path (~line 2273): when `require_sema_resolved_ctor` is true and `direct_ctor->resolved_constructor()` is null — now throws `InternalError("Sema did not annotate constructor for normalized body")`.
+  Both paths were probe-verified against the full test suite (2494 pass / 181 expected-fail) with a temporary probe throw before conversion, confirming sema already annotates all normalized bodies.
+- **Static storage global variable path (~line 830)**: Verified that `normalizeTopLevelNode` for `VariableDeclarationNode` calls `normalizeExpression` → `tryAnnotateConstructorCallArgConversions`, so `ctor_call.resolved_constructor()` is already populated by sema first. The type-based and arity fallbacks at lines 811–834 are only reached when the constexpr evaluator fails AND sema cannot uniquely resolve; they remain as legitimate non-normalized-body fallbacks.
+- **Converting constructor fallback (~line 2593, copy-init path in `IrGenerator_Stmt_Decl.cpp`)**: Probe-verified against the full test suite (2494 pass / 181 expected-fail) — the block never fired for any sema-normalized body. Added a hard-fail guard: `if (sema_normalized_current_function_) throw InternalError("Sema did not annotate converting constructor for normalized body")` at the top of the block. The existing type-based and arity-based fallbacks remain as legitimate non-normalized-body paths.
+- **Arity fallback at ~line 2363 (direct constructor call)**: This is unreachable from normalized-body paths (covered by the new hard-fail at ~2273). Remains as a valid codegen-time fallback for non-normalized bodies.
 - **Fallback 3 (binary operator LHS/RHS type conversion in `IrGenerator_Expr_Operators.cpp`)**: *not a parser API fallback*. Calls `generateTypeConversion` directly for legitimately uncovered cases (pointer arithmetic and unscoped/scoped enum operands where sema annotations are partial). Intentionally retained.
 - `AstToIr::visitSizeofNode(...)` now resolves `sizeof(member_access)` member sizing through `resolveMemberAccessType(...)` (sema-owned member resolution first) and no longer scans instantiated type names (`base`, `base_...`, `base$...`) as a codegen-side recovery path.
 - codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited

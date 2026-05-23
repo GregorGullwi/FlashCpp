@@ -1485,11 +1485,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											reportMismatchedSemaResolvedConstructor(type_info->name(), "brace initialization");
 										}
 									} else if (require_sema_resolved_ctor) {
-										// Sema ran but did not annotate the resolved constructor.  Log a
-										// diagnostic and fall through to codegen-time overload resolution
-										// below; only fail hard if that also finds nothing.
-										FLASH_LOG(Codegen, Warning, "Sema did not annotate brace-init constructor for '",
-												  type_info->name(), "' - falling back to codegen-time resolution");
+										throw InternalError("Sema did not annotate brace-init constructor for normalized body");
 									}
 								}
 								if (!has_matching_constructor) {
@@ -2275,11 +2271,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								reportMismatchedSemaResolvedConstructor(type_info->name(), "direct constructor call");
 							}
 						} else if (require_sema_resolved_ctor) {
-							// Sema ran but did not annotate the resolved constructor.  Log a
-							// diagnostic and fall through to codegen-time overload resolution
-							// below; only fail hard if that also finds nothing.
-							FLASH_LOG(Codegen, Warning, "Sema did not annotate constructor for '",
-									  type_info->name(), "' - falling back to codegen-time resolution");
+							throw InternalError("Sema did not annotate constructor for normalized body");
 						}
 						size_t num_args = 0;
 						direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
@@ -2599,6 +2591,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
+								if (sema_normalized_current_function_) {
+									throw InternalError("Sema did not annotate converting constructor for normalized body");
+								}
 								if (auto init_arg_type_opt = buildCodegenOverloadResolutionArgType(init_node)) {
 									std::vector<TypeSpecifierNode> arg_types;
 									arg_types.push_back(*init_arg_type_opt);
