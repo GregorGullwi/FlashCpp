@@ -2345,6 +2345,30 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+	auto getStringLiteralElementType = [](std::string_view literal_token) {
+		if (literal_token.size() >= 3 &&
+			literal_token[0] == 'u' &&
+			literal_token[1] == '8' &&
+			(literal_token[2] == '"' || literal_token[2] == 'R')) {
+			return TypeCategory::Char8;
+		}
+		if (literal_token.size() >= 2 &&
+			literal_token[0] == 'L' &&
+			(literal_token[1] == '"' || literal_token[1] == 'R')) {
+			return TypeCategory::WChar;
+		}
+		if (literal_token.size() >= 2 &&
+			literal_token[0] == 'u' &&
+			(literal_token[1] == '"' || literal_token[1] == 'R')) {
+			return TypeCategory::Char16;
+		}
+		if (literal_token.size() >= 2 &&
+			literal_token[0] == 'U' &&
+			(literal_token[1] == '"' || literal_token[1] == 'R')) {
+			return TypeCategory::Char32;
+		}
+		return TypeCategory::Char;
+	};
 
 	// Handle different expression types
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
@@ -2353,10 +2377,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& literal = std::get<NumericLiteralNode>(expr);
 		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits(), Token{}, CVQualifier::None);
 	} else if (std::holds_alternative<StringLiteralNode>(expr)) {
-		// String literals have type "const char*" (pointer to const char)
-		TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
-		char_type.add_pointer_level();
-		return char_type;
+		const auto& literal = std::get<StringLiteralNode>(expr);
+		const TypeCategory element_type = getStringLiteralElementType(literal.value());
+		TypeSpecifierNode literal_type(
+			element_type,
+			TypeQualifier::None,
+			static_cast<int>(get_type_size_bits(element_type)),
+			{},
+			CVQualifier::Const);
+		literal_type.add_pointer_level();
+		return literal_type;
 	} else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
 		auto symbol = this->lookup_symbol(ident.nameHandle());

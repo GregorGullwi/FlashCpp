@@ -3974,6 +3974,31 @@ const void* getExpressionKey(const ASTNode& node) {
 	return static_cast<const void*>(&node.as<ExpressionNode>());
 }
 
+TypeCategory getStringLiteralElementType(std::string_view literal_token) {
+	if (literal_token.size() >= 3 &&
+		literal_token[0] == 'u' &&
+		literal_token[1] == '8' &&
+		(literal_token[2] == '"' || literal_token[2] == 'R')) {
+		return TypeCategory::Char8;
+	}
+	if (literal_token.size() >= 2 &&
+		literal_token[0] == 'L' &&
+		(literal_token[1] == '"' || literal_token[1] == 'R')) {
+		return TypeCategory::WChar;
+	}
+	if (literal_token.size() >= 2 &&
+		literal_token[0] == 'u' &&
+		(literal_token[1] == '"' || literal_token[1] == 'R')) {
+		return TypeCategory::Char16;
+	}
+	if (literal_token.size() >= 2 &&
+		literal_token[0] == 'U' &&
+		(literal_token[1] == '"' || literal_token[1] == 'R')) {
+		return TypeCategory::Char32;
+	}
+	return TypeCategory::Char;
+}
+
 std::optional<TypeSpecifierNode> tryBuildDirectLiteralQueryType(const ASTNode& node) {
 	if (node.is<NumericLiteralNode>()) {
 		const TypeCategory literal_type = node.as<NumericLiteralNode>().type();
@@ -3993,8 +4018,9 @@ std::optional<TypeSpecifierNode> tryBuildDirectLiteralQueryType(const ASTNode& n
 			CVQualifier::None);
 	}
 	if (node.is<StringLiteralNode>()) {
-		const int char_size_bits = static_cast<int>(get_type_size_bits(TypeCategory::Char));
-		TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
+		const TypeCategory element_type = getStringLiteralElementType(node.as<StringLiteralNode>().value());
+		const int element_size_bits = static_cast<int>(get_type_size_bits(element_type));
+		TypeSpecifierNode type(element_type, TypeQualifier::None, element_size_bits, Token{}, CVQualifier::Const);
 		type.add_pointer_level();
 		type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 		return type;
@@ -5596,14 +5622,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return canonicalizeType(target_type_node.template as<TypeSpecifierNode>());
 				return {};
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-				// C++20 [lex.string]: a string literal has type "array of n const char"
-				// where n is the number of content characters plus one for the implicit
-				// null terminator.  The array is const-qualified per the standard.
-				// TODO: wide (L"") and Unicode (u8"", u"", U"") string literals have
-				// element types wchar_t, char8_t, char16_t, and char32_t respectively
-				// and are not yet handled; they currently fall through as const char[N].
+				// C++20 [lex.string]: a string literal has type "array of n const T"
+				// where T is char, wchar_t, char8_t, char16_t, or char32_t based on
+				// its encoding prefix and n includes the implicit null terminator.
 				CanonicalTypeDesc desc;
-				desc.type_index = nativeTypeIndex(TypeCategory::Char);
+				const TypeCategory element_type = getStringLiteralElementType(e.value());
+				desc.type_index = nativeTypeIndex(element_type);
 				desc.base_cv = CVQualifier::Const;
 				const size_t n = FlashCpp::computeStringLiteralContentLength(e.value()) + 1;
 				desc.array_dimensions.push_back(n);
@@ -5876,6 +5900,11 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
+
+	// If the destination type is still unresolved, defer diagnostics so we don't
+	// emit false-positive scoped-enum conversion errors with an empty target type.
+	if (to_desc.category() == TypeCategory::Invalid || getTypeName(to_desc.category()).empty())
+		return;
 
 	if (from_desc.category() != TypeCategory::Enum)
 		return;
