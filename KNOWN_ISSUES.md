@@ -72,3 +72,14 @@ before stopping on a multiply defined `__security_cookie`.
 - **Fix direction**: Audit where FlashCpp synthesizes or exports the GS cookie
   runtime state and make it coexist with the CRT-provided definition instead of
   emitting a second strong symbol.
+
+---
+
+## N) Return-statement converting-constructor codegen fallback fires for template nested-type same-type returns
+
+- **Symptom**: In `IrGenerator_Visitors_Namespace.cpp` around line 311, the converting-constructor codegen fallback is entered even for sema-normalized function bodies when the return expression is a nested-struct type inside a template instantiation.  Probe-verified 2026-05-24 against the full test suite: 6 tests trigger this path.
+- **Affected tests**: `test_reverse_iterator_template_copy_postfix_ret5.cpp`, `test_template_nested_default_member_init_method_ret42.cpp`, `test_template_nested_default_member_init_namespace_method_ret42.cpp`, `test_template_nested_multi_inst_method_ret42.cpp`, `test_template_nested_type_param_method_ret42.cpp`, `test_template_static_member_initializer_nested_constexpr_member_call_ret42.cpp`.
+- **Root cause**: Template instantiation creates a `TypeIndex` mismatch between the return expression's codegen type and the function return type.  The expression's `type_index` comes from the template pattern's nested type, while the return type's `type_index` comes from the instantiated nested type.  Sema correctly emits no conversion annotation (same logical type, no user-defined conversion required), so `sema_applied_conversion` remains false.  The codegen condition `operands.type_index != return_type_spec.type_index()` then fires and enters the fallback, which resolves the copy/value constructor of the target type to reconcile the mismatch.
+- **Affected path**: `IrGenerator_Visitors_Namespace.cpp` `visitReturnStatementNode` → `buildCodegenOverloadResolutionArgType` fallback block (`!sema_applied_conversion && is_struct_type(return_category) && operands.type_index != return_type_spec.type_index()`).
+- **Impact**: Codegen is not wrong — the fallback finds the correct constructor and produces correct code — but it represents a sema/codegen layering gap: sema does not annotate these cases, leaving codegen to perform type-identity reconciliation on its own.
+- **Fix direction**: In `SemanticAnalysis::inferExpressionType` (or during template instantiation), ensure that `ConstructorCallNode` expressions for nested template types infer the *instantiated* `CanonicalTypeId` rather than the template-pattern type.  Once `isSameTypeConstructorCallInitialization` returns true for these cases, `tryAnnotateReturnConversion` exits early (correctly), `sema_applied_conversion` remains false, and the codegen fallback condition `operands.type_index != return_type_spec.type_index()` is also resolved by fixing the codegen type_index propagation for instantiated nested types.
