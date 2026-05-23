@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AstNodeTypes_TypeSystem.h"
 #include <cctype>
 #include <string>
 #include <string_view>
@@ -12,6 +13,33 @@ struct ParsedStringLiteralToken {
 	bool is_raw = false;
 	bool has_delimited_content = false;
 };
+
+inline TypeCategory getStringLiteralElementType(std::string_view literal_token) {
+	auto has_prefix = [&](std::string_view prefix) {
+		if (!literal_token.starts_with(prefix)) {
+			return false;
+		}
+		if (literal_token.size() <= prefix.size()) {
+			return false;
+		}
+		const char marker = literal_token[prefix.size()];
+		return marker == '"' || marker == 'R';
+	};
+
+	if (has_prefix("u8")) {
+		return TypeCategory::Char8;
+	}
+	if (has_prefix("L")) {
+		return TypeCategory::WChar;
+	}
+	if (has_prefix("u")) {
+		return TypeCategory::Char16;
+	}
+	if (has_prefix("U")) {
+		return TypeCategory::Char32;
+	}
+	return TypeCategory::Char;
+}
 
 inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_raw) {
 	ParsedStringLiteralToken result{
