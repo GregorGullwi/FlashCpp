@@ -8,6 +8,7 @@
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
+#include "StringLiteralTokenUtils.h"
 
 #include "LambdaHelpers.h"
 
@@ -2353,10 +2354,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& literal = std::get<NumericLiteralNode>(expr);
 		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits(), Token{}, CVQualifier::None);
 	} else if (std::holds_alternative<StringLiteralNode>(expr)) {
-		// String literals have type "const char*" (pointer to const char)
-		TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
-		char_type.add_pointer_level();
-		return char_type;
+		const auto& literal = std::get<StringLiteralNode>(expr);
+		const TypeCategory element_type = FlashCpp::getLiteralElementType(literal.value());
+		TypeSpecifierNode literal_type(
+			element_type,
+			TypeQualifier::None,
+			static_cast<int>(get_type_size_bits(element_type)),
+			{},
+			CVQualifier::Const);
+		literal_type.add_pointer_level();
+		return literal_type;
 	} else if (std::holds_alternative<IdentifierNode>(expr)) {
 		const auto& ident = std::get<IdentifierNode>(expr);
 		auto symbol = this->lookup_symbol(ident.nameHandle());

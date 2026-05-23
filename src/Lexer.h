@@ -12,6 +12,7 @@
 
 #include "Token.h"
 #include "FileReader.h"	// For SourceLineMapping definition
+#include "StringLiteralTokenUtils.h"
 
 struct TokenPosition {
 	size_t cursor_;
@@ -74,6 +75,10 @@ public:
 		size_t num_characters_left = source_size_ - cursor_;
 		while (cursor_ < source_size_) {
 			char c = source_[cursor_];
+			const bool can_start_prefixed_literal = c == 'L' || c == 'u' || c == 'U';
+			const size_t literal_prefix_length = can_start_prefixed_literal
+				? FlashCpp::getLiteralEncodingPrefixLength(source_.substr(cursor_))
+				: 0;
 
 			if (std::isspace(c)) {
 				consume_whitespace();
@@ -93,20 +98,20 @@ public:
 				}
 			} else if (c == 'R' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '"') {
 				return consume_raw_string_literal(cursor_);
-			} else if (c == 'L' && cursor_ + 1 < source_size_ && (source_[cursor_ + 1] == '\"' || source_[cursor_ + 1] == '\'')) {
-				// Wide string/character literals (L"..." or L'...')
+			} else if (literal_prefix_length > 0) {
 				size_t start = cursor_;
-				++cursor_;
-				++column_;
-				if (source_[cursor_] == '\"') {
+				cursor_ += literal_prefix_length;
+				column_ += literal_prefix_length;
+				if (cursor_ < source_size_ && source_[cursor_] == 'R' &&
+					cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '"') {
+					return consume_raw_string_literal(start);
+				}
+				if (cursor_ < source_size_ && source_[cursor_] == '\"') {
 					return consume_prefixed_string_literal(start);
-				} else {
+				}
+				if (cursor_ < source_size_ && source_[cursor_] == '\'') {
 					return consume_prefixed_character_literal(start);
 				}
-			} else if (is_raw_string_prefix_at_cursor()) {
-				size_t start = cursor_;
-				consume_raw_string_prefix();
-				return consume_raw_string_literal(start);
 			} else if (std::isalpha(c) || c == '_') {
 				return consume_identifier_or_keyword();
 			} else if (std::isdigit(c)) {
@@ -567,33 +572,6 @@ private:
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::StringLiteral, value, line_, column_,
 					 current_file_index_);
-	}
-
-	bool is_raw_string_prefix_at_cursor() const {
-		if (cursor_ >= source_size_) {
-			return false;
-		}
-		if ((source_[cursor_] == 'u' || source_[cursor_] == 'U' || source_[cursor_] == 'L') &&
-			cursor_ + 2 < source_size_ &&
-			source_[cursor_ + 1] == 'R' &&
-			source_[cursor_ + 2] == '"') {
-			return true;
-		}
-		return source_[cursor_] == 'u' &&
-			cursor_ + 3 < source_size_ &&
-			source_[cursor_ + 1] == '8' &&
-			source_[cursor_ + 2] == 'R' &&
-			source_[cursor_ + 3] == '"';
-	}
-
-	void consume_raw_string_prefix() {
-		if (source_[cursor_] == 'u' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '8') {
-			cursor_ += 2;
-			column_ += 2;
-		} else {
-			++cursor_;
-			++column_;
-		}
 	}
 
 	Token consume_raw_string_literal(size_t start) {

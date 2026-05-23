@@ -3993,8 +3993,9 @@ std::optional<TypeSpecifierNode> tryBuildDirectLiteralQueryType(const ASTNode& n
 			CVQualifier::None);
 	}
 	if (node.is<StringLiteralNode>()) {
-		const int char_size_bits = static_cast<int>(get_type_size_bits(TypeCategory::Char));
-		TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
+		const TypeCategory element_type = FlashCpp::getLiteralElementType(node.as<StringLiteralNode>().value());
+		const int element_size_bits = static_cast<int>(get_type_size_bits(element_type));
+		TypeSpecifierNode type(element_type, TypeQualifier::None, element_size_bits, Token{}, CVQualifier::Const);
 		type.add_pointer_level();
 		type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 		return type;
@@ -5596,14 +5597,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return canonicalizeType(target_type_node.template as<TypeSpecifierNode>());
 				return {};
 			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-				// C++20 [lex.string]: a string literal has type "array of n const char"
-				// where n is the number of content characters plus one for the implicit
-				// null terminator.  The array is const-qualified per the standard.
-				// TODO: wide (L"") and Unicode (u8"", u"", U"") string literals have
-				// element types wchar_t, char8_t, char16_t, and char32_t respectively
-				// and are not yet handled; they currently fall through as const char[N].
+				// C++20 [lex.string]: a string literal has type "array of n const T"
+				// where T is char, wchar_t, char8_t, char16_t, or char32_t based on
+				// its encoding prefix and n includes the implicit null terminator.
 				CanonicalTypeDesc desc;
-				desc.type_index = nativeTypeIndex(TypeCategory::Char);
+				const TypeCategory element_type = FlashCpp::getLiteralElementType(e.value());
+				desc.type_index = nativeTypeIndex(element_type);
 				desc.base_cv = CVQualifier::Const;
 				const size_t n = FlashCpp::computeStringLiteralContentLength(e.value()) + 1;
 				desc.array_dimensions.push_back(n);
@@ -5876,6 +5875,15 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
+
+	// If the destination type is still unresolved, defer diagnostics so we don't
+	// emit false-positive scoped-enum conversion errors with an empty target type.
+	// We guard both explicit Invalid and unnamed categories separately because some
+	// unresolved aliases can currently survive with a non-Invalid category but no
+	// user-facing type name yet.
+	const bool unnamed_target_category = getTypeName(to_desc.category()).empty();
+	if (to_desc.category() == TypeCategory::Invalid || unnamed_target_category)
+		return;
 
 	if (from_desc.category() != TypeCategory::Enum)
 		return;

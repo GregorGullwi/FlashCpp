@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AstNodeTypes_TypeSystem.h"
 #include <cctype>
 #include <string>
 #include <string_view>
@@ -13,6 +14,52 @@ struct ParsedStringLiteralToken {
 	bool has_delimited_content = false;
 };
 
+inline size_t getLiteralEncodingPrefixLength(std::string_view literal_token) {
+	auto has_prefix = [&](std::string_view prefix) {
+		if (!literal_token.starts_with(prefix)) {
+			return false;
+		}
+		if (literal_token.size() <= prefix.size()) {
+			return false;
+		}
+		const char marker = literal_token[prefix.size()];
+		if (marker == '"' || marker == '\'') {
+			return true;
+		}
+		return marker == 'R' &&
+			literal_token.size() > prefix.size() + 1 &&
+			literal_token[prefix.size() + 1] == '"';
+	};
+
+	if (has_prefix("u8")) {
+		return 2;
+	}
+	if (has_prefix("L") || has_prefix("u") || has_prefix("U")) {
+		return 1;
+	}
+	return 0;
+}
+
+inline TypeCategory getLiteralElementType(std::string_view literal_token) {
+	const size_t prefix_length = getLiteralEncodingPrefixLength(literal_token);
+	if (prefix_length == 2) {
+		return TypeCategory::Char8;
+	}
+	if (prefix_length == 1 && !literal_token.empty()) {
+		switch (literal_token.front()) {
+		case 'L':
+			return TypeCategory::WChar;
+		case 'u':
+			return TypeCategory::Char16;
+		case 'U':
+			return TypeCategory::Char32;
+		default:
+			break;
+		}
+	}
+	return TypeCategory::Char;
+}
+
 inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_raw) {
 	ParsedStringLiteralToken result{
 		.normalized_token = token_raw,
@@ -24,15 +71,21 @@ inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_r
 
 	std::string_view token = token_raw;
 	if (token.front() != '"' && token.front() != 'R') {
-		const size_t quote = token.find('"');
-		const size_t raw_marker = token.find('R');
-		if (raw_marker != std::string_view::npos &&
-			(quote == std::string_view::npos || raw_marker < quote)) {
-			token = token.substr(raw_marker);
-		} else if (quote != std::string_view::npos) {
-			token = token.substr(quote);
-		} else {
-			return result;
+		const size_t prefix_length = getLiteralEncodingPrefixLength(token);
+		if (prefix_length > 0 && token.size() > prefix_length) {
+			token.remove_prefix(prefix_length);
+		}
+		if (!token.empty() && token.front() != '"' && token.front() != 'R') {
+			const size_t quote = token.find('"');
+			const size_t raw_marker = token.find('R');
+			if (raw_marker != std::string_view::npos &&
+				(quote == std::string_view::npos || raw_marker < quote)) {
+				token = token.substr(raw_marker);
+			} else if (quote != std::string_view::npos) {
+				token = token.substr(quote);
+			} else {
+				return result;
+			}
 		}
 	}
 

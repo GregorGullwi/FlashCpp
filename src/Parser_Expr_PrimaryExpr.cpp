@@ -5,6 +5,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "StringLiteralTokenUtils.h"
 #include "TypeTraitEvaluator.h"
 
 #include <algorithm>
@@ -8866,34 +8867,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// Parse character literal and convert to numeric value
 		std::string_view value = current_token_.value();
 
-		// Character literal format:
-		// - Regular: 'x' or '\x' (char_offset = 1)
-		// - Wide: L'x' or L'\x' (char_offset = 2)
-		// - char8_t: u8'x' (char_offset = 3)
-		// - char16_t: u'x' (char_offset = 2)
-		// - char32_t: U'x' (char_offset = 2)
-		size_t char_offset = 1;	// Default: regular char literal 'x'
-		TypeCategory char_type = TypeCategory::Char;
-		int char_size_bits = 8;
-
-		// Check for prefix (wide character literals)
-		if (value.size() > 0 && value[0] == 'L') {
-			char_offset = 2;	 // L'x'
-			char_type = TypeCategory::WChar;
-			char_size_bits = get_wchar_size_bits();
-		} else if (value.size() > 1 && value[0] == 'u' && value[1] == '8') {
-			char_offset = 3;	 // u8'x'
-			char_type = TypeCategory::Char8;
-			char_size_bits = 8;
-		} else if (value.size() > 0 && value[0] == 'u') {
-			char_offset = 2;	 // u'x'
-			char_type = TypeCategory::Char16;
-			char_size_bits = 16;
-		} else if (value.size() > 0 && value[0] == 'U') {
-			char_offset = 2;	 // U'x'
-			char_type = TypeCategory::Char32;
-			char_size_bits = 32;
-		}
+		const size_t char_offset = FlashCpp::getLiteralEncodingPrefixLength(value) + 1;
+		const TypeCategory char_type = FlashCpp::getLiteralElementType(value);
+		const int char_size_bits = static_cast<int>(get_type_size_bits(char_type));
 
 		// Minimum size check: prefix + quote + char + quote
 		if (value.size() < char_offset + 2) {
