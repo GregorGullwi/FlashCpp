@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (C++20 aggregate-base ctor forwarding; P::method template-param qualified call lifted to sema)
+**Last updated:** 2026-05-23 (deferred-base replay metadata uplift for inherited member-template owner lookup)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -65,9 +65,13 @@ Useful assumptions before changing this area:
   `InstantiationContext::param_names`/`param_args` when the qualifier is a
   simple name that matches a template type parameter. Codegen retains a parallel
   fallback via `InstantiationContext` for cases sema does not yet reach.
+- **deferred dependent-base metadata is now persisted as full specifiers in
+  `StructTypeInfo` (not only base template names)**, and inherited member-template
+  owner traversal now consumes that richer metadata (including member-type chains)
+  before falling back to legacy name-only paths.
 
 Latest recorded full-suite validation:
-`2496` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -79,6 +83,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_nttp_deferred_ctor_body_ret0.cpp`
 - `test_template_aggregate_base_class_ctor_ret0.cpp`
 - `test_template_type_param_qualified_static_call_ret0.cpp`
+- `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
 
 ## What is still wrong
 
@@ -92,8 +97,8 @@ instantiation has to recover intent from partially substituted AST state.
 
 The next highest-value remaining surface:
 
-- remaining declaration/static-member/deferred-base replay paths that never
-  captured enough replay metadata at parse time.
+- remaining declaration/static-member replay paths that never captured enough
+  replay metadata at parse time.
 - pointer/reference/function-pointer NTTP substitution in deferred constructor
   bodies: these currently fall back to `IdentifierNode` and are resolved at
   instantiation time by `substitute_template_params_in_expression`; a dedicated
@@ -124,7 +129,7 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Remove the next AST-only replay fallback**
-   - Continue with the remaining declaration/static-member/deferred-base replay
+   - Continue with the remaining declaration/static-member replay
      paths that still never captured enough metadata at parse time.
    - Prefer replay-first semantic attachment over adding more repair logic.
 
@@ -164,6 +169,10 @@ The following are complete enough to rely on:
   the current member context's `InstantiationContext::param_names`/`param_args`
   when the qualifier is a simple name matching a template type parameter.
   A parallel codegen fallback is retained as a safety net.
+- deferred dependent-base metadata now persists in `StructTypeInfo` as full
+  `DeferredTemplateBaseClassSpecifier` entries, and inherited member-template
+  owner traversal consumes those specifiers (including member-type chains)
+  before the legacy name-only fallback.
 - **C++20 aggregate initialization through base-class-only intermediate structs
   is handled at codegen level** (`IrGenerator_Visitors_Decl.cpp`): when
   `resolveCodegenConstructorFromArgs` returns null for an aggregate struct with

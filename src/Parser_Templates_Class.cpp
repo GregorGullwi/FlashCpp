@@ -2629,10 +2629,8 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Finalize the struct layout with base classes
 			bool finalize_success;
-			struct_info_ptr->has_deferred_base_classes = !struct_ref.deferred_template_base_classes().empty();
-			for (const auto& deferred_base : struct_ref.deferred_template_base_classes()) {
-				struct_info_ptr->deferred_base_template_names.push_back(deferred_base.base_template_name);
-			}
+			struct_info_ptr->setDeferredTemplateBases(
+				struct_ref.deferred_template_base_classes());
 			if (!struct_ref.base_classes().empty()) {
 				finalize_success = struct_info_ptr->finalizeWithBases();
 			} else {
@@ -4079,10 +4077,8 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Finalize the struct layout with base classes
 			bool finalize_success;
-			struct_info->has_deferred_base_classes = !struct_ref.deferred_template_base_classes().empty();
-			for (const auto& deferred_base : struct_ref.deferred_template_base_classes()) {
-				struct_info->deferred_base_template_names.push_back(deferred_base.base_template_name);
-			}
+			struct_info->setDeferredTemplateBases(
+				struct_ref.deferred_template_base_classes());
 			if (!struct_ref.base_classes().empty()) {
 				finalize_success = struct_info->finalizeWithBases();
 			} else {

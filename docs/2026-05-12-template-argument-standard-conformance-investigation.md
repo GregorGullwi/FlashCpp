@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (C++20 aggregate-base ctor forwarding; P::method template-param qualified call lifted to sema)
+**Last updated:** 2026-05-23 (deferred-base replay metadata uplift for inherited member-template owner lookup)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -68,9 +68,13 @@ Future work can rely on these being in place:
   `resolved_constructor` pointer). This is tracked as a lower-priority open item:
   extend `ConstructorCallNode` to carry aggregate-forwarding metadata so sema can
   own the two-call sequence.
+- **deferred dependent-base metadata is now persisted in `StructTypeInfo` as full
+  `DeferredTemplateBaseClassSpecifier` entries (not only template names)**, and
+  inherited member-template owner lookup now consumes those specifiers (including
+  member-type chains) before falling back to legacy name-only traversal.
 
 Latest recorded full-suite validation:
-`2496` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -82,12 +86,13 @@ Latest focused regressions added on the current branch:
 - `test_template_nttp_deferred_ctor_body_ret0.cpp`
 - `test_template_aggregate_base_class_ctor_ret0.cpp`
 - `test_template_type_param_qualified_static_call_ret0.cpp`
+- `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
 
 ## Remaining work, in priority order
 
 ### 1. Remove the next replay-metadata gap
 
-Continue with the remaining declaration/static-member/deferred-base replay
+Continue with the remaining declaration/static-member replay
 paths that still never captured enough metadata at parse time.
 
 Rule for this work:
@@ -127,7 +132,7 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. continue with the remaining declaration/static-member/deferred-base replay
+1. continue with the remaining declaration/static-member replay
    paths that still never captured enough metadata at parse time;
 2. update these docs with the next remaining replay-metadata gap.
 
