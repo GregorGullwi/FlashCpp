@@ -5894,6 +5894,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return unified_resolve_function_call(args);
 				}
 			} else {
+				FLASH_LOG_FORMAT(Parser, Debug, "ELSE-BRANCH for '{}': is_lambda_variable={}, peek='{}'",
+					identifier_token.value(), is_lambda_variable, !peek().is_eof() ? peek_info().value() : "EOF");
 				// Lambda variables should create an identifier node and return immediately
 				// so postfix operator parsing can handle the operator() call
 				if (is_lambda_variable) {
