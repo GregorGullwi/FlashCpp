@@ -893,7 +893,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// we need pointer indirection
 			// NOTE: Local arrays with explicit size (e.g., int arr[3]) are NOT pointers
 			// EXCEPTION: Reference-to-array parameters (e.g., int (&arr)[3]) ARE pointers
-			if (type_node.is_array() && decl_ptr->array_size().has_value()) {
+			if ((decl_ptr->is_array() || type_node.is_array()) && decl_ptr->array_size().has_value()) {
 				// Check if this is a reference to an array (parameter)
 				// References to arrays need pointer indirection
 				if (type_node.is_reference() || type_node.is_rvalue_reference()) {
