@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-22 (partial-spec base-name OOL attachment fix)
+**Last updated:** 2026-05-23 (NTTP deferred constructor body fix)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -46,9 +46,14 @@ Useful assumptions before changing this area:
   current template name and the extracted base template name (with dedupe)**,
   so plain-member replay and member-function-template deferred replay still
   attach when registrations land under the base template name.
+- **deferred class-template constructor bodies now store `template_param_names`**
+  so the replay pass sets `hasActiveTemplateParameters() = true`; and integral
+  NTTPs referenced inside such bodies are now substituted directly to
+  `NumericLiteralNode` during replay instead of falling through to a runtime
+  `IdentifierNode` that codegen cannot resolve.
 
 Latest recorded full-suite validation:
-`2484` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2489` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -57,6 +62,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_partial_spec_ool_plain_member_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_base_name_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_base_name_lookup_ret0.cpp`
+- `test_template_nttp_deferred_ctor_body_ret0.cpp`
 
 ## What is still wrong
 
@@ -72,6 +78,10 @@ The next highest-value remaining surface:
 
 - remaining declaration/static-member/deferred-base replay paths that never
   captured enough replay metadata at parse time.
+- pointer/reference/function-pointer NTTP substitution in deferred constructor
+  bodies: these currently fall back to `IdentifierNode` and are resolved at
+  instantiation time by `substitute_template_params_in_expression`; a dedicated
+  path should handle them at parse time for uniformity.
 
 ### 2. Dependent-name modeling is still too weak
 
@@ -122,6 +132,10 @@ The following are complete enough to rely on:
   nodes, registers qualified names, and attaches outer template bindings so the
   replay path can materialize bodies with the correct class-template parameters
   in scope.
+- deferred class-template constructor bodies now store template-parameter names
+  at parse time, so replay sets `hasActiveTemplateParameters() = true`; integral
+  NTTPs referenced inside such bodies are substituted to `NumericLiteralNode`
+  during replay, preventing "symbol not found" codegen failures.
 
 ## Exit criteria
 

@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-22 (partial-spec base-name OOL attachment fix)
+**Last updated:** 2026-05-23 (NTTP deferred constructor body fix)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -47,9 +47,14 @@ Future work can rely on these being in place:
   current template name and base template name (without duplicate replay)**,
   covering both plain members and deferred member-function-template replay when
   registration lands under the base template key.
+- **deferred class-template constructor bodies now store template-parameter names**
+  at parse time so `hasActiveTemplateParameters()` returns true during replay;
+  integral NTTPs in those bodies are substituted directly to `NumericLiteralNode`
+  at replay time instead of falling through to a runtime `IdentifierNode` that
+  codegen cannot resolve.
 
 Latest recorded full-suite validation:
-`2484` regular tests compiled/linked/runtime-pass, `181` expected-fail tests.
+`2489` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -58,6 +63,7 @@ Latest focused regressions added on the current branch:
 - `test_template_partial_spec_ool_plain_member_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_base_name_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_base_name_lookup_ret0.cpp`
+- `test_template_nttp_deferred_ctor_body_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -87,7 +93,10 @@ This work should support item 1, not replace it as the main track.
 
 Still open, but not the next best slice:
 
-- remaining NTTP categories;
+- remaining NTTP categories (pointer/reference/function-pointer NTTP substitution
+  in deferred constructor bodies currently relies on `substitute_template_params_in_expression`
+  at instantiation time instead of parse-time substitution — works but is inconsistent
+  with the integral NTTP path);
 - broader sema-owned deduction and ranking;
 - final conversion of repair paths into invariants/diagnostics.
 

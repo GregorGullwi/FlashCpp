@@ -8731,7 +8731,42 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Regular identifier
 				// Additional type checking and verification logic can be performed here using identifierType
 
-				result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+				// During deferred template body replay, identifierType may be set to
+				// TemplateParameterReferenceNode(N) while template_param_substitutions_ has the actual
+				// concrete value. Substitute it so codegen receives a literal, not a symbol lookup.
+				// We only do this when substitutions are present (replay context); during first-pass
+				// template parsing the substitution map is empty and we fall through to createBoundIdentifier
+				// so that array dimensions etc. are stored as IdentifierNode as the layout code expects.
+				bool applied_nttp_subst = false;
+				if (identifierType && identifierType->is<TemplateParameterReferenceNode>() &&
+					!template_param_substitutions_.empty()) {
+					const TemplateParameterReferenceNode& tpref = identifierType->as<TemplateParameterReferenceNode>();
+					const StringHandle target_param_name = tpref.param_name();
+					for (const auto& subst : template_param_substitutions_) {
+						if (subst.param_name == target_param_name) {
+							if (subst.is_value_param && !subst.typed_value_identity.has_value()) {
+								StringBuilder value_str;
+								value_str.append(subst.value);
+								std::string_view value_view = value_str.commit();
+								Token num_token(Token::Type::Literal, value_view,
+												identifier_token.line(), identifier_token.column(),
+												identifier_token.file_index());
+								result = emplace_node<ExpressionNode>(
+									NumericLiteralNode(num_token,
+													   static_cast<unsigned long long>(subst.value),
+													   subst.value_type,
+													   TypeQualifier::None,
+													   get_type_size_bits(subst.value_type)));
+								applied_nttp_subst = true;
+							}
+							break;
+						}
+					}
+				}
+
+				if (!applied_nttp_subst) {
+					result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+				}
 			}
 		}
 	} else if (current_token_.type() == Token::Type::Literal) {
