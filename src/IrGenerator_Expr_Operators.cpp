@@ -2301,6 +2301,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	bool can_try_spaceship_rewrite = false;
 	bool equality_rewrite_negate = binaryOperatorNode.has_recorded_equality_rewrite_negate();
 
+	// Helper: emit !(result_var == 0) to negate a bool result for the C++20 != -> !(==) rewrite
+	auto emitEqualityRewriteNegate = [&](TempVar result_var) -> ExprResult {
+		TempVar negate_var = var_counter.next();
+		BinaryOp negate_op{
+			.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, result_var),
+			.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, 0ULL),
+			.result = negate_var,
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(negate_op), binaryOperatorNode.get_token()));
+		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{negate_var}, PointerDepth{}, ValueStorage::ContainsData);
+	};
+
 	if (should_attempt_operator_overload) {
 		// Check for operator overload (member function or free function)
 		OperatorOverloadResult overload_result;
@@ -2498,17 +2510,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			SizeInBits return_size = call_op.return_size_in_bits;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
-			// C++20 equality rewrite: != was rewritten to !(==), so negate the bool result
-			if (equality_rewrite_negate) {
-				TempVar negate_var = var_counter.next();
-				BinaryOp negate_op{
-					.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, result_var),
-					.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, 0ULL),
-					.result = negate_var,
-				};
-				ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(negate_op), binaryOperatorNode.get_token()));
-				return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{negate_var}, PointerDepth{}, ValueStorage::ContainsData);
-			}
+			if (equality_rewrite_negate)
+				return emitEqualityRewriteNegate(result_var);
 
 			return makeExprResult(result_type_index, return_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
@@ -2561,8 +2564,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			// Generate mangled name for the operator
+			// When doing C++20 equality rewrite (!= -> !(==)), use "==" for the function name
 			std::string operator_func_name = "operator";
-			operator_func_name += op;
+			std::string_view mangle_op_member = equality_rewrite_negate ? std::string_view("==") : op;
+			operator_func_name += mangle_op_member;
 			std::vector<std::string_view> empty_namespace;
 			auto mangled_name = NameMangling::generateMangledName(
 				operator_func_name,
@@ -2673,17 +2678,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			SizeInBits result_size = call_op.return_size_in_bits;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
-			// C++20 equality rewrite: != was rewritten to !(==), so negate the bool result
-			if (equality_rewrite_negate) {
-				TempVar negate_var = var_counter.next();
-				BinaryOp negate_op{
-					.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, result_var),
-					.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, 0ULL),
-					.result = negate_var,
-				};
-				ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(negate_op), binaryOperatorNode.get_token()));
-				return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{negate_var}, PointerDepth{}, ValueStorage::ContainsData);
-			}
+			if (equality_rewrite_negate)
+				return emitEqualityRewriteNegate(result_var);
 
 			// Return the result with resolved types
 			return makeExprResult(result_type_index, result_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
