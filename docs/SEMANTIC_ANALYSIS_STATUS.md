@@ -56,12 +56,44 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - **Fallback 3 (binary operator LHS/RHS type conversion in `IrGenerator_Expr_Operators.cpp`)**: *not a parser API fallback*. Calls `generateTypeConversion` directly for legitimately uncovered cases (pointer arithmetic and unscoped/scoped enum operands where sema annotations are partial). Intentionally retained.
 - codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited
 
-## Active backlog (high level)
+## NTTP deferred constructor body fix (2026-05-23)
+
+Class-template constructors that reference a non-type template parameter (NTTP) inside
+their body were failing with "Symbol 'N' not found during code generation" when the
+class also contained a `static constexpr` member (causing the constructor body to be
+deferred).
+
+**Root cause (two bugs):**
+
+1. `Parser_Decl_StructEnum.cpp`: when storing a deferred constructor body, `template_param_names`
+   was left as `{}`. Fixed by calling `currentTemplateParamNames()` so the replay pass sets
+   `hasActiveTemplateParameters() = true` and the template-aware lookup returns
+   `TemplateParameterReferenceNode(N)` instead of null.
+
+2. `Parser_Expr_PrimaryExpr.cpp` (`else` at line ~8730): when the identifier is not a
+   function-call site and `identifierType` is already `TemplateParameterReferenceNode(N)`,
+   the old code unconditionally overwrote `result` with `createBoundIdentifier("N")` =
+   `IdentifierNode("N")`. Codegen then failed with "Symbol 'N' not found" because "N" is
+   not a runtime symbol. Fixed by: during deferred replay (when `template_param_substitutions_`
+   is non-empty), substitute integral NTTPs directly to `NumericLiteralNode`; pointer / reference /
+   function-pointer NTTPs (those with `typed_value_identity`) are left as `IdentifierNode` as
+   before (their substitution happens via the instantiation-time `substitute_template_params_in_expression`
+   pathway).
+
+**Test suite:** 2489 pass / 0 fail (was 2484 before this fix; 5 previously-failing NTTP tests now pass).
+
+
 
 1. Continue reducing codegen semantic recovery where sema can be authoritative in non-dependent code.
 2. Keep parser/template boundary invariants strict as new template features land.
 3. Continue tightening query-state coverage on narrower specialized caches.
 4. Keep fallback behavior explicit and limited to genuinely unresolved/dependent flows.
+5. **NTTP – pointer/reference substitution in deferred constructor bodies**: pointer-type NTTPs
+   (`auto P = &obj`) inside deferred class-template constructor bodies currently fall back to
+   `IdentifierNode("P")`, resolved at instantiation time via `substitute_template_params_in_expression`.
+   A dedicated path calling the full `trySubstituteValueTemplateParam` logic (handling
+   `typed_value_identity`) should be added to the `else` at ~8730 so all NTTP kinds are
+   uniformly substituted at parse time.
 
 ## Related documents
 

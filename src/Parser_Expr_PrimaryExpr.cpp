@@ -5894,8 +5894,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return unified_resolve_function_call(args);
 				}
 			} else {
-				FLASH_LOG_FORMAT(Parser, Debug, "ELSE-BRANCH for '{}': is_lambda_variable={}, peek='{}'",
-					identifier_token.value(), is_lambda_variable, !peek().is_eof() ? peek_info().value() : "EOF");
 				// Lambda variables should create an identifier node and return immediately
 				// so postfix operator parsing can handle the operator() call
 				if (is_lambda_variable) {
@@ -6783,9 +6781,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				auto trySubstituteValueTemplateParam = [&](StringHandle param_name) -> bool {
-					FLASH_LOG_FORMAT(Parser, Debug, "trySubstituteValueTemplateParam: param_name='{}', substitutions_count={}", param_name.view(), template_param_substitutions_.size());
 					for (const auto& subst : template_param_substitutions_) {
-						FLASH_LOG_FORMAT(Parser, Debug, "  checking subst: subst.param_name='{}', is_value={}, match={}", subst.param_name.view(), subst.is_value_param, subst.param_name == param_name);
 						if (subst.param_name != param_name || !subst.is_value_param) {
 							continue;
 						}
@@ -6886,8 +6882,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If this identifier resolves to a declaration but is also an active template
 				// value parameter, still apply value substitution (needed for auto NTTP callables).
-				FLASH_LOG_FORMAT(Parser, Debug, "PRE-SUBST-CHECK for '{}': identifierType={}, isTemplateClassOrActiveParameters={}, parsing_template_class_={}, hasActiveTemplateParameters={}, template_params_count={}",
-					identifier_token.value(), identifierType.has_value(), isTemplateClassOrActiveParameters(), parsing_template_class_, hasActiveTemplateParameters(), currentTemplateParamCount());
 				if (identifierType && isTemplateClassOrActiveParameters()) {
 					for (const auto& param_name : currentTemplateParamNames()) {
 						if (param_name == identifier_token.value() &&
@@ -8737,7 +8731,40 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Regular identifier
 				// Additional type checking and verification logic can be performed here using identifierType
 
-				result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+				// During deferred template body replay, identifierType may be set to
+				// TemplateParameterReferenceNode(N) while template_param_substitutions_ has the actual
+				// concrete value. Substitute it so codegen receives a literal, not a symbol lookup.
+				// We only do this when substitutions are present (replay context); during first-pass
+				// template parsing the substitution map is empty and we fall through to createBoundIdentifier
+				// so that array dimensions etc. are stored as IdentifierNode as the layout code expects.
+				bool applied_nttp_subst = false;
+				if (identifierType && identifierType->is<TemplateParameterReferenceNode>() &&
+					!template_param_substitutions_.empty()) {
+					const TemplateParameterReferenceNode& tpref = identifierType->as<TemplateParameterReferenceNode>();
+					for (const auto& subst : template_param_substitutions_) {
+						if (subst.param_name == tpref.param_name() && subst.is_value_param &&
+					!subst.typed_value_identity.has_value()) {
+							StringBuilder value_str;
+							value_str.append(subst.value);
+							std::string_view value_view = value_str.commit();
+							Token num_token(Token::Type::Literal, value_view,
+											identifier_token.line(), identifier_token.column(),
+											identifier_token.file_index());
+							result = emplace_node<ExpressionNode>(
+								NumericLiteralNode(num_token,
+												   static_cast<unsigned long long>(subst.value),
+												   subst.value_type,
+												   TypeQualifier::None,
+												   get_type_size_bits(subst.value_type)));
+							applied_nttp_subst = true;
+							break;
+						}
+					}
+				}
+
+				if (!applied_nttp_subst) {
+					result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
+				}
 			}
 		}
 	} else if (current_token_.type() == Token::Type::Literal) {
