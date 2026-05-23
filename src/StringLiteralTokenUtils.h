@@ -14,7 +14,7 @@ struct ParsedStringLiteralToken {
 	bool has_delimited_content = false;
 };
 
-inline TypeCategory getStringLiteralElementType(std::string_view literal_token) {
+inline size_t getLiteralEncodingPrefixLength(std::string_view literal_token) {
 	auto has_prefix = [&](std::string_view prefix) {
 		if (!literal_token.starts_with(prefix)) {
 			return false;
@@ -23,22 +23,55 @@ inline TypeCategory getStringLiteralElementType(std::string_view literal_token) 
 			return false;
 		}
 		const char marker = literal_token[prefix.size()];
-		return marker == '"' || marker == 'R';
+		if (marker == '"' || marker == '\'') {
+			return true;
+		}
+		return marker == 'R' &&
+			literal_token.size() > prefix.size() + 1 &&
+			literal_token[prefix.size() + 1] == '"';
 	};
 
 	if (has_prefix("u8")) {
-		return TypeCategory::Char8;
+		return 2;
 	}
 	if (has_prefix("L")) {
-		return TypeCategory::WChar;
+		return 1;
 	}
 	if (has_prefix("u")) {
-		return TypeCategory::Char16;
+		return 1;
 	}
 	if (has_prefix("U")) {
-		return TypeCategory::Char32;
+		return 1;
+	}
+	return 0;
+}
+
+inline TypeCategory getLiteralElementType(std::string_view literal_token) {
+	const size_t prefix_length = getLiteralEncodingPrefixLength(literal_token);
+	if (prefix_length == 2) {
+		return TypeCategory::Char8;
+	}
+	if (prefix_length == 1 && !literal_token.empty()) {
+		switch (literal_token.front()) {
+		case 'L':
+			return TypeCategory::WChar;
+		case 'u':
+			return TypeCategory::Char16;
+		case 'U':
+			return TypeCategory::Char32;
+		default:
+			break;
+		}
 	}
 	return TypeCategory::Char;
+}
+
+inline TypeCategory getStringLiteralElementType(std::string_view literal_token) {
+	return getLiteralElementType(literal_token);
+}
+
+inline TypeCategory getCharacterLiteralElementType(std::string_view literal_token) {
+	return getLiteralElementType(literal_token);
 }
 
 inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_raw) {
@@ -52,15 +85,21 @@ inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_r
 
 	std::string_view token = token_raw;
 	if (token.front() != '"' && token.front() != 'R') {
-		const size_t quote = token.find('"');
-		const size_t raw_marker = token.find('R');
-		if (raw_marker != std::string_view::npos &&
-			(quote == std::string_view::npos || raw_marker < quote)) {
-			token = token.substr(raw_marker);
-		} else if (quote != std::string_view::npos) {
-			token = token.substr(quote);
-		} else {
-			return result;
+		const size_t prefix_length = getLiteralEncodingPrefixLength(token);
+		if (prefix_length > 0 && token.size() > prefix_length) {
+			token.remove_prefix(prefix_length);
+		}
+		if (token.front() != '"' && token.front() != 'R') {
+			const size_t quote = token.find('"');
+			const size_t raw_marker = token.find('R');
+			if (raw_marker != std::string_view::npos &&
+				(quote == std::string_view::npos || raw_marker < quote)) {
+				token = token.substr(raw_marker);
+			} else if (quote != std::string_view::npos) {
+				token = token.substr(quote);
+			} else {
+				return result;
+			}
 		}
 	}
 

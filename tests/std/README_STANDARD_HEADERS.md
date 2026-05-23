@@ -105,11 +105,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 Fix landed:
 
-- **String-literal type inference now preserves encoding prefixes** in both parser-side expression typing and semantic-analysis canonical type inference. `L""`, `u8""`, `u""`, and `U""` now map to `wchar_t`, `char8_t`, `char16_t`, and `char32_t` element types instead of falling through as `char`.
+- **Prefixed literal handling is now consistent across lexer, parser expression typing, and semantic-analysis canonical type inference.** `L""`, `u8""`, `u""`, and `U""` string literals now tokenize and map to `wchar_t`, `char8_t`, `char16_t`, and `char32_t` element types instead of partially falling through as plain `char`.
 
 Regression coverage:
 
 - `tests/test_wide_string_literal_overload_ret0.cpp`
+- `tests/test_prefixed_literal_lexer_ret0.cpp`
 
 Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 
