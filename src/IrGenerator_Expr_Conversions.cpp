@@ -2119,29 +2119,10 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			tryApplyPointerInfoFromIdentifier(std::get<IdentifierNode>(operandExpr));
 		} else if (std::holds_alternative<MemberAccessNode>(operandExpr)) {
 			const auto& member_access = std::get<MemberAccessNode>(operandExpr);
-			std::optional<TypeSpecifierNode> object_type_opt;
-			if (member_access.object().is<ExpressionNode>()) {
-				const ExpressionNode& object_expr = member_access.object().as<ExpressionNode>();
-				if (const auto* identifier = std::get_if<IdentifierNode>(&object_expr)) {
-					if (identifier->name() == "this" && current_struct_name_.isValid()) {
-						auto type_it = getTypesByNameMap().find(current_struct_name_);
-						if (type_it != getTypesByNameMap().end() && type_it->second) {
-							const TypeInfo& type_info = *type_it->second;
-							object_type_opt = TypeSpecifierNode(type_info.type_index_.withCategory(TypeCategory::Struct), static_cast<int>(type_info.sizeInBits().value), Token{}, CVQualifier::None, ReferenceQualifier::None);
-						}
-					} else if (auto symbol = symbol_table.lookup(identifier->name()); symbol.has_value()) {
-						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-							object_type_opt = decl->type_specifier_node();
-						}
-					}
-				}
-			}
-			if (!object_type_opt.has_value()) {
-				object_type_opt = getExprTypeFromSema(
-					member_access.object(),
-					"Normalized builtin ++/-- member object type query remained NotYetAnalyzed",
-					"Builtin ++/-- member object type could not be resolved via semantic analysis");
-			}
+			std::optional<TypeSpecifierNode> object_type_opt = getExprTypeFromSema(
+				member_access.object(),
+				"Normalized builtin ++/-- member object type query remained NotYetAnalyzed",
+				"Builtin ++/-- member object type could not be resolved via semantic analysis");
 			if (object_type_opt.has_value() &&
 				isIrStructType(toIrType(object_type_opt->type())) &&
 				tryGetTypeInfo(object_type_opt->type_index())) {
