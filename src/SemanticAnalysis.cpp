@@ -6565,6 +6565,21 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 
 // --- Return conversion annotation ---
 
+bool SemanticAnalysis::isLogicallySameStructType(TypeIndex lhs_type_index, TypeIndex rhs_type_index) const {
+	if (!lhs_type_index.is_valid() || !rhs_type_index.is_valid()) {
+		return false;
+	}
+	if (!is_struct_type(lhs_type_index.category()) || !is_struct_type(rhs_type_index.category())) {
+		return false;
+	}
+	if (lhs_type_index == rhs_type_index) {
+		return true;
+	}
+	const TypeInfo* lhs_type_info = tryGetTypeInfo(lhs_type_index);
+	const TypeInfo* rhs_type_info = tryGetTypeInfo(rhs_type_index);
+	return lhs_type_info && rhs_type_info && lhs_type_info->name() == rhs_type_info->name();
+}
+
 bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 	const ASTNode& expr_node,
 	CanonicalTypeId target_type_id) {
@@ -6578,20 +6593,9 @@ bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 	if (expr_type_id == target_type_id) {
 		return true;
 	}
-	// Also check by name: a template member function returning a nested struct type may
-	// have its return-type specifier holding a TypeAlias TypeIndex while the
-	// ConstructorCallNode carries the lazy-instantiated struct's TypeIndex.  Both refer
-	// to the same type, so no conversion is needed.
 	const CanonicalTypeDesc& expr_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
-	if (is_struct_type(expr_desc.category()) && is_struct_type(target_desc.category())) {
-		const TypeInfo* expr_ti = tryGetTypeInfo(expr_desc.type_index);
-		const TypeInfo* target_ti = tryGetTypeInfo(target_desc.type_index);
-		if (expr_ti && target_ti && expr_ti->name() == target_ti->name()) {
-			return true;
-		}
-	}
-	return false;
+	return isLogicallySameStructType(expr_desc.type_index, target_desc.type_index);
 }
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {

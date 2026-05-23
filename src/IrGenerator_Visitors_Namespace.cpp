@@ -422,41 +422,21 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// context, so the operand now represents the address-producing glvalue.
 			// Do not run ordinary value conversion against the ABI-sized return slot.
 			/*
-			Same concrete struct type indices are identity returns even if an earlier
-			category/size view is stale; this keeps returned closure objects from
-			falling into the residual conversion fallback.
+			Identity return for logically-same struct types. Template nested returns can
+			carry different TypeIndex slots (pattern alias vs instantiated type), but no
+			conversion is needed when semantic identity matches.
 			*/
 			if (!sema_applied_conversion &&
 				is_struct_type(expr_category) &&
 				is_struct_type(return_category) &&
 				operands.type_index.is_valid() &&
 				current_function_return_type_index_.is_valid() &&
-				operands.type_index.index() == current_function_return_type_index_.index()) {
+				(operands.type_index == current_function_return_type_index_ ||
+				 sema_.isLogicallySameStructType(operands.type_index, current_function_return_type_index_))) {
 				operands.type_index = current_function_return_type_index_;
 				expr_type = return_type;
 				expr_category = return_category;
 				expr_size = return_size;
-			}
-			// Normalize when the expression and return type refer to the same struct by name
-			// but carry different TypeIndex values.  This can occur when a template-class
-			// member function returns a nested type: the ConstructorCallNode may carry the
-			// lazily-instantiated TypeIndex while the function's return-type specifier carries
-			// an earlier TypeAlias TypeIndex (or vice versa).  Both describe the same struct
-			// so no conversion is needed.
-			if (!sema_applied_conversion &&
-				is_struct_type(expr_category) &&
-				is_struct_type(return_category) &&
-				operands.type_index.is_valid() &&
-				current_function_return_type_index_.is_valid() &&
-				operands.type_index != current_function_return_type_index_) {
-				const TypeInfo* expr_ti = tryGetTypeInfo(operands.type_index);
-				const TypeInfo* ret_ti = tryGetTypeInfo(current_function_return_type_index_);
-				if (expr_ti && ret_ti && expr_ti->name() == ret_ti->name()) {
-					operands.type_index = current_function_return_type_index_;
-					expr_type = return_type;
-					expr_category = return_category;
-					expr_size = return_size;
-				}
 			}
 			if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 				auto tryApplyResolvedAliasReturnConversion = [&](TypeIndex source_type_index) {

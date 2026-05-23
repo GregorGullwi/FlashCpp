@@ -369,6 +369,10 @@ public:
 	// Returns the number of entries materialized by this call.
 	size_t drainLazyMemberRegistry();
 
+	// Returns true when both type indices represent struct types with identical
+	// logical identity (same concrete index or same registered type name).
+	bool isLogicallySameStructType(TypeIndex lhs_type_index, TypeIndex rhs_type_index) const;
+
 private:
 	friend class ParserSemanticServices;
 	friend class PostParseSemanticNormalizer;
