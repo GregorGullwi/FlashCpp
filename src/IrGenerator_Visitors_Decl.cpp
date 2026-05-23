@@ -1696,6 +1696,11 @@ static bool hasOnlyImplicitConstructors(const StructTypeInfo& si) {
 	return true;
 }
 
+static bool shouldCallBaseObjectVariant(const StructTypeInfo* target_struct_info) {
+	return target_struct_info != nullptr &&
+		   !target_struct_info->virtual_bases.empty();
+}
+
 void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& node) {
 	// Deduplication: if this exact constructor node was already emitted (e.g., visited
 	// during beginStructDeclarationCodegen AND later re-queued via deferred emission),
@@ -1918,11 +1923,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			arg.value = ctor_param_names[i];
 			ctor_op.arguments.push_back(std::move(arg));
 		}
-	};
-
-	auto shouldCallBaseObjectVariant = [](const StructTypeInfo* target_struct_info) {
-		return target_struct_info != nullptr &&
-			   !target_struct_info->virtual_bases.empty();
 	};
 
 	bool is_implicit_copy_constructor = false;
@@ -2226,7 +2226,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								ConstructorCallOp inner_ctor_op;
 								inner_ctor_op.object = StringTable::getOrInternStringHandle("this");
 								inner_ctor_op.base_class_offset = static_cast<int>(combined_offset);
-								inner_ctor_op.call_base_object_variant = !inner_struct_info->virtual_bases.empty();
+								inner_ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(inner_struct_info);
 								inner_ctor_op.resolved_constructor = inner_ctor;
 								appendConstructorCallArguments(inner_ctor_op, inner_ctor, base_init->arguments, node.name_token());
 								finalizeConstructorCallOp(inner_ctor_op, *inner_struct_info, node.name_token());
@@ -3458,6 +3458,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Find the matching constructor to get parameter types for reference handling
 	const ConstructorDeclarationNode* matching_ctor = constructorCallNode.resolved_constructor();
+	std::vector<TypeSpecifierNode> ctor_arg_types;
 	const bool require_sema_resolved_ctor =
 		sema_normalized_current_function_ &&
 		struct_info &&
@@ -3485,19 +3486,19 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				.commit()));
 		}
 		if (!matching_ctor) {
-			std::vector<TypeSpecifierNode> arg_types;
-			arg_types.reserve(num_args);
+			ctor_arg_types.clear();
+			ctor_arg_types.reserve(num_args);
 			constructorCallNode.arguments().visit([&](ASTNode arg) {
 				auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
 				if (!arg_type_opt.has_value()) {
-					arg_types.clear();
+					ctor_arg_types.clear();
 					return;
 				}
-				arg_types.push_back(std::move(*arg_type_opt));
+				ctor_arg_types.push_back(std::move(*arg_type_opt));
 			});
 
-			if (arg_types.size() == num_args) {
-				auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+			if (ctor_arg_types.size() == num_args) {
+				auto resolution = resolve_constructor_overload(*struct_info, ctor_arg_types, false);
 				if (resolution.is_ambiguous) {
 					throw CompileError("Ambiguous constructor call");
 				}
@@ -3615,7 +3616,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// whose constructor accepts them.
 	if (!matching_ctor && struct_info && num_args > 0 &&
 		struct_info->members.empty() && !struct_info->base_classes.empty()) {
-		if (hasOnlyImplicitConstructors(*struct_info)) {
+		if (hasOnlyImplicitConstructors(*struct_info) && ctor_arg_types.size() == num_args) {
 			for (const auto& base_spec : struct_info->base_classes) {
 				const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index);
 				if (!base_type_info) {
@@ -3625,18 +3626,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				if (!base_struct_info) {
 					continue;
 				}
-				std::vector<TypeSpecifierNode> base_arg_types;
-				base_arg_types.reserve(num_args);
-				constructorCallNode.arguments().visit([&](ASTNode arg) {
-					auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
-					if (arg_type_opt.has_value()) {
-						base_arg_types.push_back(std::move(*arg_type_opt));
-					}
-				});
-				if (base_arg_types.size() != num_args) {
-					continue;
-				}
-				auto base_resolution = resolve_constructor_overload(*base_struct_info, base_arg_types, false);
+				auto base_resolution = resolve_constructor_overload(*base_struct_info, ctor_arg_types, false);
 				if (!base_resolution.selected_overload) {
 					continue;
 				}
@@ -3652,6 +3642,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				base_ctor_op.object = ret_var;
 				assert(base_spec.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 				base_ctor_op.base_class_offset = static_cast<int>(base_spec.offset);
+				base_ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
 				base_ctor_op.resolved_constructor = base_resolution.selected_overload;
 				appendConstructorCallArguments(base_ctor_op, base_resolution.selected_overload,
 					constructorCallNode.arguments(), constructorCallNode.called_from());

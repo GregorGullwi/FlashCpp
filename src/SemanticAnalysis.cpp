@@ -7530,18 +7530,8 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 				// This handles the policy-pattern: template<typename P> struct UsePolicy
 				// { void f() { P::scale(x); } }; when instantiated with P=ScaleByTwo.
 				if (!type_info) {
-					for (const auto* inst_ctx = current_type_info->instantiationContext();
-						 inst_ctx && !type_info;
-						 inst_ctx = inst_ctx->parent) {
-						for (size_t param_index = 0;
-							 param_index < inst_ctx->param_names.size() &&
-							 param_index < inst_ctx->param_args.size();
-							 ++param_index) {
-							if (StringTable::getStringView(inst_ctx->param_names[param_index]) == owner_name) {
-								type_info = tryGetTypeInfo(inst_ctx->param_args[param_index].type_index);
-								break;
-							}
-						}
+					if (const TypeInfo::TemplateArgInfo* bound_arg = current_type_info->findLegacyInstantiationArgByName(owner_name)) {
+						type_info = tryGetTypeInfo(bound_arg->type_index);
 					}
 				}
 			}

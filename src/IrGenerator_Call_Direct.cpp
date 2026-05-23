@@ -1347,42 +1347,29 @@ ambiguous_qualified_static_member:
 			if (curr_type_it != getTypesByNameMap().end() && curr_type_it->second) {
 				const TypeInfo* curr_type = curr_type_it->second;
 				// Walk instantiation context to find a type-parameter binding matching the qualifier
-				for (const auto* inst_ctx = curr_type->instantiationContext();
-					 inst_ctx && !matched_func_decl;
-					 inst_ctx = inst_ctx->parent) {
-					// Legacy compatibility fields are populated in parallel; keep a
-					// defensive bound while migration to bindings completes.
-					const size_t param_count = std::min(inst_ctx->param_names.size(), inst_ctx->param_args.size());
-					for (size_t param_index = 0; param_index < param_count; ++param_index) {
-						if (StringTable::getStringView(inst_ctx->param_names[param_index]) != qualifier) {
-							continue;
-						}
-						const TypeInfo* concrete_type = tryGetTypeInfo(inst_ctx->param_args[param_index].type_index);
-						if (!concrete_type || !concrete_type->isStruct()) {
-							break;
-						}
+				if (const TypeInfo::TemplateArgInfo* bound_arg = curr_type->findLegacyInstantiationArgByName(qualifier)) {
+					const TypeInfo* concrete_type = tryGetTypeInfo(bound_arg->type_index);
+					if (concrete_type && concrete_type->isStruct()) {
 						const StructTypeInfo* concrete_struct = concrete_type->getStructInfo();
-						if (!concrete_struct) {
-							break;
-						}
-						for (const auto& member_func : concrete_struct->member_functions) {
-							if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
-								continue;
+						if (concrete_struct) {
+							for (const auto& member_func : concrete_struct->member_functions) {
+								if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+									continue;
+								}
+								const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+								if (func_decl.decl_node().identifier_token().value() == member_name_local) {
+									matched_func_decl = &func_decl;
+									resolveMangledName(matched_func_decl, concrete_type->name());
+									queueDeferredMemberFunctions(concrete_type->name(), concrete_struct, lookup_name_view);
+									FLASH_LOG_FORMAT(Codegen, Debug,
+										"Resolved template-param qualified call '{}' -> '{}::{}'",
+										lookup_name_view,
+										StringTable::getStringView(concrete_type->name()),
+										member_name_local);
+									break;
+								}
 							}
-							const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-							if (func_decl.decl_node().identifier_token().value() == member_name_local) {
-								matched_func_decl = &func_decl;
-								resolveMangledName(matched_func_decl, concrete_type->name());
-								queueDeferredMemberFunctions(concrete_type->name(), concrete_struct, lookup_name_view);
-								FLASH_LOG_FORMAT(Codegen, Debug,
-									"Resolved template-param qualified call '{}' -> '{}::{}'",
-									lookup_name_view,
-									StringTable::getStringView(concrete_type->name()),
-									member_name_local);
-								break;
-							}
 						}
-						break;
 					}
 				}
 			}
