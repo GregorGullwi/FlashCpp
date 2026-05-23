@@ -8868,7 +8868,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		std::string_view value = current_token_.value();
 
 		const size_t char_offset = FlashCpp::getLiteralEncodingPrefixLength(value) + 1;
-		const TypeCategory char_type = FlashCpp::getCharacterLiteralElementType(value);
+		const TypeCategory char_type = FlashCpp::getLiteralElementType(value);
 		const int char_size_bits = static_cast<int>(get_type_size_bits(char_type));
 
 		// Minimum size check: prefix + quote + char + quote

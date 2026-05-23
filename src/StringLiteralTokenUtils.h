@@ -34,13 +34,7 @@ inline size_t getLiteralEncodingPrefixLength(std::string_view literal_token) {
 	if (has_prefix("u8")) {
 		return 2;
 	}
-	if (has_prefix("L")) {
-		return 1;
-	}
-	if (has_prefix("u")) {
-		return 1;
-	}
-	if (has_prefix("U")) {
+	if (has_prefix("L") || has_prefix("u") || has_prefix("U")) {
 		return 1;
 	}
 	return 0;
@@ -66,14 +60,6 @@ inline TypeCategory getLiteralElementType(std::string_view literal_token) {
 	return TypeCategory::Char;
 }
 
-inline TypeCategory getStringLiteralElementType(std::string_view literal_token) {
-	return getLiteralElementType(literal_token);
-}
-
-inline TypeCategory getCharacterLiteralElementType(std::string_view literal_token) {
-	return getLiteralElementType(literal_token);
-}
-
 inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_raw) {
 	ParsedStringLiteralToken result{
 		.normalized_token = token_raw,
@@ -89,7 +75,7 @@ inline ParsedStringLiteralToken parseStringLiteralToken(std::string_view token_r
 		if (prefix_length > 0 && token.size() > prefix_length) {
 			token.remove_prefix(prefix_length);
 		}
-		if (token.front() != '"' && token.front() != 'R') {
+		if (!token.empty() && token.front() != '"' && token.front() != 'R') {
 			const size_t quote = token.find('"');
 			const size_t raw_marker = token.find('R');
 			if (raw_marker != std::string_view::npos &&

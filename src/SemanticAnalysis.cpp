@@ -3993,7 +3993,7 @@ std::optional<TypeSpecifierNode> tryBuildDirectLiteralQueryType(const ASTNode& n
 			CVQualifier::None);
 	}
 	if (node.is<StringLiteralNode>()) {
-		const TypeCategory element_type = FlashCpp::getStringLiteralElementType(node.as<StringLiteralNode>().value());
+		const TypeCategory element_type = FlashCpp::getLiteralElementType(node.as<StringLiteralNode>().value());
 		const int element_size_bits = static_cast<int>(get_type_size_bits(element_type));
 		TypeSpecifierNode type(element_type, TypeQualifier::None, element_size_bits, Token{}, CVQualifier::Const);
 		type.add_pointer_level();
@@ -5601,7 +5601,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// where T is char, wchar_t, char8_t, char16_t, or char32_t based on
 				// its encoding prefix and n includes the implicit null terminator.
 				CanonicalTypeDesc desc;
-				const TypeCategory element_type = FlashCpp::getStringLiteralElementType(e.value());
+				const TypeCategory element_type = FlashCpp::getLiteralElementType(e.value());
 				desc.type_index = nativeTypeIndex(element_type);
 				desc.base_cv = CVQualifier::Const;
 				const size_t n = FlashCpp::computeStringLiteralContentLength(e.value()) + 1;

@@ -2355,7 +2355,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits(), Token{}, CVQualifier::None);
 	} else if (std::holds_alternative<StringLiteralNode>(expr)) {
 		const auto& literal = std::get<StringLiteralNode>(expr);
-		const TypeCategory element_type = FlashCpp::getStringLiteralElementType(literal.value());
+		const TypeCategory element_type = FlashCpp::getLiteralElementType(literal.value());
 		TypeSpecifierNode literal_type(
 			element_type,
 			TypeQualifier::None,

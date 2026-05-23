@@ -75,6 +75,10 @@ public:
 		size_t num_characters_left = source_size_ - cursor_;
 		while (cursor_ < source_size_) {
 			char c = source_[cursor_];
+			const bool can_start_prefixed_literal = c == 'L' || c == 'u' || c == 'U';
+			const size_t literal_prefix_length = can_start_prefixed_literal
+				? FlashCpp::getLiteralEncodingPrefixLength(source_.substr(cursor_))
+				: 0;
 
 			if (std::isspace(c)) {
 				consume_whitespace();
@@ -94,11 +98,10 @@ public:
 				}
 			} else if (c == 'R' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '"') {
 				return consume_raw_string_literal(cursor_);
-			} else if (const size_t prefix_length = FlashCpp::getLiteralEncodingPrefixLength(source_.substr(cursor_));
-					   prefix_length > 0) {
+			} else if (literal_prefix_length > 0) {
 				size_t start = cursor_;
-				cursor_ += prefix_length;
-				column_ += prefix_length;
+				cursor_ += literal_prefix_length;
+				column_ += literal_prefix_length;
 				if (cursor_ < source_size_ && source_[cursor_] == 'R' &&
 					cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '"') {
 					return consume_raw_string_literal(start);
