@@ -458,6 +458,43 @@ inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
 	return min_required;
 }
 
+// Probe a StructMemberFunction entry to determine whether it is a viable implicit
+// converting constructor (non-explicit, at least one parameter, at most one required
+// parameter) and return a pointer to its first parameter's TypeSpecifierNode.
+// Returns nullptr when the member is not a constructor, is marked explicit, has no
+// parameters, or requires more than one argument.
+// NOTE: Constructors with is_constructor=true are always stored as ConstructorDeclarationNode
+// in practice.  The FunctionDeclarationNode branch is kept for safety but cannot enforce
+// is_explicit() because FunctionDeclarationNode has no such method; it therefore treats any
+// FunctionDeclarationNode constructor as non-explicit.
+inline const TypeSpecifierNode* getImplicitCtorFirstParamType(const StructMemberFunction& mf) {
+	if (!mf.is_constructor)
+		return nullptr;
+	std::span<const ASTNode> params;
+	size_t min_required = 0;
+	if (mf.function_decl.is<FunctionDeclarationNode>()) {
+		const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
+		params = ctor_decl.parameter_nodes();
+		min_required = countMinRequiredParameters(params);
+	} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
+		const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
+		if (ctor_decl.is_explicit())
+			return nullptr;
+		params = ctor_decl.parameter_nodes();
+		min_required = countMinRequiredParameters(params);
+	} else {
+		return nullptr;
+	}
+	if (params.empty() || min_required > 1)
+		return nullptr;
+	if (!params[0].is<DeclarationNode>())
+		return nullptr;
+	const auto& param_type = params[0].as<DeclarationNode>().type_node();
+	if (!param_type.is<TypeSpecifierNode>())
+		return nullptr;
+	return &param_type.as<TypeSpecifierNode>();
+}
+
 // Check if target_struct has a non-explicit converting constructor whose first parameter
 // accepts source_type and whose remaining parameters are all defaulted, OR if source
 // derives from target (implicit derived-to-base conversion).
@@ -465,10 +502,6 @@ inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
 // Only checks gTypeInfo (populated at or before IR-gen time).
 // Returns false both when struct info is genuinely absent (caller should then check
 // getStructInfo() separately and fall back to UserDefined) and when no constructor is found.
-// NOTE: Constructors with is_constructor=true are always stored as ConstructorDeclarationNode
-// in practice.  The FunctionDeclarationNode branch is kept for safety but cannot check
-// is_explicit() because FunctionDeclarationNode has no such method; it therefore treats any
-// FunctionDeclarationNode constructor as non-explicit.
 inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_idx) {
 	if (!target_idx.is_valid() || !source_idx.is_valid())
 		return false;
@@ -484,31 +517,10 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	// Check constructors whose first argument consumes the source and whose
 	// remaining arguments are defaulted.
 	for (const auto& mf : target->member_functions) {
-		if (!mf.is_constructor)
+		const TypeSpecifierNode* first_param = getImplicitCtorFirstParamType(mf);
+		if (!first_param)
 			continue;
-		std::span<const ASTNode> params;
-		size_t min_required = 0;
-		if (mf.function_decl.is<FunctionDeclarationNode>()) {
-			const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
-			params = ctor_decl.parameter_nodes();
-			min_required = countMinRequiredParameters(params);
-		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
-			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
-			if (ctor_decl.is_explicit()) {
-				continue;
-			}
-			params = ctor_decl.parameter_nodes();
-			min_required = countMinRequiredParameters(params);
-		}
-		if (params.empty() || min_required > 1)
-			continue;
-		if (!params[0].is<DeclarationNode>())
-			continue;
-		const auto& param_type = params[0].as<DeclarationNode>().type_node();
-		if (!param_type.is<TypeSpecifierNode>())
-			continue;
-		TypeIndex param_idx = param_type.as<TypeSpecifierNode>().type_index();
-		if (param_idx == source_idx)
+		if (first_param->type_index() == source_idx)
 			return true;
 	}
 	return false;
@@ -527,31 +539,11 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 		return false;
 	}
 	for (const auto& mf : target->member_functions) {
-		if (!mf.is_constructor) {
+		const TypeSpecifierNode* first_param = getImplicitCtorFirstParamType(mf);
+		if (!first_param) {
 			continue;
 		}
-		std::span<const ASTNode> params;
-		size_t min_required = 0;
-		if (mf.function_decl.is<FunctionDeclarationNode>()) {
-			const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
-			params = ctor_decl.parameter_nodes();
-			min_required = countMinRequiredParameters(params);
-		} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
-			const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
-			if (ctor_decl.is_explicit()) {
-				continue;
-			}
-			params = ctor_decl.parameter_nodes();
-			min_required = countMinRequiredParameters(params);
-		}
-		if (params.empty() || min_required > 1 || !params[0].is<DeclarationNode>()) {
-			continue;
-		}
-		const auto& param_type = params[0].as<DeclarationNode>().type_node();
-		if (!param_type.is<TypeSpecifierNode>()) {
-			continue;
-		}
-		const auto& param_spec = param_type.as<TypeSpecifierNode>();
+		const auto& param_spec = *first_param;
 		if (param_spec.is_pointer() || param_spec.is_function_pointer() ||
 			param_spec.is_member_function_pointer() || param_spec.is_member_object_pointer()) {
 			// At overload-resolution time we only have type-category information; we
