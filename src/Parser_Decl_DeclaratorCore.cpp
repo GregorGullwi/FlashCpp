@@ -481,8 +481,16 @@ ParseResult Parser::parse_type_and_name() {
 	if (!peek().is_eof() &&
 		(peek_info().type() == Token::Type::Operator || peek_info().type() == Token::Type::Punctuator) &&
 		peek() == "..."_tok) {
-		advance(); // consume '...'
-		is_parameter_pack = true;
+		// When parsing out-of-line member template definitions, a pack expansion can
+		// remain at the end of a template-id in a parameter type:
+		//   Type<Args...>, ...
+		// In that case this ellipsis belongs to the type, not to a named parameter pack.
+		if (peek(1) == ">"_tok || peek(1) == ">>"_tok) {
+			advance(); // consume type pack expansion suffix
+		} else {
+			advance(); // consume '...'
+			is_parameter_pack = true;
+		}
 	}
 
 	// Check for alignas specifier before the identifier (if not already specified)
@@ -588,6 +596,7 @@ ParseResult Parser::parse_type_and_name() {
 			if (!peek().is_eof()) {
 				auto next = peek_info().value();
 				if (next == "," || next == ")" || next == "=" || next == "[" ||
+					next == ">" || next == ">>" ||
 					next == ":" || next == ";") {
 					// This is an unnamed parameter/member - create a synthetic empty identifier
 					// ':' handles unnamed bitfields (e.g., int :32;) and ';' handles unnamed members
