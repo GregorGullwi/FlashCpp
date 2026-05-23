@@ -1,3 +1,5 @@
+#include <limits>
+
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "BuiltinListInitNarrowing.h"
@@ -3413,6 +3415,18 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
 			symbol_opt = lookup_identifier_symbol(&identifier, var_name, *context.global_symbols);
 		}
+		// If still not found, try namespace-qualified lookup using the struct's namespace.
+		// This handles identifiers like enum enumerators ('denorm_absent') that live in the
+		// same namespace as the enclosing struct but aren't visible at global scope.
+		if (!symbol_opt.has_value() && context.struct_info != nullptr) {
+			NamespaceHandle ns_handle = context.struct_info->getNamespaceHandle();
+			if (ns_handle.isValid() && !ns_handle.isGlobal()) {
+				symbol_opt = context.symbols->lookup_qualified(ns_handle, var_name);
+				if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
+					symbol_opt = context.global_symbols->lookup_qualified(ns_handle, var_name);
+				}
+			}
+		}
 	}
 
 	// If not found in symbol table, check for static members in the current struct
@@ -4561,6 +4575,43 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			return EvalResult::error(std::string(func_name) + "(LLONG_MIN) is undefined behavior");
 		}
 		return EvalResult::from_int(value < 0 ? -value : value);
+	}
+
+	// Floating-point infinity and NaN builtins
+	auto signalingNan = [](auto tag) -> double {
+		using T = decltype(tag);
+		if constexpr (std::numeric_limits<T>::has_signaling_NaN) {
+			return static_cast<double>(std::numeric_limits<T>::signaling_NaN());
+		} else {
+			return static_cast<double>(std::numeric_limits<T>::quiet_NaN());
+		}
+	};
+	if (func_name == "__builtin_huge_valf" || func_name == "__builtin_huge_valf__") {
+		return EvalResult::from_double(static_cast<double>(std::numeric_limits<float>::infinity()));
+	}
+	if (func_name == "__builtin_huge_val" || func_name == "__builtin_huge_val__") {
+		return EvalResult::from_double(std::numeric_limits<double>::infinity());
+	}
+	if (func_name == "__builtin_huge_vall" || func_name == "__builtin_huge_vall__") {
+		return EvalResult::from_double(static_cast<double>(std::numeric_limits<long double>::infinity()));
+	}
+	if (func_name == "__builtin_nanf" || func_name == "__builtin_nanf__") {
+		return EvalResult::from_double(static_cast<double>(std::numeric_limits<float>::quiet_NaN()));
+	}
+	if (func_name == "__builtin_nan" || func_name == "__builtin_nan__") {
+		return EvalResult::from_double(std::numeric_limits<double>::quiet_NaN());
+	}
+	if (func_name == "__builtin_nanl" || func_name == "__builtin_nanl__") {
+		return EvalResult::from_double(static_cast<double>(std::numeric_limits<long double>::quiet_NaN()));
+	}
+	if (func_name == "__builtin_nansf" || func_name == "__builtin_nansf__") {
+		return EvalResult::from_double(signalingNan(float{}));
+	}
+	if (func_name == "__builtin_nans" || func_name == "__builtin_nans__") {
+		return EvalResult::from_double(signalingNan(double{}));
+	}
+	if (func_name == "__builtin_nansl" || func_name == "__builtin_nansl__") {
+		return EvalResult::from_double(signalingNan((long double)0.0L));
 	}
 
 	// Not a known builtin function - return a special error that callers can check
