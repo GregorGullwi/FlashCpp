@@ -309,16 +309,6 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							return false;
 						};
 						if (auto arg_type_opt = buildCodegenOverloadResolutionArgType(*expr_opt)) {
-							// NOTE: This fallback legitimately fires for sema-normalized template
-							// bodies when the return expression is a nested template type whose
-							// codegen type_index differs from the return type's type_index
-							// (template pattern vs. instantiated form).  Sema correctly emits no
-							// conversion annotation in those cases (same logical type, no user-
-							// defined conversion needed), but codegen must still resolve the
-							// copy/construct path to reconcile the type_index mismatch.
-							// Probe-verified 2026-05-24: 6 template tests fire this path for
-							// same-type nested-struct returns (e.g. return Entry{}, return __tmp).
-							// Root-cause fix tracked in KNOWN_ISSUES.md.
 							std::vector<TypeSpecifierNode> arg_types;
 							arg_types.push_back(*arg_type_opt);
 							auto resolution = resolve_constructor_overload(*target_struct_info, arg_types, true);
@@ -432,16 +422,17 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// context, so the operand now represents the address-producing glvalue.
 			// Do not run ordinary value conversion against the ABI-sized return slot.
 			/*
-			Same concrete struct type indices are identity returns even if an earlier
-			category/size view is stale; this keeps returned closure objects from
-			falling into the residual conversion fallback.
+			Identity return for logically-same struct types. Template nested returns can
+			carry different TypeIndex slots (pattern alias vs instantiated type), but no
+			conversion is needed when semantic identity matches.
 			*/
 			if (!sema_applied_conversion &&
 				is_struct_type(expr_category) &&
 				is_struct_type(return_category) &&
 				operands.type_index.is_valid() &&
 				current_function_return_type_index_.is_valid() &&
-				operands.type_index.index() == current_function_return_type_index_.index()) {
+				(operands.type_index == current_function_return_type_index_ ||
+				 sema_.isLogicallySameStructType(operands.type_index, current_function_return_type_index_))) {
 				operands.type_index = current_function_return_type_index_;
 				expr_type = return_type;
 				expr_category = return_category;

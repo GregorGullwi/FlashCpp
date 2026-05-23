@@ -3953,7 +3953,7 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		}
 	}
 
-	auto id = type_context_.intern(desc);
+		auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
 }
@@ -6573,6 +6573,21 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 
 // --- Return conversion annotation ---
 
+bool SemanticAnalysis::isLogicallySameStructType(TypeIndex lhs_type_index, TypeIndex rhs_type_index) const {
+	if (!lhs_type_index.is_valid() || !rhs_type_index.is_valid()) {
+		return false;
+	}
+	if (!is_struct_type(lhs_type_index.category()) || !is_struct_type(rhs_type_index.category())) {
+		return false;
+	}
+	if (lhs_type_index == rhs_type_index) {
+		return true;
+	}
+	const TypeInfo* lhs_type_info = tryGetTypeInfo(lhs_type_index);
+	const TypeInfo* rhs_type_info = tryGetTypeInfo(rhs_type_index);
+	return lhs_type_info && rhs_type_info && lhs_type_info->name() == rhs_type_info->name();
+}
+
 bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 	const ASTNode& expr_node,
 	CanonicalTypeId target_type_id) {
@@ -6580,7 +6595,15 @@ bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 		return false;
 	}
 	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
-	return expr_type_id && expr_type_id == target_type_id;
+	if (!expr_type_id) {
+		return false;
+	}
+	if (expr_type_id == target_type_id) {
+		return true;
+	}
+	const CanonicalTypeDesc& expr_desc = type_context_.get(expr_type_id);
+	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
+	return isLogicallySameStructType(expr_desc.type_index, target_desc.type_index);
 }
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
