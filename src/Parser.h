@@ -479,6 +479,8 @@ TemplateTypeArg templateTypeArgFromEvalResult(
 // the first destructor invocation during unwinding; cleared by the catch site after use.
 inline thread_local std::string g_parser_instantiation_notes;
 
+struct DeferredBaseReplayContextScope;
+
 class Parser {
 	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
@@ -486,6 +488,7 @@ class Parser {
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
 	friend class SemanticAnalysis;
 	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
+	friend struct DeferredBaseReplayContextScope;
 
 public:
 	static constexpr size_t default_ast_tree_size_ = 256 * 1024;
@@ -1607,6 +1610,9 @@ private:
 		StringHandle current_instantiation_name) const;
 	TemplateDefinitionLookupContext buildVariableTemplateInitializerDefinitionLookupContext(
 		const Token& variable_name_token,
+		StringHandle current_instantiation_name) const;
+	std::pair<TemplateDefinitionLookupContext, TemplateReplayParameterState> buildDeferredBaseReplayMetadata(
+		const Token& definition_token,
 		StringHandle current_instantiation_name) const;
 	TemplateDefinitionLookupContext ensureReplayDefinitionLookupContext(
 		TemplateDefinitionLookupContext definition_lookup_context,

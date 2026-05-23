@@ -38,6 +38,31 @@ TemplateDefinitionLookupContext Parser::buildVariableTemplateInitializerDefiniti
 		current_instantiation_name);
 }
 
+std::pair<TemplateDefinitionLookupContext, TemplateReplayParameterState>
+Parser::buildDeferredBaseReplayMetadata(
+	const Token& definition_token,
+	StringHandle current_instantiation_name) const {
+	TemplateDefinitionLookupContext definition_lookup_context;
+	if ((current_template_definition_lookup_context_ != nullptr &&
+		 current_template_definition_lookup_context_->is_valid()) ||
+		parsing_template_depth_ > 0 ||
+		hasActiveTemplateParameters()) {
+		definition_lookup_context = buildDefinitionLookupContextFromToken(
+			definition_token,
+			current_instantiation_name);
+	}
+
+	TemplateReplayParameterState replay_template_parameters;
+	const auto& active_template_params = currentTemplateParamState();
+	replay_template_parameters.names = active_template_params.names;
+	replay_template_parameters.kinds = active_template_params.kinds;
+	replay_template_parameters.non_type_categories =
+		active_template_params.non_type_categories;
+	return {
+		std::move(definition_lookup_context),
+		std::move(replay_template_parameters)};
+}
+
 TemplateDefinitionLookupContext Parser::ensureReplayDefinitionLookupContext(
 	TemplateDefinitionLookupContext definition_lookup_context,
 	const Token& fallback_definition_token,

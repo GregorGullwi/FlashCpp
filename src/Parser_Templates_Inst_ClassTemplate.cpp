@@ -93,6 +93,98 @@ static void buildTemplateParameterReplayState(
 	}
 }
 
+struct DeferredBaseReplayContextScope {
+	template <typename DeferredBaseSpecifier>
+	DeferredBaseReplayContextScope(
+		Parser& parser,
+		const DeferredBaseSpecifier& deferred_base,
+		StringHandle fallback_current_instantiation_name,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args)
+		: parser_(parser),
+		  replay_definition_lookup_context_(
+			  buildLookupContext(
+				  parser,
+				  deferred_base,
+				  fallback_current_instantiation_name)),
+		  lookup_scope_(
+			  parser.current_template_definition_lookup_context_,
+			  replay_definition_lookup_context_.is_valid()
+				  ? &replay_definition_lookup_context_
+				  : nullptr),
+		  template_params_guard_(parser.current_template_params_),
+		  substitutions_guard_(parser.template_param_substitutions_) {
+		setTemplateParameters(
+			parser_,
+			deferred_base,
+			template_params);
+		TemplateEnvironment deferred_base_environment = buildTemplateEnvironment(
+			template_params,
+			template_args,
+			nullptr);
+		parser_.populateTemplateParamSubstitutions(
+			parser_.template_param_substitutions_,
+			deferred_base_environment);
+	}
+
+private:
+	template <typename DeferredBaseSpecifier>
+	static TemplateDefinitionLookupContext buildLookupContext(
+		Parser& parser,
+		const DeferredBaseSpecifier& deferred_base,
+		StringHandle fallback_current_instantiation_name) {
+		TemplateDefinitionLookupContext replay_definition_lookup_context =
+			deferred_base.replay_definition_lookup_context;
+		if (!replay_definition_lookup_context.is_valid() &&
+			deferred_base.replay_position.has_value()) {
+			SaveHandle lookup_saved_position = parser.save_token_position();
+			parser.restore_lexer_position_only(*deferred_base.replay_position);
+			Token replay_definition_token = parser.peek_info();
+			parser.restore_token_position(lookup_saved_position);
+			parser.discard_saved_token(lookup_saved_position);
+			replay_definition_lookup_context = parser.ensureReplayDefinitionLookupContext(
+				replay_definition_lookup_context,
+				replay_definition_token,
+				gSymbolTable.get_current_namespace_handle(),
+				fallback_current_instantiation_name);
+		}
+		return replay_definition_lookup_context;
+	}
+
+	template <typename DeferredBaseSpecifier>
+	static void setTemplateParameters(
+		Parser& parser,
+		const DeferredBaseSpecifier& deferred_base,
+		std::span<const TemplateParameterNode> template_params) {
+		if (deferred_base.replay_template_parameters.hasParameters()) {
+			parser.setCurrentTemplateParameters(
+				deferred_base.replay_template_parameters.names,
+				deferred_base.replay_template_parameters.kinds,
+				deferred_base.replay_template_parameters.non_type_categories);
+			return;
+		}
+
+		InlineVector<StringHandle, 4> replay_param_names;
+		InlineVector<TemplateParameterKind, 4> replay_param_kinds;
+		InlineVector<TypeCategory, 4> replay_non_type_categories;
+		buildTemplateParameterReplayState(
+			template_params,
+			replay_param_names,
+			replay_param_kinds,
+			replay_non_type_categories);
+		parser.setCurrentTemplateParameters(
+			std::move(replay_param_names),
+			std::move(replay_param_kinds),
+			std::move(replay_non_type_categories));
+	}
+
+	Parser& parser_;
+	TemplateDefinitionLookupContext replay_definition_lookup_context_;
+	Parser::ScopedDefinitionLookupContext lookup_scope_;
+	FlashCpp::ScopedState<Parser::ActiveTemplateParameterState> template_params_guard_;
+	FlashCpp::ScopedState<InlineVector<Parser::TemplateParamSubstitution, 4>> substitutions_guard_;
+};
+
 static void registerAliasTemplateWithOuterBinding(
 	StringHandle alias_name,
 	const ASTNode& alias_node,
@@ -3772,56 +3864,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view base_tpl_name = StringTable::getStringView(deferred_base.base_template_name);
 					FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' ({} args)",
 									 base_tpl_name, deferred_base.template_arguments.size());
-					TemplateDefinitionLookupContext replay_definition_lookup_context =
-						deferred_base.replay_definition_lookup_context;
-					if (!replay_definition_lookup_context.is_valid() &&
-						deferred_base.hasReplayPosition()) {
-						SaveHandle lookup_saved_position = save_token_position();
-						restore_lexer_position_only(deferred_base.replayPosition());
-						Token replay_definition_token = peek_info();
-						restore_token_position(lookup_saved_position);
-						discard_saved_token(lookup_saved_position);
-						replay_definition_lookup_context = ensureReplayDefinitionLookupContext(
-							replay_definition_lookup_context,
-							replay_definition_token,
-							gSymbolTable.get_current_namespace_handle(),
-							pattern_struct.name());
-					}
-					ScopedDefinitionLookupContext deferred_base_lookup_scope(
-						current_template_definition_lookup_context_,
-						replay_definition_lookup_context.is_valid()
-							? &replay_definition_lookup_context
-							: nullptr);
-
-					FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-					if (deferred_base.replay_template_parameters.hasParameters()) {
-						setCurrentTemplateParameters(
-							deferred_base.replay_template_parameters.names,
-							deferred_base.replay_template_parameters.kinds,
-							deferred_base.replay_template_parameters.non_type_categories);
-					} else {
-						InlineVector<StringHandle, 4> replay_param_names;
-						InlineVector<TemplateParameterKind, 4> replay_param_kinds;
-						InlineVector<TypeCategory, 4> replay_non_type_categories;
-						buildTemplateParameterReplayState(
-							template_params,
-							replay_param_names,
-							replay_param_kinds,
-							replay_non_type_categories);
-						setCurrentTemplateParameters(
-							std::move(replay_param_names),
-							std::move(replay_param_kinds),
-							std::move(replay_non_type_categories));
-					}
-
-					FlashCpp::ScopedState guard_substitutions(template_param_substitutions_);
-					TemplateEnvironment deferred_base_environment = buildTemplateEnvironment(
+					DeferredBaseReplayContextScope deferred_base_replay_scope(
+						*this,
+						deferred_base,
+						pattern_struct.name(),
 						template_params,
-						template_args_for_member_copy,
-						nullptr);
-					populateTemplateParamSubstitutions(
-						template_param_substitutions_,
-						deferred_base_environment);
+						template_args_for_member_copy);
 
 					DeferredBasePackExpansionBindingInfo base_pack_bindings =
 						collectDeferredBasePackExpansionBindings(deferred_base, spec_pack_subst_map);
@@ -7220,56 +7268,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		for (const auto& deferred_base : class_decl.deferred_template_base_classes()) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Processing deferred template base '{}' with {} template args",
 							 StringTable::getStringView(deferred_base.base_template_name), deferred_base.template_arguments.size());
-			TemplateDefinitionLookupContext replay_definition_lookup_context =
-				deferred_base.replay_definition_lookup_context;
-			if (!replay_definition_lookup_context.is_valid() &&
-				deferred_base.hasReplayPosition()) {
-				SaveHandle lookup_saved_position = save_token_position();
-				restore_lexer_position_only(deferred_base.replayPosition());
-				Token replay_definition_token = peek_info();
-				restore_token_position(lookup_saved_position);
-				discard_saved_token(lookup_saved_position);
-				replay_definition_lookup_context = ensureReplayDefinitionLookupContext(
-					replay_definition_lookup_context,
-					replay_definition_token,
-					gSymbolTable.get_current_namespace_handle(),
-					class_decl.name());
-			}
-			ScopedDefinitionLookupContext deferred_base_lookup_scope(
-				current_template_definition_lookup_context_,
-				replay_definition_lookup_context.is_valid()
-					? &replay_definition_lookup_context
-					: nullptr);
-
-			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-			if (deferred_base.replay_template_parameters.hasParameters()) {
-				setCurrentTemplateParameters(
-					deferred_base.replay_template_parameters.names,
-					deferred_base.replay_template_parameters.kinds,
-					deferred_base.replay_template_parameters.non_type_categories);
-			} else {
-				InlineVector<StringHandle, 4> replay_param_names;
-				InlineVector<TemplateParameterKind, 4> replay_param_kinds;
-				InlineVector<TypeCategory, 4> replay_non_type_categories;
-				buildTemplateParameterReplayState(
-					template_params,
-					replay_param_names,
-					replay_param_kinds,
-					replay_non_type_categories);
-				setCurrentTemplateParameters(
-					std::move(replay_param_names),
-					std::move(replay_param_kinds),
-					std::move(replay_non_type_categories));
-			}
-
-			FlashCpp::ScopedState guard_substitutions(template_param_substitutions_);
-			TemplateEnvironment deferred_base_environment = buildTemplateEnvironment(
+			DeferredBaseReplayContextScope deferred_base_replay_scope(
+				*this,
+				deferred_base,
+				class_decl.name(),
 				template_params,
-				template_args_to_use,
-				nullptr);
-			populateTemplateParamSubstitutions(
-				template_param_substitutions_,
-				deferred_base_environment);
+				template_args_to_use);
 
 			const InlineVector<TemplateParameterNode, 4>* deferred_base_template_params = nullptr;
 			if (auto base_template_node = gTemplateRegistry.lookupTemplate(deferred_base.base_template_name);
@@ -8069,56 +8073,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FLASH_LOG(Templates, Debug, "Primary template has ", class_decl.deferred_base_classes().size(), " deferred base classes");
 	for (const auto& deferred_base : class_decl.deferred_base_classes()) {
 		FLASH_LOG(Templates, Debug, "Processing deferred decltype base class");
-		TemplateDefinitionLookupContext replay_definition_lookup_context =
-			deferred_base.replay_definition_lookup_context;
-		if (!replay_definition_lookup_context.is_valid() &&
-			deferred_base.hasReplayPosition()) {
-			SaveHandle lookup_saved_position = save_token_position();
-			restore_lexer_position_only(deferred_base.replayPosition());
-			Token replay_definition_token = peek_info();
-			restore_token_position(lookup_saved_position);
-			discard_saved_token(lookup_saved_position);
-			replay_definition_lookup_context = ensureReplayDefinitionLookupContext(
-				replay_definition_lookup_context,
-				replay_definition_token,
-				gSymbolTable.get_current_namespace_handle(),
-				class_decl.name());
-		}
-		ScopedDefinitionLookupContext deferred_decltype_lookup_scope(
-			current_template_definition_lookup_context_,
-			replay_definition_lookup_context.is_valid()
-				? &replay_definition_lookup_context
-				: nullptr);
-
-		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-		if (deferred_base.replay_template_parameters.hasParameters()) {
-			setCurrentTemplateParameters(
-				deferred_base.replay_template_parameters.names,
-				deferred_base.replay_template_parameters.kinds,
-				deferred_base.replay_template_parameters.non_type_categories);
-		} else {
-			InlineVector<StringHandle, 4> replay_param_names;
-			InlineVector<TemplateParameterKind, 4> replay_param_kinds;
-			InlineVector<TypeCategory, 4> replay_non_type_categories;
-			buildTemplateParameterReplayState(
-				template_params,
-				replay_param_names,
-				replay_param_kinds,
-				replay_non_type_categories);
-			setCurrentTemplateParameters(
-				std::move(replay_param_names),
-				std::move(replay_param_kinds),
-				std::move(replay_non_type_categories));
-		}
-
-		FlashCpp::ScopedState guard_substitutions(template_param_substitutions_);
-		TemplateEnvironment deferred_base_environment = buildTemplateEnvironment(
+		DeferredBaseReplayContextScope deferred_base_replay_scope(
+			*this,
+			deferred_base,
+			class_decl.name(),
 			template_params,
-			template_args_to_use,
-			nullptr);
-		populateTemplateParamSubstitutions(
-			template_param_substitutions_,
-			deferred_base_environment);
+			template_args_to_use);
 
 		auto try_add_deferred_base_from_type = [&](const TypeInfo* candidate_base_type) -> bool {
 			if (candidate_base_type == nullptr) {
@@ -9118,56 +9078,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (!nested_struct.deferred_template_base_classes().empty()) {
 				ensure_substitution_maps();
 				for (const auto& deferred_base : nested_struct.deferred_template_base_classes()) {
-					TemplateDefinitionLookupContext replay_definition_lookup_context =
-						deferred_base.replay_definition_lookup_context;
-					if (!replay_definition_lookup_context.is_valid() &&
-						deferred_base.hasReplayPosition()) {
-						SaveHandle lookup_saved_position = save_token_position();
-						restore_lexer_position_only(deferred_base.replayPosition());
-						Token replay_definition_token = peek_info();
-						restore_token_position(lookup_saved_position);
-						discard_saved_token(lookup_saved_position);
-						replay_definition_lookup_context = ensureReplayDefinitionLookupContext(
-							replay_definition_lookup_context,
-							replay_definition_token,
-							gSymbolTable.get_current_namespace_handle(),
-							nested_struct.name());
-					}
-					ScopedDefinitionLookupContext deferred_base_lookup_scope(
-						current_template_definition_lookup_context_,
-						replay_definition_lookup_context.is_valid()
-							? &replay_definition_lookup_context
-							: nullptr);
-
-					FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-					if (deferred_base.replay_template_parameters.hasParameters()) {
-						setCurrentTemplateParameters(
-							deferred_base.replay_template_parameters.names,
-							deferred_base.replay_template_parameters.kinds,
-							deferred_base.replay_template_parameters.non_type_categories);
-					} else {
-						InlineVector<StringHandle, 4> replay_param_names;
-						InlineVector<TemplateParameterKind, 4> replay_param_kinds;
-						InlineVector<TypeCategory, 4> replay_non_type_categories;
-						buildTemplateParameterReplayState(
-							template_params,
-							replay_param_names,
-							replay_param_kinds,
-							replay_non_type_categories);
-						setCurrentTemplateParameters(
-							std::move(replay_param_names),
-							std::move(replay_param_kinds),
-							std::move(replay_non_type_categories));
-					}
-
-					FlashCpp::ScopedState guard_substitutions(template_param_substitutions_);
-					TemplateEnvironment deferred_base_environment = buildTemplateEnvironment(
+					DeferredBaseReplayContextScope deferred_base_replay_scope(
+						*this,
+						deferred_base,
+						nested_struct.name(),
 						template_params,
-						template_args_to_use,
-						nullptr);
-					populateTemplateParamSubstitutions(
-						template_param_substitutions_,
-						deferred_base_environment);
+						template_args_to_use);
 
 					DeferredBasePackExpansionBindingInfo base_pack_bindings =
 						collectDeferredBasePackExpansionBindings(deferred_base, pack_substitution_map);
@@ -9300,7 +9216,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							deferred_base.access,
 							deferred_base.is_virtual,
 							deferred_base.is_pack_expansion,
-							deferred_base.hasReplayPosition() ? deferred_base.replayPosition() : SaveHandle{},
+							deferred_base.replay_position,
 							deferred_base.replay_definition_lookup_context,
 							deferred_base.replay_template_parameters);
 						continue;

@@ -318,26 +318,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Parse base class list (if present): : public Base1, private Base2
 	if (peek() == ":"_tok) {
 		advance(); // consume ':'
-		auto build_deferred_base_replay_metadata = [&](const Token& definition_token) {
-			TemplateDefinitionLookupContext definition_lookup_context;
-			if (current_template_definition_lookup_context_ != nullptr &&
-				current_template_definition_lookup_context_->is_valid()) {
-				definition_lookup_context = *current_template_definition_lookup_context_;
-			} else if (parsing_template_depth_ > 0 || hasActiveTemplateParameters()) {
-				definition_lookup_context = buildDefinitionLookupContextFromToken(
-					definition_token,
-					qualified_struct_name);
-			}
-
-			TemplateReplayParameterState replay_template_parameters;
-			const auto& active_template_params = currentTemplateParamState();
-			replay_template_parameters.names = active_template_params.names;
-			replay_template_parameters.kinds = active_template_params.kinds;
-			replay_template_parameters.non_type_categories = active_template_params.non_type_categories;
-			return std::pair<TemplateDefinitionLookupContext, TemplateReplayParameterState>{
-				std::move(definition_lookup_context),
-				std::move(replay_template_parameters)};
-		};
 
 		do {
 			// Parse virtual keyword (optional, can appear before or after access specifier)
@@ -416,7 +396,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					FLASH_LOG(Templates, Debug, "Deferring decltype base class - will be resolved during template instantiation");
 					is_decltype_base = true;
 					auto [replay_definition_lookup_context, replay_template_parameters] =
-						build_deferred_base_replay_metadata(base_name_token);
+						buildDeferredBaseReplayMetadata(
+							base_name_token,
+							qualified_struct_name);
 
 					// Add deferred base class to struct node with the unevaluated expression
 					struct_ref.add_deferred_base_class(
@@ -537,7 +519,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(full_name);
 							auto [replay_definition_lookup_context, replay_template_parameters] =
-								build_deferred_base_replay_metadata(base_name_token);
+								buildDeferredBaseReplayMetadata(
+									base_name_token,
+									qualified_struct_name);
 							struct_ref.add_deferred_template_base_class(
 								template_name_handle,
 								std::move(arg_infos),
@@ -739,7 +723,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
 					auto [replay_definition_lookup_context, replay_template_parameters] =
-						build_deferred_base_replay_metadata(base_name_token);
+						buildDeferredBaseReplayMetadata(
+							base_name_token,
+							qualified_struct_name);
 					struct_ref.add_deferred_template_base_class(
 						template_name_handle,
 						std::move(arg_infos),

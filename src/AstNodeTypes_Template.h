@@ -1114,7 +1114,7 @@ public:
 		ASTNode decltype_expr,
 		AccessSpecifier access,
 		bool is_virtual,
-		SaveHandle replay_position,
+		std::optional<SaveHandle> replay_position,
 		const TemplateDefinitionLookupContext& replay_definition_lookup_context,
 		TemplateReplayParameterState replay_template_parameters) {
 		deferred_base_classes_.emplace_back(
@@ -1132,7 +1132,7 @@ public:
 										  AccessSpecifier access,
 										  bool is_virtual,
 										  bool is_pack_expansion,
-										  SaveHandle replay_position,
+										  std::optional<SaveHandle> replay_position,
 										  const TemplateDefinitionLookupContext& replay_definition_lookup_context,
 										  TemplateReplayParameterState replay_template_parameters) {
 		deferred_template_base_classes_.emplace_back(

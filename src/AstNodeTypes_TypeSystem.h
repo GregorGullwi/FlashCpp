@@ -1027,7 +1027,7 @@ struct DeferredBaseClassSpecifier {
 		ASTNode expr,
 		AccessSpecifier acc,
 		bool virt,
-		SaveHandle replay_pos,
+		std::optional<SaveHandle> replay_pos,
 		const TemplateDefinitionLookupContext& lookup_context,
 		TemplateReplayParameterState replay_template_param_state)
 		: decltype_expression(expr),
@@ -1075,7 +1075,7 @@ struct DeferredTemplateBaseClassSpecifier {
 									   AccessSpecifier acc,
 									   bool virt,
 									   bool pack_expansion,
-									   SaveHandle replay_pos,
+									   std::optional<SaveHandle> replay_pos,
 									   const TemplateDefinitionLookupContext& lookup_context,
 									   TemplateReplayParameterState replay_template_param_state)
 		: base_template_name(name),
