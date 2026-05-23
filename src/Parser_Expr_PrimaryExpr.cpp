@@ -8741,22 +8741,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (identifierType && identifierType->is<TemplateParameterReferenceNode>() &&
 					!template_param_substitutions_.empty()) {
 					const TemplateParameterReferenceNode& tpref = identifierType->as<TemplateParameterReferenceNode>();
+					const StringHandle target_param_name = tpref.param_name();
 					for (const auto& subst : template_param_substitutions_) {
-						if (subst.param_name == tpref.param_name() && subst.is_value_param &&
-					!subst.typed_value_identity.has_value()) {
-							StringBuilder value_str;
-							value_str.append(subst.value);
-							std::string_view value_view = value_str.commit();
-							Token num_token(Token::Type::Literal, value_view,
-											identifier_token.line(), identifier_token.column(),
-											identifier_token.file_index());
-							result = emplace_node<ExpressionNode>(
-								NumericLiteralNode(num_token,
-												   static_cast<unsigned long long>(subst.value),
-												   subst.value_type,
-												   TypeQualifier::None,
-												   get_type_size_bits(subst.value_type)));
-							applied_nttp_subst = true;
+						if (subst.param_name == target_param_name) {
+							if (subst.is_value_param && !subst.typed_value_identity.has_value()) {
+								StringBuilder value_str;
+								value_str.append(subst.value);
+								std::string_view value_view = value_str.commit();
+								Token num_token(Token::Type::Literal, value_view,
+												identifier_token.line(), identifier_token.column(),
+												identifier_token.file_index());
+								result = emplace_node<ExpressionNode>(
+									NumericLiteralNode(num_token,
+													   static_cast<unsigned long long>(subst.value),
+													   subst.value_type,
+													   TypeQualifier::None,
+													   get_type_size_bits(subst.value_type)));
+								applied_nttp_subst = true;
+							}
 							break;
 						}
 					}
