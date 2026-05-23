@@ -1682,8 +1682,9 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 }
 
 // Returns true when all declared constructors are compiler-generated (implicit).
-// This is a narrower predicate than full C++20 aggregate rules and is used
-// only for constructor-path branching in this file.
+// This is narrower than full C++20 aggregate rules: it does not validate
+// access-control, virtual-member, or base-class aggregate constraints.
+// It is used only for constructor-path branching in this file.
 static bool hasOnlyImplicitConstructors(const StructTypeInfo& si) {
 	for (const auto& func : si.member_functions) {
 		if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
