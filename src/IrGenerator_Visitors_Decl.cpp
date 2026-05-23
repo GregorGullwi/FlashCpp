@@ -2171,10 +2171,72 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					}
 					const ConstructorDeclarationNode* resolved_ctor =
 						resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
-					appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
-					finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
-					// If there's an explicit initializer, generate the constructor call
-					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+
+					// C++20 aggregate: base has no user-declared constructors and no direct
+					// data members, but has its own base class(es).  Forward the arguments
+					// through to the first inner base whose constructor accepts them.
+					bool handled_as_aggregate_base = false;
+					if (!resolved_ctor &&
+						base_struct_info->members.empty() &&
+						!base_struct_info->base_classes.empty() &&
+						!base_init->arguments.empty()) {
+						bool is_base_aggregate = true;
+						for (const auto& mf : base_struct_info->member_functions) {
+							if (mf.is_constructor && mf.function_decl.is<ConstructorDeclarationNode>()) {
+								if (!mf.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
+									is_base_aggregate = false;
+									break;
+								}
+							}
+						}
+						if (is_base_aggregate) {
+							for (const auto& inner_base : base_struct_info->base_classes) {
+								const TypeInfo* inner_type_info = tryGetTypeInfo(inner_base.type_index);
+								if (!inner_type_info) {
+									continue;
+								}
+								const StructTypeInfo* inner_struct_info = inner_type_info->getStructInfo();
+								if (!inner_struct_info) {
+									continue;
+								}
+								const ConstructorDeclarationNode* inner_ctor =
+									resolveCodegenConstructorFromArgs(*inner_struct_info, base_init->arguments);
+								if (!inner_ctor) {
+									continue;
+								}
+								// Emit a default-construct for the middle aggregate first (zero-init)
+								ConstructorCallOp mid_ctor_op;
+								mid_ctor_op.object = StringTable::getOrInternStringHandle("this");
+								assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
+								mid_ctor_op.base_class_offset = static_cast<int>(base.offset);
+								mid_ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
+								fillInDefaultConstructorArguments(mid_ctor_op, *base_struct_info);
+								finalizeConstructorCallOp(mid_ctor_op, *base_struct_info, node.name_token());
+								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(mid_ctor_op), node.name_token()));
+
+								// Then forward the args to the inner base at the combined offset
+								const size_t combined_offset = base.offset + inner_base.offset;
+								assert(combined_offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Combined base class offset exceeds int range");
+								ConstructorCallOp inner_ctor_op;
+								inner_ctor_op.object = StringTable::getOrInternStringHandle("this");
+								inner_ctor_op.base_class_offset = static_cast<int>(combined_offset);
+								inner_ctor_op.call_base_object_variant = !inner_struct_info->virtual_bases.empty();
+								inner_ctor_op.resolved_constructor = inner_ctor;
+								appendConstructorCallArguments(inner_ctor_op, inner_ctor, base_init->arguments, node.name_token());
+								finalizeConstructorCallOp(inner_ctor_op, *inner_struct_info, node.name_token());
+								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(inner_ctor_op), node.name_token()));
+								handled_as_aggregate_base = true;
+								break;
+							}
+						}
+					}
+
+					if (!handled_as_aggregate_base) {
+						appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
+						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
+						// If there's an explicit initializer, generate the constructor call
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					}
 				}
 				// If no explicit initializer and this is NOT an implicit copy/move constructor,
 				// call default constructor (no args)
@@ -3443,18 +3505,22 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// But first check for aggregate initialization: if no matching constructor was found
 	// (excluding implicit copy/move), and the struct has public members, generate direct
 	// member stores instead of a constructor call. This handles: return my_type{0}
-	if (!matching_ctor && struct_info && num_args > 0 && !struct_info->members.empty()) {
-		bool is_aggregate = true;
-		for (const auto& func : struct_info->member_functions) {
+
+	// Helper: returns true if the given struct is a C++20 aggregate
+	// (no user-declared constructors, only implicit ones allowed).
+	auto checkIsAggregate = [](const StructTypeInfo& si) {
+		for (const auto& func : si.member_functions) {
 			if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 				if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
-					is_aggregate = false;
-					break;
+					return false;
 				}
 			}
 		}
+		return true;
+	};
 
-		if (is_aggregate && num_args <= struct_info->members.size()) {
+	if (!matching_ctor && struct_info && num_args > 0 && !struct_info->members.empty()) {
+		if (checkIsAggregate(*struct_info) && num_args <= struct_info->members.size()) {
 			// Emit default constructor call first (zero-initializes the object)
 			fillInDefaultConstructorArguments(ctor_op, *struct_info);
 			finalizeConstructorCallOp(ctor_op, *struct_info, constructorCallNode.called_from());
@@ -3546,6 +3612,60 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
 
 			return makeExprResult(result_type_index.withCategory(result_type_category), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+		}
+	}
+
+	// C++20 extended aggregate: no user-declared constructors, no direct members, but
+	// has base class(es).  Forward all constructor arguments to the first base class
+	// whose constructor accepts them.
+	if (!matching_ctor && struct_info && num_args > 0 &&
+		struct_info->members.empty() && !struct_info->base_classes.empty()) {
+		if (checkIsAggregate(*struct_info)) {
+			for (const auto& base_spec : struct_info->base_classes) {
+				const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index);
+				if (!base_type_info) {
+					continue;
+				}
+				const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+				if (!base_struct_info) {
+					continue;
+				}
+				std::vector<TypeSpecifierNode> base_arg_types;
+				base_arg_types.reserve(num_args);
+				constructorCallNode.arguments().visit([&](ASTNode arg) {
+					auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+					if (arg_type_opt.has_value()) {
+						base_arg_types.push_back(std::move(*arg_type_opt));
+					}
+				});
+				if (base_arg_types.size() != num_args) {
+					continue;
+				}
+				auto base_resolution = resolve_constructor_overload(*base_struct_info, base_arg_types, false);
+				if (!base_resolution.selected_overload) {
+					continue;
+				}
+				// Emit default-construct for the outer aggregate first (zero-initializes it)
+				ConstructorCallOp outer_ctor_op;
+				outer_ctor_op.object = ret_var;
+				fillInDefaultConstructorArguments(outer_ctor_op, *struct_info);
+				finalizeConstructorCallOp(outer_ctor_op, *struct_info, constructorCallNode.called_from());
+				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(outer_ctor_op), constructorCallNode.called_from()));
+
+				// Then forward args to the base class constructor at its offset
+				ConstructorCallOp base_ctor_op;
+				base_ctor_op.object = ret_var;
+				assert(base_spec.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
+				base_ctor_op.base_class_offset = static_cast<int>(base_spec.offset);
+				base_ctor_op.resolved_constructor = base_resolution.selected_overload;
+				appendConstructorCallArguments(base_ctor_op, base_resolution.selected_overload,
+					constructorCallNode.arguments(), constructorCallNode.called_from());
+				finalizeConstructorCallOp(base_ctor_op, *base_struct_info, constructorCallNode.called_from());
+				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(base_ctor_op), constructorCallNode.called_from()));
+
+				setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
+				return makeExprResult(result_type_index.withCategory(result_type_category), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+			}
 		}
 	}
 
