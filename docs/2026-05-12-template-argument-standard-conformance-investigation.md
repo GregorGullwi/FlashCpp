@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (deferred-base replay metadata uplift for inherited member-template owner lookup)
+**Last updated:** 2026-05-23 (template static-member initializer replay metadata invariants enforced)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -72,6 +72,10 @@ Future work can rely on these being in place:
   `DeferredTemplateBaseClassSpecifier` entries (not only template names)**, and
   inherited member-template owner lookup now consumes those specifiers (including
   member-type chains) before falling back to legacy name-only traversal.
+- **in-class and out-of-line template static-member initializers now enforce
+  replay metadata invariants for dependent/complex initializers**: these paths
+  now fail fast on missing replay metadata instead of silently using broad
+  AST-only substitution fallback.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
@@ -87,13 +91,14 @@ Latest focused regressions added on the current branch:
 - `test_template_aggregate_base_class_ctor_ret0.cpp`
 - `test_template_type_param_qualified_static_call_ret0.cpp`
 - `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
+- `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`
 
 ## Remaining work, in priority order
 
 ### 1. Remove the next replay-metadata gap
 
-Continue with the remaining declaration/static-member replay
-paths that still never captured enough metadata at parse time.
+Continue with the remaining declaration replay paths outside static-member
+initializers that still never captured enough metadata at parse time.
 
 Rule for this work:
 
@@ -132,8 +137,8 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. continue with the remaining declaration/static-member replay
-   paths that still never captured enough metadata at parse time;
+1. continue with the remaining non-static declaration replay paths that still
+   never captured enough metadata at parse time;
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
@@ -144,7 +149,7 @@ Keep adding narrow regressions in these areas:
   or equivalent dependent-base lookup — particularly through partial specs;
 - declaration/definition attachment where inner and outer template parameters
   interact;
-- remaining declaration/static-member replay paths that still fall back to
+- remaining non-static declaration replay paths that still fall back to
   partially substituted AST state.
 
 ## Exit criteria
