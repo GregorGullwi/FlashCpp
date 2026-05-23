@@ -297,6 +297,7 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 	adjust_argument_type_for_overload_resolution(binary_operator_node.get_rhs(), *right_type_spec);
 
 	OperatorOverloadResult overload_result;
+	bool equality_rewrite_negate = false;
 	if (op_kind == OverloadableOperator::Assign) {
 		overload_result = findBinaryOperatorOverload(
 			*left_type_spec,
@@ -320,6 +321,17 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 			}
 		}
 	}
+	if (!overload_result.has_match && !overload_result.is_ambiguous && op_kind == OverloadableOperator::NotEqual) {
+		OperatorOverloadResult eq_overload = findBinaryOperatorOverloadWithFreeFunction(
+			*left_type_spec,
+			*right_type_spec,
+			OverloadableOperator::Equal,
+			gSymbolTable);
+		if (eq_overload.has_match && !eq_overload.is_ambiguous) {
+			overload_result = eq_overload;
+			equality_rewrite_negate = true;
+		}
+	}
 
 	if (overload_result.is_ambiguous) {
 		binary_operator_node.set_ambiguous_operator_overload();
@@ -329,6 +341,7 @@ void Parser::annotateConcreteBinaryOperatorOverload(BinaryOperatorNode& binary_o
 		} else {
 			binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload);
 		}
+		binary_operator_node.set_recorded_equality_rewrite_negate(equality_rewrite_negate);
 	} else {
 		binary_operator_node.set_no_match_operator_overload();
 	}
@@ -859,6 +872,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						adjust_argument_type_for_overload_resolution(*rightNode, *right_type_spec);
 
 						OperatorOverloadResult overload_result;
+						bool equality_rewrite_negate = false;
 						if (op_kind == OverloadableOperator::Assign) {
 							overload_result = findBinaryOperatorOverload(
 								*left_type_spec,
@@ -882,6 +896,17 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 							}
 							}
 						}
+						if (!overload_result.has_match && !overload_result.is_ambiguous && op_kind == OverloadableOperator::NotEqual) {
+							OperatorOverloadResult eq_overload = findBinaryOperatorOverloadWithFreeFunction(
+								*left_type_spec,
+								*right_type_spec,
+								OverloadableOperator::Equal,
+								gSymbolTable);
+							if (eq_overload.has_match && !eq_overload.is_ambiguous) {
+								overload_result = eq_overload;
+								equality_rewrite_negate = true;
+							}
+						}
 
 						if (overload_result.is_ambiguous) {
 							binary_operator_node.set_ambiguous_operator_overload();
@@ -891,6 +916,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 							} else {
 								binary_operator_node.set_resolved_member_operator_overload(overload_result.member_overload);
 							}
+							binary_operator_node.set_recorded_equality_rewrite_negate(equality_rewrite_negate);
 						} else {
 							binary_operator_node.set_no_match_operator_overload();
 						}

@@ -2417,6 +2417,7 @@ public:
 	bool has_resolved_operator_overload() const { return has_resolved_member_operator_overload() || has_resolved_free_function_operator_overload(); }
 	bool has_ambiguous_operator_overload() const { return semantic_operator_resolution_state_ == BinaryOperatorSemanticResolutionState::Ambiguous; }
 	bool has_no_match_operator_overload() const { return semantic_operator_resolution_state_ == BinaryOperatorSemanticResolutionState::NoMatch; }
+	bool has_recorded_equality_rewrite_negate() const { return semantic_rewrite_neq_to_eq_; }
 	const StructMemberFunction* resolved_member_operator_overload() const { return resolved_member_operator_overload_; }
 	const FunctionDeclarationNode* resolved_free_function_operator_overload() const { return resolved_free_function_operator_overload_; }
 
@@ -2426,6 +2427,7 @@ public:
 		semantic_operator_resolution_state_ = overload != nullptr
 												  ? BinaryOperatorSemanticResolutionState::MemberMatch
 												  : BinaryOperatorSemanticResolutionState::NoMatch;
+		semantic_rewrite_neq_to_eq_ = false;
 	}
 
 	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
@@ -2434,30 +2436,39 @@ public:
 		semantic_operator_resolution_state_ = overload != nullptr
 												  ? BinaryOperatorSemanticResolutionState::FreeFunctionMatch
 												  : BinaryOperatorSemanticResolutionState::NoMatch;
+		semantic_rewrite_neq_to_eq_ = false;
+	}
+
+	void set_recorded_equality_rewrite_negate(bool value) {
+		semantic_rewrite_neq_to_eq_ = value;
 	}
 
 	void set_no_match_operator_overload() {
 		resolved_member_operator_overload_ = nullptr;
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::NoMatch;
+		semantic_rewrite_neq_to_eq_ = false;
 	}
 
 	void set_ambiguous_operator_overload() {
 		resolved_member_operator_overload_ = nullptr;
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Ambiguous;
+		semantic_rewrite_neq_to_eq_ = false;
 	}
 
 	void clear_semantic_operator_resolution() {
 		resolved_member_operator_overload_ = nullptr;
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
+		semantic_rewrite_neq_to_eq_ = false;
 	}
 
 	void copy_semantic_operator_resolution_from(const BinaryOperatorNode& other) {
 		resolved_member_operator_overload_ = other.resolved_member_operator_overload_;
 		resolved_free_function_operator_overload_ = other.resolved_free_function_operator_overload_;
 		semantic_operator_resolution_state_ = other.semantic_operator_resolution_state_;
+		semantic_rewrite_neq_to_eq_ = other.semantic_rewrite_neq_to_eq_;
 	}
 
 private:
@@ -2468,6 +2479,7 @@ private:
 	const StructMemberFunction* resolved_member_operator_overload_ = nullptr;
 	const FunctionDeclarationNode* resolved_free_function_operator_overload_ = nullptr;
 	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
+	bool semantic_rewrite_neq_to_eq_ = false;
 };
 
 class UnaryOperatorNode {

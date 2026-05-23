@@ -2299,7 +2299,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 																						  ? concrete_operands_require_user_defined_operator
 																						  : (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));
 	bool can_try_spaceship_rewrite = false;
-	bool equality_rewrite_negate = false; // C++20 [over.match.oper]: for !=, rewrite to !(a == b)
+	bool equality_rewrite_negate = binaryOperatorNode.has_recorded_equality_rewrite_negate();
 
 	if (should_attempt_operator_overload) {
 		// Check for operator overload (member function or free function)
