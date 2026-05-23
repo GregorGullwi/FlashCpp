@@ -1483,6 +1483,26 @@ ParseResult Parser::parse_template_declaration() {
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
 				advance();  // consume ':'
+				auto build_deferred_base_replay_metadata = [&](const Token& definition_token) {
+					TemplateDefinitionLookupContext definition_lookup_context;
+					if (current_template_definition_lookup_context_ != nullptr &&
+						current_template_definition_lookup_context_->is_valid()) {
+						definition_lookup_context = *current_template_definition_lookup_context_;
+					} else if (parsing_template_depth_ > 0 || hasActiveTemplateParameters()) {
+						definition_lookup_context = buildDefinitionLookupContextFromToken(
+							definition_token,
+							struct_ref.name());
+					}
+
+					TemplateReplayParameterState replay_template_parameters;
+					const auto& active_template_params = currentTemplateParamState();
+					replay_template_parameters.names = active_template_params.names;
+					replay_template_parameters.kinds = active_template_params.kinds;
+					replay_template_parameters.non_type_categories = active_template_params.non_type_categories;
+					return std::pair<TemplateDefinitionLookupContext, TemplateReplayParameterState>{
+						std::move(definition_lookup_context),
+						std::move(replay_template_parameters)};
+				};
 
 				do {
 					// Parse virtual keyword (optional)
@@ -1507,6 +1527,7 @@ ParseResult Parser::parse_template_declaration() {
 						return ParseResult::error("Expected base class name", peek_info());
 					}
 
+					SaveHandle base_specifier_replay_position = save_token_position();
 					Token base_name_token = advance();
 					StringBuilder base_class_name_builder;
 					base_class_name_builder.append(base_name_token.value());
@@ -1568,7 +1589,18 @@ ParseResult Parser::parse_template_declaration() {
 							auto arg_infos = build_template_arg_infos(base_template_args, template_arg_nodes);
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
+							auto [replay_definition_lookup_context, replay_template_parameters] =
+								build_deferred_base_replay_metadata(base_name_token);
+							struct_ref.add_deferred_template_base_class(
+								template_name_handle,
+								std::move(arg_infos),
+								std::move(member_type_chain),
+								base_access,
+								is_virtual_base,
+								post_info.is_pack_expansion,
+								base_specifier_replay_position,
+								replay_definition_lookup_context,
+								std::move(replay_template_parameters));
 							continue;  // Skip to next base class or exit loop
 						}
 
@@ -2918,6 +2950,26 @@ ParseResult Parser::parse_template_declaration() {
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
 				advance();  // consume ':'
+				auto build_deferred_base_replay_metadata = [&](const Token& definition_token) {
+					TemplateDefinitionLookupContext definition_lookup_context;
+					if (current_template_definition_lookup_context_ != nullptr &&
+						current_template_definition_lookup_context_->is_valid()) {
+						definition_lookup_context = *current_template_definition_lookup_context_;
+					} else if (parsing_template_depth_ > 0 || hasActiveTemplateParameters()) {
+						definition_lookup_context = buildDefinitionLookupContextFromToken(
+							definition_token,
+							struct_ref.name());
+					}
+
+					TemplateReplayParameterState replay_template_parameters;
+					const auto& active_template_params = currentTemplateParamState();
+					replay_template_parameters.names = active_template_params.names;
+					replay_template_parameters.kinds = active_template_params.kinds;
+					replay_template_parameters.non_type_categories = active_template_params.non_type_categories;
+					return std::pair<TemplateDefinitionLookupContext, TemplateReplayParameterState>{
+						std::move(definition_lookup_context),
+						std::move(replay_template_parameters)};
+				};
 
 				do {
 					// Parse virtual keyword (optional)
@@ -2938,6 +2990,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 
 					// Parse base class name - could be qualified like ns::Base or simple like Base
+					SaveHandle base_specifier_replay_position = save_token_position();
 					auto base_name_token = advance();
 					if (base_name_token.type() != Token::Type::Identifier) {
 						return ParseResult::error("Expected base class name", base_name_token);
@@ -2998,7 +3051,18 @@ ParseResult Parser::parse_template_declaration() {
 							auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
+							auto [replay_definition_lookup_context, replay_template_parameters] =
+								build_deferred_base_replay_metadata(base_name_token);
+							struct_ref.add_deferred_template_base_class(
+								template_name_handle,
+								std::move(arg_infos),
+								std::move(post_info.member_type_chain),
+								base_access,
+								is_virtual_base,
+								post_info.is_pack_expansion,
+								base_specifier_replay_position,
+								replay_definition_lookup_context,
+								std::move(replay_template_parameters));
 							continue;  // Skip to next base class or exit loop
 						}
 
@@ -4668,6 +4732,27 @@ ParseResult Parser::parse_template_declaration() {
 ParseResult Parser::parse_member_struct_template_base_class_list(
 	StructDeclarationNode& struct_ref,
 	bool is_class) {
+	auto build_deferred_base_replay_metadata = [&](const Token& definition_token) {
+		TemplateDefinitionLookupContext definition_lookup_context;
+		if (current_template_definition_lookup_context_ != nullptr &&
+			current_template_definition_lookup_context_->is_valid()) {
+			definition_lookup_context = *current_template_definition_lookup_context_;
+		} else if (parsing_template_depth_ > 0 || hasActiveTemplateParameters()) {
+			definition_lookup_context = buildDefinitionLookupContextFromToken(
+				definition_token,
+				struct_ref.name());
+		}
+
+		TemplateReplayParameterState replay_template_parameters;
+		const auto& active_template_params = currentTemplateParamState();
+		replay_template_parameters.names = active_template_params.names;
+		replay_template_parameters.kinds = active_template_params.kinds;
+		replay_template_parameters.non_type_categories = active_template_params.non_type_categories;
+		return std::pair<TemplateDefinitionLookupContext, TemplateReplayParameterState>{
+			std::move(definition_lookup_context),
+			std::move(replay_template_parameters)};
+	};
+
 	do {
 		// Optional 'virtual' keyword
 		bool is_virtual_base = false;
@@ -4689,6 +4774,7 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 			return ParseResult::error("Expected base class name", peek_info());
 		}
 
+		SaveHandle base_specifier_replay_position = save_token_position();
 		Token base_name_token = advance();
 		StringBuilder base_class_name_builder;
 		base_class_name_builder.append(base_name_token.value());
@@ -4722,9 +4808,18 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 			// Always defer since we are inside a template body
 			auto arg_infos = build_template_arg_infos(*template_args_opt, template_arg_nodes);
 			StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
+			auto [replay_definition_lookup_context, replay_template_parameters] =
+				build_deferred_base_replay_metadata(base_name_token);
 			struct_ref.add_deferred_template_base_class(
-				template_name_handle, std::move(arg_infos),
-				std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
+				template_name_handle,
+				std::move(arg_infos),
+				std::move(post_info.member_type_chain),
+				base_access,
+				is_virtual_base,
+				post_info.is_pack_expansion,
+				base_specifier_replay_position,
+				replay_definition_lookup_context,
+				std::move(replay_template_parameters));
 		} else {
 			// Simple identifier base class – look it up now; defer only if it's a template parameter
 			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_class_name));

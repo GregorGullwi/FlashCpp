@@ -5,6 +5,9 @@
 #include <functional>
 #include <span>
 
+enum class TypeCategory : uint8_t;
+enum class TemplateParameterKind;
+
 enum class TypeQualifier {
 	None,
 	Signed,
@@ -60,6 +63,16 @@ struct TemplateDefinitionLookupContext {
 	const SourceLocation& definitionLocation() const { return definition_location; }
 	void setDefinitionLocation(SourceLocation location) { definition_location = location; }
 	void setDefinitionToken(const Token& token) { definition_location = SourceLocation::fromToken(token); }
+};
+
+struct TemplateReplayParameterState {
+	InlineVector<StringHandle, 4> names;
+	InlineVector<TemplateParameterKind, 4> kinds;
+	InlineVector<TypeCategory, 4> non_type_categories;
+
+	bool hasParameters() const {
+		return !names.empty();
+	}
 };
 inline CVQualifier operator|(CVQualifier a, CVQualifier b) {
 	return static_cast<CVQualifier>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
@@ -1006,9 +1019,26 @@ struct DeferredBaseClassSpecifier {
 	ASTNode decltype_expression;	 // The parsed decltype expression
 	AccessSpecifier access;		// Inheritance access (public/protected/private)
 	bool is_virtual;				 // True for virtual inheritance
+	std::optional<SaveHandle> replay_position;
+	TemplateDefinitionLookupContext replay_definition_lookup_context;
+	TemplateReplayParameterState replay_template_parameters;
 
-	DeferredBaseClassSpecifier(ASTNode expr, AccessSpecifier acc, bool virt = false)
-		: decltype_expression(expr), access(acc), is_virtual(virt) {}
+	DeferredBaseClassSpecifier(
+		ASTNode expr,
+		AccessSpecifier acc,
+		bool virt,
+		SaveHandle replay_pos,
+		const TemplateDefinitionLookupContext& lookup_context,
+		TemplateReplayParameterState replay_template_param_state)
+		: decltype_expression(expr),
+		  access(acc),
+		  is_virtual(virt),
+		  replay_position(replay_pos),
+		  replay_definition_lookup_context(lookup_context),
+		  replay_template_parameters(std::move(replay_template_param_state)) {}
+
+	bool hasReplayPosition() const { return replay_position.has_value(); }
+	SaveHandle replayPosition() const { return *replay_position; }
 };
 
 struct TemplateArgumentNodeInfo {
@@ -1035,19 +1065,31 @@ struct DeferredTemplateBaseClassSpecifier {
 	AccessSpecifier access;
 	bool is_virtual;
 	bool is_pack_expansion = false; // e.g., Base<Args>...
+	std::optional<SaveHandle> replay_position;
+	TemplateDefinitionLookupContext replay_definition_lookup_context;
+	TemplateReplayParameterState replay_template_parameters;
 
 	DeferredTemplateBaseClassSpecifier(StringHandle name,
 									   std::vector<TemplateArgumentNodeInfo> args,
 									   std::vector<QualifiedTypeMemberAccess> member_chain,
 									   AccessSpecifier acc,
 									   bool virt,
-									   bool pack_expansion = false)
+									   bool pack_expansion,
+									   SaveHandle replay_pos,
+									   const TemplateDefinitionLookupContext& lookup_context,
+									   TemplateReplayParameterState replay_template_param_state)
 		: base_template_name(name),
 		  template_arguments(std::move(args)),
 		  member_type_chain(std::move(member_chain)),
 		  access(acc),
 		  is_virtual(virt),
-		  is_pack_expansion(pack_expansion) {}
+		  is_pack_expansion(pack_expansion),
+		  replay_position(replay_pos),
+		  replay_definition_lookup_context(lookup_context),
+		  replay_template_parameters(std::move(replay_template_param_state)) {}
+
+	bool hasReplayPosition() const { return replay_position.has_value(); }
+	SaveHandle replayPosition() const { return *replay_position; }
 };
 
 // Function signature for function pointers
