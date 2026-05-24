@@ -1,8 +1,10 @@
+#include <stddef.h>
+
 template<typename T>
 struct Iter {
 	T* ptr;
 
-	long operator-(const Iter& other) const;
+	ptrdiff_t operator-(const Iter& other) const;
 };
 
 int main() {
