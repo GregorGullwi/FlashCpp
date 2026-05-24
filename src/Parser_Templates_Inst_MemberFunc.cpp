@@ -1997,6 +1997,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());
+			new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 			if (param_decl.has_default_value()) {
 				ExpressionSubstitutor substitutor(default_environment, *this);
 				ASTNode substituted_default = substitutor.substitute(param_decl.default_value());

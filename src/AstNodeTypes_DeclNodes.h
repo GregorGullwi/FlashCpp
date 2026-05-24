@@ -2251,6 +2251,15 @@ public:
 	const ASTNode& default_value() const { return default_value_.value(); }
 	void set_default_value(ASTNode value) { default_value_ = value; }
 
+	// Copies declaration metadata (excluding type node and identifier token).
+	void copyMetadataFrom(const DeclarationNode& other) {
+		custom_alignment_ = other.custom_alignment_;
+		is_parameter_pack_ = other.is_parameter_pack_;
+		is_unsized_array_ = other.is_unsized_array_;
+		array_dimensions_ = other.array_dimensions_;
+		default_value_ = other.default_value_;
+	}
+
 	// Pre-computed external symbol name support (e.g. GNU __asm__("symbol") labels)
 	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
 	std::string_view mangled_name() const { return mangled_name_.view(); }

@@ -18,7 +18,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
 | `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1499ms (retested 2026-05-23, Linux/libstdc++-14). |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~2.60s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~4.44s (retested 2026-05-23, Linux/libstdc++-14). Progressed past earlier wide-literal type mismatch and now stops later in IR conversion at `Type with no runtime size reached codegen in direct call return size (type=25)` in the `find` path. |
@@ -32,8 +32,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3.47s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~3763ms (retested 2026-04-24, Linux/libstdc++). `_M_tail` blocker resolved by the member-function overload fix; now first-order error is non-dependent name `__node_gen` C++20 [temp.res]/9 violation (false positive triggered by template reparse depth-guard firing during deep instantiation). |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3.56s (retested 2026-05-23, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is still `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~5.06s (retested 2026-05-23, Linux/libstdc++-14). Progressed past the previous `<tuple>` out-of-line constructor parameter-list parse stop (`tuple:2886`); current first hard stop is later at `bits/std_function.h:130` (`Expected ';' after type alias`). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-23 Linux/libstdc++ nested out-of-line member-template parameter-context follow-up
+
+Fix landed:
+
+- **Nested out-of-line member-template signature parsing now merges outer + inner template parameter context (including kinds/categories) while parsing the parameter list.**
+- **Dependent non-type template-argument classification now preserves NTTP category when a current template parameter has no pre-registered `TypeIndex`.**
+
+Regression coverage:
+
+- `tests/test_out_of_line_member_template_inner_nttp_param_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_out_of_line_member_template_inner_nttp_param_ret0.cpp` | ✅ Pass | focused runner | New regression verifies out-of-line member templates keep inner NTTPs visible in parameter types (`int (&)[N]`). |
+| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | 5.06s | Progresses past prior `<tuple>:2886` parse stop; current first stop is `bits/std_function.h:130` (`Expected ';' after type alias`). |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | 2.60s | Still compiles. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | 3.56s | First stop unchanged at `bits/alloc_traits.h:904` (`Failed to instantiate template function`). |
 
 ### 2026-05-23 Linux/libstdc++ wide-string-literal type follow-up
 

@@ -1187,8 +1187,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 				// For references to arrays (e.g., int (&arr)[3]), the reference parameter
 				// already holds the array address directly. We don't dereference it.
-				// Just return it as a pointer (64 bits on x64 architecture).
-			if (type_node.is_array()) {
+				// Array extents can live on either the declaration node or the type node,
+				// so check both representations before falling through to ordinary reference
+				// dereference handling.
+			if (decl_node.is_array() || type_node.is_array()) {
 					// Return the array reference as a 64-bit pointer
 				return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
 			}
@@ -1362,8 +1364,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 					// For references to arrays (e.g., int (&arr)[3]), the reference variable
 					// already holds the array address directly. We don't dereference it.
-					// Just return it as a pointer (64 bits on x64 architecture).
-				if (type_node.is_array()) {
+					// Array extents can live on either the declaration node or the type node,
+					// so check both representations before treating this like an ordinary
+					// reference value.
+				if (decl_node.is_array() || type_node.is_array()) {
 						// Return the array reference as a 64-bit pointer
 					return makeExprResult(nativeTypeIndex(type_node.type()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{StringTable::getOrInternStringHandle(identifierNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
 				}

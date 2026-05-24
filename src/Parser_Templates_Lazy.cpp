@@ -245,6 +245,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 				auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
+				substituted_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 				if (param_decl.has_default_value()) {
 					ASTNode substituted_default = substituteTemplateParameters(
 						param_decl.default_value(),

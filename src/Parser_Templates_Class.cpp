@@ -495,6 +495,35 @@ ParseResult Parser::parse_template_declaration() {
 			}
 
 			if (found_nested_def && peek() == "("_tok) {
+				auto merge_template_metadata = []<typename T>(
+					InlineVector<T, 4>& dest,
+					const InlineVector<T, 4>& outer_values,
+					const InlineVector<T, 4>& inner_values) {
+					dest.reserve(outer_values.size() + inner_values.size());
+					dest.insert(dest.end(), outer_values.begin(), outer_values.end());
+					dest.insert(dest.end(), inner_values.begin(), inner_values.end());
+				};
+
+				InlineVector<StringHandle, 4> nested_template_param_names;
+				InlineVector<TemplateParameterKind, 4> nested_template_param_kinds;
+				InlineVector<TypeCategory, 4> nested_template_param_non_type_categories;
+				merge_template_metadata(
+					nested_template_param_names,
+					template_param_metadata.names,
+					inner_template_param_metadata.names);
+				merge_template_metadata(
+					nested_template_param_kinds,
+					template_param_metadata.kinds,
+					inner_template_param_metadata.kinds);
+				merge_template_metadata(
+					nested_template_param_non_type_categories,
+					template_param_metadata.non_type_categories,
+					inner_template_param_metadata.non_type_categories);
+				setCurrentTemplateParameters(
+					nested_template_param_names,
+					nested_template_param_kinds,
+					nested_template_param_non_type_categories);
+
 				// Create a stub function declaration for registration
 				auto void_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, nested_func_name_token, CVQualifier::None);
 				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, nested_func_name_token);

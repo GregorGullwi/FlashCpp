@@ -2357,9 +2357,7 @@ bool Parser::materializeTemplateFunctionParameters(
 			}
 			ASTNode param_type = buildMaterializedParamType(param_decl, flat_subst_params, flat_subst_args);
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-			if (param_decl.has_default_value()) {
-				new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-			}
+			new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 			new_func_ref.add_parameter_node(new_param_decl);
 			arg_type_index++;
 		}
@@ -2525,9 +2523,7 @@ bool Parser::materializeTemplateFunctionParameters(
 		}
 
 		auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
-		if (param_decl.has_default_value()) {
-			new_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-		}
+		new_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 		new_func_ref.add_parameter_node(new_param_decl);
 		if (arg_type_index < arg_types->size()) {
 			arg_type_index++;
