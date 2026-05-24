@@ -1724,9 +1724,17 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			apply_bound_metadata_to_full_substitution,
 			apply_resolved_index_to_full_substitution);
 		if (!preserve_parameter_cv_qualifier) {
-			// Declaration-only member-instantiation historically cleared parameter-level cv here.
-			// Keep that behavior configurable to avoid semantic drift across refactored paths.
-			substituted_param_type.set_cv_qualifier(CVQualifier::None);
+			// Preserve cv-qualification that participates in pointee/referred type identity.
+			// Only strip top-level cv on by-value parameters, matching function-parameter
+			// adjustment rules while keeping pointer/reference signatures stable for
+			// out-of-line replay attachment and mangling.
+			const bool is_by_value_parameter =
+				substituted_param_type.pointer_depth() == 0 &&
+				!substituted_param_type.is_reference() &&
+				!substituted_param_type.is_rvalue_reference();
+			if (is_by_value_parameter) {
+				substituted_param_type.set_cv_qualifier(CVQualifier::None);
+			}
 		}
 
 		if (self_type_from_index.is_valid() &&
@@ -10915,7 +10923,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					TypeIndex{},
 					TypeIndex{},
 					SubstitutedDefaultArgumentPolicy::None,
-					false, // Declaration-only path: clear parameter cv-qualifier to preserve legacy behavior
+					false, // Declaration-only path: strip only top-level by-value cv-qualifiers
 					false, // Do not re-apply bound metadata to full substitution
 					true); // Force resolved TypeIndex onto full AST substitutions
 				pack_param_info_.resize(saved_pack_info);

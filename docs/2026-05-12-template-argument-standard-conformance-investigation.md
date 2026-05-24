@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (plain non-template out-of-line member attachment now resolves via source-member→stub identity for primary and partial-spec class-template instantiation paths, removing instantiated-member scan attachment in that slice)
+**Last updated:** 2026-05-24 (declaration-only member stub substitution now strips only top-level by-value cv qualifiers, preserving pointer/reference cv identity so replay-first OOL plain-member attachment materializes constructor+member template cases correctly)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -51,6 +51,11 @@ Future work can rely on these being in place:
   attachment now use replay-first source-member→instantiated-stub identity
   lookup (including same-name overloads)**, removing the old
   instantiated-member name/arity attachment scan for that slice.
+- **declaration-only member stub substitution now strips only top-level
+  by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
+  so replay-first source-member signature matching and mangled identity remain
+  stable for out-of-line plain members (including classes that also declare
+  constructors).
 - **deferred class-template constructor replay now uses normalized template
   environments for substitution registration**, preserving full typed NTTP
   identity payloads (pointer/reference/function-pointer/member-pointer) and
@@ -110,6 +115,7 @@ Latest focused regressions added on the current branch:
 - `test_template_nttp_deferred_ctor_body_pointer_function_ret0.cpp`
 - `test_template_ool_plain_member_same_name_overload_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
+- `out_of_line_template_member_with_ctor_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -157,6 +163,8 @@ Still open, but not the next best slice:
 1. remove remaining declaration replay scans in non-static template-member
    attachment paths, starting with constructor attachment/replay paths that
    still recover targets from instantiated members instead of source members;
+   keep function-parameter adjustment rules centralized so replay/attachment
+   compares canonical signatures across eager/lazy/declaration-only paths;
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
