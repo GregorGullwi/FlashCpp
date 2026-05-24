@@ -127,6 +127,10 @@ bool isCodegenSynthesizedOverloadArg(const ASTNode& arg) {
 					  expr);
 }
 
+// In sema-normalized bodies, identifier-based same-type constructor selection
+// must not silently fall back to symbol-table recovery when sema-owned
+// overload-argument typing is missing. Other expression shapes remain
+// compatibility paths for now.
 bool shouldPropagateMissingSemaOverloadArgType(const ASTNode& arg) {
 	if (!arg.is<ExpressionNode>()) {
 		return false;
@@ -216,6 +220,11 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 }
 
 std::optional<TypeSpecifierNode> AstToIr::tryBuildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
+	// Centralized policy wrapper:
+	// - propagate InternalError for normalized identifier paths where sema metadata
+	//   is required;
+	// - otherwise return unknown and let existing non-normalized/non-identifier
+	//   compatibility fallbacks continue.
 	try {
 		return buildCodegenOverloadResolutionArgType(arg);
 	} catch (const InternalError&) {
