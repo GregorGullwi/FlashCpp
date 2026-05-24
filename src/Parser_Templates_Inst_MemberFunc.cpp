@@ -1197,21 +1197,16 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		}
 	}
 
-	if (template_candidates.empty()) {
-		if (auto type_it = getTypesByNameMap().find(struct_name_handle);
-			type_it != getTypesByNameMap().end()) {
-			if (const TypeInfo* struct_type = type_it->second;
-				struct_type != nullptr && struct_type->sourceNamespace().isValid()) {
-				const std::string_view qualified_owner_name = buildQualifiedNameFromHandle(
-					struct_type->sourceNamespace(),
-					struct_name);
-				if (!qualified_owner_name.empty() &&
-					qualified_owner_name != struct_name) {
-					template_candidates = lookupMemberFunctionTemplateCandidatesForInstantiation(
-						qualified_owner_name,
-						member_name);
-				}
-			}
+	if (template_candidates.empty() && struct_type_info != nullptr &&
+		struct_type_info->sourceNamespace().isValid()) {
+		const std::string_view qualified_owner_name = buildQualifiedNameFromHandle(
+			struct_type_info->sourceNamespace(),
+			struct_name);
+		if (!qualified_owner_name.empty() &&
+			qualified_owner_name != struct_name) {
+			template_candidates = lookupMemberFunctionTemplateCandidatesForInstantiation(
+				qualified_owner_name,
+				member_name);
 		}
 	}
 
