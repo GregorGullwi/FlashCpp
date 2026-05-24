@@ -420,6 +420,10 @@ private:
 	CanonicalTypeId canonicalizeType(const TypeSpecifierNode& type);
 	void resolveRemainingAutoReturns();
 	void resolveRemainingAutoReturnsInNode(ASTNode& node);
+	// Retry deferred copy-init converting-constructor annotations after lazy-member
+	// drain and auto-return resolution so every call to an auto-return function that
+	// was a lazy stub at annotation time is correctly annotated.
+	void resolvePendingCopyInitAnnotations();
 	std::optional<TypeSpecifierNode> deducePlaceholderReturnType(const ASTNode& body, TypeCategory placeholder_type);
 	TypeSpecifierNode finalizePlaceholderDeduction(TypeCategory placeholder_type, const TypeSpecifierNode& deduced_type) const;
 	std::optional<TypeSpecifierNode> resolveCallableReturnType(const FunctionDeclarationNode& callable);
@@ -667,6 +671,18 @@ private:
 	// "not yet analyzed" from "analyzed and no operator[] overload selected".
 	std::unordered_map<const ArraySubscriptNode*, const FunctionDeclarationNode*> op_subscript_table_;
 	std::unordered_set<const ArraySubscriptNode*> analyzed_op_subscript_queries_;
+
+	// Deferred copy-init converting-constructor annotations.
+	// Populated during normalizeStatement for VariableDeclarationNode when
+	// tryAnnotateCopyInitConvertingConstructor fails because the init-expression
+	// type is not yet known (e.g. a call to a lazy auto-return function whose
+	// body has not been materialized yet). Drained by resolvePendingCopyInitAnnotations()
+	// after lazy-member drain and resolveRemainingAutoReturns().
+	struct PendingCopyInitAnnotation {
+		ASTNode init_expr;
+		CanonicalTypeId target_type_id;
+	};
+	std::vector<PendingCopyInitAnnotation> pending_copy_init_annotations_;
 
 	// Track which function body ASTNode pointers sema has normalized.
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited

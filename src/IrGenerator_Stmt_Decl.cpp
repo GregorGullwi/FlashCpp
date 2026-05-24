@@ -2538,6 +2538,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// For converting constructors in copy initialization, check if constructor is explicit
 							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
+								if (sema_normalized_current_function_) {
+									throw InternalError("Sema did not annotate converting constructor for normalized body");
+								}
 									// Find converting constructors that take the initializer type as single parameter.
 									// Scan all candidates: only error when every match is explicit.
 								bool found_matching_ctor = false;
