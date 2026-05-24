@@ -2350,7 +2350,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										matching_ctor = resolution.selected_overload;
 									}
 
-									if (!matching_ctor) {
+									if (!matching_ctor && !sema_normalized_current_function_) {
 										FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(type_info->name()));
 										auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, num_args, true);
 										matching_ctor = arity_resolution.selected_overload;
