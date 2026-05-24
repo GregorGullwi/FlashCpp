@@ -1775,7 +1775,8 @@ bool Parser::trySubstituteValueTemplateParameterExpression(
 			const auto& identity = *subst.typed_value_identity;
 			const auto kind = identity.kind;
 			if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
-				 kind == FlashCpp::NonTypeValueIdentityKind::Reference) &&
+				 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
+				 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
 				identity.entity_name.isValid()) {
 				std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
 				Token entity_token(Token::Type::Identifier, entity_name_view,
@@ -1786,22 +1787,7 @@ bool Parser::trySubstituteValueTemplateParameterExpression(
 					source_token.file_index());
 				ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
 				result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
-				FLASH_LOG(Templates, Debug, "Substituted ObjectPointer/Reference NTTP '", param_name,
-					"' with &", entity_name_view);
-				return true;
-			}
-			if (kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
-				identity.entity_name.isValid()) {
-				std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
-				Token entity_token(Token::Type::Identifier, entity_name_view,
-					source_token.line(), source_token.column(),
-					source_token.file_index());
-				Token amp_token(Token::Type::Operator, "&"sv,
-					source_token.line(), source_token.column(),
-					source_token.file_index());
-				ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
-				result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
-				FLASH_LOG(Templates, Debug, "Substituted FunctionPointer NTTP '", param_name,
+				FLASH_LOG(Templates, Debug, "Substituted pointer/reference/function-pointer NTTP '", param_name,
 					"' with &", entity_name_view);
 				return true;
 			}
