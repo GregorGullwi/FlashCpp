@@ -17,5 +17,11 @@ int Box<T>::pick(U, U) { return 42; }
 
 int main() {
 	Box<int> b;
-	return b.pick(0, 0) - 42;
+	if (b.pick(123) != 1) {
+		return 1;
+	}
+	if (b.pick(0, 0) != 42) {
+		return 2;
+	}
+	return 0;
 }
