@@ -1188,6 +1188,29 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
+		const std::string_view unqualified_owner_name = unqualifiedTypeComponent(struct_name);
+		if (!unqualified_owner_name.empty() &&
+			unqualified_owner_name != struct_name) {
+			template_candidates = lookupMemberFunctionTemplateCandidatesForInstantiation(
+				unqualified_owner_name,
+				member_name);
+		}
+	}
+
+	if (template_candidates.empty() && struct_type_info != nullptr &&
+		struct_type_info->sourceNamespace().isValid()) {
+		const std::string_view qualified_owner_name = buildQualifiedNameFromHandle(
+			struct_type_info->sourceNamespace(),
+			struct_name);
+		if (!qualified_owner_name.empty() &&
+			qualified_owner_name != struct_name) {
+			template_candidates = lookupMemberFunctionTemplateCandidatesForInstantiation(
+				qualified_owner_name,
+				member_name);
+		}
+	}
+
+	if (template_candidates.empty()) {
 		return std::nullopt;	 // Not a template
 	}
 	qualified_name = template_candidates.front().identity.lookup_name;

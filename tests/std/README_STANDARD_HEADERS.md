@@ -33,7 +33,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3.56s (retested 2026-05-23, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is still `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.67s (retested 2026-05-24, Linux/libstdc++-14). Progressed past the prior `integral_constant<bool, __stored_locally>` alias parse stop (`bits/std_function.h:130`); current first hard stop moved later to `bits/std_function.h:274` (`No matching member function template for call to '_M_access'`). |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~6.41s (retested 2026-05-24, Linux/libstdc++-14). Progressed past the prior explicit member-template lookup stop in `bits/std_function.h:274` (`No matching member function template for call to '_M_access'`); current first hard stop moved later to `bits/alloc_traits.h:904` (`Failed to instantiate template function`). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-24 Linux/libstdc++ namespace-qualified owner member-template lookup follow-up
+
+Fix landed:
+
+- **Explicit member-function-template instantiation now retries owner-name lookup across qualified/unqualified namespace forms when the initial owner spelling misses template-registry entries.**
+- Kept the fallback scoped to the explicit member-template instantiation path so ordinary member-template deduction/lookup behavior remains unchanged.
+
+Regression coverage:
+
+- `tests/test_member_template_namespace_explicit_noargs_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_member_template_namespace_explicit_noargs_ret0.cpp` | ✅ Pass | focused runner | New regression verifies `Ns::Type::template member<T>()` style explicit no-arg member-template calls resolve when the owner type lives in a namespace. |
+| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | 6.41s | Progresses past `bits/std_function.h:274` (`No matching member function template for call to '_M_access'`); current first hard stop is now `bits/alloc_traits.h:904` (`Failed to instantiate template function`). |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | 2.78s | Control retest still compiles. |
+| `<array>` (`test_std_array.cpp`) | ✅ Pass | 4.27s | Control retest still compiles. |
 
 ### 2026-05-24 Linux/libstdc++ nested member-template static-bool NTTP alias follow-up
 
