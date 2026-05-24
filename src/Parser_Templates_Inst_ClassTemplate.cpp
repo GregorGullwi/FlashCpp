@@ -8577,6 +8577,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			template_param_kinds,
 			non_type_categories);
 
+		TypeIndex struct_type_index{};
+		if (auto type_it = getTypesByNameMap().find(owning_instantiated_name);
+			type_it != getTypesByNameMap().end()) {
+			struct_type_index = type_it->second->type_index_;
+		}
+		member_function_context_stack_.push_back(
+			{owning_instantiated_name, struct_type_index, nullptr, struct_info.get()});
+		struct MemberContextGuard {
+			Parser* parser;
+			~MemberContextGuard() {
+				if (!parser->member_function_context_stack_.empty()) {
+					parser->member_function_context_stack_.pop_back();
+				}
+			}
+		} member_ctx_scope{this};
+
 		restore_lexer_position_only(*static_member.initializer_position);
 
 		ASTNode declaration_copy = *static_member.declaration;
@@ -8600,13 +8616,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				reparsed_initializer = *init_result.node();
 			}
 		} else {
-			throw InternalError(
-				"Template static member initializer replay expected '=' or '{' token");
+			return std::nullopt;
 		}
 
 		if (!reparsed_initializer.has_value()) {
-			throw InternalError(
-				"Template static member initializer replay failed to parse initializer");
+			return std::nullopt;
 		}
 
 		return substituteTemplateParameters(
@@ -12016,6 +12030,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_param_kinds,
 					non_type_categories);
 
+				TypeIndex struct_type_index{};
+				if (auto type_it = getTypesByNameMap().find(instantiated_name);
+					type_it != getTypesByNameMap().end()) {
+					struct_type_index = type_it->second->type_index_;
+				}
+				member_function_context_stack_.push_back(
+					{instantiated_name, struct_type_index, nullptr, struct_info_ptr});
+				struct MemberContextGuard {
+					Parser* parser;
+					~MemberContextGuard() {
+						if (!parser->member_function_context_stack_.empty()) {
+							parser->member_function_context_stack_.pop_back();
+						}
+					}
+				} member_ctx_scope{this};
+
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
 				ASTNode declaration_copy = *out_of_line_var.declaration;
 				DeclarationNode* declaration_copy_ptr =
@@ -12040,12 +12070,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				if (!reparsed_initializer.has_value()) {
-					throw InternalError(
-						"Out-of-line template static member initializer replay failed to parse initializer");
+					return false;
 				}
 				if (!consume(";"_tok)) {
-					throw InternalError(
-						"Out-of-line template static member initializer replay expected trailing ';'");
+					return false;
 				}
 
 				substituted_initializer = substituteTemplateParameters(
