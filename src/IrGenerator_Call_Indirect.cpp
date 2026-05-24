@@ -950,8 +950,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 		return nullptr;
 	};
-	auto sameTypeSpec = [](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
-		return lhs.type() == rhs.type() && lhs.type_index() == rhs.type_index() && lhs.pointer_depth() == rhs.pointer_depth() && lhs.reference_qualifier() == rhs.reference_qualifier() && lhs.cv_qualifier() == rhs.cv_qualifier();
+	auto sameTypeSpec = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
+		if (lhs.pointer_depth() != rhs.pointer_depth() ||
+			lhs.reference_qualifier() != rhs.reference_qualifier() ||
+			lhs.cv_qualifier() != rhs.cv_qualifier()) {
+			return false;
+		}
+		if (lhs.type() == rhs.type() && lhs.type_index() == rhs.type_index()) {
+			return true;
+		}
+		return sema_.isLogicallySameStructType(lhs.type_index(), rhs.type_index());
 	};
 	auto matchesSelectedMemberDecl = [&](const FunctionDeclarationNode& candidate) {
 		if (&candidate == &func_decl || &candidate.decl_node() == &func_decl_node) {

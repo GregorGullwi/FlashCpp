@@ -62,6 +62,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - **Arity fallback at ~line 2363 (direct constructor call)**: This is unreachable from normalized-body paths (covered by the new hard-fail at ~2273). Remains as a valid codegen-time fallback for non-normalized bodies.
 - **Fallback 3 (binary operator LHS/RHS type conversion in `IrGenerator_Expr_Operators.cpp`)**: *not a parser API fallback*. Calls `generateTypeConversion` directly for legitimately uncovered cases (pointer arithmetic and unscoped/scoped enum operands where sema annotations are partial). Intentionally retained.
 - `AstToIr::visitSizeofNode(...)` now resolves `sizeof(member_access)` member sizing through `resolveMemberAccessType(...)` (sema-owned member resolution first) and no longer scans instantiated type names (`base`, `base_...`, `base$...`) as a codegen-side recovery path.
+- `AstToIr::generateMemberFunctionCallIr(...)` now compares selected member parameter types using sema logical struct-type identity (not only raw `TypeIndex` equality), reducing template-instantiation cases that previously fell through to viable-overload metadata recovery during member-call dispatch setup.
 - codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited
 
 ## Active backlog (high level)
