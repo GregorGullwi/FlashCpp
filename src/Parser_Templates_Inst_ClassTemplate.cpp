@@ -1,4 +1,5 @@
 #include <cctype>
+#include <functional>
 
 #include "Parser.h"
 #include "CallNodeHelpers.h"
@@ -91,6 +92,112 @@ static void buildTemplateParameterReplayState(
 				? template_param.type_specifier_node().type()
 				: TypeCategory::Invalid);
 	}
+}
+
+struct SourceMemberIdentityMaps {
+	std::unordered_map<const void*, ASTNode> by_node;
+	std::unordered_map<uint64_t, ASTNode> by_location;
+};
+
+static const void* sourceMemberAstNodeKey(const ASTNode& node) {
+	if (!node.has_value())
+		return nullptr;
+	if (node.is<FunctionDeclarationNode>())
+		return &node.as<FunctionDeclarationNode>();
+	if (node.is<TemplateFunctionDeclarationNode>())
+		return &node.as<TemplateFunctionDeclarationNode>();
+	if (node.is<ConstructorDeclarationNode>())
+		return &node.as<ConstructorDeclarationNode>();
+	if (node.is<DestructorDeclarationNode>())
+		return &node.as<DestructorDeclarationNode>();
+	return nullptr;
+}
+
+static std::optional<uint64_t> sourceMemberLocationKey(const ASTNode& member) {
+	const FunctionDeclarationNode* member_func_decl = get_function_decl_node(member);
+	if (member_func_decl == nullptr) {
+		return std::nullopt;
+	}
+	const Token& ident = member_func_decl->decl_node().identifier_token();
+	uint64_t key = 0xCBF29CE484222325ull;
+	auto mix = [&](uint64_t value) {
+		key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
+	};
+	mix(static_cast<uint64_t>(ident.file_index()));
+	mix(static_cast<uint64_t>(ident.line()));
+	mix(static_cast<uint64_t>(ident.column()));
+	mix(static_cast<uint64_t>(ident.handle().handle));
+	const auto& params = member_func_decl->parameter_nodes();
+	mix(static_cast<uint64_t>(params.size()));
+	for (const ASTNode& param : params) {
+		if (param.is<DeclarationNode>()) {
+			const TypeSpecifierNode& ts = param.as<DeclarationNode>().type_specifier_node();
+			mix(static_cast<uint64_t>(ts.token().handle().handle));
+			mix(static_cast<uint64_t>(ts.type_index().index()));
+			mix(static_cast<uint64_t>(ts.pointer_depth()));
+			mix(static_cast<uint64_t>(ts.reference_qualifier()));
+		} else {
+			mix(static_cast<uint64_t>(std::hash<std::string_view>{}(param.type_name())));
+		}
+	}
+	if (member.is<TemplateFunctionDeclarationNode>()) {
+		mix(static_cast<uint64_t>(
+			member.as<TemplateFunctionDeclarationNode>().template_parameters().size()) |
+			(1ull << 63));
+	}
+	return key;
+}
+
+static void registerSourceMemberStubIdentity(
+	SourceMemberIdentityMaps& identity_maps,
+	const ASTNode& source_member,
+	ASTNode instantiated_stub) {
+	auto register_key = [&](const void* key) {
+		if (key != nullptr) {
+			identity_maps.by_node[key] = instantiated_stub;
+		}
+	};
+	register_key(sourceMemberAstNodeKey(source_member));
+	if (source_member.is<TemplateFunctionDeclarationNode>()) {
+		register_key(sourceMemberAstNodeKey(
+			source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
+	}
+	if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
+		location_key.has_value()) {
+		identity_maps.by_location[*location_key] = instantiated_stub;
+	}
+}
+
+static ASTNode* findSourceMemberStubByIdentity(
+	SourceMemberIdentityMaps& identity_maps,
+	const ASTNode& source_member) {
+	auto find_by_key = [&](const void* key) -> ASTNode* {
+		if (key == nullptr) {
+			return nullptr;
+		}
+		auto it = identity_maps.by_node.find(key);
+		if (it == identity_maps.by_node.end()) {
+			return nullptr;
+		}
+		return &it->second;
+	};
+	if (ASTNode* direct = find_by_key(sourceMemberAstNodeKey(source_member))) {
+		return direct;
+	}
+	if (source_member.is<TemplateFunctionDeclarationNode>()) {
+		if (ASTNode* by_template_fn = find_by_key(sourceMemberAstNodeKey(
+				source_member.as<TemplateFunctionDeclarationNode>().function_declaration()))) {
+			return by_template_fn;
+		}
+	}
+	if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
+		location_key.has_value()) {
+		auto it = identity_maps.by_location.find(*location_key);
+		if (it != identity_maps.by_location.end()) {
+			return &it->second;
+		}
+	}
+	return nullptr;
 }
 
 bool Parser::static_initializer_requires_replay_metadata(
@@ -5547,101 +5654,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Partial-spec replay identity map: source member declaration -> instantiated stub.
 			// Used to attach nested out-of-line member-template bodies replay-first, mirroring
 			// the primary-template path.
-			std::unordered_map<const void*, ASTNode> source_member_to_stub;
-			std::unordered_map<uint64_t, ASTNode> source_member_location_to_stub;
-			auto astNodeKey = [](const ASTNode& n) -> const void* {
-				if (!n.has_value())
-					return nullptr;
-				if (n.is<FunctionDeclarationNode>())
-					return &n.as<FunctionDeclarationNode>();
-				if (n.is<TemplateFunctionDeclarationNode>())
-					return &n.as<TemplateFunctionDeclarationNode>();
-				if (n.is<ConstructorDeclarationNode>())
-					return &n.as<ConstructorDeclarationNode>();
-				if (n.is<DestructorDeclarationNode>())
-					return &n.as<DestructorDeclarationNode>();
-				return nullptr;
-			};
-			auto sourceMemberLocationKey = [](const ASTNode& member) -> std::optional<uint64_t> {
-				const FunctionDeclarationNode* member_func_decl = get_function_decl_node(member);
-				if (member_func_decl == nullptr) {
-					return std::nullopt;
-				}
-				const Token& ident = member_func_decl->decl_node().identifier_token();
-				// FNV-style non-zero seed + splitmix-style combine step for stable composite
-				// hashing of declaration location + signature shape, matching the
-				// primary-template identity-map path.
-				uint64_t key = 0xCBF29CE484222325ull;
-				auto mix = [&](uint64_t value) {
-					key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
-				};
-				mix(static_cast<uint64_t>(ident.file_index()));
-				mix(static_cast<uint64_t>(ident.line()));
-				mix(static_cast<uint64_t>(ident.column()));
-				mix(static_cast<uint64_t>(ident.handle().handle));
-				const auto& params = member_func_decl->parameter_nodes();
-				mix(static_cast<uint64_t>(params.size()));
-				for (const ASTNode& param : params) {
-					if (param.is<DeclarationNode>()) {
-						const TypeSpecifierNode& ts = param.as<DeclarationNode>().type_specifier_node();
-						mix(static_cast<uint64_t>(ts.token().handle().handle));
-						mix(static_cast<uint64_t>(ts.type_index().index()));
-						mix(static_cast<uint64_t>(ts.pointer_depth()));
-						mix(static_cast<uint64_t>(ts.reference_qualifier()));
-					}
-				}
-				if (member.is<TemplateFunctionDeclarationNode>()) {
-					mix(static_cast<uint64_t>(
-						member.as<TemplateFunctionDeclarationNode>().template_parameters().size()) |
-						(1ull << 63));
-				}
-				return key;
-			};
-			auto registerSourceMemberToStubIdentity = [&](const ASTNode& source_member, ASTNode instantiated_stub) {
-				auto register_key = [&](const void* key) {
-					if (key != nullptr) {
-						source_member_to_stub[key] = instantiated_stub;
-					}
-				};
-				register_key(astNodeKey(source_member));
-				if (source_member.is<TemplateFunctionDeclarationNode>()) {
-					register_key(astNodeKey(
-						source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
-				}
-				if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
-					location_key.has_value()) {
-					source_member_location_to_stub[*location_key] = instantiated_stub;
-				}
-			};
-			auto findStubBySourceMemberIdentity = [&](const ASTNode& source_member) -> ASTNode* {
-				auto find_by_key = [&](const void* key) -> ASTNode* {
-					if (key == nullptr) {
-						return nullptr;
-					}
-					auto it = source_member_to_stub.find(key);
-					if (it == source_member_to_stub.end()) {
-						return nullptr;
-					}
-					return &it->second;
-				};
-				if (ASTNode* direct = find_by_key(astNodeKey(source_member))) {
-					return direct;
-				}
-				if (source_member.is<TemplateFunctionDeclarationNode>()) {
-					if (ASTNode* by_template_fn = find_by_key(astNodeKey(
-							source_member.as<TemplateFunctionDeclarationNode>().function_declaration()))) {
-						return by_template_fn;
-					}
-				}
-				if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
-					location_key.has_value()) {
-					auto it = source_member_location_to_stub.find(*location_key);
-					if (it != source_member_location_to_stub.end()) {
-						return &it->second;
-					}
-				}
-				return nullptr;
-			};
+			SourceMemberIdentityMaps source_member_identity_maps;
 
 			// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
 			// This is critical - we need to create new FunctionDeclarationNodes with instantiated_name as parent
@@ -5692,7 +5705,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
-					registerSourceMemberToStubIdentity(mem_func.function_declaration, new_ctor_node);
+					registerSourceMemberStubIdentity(
+						source_member_identity_maps,
+						mem_func.function_declaration,
+						new_ctor_node);
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
@@ -5949,7 +5965,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							new_template_func,
 							decl_node.identifier_token().handle(),
 							decl_node.identifier_token().value());
-						registerSourceMemberToStubIdentity(mem_func.function_declaration, new_template_func);
+						registerSourceMemberStubIdentity(
+							source_member_identity_maps,
+							mem_func.function_declaration,
+							new_template_func);
 					} else {
 						auto [new_decl_node_no_subst, new_decl_ref_no_subst] = emplace_node_ref<DeclarationNode>(
 							decl_node.type_node(),
@@ -6003,7 +6022,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							new_template_func_no_subst,
 							decl_node.identifier_token().handle(),
 							decl_node.identifier_token().value());
-						registerSourceMemberToStubIdentity(
+						registerSourceMemberStubIdentity(
+							source_member_identity_maps,
 							mem_func.function_declaration,
 							new_template_func_no_subst);
 					}
@@ -6152,7 +6172,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_virtual, mem_func.is_pure_virtual,
 						mem_func.is_override, mem_func.is_final,
 						mem_func.cv_qualifier);
-					registerSourceMemberToStubIdentity(mem_func.function_declaration, new_func_node);
+					registerSourceMemberStubIdentity(
+						source_member_identity_maps,
+						mem_func.function_declaration,
+						new_func_node);
 				}
 			}
 
@@ -6315,8 +6338,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (source_func_decl == nullptr) {
 							continue;
 						}
-						ASTNode* matched_stub =
-							findStubBySourceMemberIdentity(source_member->function_declaration);
+						ASTNode* matched_stub = findSourceMemberStubByIdentity(
+							source_member_identity_maps,
+							source_member->function_declaration);
 						if (matched_stub == nullptr || !matched_stub->is<TemplateFunctionDeclarationNode>()) {
 							continue;
 						}
@@ -10385,110 +10409,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Slice 3: map from original template member node (by raw pointer) to the instantiated stub node.
 	// Used by deferred-body replay and nested out-of-line attachment to avoid name-based scanning.
-	std::unordered_map<const void*, ASTNode> source_member_to_stub;
-	std::unordered_map<uint64_t, ASTNode> source_member_location_to_stub;
+	SourceMemberIdentityMaps source_member_identity_maps;
 	TypeIndex instantiated_member_owner_type_index{};
 	if (auto instantiated_owner_it = getTypesByNameMap().find(instantiated_name);
 		instantiated_owner_it != getTypesByNameMap().end()) {
 		instantiated_member_owner_type_index = instantiated_owner_it->second->type_index_;
 	}
-	// Extract a stable identity key from an ASTNode (raw pointer of the stored node).
-	auto astNodeKey = [](const ASTNode& n) -> const void* {
-		if (!n.has_value())
-			return nullptr;
-		if (n.is<FunctionDeclarationNode>())
-			return &n.as<FunctionDeclarationNode>();
-		if (n.is<TemplateFunctionDeclarationNode>())
-			return &n.as<TemplateFunctionDeclarationNode>();
-		if (n.is<ConstructorDeclarationNode>())
-			return &n.as<ConstructorDeclarationNode>();
-		if (n.is<DestructorDeclarationNode>())
-			return &n.as<DestructorDeclarationNode>();
-		return nullptr;
-	};
-	auto sourceMemberLocationKey = [](const ASTNode& member) -> std::optional<uint64_t> {
-		const FunctionDeclarationNode* member_func_decl = get_function_decl_node(member);
-		if (member_func_decl == nullptr) {
-			return std::nullopt;
-		}
-		const Token& ident = member_func_decl->decl_node().identifier_token();
-		// FNV-style non-zero seed + splitmix-style combine step for stable composite hashing.
-		// This keeps source-location identity deterministic across AST copies while
-		// reducing collisions for nearby declarations with similar coordinates.
-		uint64_t key = 0xCBF29CE484222325ull;
-		auto mix = [&](uint64_t value) {
-			key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
-		};
-		mix(static_cast<uint64_t>(ident.file_index()));
-		mix(static_cast<uint64_t>(ident.line()));
-		mix(static_cast<uint64_t>(ident.column()));
-		mix(static_cast<uint64_t>(ident.handle().handle));
-		const auto& params = member_func_decl->parameter_nodes();
-		mix(static_cast<uint64_t>(params.size()));
-		// Mix in per-parameter type identity to distinguish same-arity overloads
-		// that could share the same source coordinate (e.g., via macro expansion).
-		// We use the type-specifier token handle (which encodes the dependent name
-		// for T/U-style template params), plus structural attributes, so that
-		// eval(T, U) and eval(U, U) produce different keys even at the same location.
-		for (const ASTNode& param : params) {
-			if (param.is<DeclarationNode>()) {
-				const TypeSpecifierNode& ts = param.as<DeclarationNode>().type_specifier_node();
-				mix(static_cast<uint64_t>(ts.token().handle().handle));
-				mix(static_cast<uint64_t>(ts.type_index().index()));
-				mix(static_cast<uint64_t>(ts.pointer_depth()));
-				mix(static_cast<uint64_t>(ts.reference_qualifier()));
-			}
-		}
-		if (member.is<TemplateFunctionDeclarationNode>()) {
-			// High-bit tag separates nested member-template declarations from
-			// non-template members that share the same source coordinate tuple.
-			mix(static_cast<uint64_t>(member.as<TemplateFunctionDeclarationNode>().template_parameters().size()) | (1ull << 63));
-		}
-		return key;
-	};
-	auto registerSourceMemberToStubIdentity = [&](const ASTNode& source_member, ASTNode instantiated_stub) {
-		auto register_key = [&](const void* key) {
-			if (key != nullptr) {
-				source_member_to_stub[key] = instantiated_stub;
-			}
-		};
-		register_key(astNodeKey(source_member));
-		if (source_member.is<TemplateFunctionDeclarationNode>()) {
-			register_key(astNodeKey(source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
-		}
-		if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
-			location_key.has_value()) {
-			source_member_location_to_stub[*location_key] = instantiated_stub;
-		}
-	};
-	auto findStubBySourceMemberIdentity = [&](const ASTNode& source_member) -> ASTNode* {
-		auto find_by_key = [&](const void* key) -> ASTNode* {
-			if (key == nullptr) {
-				return nullptr;
-			}
-			auto it = source_member_to_stub.find(key);
-			if (it == source_member_to_stub.end()) {
-				return nullptr;
-			}
-			return &it->second;
-		};
-		if (ASTNode* direct = find_by_key(astNodeKey(source_member))) {
-			return direct;
-		}
-		if (source_member.is<TemplateFunctionDeclarationNode>()) {
-			if (ASTNode* by_template_fn = find_by_key(astNodeKey(source_member.as<TemplateFunctionDeclarationNode>().function_declaration()))) {
-				return by_template_fn;
-			}
-		}
-		if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
-			location_key.has_value()) {
-			auto it = source_member_location_to_stub.find(*location_key);
-			if (it != source_member_location_to_stub.end()) {
-				return &it->second;
-			}
-		}
-		return nullptr;
-	};
 
 	auto remapInstantiatedNestedTypeInSpec = [&](TypeSpecifierNode& type_spec) {
 		if (!type_spec.type_index().is_valid()) {
@@ -10661,7 +10587,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
 				// Slice 3: record lazy-path stub for identity-map lookup during deferred-body replay.
-				registerSourceMemberToStubIdentity(mem_func.function_declaration, new_func_node);
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_func_node);
 
 				StringBuilder qualified_name_builder;
 				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
@@ -10863,7 +10792,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
 				// Slice 3: record eager-with-definition stub for identity-map lookup.
-				registerSourceMemberToStubIdentity(mem_func.function_declaration, new_func_node);
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_func_node);
 			} else {
 				// No definition, but still need to substitute parameter types and return type
 
@@ -10984,7 +10916,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
 				// Slice 3: record no-definition stub for identity-map lookup.
-				registerSourceMemberToStubIdentity(mem_func.function_declaration, new_func_node);
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_func_node);
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
@@ -11048,7 +10983,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
 
 					// Slice 3: record constructor-with-definition stub.
-					registerSourceMemberToStubIdentity(mem_func.function_declaration, new_ctor_node);
+					registerSourceMemberStubIdentity(
+						source_member_identity_maps,
+						mem_func.function_declaration,
+						new_ctor_node);
 
 					// Register lazy constructor stubs with deferred bodies in the lazy registry
 					// for on-demand materialization when odr-used. The stub carries
@@ -11143,7 +11081,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Slice 3: map original template-pattern key to fresh instantiated stub,
 					// so deferred-body-replay can find and materialise it later.
-					registerSourceMemberToStubIdentity(mem_func.function_declaration, new_ctor_node);
+					registerSourceMemberStubIdentity(
+						source_member_identity_maps,
+						mem_func.function_declaration,
+						new_ctor_node);
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception creating no-body constructor stub for ",
 							  ctor_decl.name(), ": ", e.what());
@@ -11206,7 +11147,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info_ptr->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
 
 					// Slice 3: record destructor-with-definition stub.
-					registerSourceMemberToStubIdentity(mem_func.function_declaration, new_dtor_node);
+					registerSourceMemberStubIdentity(
+						source_member_identity_maps,
+						mem_func.function_declaration,
+						new_dtor_node);
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for destructor ",
 							  dtor_decl.name(), ": ", e.what());
@@ -11236,7 +11180,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_struct_ref.add_destructor(new_dtor_node, mem_func.access);
 				struct_info_ptr->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
 				// Slice 3: record the deferred stub so the deferred-body replay can find it.
-				registerSourceMemberToStubIdentity(mem_func.function_declaration, new_dtor_node);
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_dtor_node);
 			}
 		} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
 			// Member template functions need outer template parameters substituted
@@ -11500,7 +11447,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
 				gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
-				registerSourceMemberToStubIdentity(mem_func.function_declaration, new_template_func);
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_template_func);
 
 				// Register outer template parameter bindings
 				{
@@ -11595,7 +11545,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				gTemplateRegistry.registerTemplate(qualified_name_handle, new_template_func);
 				gTemplateRegistry.registerTemplate(decl_node.identifier_token().handle(), new_template_func);
-				registerSourceMemberToStubIdentity(mem_func.function_declaration, new_template_func);
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_template_func);
 
 				// Register outer template parameter bindings
 				{
@@ -11748,7 +11701,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (source_func_decl->decl_node().identifier_token().value() != ool_func_name) {
 					continue;
 				}
-				ASTNode* matched_stub = findStubBySourceMemberIdentity(source_member.function_declaration);
+				ASTNode* matched_stub = findSourceMemberStubByIdentity(
+					source_member_identity_maps,
+					source_member.function_declaration);
 				if (matched_stub == nullptr) {
 					continue;
 				}
@@ -12672,10 +12627,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Slice 3: try identity-map lookup first (source-member → instantiated stub).
 			{
-				const void* src_key = astNodeKey(deferred.identity.original_member_node);
+				const void* src_key = sourceMemberAstNodeKey(deferred.identity.original_member_node);
 				if (src_key) {
-					auto it = source_member_to_stub.find(src_key);
-					if (it != source_member_to_stub.end()) {
+					auto it = source_member_identity_maps.by_node.find(src_key);
+					if (it != source_member_identity_maps.by_node.end()) {
 						ASTNode& stub = it->second;
 						if (stub.is<FunctionDeclarationNode>())
 							target_func = &stub.as<FunctionDeclarationNode>();
