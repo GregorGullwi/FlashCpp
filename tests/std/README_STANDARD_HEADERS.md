@@ -33,7 +33,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3.56s (retested 2026-05-23, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is still `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~5.06s (retested 2026-05-23, Linux/libstdc++-14). Progressed past the previous `<tuple>` out-of-line constructor parameter-list parse stop (`tuple:2886`); current first hard stop is later at `bits/std_function.h:130` (`Expected ';' after type alias`). |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.67s (retested 2026-05-24, Linux/libstdc++-14). Progressed past the prior `integral_constant<bool, __stored_locally>` alias parse stop (`bits/std_function.h:130`); current first hard stop moved later to `bits/std_function.h:274` (`No matching member function template for call to '_M_access'`). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-24 Linux/libstdc++ nested member-template static-bool NTTP alias follow-up
+
+Fix landed:
+
+- **Explicit template-argument parsing now recovers unresolved identifiers in template parsing contexts as dependent identifiers instead of hard-failing type-argument classification.**
+- **When argument classification encounters unresolved identifiers that are value-like (e.g. class static-bool NTTPs), it now keeps parsing and classifies them without rewinding the whole `<...>` list.**
+
+Regression coverage:
+
+- `tests/test_nested_member_template_static_bool_nttp_alias_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_nested_member_template_static_bool_nttp_alias_ret0.cpp` | ✅ Pass | focused runner | New regression verifies `using Alias = integral_constant<bool, stored_locally>;` inside a nested class template parses and instantiates. |
+| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | 4.67s | Progresses past `bits/std_function.h:130` (`Expected ';' after type alias`); new first stop is `bits/std_function.h:274` (`No matching member function template for call to '_M_access'`). |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | 2.34s | Control retest still compiles. |
+| `<array>` (`test_std_array.cpp`) | ✅ Pass | 3.68s | Control retest still compiles. |
 
 ### 2026-05-24 Linux/libstdc++ constructor-target logical-type matching follow-up
 
