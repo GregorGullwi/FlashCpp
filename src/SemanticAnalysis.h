@@ -479,6 +479,10 @@ private:
 												  CanonicalTypeId expr_type_id = {});
 	bool isSameTypeConstructorCallInitialization(const ASTNode& expr_node,
 												 CanonicalTypeId target_type_id);
+	void tryAnnotateVariableInitializationConversion(const ASTNode& init_expr,
+													 CanonicalTypeId target_type_id,
+													 const char* context_description,
+													 bool allow_deferral);
 
 	// Try to annotate a return expression with implicit cast info when the
 	// expression type differs from the declared function return type.

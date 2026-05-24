@@ -2135,8 +2135,11 @@ void SemanticAnalysis::resolvePendingCopyInitAnnotations() {
 			if (existing_slot.has_value() && existing_slot->has_cast())
 				continue;
 		}
-		tryAnnotateCopyInitConvertingConstructor(entry.init_expr, entry.target_type_id,
-												 " in variable initialization (deferred)");
+		tryAnnotateVariableInitializationConversion(
+			entry.init_expr,
+			entry.target_type_id,
+			" in variable initialization (deferred)",
+			false);
 	}
 }
 
@@ -2836,20 +2839,11 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			normalizeExpression(*init, ctx);
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
-				if (!isSameTypeConstructorCallInitialization(*init, decl_type_id) &&
-					!tryAnnotateCopyInitConvertingConstructor(*init, decl_type_id,
-															  " in variable initialization")) {
-					// If the initializer type is still unresolved after normalization
-					// (e.g. the init is a call to a lazy auto-return function whose body
-					// has not been materialized yet), defer the annotation to
-					// resolvePendingCopyInitAnnotations() which runs after all lazy
-					// members have been drained and auto-return types have been resolved.
-					if (!inferExpressionType(*init)) {
-						pending_copy_init_annotations_.push_back({*init, decl_type_id});
-					}
-					tryAnnotateConversion(*init, decl_type_id);
-					diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
-				}
+				tryAnnotateVariableInitializationConversion(
+					*init,
+					decl_type_id,
+					" in variable initialization",
+					true);
 			}
 		}
 	} else if (node.is<StructuredBindingNode>()) {
@@ -6645,6 +6639,34 @@ bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 	const CanonicalTypeDesc& expr_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
 	return isLogicallySameStructType(expr_desc.type_index, target_desc.type_index);
+}
+
+void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
+	const ASTNode& init_expr,
+	CanonicalTypeId target_type_id,
+	const char* context_description,
+	bool allow_deferral) {
+	if (!target_type_id) {
+		return;
+	}
+	if (isSameTypeConstructorCallInitialization(init_expr, target_type_id)) {
+		return;
+	}
+
+	const CanonicalTypeId init_type_id = inferExpressionType(init_expr);
+	if (tryAnnotateCopyInitConvertingConstructor(init_expr, target_type_id, context_description, init_type_id)) {
+		return;
+	}
+
+	if (!init_type_id) {
+		if (allow_deferral && init_expr.is<ExpressionNode>()) {
+			pending_copy_init_annotations_.push_back({init_expr, target_type_id});
+		}
+		return;
+	}
+
+	tryAnnotateConversion(init_expr, target_type_id, init_type_id);
+	diagnoseScopedEnumConversion(init_expr, target_type_id, context_description, init_type_id);
 }
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {

@@ -17,7 +17,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~1.38s (retested 2026-05-24, Linux/libstdc++-14). The sema-normalized converting-constructor annotation hard stop in `main` is now bypassed by codegen fallback constructor overload selection; current first hard stop is unresolved semantic type category 25 for local `__arg`. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~1.38s (retested 2026-05-24, Linux/libstdc++-14). The sema-normalized converting-constructor annotation hard stop in `main` is now avoided by sema-side deferred annotation retry after lazy-member drain/auto-return resolution; current first hard stop is unresolved semantic type category 25 for local `__arg`. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1.84s (retested 2026-05-24, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
@@ -101,12 +101,12 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-### 2026-05-24 Linux/libstdc++ call-return placeholder-auto + normalized converting-constructor fallback follow-up
+### 2026-05-24 Linux/libstdc++ call-return placeholder-auto + normalized converting-constructor sema-first follow-up
 
 Fix landed:
 
 - **Call return-type preference now picks sema-owned expression return types when the declaration-side return type is placeholder `auto`.**
-- **Normalized-body copy-initialization no longer hard-fails when sema did not pre-annotate a converting constructor; codegen now falls back to existing constructor overload resolution in that path.**
+- **Normalized-body copy-initialization now keeps the hard invariant in codegen by ensuring sema annotates converting constructors first (including deferred retry after lazy-member drain + auto-return resolution); this is no longer a codegen-fallback workaround.**
 
 Regression coverage:
 
