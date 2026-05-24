@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (deferred ctor replay now preserves typed NTTP identity payloads)
+**Last updated:** 2026-05-24 (primary nested out-of-line member-template attachment remains replay-first; same-name overload regressions now recover via instantiated-candidate signature fallback when identity replay misses)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -76,12 +76,21 @@ Future work can rely on these being in place:
   replay metadata invariants for dependent/complex initializers**: these paths
   now fail fast on missing replay metadata instead of silently using broad
   AST-only substitution fallback.
+- **primary-template nested out-of-line member-template attachment now uses
+  source-member→instantiated-stub identity mapping**: this path no longer
+  replays non-static declarations from original type-info fallback when
+  attachment matching fails.
+- **primary-template same-name nested member-template overload attachment now
+  includes a constrained instantiated-candidate fallback** when source identity
+  replay misses: fallback requires matching name + substituted signature and an
+  unattached stub, and still avoids any original type-info declaration recovery.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
+- `test_template_nested_ool_member_template_arity_disambiguation_ret0.cpp`
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_ret0.cpp`
@@ -106,6 +115,11 @@ Rule for this work:
 - prefer replay-first semantic attachment;
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
+- next slices:
+  - complete primary-template source-member→stub key coverage so overload
+    attachment does not depend on instantiated-candidate fallback;
+  - convert partial-spec nested out-of-line member-template attachment from
+    scan-first matching to source-member→stub identity matching.
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
 
@@ -134,9 +148,11 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. continue with the remaining non-static declaration replay paths that still
-   never captured enough metadata at parse time;
-2. update these docs with the next remaining replay-metadata gap.
+1. complete primary-template source-member→stub identity coverage for same-name
+   nested member-template overloads;
+2. port partial-spec nested out-of-line member-template attachment to the same
+   replay-first source-member→stub identity path;
+3. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
 
