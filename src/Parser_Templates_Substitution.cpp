@@ -2065,6 +2065,17 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	// Then try direct unqualified lookup, subject to namespace visibility rules.
 	auto it = getTypesByNameMap().find(type_handle);
 	if (it != getTypesByNameMap().end() && isDirectlyVisibleUnqualified(it->second)) {
+		const ScopeType scope_type = gSymbolTable.get_current_scope_type();
+		if (type_name.find("::") == std::string_view::npos &&
+			(scope_type == ScopeType::Function || scope_type == ScopeType::Block) &&
+			it->second != nullptr && it->second->isEnum()) {
+			for (size_t i = getTypeInfoCount(); i > 0; --i) {
+				const TypeInfo* candidate = tryGetTypeInfo(TypeIndex{static_cast<uint32_t>(i - 1), TypeCategory::UserDefined});
+				if (candidate && candidate->isEnum() && candidate->name() == type_handle) {
+					return candidate;
+				}
+			}
+		}
 		return it->second;
 	}
 
