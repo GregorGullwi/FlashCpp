@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (deferred ctor replay now preserves typed NTTP identity payloads)
+**Last updated:** 2026-05-24 (primary nested out-of-line member-template attachment is now replay-first via stub identity mapping)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -74,12 +74,18 @@ Useful assumptions before changing this area:
   replay metadata invariants for dependent/complex initializers**: these paths
   now throw invariant failures when required replay metadata is missing instead
   of silently relying on broad AST-only substitution fallback.
+- **primary-template nested out-of-line member-template attachment is now
+  replay-first and identity-map-backed**: attachment now resolves source member
+  templates to instantiated stubs through `source_member_to_stub`, and the
+  previous non-static AST recovery path that replayed declarations from original
+  type info has been removed from this path.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
+- `test_template_nested_ool_member_template_arity_disambiguation_ret0.cpp`
 - `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
 - `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_ret0.cpp`
@@ -106,6 +112,8 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
+- partial-spec nested out-of-line member-template attachment still uses broad
+  instantiated-member scanning rather than source-member→stub identity lookup.
 ### 2. Dependent-name modeling is still too weak
 
 `DependentQualifiedNameRecord` is useful, but it is still not a complete
@@ -130,10 +138,10 @@ they directly block items 1-2:
 
 ## Highest-impact next steps
 
-1. **Remove the next AST-only replay fallback in declaration replay**
-   - Continue with the remaining non-static declaration replay paths that still
-     never captured enough metadata at parse time.
-   - Prefer replay-first semantic attachment over adding more repair logic.
+1. **Port partial-spec nested out-of-line member-template attachment to replay-first identity matching**
+   - Reuse source-member→instantiated-stub identity for partial-specialization
+     nested member-template attachment (mirroring the primary-template path).
+   - Then remove remaining scan-first attachment behavior in that slice.
 
 2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
    - Expand richer dependent-base and unknown-specialization records only when
@@ -157,7 +165,9 @@ The following are complete enough to rely on:
   metadata and reattaches deferred body/initializer-list state correctly in the
   covered paths;
 - nested out-of-line member-function-template replay preserves instantiated
-  outer parameter types while importing definition-side parameter names;
+  outer parameter types while importing definition-side parameter names, and now
+  attaches definitions through source-member→stub identity (no original-type
+  declaration recovery fallback in the primary-template path);
 - partial-spec plain (non-template) out-of-line member functions now parse and
   substitute their bodies with the correct class-template parameters and
   definition lookup context in scope;
