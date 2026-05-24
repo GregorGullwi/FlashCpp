@@ -2608,9 +2608,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
-								if (sema_normalized_current_function_) {
-									throw InternalError("Sema did not annotate converting constructor for normalized body");
-								}
 								if (auto init_arg_type_opt = buildCodegenOverloadResolutionArgType(init_node)) {
 									std::vector<TypeSpecifierNode> arg_types;
 									arg_types.push_back(*init_arg_type_opt);
