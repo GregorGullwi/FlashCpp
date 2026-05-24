@@ -11569,6 +11569,64 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				break;
 			}
 
+			// Secondary replay attachment path: if source->stub identity replay misses,
+			// disambiguate directly against instantiated member-template stubs by
+			// substituted signature. This remains replay metadata driven and does not
+			// recover from original type-info members.
+			if (inst_func_decl == nullptr) {
+				FunctionDeclarationNode* fallback_match = nullptr;
+				size_t fallback_match_count = 0;
+				for (auto& mem_func : instantiated_struct_ref.member_functions()) {
+					if (!mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+						continue;
+					}
+					FunctionDeclarationNode* candidate_decl =
+						get_function_decl_node_mut(mem_func.function_declaration);
+					if (candidate_decl == nullptr) {
+						continue;
+					}
+					if (candidate_decl->decl_node().identifier_token().value() != ool_func_name) {
+						continue;
+					}
+					if (candidate_decl->has_any_body_source()) {
+						continue;
+					}
+					if (same_name_member_template_count > 1) {
+						std::optional<bool> signature_match =
+							nestedOutOfLineMemberTemplateMatchesCandidate(
+								*this,
+								mem_func.function_declaration,
+								ool_func,
+								std::span<const TemplateParameterNode>(
+									out_of_line_member.template_params.data(),
+									out_of_line_member.template_params.size()),
+								std::span<const TemplateTypeArg>(
+									template_args_to_use.data(),
+									template_args_to_use.size()),
+								instantiated_name,
+								std::span<const TemplateParameterNode>(
+									out_of_line_member.inner_template_params.data(),
+									out_of_line_member.inner_template_params.size()));
+						if (!signature_match.has_value() || !*signature_match) {
+							continue;
+						}
+					}
+					fallback_match = candidate_decl;
+					++fallback_match_count;
+					if (fallback_match_count > 1) {
+						break;
+					}
+				}
+				if (fallback_match_count == 1) {
+					inst_func_decl = fallback_match;
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Attached nested out-of-line member template via instantiated candidate fallback: ",
+						ool_func_name);
+				}
+			}
+
 			if (inst_func_decl != nullptr) {
 				// Set the body position and definition-time lookup context from the
 				// out-of-line definition so two-phase lookup uses the definition namespace.

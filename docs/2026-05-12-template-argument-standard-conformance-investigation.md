@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (primary nested out-of-line member-template attachment is now replay-first via stub identity mapping)
+**Last updated:** 2026-05-24 (primary nested out-of-line member-template attachment remains replay-first; same-name overload regressions now recover via instantiated-candidate signature fallback when identity replay misses)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -80,6 +80,10 @@ Future work can rely on these being in place:
   source-member→instantiated-stub identity mapping**: this path no longer
   replays non-static declarations from original type-info fallback when
   attachment matching fails.
+- **primary-template same-name nested member-template overload attachment now
+  includes a constrained instantiated-candidate fallback** when source identity
+  replay misses: fallback requires matching name + substituted signature and an
+  unattached stub, and still avoids any original type-info declaration recovery.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
@@ -111,8 +115,11 @@ Rule for this work:
 - prefer replay-first semantic attachment;
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
-- next slice: convert partial-spec nested out-of-line member-template attachment
-  from scan-first matching to source-member→stub identity matching.
+- next slices:
+  - complete primary-template source-member→stub key coverage so overload
+    attachment does not depend on instantiated-candidate fallback;
+  - convert partial-spec nested out-of-line member-template attachment from
+    scan-first matching to source-member→stub identity matching.
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
 
@@ -141,9 +148,11 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. port partial-spec nested out-of-line member-template attachment to the same
-   replay-first source-member→stub identity path now used by primary templates;
-2. update these docs with the next remaining replay-metadata gap.
+1. complete primary-template source-member→stub identity coverage for same-name
+   nested member-template overloads;
+2. port partial-spec nested out-of-line member-template attachment to the same
+   replay-first source-member→stub identity path;
+3. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
 
