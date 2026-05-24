@@ -6660,6 +6660,45 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	CanonicalTypeDesc common_desc;
 	common_desc.type_index = nativeTypeIndex(common_cat);
 	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
+	const std::string_view op = bin_op.op();
+	const bool is_comparison =
+		op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=";
+	const bool lhs_scoped = isScopedEnum(lhs_desc);
+	const bool rhs_scoped = isScopedEnum(rhs_desc);
+	const bool is_same_scoped_enum_comparison =
+		is_comparison &&
+		lhs_scoped &&
+		rhs_scoped &&
+		lhs_desc.type_index == rhs_desc.type_index;
+	auto tryAnnotateScopedEnumComparisonConversion =
+		[&](const ASTNode& expr_node, CanonicalTypeId source_type_id) -> bool {
+		if (!expr_node.is<ExpressionNode>()) {
+			return false;
+		}
+		const ConversionPlan plan = buildConversionPlan(TypeCategory::Enum, common_cat);
+		if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) {
+			return false;
+		}
+		ImplicitCastInfo cast_info;
+		cast_info.source_type_id = source_type_id;
+		cast_info.target_type_id = common_type_id;
+		cast_info.cast_kind = plan.kind;
+		cast_info.value_category_after = ValueCategory::PRValue;
+		const CastInfoIndex idx = allocateCastInfo(cast_info);
+		SemanticSlot slot;
+		slot.type_id = common_type_id;
+		slot.cast_info_index = idx;
+		slot.value_category = ValueCategory::PRValue;
+		const void* key = static_cast<const void*>(&expr_node.as<ExpressionNode>());
+		setSlot(key, slot);
+		stats_.slots_filled++;
+		return true;
+	};
+	if (is_same_scoped_enum_comparison) {
+		tryAnnotateScopedEnumComparisonConversion(bin_op.get_lhs(), lhs_type_id);
+		tryAnnotateScopedEnumComparisonConversion(bin_op.get_rhs(), rhs_type_id);
+		return;
+	}
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id, lhs_type_id);
 	tryAnnotateConversion(bin_op.get_rhs(), common_type_id, rhs_type_id);

@@ -942,14 +942,22 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		return expr_operands;
 	}
 
-		// For enum to int or int to enum, we can just change the type
-	if ((source_type == TypeCategory::Enum && target_type == TypeCategory::Int) ||
-		(source_type == TypeCategory::Int && target_type == TypeCategory::Enum) ||
-		(source_type == TypeCategory::Enum && target_type == TypeCategory::UnsignedInt) ||
-		(source_type == TypeCategory::UnsignedInt && target_type == TypeCategory::Enum)) {
-			// Return the value with the new type
-		return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
-	}
+		// Enum/integer static_casts must honor enum underlying size/sign.  Simply
+		// retagging metadata makes later integer loads read with the wrong width.
+		if (source_type == TypeCategory::Enum && is_integer_type(target_type)) {
+			return generateTypeConversion(expr_operands, source_type, target_type, staticCastNode.cast_token());
+		}
+		if (is_integer_type(source_type) && target_type == TypeCategory::Enum) {
+			const TypeCategory target_underlying = resolveEnumUnderlyingTypeCategory(target_type_index);
+			if (target_underlying != TypeCategory::Invalid) {
+				ExprResult converted = generateTypeConversion(expr_operands, source_type, target_underlying, staticCastNode.cast_token());
+				return makeExprResult(target_type_index.withCategory(TypeCategory::Enum),
+									  SizeInBits{target_size},
+									  converted.value,
+									  PointerDepth{},
+									  ValueStorage::ContainsData);
+			}
+		}
 
 		// For float-to-int conversions, generate FloatToInt IR
 	if (is_floating_point_type(source_type) && is_integer_type(target_type)) {
