@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (template static-member initializer replay metadata invariants enforced)
+**Last updated:** 2026-05-24 (deferred ctor replay now preserves typed NTTP identity payloads)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -46,11 +46,12 @@ Useful assumptions before changing this area:
   current template name and the extracted base template name (with dedupe)**,
   so plain-member replay and member-function-template deferred replay still
   attach when registrations land under the base template name.
-- **deferred class-template constructor bodies now store `template_param_names`**
-  so the replay pass sets `hasActiveTemplateParameters() = true`; and integral
-  NTTPs referenced inside such bodies are now substituted directly to
-  `NumericLiteralNode` during replay instead of falling through to a runtime
-  `IdentifierNode` that codegen cannot resolve.
+- **deferred class-template constructor replay now builds substitutions from a
+  normalized template environment**, so non-type substitutions preserve full
+  typed identity payloads (pointer/reference/function-pointer/member-pointer) in
+  addition to integral values; replay now reuses the shared
+  `trySubstituteValueTemplateParameterExpression` path instead of a
+  constructor-only numeric fallback.
 - **C++20 extended aggregate initialization through base-class-only intermediates
   now works at codegen level**: when a base initializer resolves to an aggregate
   struct with no direct members but one or more base classes, codegen emits a
@@ -89,6 +90,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_type_param_qualified_static_call_ret0.cpp`
 - `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
 - `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`
+- `test_template_nttp_deferred_ctor_body_pointer_function_ret0.cpp`
 
 ## What is still wrong
 
@@ -104,11 +106,6 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
-- pointer/reference/function-pointer NTTP substitution in deferred constructor
-  bodies: these currently fall back to `IdentifierNode` and are resolved at
-  instantiation time by `substitute_template_params_in_expression`; a dedicated
-  path should handle them at parse time for uniformity.
-
 ### 2. Dependent-name modeling is still too weak
 
 `DependentQualifiedNameRecord` is useful, but it is still not a complete
@@ -169,9 +166,10 @@ The following are complete enough to rely on:
   replay path can materialize bodies with the correct class-template parameters
   in scope.
 - deferred class-template constructor bodies now store template-parameter names
-  at parse time, so replay sets `hasActiveTemplateParameters() = true`; integral
-  NTTPs referenced inside such bodies are substituted to `NumericLiteralNode`
-  during replay, preventing "symbol not found" codegen failures.
+  at parse time, so replay sets `hasActiveTemplateParameters() = true`; replay
+  substitution now preserves full typed NTTP identity metadata and reuses the
+  shared value-parameter substitution path (no constructor-only identifier
+  fallback when typed identity is available).
 - **`P::method()` qualified calls where P is a template type parameter are now
   resolved at sema level**: `SemanticAnalysis::resolveQualifiedOwnerType` walks
   the current member context's `InstantiationContext::param_names`/`param_args`

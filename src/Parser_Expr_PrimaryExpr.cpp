@@ -1763,6 +1763,91 @@ ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 	return ParseResult::success(result);
 }
 
+bool Parser::trySubstituteValueTemplateParameterExpression(
+	StringHandle param_name,
+	const Token& source_token,
+	std::optional<ASTNode>& result) {
+	for (const auto& subst : template_param_substitutions_) {
+		if (subst.param_name != param_name || !subst.is_value_param) {
+			continue;
+		}
+		if (subst.typed_value_identity.has_value()) {
+			const auto& identity = *subst.typed_value_identity;
+			const auto kind = identity.kind;
+			if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
+				 kind == FlashCpp::NonTypeValueIdentityKind::Reference ||
+				 kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer) &&
+				identity.entity_name.isValid()) {
+				std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
+				Token entity_token(Token::Type::Identifier, entity_name_view,
+					source_token.line(), source_token.column(),
+					source_token.file_index());
+				Token amp_token(Token::Type::Operator, "&"sv,
+					source_token.line(), source_token.column(),
+					source_token.file_index());
+				ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
+				result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
+				FLASH_LOG(Templates, Debug, "Substituted pointer/reference/function-pointer NTTP '", param_name,
+					"' with &", entity_name_view);
+				return true;
+			}
+			if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
+				identity.member_name.isValid() &&
+				identity.member_class_name.isValid()) {
+				std::vector<std::string_view> owner_components =
+					splitQualifiedNamespace(
+						StringTable::getStringView(identity.member_class_name));
+				NamespaceHandle owner_scope = owner_components.empty()
+					? NamespaceRegistry::GLOBAL_NAMESPACE
+					: gNamespaceRegistry.getOrCreatePath(
+						NamespaceRegistry::GLOBAL_NAMESPACE,
+						std::span<const std::string_view>(
+							owner_components.data(),
+							owner_components.size()));
+				if (owner_scope.isValid() && !owner_scope.isGlobal()) {
+					std::string_view member_name_view = StringTable::getStringView(identity.member_name);
+					Token member_token(Token::Type::Identifier, member_name_view,
+						source_token.line(), source_token.column(),
+						source_token.file_index());
+					Token amp_token(Token::Type::Operator, "&"sv,
+						source_token.line(), source_token.column(),
+						source_token.file_index());
+					ASTNode qualified_member = emplace_node<ExpressionNode>(
+						QualifiedIdentifierNode(owner_scope, member_token));
+					result = emplace_node<ExpressionNode>(
+						UnaryOperatorNode(amp_token, qualified_member, true));
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Substituted MemberPointer NTTP '",
+						param_name,
+						"' with &",
+						StringTable::getStringView(identity.member_class_name),
+						"::",
+						member_name_view);
+					return true;
+				}
+			}
+		}
+		StringBuilder value_str;
+		value_str.append(subst.value);
+		std::string_view value_view = value_str.commit();
+		Token num_token(Token::Type::Literal, value_view,
+			source_token.line(), source_token.column(),
+			source_token.file_index());
+		result = emplace_node<ExpressionNode>(
+			NumericLiteralNode(num_token,
+				static_cast<unsigned long long>(subst.value),
+				subst.value_type,
+				TypeQualifier::None,
+				get_type_size_bits(subst.value_type)));
+		FLASH_LOG(Templates, Debug, "Substituted template parameter '", param_name,
+			"' with value ", subst.value);
+		return true;
+	}
+	return false;
+}
+
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(PrimaryExpression);
@@ -6781,112 +6866,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 
-				auto trySubstituteValueTemplateParam = [&](StringHandle param_name) -> bool {
-					for (const auto& subst : template_param_substitutions_) {
-						if (subst.param_name != param_name || !subst.is_value_param) {
-							continue;
-						}
-						// Handle pointer/reference NTTP identities before integral fallback
-						if (subst.typed_value_identity.has_value()) {
-							const auto& identity = *subst.typed_value_identity;
-							const auto kind = identity.kind;
-							if ((kind == FlashCpp::NonTypeValueIdentityKind::ObjectPointer ||
-								 kind == FlashCpp::NonTypeValueIdentityKind::Reference) &&
-								identity.entity_name.isValid()) {
-								// Substitute P with &entity_name so *P dereferences the pointed-to object
-								std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
-								Token entity_token(Token::Type::Identifier, entity_name_view,
-											   identifier_token.line(), identifier_token.column(),
-											   identifier_token.file_index());
-								Token amp_token(Token::Type::Operator, "&"sv,
-											identifier_token.line(), identifier_token.column(),
-											identifier_token.file_index());
-								ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
-								result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
-								FLASH_LOG(Templates, Debug, "Substituted ObjectPointer/Reference NTTP '", param_name,
-										  "' with &", entity_name_view);
-								return true;
-							}
-							if (kind == FlashCpp::NonTypeValueIdentityKind::FunctionPointer &&
-								identity.entity_name.isValid()) {
-								// Substitute F with &entity_name.
-								std::string_view entity_name_view = StringTable::getStringView(identity.entity_name);
-								Token entity_token(Token::Type::Identifier, entity_name_view,
-											   identifier_token.line(), identifier_token.column(),
-											   identifier_token.file_index());
-								Token amp_token(Token::Type::Operator, "&"sv,
-											identifier_token.line(), identifier_token.column(),
-											identifier_token.file_index());
-								ASTNode entity_id = emplace_node<ExpressionNode>(createBoundIdentifier(entity_token));
-								result = emplace_node<ExpressionNode>(UnaryOperatorNode(amp_token, entity_id, true));
-								FLASH_LOG(Templates, Debug, "Substituted FunctionPointer NTTP '", param_name,
-										  "' with &", entity_name_view);
-								return true;
-							}
-							if (kind == FlashCpp::NonTypeValueIdentityKind::MemberPointer &&
-								identity.member_name.isValid() &&
-								identity.member_class_name.isValid()) {
-								std::vector<std::string_view> owner_components =
-									splitQualifiedNamespace(
-										StringTable::getStringView(identity.member_class_name));
-								NamespaceHandle owner_scope = owner_components.empty()
-									? NamespaceRegistry::GLOBAL_NAMESPACE
-									: gNamespaceRegistry.getOrCreatePath(
-										NamespaceRegistry::GLOBAL_NAMESPACE,
-										std::span<const std::string_view>(
-											owner_components.data(),
-											owner_components.size()));
-								if (owner_scope.isValid() && !owner_scope.isGlobal()) {
-									std::string_view member_name_view = StringTable::getStringView(identity.member_name);
-									Token member_token(Token::Type::Identifier, member_name_view,
-											   identifier_token.line(), identifier_token.column(),
-											   identifier_token.file_index());
-									Token amp_token(Token::Type::Operator, "&"sv,
-											identifier_token.line(), identifier_token.column(),
-											identifier_token.file_index());
-									ASTNode qualified_member = emplace_node<ExpressionNode>(
-										QualifiedIdentifierNode(owner_scope, member_token));
-									result = emplace_node<ExpressionNode>(
-										UnaryOperatorNode(amp_token, qualified_member, true));
-									FLASH_LOG(
-										Templates,
-										Debug,
-										"Substituted MemberPointer NTTP '",
-										param_name,
-										"' with &",
-										StringTable::getStringView(identity.member_class_name),
-										"::",
-										member_name_view);
-									return true;
-								}
-							}
-						}
-						// Substitute with actual value
-						StringBuilder value_str;
-						value_str.append(subst.value);
-						std::string_view value_view = value_str.commit();
-						Token num_token(Token::Type::Literal, value_view,
-										identifier_token.line(), identifier_token.column(),
-										identifier_token.file_index());
-						result = emplace_node<ExpressionNode>(
-							NumericLiteralNode(num_token,
-											   static_cast<unsigned long long>(subst.value),
-											   subst.value_type,
-											   TypeQualifier::None,
-											   get_type_size_bits(subst.value_type)));
-						FLASH_LOG(Templates, Debug, "Substituted template parameter '", param_name,
-								  "' with value ", subst.value);
-						return true;
-					}
-					return false;
-				};
-
 				// If this identifier resolves to a declaration but is also an active template
 				// value parameter, still apply value substitution (needed for auto NTTP callables).
 				if (identifierType && isTemplateClassOrActiveParameters()) {
 					for (const auto& param_name : currentTemplateParamNames()) {
 						if (param_name == identifier_token.value() &&
-							trySubstituteValueTemplateParam(param_name)) {
+							trySubstituteValueTemplateParameterExpression(param_name, identifier_token, result)) {
 							return ParseResult::success(*result);
 						}
 					}
@@ -6899,7 +6884,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (param_name == identifier_token.value()) {
 							// This is a template parameter reference
 							// Check if we have a substitution value (for deferred template body parsing)
-							bool substituted = trySubstituteValueTemplateParam(param_name);
+							bool substituted = trySubstituteValueTemplateParameterExpression(
+								param_name,
+								identifier_token,
+								result);
 							if (substituted) {
 								return ParseResult::success(*result);
 							}
@@ -8734,35 +8722,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// During deferred template body replay, identifierType may be set to
 				// TemplateParameterReferenceNode(N) while template_param_substitutions_ has the actual
-				// concrete value. Substitute it so codegen receives a literal, not a symbol lookup.
-				// We only do this when substitutions are present (replay context); during first-pass
-				// template parsing the substitution map is empty and we fall through to createBoundIdentifier
-				// so that array dimensions etc. are stored as IdentifierNode as the layout code expects.
+				// concrete value/identity payload. Reuse the normal substitution path so
+				// pointer/reference/function-pointer NTTPs materialize consistently.
 				bool applied_nttp_subst = false;
 				if (identifierType && identifierType->is<TemplateParameterReferenceNode>() &&
 					!template_param_substitutions_.empty()) {
 					const TemplateParameterReferenceNode& tpref = identifierType->as<TemplateParameterReferenceNode>();
 					const StringHandle target_param_name = tpref.param_name();
-					for (const auto& subst : template_param_substitutions_) {
-						if (subst.param_name == target_param_name) {
-							if (subst.is_value_param && !subst.typed_value_identity.has_value()) {
-								StringBuilder value_str;
-								value_str.append(subst.value);
-								std::string_view value_view = value_str.commit();
-								Token num_token(Token::Type::Literal, value_view,
-												identifier_token.line(), identifier_token.column(),
-												identifier_token.file_index());
-								result = emplace_node<ExpressionNode>(
-									NumericLiteralNode(num_token,
-													   static_cast<unsigned long long>(subst.value),
-													   subst.value_type,
-													   TypeQualifier::None,
-													   get_type_size_bits(subst.value_type)));
-								applied_nttp_subst = true;
-							}
-							break;
-						}
-					}
+					applied_nttp_subst = trySubstituteValueTemplateParameterExpression(
+						target_param_name,
+						identifier_token,
+						result);
 				}
 
 				if (!applied_nttp_subst) {
