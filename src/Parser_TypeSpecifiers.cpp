@@ -563,6 +563,11 @@ ParseResult Parser::parse_type_specifier() {
 		[&](TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
 			const Token& diagnostic_token,
 			bool allow_member_template_type_id) -> std::optional<ParseResult> {
+		const bool in_template_dependent_context =
+			isTemplateParameterTrackingActive() || parsing_template_depth_ > 0;
+		if (!in_template_dependent_context) {
+			return std::nullopt;
+		}
 		if (saw_typename_keyword ||
 			parsing_alias_type_id_ ||
 			allow_member_template_type_id ||

@@ -17,7 +17,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~607ms (retested 2026-04-11). Targeted test now fails with "Expected symbol '_Arg' to exist in code generation" in `std::any` constructor. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~1077ms (retested 2026-05-24, Linux/libstdc++-14). No longer stops on parser `typename` false-positive in `aligned_storage<...>::type`; current first hard stop is later codegen: `Expected symbol '_Arg' to exist in code generation` in `std::any` constructor. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~2.60s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
@@ -100,6 +100,27 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-24 Linux/libstdc++ non-template dependent-owner typename diagnostic follow-up
+
+Fix landed:
+
+- **Dependent qualified-type `typename` diagnostics are now gated to template-dependent parsing contexts.**
+  Non-template code paths no longer emit `Missing 'typename' before dependent qualified type name (...)`
+  when temporary dependent placeholders are created during qualified type lookup.
+
+Regression coverage:
+
+- `tests/test_non_template_aligned_storage_member_type_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_non_template_aligned_storage_member_type_ret0.cpp` | ✅ Pass | focused runner | New regression verifies `Template<sizeof(member), alignof(...)>::type` in non-template class scope no longer trips a missing-`typename` parse failure. |
+| `<any>` (`test_std_any.cpp`) | ❌ Codegen Error | 1.08s | Progresses past the old parser stop (`Missing 'typename'... unknown specialization owner`); current first hard stop is codegen: `Expected symbol '_Arg' to exist in code generation`. |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | 1.59s | Control retest still compiles. |
+| `<array>` (`test_std_array.cpp`) | ✅ Pass | 2.61s | Control retest still compiles. |
 
 ### 2026-05-23 Linux/libstdc++ nested out-of-line member-template parameter-context follow-up
 
