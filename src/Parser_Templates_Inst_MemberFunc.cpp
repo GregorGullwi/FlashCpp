@@ -224,17 +224,46 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 		false);
 	append_candidates(gTemplateRegistry.lookupTemplateName(direct_request));
 
+	auto try_lookup_owner = [&](StringHandle owner_name) {
+		TemplateNameLookupRequest request = buildMemberFunctionTemplateLookupRequest(
+			owner_name,
+			member_name_handle,
+			false);
+		append_candidates(gTemplateRegistry.lookupTemplateName(request));
+	};
+
 	if (candidates.empty()) {
 		if (auto lookup_owner = getTemplateLookupOwnerName(struct_name)) {
 			if (*lookup_owner != requested_owner) {
-				TemplateNameLookupRequest base_request = buildMemberFunctionTemplateLookupRequest(
-					*lookup_owner,
-					member_name_handle,
-					false);
-				append_candidates(gTemplateRegistry.lookupTemplateName(base_request));
+				try_lookup_owner(*lookup_owner);
 				if (!candidates.empty()) {
-					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", base_request.owner_name.view());
+					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", lookup_owner->view());
 				}
+			}
+		}
+	}
+
+	if (candidates.empty()) {
+		const std::string_view requested_owner_name = StringTable::getStringView(requested_owner);
+		const std::string_view unqualified_owner_name = unqualifiedTypeComponent(requested_owner_name);
+		if (!unqualified_owner_name.empty() &&
+			unqualified_owner_name != requested_owner_name) {
+			try_lookup_owner(StringTable::getOrInternStringHandle(unqualified_owner_name));
+		}
+	}
+
+	if (candidates.empty() &&
+		requested_owner.view().find("::") == std::string_view::npos) {
+		if (auto type_it = getTypesByNameMap().find(requested_owner);
+			type_it != getTypesByNameMap().end()) {
+			if (const TypeInfo* type_info = type_it->second;
+				type_info != nullptr && type_info->sourceNamespace().isValid()) {
+				StringBuilder qualified_owner_builder;
+				qualified_owner_builder
+					.append(StringTable::getStringView(type_info->sourceNamespace()))
+					.append("::")
+					.append(requested_owner.view());
+				try_lookup_owner(StringTable::getOrInternStringHandle(qualified_owner_builder.commit()));
 			}
 		}
 	}
