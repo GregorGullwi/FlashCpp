@@ -17,7 +17,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
 | `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
-| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~1077ms (retested 2026-05-24, Linux/libstdc++-14). No longer stops on parser `typename` false-positive in `aligned_storage<...>::type`; current first hard stop is later codegen: `Expected symbol '_Arg' to exist in code generation` in `std::any` constructor. |
+| `<any>` | `test_std_any.cpp` | ❌ Codegen Error | ~1.12s (retested 2026-05-24, Linux/libstdc++-14). Progressed past the prior declaration/expression misparse in namespaced-class member bodies (`Expected symbol '_Arg' to exist in code generation` is gone); current first hard stop is later IR/codegen: unresolved semantic type category 25 for local `__arg`, then `Sema did not annotate converting constructor for normalized body`. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~2.60s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
@@ -33,7 +33,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3.56s (retested 2026-05-23, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is still `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~6.41s (retested 2026-05-24, Linux/libstdc++-14). Progressed past the prior explicit member-template lookup stop in `bits/std_function.h:274` (`No matching member function template for call to '_M_access'`); current first hard stop moved later to `bits/alloc_traits.h:904` (`Failed to instantiate template function`). |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.58s (retested 2026-05-24, Linux/libstdc++-14). Current first hard stop remains `bits/alloc_traits.h:904` (`Failed to instantiate template function`). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-24 Linux/libstdc++ namespaced member-body nested-type declaration disambiguation follow-up
+
+Fix landed:
+
+- **Statement/declaration disambiguation now does struct-scoped type lookup for current member/struct parsing contexts before falling back to expression parsing.**
+- Reused existing type-resolution helpers (`lookupTypeInCurrentContext`, `lookup_inherited_type_alias`) and centralized the declaration-start lookup path in `Parser_Statements.cpp` to reduce duplicated logic.
+
+Regression coverage:
+
+- `tests/std/test_std_namespaced_nested_member_type_decl.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_std_namespaced_nested_member_type_decl.cpp` | ✅ Parse/Sema progress | focused runner | No longer hits the prior `_Arg` symbol-loss codegen path in namespaced class member bodies. |
+| `<any>` (`test_std_any.cpp`) | ❌ Codegen Error | 1.12s | Progresses past `Expected symbol '_Arg' to exist in code generation`; current stop is later unresolved semantic type category 25 for local `__arg`, then `Sema did not annotate converting constructor for normalized body`. |
+| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | 4.58s | First hard stop unchanged: `bits/alloc_traits.h:904` (`Failed to instantiate template function`). |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | 1.63s | Control retest still compiles. |
 
 ### 2026-05-24 Linux/libstdc++ namespace-qualified owner member-template lookup follow-up
 

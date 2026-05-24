@@ -200,6 +200,42 @@ ParseResult Parser::parse_statement_or_declaration() {
 			   token.value() == "*"sv || token.value() == "&"sv || token.value() == "&&"sv;
 	};
 
+	auto lookupDeclarationStartTypeInfo = [&](StringHandle type_name_handle) -> const TypeInfo* {
+		const TypeInfo* type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
+		if (type_info_ctx) {
+			return type_info_ctx;
+		}
+
+		std::string_view type_name = StringTable::getStringView(type_name_handle);
+		if (type_name.find("::") != std::string_view::npos) {
+			return nullptr;
+		}
+
+		auto tryScopeIncludingInherited = [&](StringHandle struct_name_handle) -> const TypeInfo* {
+			if (!struct_name_handle.isValid()) {
+				return nullptr;
+			}
+			return lookup_inherited_type_alias(struct_name_handle, type_name_handle);
+		};
+
+		for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
+			if (const TypeInfo* found = tryScopeIncludingInherited(it->struct_name)) {
+				return found;
+			}
+		}
+		for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+			if (it->struct_name.empty()) {
+				continue;
+			}
+			StringHandle struct_name_handle = StringTable::getOrInternStringHandle(it->struct_name);
+			if (const TypeInfo* found = tryScopeIncludingInherited(struct_name_handle)) {
+				return found;
+			}
+		}
+
+		return nullptr;
+	};
+
 	auto looksLikeQualifiedTemplateDeclaration = [&]() -> bool {
 		SaveHandle saved_pos = save_token_position();
 		ScopeGuard restore_guard([&]() { restore_token_position(saved_pos); });
@@ -263,25 +299,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		restore_token_position(saved_pos);
 
 		auto type_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
-		auto type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
-		if (!type_info_ctx && !struct_parsing_context_stack_.empty()) {
-			const auto& struct_ctx = struct_parsing_context_stack_.back();
-			if (struct_ctx.local_struct_info && !struct_ctx.local_struct_info->base_classes.empty()) {
-				StringHandle struct_name = struct_ctx.local_struct_info->getName();
-				if (const TypeInfo* inherited = lookup_inherited_type_alias(struct_name, type_name_handle)) {
-					type_info_ctx = inherited;
-				}
-			}
-		}
-		if (!type_info_ctx && !member_function_context_stack_.empty()) {
-			const auto& mf_ctx = member_function_context_stack_.back();
-			if (mf_ctx.local_struct_info && !mf_ctx.local_struct_info->base_classes.empty()) {
-				StringHandle struct_name = mf_ctx.local_struct_info->getName();
-				if (const TypeInfo* inherited = lookup_inherited_type_alias(struct_name, type_name_handle)) {
-					type_info_ctx = inherited;
-				}
-			}
-		}
+		auto type_info_ctx = lookupDeclarationStartTypeInfo(type_name_handle);
 		if (type_info_ctx) {
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
 							  (type_info_ctx->fallback_size_bits_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
@@ -678,35 +696,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		restore_token_position(saved_pos);
 
 		auto type_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
-		auto type_info_ctx = lookupTypeInCurrentContext(type_name_handle);
-		// If not found in current context, search base class typedefs
-		// This handles cases like: struct Derived : Base<int> { void f() { value_type x = 10; } }
-		// where value_type is a typedef in Base<int>
-		if (!type_info_ctx && !struct_parsing_context_stack_.empty()) {
-			const auto& struct_ctx = struct_parsing_context_stack_.back();
-			FLASH_LOG(Parser, Debug, "Checking base class typedefs for '", current_token.value(),
-					  "', struct=", struct_ctx.struct_name, ", has_info=", (struct_ctx.local_struct_info != nullptr));
-			if (struct_ctx.local_struct_info && !struct_ctx.local_struct_info->base_classes.empty()) {
-				StringHandle struct_name = struct_ctx.local_struct_info->getName();
-				const TypeInfo* inherited = lookup_inherited_type_alias(struct_name, type_name_handle);
-				if (inherited) {
-					FLASH_LOG(Parser, Debug, "Found inherited typedef '", current_token.value(), "' from base class");
-					type_info_ctx = inherited;
-				}
-			}
-		}
-		if (!type_info_ctx && !member_function_context_stack_.empty()) {
-			const auto& mf_ctx = member_function_context_stack_.back();
-			if (mf_ctx.local_struct_info && !mf_ctx.local_struct_info->base_classes.empty()) {
-				FLASH_LOG(Parser, Debug, "Checking member function context base class typedefs for '", current_token.value(), "'");
-				StringHandle struct_name = mf_ctx.local_struct_info->getName();
-				const TypeInfo* inherited = lookup_inherited_type_alias(struct_name, type_name_handle);
-				if (inherited) {
-					FLASH_LOG(Parser, Debug, "Found inherited typedef '", current_token.value(), "' from member function context base class");
-					type_info_ctx = inherited;
-				}
-			}
-		}
+		auto type_info_ctx = lookupDeclarationStartTypeInfo(type_name_handle);
 		if (type_info_ctx) {
 			// Check if it's a struct, enum, or typedef
 			// A typedef can be detected either by fallback_size_bits_ > 0 (for primitive typedefs) or by isTypeAlias() flag
