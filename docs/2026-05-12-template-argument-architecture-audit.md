@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (primary nested out-of-line member-template attachment remains replay-first; same-name overload regressions now attach via instantiated-candidate signature fallback when identity replay misses)
+**Last updated:** 2026-05-24 (primary nested out-of-line member-template same-name overload attachment now resolves through source-member→stub identity, with no instantiated-candidate scan fallback)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -75,15 +75,11 @@ Useful assumptions before changing this area:
   now throw invariant failures when required replay metadata is missing instead
   of silently relying on broad AST-only substitution fallback.
 - **primary-template nested out-of-line member-template attachment is now
-  replay-first and identity-map-backed**: attachment now resolves source member
-  templates to instantiated stubs through `source_member_to_stub`, and the
-  previous non-static AST recovery path that replayed declarations from original
-  type info has been removed from this path.
-- **same-name nested member-template overload attachment is now robust against
-  source-identity misses**: when replay identity mapping fails to find a stub,
-  attachment now performs a constrained fallback over instantiated
-  member-template stubs (name + substituted signature + no existing body source)
-  and still does not recover declarations from original type info.
+  replay-first and identity-map-backed (including same-name overloads)**:
+  source-member→stub attachment now registers and resolves both AST-node and
+  declaration-location identities, and overload disambiguation compares
+  substituted signatures against the identity-resolved instantiated stub.
+  Instantiated-candidate scan fallback has been removed from this primary path.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
@@ -143,17 +139,12 @@ they directly block items 1-2:
 
 ## Highest-impact next steps
 
-1. **Make replay identity construction complete for primary nested member-template overloads**
-   - Keep replay-first attachment as the primary path.
-   - Reduce reliance on instantiated-candidate fallback by ensuring every source
-     nested member-template overload gets a stable source→stub replay key.
-
-2. **Port partial-spec nested out-of-line member-template attachment to replay-first identity matching**
+1. **Port partial-spec nested out-of-line member-template attachment to replay-first identity matching**
    - Reuse source-member→instantiated-stub identity for partial-specialization
      nested member-template attachment (mirroring the primary-template path).
    - Then remove remaining scan-first attachment behavior in that slice.
 
-3. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1-2**
+2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
    - Expand richer dependent-base and unknown-specialization records only when
      required by the replay/lookup path above.
    - Avoid broad redesign work that does not directly reduce fallback behavior.
@@ -176,8 +167,10 @@ The following are complete enough to rely on:
   covered paths;
 - nested out-of-line member-function-template replay preserves instantiated
   outer parameter types while importing definition-side parameter names, and now
-  attaches definitions through source-member→stub identity (no original-type
-  declaration recovery fallback in the primary-template path);
+  attaches definitions through source-member→stub identity (AST-node +
+  declaration-location keyed), including same-name overload disambiguation
+  against identity-resolved stubs, with no instantiated-candidate scan fallback
+  in the primary-template path;
 - partial-spec plain (non-template) out-of-line member functions now parse and
   substitute their bodies with the correct class-template parameters and
   definition lookup context in scope;
