@@ -224,46 +224,17 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCan
 		false);
 	append_candidates(gTemplateRegistry.lookupTemplateName(direct_request));
 
-	auto try_lookup_owner = [&](StringHandle owner_name) {
-		TemplateNameLookupRequest request = buildMemberFunctionTemplateLookupRequest(
-			owner_name,
-			member_name_handle,
-			false);
-		append_candidates(gTemplateRegistry.lookupTemplateName(request));
-	};
-
 	if (candidates.empty()) {
 		if (auto lookup_owner = getTemplateLookupOwnerName(struct_name)) {
 			if (*lookup_owner != requested_owner) {
-				try_lookup_owner(*lookup_owner);
+				TemplateNameLookupRequest base_request = buildMemberFunctionTemplateLookupRequest(
+					*lookup_owner,
+					member_name_handle,
+					false);
+				append_candidates(gTemplateRegistry.lookupTemplateName(base_request));
 				if (!candidates.empty()) {
-					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", lookup_owner->view());
+					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", base_request.owner_name.view());
 				}
-			}
-		}
-	}
-
-	if (candidates.empty()) {
-		const std::string_view requested_owner_name = StringTable::getStringView(requested_owner);
-		const std::string_view unqualified_owner_name = unqualifiedTypeComponent(requested_owner_name);
-		if (!unqualified_owner_name.empty() &&
-			unqualified_owner_name != requested_owner_name) {
-			try_lookup_owner(StringTable::getOrInternStringHandle(unqualified_owner_name));
-		}
-	}
-
-	if (candidates.empty() &&
-		requested_owner.view().find("::") == std::string_view::npos) {
-		if (auto type_it = getTypesByNameMap().find(requested_owner);
-			type_it != getTypesByNameMap().end()) {
-			if (const TypeInfo* type_info = type_it->second;
-				type_info != nullptr && type_info->sourceNamespace().isValid()) {
-				StringBuilder qualified_owner_builder;
-				qualified_owner_builder
-					.append(StringTable::getStringView(type_info->sourceNamespace()))
-					.append("::")
-					.append(requested_owner.view());
-				try_lookup_owner(StringTable::getOrInternStringHandle(qualified_owner_builder.commit()));
 			}
 		}
 	}
@@ -1215,6 +1186,34 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	// Route member template overload discovery through the semantic two-phase lookup request.
 	std::vector<TemplateNameLookupCandidate> template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
+
+	if (template_candidates.empty()) {
+		const std::string_view unqualified_owner_name = unqualifiedTypeComponent(struct_name);
+		if (!unqualified_owner_name.empty() &&
+			unqualified_owner_name != struct_name) {
+			template_candidates = lookupMemberFunctionTemplateCandidatesForInstantiation(
+				unqualified_owner_name,
+				member_name);
+		}
+	}
+
+	if (template_candidates.empty()) {
+		if (auto type_it = getTypesByNameMap().find(struct_name_handle);
+			type_it != getTypesByNameMap().end()) {
+			if (const TypeInfo* struct_type = type_it->second;
+				struct_type != nullptr && struct_type->sourceNamespace().isValid()) {
+				const std::string_view qualified_owner_name = buildQualifiedNameFromHandle(
+					struct_type->sourceNamespace(),
+					struct_name);
+				if (!qualified_owner_name.empty() &&
+					qualified_owner_name != struct_name) {
+					template_candidates = lookupMemberFunctionTemplateCandidatesForInstantiation(
+						qualified_owner_name,
+						member_name);
+				}
+			}
+		}
+	}
 
 	if (template_candidates.empty()) {
 		return std::nullopt;	 // Not a template
