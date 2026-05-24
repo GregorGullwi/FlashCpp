@@ -2124,7 +2124,7 @@ void SemanticAnalysis::resolvePendingCopyInitAnnotations() {
 	// (typically: a call to an auto-return function that was a lazy stub).
 	// Now that lazy members have been materialized and auto-return types are
 	// resolved, retry the annotation so codegen finds the sema-selected constructor.
-	std::vector<PendingCopyInitAnnotation> pending = std::exchange(pending_copy_init_annotations_, {});
+	std::vector<PendingCopyInitAnnotation> pending = std::move(pending_copy_init_annotations_);
 	for (const auto& entry : pending) {
 		if (!entry.target_type_id || !entry.init_expr.has_value())
 			continue;
