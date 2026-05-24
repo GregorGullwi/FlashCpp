@@ -3529,6 +3529,21 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 									rhsCat,
 									is_shift_op);
 	TypeCategory commonType = commonTypeInfo.commonType;
+	const bool is_comparison_op =
+		op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=";
+	auto isScopedEnumTypeIndex = [&](TypeIndex type_index) {
+		if (type_index.category() != TypeCategory::Enum || !type_index.is_valid())
+			return false;
+		const TypeInfo* type_info = tryGetTypeInfo(type_index);
+		const EnumTypeInfo* enum_info = type_info ? type_info->getEnumInfo() : nullptr;
+		return enum_info && enum_info->is_scoped;
+	};
+	const bool is_same_scoped_enum_comparison =
+		is_comparison_op &&
+		lhsExprResult.type_index.category() == TypeCategory::Enum &&
+		rhsExprResult.type_index.category() == TypeCategory::Enum &&
+		lhsExprResult.type_index == rhsExprResult.type_index &&
+		isScopedEnumTypeIndex(lhsExprResult.type_index);
 
 	// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 	const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
@@ -3539,6 +3554,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// guard, expected-target verification, enum type mismatch handling, and conversion.
 	if (!is_pointer_comparison && lhsCat != commonType) {
 		if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
+			if (sema_normalized_current_function_ && is_same_scoped_enum_comparison) {
+				throw InternalError("Phase 15: sema missed scoped-enum comparison LHS promotion");
+			}
 			if (sema_normalized_current_function_ &&
 				is_standard_arithmetic_type(lhsCat) &&
 				is_standard_arithmetic_type(commonType))
@@ -3571,6 +3589,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 	} else if (!is_pointer_comparison && rhsCat != commonType) {
 		if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
+			if (sema_normalized_current_function_ && is_same_scoped_enum_comparison) {
+				throw InternalError("Phase 15: sema missed scoped-enum comparison RHS promotion");
+			}
 			if (sema_normalized_current_function_ &&
 				is_standard_arithmetic_type(rhsCat) &&
 				is_standard_arithmetic_type(commonType))

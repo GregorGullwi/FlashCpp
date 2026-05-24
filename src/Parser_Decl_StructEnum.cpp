@@ -3834,6 +3834,7 @@ ParseResult Parser::parse_enum_declaration() {
 	// search by name (which would collide when two functions define local enums
 	// with the same unqualified name — getTypesByNameMap()::emplace is a no-op on duplicates).
 	enum_ref.set_type_index(enum_type_info.type_index_);
+	(void)gSymbolTable.insert(enum_name, enum_node);
 
 	// Check for underlying type specification (: type)
 	if (peek() == ":"_tok) {

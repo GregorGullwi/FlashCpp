@@ -2014,6 +2014,19 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	const std::string_view type_name = StringTable::getStringView(type_handle);
 
+	// Prefer declarations from the active symbol scope for unqualified type names.
+	// This keeps block/function-local enum tags authoritative even when
+	// getTypesByNameMap() still holds an older outer-scope type under the same key.
+	if (type_name.find("::") == std::string_view::npos) {
+		if (std::optional<ASTNode> symbol = gSymbolTable.lookup(type_name);
+			symbol.has_value() && symbol->is<EnumDeclarationNode>()) {
+			const TypeIndex enum_type_index = symbol->as<EnumDeclarationNode>().type_index();
+			if (const TypeInfo* enum_type_info = tryGetTypeInfo(enum_type_index)) {
+				return enum_type_info;
+			}
+		}
+	}
+
 	auto isDirectlyVisibleUnqualified = [&](const TypeInfo* type_info) {
 		if (!type_info) {
 			return false;
