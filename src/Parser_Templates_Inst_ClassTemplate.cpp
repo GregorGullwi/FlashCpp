@@ -12526,40 +12526,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Map template parameter names to actual types and values
 			setCurrentTemplateParamNames(delayed.template_param_names);
 
-			// Create template parameter substitutions for non-type AND type parameters
-			// This allows template parameters like 'v' in 'return v;' to be substituted with actual values
-			// and type parameters like '_R1' in '__is_ratio_v<_R1>' to be substituted with actual types
+			// Build substitutions from the normalized template environment so value
+			// parameters keep full typed identity metadata (pointer/reference/function
+			// pointer NTTP payload) instead of only integral values.
 			template_param_substitutions_.clear();
-			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
-				const TemplateParameterNode& param = template_params[i];
-				const auto& arg = template_args_to_use[i];
-
-				if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
-					// Non-type parameter - store value for substitution
-					TemplateParamSubstitution subst;
-					subst.param_name = param.nameHandle();
-					subst.is_value_param = true;
-					subst.value = arg.value;
-					subst.value_type = arg.typeEnum();
-					template_param_substitutions_.push_back(subst);
-
-					FLASH_LOG(Templates, Debug, "Registered non-type template parameter '",
-							  param.name(), "' with value ", arg.value);
-				} else if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
-					// Type parameter - store type for substitution
-					// This enables variable templates inside function templates to work correctly:
-					// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
-					TemplateParamSubstitution subst;
-					subst.param_name = param.nameHandle();
-					subst.is_value_param = false;
-					subst.is_type_param = true;
-					subst.substituted_type = arg;
-					template_param_substitutions_.push_back(subst);
-
-					FLASH_LOG(Templates, Debug, "Registered type template parameter '",
-							  param.name(), "' with type ", arg.toString());
-				}
-			}
+			TemplateEnvironment deferred_body_environment = buildTemplateEnvironment(
+				template_params,
+				template_args_to_use,
+				nullptr);
+			populateTemplateParamSubstitutions(
+				template_param_substitutions_,
+				deferred_body_environment);
 
 			FLASH_LOG(Templates, Debug, "About to parse deferred body for ", deferred.identity.original_lookup_name);
 

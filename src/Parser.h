@@ -3271,6 +3271,10 @@ private:	 // Resume private methods
 	// Use ExpressionContext::Normal for most cases; TemplateTypeArg when inside <...>.
 	ParseResult parse_expression(int precedence, ExpressionContext context);
 	ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }	 // Wrapper for keyword map
+	bool trySubstituteValueTemplateParameterExpression(
+		StringHandle param_name,
+		const Token& source_token,
+		std::optional<ASTNode>& result);
 	ParseResult parse_primary_expression(ExpressionContext context);
 	ParseResult parse_postfix_expression(ExpressionContext context);	 // Phase 3: New postfix operator layer
 	ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result

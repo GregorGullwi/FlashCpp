@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (template static-member initializer replay metadata invariants enforced)
+**Last updated:** 2026-05-24 (deferred ctor replay now preserves typed NTTP identity payloads)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -47,11 +47,11 @@ Future work can rely on these being in place:
   current template name and base template name (without duplicate replay)**,
   covering both plain members and deferred member-function-template replay when
   registration lands under the base template key.
-- **deferred class-template constructor bodies now store template-parameter names**
-  at parse time so `hasActiveTemplateParameters()` returns true during replay;
-  integral NTTPs in those bodies are substituted directly to `NumericLiteralNode`
-  at replay time instead of falling through to a runtime `IdentifierNode` that
-  codegen cannot resolve.
+- **deferred class-template constructor replay now uses normalized template
+  environments for substitution registration**, preserving full typed NTTP
+  identity payloads (pointer/reference/function-pointer/member-pointer) and
+  reusing the shared value-parameter substitution path instead of a
+  constructor-only numeric fallback.
 - **`P::method()` qualified calls where P is a template type parameter are now
   resolved at sema level**: `resolveQualifiedOwnerType` in `tryRecoverCallDeclFromStructMembers`
   now walks `InstantiationContext::param_names`/`param_args` when the qualifier
@@ -92,6 +92,7 @@ Latest focused regressions added on the current branch:
 - `test_template_type_param_qualified_static_call_ret0.cpp`
 - `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
 - `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`
+- `test_template_nttp_deferred_ctor_body_pointer_function_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -121,10 +122,6 @@ This work should support item 1, not replace it as the main track.
 
 Still open, but not the next best slice:
 
-- remaining NTTP categories (pointer/reference/function-pointer NTTP substitution
-  in deferred constructor bodies currently relies on `substitute_template_params_in_expression`
-  at instantiation time instead of parse-time substitution — works but is inconsistent
-  with the integral NTTP path);
 - broader sema-owned deduction and ranking;
 - final conversion of repair paths into invariants/diagnostics;
 - **C++20 extended aggregate initialization at sema level**: `ConstructorCallNode`
