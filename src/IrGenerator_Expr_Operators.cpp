@@ -613,6 +613,32 @@ TypedValue AstToIr::buildReferenceCallArgumentFromResult(
 	return toTypedValue(argument_result);
 }
 
+bool AstToIr::resolvedConstructorMatchesTargetType(const ConstructorDeclarationNode& ctor, TypeIndex target_type_index) const {
+	const TypeIndex owning_type_index = ctor.owning_type_index();
+	const StructTypeInfo* target_struct_info = tryGetStructTypeInfo(target_type_index);
+
+	if (owning_type_index.is_valid()) {
+		if (owning_type_index == target_type_index) {
+			return true;
+		}
+
+		const StructTypeInfo* owning_struct_info = tryGetStructTypeInfo(owning_type_index);
+		if (owning_struct_info && target_struct_info &&
+			isSameClassOrInstantiation(owning_struct_info, target_struct_info)) {
+			return true;
+		}
+
+		if (sema_.isLogicallySameStructType(owning_type_index, target_type_index)) {
+			return true;
+		}
+	}
+
+	if (target_struct_info && ctor.struct_name() == target_struct_info->name) {
+		return true;
+	}
+	return false;
+}
+
 bool AstToIr::canUseDirectIdentifierCallArgument(
 	const DeclarationNode* decl_node,
 	CVReferenceQualifier param_ref_qualifier,

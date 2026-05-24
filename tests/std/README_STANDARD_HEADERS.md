@@ -21,7 +21,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~2.60s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~4.44s (retested 2026-05-23, Linux/libstdc++-14). Progressed past earlier wide-literal type mismatch and now stops later in IR conversion at `Type with no runtime size reached codegen in direct call return size (type=25)` in the `find` path. |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~3.75s (retested 2026-05-24, Linux/libstdc++-14). Progressed past the sema-normalized constructor-target mismatch in `basic_string_view::substr`; current first hard stop is later IR conversion at `Type with no runtime size reached codegen in direct call return size (type=25)` in the `find` path. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~2.64s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
@@ -100,6 +100,27 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-24 Linux/libstdc++ constructor-target logical-type matching follow-up
+
+Fix landed:
+
+- **Codegen constructor-target matching now accepts semantically identical struct types (same logical struct identity) instead of requiring raw `TypeIndex` equality only.**
+- Reused the shared sema helper (`isLogicallySameStructType`) from `AstToIr::resolvedConstructorMatchesTargetType` to keep constructor-validation logic centralized and smaller.
+
+Regression coverage:
+
+- `tests/std/test_std_string_view_substr_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `<string_view>` (`test_std_string_view.cpp`) | ❌ Compile Error | 3.75s | Progresses past the prior `substr` constructor-target mismatch (`Sema-normalized constructor call resolved the wrong constructor target for 'std::basic_string_view'`); current first stop is later IR `find` return-size type=25. |
+| `<string_view>` wide literal repro (`test_std_wstring_view_find_ret0.cpp`) | ❌ Compile Error | 3.71s | Same first hard stop in `find`: `Type with no runtime size reached codegen in direct call return size (type=25)`. |
+| `<string_view>` substr-focused repro (`test_std_string_view_substr_ret0.cpp`) | ❌ Compile Error | 3.72s | New repro also reaches the same later `find` type=25 stop instead of failing in constructor-target validation. |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | 1.32s | Control retest still compiles. |
+| `<array>` (`test_std_array.cpp`) | ✅ Pass | 2.20s | Control retest still compiles. |
 
 ### 2026-05-24 Linux/libstdc++ non-template dependent-owner typename diagnostic follow-up
 
