@@ -3071,7 +3071,43 @@ ParseResult Parser::parse_type_specifier() {
 			return nullptr;
 		};
 
+		// Look up nested struct/union/class types declared inside the enclosing class.
+		// This handles e.g. `_Arg arg;` in a member function body where `_Arg` is a
+		// nested union declared later in the same class (C++20 [basic.scope.class]).
+		// tryStructScopedTypeAlias above only covers typedef/using aliases; this
+		// companion helper covers actual nested struct/union/class types.
+		auto tryStructScopedNestedStructType = [&]() -> const TypeInfo* {
+			auto tryName = [&](std::string_view struct_name) -> const TypeInfo* {
+				if (struct_name.empty())
+					return nullptr;
+				StringBuilder sb;
+				StringHandle qualified = StringTable::getOrInternStringHandle(
+					sb.append(struct_name).append("::").append(type_name).commit());
+				auto it = getTypesByNameMap().find(qualified);
+				if (it == getTypesByNameMap().end())
+					return nullptr;
+				const TypeInfo* info = it->second;
+				if (!info->isStruct() || info->is_incomplete_instantiation_)
+					return nullptr;
+				return info;
+			};
+			for (auto it = member_function_context_stack_.rbegin();
+				 it != member_function_context_stack_.rend(); ++it) {
+				std::string_view sname = StringTable::getStringView(it->struct_name);
+				if (const TypeInfo* found = tryName(sname))
+					return found;
+			}
+			for (auto it = struct_parsing_context_stack_.rbegin();
+				 it != struct_parsing_context_stack_.rend(); ++it) {
+				if (const TypeInfo* found = tryName(it->struct_name))
+					return found;
+			}
+			return nullptr;
+		};
+
 		const TypeInfo* struct_scoped = tryStructScopedTypeAlias();
+		if (!struct_scoped)
+			struct_scoped = tryStructScopedNestedStructType();
 		const TypeInfo* type_info_ctx = struct_scoped ? struct_scoped : lookupTypeInCurrentContext(type_name_handle);
 		if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)

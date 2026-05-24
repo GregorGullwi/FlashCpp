@@ -1310,37 +1310,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		}
 		return 64;
 	};
-	auto tryResolveCurrentStructNestedTypeIndex = [&](const TypeSpecifierNode& type_node) -> TypeIndex {
-		if (type_node.type_index().is_valid()) {
-			return type_node.type_index();
-		}
-		if (type_node.category() != TypeCategory::UserDefined || !current_struct_name_.isValid()) {
-			return {};
-		}
-
-		StringHandle unresolved_name = type_node.token().handle();
-		if (!unresolved_name.isValid()) {
-			unresolved_name = StringTable::getOrInternStringHandle(type_node.token().value());
-		}
-		if (!unresolved_name.isValid()) {
-			return {};
-		}
-
-		StringHandle qualified_name = StringTable::getOrInternStringHandle(
-			StringBuilder().append(current_struct_name_).append("::").append(unresolved_name).commit());
-		if (auto qualified_type_it = getTypesByNameMap().find(qualified_name);
-			qualified_type_it != getTypesByNameMap().end()) {
-			return qualified_type_it->second->type_index_;
-		}
-
-		if (auto unresolved_type_it = getTypesByNameMap().find(unresolved_name);
-			unresolved_type_it != getTypesByNameMap().end() && unresolved_type_it->second->isStruct()) {
-			return unresolved_type_it->second->type_index_;
-		}
-
-		return {};
-	};
-
 	// OPERATOR-> OVERLOAD RESOLUTION
 	// If this is arrow access (obj->member), check if the object has operator->() overload
 	if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
@@ -1626,14 +1595,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				base_object = ptr_result;
 				base_type_index = return_type.type_index();
 				is_pointer_dereference = true;
-			}
-		}
-	}
-
-	if (!base_type_index.is_valid()) {
-		if (const auto* base_name_handle = std::get_if<StringHandle>(&base_object)) {
-			if (const DeclarationNode* base_decl = lookupDeclaration(*base_name_handle)) {
-				base_type_index = tryResolveCurrentStructNestedTypeIndex(base_decl->type_specifier_node());
 			}
 		}
 	}
