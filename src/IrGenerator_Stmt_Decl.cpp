@@ -215,6 +215,11 @@ std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& ini
 	try {
 		init_type_opt = buildCodegenOverloadResolutionArgType(init_node);
 	} catch (const InternalError&) {
+		const bool is_identifier_expression = init_node.is<ExpressionNode>() &&
+			std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>());
+		if (sema_normalized_current_function_ && is_identifier_expression) {
+			throw;
+		}
 		return std::nullopt;
 	}
 	if (!init_type_opt.has_value()) {
