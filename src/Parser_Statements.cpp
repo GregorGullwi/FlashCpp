@@ -207,44 +207,29 @@ ParseResult Parser::parse_statement_or_declaration() {
 		}
 
 		std::string_view type_name = StringTable::getStringView(type_name_handle);
-		auto tryStructScopedLookup = [&](std::string_view struct_name) -> const TypeInfo* {
-			if (struct_name.empty() || type_name.find("::") != std::string_view::npos) {
+		if (type_name.find("::") != std::string_view::npos) {
+			return nullptr;
+		}
+
+		auto tryScopeIncludingInherited = [&](StringHandle struct_name_handle) -> const TypeInfo* {
+			if (!struct_name_handle.isValid()) {
 				return nullptr;
 			}
-			StringHandle qualified = StringTable::getOrInternStringHandle(
-				StringBuilder().append(struct_name).append("::").append(type_name).commit());
-			auto it = getTypesByNameMap().find(qualified);
-			if (it != getTypesByNameMap().end()) {
-				return it->second;
-			}
-			return nullptr;
+			return lookup_inherited_type_alias(struct_name_handle, type_name_handle);
 		};
 
 		for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
-			if (const TypeInfo* struct_scoped = tryStructScopedLookup(StringTable::getStringView(it->struct_name))) {
-				return struct_scoped;
+			if (const TypeInfo* found = tryScopeIncludingInherited(it->struct_name)) {
+				return found;
 			}
 		}
 		for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
-			if (const TypeInfo* struct_scoped = tryStructScopedLookup(it->struct_name)) {
-				return struct_scoped;
+			if (it->struct_name.empty()) {
+				continue;
 			}
-		}
-
-		for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
-			if (it->local_struct_info && !it->local_struct_info->base_classes.empty()) {
-				const TypeInfo* inherited = lookup_inherited_type_alias(it->local_struct_info->getName(), type_name_handle);
-				if (inherited) {
-					return inherited;
-				}
-			}
-		}
-		for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
-			if (it->local_struct_info && !it->local_struct_info->base_classes.empty()) {
-				const TypeInfo* inherited = lookup_inherited_type_alias(it->local_struct_info->getName(), type_name_handle);
-				if (inherited) {
-					return inherited;
-				}
+			StringHandle struct_name_handle = StringTable::getOrInternStringHandle(it->struct_name);
+			if (const TypeInfo* found = tryScopeIncludingInherited(struct_name_handle)) {
+				return found;
 			}
 		}
 
