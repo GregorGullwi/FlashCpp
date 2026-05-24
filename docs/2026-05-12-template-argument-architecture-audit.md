@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (partial-spec nested out-of-line member-template same-name overload attachment now resolves through source-member→stub identity, with scan-first matching removed in that slice)
+**Last updated:** 2026-05-24 (plain non-template out-of-line member attachment now resolves through source-member→stub identity for primary and partial-spec class-template instantiation paths, removing instantiated-member name/shape scans in that slice)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -46,6 +46,11 @@ Useful assumptions before changing this area:
   current template name and the extracted base template name (with dedupe)**,
   so plain-member replay and member-function-template deferred replay still
   attach when registrations land under the base template name.
+- **primary-template and partial-spec plain (non-template) out-of-line member
+  attachment are now replay-first and identity-map-backed (including same-name
+  overloads)**: these paths now resolve the source declaration first, then map
+  source-member→instantiated-stub identity before replaying the body, removing
+  the old instantiated-member name/arity scan in this slice.
 - **deferred class-template constructor replay now builds substitutions from a
   normalized template environment**, so non-type substitutions preserve full
   typed identity payloads (pointer/reference/function-pointer/member-pointer) in
@@ -103,6 +108,8 @@ Latest focused replay regressions added on the current branch:
 - `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
 - `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`
 - `test_template_nttp_deferred_ctor_body_pointer_function_ret0.cpp`
+- `test_template_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
 
 ## What is still wrong
 
@@ -143,8 +150,9 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Remove the next remaining declaration replay scans outside static-member initializers**
-   - Continue replacing non-static replay attachment paths that still scan
-     instantiated members by name/shape with source-member identity lookup.
+   - Continue replacing the remaining constructor/non-static replay attachment
+     paths that still recover targets from instantiated-member scans instead of
+     source-member identity.
 
 2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
    - Expand richer dependent-base and unknown-specialization records only when
@@ -173,6 +181,10 @@ The following are complete enough to rely on:
   declaration-location keyed), including same-name overload disambiguation
   against identity-resolved stubs, with no instantiated-candidate scan fallback
   in the primary-template path;
+- plain (non-template) out-of-line member replay for both primary templates and
+  partial specializations now also resolves through source-member→stub identity,
+  including same-name overload cases, with no instantiated-member name/arity
+  attachment scan in that slice;
 - partial-spec nested out-of-line member-template attachment now mirrors that
   replay-first source-member→stub identity path (including same-name overload
   disambiguation), with no scan-first fallback in this slice;
