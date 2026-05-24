@@ -10293,7 +10293,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		mix(static_cast<uint64_t>(ident.line()));
 		mix(static_cast<uint64_t>(ident.column()));
 		mix(static_cast<uint64_t>(ident.handle().handle));
-		mix(static_cast<uint64_t>(member_func_decl->parameter_nodes().size()));
+		const auto& params = member_func_decl->parameter_nodes();
+		mix(static_cast<uint64_t>(params.size()));
+		// Mix in per-parameter type identity to distinguish same-arity overloads
+		// that could share the same source coordinate (e.g., via macro expansion).
+		// We use the type-specifier token handle (which encodes the dependent name
+		// for T/U-style template params), plus structural attributes, so that
+		// eval(T, U) and eval(U, U) produce different keys even at the same location.
+		for (const ASTNode& param : params) {
+			if (param.is<DeclarationNode>()) {
+				const TypeSpecifierNode& ts = param.as<DeclarationNode>().type_specifier_node();
+				mix(static_cast<uint64_t>(ts.token().handle().handle));
+				mix(static_cast<uint64_t>(ts.type_index().index()));
+				mix(static_cast<uint64_t>(ts.pointer_depth()));
+				mix(static_cast<uint64_t>(ts.reference_qualifier()));
+			}
+		}
 		if (member.is<TemplateFunctionDeclarationNode>()) {
 			// High-bit tag separates nested member-template declarations from
 			// non-template members that share the same source coordinate tuple.
