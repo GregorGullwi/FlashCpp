@@ -3525,7 +3525,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					.commit()));
 			// Remaining fallback: handles legitimate non-sema-covered implicit conversions:
 			//   - static local / global variable address derefs (Pointer category)
-			//   - unscoped/scoped enum operands (sema annotations are partial for these)
+			//   - enum operands where TypeIndex is invalid (local enum TypeIndex resolution gap,
+			//     see KNOWN_ISSUES.md: "Enum binary operand conversion fallback")
 			lhsExprResult = generateTypeConversion(lhsExprResult, lhsCat, commonType, binaryOperatorNode.get_token());
 		}
 	}
