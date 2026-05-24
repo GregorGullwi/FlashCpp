@@ -93,6 +93,52 @@ static void buildTemplateParameterReplayState(
 	}
 }
 
+bool Parser::static_initializer_requires_replay_metadata(
+	const std::optional<ASTNode>& initializer,
+	std::span<const TemplateParameterNode> template_params_for_substitution) {
+	if (!initializer.has_value()) {
+		return false;
+	}
+
+	std::unordered_set<StringHandle, StringHandleHash> template_param_names;
+	template_param_names.reserve(template_params_for_substitution.size());
+	for (const TemplateParameterNode& param : template_params_for_substitution) {
+		template_param_names.insert(param.nameHandle());
+	}
+
+	const auto matches_template_param_name = [&template_param_names](StringHandle candidate) -> bool {
+		return template_param_names.contains(candidate);
+	};
+
+	return RebindStaticMemberAst::visitASTUntil(
+		*initializer,
+		[&matches_template_param_name](const ASTNode& node) -> bool {
+			if (!node.is<ExpressionNode>()) {
+				return false;
+			}
+
+			const ExpressionNode& expr = node.as<ExpressionNode>();
+			if (std::holds_alternative<FoldExpressionNode>(expr) ||
+				std::holds_alternative<SizeofPackNode>(expr) ||
+				std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+				return true;
+			}
+			if (const auto* id = std::get_if<IdentifierNode>(&expr);
+				id != nullptr && matches_template_param_name(id->nameHandle())) {
+				return true;
+			}
+			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expr);
+				qualified != nullptr && matches_template_param_name(qualified->nameHandle())) {
+				return true;
+			}
+			if (const auto* call = std::get_if<CallExprNode>(&expr)) {
+				return call->has_dependent_qualified_lookup_record() ||
+					call->dependent_unqualified_lookup_record().has_value();
+			}
+			return false;
+		});
+}
+
 struct DeferredBaseReplayContextScope {
 	template <typename DeferredBaseSpecifier>
 	DeferredBaseReplayContextScope(
@@ -8466,22 +8512,44 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
-	auto try_reparse_in_class_static_initializer_fallback =
+	auto push_replay_member_context =
+		[this](StringHandle instantiated_class_name, StructTypeInfo* instantiated_struct_info) {
+		TypeIndex struct_type_index{};
+		if (auto type_it = getTypesByNameMap().find(instantiated_class_name);
+			type_it != getTypesByNameMap().end()) {
+			struct_type_index = type_it->second->type_index_;
+		}
+		member_function_context_stack_.push_back(
+			{instantiated_class_name, struct_type_index, nullptr, instantiated_struct_info});
+		return ScopeGuard([this]() {
+			if (!member_function_context_stack_.empty()) {
+				member_function_context_stack_.pop_back();
+			}
+		});
+	};
+
+	auto try_reparse_in_class_static_initializer =
 		[&](
 			const auto& static_member,
 			const auto& template_params,
 			std::span<const TemplateTypeArg> template_args,
 			StringHandle owning_instantiated_name,
-			NamespaceHandle fallback_definition_namespace) -> std::optional<ASTNode> {
+			NamespaceHandle fallback_definition_namespace,
+			bool requires_replay_metadata) -> std::optional<ASTNode> {
 		if (!static_member.initializer_position.has_value() ||
 			!static_member.declaration.has_value()) {
+			if (requires_replay_metadata) {
+				throw InternalError(
+					"Template static member initializer replay metadata missing for dependent initializer");
+			}
 			return std::nullopt;
 		}
 
 		const DeclarationNode* declaration =
 			get_decl_from_symbol(*static_member.declaration);
 		if (declaration == nullptr) {
-			return std::nullopt;
+			throw InternalError(
+				"Template static member initializer replay declaration is missing or invalid");
 		}
 
 		SaveHandle current_pos = save_token_position();
@@ -8527,13 +8595,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			template_param_kinds,
 			non_type_categories);
 
+		auto member_ctx_scope =
+			push_replay_member_context(owning_instantiated_name, struct_info.get());
+
 		restore_lexer_position_only(*static_member.initializer_position);
 
 		ASTNode declaration_copy = *static_member.declaration;
 		DeclarationNode* declaration_copy_ptr =
 			get_decl_from_symbol_mut(declaration_copy);
 		if (declaration_copy_ptr == nullptr) {
-			return std::nullopt;
+			throw InternalError(
+				"Template static member initializer replay failed to materialize mutable declaration");
 		}
 		DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;
 		TypeSpecifierNode& type_spec = declaration_copy_ref.type_specifier_node();
@@ -8549,12 +8621,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				reparsed_initializer = *init_result.node();
 			}
 		} else {
-			FLASH_LOG(
-				Templates,
-				Debug,
-				"Skipping in-class static initializer replay for ",
-				declaration->identifier_token().value(),
-				" — initializer token is neither '=' nor '{'");
+			return std::nullopt;
 		}
 
 		if (!reparsed_initializer.has_value()) {
@@ -8578,24 +8645,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;
 		}
 
+		const bool requires_replay_metadata =
+			static_initializer_requires_replay_metadata(
+				static_member.initializer,
+				std::span<const TemplateParameterNode>(
+					template_params.data(),
+					template_params.size()));
+		const bool has_replay_metadata =
+			static_member.initializer_position.has_value() &&
+			static_member.declaration.has_value();
 		std::optional<ASTNode> substituted_initializer;
 		try {
 			substituted_initializer =
-				try_reparse_in_class_static_initializer_fallback(
+				try_reparse_in_class_static_initializer(
 					static_member,
 					template_params,
 					template_args,
 					owning_instantiated_name,
-					fallback_definition_namespace);
+					fallback_definition_namespace,
+					requires_replay_metadata);
 		} catch (const std::exception& ex) {
-			FLASH_LOG(Templates, Debug,
+			FLASH_LOG(Templates, Error,
 					  "Replay substitution failed for in-class static member: ",
-					  ex.what(),
-					  " — falling back to AST substitution");
-			substituted_initializer.reset();
+					  ex.what());
+			if (has_replay_metadata || requires_replay_metadata) {
+				throw;
+			}
 		}
 
 		if (!substituted_initializer.has_value()) {
+			if (requires_replay_metadata) {
+				throw InternalError(
+					"Dependent template static member initializer requires replay metadata");
+			}
 			substituted_initializer = substituteTemplateParameters(
 				*static_member.initializer,
 				template_params,
@@ -11880,8 +11962,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		if (out_of_line_var.initializer.has_value()) {
 			auto try_reparse_out_of_line_static_initializer = [&]() -> bool {
+				std::span<const TemplateParameterNode> replay_template_params;
+				if (!out_of_line_var.replay_template_params.empty()) {
+					replay_template_params = std::span<const TemplateParameterNode>(
+						out_of_line_var.replay_template_params.data(),
+						out_of_line_var.replay_template_params.size());
+				} else {
+					replay_template_params = std::span<const TemplateParameterNode>(
+						out_of_line_var.template_params.data(),
+						out_of_line_var.template_params.size());
+				}
+				const bool requires_replay_metadata =
+					static_initializer_requires_replay_metadata(
+						out_of_line_var.initializer,
+						replay_template_params);
 				if (!out_of_line_var.initializer_position.has_value() ||
 					!out_of_line_var.declaration.has_value()) {
+					if (requires_replay_metadata) {
+						throw InternalError(
+							"Out-of-line template static member initializer replay metadata missing for dependent initializer");
+					}
 					return false;
 				}
 
@@ -11898,7 +11998,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const DeclarationNode* declaration_ptr =
 					get_decl_from_symbol(*out_of_line_var.declaration);
 				if (declaration_ptr == nullptr) {
-					return false;
+					throw InternalError(
+						"Out-of-line template static member initializer replay declaration is missing or invalid");
 				}
 
 				TemplateDefinitionLookupContext definition_lookup_context =
@@ -11924,13 +12025,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				InlineVector<StringHandle, 4> template_param_names;
 				InlineVector<TemplateParameterKind, 4> template_param_kinds;
 				InlineVector<TypeCategory, 4> non_type_categories;
-				const auto& replay_params_source =
-					!out_of_line_var.replay_template_params.empty()
-						? out_of_line_var.replay_template_params
-						: out_of_line_var.template_params;
-				std::span<const TemplateParameterNode> replay_template_params(
-					replay_params_source.data(),
-					replay_params_source.size());
 				buildTemplateParameterReplayState(
 					replay_template_params,
 					template_param_names,
@@ -11941,17 +12035,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_param_kinds,
 					non_type_categories);
 
+				auto member_ctx_scope =
+					push_replay_member_context(instantiated_name, struct_info_ptr);
+
 				restore_lexer_position_only(*out_of_line_var.initializer_position);
 				ASTNode declaration_copy = *out_of_line_var.declaration;
 				DeclarationNode* declaration_copy_ptr =
 					get_decl_from_symbol_mut(declaration_copy);
 				if (declaration_copy_ptr == nullptr) {
-					FLASH_LOG(
-						Templates,
-						Debug,
-						"Out-of-line static initializer replay failed to recover mutable declaration for ",
-						out_of_line_var.member_name);
-					return false;
+					throw InternalError(
+						"Out-of-line template static member initializer replay failed to materialize mutable declaration");
 				}
 				DeclarationNode& declaration_copy_ref = *declaration_copy_ptr;
 				TypeSpecifierNode& type_spec = declaration_copy_ref.type_specifier_node();

@@ -3140,6 +3140,9 @@ private:	 // Resume private methods
 
 	// Helper function for counting pack elements in template parameter packs
 	size_t count_pack_elements(std::string_view pack_name) const;
+	static bool static_initializer_requires_replay_metadata(
+		const std::optional<ASTNode>& initializer,
+		std::span<const TemplateParameterNode> template_params_for_substitution);
 
 	// Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
 	// Returns std::nullopt if pack name is not found (unknown pack)

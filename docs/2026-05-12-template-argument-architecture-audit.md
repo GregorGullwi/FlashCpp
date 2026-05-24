@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-23 (deferred-base replay metadata uplift for inherited member-template owner lookup)
+**Last updated:** 2026-05-23 (template static-member initializer replay metadata invariants enforced)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -69,6 +69,10 @@ Useful assumptions before changing this area:
   `StructTypeInfo` (not only base template names)**, and inherited member-template
   owner traversal now consumes that richer metadata (including member-type chains)
   before falling back to legacy name-only paths.
+- **in-class and out-of-line template static-member initializers now enforce
+  replay metadata invariants for dependent/complex initializers**: these paths
+  now throw invariant failures when required replay metadata is missing instead
+  of silently relying on broad AST-only substitution fallback.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
@@ -84,6 +88,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_aggregate_base_class_ctor_ret0.cpp`
 - `test_template_type_param_qualified_static_call_ret0.cpp`
 - `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
+- `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`
 
 ## What is still wrong
 
@@ -97,8 +102,8 @@ instantiation has to recover intent from partially substituted AST state.
 
 The next highest-value remaining surface:
 
-- remaining declaration/static-member replay paths that never captured enough
-  replay metadata at parse time.
+- remaining declaration replay paths outside static-member initializers that
+  still recover intent from partially substituted AST state.
 - pointer/reference/function-pointer NTTP substitution in deferred constructor
   bodies: these currently fall back to `IdentifierNode` and are resolved at
   instantiation time by `substitute_template_params_in_expression`; a dedicated
@@ -128,9 +133,9 @@ they directly block items 1-2:
 
 ## Highest-impact next steps
 
-1. **Remove the next AST-only replay fallback**
-   - Continue with the remaining declaration/static-member replay
-     paths that still never captured enough metadata at parse time.
+1. **Remove the next AST-only replay fallback in declaration replay**
+   - Continue with the remaining non-static declaration replay paths that still
+     never captured enough metadata at parse time.
    - Prefer replay-first semantic attachment over adding more repair logic.
 
 2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
@@ -148,6 +153,9 @@ The following are complete enough to rely on:
   materialization path;
 - out-of-line static-member replay preserves replay-visible template
   parameters in the covered paths;
+- in-class and out-of-line static-member initializer replay now enforces
+  replay-metadata invariants for dependent/complex initializers, and no longer
+  silently falls back to broad AST-only substitution in those required paths;
 - top-level out-of-line constructor-template replay preserves inner template
   metadata and reattaches deferred body/initializer-list state correctly in the
   covered paths;
