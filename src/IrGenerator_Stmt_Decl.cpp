@@ -127,6 +127,15 @@ bool isCodegenSynthesizedOverloadArg(const ASTNode& arg) {
 					  expr);
 }
 
+bool shouldPropagateMissingSemaOverloadArgType(const ASTNode& arg) {
+	if (!arg.is<ExpressionNode>()) {
+		return false;
+	}
+
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	return std::holds_alternative<IdentifierNode>(expr);
+}
+
 std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 	if (!arg.is<ExpressionNode>()) {
 		return "non-expression";
@@ -206,22 +215,24 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 	return std::nullopt;
 }
 
+std::optional<TypeSpecifierNode> AstToIr::tryBuildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
+	try {
+		return buildCodegenOverloadResolutionArgType(arg);
+	} catch (const InternalError&) {
+		if (sema_normalized_current_function_ &&
+			shouldPropagateMissingSemaOverloadArgType(arg)) {
+			throw;
+		}
+		return std::nullopt;
+	}
+}
+
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
 	if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
 		return std::nullopt;
 	}
 
-	std::optional<TypeSpecifierNode> init_type_opt;
-	try {
-		init_type_opt = buildCodegenOverloadResolutionArgType(init_node);
-	} catch (const InternalError&) {
-		const bool is_identifier_expression = init_node.is<ExpressionNode>() &&
-			std::holds_alternative<IdentifierNode>(init_node.as<ExpressionNode>());
-		if (sema_normalized_current_function_ && is_identifier_expression) {
-			throw;
-		}
-		return std::nullopt;
-	}
+	std::optional<TypeSpecifierNode> init_type_opt = tryBuildCodegenOverloadResolutionArgType(init_node);
 	if (!init_type_opt.has_value()) {
 		return std::nullopt;
 	}
@@ -1501,12 +1512,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										std::vector<TypeSpecifierNode> arg_types;
 										bool all_arg_types_known = true;
 										for (const auto& init_arg : initializers) {
-											std::optional<TypeSpecifierNode> arg_type_opt;
-											try {
-												arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
-											} catch (const InternalError&) {
-												arg_type_opt = std::nullopt;
-											}
+											std::optional<TypeSpecifierNode> arg_type_opt =
+												tryBuildCodegenOverloadResolutionArgType(init_arg);
 											if (!arg_type_opt.has_value()) {
 												all_arg_types_known = false;
 												break;

@@ -858,6 +858,7 @@ private:
 								 const StructTypeInfo*& out_struct_info,
 								 const StructMember*& out_member) const;
 	std::optional<TypeSpecifierNode> buildCodegenOverloadResolutionArgType(const ASTNode& arg) const;
+	std::optional<TypeSpecifierNode> tryBuildCodegenOverloadResolutionArgType(const ASTNode& arg) const;
 	bool resolvedConstructorMatchesTargetType(const ConstructorDeclarationNode& ctor, TypeIndex target_type_index) const;
 	// Resolve a constructor for an AST argument range using sema-aware/codegen-aware
 	// argument types, falling back to arity matching when precise types are
