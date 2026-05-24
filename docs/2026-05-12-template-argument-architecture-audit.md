@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (primary nested out-of-line member-template same-name overload attachment now resolves through source-member→stub identity, with no instantiated-candidate scan fallback)
+**Last updated:** 2026-05-24 (partial-spec nested out-of-line member-template same-name overload attachment now resolves through source-member→stub identity, with scan-first matching removed in that slice)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -80,6 +80,11 @@ Useful assumptions before changing this area:
   declaration-location identities, and overload disambiguation compares
   substituted signatures against the identity-resolved instantiated stub.
   Instantiated-candidate scan fallback has been removed from this primary path.
+- **partial-spec nested out-of-line member-template attachment is now
+  replay-first and identity-map-backed (including same-name overloads)**:
+  source-member→stub identity is now registered during partial-spec member
+  instantiation and used for nested OOL attachment/disambiguation, with the
+  old instantiated-member scan-first path removed for this slice.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
@@ -113,8 +118,6 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
-- partial-spec nested out-of-line member-template attachment still uses broad
-  instantiated-member scanning rather than source-member→stub identity lookup.
 ### 2. Dependent-name modeling is still too weak
 
 `DependentQualifiedNameRecord` is useful, but it is still not a complete
@@ -139,10 +142,9 @@ they directly block items 1-2:
 
 ## Highest-impact next steps
 
-1. **Port partial-spec nested out-of-line member-template attachment to replay-first identity matching**
-   - Reuse source-member→instantiated-stub identity for partial-specialization
-     nested member-template attachment (mirroring the primary-template path).
-   - Then remove remaining scan-first attachment behavior in that slice.
+1. **Remove the next remaining declaration replay scans outside static-member initializers**
+   - Continue replacing non-static replay attachment paths that still scan
+     instantiated members by name/shape with source-member identity lookup.
 
 2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
    - Expand richer dependent-base and unknown-specialization records only when
@@ -171,6 +173,9 @@ The following are complete enough to rely on:
   declaration-location keyed), including same-name overload disambiguation
   against identity-resolved stubs, with no instantiated-candidate scan fallback
   in the primary-template path;
+- partial-spec nested out-of-line member-template attachment now mirrors that
+  replay-first source-member→stub identity path (including same-name overload
+  disambiguation), with no scan-first fallback in this slice;
 - partial-spec plain (non-template) out-of-line member functions now parse and
   substitute their bodies with the correct class-template parameters and
   definition lookup context in scope;

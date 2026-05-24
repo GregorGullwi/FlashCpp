@@ -5544,6 +5544,105 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					static_member.is_constexpr);
 			}
 
+			// Partial-spec replay identity map: source member declaration -> instantiated stub.
+			// Used to attach nested out-of-line member-template bodies replay-first, mirroring
+			// the primary-template path.
+			std::unordered_map<const void*, ASTNode> source_member_to_stub;
+			std::unordered_map<uint64_t, ASTNode> source_member_location_to_stub;
+			auto astNodeKey = [](const ASTNode& n) -> const void* {
+				if (!n.has_value())
+					return nullptr;
+				if (n.is<FunctionDeclarationNode>())
+					return &n.as<FunctionDeclarationNode>();
+				if (n.is<TemplateFunctionDeclarationNode>())
+					return &n.as<TemplateFunctionDeclarationNode>();
+				if (n.is<ConstructorDeclarationNode>())
+					return &n.as<ConstructorDeclarationNode>();
+				if (n.is<DestructorDeclarationNode>())
+					return &n.as<DestructorDeclarationNode>();
+				return nullptr;
+			};
+			auto sourceMemberLocationKey = [](const ASTNode& member) -> std::optional<uint64_t> {
+				const FunctionDeclarationNode* member_func_decl = get_function_decl_node(member);
+				if (member_func_decl == nullptr) {
+					return std::nullopt;
+				}
+				const Token& ident = member_func_decl->decl_node().identifier_token();
+				// FNV-style non-zero seed + splitmix-style combine step for stable composite
+				// hashing of declaration location + signature shape, matching the
+				// primary-template identity-map path.
+				uint64_t key = 0xCBF29CE484222325ull;
+				auto mix = [&](uint64_t value) {
+					key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
+				};
+				mix(static_cast<uint64_t>(ident.file_index()));
+				mix(static_cast<uint64_t>(ident.line()));
+				mix(static_cast<uint64_t>(ident.column()));
+				mix(static_cast<uint64_t>(ident.handle().handle));
+				const auto& params = member_func_decl->parameter_nodes();
+				mix(static_cast<uint64_t>(params.size()));
+				for (const ASTNode& param : params) {
+					if (param.is<DeclarationNode>()) {
+						const TypeSpecifierNode& ts = param.as<DeclarationNode>().type_specifier_node();
+						mix(static_cast<uint64_t>(ts.token().handle().handle));
+						mix(static_cast<uint64_t>(ts.type_index().index()));
+						mix(static_cast<uint64_t>(ts.pointer_depth()));
+						mix(static_cast<uint64_t>(ts.reference_qualifier()));
+					}
+				}
+				if (member.is<TemplateFunctionDeclarationNode>()) {
+					mix(static_cast<uint64_t>(
+						member.as<TemplateFunctionDeclarationNode>().template_parameters().size()) |
+						(1ull << 63));
+				}
+				return key;
+			};
+			auto registerSourceMemberToStubIdentity = [&](const ASTNode& source_member, ASTNode instantiated_stub) {
+				auto register_key = [&](const void* key) {
+					if (key != nullptr) {
+						source_member_to_stub[key] = instantiated_stub;
+					}
+				};
+				register_key(astNodeKey(source_member));
+				if (source_member.is<TemplateFunctionDeclarationNode>()) {
+					register_key(astNodeKey(
+						source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
+				}
+				if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
+					location_key.has_value()) {
+					source_member_location_to_stub[*location_key] = instantiated_stub;
+				}
+			};
+			auto findStubBySourceMemberIdentity = [&](const ASTNode& source_member) -> ASTNode* {
+				auto find_by_key = [&](const void* key) -> ASTNode* {
+					if (key == nullptr) {
+						return nullptr;
+					}
+					auto it = source_member_to_stub.find(key);
+					if (it == source_member_to_stub.end()) {
+						return nullptr;
+					}
+					return &it->second;
+				};
+				if (ASTNode* direct = find_by_key(astNodeKey(source_member))) {
+					return direct;
+				}
+				if (source_member.is<TemplateFunctionDeclarationNode>()) {
+					if (ASTNode* by_template_fn = find_by_key(astNodeKey(
+							source_member.as<TemplateFunctionDeclarationNode>().function_declaration()))) {
+						return by_template_fn;
+					}
+				}
+				if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
+					location_key.has_value()) {
+					auto it = source_member_location_to_stub.find(*location_key);
+					if (it != source_member_location_to_stub.end()) {
+						return &it->second;
+					}
+				}
+				return nullptr;
+			};
+
 			// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
 			// This is critical - we need to create new FunctionDeclarationNodes with instantiated_name as parent
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
@@ -5593,6 +5692,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+					registerSourceMemberToStubIdentity(mem_func.function_declaration, new_ctor_node);
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
@@ -5849,6 +5949,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							new_template_func,
 							decl_node.identifier_token().handle(),
 							decl_node.identifier_token().value());
+						registerSourceMemberToStubIdentity(mem_func.function_declaration, new_template_func);
 					} else {
 						auto [new_decl_node_no_subst, new_decl_ref_no_subst] = emplace_node_ref<DeclarationNode>(
 							decl_node.type_node(),
@@ -5902,6 +6003,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							new_template_func_no_subst,
 							decl_node.identifier_token().handle(),
 							decl_node.identifier_token().value());
+						registerSourceMemberToStubIdentity(
+							mem_func.function_declaration,
+							new_template_func_no_subst);
 					}
 				} else {
 					FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
@@ -6048,6 +6152,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_virtual, mem_func.is_pure_virtual,
 						mem_func.is_override, mem_func.is_final,
 						mem_func.cv_qualifier);
+					registerSourceMemberToStubIdentity(mem_func.function_declaration, new_func_node);
 				}
 			}
 
@@ -6183,33 +6288,43 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_base_name);
 				if (!out_of_line_ctor_stub) {
 					// Non-ctor OOL member function template in a partial specialization:
-					// attach the body position and definition lookup context to the matching
-					// TemplateFunctionDeclarationNode in the instantiated struct, then register
-					// the outer binding so the replay path can put T in scope.
-					// Count same-name members first to know whether we need signature
-					// disambiguation (mirrors the primary-template path at ~line 11069).
-					size_t same_name_member_template_count = 0;
-					for (const auto& mf : instantiated_struct_ref.member_functions()) {
-						const FunctionDeclarationNode* fd =
-							get_function_decl_node(mf.function_declaration);
-						if (fd && fd->decl_node().identifier_token().value() == ool_func_name) {
-							++same_name_member_template_count;
-						}
-					}
-					for (auto& mem_func : instantiated_struct_ref.member_functions()) {
-						FunctionDeclarationNode* inst_func_decl =
-							get_function_decl_node_mut(mem_func.function_declaration);
-						if (!inst_func_decl) {
+					// replay-first attachment against source members, then source-member->stub
+					// identity resolution (mirrors the primary-template path).
+					std::vector<const StructMemberFunctionDecl*> same_name_source_member_templates;
+					for (const StructMemberFunctionDecl& source_member :
+						 pattern_struct.member_functions()) {
+						if (!source_member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
 							continue;
 						}
-						if (inst_func_decl->decl_node().identifier_token().value() != ool_func_name) {
+						const FunctionDeclarationNode* source_func_decl =
+							get_function_decl_node(source_member.function_declaration);
+						if (source_func_decl == nullptr) {
+							continue;
+						}
+						if (source_func_decl->decl_node().identifier_token().value() == ool_func_name) {
+							same_name_source_member_templates.push_back(&source_member);
+						}
+					}
+					const size_t same_name_member_template_count =
+						same_name_source_member_templates.size();
+					FunctionDeclarationNode* inst_func_decl = nullptr;
+					for (const StructMemberFunctionDecl* source_member :
+						 same_name_source_member_templates) {
+						const FunctionDeclarationNode* source_func_decl =
+							get_function_decl_node(source_member->function_declaration);
+						if (source_func_decl == nullptr) {
+							continue;
+						}
+						ASTNode* matched_stub =
+							findStubBySourceMemberIdentity(source_member->function_declaration);
+						if (matched_stub == nullptr || !matched_stub->is<TemplateFunctionDeclarationNode>()) {
 							continue;
 						}
 						if (same_name_member_template_count > 1) {
 							std::optional<bool> signature_match =
 								nestedOutOfLineMemberTemplateMatchesCandidate(
 									*this,
-									mem_func.function_declaration,
+									*matched_stub,
 									ool_func,
 									std::span<const TemplateParameterNode>(
 										template_params.data(),
@@ -6225,6 +6340,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								continue;
 							}
 						}
+						inst_func_decl = get_function_decl_node_mut(*matched_stub);
+						if (inst_func_decl == nullptr) {
+							continue;
+						}
+						break;
+					}
+					if (inst_func_decl != nullptr) {
 						inst_func_decl->set_template_body_position(out_of_line_member.body_start);
 						copyDefinitionParameterIdentifiers(
 							inst_func_decl->parameter_nodes(),
@@ -6250,7 +6372,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							Debug,
 							"Set body position on partial-spec nested template member: ",
 							ool_func_name);
-						break;
+					} else {
+						FLASH_LOG(
+							Templates,
+							Error,
+							"Could not attach partial-spec nested out-of-line member template '",
+							ool_func_name,
+							"' for instantiated class '",
+							instantiated_name,
+							"' via replay identity map");
 					}
 					continue;
 				}

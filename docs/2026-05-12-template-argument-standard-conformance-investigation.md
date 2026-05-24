@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (primary nested out-of-line member-template same-name overload attachment now resolves via source-member→stub identity, without instantiated-candidate scan fallback)
+**Last updated:** 2026-05-24 (partial-spec nested out-of-line member-template same-name overload attachment now resolves via source-member→stub identity, removing scan-first matching in that slice)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -81,6 +81,11 @@ Future work can rely on these being in place:
   location identities)**: same-name overload disambiguation now validates
   substituted signatures on identity-resolved stubs, and this path no longer
   relies on instantiated-candidate scan fallback or original type-info recovery.
+- **partial-spec nested out-of-line member-template attachment now uses the
+  same replay-first source-member→instantiated-stub identity mapping (AST-node
+  + declaration-location identities)**: same-name overload disambiguation now
+  validates substituted signatures on identity-resolved stubs, and this slice
+  no longer relies on instantiated-member scan-first matching.
 
 Latest recorded full-suite validation:
 `2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
@@ -113,8 +118,6 @@ Rule for this work:
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
 - next slices:
-  - convert partial-spec nested out-of-line member-template attachment from
-    scan-first matching to source-member→stub identity matching;
   - remove remaining declaration replay scans in non-static paths still not
     keyed by source-member identity.
 
@@ -145,11 +148,9 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. port partial-spec nested out-of-line member-template attachment to the same
-   replay-first source-member→stub identity path;
-2. remove remaining declaration replay scans in non-static template-member
+1. remove remaining declaration replay scans in non-static template-member
    attachment paths;
-3. update these docs with the next remaining replay-metadata gap.
+2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
 
