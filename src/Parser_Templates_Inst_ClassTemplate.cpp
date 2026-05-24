@@ -107,8 +107,8 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle owner_type_name,
-	std::span<const TemplateParameterNode> instantiated_template_params = {},
-	std::span<const TemplateParameterNode> out_of_line_template_params = {});
+	std::span<const TemplateParameterNode> instantiated_template_params,
+	std::span<const TemplateParameterNode> out_of_line_template_params);
 
 static const void* sourceMemberAstNodeKey(const ASTNode& node) {
 	if (!node.has_value())
@@ -268,7 +268,9 @@ static FunctionDeclarationNode* findPlainOutOfLineMemberStubByIdentity(
 				out_of_line_decl,
 				outer_template_params,
 				outer_template_args,
-				owner_type_name);
+				owner_type_name,
+				std::span<const TemplateParameterNode>{},
+				std::span<const TemplateParameterNode>{});
 		if (same_name_source_member_count > 1) {
 			if (!signature_match.has_value() || !*signature_match) {
 				continue;
