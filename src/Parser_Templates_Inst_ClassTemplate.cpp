@@ -4035,20 +4035,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return false;
 			}
 
-			for (const auto& static_member : struct_info->static_members) {
-				if (StringTable::getStringView(static_member.getName()) != member_name ||
-					!static_member.initializer.has_value()) {
-					continue;
+			auto try_append_from_member = [&](const StructStaticMember& static_member) -> bool {
+				if (!static_member.initializer.has_value()) {
+					return false;
 				}
-
 				if (tryAppendEvaluatedTemplateValue(out_args, *static_member.initializer, log_context)) {
 					return true;
 				}
-
 				if (!static_member.initializer->is<ExpressionNode>()) {
 					return false;
 				}
-
 				const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
 				if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
 					out_args.push_back(TemplateTypeArg(bool_literal->value() ? 1LL : 0LL, TypeCategory::Bool));
@@ -4061,8 +4057,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return true;
 					}
 				}
-
 				return false;
+			};
+
+			// Use findStaticMemberRecursive to also check inherited members from base classes.
+			// This handles patterns like is_enum<T>::value where value comes from integral_constant<bool,V>.
+			StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+			auto [found_member, found_owner] = struct_info->findStaticMemberRecursive(member_name_handle);
+			if (found_member) {
+				return try_append_from_member(*found_member);
+			}
+
+			// Fallback: iterate direct members (in case findStaticMemberRecursive missed something)
+			for (const auto& static_member : struct_info->static_members) {
+				if (StringTable::getStringView(static_member.getName()) != member_name) {
+					continue;
+				}
+				return try_append_from_member(static_member);
 			}
 
 			return false;
@@ -8652,6 +8663,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
 								}
 
+								// Try to evaluate the type trait first. Many traits (is_enum, is_function,
+								// is_pointer, etc.) only check TypeCategory and can succeed even when
+								// the type's template arguments are "dependent" at a deeper level.
+								if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
+									resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
+									continue;
+								}
+
 								if (typeSpecStillUsesDependentPlaceholder(substituted_type_spec)) {
 									StringHandle dependent_anchor;
 									if (const TypeInfo* dependent_ti = tryGetTypeInfo(substituted_type_spec.type_index());
@@ -8667,11 +8686,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											subst_trait_node);
 									dependent_value.is_pack = arg_info.is_pack;
 									resolved_args.push_back(std::move(dependent_value));
-									continue;
-								}
-
-								if (auto value = try_evaluate_constant_expression(subst_trait_node)) {
-									resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 									continue;
 								}
 							}

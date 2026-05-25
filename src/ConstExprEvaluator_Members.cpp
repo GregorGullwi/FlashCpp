@@ -5572,6 +5572,43 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 
+				// If member not found and there are base classes without struct info (ShapeOnly
+				// instantiations), force-materialize them and retry the lookup.
+				// This handles cases like is_enum<T>::value where T's base integral_constant<bool,V>
+				// was only instantiated in ShapeOnly mode and has no recorded static members.
+				if (!static_member && context.parser != nullptr && !struct_info->base_classes.empty()) {
+					bool any_materialized = false;
+					for (const auto& base : struct_info->base_classes) {
+						if (!base.type_index.is_valid() || base.type_index.index() >= gTypeInfo.size()) {
+							continue;
+						}
+						const TypeInfo& base_type_info = gTypeInfo[base.type_index.index()];
+						if (base_type_info.getStructInfo() != nullptr) {
+							continue;
+						}
+						if (!base_type_info.isTemplateInstantiation()) {
+							continue;
+						}
+						std::string_view base_template_name = StringTable::getStringView(base_type_info.baseTemplateName());
+						if (base_template_name.empty()) {
+							continue;
+						}
+						std::vector<TemplateTypeArg> base_args;
+						base_args.reserve(base_type_info.templateArgs().size());
+						for (const auto& arg_info : base_type_info.templateArgs()) {
+							base_args.push_back(toTemplateTypeArg(arg_info));
+						}
+						FLASH_LOG(ConstExpr, Debug, "Force-materializing ShapeOnly base '", base_template_name, "' to find member '", StringTable::getStringView(member_handle), "'");
+						context.parser->materializeTemplateInstantiationForLookup(base_template_name, base_args);
+						any_materialized = true;
+					}
+					if (any_materialized) {
+						auto [retry_member, retry_owner] = struct_info->findStaticMemberRecursive(member_handle);
+						static_member = retry_member;
+						owner_struct = retry_owner;
+					}
+				}
+
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Static member found: ", (static_member != nullptr),
 							  ", owner: ", (owner_struct != nullptr));
