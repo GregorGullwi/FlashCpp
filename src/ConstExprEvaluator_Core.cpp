@@ -1,3 +1,4 @@
+#include <array>
 #include <limits>
 
 #include "Parser.h"
@@ -4654,7 +4655,7 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 
 	std::optional<ASTNode> var_node;
 	auto tryInstantiateByName = [&](std::string_view candidate_name) {
-		if (candidate_name.empty() || var_node.has_value()) {
+		if (candidate_name.empty()) {
 			return;
 		}
 		var_node = parser.try_instantiate_variable_template(candidate_name, template_args, nullptr);
@@ -4667,14 +4668,13 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		tryInstantiateByName(call_expr.qualified_name());
 	}
 
-	if (!var_node.has_value()) {
-		StringBuilder std_name_builder;
-		tryInstantiateByName(std_name_builder.append("std::").append(func_name).commit());
-	}
-
-	if (!var_node.has_value()) {
-		StringBuilder gnu_name_builder;
-		tryInstantiateByName(gnu_name_builder.append("__gnu_cxx::").append(func_name).commit());
+	static constexpr std::array<std::string_view, 2> namespace_prefixes = {"std::", "__gnu_cxx::"};
+	for (std::string_view namespace_prefix : namespace_prefixes) {
+		if (var_node.has_value()) {
+			break;
+		}
+		StringBuilder fallback_name_builder;
+		tryInstantiateByName(fallback_name_builder.append(namespace_prefix).append(func_name).commit());
 	}
 
 	if (var_node.has_value() && var_node->is<VariableDeclarationNode>()) {
