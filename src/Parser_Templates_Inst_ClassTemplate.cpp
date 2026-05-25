@@ -10178,7 +10178,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Pre-count same-name same-arity candidates without a body so that
 					// we can gate signature matching on overload ambiguity (mirrors the
 					// pattern used at the partial-spec and primary-template call sites).
-					std::vector<const StructMemberFunctionDecl*> same_name_candidates;
+					InlineVector<const StructMemberFunctionDecl*, 4> same_name_candidates;
 					for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 						if (!mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
 							continue;
