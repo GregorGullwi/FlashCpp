@@ -1,10 +1,8 @@
-#include <stddef.h>
-
 template<typename T>
 struct Iter {
 	T* ptr;
 
-	ptrdiff_t operator-(const Iter& other) const;
+	decltype((T*)0 - (T*)0) operator-(const Iter& other) const;
 };
 
 int main() {
