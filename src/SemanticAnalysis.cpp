@@ -1379,6 +1379,12 @@ public:
 
 		owner_.resolveRemainingAutoReturns();
 
+		// Retry any copy-init converting-constructor annotations that were deferred
+		// because the init-expression type was not yet available (e.g. calls to lazy
+		// auto-return functions that were materialized during drainLazyMemberRegistry).
+		// Auto-return types are now fully resolved so the retry will succeed.
+		owner_.resolvePendingCopyInitAnnotations();
+
 		FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
 				  owner_.stats_.roots_visited, " roots visited, ",
 				  owner_.stats_.expressions_visited, " expressions, ",
@@ -2112,6 +2118,31 @@ void SemanticAnalysis::resolveRemainingAutoReturns() {
 	}
 }
 
+void SemanticAnalysis::resolvePendingCopyInitAnnotations() {
+	// pending_copy_init_annotations_ was populated during normalization for
+	// VariableDeclarationNodes whose init-expression type was not yet known
+	// (typically: a call to an auto-return function that was a lazy stub).
+	// Now that lazy members have been materialized and auto-return types are
+	// resolved, retry the annotation so codegen finds the sema-selected constructor.
+	std::vector<PendingCopyInitAnnotation> pending = std::move(pending_copy_init_annotations_);
+	for (const auto& entry : pending) {
+		if (!entry.target_type_id || !entry.init_expr.has_value())
+			continue;
+		// Skip if already annotated by a previous step.
+		if (entry.init_expr.is<ExpressionNode>()) {
+			const void* key = static_cast<const void*>(&entry.init_expr.as<ExpressionNode>());
+			const auto existing_slot = getSlot(key);
+			if (existing_slot.has_value() && existing_slot->has_cast())
+				continue;
+		}
+		tryAnnotateVariableInitializationConversion(
+			entry.init_expr,
+			entry.target_type_id,
+			" in variable initialization (deferred)",
+			false);
+	}
+}
+
 void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 	if (!node.has_value()) {
 		return;
@@ -2800,16 +2831,20 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 					}
 				}
 			}
+			// Normalize the initializer expression first so that expression kind-specific
+			// semantic state (e.g. resolved call return types for auto-return functions)
+			// is available when inferring the initializer type for copy-init annotation.
+			// This mirrors the return-statement pattern where normalizeExpression runs
+			// before tryAnnotateReturnConversion.
+			normalizeExpression(*init, ctx);
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
-				if (!isSameTypeConstructorCallInitialization(*init, decl_type_id) &&
-					!tryAnnotateCopyInitConvertingConstructor(*init, decl_type_id,
-															  " in variable initialization")) {
-					tryAnnotateConversion(*init, decl_type_id);
-					diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
-				}
+				tryAnnotateVariableInitializationConversion(
+					*init,
+					decl_type_id,
+					" in variable initialization",
+					true);
 			}
-			normalizeExpression(*init, ctx);
 		}
 	} else if (node.is<StructuredBindingNode>()) {
 		const auto& binding = node.as<StructuredBindingNode>();
@@ -6604,6 +6639,34 @@ bool SemanticAnalysis::isSameTypeConstructorCallInitialization(
 	const CanonicalTypeDesc& expr_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
 	return isLogicallySameStructType(expr_desc.type_index, target_desc.type_index);
+}
+
+void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
+	const ASTNode& init_expr,
+	CanonicalTypeId target_type_id,
+	const char* context_description,
+	bool allow_deferral) {
+	if (!target_type_id) {
+		return;
+	}
+	if (isSameTypeConstructorCallInitialization(init_expr, target_type_id)) {
+		return;
+	}
+
+	const CanonicalTypeId init_type_id = inferExpressionType(init_expr);
+	if (tryAnnotateCopyInitConvertingConstructor(init_expr, target_type_id, context_description, init_type_id)) {
+		return;
+	}
+
+	if (!init_type_id) {
+		if (allow_deferral && init_expr.is<ExpressionNode>()) {
+			pending_copy_init_annotations_.push_back({init_expr, target_type_id});
+		}
+		return;
+	}
+
+	tryAnnotateConversion(init_expr, target_type_id, init_type_id);
+	diagnoseScopedEnumConversion(init_expr, target_type_id, context_description, init_type_id);
 }
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {

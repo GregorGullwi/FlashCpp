@@ -1804,7 +1804,10 @@ ambiguous_qualified_static_member:
 	const TypeSpecifierNode* best_return_type = nullptr;
 	if (matched_func_decl) {
 		const auto& mrt = matched_func_decl->decl_node().type_specifier_node();
-		if (mrt.category() != TypeCategory::UserDefined) {
+		// Keep unresolved user-defined placeholders and placeholder-auto return types
+		// off the direct-call ABI path; expression/sema-owned return types are preferred later.
+		if (mrt.category() != TypeCategory::UserDefined &&
+			!isPlaceholderAutoType(mrt.type())) {
 			best_return_type = &mrt;
 		}
 	}
