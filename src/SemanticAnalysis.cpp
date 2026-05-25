@@ -1492,6 +1492,14 @@ const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(con
 	return owner_->getResolvedDirectCall(key);
 }
 
+std::optional<DirectCallFallbackReason> ParserSemanticServices::getDirectCallFallbackReason(const void* key) const {
+	return owner_->getDirectCallFallbackReason(key);
+}
+
+std::optional<DirectCallFallbackReason> ParserSemanticServices::getDirectCallFallbackReason(const CallExprNode* key) const {
+	return owner_->getDirectCallFallbackReason(key);
+}
+
 std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
 	StringHandle struct_name,
 	const FunctionDeclarationNode& function_decl) {

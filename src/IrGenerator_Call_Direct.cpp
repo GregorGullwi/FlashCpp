@@ -1090,7 +1090,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// hatches. Semantically normalized ordinary direct calls should now either
 	// provide a sema-owned target or record a specific compatibility reason.
 	const std::optional<DirectCallFallbackReason> sema_direct_call_fallback_reason =
-		sema_.getDirectCallFallbackReason(sema_call_key);
+		sema_services.getDirectCallFallbackReason(sema_call_key);
 	if (!matched_func_decl &&
 		sema_normalized_current_function_ &&
 		!sema_direct_call_fallback_reason.has_value() &&
@@ -1679,7 +1679,7 @@ ambiguous_qualified_static_member:
 				if (standard_conversion.is_valid &&
 					standard_conversion.rank != ConversionRank::UserDefined) {
 					if (sema_normalized_current_function_ &&
-						!sema_.hasDirectCallFallbackReason(sema_call_key)) {
+						!sema_services.getDirectCallFallbackReason(sema_call_key).has_value()) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, callExprNode.called_from());

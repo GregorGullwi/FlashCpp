@@ -113,6 +113,8 @@ public:
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
+	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const void* key) const;
+	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const CallExprNode* key) const;
 
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
