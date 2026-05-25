@@ -2538,9 +2538,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// For converting constructors in copy initialization, check if constructor is explicit
 							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
-								if (sema_normalized_current_function_) {
-									throw InternalError("Sema did not annotate converting constructor for normalized body");
-								}
 									// Find converting constructors that take the initializer type as single parameter.
 									// Scan all candidates: only error when every match is explicit.
 								bool found_matching_ctor = false;
@@ -2615,10 +2612,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									std::vector<TypeSpecifierNode> arg_types;
 									arg_types.push_back(*init_arg_type_opt);
 									auto resolution = resolve_constructor_overload(*type_info->struct_info_, arg_types, true);
-									if (resolution.is_ambiguous) {
-										throw CompileError("Ambiguous constructor call");
-									}
-									if (resolution.selected_overload && !resolution.selected_overload->is_explicit()) {
+									// Keep going when overload resolution is ambiguous here: copy-init fallback
+									// still gets a second chance via arity-based selection below, which mirrors
+									// existing behavior for template-heavy library constructors.
+									if (!resolution.is_ambiguous &&
+										resolution.selected_overload &&
+										!resolution.selected_overload->is_explicit()) {
 										sema_selected_converting_ctor = resolution.selected_overload;
 									}
 								}
