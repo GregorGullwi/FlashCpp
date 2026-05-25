@@ -9,14 +9,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5755ms (retested 2026-05-23, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~795ms (retested 2026-05-23, Linux/libstdc++-14). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~970ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1460ms (retested 2026-05-10, Linux/libstdc++-14). The deleted `swap` stop in `optional::swap` is fixed; current blockers are later IR failures around unresolved semantic type category 25 and missing `_Optional_payload<...>::_M_engaged` reconstruction. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~2.76s (retested 2026-05-25, Linux/libstdc++-14). Deferred-base call-argument handling no longer hard-aborts with `Fatal error: Deferred base arguments should be resolved by specialized handlers`; current first hard stop is later codegen (`Type with no runtime size reached codegen in reference identifier lvalue lowering`, type category 28 in `_Optional_payload`). |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~1.13s (retested 2026-05-25, Linux/libstdc++-14). No longer hard-stops in `main` on `Sema did not annotate converting constructor for normalized body`; `std::any a = 42;` now reaches full codegen/object emission. |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1.84s (retested 2026-05-24, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
@@ -100,6 +100,27 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-25 Linux/libstdc++ deferred-base constexpr call argument + variable-template constexpr fallback follow-up
+
+Fix landed:
+
+- **Deferred template-base call arguments that remain non-evaluable after substitution now stay unresolved instead of hard-aborting with an internal error.**
+- **Constexpr variable-template evaluation now retries unqualified names through common namespace fallbacks (`std::` / `__gnu_cxx::`) before reporting undefined-function failures.**
+
+Regression coverage:
+
+- `tests/test_deferred_base_constexpr_call_expr_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_deferred_base_constexpr_call_expr_ret0.cpp` | ✅ Pass | ~0.04s | New regression verifies deferred-base non-type argument evaluation via constexpr function call (`bool_constant<fn<T>()>`). |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~0.97s | Control retest still compiles. |
+| `<any>` (`test_std_any.cpp`) | ✅ Pass | ~1.26s | Control retest still compiles. |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | ~1.84s | Control retest still compiles. |
+| `<optional>` (`test_std_optional.cpp`) | ❌ Codegen Error | ~2.76s | No longer terminates with deferred-base internal error; current first stop is `Type with no runtime size reached codegen ...` in `_Optional_payload`. |
 
 ### 2026-05-25 Linux/libstdc++ `<any>` copy-init converting-constructor normalized-body follow-up
 

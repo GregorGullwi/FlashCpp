@@ -4652,13 +4652,26 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		return EvalResult::error("No template arguments extracted for variable template");
 	}
 
-	auto var_node = parser.try_instantiate_variable_template(func_name, template_args, nullptr);
-	context.normalizePendingSemanticRoots();
-
-	if (!var_node.has_value() && call_expr.has_qualified_name()) {
-		var_node = parser.try_instantiate_variable_template(call_expr.qualified_name(), template_args, nullptr);
+	std::optional<ASTNode> var_node;
+	auto tryInstantiateByName = [&](std::string_view candidate_name) {
+		if (candidate_name.empty() || var_node.has_value()) {
+			return;
+		}
+		var_node = parser.try_instantiate_variable_template(candidate_name, template_args, nullptr);
 		context.normalizePendingSemanticRoots();
+	};
+
+	tryInstantiateByName(func_name);
+
+	if (call_expr.has_qualified_name()) {
+		tryInstantiateByName(call_expr.qualified_name());
 	}
+
+	StringBuilder std_name_builder;
+	tryInstantiateByName(std_name_builder.append("std::").append(func_name).commit());
+
+	StringBuilder gnu_name_builder;
+	tryInstantiateByName(gnu_name_builder.append("__gnu_cxx::").append(func_name).commit());
 
 	if (var_node.has_value() && var_node->is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var_decl = var_node->as<VariableDeclarationNode>();

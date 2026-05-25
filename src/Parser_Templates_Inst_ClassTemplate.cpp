@@ -8196,7 +8196,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								continue;
 							}
 
-							throw InternalError("Deferred base arguments should be resolved by specialized handlers");
+							FLASH_LOG(Templates, Debug,
+									  "Could not constexpr-evaluate substituted deferred base call argument; leaving deferred base unresolved");
 						} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
 							// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
 							// These need template parameter substitution before evaluation
