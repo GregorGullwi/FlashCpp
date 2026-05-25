@@ -3328,16 +3328,41 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constructorCallNode) {
 	// Get the type being constructed
 	const TypeSpecifierNode& type_spec = constructorCallNode.type_node();
+	TypeSpecifierNode normalized_type_spec = type_spec;
+	if (type_spec.type_index().is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+			const TypeCategory resolved_category = type_info->typeEnum();
+			if (resolved_category != TypeCategory::Invalid) {
+				normalized_type_spec.set_category(resolved_category);
+				if (normalized_type_spec.size_in_bits() == 0 && type_info->sizeInBits().is_set()) {
+					normalized_type_spec.set_size_in_bits(type_info->sizeInBits());
+				}
+			}
+		} else if (const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type_spec.type_index());
+				   alias_info.terminal_type_info != nullptr) {
+			const TypeCategory resolved_category = alias_info.typeEnum();
+			if (resolved_category != TypeCategory::Invalid) {
+				normalized_type_spec.set_category(resolved_category);
+				normalized_type_spec.set_type_index(
+					alias_info.type_index.withCategory(resolved_category));
+				if (normalized_type_spec.size_in_bits() == 0 && alias_info.terminal_type_info->sizeInBits().is_set()) {
+					normalized_type_spec.set_size_in_bits(alias_info.terminal_type_info->sizeInBits());
+				}
+			}
+		}
+	}
+	const TypeCategory constructor_type_category = normalized_type_spec.category();
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
-	if (!is_struct_type(type_spec.category()) && type_spec.category() != TypeCategory::UserDefined) {
-		const int type_size_bits = get_type_size_bits(type_spec.type());
+	if (!is_struct_type(constructor_type_category) &&
+		constructor_type_category != TypeCategory::UserDefined) {
+		const int type_size_bits = get_type_size_bits(constructor_type_category);
 		if (num_args == 0) {
-			if (is_floating_point_type(type_spec.category())) {
-				return makeExprResult(type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);
+			if (is_floating_point_type(constructor_type_category)) {
+				return makeExprResult(normalized_type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			return makeExprResult(type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(normalized_type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		if (num_args == 1) {
 			ASTNode first_arg;
@@ -3369,12 +3394,12 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				}
 
 				TypeCategory source_category = BuiltinListInitNarrowing::effectiveScalarCategory(arg_result.category(), arg_result.type_index);
-				TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(type_spec.category(), type_spec.type_index());
+				TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(constructor_type_category, normalized_type_spec.type_index());
 				if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, constant_value)) {
 					throwNarrowingBuiltinBraceInitCompileError(source_category, target_category);
 				}
 			}
-			return generateTypeConversion(arg_result, arg_result.category(), type_spec.category(), constructorCallNode.called_from());
+			return generateTypeConversion(arg_result, arg_result.category(), constructor_type_category, constructorCallNode.called_from());
 		}
 		throw CompileError("Primitive constructor call must have 0 or 1 arguments");
 	}
@@ -3411,10 +3436,10 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	TempVar ret_var = var_counter.next();
 
 	// Get the actual size of the struct from gTypeInfo
-	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
+	int actual_size_bits = static_cast<int>(normalized_type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
-	if (type_spec.category() == TypeCategory::Struct) {
-		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	if (constructor_type_category == TypeCategory::Struct) {
+		const TypeInfo* type_info = tryGetTypeInfo(normalized_type_spec.type_index());
 		if (type_info && type_info->struct_info_) {
 			actual_size_bits = static_cast<int>(type_info->struct_info_->sizeInBits().value);
 			struct_info = type_info->struct_info_.get();
@@ -3438,7 +3463,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	TypeIndex result_type_index = current_instantiation_type_index.is_valid()
 		? current_instantiation_type_index
-		: type_spec.type_index();
+		: normalized_type_spec.type_index();
 	if (!result_type_index.is_valid() && struct_info && struct_info->own_type_index_.has_value()) {
 		// Constructor targets should normally carry a concrete type index already; this
 		// fallback covers unresolved current-instantiation spellings that were recovered above.
@@ -3450,7 +3475,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			result_type_index = type_it->second->registeredTypeIndex();
 		}
 	}
-	TypeCategory result_type_category = struct_info ? TypeCategory::Struct : type_spec.type();
+	TypeCategory result_type_category = struct_info ? TypeCategory::Struct : constructor_type_category;
 
 	// Build ConstructorCallOp
 	ConstructorCallOp ctor_op;

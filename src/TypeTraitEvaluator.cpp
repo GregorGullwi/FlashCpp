@@ -1,5 +1,7 @@
 #include "TypeTraitEvaluator.h"
 
+#include "OverloadResolution.h"
+
 #include <ranges>
 
 namespace TypeTraitEval {
@@ -707,13 +709,104 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		return TypeTraitResult::failure();
 	}
 
-	const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(
+		trait_expr.type_node().as<TypeSpecifierNode>());
+	if (trait_expr.is_variadic_trait()) {
+		std::vector<TypeSpecifierNode> additional_types;
+		additional_types.reserve(trait_expr.additional_type_nodes().size());
+		for (const ASTNode& additional_type_node : trait_expr.additional_type_nodes()) {
+			if (!additional_type_node.is<TypeSpecifierNode>()) {
+				return TypeTraitResult::failure();
+			}
+			additional_types.push_back(
+				normalizeTypeTraitOperand(additional_type_node.as<TypeSpecifierNode>()));
+		}
+		auto canConstructFromArg =
+			[](const TypeSpecifierNode& target, const TypeSpecifierNode& arg) {
+				if (target.category() == TypeCategory::Enum &&
+					arg.category() == TypeCategory::Enum) {
+					if (!target.type_index().is_valid() || !arg.type_index().is_valid()) {
+						return false;
+					}
+					if (target.type_index() != arg.type_index()) {
+						return false;
+					}
+				}
+				if (target.pointer_depth() > 0) {
+					if (arg.pointer_depth() == 0) {
+						return arg.category() == TypeCategory::Nullptr;
+					}
+					if (arg.pointer_depth() != target.pointer_depth()) {
+						return false;
+					}
+					if (target.category() != arg.category() &&
+						target.category() != TypeCategory::Void &&
+						arg.category() != TypeCategory::Void) {
+						return false;
+					}
+				}
+				return can_convert_type(arg, target).is_valid;
+			};
+
+		// Reference targets are never default-constructible and only support a single source type.
+		// Use sema-level implicit conversion rules for reference binding compatibility.
+		if (type_spec.is_reference()) {
+			if (additional_types.size() != 1) {
+				return TypeTraitResult::success_false();
+			}
+			return canConstructFromArg(type_spec, additional_types.front())
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+
+		const bool is_scalar_target = TypeTraitEval::isScalarType(
+			type_spec.category(),
+			type_spec.is_reference(),
+			type_spec.pointer_depth());
+		if (is_scalar_target) {
+			if (additional_types.empty()) {
+				return TypeTraitResult::success_true();
+			}
+			if (additional_types.size() != 1) {
+				return TypeTraitResult::success_false();
+			}
+			return canConstructFromArg(type_spec, additional_types.front())
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+
+		const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
+		if (!struct_info || struct_info->is_union || type_spec.pointer_depth() != 0) {
+			return TypeTraitResult::success_false();
+		}
+
+		if (additional_types.empty()) {
+			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
+			return base_result.success
+				? base_result
+				: TypeTraitResult::success_false();
+		}
+
+		const ConstructorOverloadResolutionResult ctor_resolution =
+			resolve_constructor_overload(*struct_info, additional_types, false);
+		if (!ctor_resolution.has_match) {
+			return TypeTraitResult::success_false();
+		}
+
+		if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+			return TypeTraitResult::success_true();
+		}
+		return (!struct_info->has_vtable && !struct_info->hasUserDefinedConstructor())
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+
 	if (trait_expr.has_second_type()) {
 		if (!trait_expr.second_type_node().is<TypeSpecifierNode>()) {
 			return TypeTraitResult::failure();
 		}
-		const TypeSpecifierNode& second_type_spec =
-			trait_expr.second_type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode second_type_spec = normalizeTypeTraitOperand(
+			trait_expr.second_type_node().as<TypeSpecifierNode>());
 		switch (trait_expr.kind()) {
 		case TypeTraitKind::IsSame:
 			return areSameTypeTraitOperands(type_spec, second_type_spec)

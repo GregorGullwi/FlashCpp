@@ -9844,6 +9844,23 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	case TypeTraitKind::IsTriviallyCopyable:
 	case TypeTraitKind::IsTrivial:
 	case TypeTraitKind::IsPod:
+	case TypeTraitKind::IsConstructible:
+	case TypeTraitKind::IsTriviallyConstructible:
+	case TypeTraitKind::IsNothrowConstructible:
+		{
+			// Delegate to the variadic evaluateTypeTrait overload so additional type arguments
+			// (the constructor argument types) are taken into account.
+			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr);
+			if (trait_result.success) {
+				return EvalResult::from_bool(trait_result.value);
+			}
+			return EvalResult::error("Failed to evaluate type trait");
+		}
+
+	case TypeTraitKind::IsDestructible:
+	case TypeTraitKind::IsTriviallyDestructible:
+	case TypeTraitKind::IsNothrowDestructible:
+	case TypeTraitKind::HasTrivialDestructor:
 		{
 			const StructTypeInfo* struct_info = nullptr;
 			if (resolved_trait_type.terminal_type_info != nullptr) {

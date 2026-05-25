@@ -905,6 +905,19 @@ bool typeRefersToCurrentTemplateParam(
 	if (!type_spec.type_index().is_valid()) {
 		return true;
 	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+		if (type_info->isTypeAlias()) {
+			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
+				if (typeRefersToCurrentTemplateParam(*alias_type_spec, current_template_param_names)) {
+					return true;
+				}
+			}
+			if (type_info->type_index_.is_valid() &&
+				typeIndexContainsDependentPlaceholder(type_info->type_index_)) {
+				return true;
+			}
+		}
+	}
 	StringHandle token_handle = type_spec.token().handle();
 	if (token_handle.isValid() &&
 		std::find(current_template_param_names.begin(), current_template_param_names.end(), token_handle) != current_template_param_names.end()) {
@@ -912,6 +925,35 @@ bool typeRefersToCurrentTemplateParam(
 	}
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 		return std::find(current_template_param_names.begin(), current_template_param_names.end(), type_info->name()) != current_template_param_names.end();
+	}
+	return false;
+}
+
+bool identifierExpressionHasDeferredTemplateDependency(
+	const IdentifierNode& identifier,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	if (identifierRefersToCurrentTemplateParam(identifier.nameHandle(), current_template_param_names)) {
+		return true;
+	}
+	std::optional<ASTNode> symbol = gSymbolTable.lookup(
+		identifier.getOrInternNameHandle(),
+		gSymbolTable.get_current_scope_handle(),
+		&current_template_param_names);
+	if (!symbol.has_value()) {
+		return false;
+	}
+	if (symbol->is<TemplateParameterReferenceNode>()) {
+		return true;
+	}
+	if (symbol->is<DeclarationNode>()) {
+		return typeRefersToCurrentTemplateParam(
+			symbol->as<DeclarationNode>().type_specifier_node(),
+			current_template_param_names);
+	}
+	if (symbol->is<VariableDeclarationNode>()) {
+		return typeRefersToCurrentTemplateParam(
+			symbol->as<VariableDeclarationNode>().declaration().type_specifier_node(),
+			current_template_param_names);
 	}
 	return false;
 }
@@ -988,6 +1030,10 @@ bool expressionHasDeferredTemplateDependency(
 			using T = std::decay_t<decltype(inner)>;
 			if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				return true;
+			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return identifierExpressionHasDeferredTemplateDependency(
+					inner,
+					current_template_param_names);
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.get_lhs(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.get_rhs(), current_template_param_names);
