@@ -1104,6 +1104,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.
+	// Any remaining codegen recovery below is strictly for non-normalized bodies or
+	// calls where sema recorded an explicit compatibility reason.
 	if (!matched_func_decl && allow_lookup_recovery) {
 		// Look up the function in the global symbol table to get all overloads
 		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
@@ -1168,25 +1170,23 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
 			}
 		}
-	}
 
-	// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
-	// single-overload codegen recovery branches here were probed across the
-	// full 2239-test corpus with hard-fail guards and never hit. Sema's
-	// resolved direct-call target plus the precomputed-mangled path above
-	// already cover these cases.
+		// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
+		// single-overload codegen recovery branches here were probed across the
+		// full 2239-test corpus with hard-fail guards and never hit. Sema's
+		// resolved direct-call target plus the precomputed-mangled path above
+		// already cover these cases.
 
-	// Invariant (audit 2026-04-27): the resolved-target paths above already
-	// populate `matched_func_decl` for precomputed-mangled call sites
-	// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
-	// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
-	// "current-struct + base-class member by name" recovery, and the
-	// "qualified static member by struct iteration" recovery were all
-	// removed after probing showed zero hits.
+		// Invariant (audit 2026-04-27): the resolved-target paths above already
+		// populate `matched_func_decl` for precomputed-mangled call sites
+		// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
+		// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
+		// "current-struct + base-class member by name" recovery, and the
+		// "qualified static member by struct iteration" recovery were all
+		// removed after probing showed zero hits.
 
-	// Legacy direct-call recovery remains only for bodies sema never normalized
-	// or calls where sema recorded an explicit compatibility reason.
-	if (!matched_func_decl && allow_lookup_recovery) {
+		// Legacy direct-call recovery remains only for bodies sema never normalized
+		// or calls where sema recorded an explicit compatibility reason.
 		// Handle dependent qualified function names: Base$dependentHash::member
 		// These occur when a template body contains Base<T>::member() and T is substituted
 		// but the hash was computed with the dependent type, not the concrete type.
@@ -1679,7 +1679,7 @@ ambiguous_qualified_static_member:
 				if (standard_conversion.is_valid &&
 					standard_conversion.rank != ConversionRank::UserDefined) {
 					if (sema_normalized_current_function_ &&
-						!sema_services.getDirectCallFallbackReason(sema_call_key).has_value()) {
+						!sema_direct_call_fallback_reason.has_value()) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, callExprNode.called_from());
