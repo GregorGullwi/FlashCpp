@@ -387,7 +387,6 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	ConstructorDeclarationNode* unknown_single_candidate = nullptr;
-	bool unknown_single_candidate_conflict = false;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -429,17 +428,13 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 
 		if (!matches_candidate) {
 			if (!substituted_signature_match.has_value() &&
-				source_ctor_count <= 1 &&
+				source_ctor_count == 1 &&
 				inst_ctor_decl->template_parameters().size() ==
 					out_of_line_inner_template_params.size()) {
 				// Compatibility-only fallback: when there is exactly one source
 				// constructor declaration and substitution cannot classify it,
 				// keep replay attachment behavior explicit and narrow.
-				if (unknown_single_candidate == nullptr) {
-					unknown_single_candidate = inst_ctor_decl;
-				} else if (unknown_single_candidate != inst_ctor_decl) {
-					unknown_single_candidate_conflict = true;
-				}
+				unknown_single_candidate = inst_ctor_decl;
 			}
 			continue;
 		}
@@ -453,8 +448,7 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 		return resolution;
 	}
 	if (resolved_matches.empty() &&
-		unknown_single_candidate != nullptr &&
-		!unknown_single_candidate_conflict) {
+		unknown_single_candidate != nullptr) {
 		resolution.ctor = unknown_single_candidate;
 		return resolution;
 	}
