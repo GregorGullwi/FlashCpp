@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-05-24
+**Last Updated:** 2026-05-25
 
 This is the consolidated status document for sema-related planning and architecture notes.
 
@@ -67,6 +67,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - **Scoped enum comparison sema coverage**: `SemanticAnalysis::tryAnnotateBinaryOperandConversions(...)` now annotates same-type scoped-enum comparison operand promotions; codegen now hard-fails sema-normalized bodies if those promotions are missing instead of silently taking the enum fallback.
 - `AstToIr::visitSizeofNode(...)` now resolves `sizeof(member_access)` member sizing through `resolveMemberAccessType(...)` (sema-owned member resolution first) and no longer scans instantiated type names (`base`, `base_...`, `base$...`) as a codegen-side recovery path.
 - `AstToIr::generateMemberFunctionCallIr(...)` now compares selected member parameter types using sema logical struct-type identity (not only raw `TypeIndex` equality), reducing template-instantiation cases that previously fell through to viable-overload metadata recovery during member-call dispatch setup.
+- **`typeid(expr)` semantic fallback tightening (`IrGenerator_NewDeleteCast.cpp`)**: in sema-normalized bodies, codegen no longer performs identifier/symbol-table type/reference recovery for `typeid` operand classification; it now strictly relies on sema-owned expression-type query state in normalized flows while preserving legacy non-normalized compatibility behavior.
 - codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited
 
 ## Active backlog (high level)
