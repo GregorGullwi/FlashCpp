@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (nested constructor preselection/sync now prefer source-member or direct node identity; dependent placeholder signature detection widened for replay matching)
+**Last updated:** 2026-05-25 (non-constructor nested/member-template replay matching now requires canonical substituted-signature evidence; strict disambiguation pre-counts narrowed to relevant candidates)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -144,6 +144,12 @@ Future work can rely on these being in place:
   `typeSpecStillUsesDependentPlaceholder(...)`** (instead of only direct
   `TypeInfo::isDependentPlaceholder()`), improving dependent signature
   classification coverage in canonical replay matching.
+- **non-constructor nested/member-template out-of-line replay disambiguation no
+  longer uses shape fallback when substituted-signature comparison returns
+  `nullopt`**: these paths now require canonical substituted-signature evidence
+  for positive attachment, and strict disambiguation pre-counts are narrowed to
+  relevant candidates (same name + inner template-parameter count + function
+  parameter count).
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
@@ -188,9 +194,9 @@ Rule for this work:
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
 - next slices:
-  - remove the remaining constructor/non-static declaration replay scans still
-    not keyed by source-member identity; then improve replay metadata capture
-    for unresolved substitution (`nullopt`) outcomes so canonical
+- continue removing remaining constructor/non-static declaration replay scans
+  still not keyed by source-member identity; then improve replay metadata
+  capture for unresolved substitution (`nullopt`) outcomes so canonical
     substituted-signature classification can succeed in more valid cases.
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
