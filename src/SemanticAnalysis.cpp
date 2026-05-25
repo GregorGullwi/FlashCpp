@@ -27,6 +27,22 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 
 } // namespace
 
+const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason) {
+	switch (reason) {
+		case DirectCallFallbackReason::ReceiverMemberRecovery:
+			return "receiver-member recovery";
+		case DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation:
+			return "dependent unqualified point-of-instantiation recovery";
+		case DirectCallFallbackReason::GlobalMangledLookupMiss:
+			return "global mangled lookup miss";
+		case DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss:
+			return "qualified or ordinary name lookup miss";
+		case DirectCallFallbackReason::StructMemberLookupMiss:
+			return "struct-member lookup miss";
+	}
+	return "unknown direct-call fallback reason";
+}
+
 void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
@@ -7785,9 +7801,22 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																				const void* call_key) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
+	auto appendUniqueOverloads = [](std::vector<ASTNode>& target, std::span<const ASTNode> source) {
+		for (const ASTNode& candidate : source) {
+			auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
+				return existing.raw_pointer() == candidate.raw_pointer();
+			});
+			if (it == target.end()) {
+				target.push_back(candidate);
+			}
+		}
+	};
 	auto recordDirectCallFallbackReason = [&](DirectCallFallbackReason reason) {
 		direct_call_fallback_reasons_[call_key] = reason;
 	};
+	if (call_info.is_indirect) {
+		return nullptr;
+	}
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
 			const FunctionDeclarationNode* recovered_func_decl = nullptr;
@@ -7821,6 +7850,15 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (func_decl)
 		return func_decl;
 
+	if (call_info.mangled_name.isValid()) {
+		if (std::optional<ASTNode> mangled_symbol = symbols_.lookup(call_info.mangled_name);
+			mangled_symbol.has_value()) {
+			if (const FunctionDeclarationNode* mangled_candidate = getCallTargetFunctionCandidate(*mangled_symbol)) {
+				return mangled_candidate;
+			}
+		}
+	}
+
 	if (!call_info.has_receiver &&
 		call_info.dependent_unqualified_lookup_record != nullptr &&
 		call_info.dependent_unqualified_lookup_record->has_value()) {
@@ -7838,6 +7876,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 					return resolved_function;
 				}
 			}
+		}
+		if (call_info.raw_function_declaration != nullptr) {
+			return call_info.raw_function_declaration;
 		}
 		recordDirectCallFallbackReason(DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation);
 		return nullptr;
@@ -7860,9 +7901,42 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	const std::string_view name = call_info.qualified_name.isValid()
 									  ? call_info.qualified_name.view()
 									  : decl.identifier_token().value();
-	auto overloads = symbols_.lookup_all(name);
+	std::vector<ASTNode> overloads;
+	if (call_info.qualified_name.isValid()) {
+		const std::string_view qualified_name = call_info.qualified_name.view();
+		const size_t scope_sep = qualified_name.rfind("::");
+		if (scope_sep != std::string_view::npos) {
+			const std::vector<std::string_view> namespace_views =
+				splitQualifiedNamespace(qualified_name.substr(0, scope_sep));
+			std::vector<StringType<>> namespaces;
+			namespaces.reserve(namespace_views.size());
+			for (std::string_view component : namespace_views) {
+				namespaces.emplace_back(component);
+			}
+			const NamespaceHandle ns_handle =
+				gSymbolTable.resolve_namespace_handle(namespaces, /*force_global=*/true);
+			if (ns_handle.isValid()) {
+				overloads = symbols_.lookup_qualified_all(ns_handle, qualified_name.substr(scope_sep + 2));
+			}
+		}
+	}
+	if (overloads.empty()) {
+		overloads = symbols_.lookup_all(name);
+	}
 	if (overloads.empty() && call_info.qualified_name.isValid()) {
-		overloads = symbols_.lookup_all(decl.identifier_token().value());
+		const std::string_view unqualified_name = decl.identifier_token().value();
+		if (unqualified_name != name) {
+			overloads = symbols_.lookup_all(unqualified_name);
+		}
+	}
+	std::vector<TypeSpecifierNode> arg_types;
+	const bool arg_types_collected = parser().tryCollectFunctionCallArgTypes(arguments, arg_types);
+	if (arg_types_collected &&
+		!arg_types.empty() &&
+		!call_info.qualified_name.isValid()) {
+		const std::vector<ASTNode> adl_candidates =
+			symbols_.lookup_adl_only(decl.identifier_token().value(), arg_types);
+		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
 		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
@@ -7870,6 +7944,16 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			return nullptr;
 		}
 		return func_decl;
+	}
+
+	if (arg_types_collected && !arg_types.empty()) {
+		const OverloadResolutionResult result = resolve_overload(overloads, arg_types);
+		if (result.has_match && !result.is_ambiguous && result.selected_overload != nullptr) {
+			if (const FunctionDeclarationNode* resolved_candidate =
+					getCallTargetFunctionCandidate(*result.selected_overload)) {
+				return resolved_candidate;
+			}
+		}
 	}
 
 	for (const auto& overload : overloads) {
@@ -8067,6 +8151,28 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
+		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
+		const std::optional<DirectCallFallbackReason> fallback_reason = getDirectCallFallbackReason(call_key);
+		const std::string_view call_name = call_info.qualified_name.isValid()
+											   ? call_info.qualified_name.view()
+											   : call_info.declaration->identifier_token().value();
+		if (!call_info.is_indirect && normalized_call_expr && fallback_reason.has_value()) {
+			throw InternalError(std::string(
+				StringBuilder()
+					.append("Phase 1: sema-normalized direct call recorded fallback reason for '")
+					.append(call_name)
+					.append("': ")
+					.append(describeDirectCallFallbackReason(*fallback_reason))
+					.commit()));
+		}
+		if (!call_info.is_indirect && normalized_call_expr) {
+			throw InternalError(std::string(
+				StringBuilder()
+					.append("Phase 1: sema-normalized direct call missing resolved target for '")
+					.append(call_name)
+					.append("'")
+					.commit()));
+		}
 		for (const ASTNode& arg : *call_info.arguments) {
 			buildOverloadResolutionArgType(arg, nullptr);
 		}

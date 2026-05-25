@@ -58,6 +58,8 @@ enum class DirectCallFallbackReason : uint8_t {
 	StructMemberLookupMiss,
 };
 
+const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason);
+
 struct ResolvedMemberAccessQueryResult {
 	enum class State : uint8_t {
 		NotYetAnalyzed,
