@@ -720,7 +720,7 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				normalizeTypeTraitOperand(additional_type_node.as<TypeSpecifierNode>()));
 		}
 
-		const bool is_scalar_target = isScalarType(
+		const bool is_scalar_target = TypeTraitEval::isScalarType(
 			type_spec.category(),
 			type_spec.is_reference(),
 			type_spec.pointer_depth());
@@ -733,7 +733,7 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			}
 
 			const TypeSpecifierNode& arg_type = additional_types.front();
-			const bool arg_is_scalar = isScalarType(
+			const bool arg_is_scalar = TypeTraitEval::isScalarType(
 				arg_type.category(),
 				false,
 				arg_type.pointer_depth());
