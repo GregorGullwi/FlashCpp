@@ -3334,7 +3334,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			const TypeCategory resolved_category = type_info->typeEnum();
 			if (resolved_category != TypeCategory::Invalid) {
 				normalized_type_spec.set_category(resolved_category);
-				if (!normalized_type_spec.size_in_bits().is_set() && type_info->sizeInBits() > 0) {
+				if (normalized_type_spec.size_in_bits() == 0 && type_info->sizeInBits().is_set()) {
 					normalized_type_spec.set_size_in_bits(type_info->sizeInBits());
 				}
 			}
