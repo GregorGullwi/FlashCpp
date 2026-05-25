@@ -720,6 +720,51 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				normalizeTypeTraitOperand(additional_type_node.as<TypeSpecifierNode>()));
 		}
 
+		// Handle reference target types first (e.g., __is_constructible(const int&, int) should be true).
+		// Reference binding rules determine whether one type can construct a reference.
+		if (type_spec.is_reference()) {
+			if (additional_types.empty()) {
+				// References cannot be default-constructed
+				return TypeTraitResult::success_false();
+			}
+			if (additional_types.size() != 1) {
+				return TypeTraitResult::success_false();
+			}
+			const TypeSpecifierNode& arg_type = additional_types.front();
+			const bool target_is_const = (static_cast<uint8_t>(type_spec.cv_qualifier()) &
+										  static_cast<uint8_t>(CVQualifier::Const)) != 0;
+			const bool target_base_is_scalar = TypeTraitEval::isScalarType(
+				type_spec.category(), false, type_spec.pointer_depth());
+			const bool arg_base_is_scalar = TypeTraitEval::isScalarType(
+				arg_type.category(), false, arg_type.pointer_depth());
+			// Exact type match: same category+pointer depth, or same type_index for struct/user types
+			const bool exact_match =
+				(type_spec.category() == arg_type.category() &&
+				 type_spec.pointer_depth() == arg_type.pointer_depth()) ||
+				(type_spec.type_index().is_valid() && arg_type.type_index().is_valid() &&
+				 type_spec.type_index() == arg_type.type_index());
+			// Scalar implicit conversion compatibility (for const reference binding to temporaries)
+			const bool scalar_compatible =
+				target_base_is_scalar && arg_base_is_scalar &&
+				type_spec.pointer_depth() == arg_type.pointer_depth();
+			if (type_spec.is_lvalue_reference() && target_is_const) {
+				// const T& can bind to anything of compatible type
+				return (exact_match || scalar_compatible)
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			if (type_spec.is_rvalue_reference()) {
+				// T&& can bind to rvalue (non-lvalue-ref) of compatible type
+				return ((exact_match || scalar_compatible) && !arg_type.is_lvalue_reference())
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			// T& (non-const lvalue ref) requires exact same type lvalue reference
+			return (exact_match && arg_type.is_lvalue_reference())
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+
 		const bool is_scalar_target = TypeTraitEval::isScalarType(
 			type_spec.category(),
 			type_spec.is_reference(),
@@ -731,20 +776,23 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			if (additional_types.size() != 1) {
 				return TypeTraitResult::success_false();
 			}
-
 			const TypeSpecifierNode& arg_type = additional_types.front();
 			const bool arg_is_scalar = TypeTraitEval::isScalarType(
 				arg_type.category(),
 				false,
 				arg_type.pointer_depth());
-			return arg_is_scalar
-				? TypeTraitResult::success_true()
-				: TypeTraitResult::success_false();
+			if (!arg_is_scalar) {
+				return TypeTraitResult::success_false();
+			}
+			// Pointer compatibility: if target is a pointer, arg must also be a pointer of same depth
+			if ((type_spec.pointer_depth() > 0) != (arg_type.pointer_depth() > 0)) {
+				return TypeTraitResult::success_false();
+			}
+			return TypeTraitResult::success_true();
 		}
 
 		const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
-		if (!struct_info || struct_info->is_union || type_spec.is_reference() ||
-			type_spec.pointer_depth() != 0) {
+		if (!struct_info || struct_info->is_union || type_spec.pointer_depth() != 0) {
 			return TypeTraitResult::success_false();
 		}
 
@@ -753,6 +801,19 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			return base_result.success
 				? base_result
 				: TypeTraitResult::success_false();
+		}
+
+		// Non-empty additional_types for struct: handle copy/move construction from same type
+		if (additional_types.size() == 1) {
+			const TypeSpecifierNode& arg_type = additional_types.front();
+			if (arg_type.type_index().is_valid() && type_spec.type_index().is_valid() &&
+				arg_type.type_index() == type_spec.type_index()) {
+				if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+					return TypeTraitResult::success_true();
+				}
+				// Trivially/nothrow copy-constructible if no vtable and no user-defined constructor
+				return TypeTraitResult{true, !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor()};
+			}
 		}
 
 		if (trait_expr.kind() == TypeTraitKind::IsConstructible) {

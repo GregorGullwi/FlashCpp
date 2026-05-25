@@ -9847,6 +9847,16 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	case TypeTraitKind::IsConstructible:
 	case TypeTraitKind::IsTriviallyConstructible:
 	case TypeTraitKind::IsNothrowConstructible:
+		{
+			// Delegate to the variadic evaluateTypeTrait overload so additional type arguments
+			// (the constructor argument types) are taken into account.
+			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr);
+			if (trait_result.success) {
+				return EvalResult::from_bool(trait_result.value);
+			}
+			return EvalResult::error("Failed to evaluate type trait");
+		}
+
 	case TypeTraitKind::IsDestructible:
 	case TypeTraitKind::IsTriviallyDestructible:
 	case TypeTraitKind::IsNothrowDestructible:

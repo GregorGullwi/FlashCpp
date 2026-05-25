@@ -3345,6 +3345,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				normalized_type_spec.set_category(resolved_category);
 				normalized_type_spec.set_type_index(
 					alias_info.type_index.withCategory(resolved_category));
+				if (normalized_type_spec.size_in_bits() == 0 && alias_info.terminal_type_info->sizeInBits().is_set()) {
+					normalized_type_spec.set_size_in_bits(alias_info.terminal_type_info->sizeInBits());
+				}
 			}
 		}
 	}
@@ -3433,7 +3436,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	TempVar ret_var = var_counter.next();
 
 	// Get the actual size of the struct from gTypeInfo
-	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
+	int actual_size_bits = static_cast<int>(normalized_type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
 	if (constructor_type_category == TypeCategory::Struct) {
 		const TypeInfo* type_info = tryGetTypeInfo(normalized_type_spec.type_index());
