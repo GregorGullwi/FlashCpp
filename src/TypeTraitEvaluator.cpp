@@ -707,13 +707,70 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 		return TypeTraitResult::failure();
 	}
 
-	const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
+	const TypeSpecifierNode type_spec = normalizeTypeTraitOperand(
+		trait_expr.type_node().as<TypeSpecifierNode>());
+	if (trait_expr.is_variadic_trait()) {
+		std::vector<TypeSpecifierNode> additional_types;
+		additional_types.reserve(trait_expr.additional_type_nodes().size());
+		for (const ASTNode& additional_type_node : trait_expr.additional_type_nodes()) {
+			if (!additional_type_node.is<TypeSpecifierNode>()) {
+				return TypeTraitResult::failure();
+			}
+			additional_types.push_back(
+				normalizeTypeTraitOperand(additional_type_node.as<TypeSpecifierNode>()));
+		}
+
+		const bool is_scalar_target = isScalarType(
+			type_spec.category(),
+			type_spec.is_reference(),
+			type_spec.pointer_depth());
+		if (is_scalar_target) {
+			if (additional_types.empty()) {
+				return TypeTraitResult::success_true();
+			}
+			if (additional_types.size() != 1) {
+				return TypeTraitResult::success_false();
+			}
+
+			const TypeSpecifierNode& arg_type = additional_types.front();
+			const bool arg_is_scalar = isScalarType(
+				arg_type.category(),
+				false,
+				arg_type.pointer_depth());
+			return arg_is_scalar
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+
+		const StructTypeInfo* struct_info = structInfoFromTypeIndex(type_spec.type_index());
+		if (!struct_info || struct_info->is_union || type_spec.is_reference() ||
+			type_spec.pointer_depth() != 0) {
+			return TypeTraitResult::success_false();
+		}
+
+		if (additional_types.empty()) {
+			TypeTraitResult base_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
+			return base_result.success
+				? base_result
+				: TypeTraitResult::success_false();
+		}
+
+		if (trait_expr.kind() == TypeTraitKind::IsConstructible) {
+			return struct_info->hasUserDefinedConstructor()
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+		return (!struct_info->has_vtable && !struct_info->hasUserDefinedConstructor())
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+
 	if (trait_expr.has_second_type()) {
 		if (!trait_expr.second_type_node().is<TypeSpecifierNode>()) {
 			return TypeTraitResult::failure();
 		}
-		const TypeSpecifierNode& second_type_spec =
-			trait_expr.second_type_node().as<TypeSpecifierNode>();
+		const TypeSpecifierNode second_type_spec = normalizeTypeTraitOperand(
+			trait_expr.second_type_node().as<TypeSpecifierNode>());
 		switch (trait_expr.kind()) {
 		case TypeTraitKind::IsSame:
 			return areSameTypeTraitOperands(type_spec, second_type_spec)
