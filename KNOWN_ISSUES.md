@@ -135,6 +135,64 @@ before stopping on a multiply defined `__security_cookie`.
   compilation.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
+---
+
+## 9) OOL constructor/member-template attachment fails when overloads swap positions of `U` and `typename T::value_type` (OPEN)
+
+- **Symptom**: Two constructor-template (or member-function-template) overloads whose
+  parameter lists swap the positions of an inner template parameter `U` and a dependent
+  outer member type `typename T::value_type` both fail to attach to their OOL
+  definitions, emitting:
+  ```
+  [ERROR][Templates] Could not attach out-of-line constructor template stub 'Container' …
+  [ERROR][Templates] Could not attach nested out-of-line member template 'set' …
+  ```
+- **Reproducer tests**:
+  - `tests/test_template_ool_ctor_tmpl_dep_member_type_swap_ret0.cpp`
+  - `tests/test_template_ool_member_tmpl_dep_member_type_swap_ret0.cpp`
+  (Both verified to compile and run correctly with `clang++ -std=c++20`.)
+- **Root cause** (traced through `declarationsMatchAfterTemplateSubstitution` in
+  `src/Parser_Templates_Inst_ClassTemplate.cpp`):
+  - `substituteAndCopyParams` substitutes the outer param (`T → Traits`) into each
+    instantiated stub. `typename T::value_type` → `short` (via alias), `U` → `U`
+    (unchanged because `U` is an inner template param). Stub types are correct.
+  - `substituteOutOfLineSignatureType` is then called for each OOL definition's param.
+    For the stub-2 / OOL-2 pair (`(short, U)` vs `(typename T::value_type, U)`),
+    param 0: the instantiated param has token value `"value_type"` (preserved from the
+    original TypeSpecifierNode for `typename T::value_type` through
+    `makeTypeSpecifierFromTemplateTypeArg`).  `findTemplateParameterByName` looks for
+    `"value_type"` in the inner template params (which only contain `"U"`), returning
+    `nullptr` → `instantiated_is_template_param_placeholder = false`.  Correct so far.
+  - However, `substituteOutOfLineSignatureType` for the OOL param
+    `typename T::value_type` may return `nullopt` when the OOL TypeInfo's
+    `type_index_.is_valid()` is false or `isDependentMemberType()` is false (the
+    condition at `Parser_Templates_Substitution.cpp` line 1610–1614 is not satisfied
+    for the second overload because parsing the second OOL def can overwrite the shared
+    TypeInfo entry for `typename T::value_type` in `getTypesByNameMap()`, or the
+    TypeInfo is freshly created without a valid TypeIndex in the OOL parsing context).
+  - When `substituted_out_of_line_param` is `nullopt` and
+    `substituted_instantiated_param` is `TypeSpec{short}`, `lhs = short`,
+    `rhs = TypeSpec{T::value_type (unresolved)}`.  `typeSpecifiersMatchForSignatureValidation`
+    returns false, and `typeSpecifierLooksLikeDependentSignaturePlaceholder(short)` is
+    also false, so the code returns `false` at line 1677 — incorrectly rejecting the match.
+- **Affected code path**:
+  - `declarationsMatchAfterTemplateSubstitution` (line 1606)
+  - `substituteOutOfLineSignatureType` (line 1207)
+  - `Parser_Templates_Substitution.cpp` lines 1610–1628 — condition that enables
+    `resolveDependentMemberTypeForSubstitution`
+- **Fix direction**:
+  When `substituted_out_of_line_param` is `nullopt` but `substituted_instantiated_param`
+  is a concrete (non-dependent) type, the fallback at line 1675 should *also* attempt to
+  match the concrete instantiated type against the unresolved OOL dependent-member-type
+  TypeSpec by calling `substituteOutOfLineSignatureType` with the outer params/args on
+  the OOL param before giving up. Alternatively, ensure the OOL parsing context always
+  assigns a valid TypeIndex and correct `isDependentMemberType()` flag for the second
+  overload's `typename T::value_type` TypeInfo so that `substituteOutOfLineSignatureType`
+  can resolve it successfully.
+- **Impact**: Any class template with two or more constructor-template or member-function-
+  template overloads that differ only by swapping `U` and `typename T::member_type` will
+  silently fail to wire up their OOL bodies (wrong results or missing function bodies).
+
 ### 2b) Link-time `__security_cookie` multiple-definition conflict
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
