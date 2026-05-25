@@ -4070,7 +4070,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Fallback: iterate direct members (in case findStaticMemberRecursive missed something)
 			for (const auto& static_member : struct_info->static_members) {
-				if (StringTable::getStringView(static_member.getName()) != member_name) {
+				if (static_member.getName() != member_name_handle) {
 					continue;
 				}
 				return try_append_from_member(static_member);

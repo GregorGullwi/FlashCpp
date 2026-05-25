@@ -5577,7 +5577,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				// This handles cases like is_enum<T>::value where T's base integral_constant<bool,V>
 				// was only instantiated in ShapeOnly mode and has no recorded static members.
 				if (!static_member && context.parser != nullptr && !struct_info->base_classes.empty()) {
-					bool any_materialized = false;
+					struct BaseToMaterialize {
+						std::string_view template_name;
+						std::vector<TemplateTypeArg> args;
+					};
+					std::vector<BaseToMaterialize> bases_to_materialize;
+					bases_to_materialize.reserve(struct_info->base_classes.size());
 					for (const auto& base : struct_info->base_classes) {
 						if (!base.type_index.is_valid() || base.type_index.index() >= gTypeInfo.size()) {
 							continue;
@@ -5598,8 +5603,13 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						for (const auto& arg_info : base_type_info.templateArgs()) {
 							base_args.push_back(toTemplateTypeArg(arg_info));
 						}
-						FLASH_LOG(ConstExpr, Debug, "Force-materializing ShapeOnly base '", base_template_name, "' to find member '", StringTable::getStringView(member_handle), "'");
-						context.parser->materializeTemplateInstantiationForLookup(base_template_name, base_args);
+						bases_to_materialize.push_back({base_template_name, std::move(base_args)});
+					}
+
+					bool any_materialized = false;
+					for (const auto& base_to_materialize : bases_to_materialize) {
+						FLASH_LOG(ConstExpr, Debug, "Force-materializing ShapeOnly base '", base_to_materialize.template_name, "' to find member '", StringTable::getStringView(member_handle), "'");
+						context.parser->materializeTemplateInstantiationForLookup(base_to_materialize.template_name, base_to_materialize.args);
 						any_materialized = true;
 					}
 					if (any_materialized) {
