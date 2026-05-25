@@ -68,6 +68,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - `AstToIr::visitSizeofNode(...)` now resolves `sizeof(member_access)` member sizing through `resolveMemberAccessType(...)` (sema-owned member resolution first) and no longer scans instantiated type names (`base`, `base_...`, `base$...`) as a codegen-side recovery path.
 - `AstToIr::generateMemberFunctionCallIr(...)` now compares selected member parameter types using sema logical struct-type identity (not only raw `TypeIndex` equality), reducing template-instantiation cases that previously fell through to viable-overload metadata recovery during member-call dispatch setup.
 - **`typeid(expr)` sema-owned operand classification (`SemanticAnalysis.cpp`, `IrGenerator_NewDeleteCast.cpp`)**: codegen now consumes a dedicated sema query for `typeid` operand classification (query state, canonical operand type identity, glvalue-ness, and runtime-RTTI requirement) instead of reconstructing that policy locally. Normalized bodies hard-fail if classification would require legacy compatibility recovery; non-normalized flows keep the explicit compatibility fallback behind the sema query boundary.
+- **Ordinary direct-call fallback reasons (`SemanticAnalysis.cpp`, `IrGenerator_Call_Direct.cpp`)**: the prior coarse `unresolved_call_args_` escape hatch has been replaced with explicit sema-recorded direct-call fallback reasons. Normalized ordinary direct calls now permit codegen recovery only when sema recorded a specific compatibility reason for that call site; they no longer treat every analyzed-absent direct-call miss as equally recoverable. This narrows the sema/codegen contract toward eventual full fallback deletion while preserving the existing compatibility path for the remaining legacy template/qualified-call cases.
 - codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited
 
 ## Active backlog (high level)
@@ -79,7 +80,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 
 ## Next recommended slice
 
-- **Ordinary direct-call resolution should become sema-owned next**: the highest-value next cleanup is still replacing codegen-side name-based direct-call recovery with a sema-owned resolved-callee query for normalized bodies. See `docs/2026-04-04-codegen-name-lookup-investigation.md` Phase 1 for the detailed roadmap and exit criteria.
+- **Ordinary direct-call fallback burn-down should continue next**: the next highest-value cleanup is eliminating the remaining explicit direct-call fallback reasons one by one until sema-normalized bodies no longer need any codegen-side direct-call recovery. See `docs/2026-04-04-codegen-name-lookup-investigation.md` Phase 1 for the detailed roadmap and exit criteria.
 
 ## Related documents
 

@@ -58,6 +58,14 @@ Stop `IrGenerator_Call_Direct.cpp` from rescanning symbol tables and member hier
 4. For sema-normalized bodies, turn the current name-based recovery chain into `InternalError` instead of more lookup.
 5. Keep only the minimum fallback needed for bodies sema never normalized yet, and document that boundary in code.
 
+**Current status**
+
+- The sema-owned resolved-direct-call table and query surface already exist.
+- Direct-call lowering already consumes the sema-owned target first.
+- The remaining large direct-call recovery block in `IrGenerator_Call_Direct.cpp` is now explicitly gated behind `allow_lookup_recovery`, so sema-normalized bodies no longer enter that codegen-side recovery path unless sema recorded a specific compatibility reason.
+- The prior coarse `unresolved_call_args_` escape hatch has been replaced with explicit sema-recorded direct-call fallback reasons, which is the intended intermediate step before deleting the remaining compatibility cases entirely.
+- Work still left in this phase: burn down the remaining reason-coded compatibility cases one by one, then delete the residual non-normalized recovery path and make normalized direct-call misses unconditional invariants.
+
 **Done when**
 
 - direct-call lowering no longer needs `lookup_all(...)`, `gSymbolTable` rescans, mangled-name retry lookup, or member/base-class search for sema-normalized bodies,

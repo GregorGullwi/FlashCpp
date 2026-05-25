@@ -7777,6 +7777,9 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																				const void* call_key) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
+	auto recordDirectCallFallbackReason = [&](DirectCallFallbackReason reason) {
+		direct_call_fallback_reasons_[call_key] = reason;
+	};
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
 			const FunctionDeclarationNode* recovered_func_decl = nullptr;
@@ -7796,7 +7799,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, recovered_func_decl)) {
 			return recovered_func_decl;
 		}
-		unresolved_call_args_.insert(call_key);
+		recordDirectCallFallbackReason(DirectCallFallbackReason::ReceiverMemberRecovery);
 		return nullptr;
 	}
 
@@ -7828,7 +7831,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				}
 			}
 		}
-		unresolved_call_args_.insert(call_key);
+		recordDirectCallFallbackReason(DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation);
 		return nullptr;
 	}
 
@@ -7843,6 +7846,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				return mangled_candidate;
 			}
 		}
+		recordDirectCallFallbackReason(DirectCallFallbackReason::GlobalMangledLookupMiss);
 	}
 
 	const std::string_view name = call_info.qualified_name.isValid()
@@ -7854,7 +7858,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 	if (overloads.empty()) {
 		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-			unresolved_call_args_.insert(call_key);
+			recordDirectCallFallbackReason(DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss);
 			return nullptr;
 		}
 		return func_decl;
@@ -7904,7 +7908,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (!func_decl) {
-		unresolved_call_args_.insert(call_key);
+		recordDirectCallFallbackReason(DirectCallFallbackReason::StructMemberLookupMiss);
 	}
 
 	return func_decl;
@@ -8079,7 +8083,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	} else {
 		resolved_direct_call_table_.erase(call_key);
 	}
-	unresolved_call_args_.erase(call_key);
+	direct_call_fallback_reasons_.erase(call_key);
 
 	annotateResolvedCallResultType(call_expr_node, *func_decl);
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);

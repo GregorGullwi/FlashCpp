@@ -50,6 +50,14 @@ struct ResolvedFunctionQueryResult {
 	}
 };
 
+enum class DirectCallFallbackReason : uint8_t {
+	ReceiverMemberRecovery,
+	DependentUnqualifiedPointOfInstantiation,
+	GlobalMangledLookupMiss,
+	QualifiedOrOrdinaryNameLookupMiss,
+	StructMemberLookupMiss,
+};
+
 struct ResolvedMemberAccessQueryResult {
 	enum class State : uint8_t {
 		NotYetAnalyzed,
@@ -226,15 +234,27 @@ public:
 		return node.has_value() && normalized_ast_nodes_.count(node.raw_pointer()) > 0;
 	}
 
-	// Returns true if sema attempted to annotate this call expression but could not
-	// resolve the callee (e.g. template specialization with separate DeclarationNode copies).
-	// Codegen uses this to suppress Phase 15 hard enforcement for known unresolvable cases.
-	bool hasUnresolvedCallArgs(const void* call) const {
-		return unresolved_call_args_.count(call) > 0;
+	// Returns the explicit sema-recorded compatibility reason for a direct-call
+	// fallback. Normalized bodies should only use codegen recovery when sema
+	// recorded one of these legacy escape hatches for the specific call.
+	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const void* call) const {
+		auto it = direct_call_fallback_reasons_.find(call);
+		if (it == direct_call_fallback_reasons_.end()) {
+			return std::nullopt;
+		}
+		return it->second;
 	}
 
-	bool hasUnresolvedCallArgs(const CallExprNode* call) const {
-		return hasUnresolvedCallArgs(static_cast<const void*>(call));
+	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const CallExprNode* call) const {
+		return getDirectCallFallbackReason(static_cast<const void*>(call));
+	}
+
+	bool hasDirectCallFallbackReason(const void* call) const {
+		return direct_call_fallback_reasons_.count(call) > 0;
+	}
+
+	bool hasDirectCallFallbackReason(const CallExprNode* call) const {
+		return hasDirectCallFallbackReason(static_cast<const void*>(call));
 	}
  
 	// Look up the compound assignment back-conversion slot (keyed by BinaryOperatorNode address).
@@ -696,9 +716,10 @@ private:
 	std::unordered_set<const FunctionDeclarationNode*> resolving_auto_return_functions_;
 
 	// Track call-expression pointers where sema attempted call-arg annotation
-	// but couldn't resolve the callee (e.g. template specialization static members
-	// whose DeclarationNode addresses differ from the call's stored decl).
-	std::unordered_set<const void*> unresolved_call_args_;
+	// and had to leave an explicit compatibility reason for codegen-side direct-call
+	// recovery. This is narrower than a generic "unresolved" bit: each entry should
+	// correspond to a known legacy gap that we plan to eliminate.
+	std::unordered_map<const void*, DirectCallFallbackReason> direct_call_fallback_reasons_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
