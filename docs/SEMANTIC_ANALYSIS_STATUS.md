@@ -67,7 +67,8 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - **Scoped enum comparison sema coverage**: `SemanticAnalysis::tryAnnotateBinaryOperandConversions(...)` now annotates same-type scoped-enum comparison operand promotions; codegen now hard-fails sema-normalized bodies if those promotions are missing instead of silently taking the enum fallback.
 - `AstToIr::visitSizeofNode(...)` now resolves `sizeof(member_access)` member sizing through `resolveMemberAccessType(...)` (sema-owned member resolution first) and no longer scans instantiated type names (`base`, `base_...`, `base$...`) as a codegen-side recovery path.
 - `AstToIr::generateMemberFunctionCallIr(...)` now compares selected member parameter types using sema logical struct-type identity (not only raw `TypeIndex` equality), reducing template-instantiation cases that previously fell through to viable-overload metadata recovery during member-call dispatch setup.
-- **`typeid(expr)` semantic fallback tightening (`IrGenerator_NewDeleteCast.cpp`)**: in sema-normalized bodies, codegen no longer performs identifier/symbol-table type/reference recovery for `typeid` operand classification; it now strictly relies on sema-owned expression-type query state in normalized flows while preserving legacy non-normalized compatibility behavior.
+- **`typeid(expr)` sema-owned operand classification (`SemanticAnalysis.cpp`, `IrGenerator_NewDeleteCast.cpp`)**: codegen now consumes a dedicated sema query for `typeid` operand classification (query state, canonical operand type identity, glvalue-ness, and runtime-RTTI requirement) instead of reconstructing that policy locally. Normalized bodies hard-fail if classification would require legacy compatibility recovery; non-normalized flows keep the explicit compatibility fallback behind the sema query boundary.
+- **Ordinary direct-call fallback reasons (`SemanticAnalysis.cpp`, `IrGenerator_Call_Direct.cpp`)**: the prior coarse `unresolved_call_args_` escape hatch has been replaced with explicit sema-recorded direct-call fallback reasons. Normalized ordinary direct calls now permit codegen recovery only when sema recorded a specific compatibility reason for that call site; they no longer treat every analyzed-absent direct-call miss as equally recoverable. This narrows the sema/codegen contract toward eventual full fallback deletion while preserving the existing compatibility path for the remaining legacy template/qualified-call cases.
 - codegen no longer contains any `parser_.get_expression_type(...)` calls in the codegen IR-lowering paths that were audited
 
 ## Active backlog (high level)
@@ -76,6 +77,10 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 2. Keep parser/template boundary invariants strict as new template features land.
 3. Continue tightening query-state coverage on narrower specialized caches.
 4. Keep fallback behavior explicit and limited to genuinely unresolved/dependent flows.
+
+## Next recommended slice
+
+- **Ordinary direct-call fallback burn-down should continue next**: the next highest-value cleanup is eliminating the remaining explicit direct-call fallback reasons one by one until sema-normalized bodies no longer need any codegen-side direct-call recovery. See `docs/2026-04-04-codegen-name-lookup-investigation.md` Phase 1 for the detailed roadmap and exit criteria.
 
 ## Related documents
 

@@ -5,6 +5,7 @@
 #include "TypeSizeQuery.h"
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type);
+static const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason);
 
 // ── Shared consteval-materialization helpers ────────────────────────────────
 
@@ -124,6 +125,22 @@ static TypeIndex getCallReturnTypeIndex(const TypeSpecifierNode& return_type) {
 	return native.is_valid()
 		? native.withCategory(return_type.type())
 		: TypeIndex{}.withCategory(return_type.type());
+}
+
+static const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason) {
+	switch (reason) {
+	case DirectCallFallbackReason::ReceiverMemberRecovery:
+		return "receiver-member recovery";
+	case DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation:
+		return "dependent unqualified point-of-instantiation recovery";
+	case DirectCallFallbackReason::GlobalMangledLookupMiss:
+		return "global mangled lookup miss";
+	case DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss:
+		return "qualified or ordinary name lookup miss";
+	case DirectCallFallbackReason::StructMemberLookupMiss:
+		return "struct-member lookup miss";
+	}
+	return "unknown direct-call fallback reason";
 }
 
 void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type) {
@@ -1071,22 +1088,24 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Keep lookup recovery only for bodies sema never normalized, synthesized
 	// call wrappers that bypass the original call key, and explicit sema escape
 	// hatches. Semantically normalized ordinary direct calls should now either
-	// provide a sema-owned target or mark the call as unresolved.
-	const bool sema_recorded_unresolved_call =
-		sema_.hasUnresolvedCallArgs(sema_call_key);
+	// provide a sema-owned target or record a specific compatibility reason.
+	const std::optional<DirectCallFallbackReason> sema_direct_call_fallback_reason =
+		sema_services.getDirectCallFallbackReason(sema_call_key);
 	if (!matched_func_decl &&
 		sema_normalized_current_function_ &&
-		!sema_recorded_unresolved_call &&
+		!sema_direct_call_fallback_reason.has_value() &&
 		!parser_resolved_direct_target &&
 		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 		throw InternalError("Normalized direct-call query remained NotYetAnalyzed");
 	}
 	const bool allow_lookup_recovery =
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
-		sema_recorded_unresolved_call; // sema recorded a known resolution gap
+		sema_direct_call_fallback_reason.has_value(); // sema recorded a known compatibility gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.
+	// Any remaining codegen recovery below is strictly for non-normalized bodies or
+	// calls where sema recorded an explicit compatibility reason.
 	if (!matched_func_decl && allow_lookup_recovery) {
 		// Look up the function in the global symbol table to get all overloads
 		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
@@ -1123,53 +1142,54 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 		}
 
-	// For instantiated template calls, the concrete specialization is registered under its
-	// mangled name in the symbol table. Prefer that over falling back to the template pattern.
-	if (!matched_func_decl && has_precomputed_mangled) {
-		auto mangled_symbol = lookupSymbol(callExprNode.mangled_name());
-		if (mangled_symbol.has_value()) {
-			if (mangled_symbol->is<FunctionDeclarationNode>()) {
-				matched_func_decl = &mangled_symbol->as<FunctionDeclarationNode>();
-				resolveMangledName(matched_func_decl);
-				FLASH_LOG_FORMAT(Codegen, Debug, "Matched function by mangled symbol lookup: {}", function_name);
-			} else if (mangled_symbol->is<TemplateFunctionDeclarationNode>()) {
-				matched_func_decl = &mangled_symbol->as<TemplateFunctionDeclarationNode>().function_decl_node();
-				resolveMangledName(matched_func_decl);
-				FLASH_LOG_FORMAT(Codegen, Debug, "Matched template function by mangled symbol lookup: {}", function_name);
+		// For instantiated template calls, the concrete specialization is registered under its
+		// mangled name in the symbol table. Prefer that over falling back to the template pattern.
+		if (!matched_func_decl && has_precomputed_mangled) {
+			auto mangled_symbol = lookupSymbol(callExprNode.mangled_name());
+			if (mangled_symbol.has_value()) {
+				if (mangled_symbol->is<FunctionDeclarationNode>()) {
+					matched_func_decl = &mangled_symbol->as<FunctionDeclarationNode>();
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched function by mangled symbol lookup: {}", function_name);
+				} else if (mangled_symbol->is<TemplateFunctionDeclarationNode>()) {
+					matched_func_decl = &mangled_symbol->as<TemplateFunctionDeclarationNode>().function_decl_node();
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched template function by mangled symbol lookup: {}", function_name);
+				}
 			}
 		}
-	}
 
-	// Remap stale pattern-owner manglings when an unqualified member call is being lowered
-	// inside an instantiated template class body.
-	if (!matched_func_decl && has_precomputed_mangled && current_struct_name_.isValid() &&
-		!callExprNode.has_qualified_name()) {
-		if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
-			matched_func_decl = instantiated_member;
-			has_precomputed_mangled = false;
-			resolveMangledName(matched_func_decl, current_struct_name_);
-			FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
+		// Remap stale pattern-owner manglings when an unqualified member call is being lowered
+		// inside an instantiated template class body.
+		if (!matched_func_decl && has_precomputed_mangled && current_struct_name_.isValid() &&
+			!callExprNode.has_qualified_name()) {
+			if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
+				matched_func_decl = instantiated_member;
+				has_precomputed_mangled = false;
+				resolveMangledName(matched_func_decl, current_struct_name_);
+				FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
+			}
 		}
-	}
 
-	// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
-	// single-overload codegen recovery branches here were probed across the
-	// full 2239-test corpus with hard-fail guards and never hit. Sema's
-	// resolved direct-call target plus the precomputed-mangled path above
-	// already cover these cases.
+		// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
+		// single-overload codegen recovery branches here were probed across the
+		// full 2239-test corpus with hard-fail guards and never hit. Sema's
+		// resolved direct-call target plus the precomputed-mangled path above
+		// already cover these cases.
 
-	// Invariant (audit 2026-04-27): the resolved-target paths above already
-	// populate `matched_func_decl` for precomputed-mangled call sites
-	// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
-	// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
-	// "current-struct + base-class member by name" recovery, and the
-	// "qualified static member by struct iteration" recovery were all
-	// removed after probing showed zero hits.
+		// Invariant (audit 2026-04-27): the resolved-target paths above already
+		// populate `matched_func_decl` for precomputed-mangled call sites
+		// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
+		// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
+		// "current-struct + base-class member by name" recovery, and the
+		// "qualified static member by struct iteration" recovery were all
+		// removed after probing showed zero hits.
 
-	// Handle dependent qualified function names: Base$dependentHash::member
-	// These occur when a template body contains Base<T>::member() and T is substituted
-	// but the hash was computed with the dependent type, not the concrete type.
-	if (!matched_func_decl) {
+		// Legacy direct-call recovery remains only for bodies sema never normalized
+		// or calls where sema recorded an explicit compatibility reason.
+		// Handle dependent qualified function names: Base$dependentHash::member
+		// These occur when a template body contains Base<T>::member() and T is substituted
+		// but the hash was computed with the dependent type, not the concrete type.
 		size_t scope_pos = lookup_name_view.find("::");
 		std::string_view base_template_name;
 		if (scope_pos != std::string_view::npos) {
@@ -1374,7 +1394,16 @@ ambiguous_qualified_static_member:
 				}
 			}
 		}
-		}
+	}
+
+	if (!matched_func_decl &&
+		sema_normalized_current_function_ &&
+		sema_direct_call_fallback_reason.has_value()) {
+		FLASH_LOG_FORMAT(Codegen,
+						 Debug,
+						 "Using sema-recorded direct-call fallback for '{}': {}",
+						 func_name_view,
+						 describeDirectCallFallbackReason(*sema_direct_call_fallback_reason));
 	}
 
 	if (!matched_func_decl && !allow_lookup_recovery) {
@@ -1640,8 +1669,8 @@ ambiguous_qualified_static_member:
 			}
 
 			// sema should annotate all resolved standard argument conversions.
-			// Exception: hasUnresolvedCallArgs means sema tried but couldn't resolve the callee
-			// (e.g. template specialization), so keep conversion recovery for that path.
+			// Exception: calls with an explicit direct-call fallback reason still use
+			// the legacy compatibility path while sema ownership is being completed.
 			if (!sema_applied_arg_conversion &&
 				param_ref_qualifier == CVReferenceQualifier::None &&
 				param_type->pointer_depth() == 0 &&
@@ -1649,7 +1678,8 @@ ambiguous_qualified_static_member:
 				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 				if (standard_conversion.is_valid &&
 					standard_conversion.rank != ConversionRank::UserDefined) {
-					if (sema_normalized_current_function_ && !sema_.hasUnresolvedCallArgs(sema_call_key)) {
+					if (sema_normalized_current_function_ &&
+						!sema_direct_call_fallback_reason.has_value()) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, callExprNode.called_from());
