@@ -113,7 +113,7 @@ static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param
 static bool typeSpecifiersMatchForSignatureValidation(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs);
-static bool outOfLineConstructorTemplateMatchesCandidate(
+static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const FunctionDeclarationNode& out_of_line_decl,
@@ -386,6 +386,8 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	}
 
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
+	ConstructorDeclarationNode* unknown_single_candidate = nullptr;
+	bool unknown_single_candidate_conflict = false;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -410,7 +412,8 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 			continue;
 		}
 
-		bool matches_candidate = outOfLineConstructorTemplateMatchesCandidate(
+		std::optional<bool> substituted_signature_match =
+			outOfLineConstructorTemplateMatchesCandidate(
 			parser,
 			*inst_ctor_decl,
 			out_of_line_decl,
@@ -421,44 +424,23 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 				inst_ctor_decl->template_parameters().data(),
 				inst_ctor_decl->template_parameters().size()),
 			out_of_line_inner_template_params);
-		if (!matches_candidate && inst_ctor_decl->template_parameters().empty()) {
-			std::optional<bool> signature_match =
-				declarationsMatchAfterTemplateSubstitution(
-					parser,
-					*inst_ctor_decl,
-					out_of_line_decl,
-					outer_template_params,
-					outer_template_args,
-					owner_type_name,
-					std::span<const TemplateParameterNode>{},
-					out_of_line_inner_template_params);
-			if (signature_match.has_value()) {
-				matches_candidate = *signature_match;
-			} else if (source_ctor_count <= 1) {
-				matches_candidate = true;
-			} else if (inst_ctor_decl->parameter_nodes().size() ==
-					   out_of_line_decl.parameter_nodes().size()) {
-				matches_candidate = true;
-				for (size_t param_index = 0;
-					 param_index < inst_ctor_decl->parameter_nodes().size();
-					 ++param_index) {
-					const TypeSpecifierNode* candidate_param_type =
-						getDeclarationParamTypeNode(inst_ctor_decl->parameter_nodes()[param_index]);
-					const TypeSpecifierNode* out_of_line_param_type =
-						getDeclarationParamTypeNode(out_of_line_decl.parameter_nodes()[param_index]);
-					if (candidate_param_type == nullptr ||
-						out_of_line_param_type == nullptr ||
-						!typeSpecifiersMatchForSignatureValidation(
-							*candidate_param_type,
-							*out_of_line_param_type)) {
-						matches_candidate = false;
-						break;
-					}
-				}
-			}
-		}
+		bool matches_candidate =
+			substituted_signature_match.has_value() && *substituted_signature_match;
 
 		if (!matches_candidate) {
+			if (!substituted_signature_match.has_value() &&
+				source_ctor_count <= 1 &&
+				inst_ctor_decl->template_parameters().size() ==
+					out_of_line_inner_template_params.size()) {
+				// Compatibility-only fallback: when there is exactly one source
+				// constructor declaration and substitution cannot classify it,
+				// keep replay attachment behavior explicit and narrow.
+				if (unknown_single_candidate == nullptr) {
+					unknown_single_candidate = inst_ctor_decl;
+				} else if (unknown_single_candidate != inst_ctor_decl) {
+					unknown_single_candidate_conflict = true;
+				}
+			}
 			continue;
 		}
 
@@ -468,6 +450,12 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	OutOfLineConstructorStubResolution resolution;
 	if (resolved_matches.size() == 1) {
 		resolution.ctor = resolved_matches.front();
+		return resolution;
+	}
+	if (resolved_matches.empty() &&
+		unknown_single_candidate != nullptr &&
+		!unknown_single_candidate_conflict) {
+		resolution.ctor = unknown_single_candidate;
 		return resolution;
 	}
 	if (resolved_matches.size() > 1) {
@@ -1441,7 +1429,7 @@ static std::optional<bool> nestedOutOfLineMemberTemplateMatchesCandidate(
 		});
 }
 
-static bool outOfLineConstructorTemplateMatchesCandidate(
+static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const FunctionDeclarationNode& out_of_line_decl,
@@ -1450,7 +1438,11 @@ static bool outOfLineConstructorTemplateMatchesCandidate(
 	StringHandle owner_type_name,
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
-	return outOfLineTemplateMatchesCandidateWithFallback(
+	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
+		return false;
+	}
+
+	return declarationsMatchAfterTemplateSubstitution(
 		parser,
 		candidate,
 		out_of_line_decl,
@@ -1458,15 +1450,7 @@ static bool outOfLineConstructorTemplateMatchesCandidate(
 		outer_template_args,
 		owner_type_name,
 		candidate_inner_template_params,
-		out_of_line_inner_template_params,
-		[&](std::span<const TemplateParameterNode> instantiated_inner_template_params,
-			std::span<const TemplateParameterNode> definition_inner_template_params) {
-			return constructorDeclarationsHaveMatchingParameterShape(
-				candidate,
-				out_of_line_decl,
-				instantiated_inner_template_params,
-				definition_inner_template_params);
-		});
+		out_of_line_inner_template_params);
 }
 
 void Parser::copyDefinitionParameterIdentifiers(

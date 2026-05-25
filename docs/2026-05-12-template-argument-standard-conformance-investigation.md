@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-27 (nested-struct OOL template member overload scan replaced with signature-based disambiguation)
+**Last updated:** 2026-05-25 (constructor-template replay attachment now prefers canonical substituted-signature evidence over shape fallback)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -71,6 +71,12 @@ Future work can rely on these being in place:
   same-name overloads)**: nested constructor-template targets are now attached
   through source-member identity with signature-equivalent `StructTypeInfo`
   synchronization.
+- **out-of-line constructor-template replay attachment no longer accepts
+  shape-based fallback in overload-sensitive matching**: constructor-template
+  attachment now requires canonical substituted-signature evidence for positive
+  matches, with only a narrow single-candidate unresolved compatibility path
+  retained when substitution cannot classify and overload disambiguation is not
+  needed.
 - **declaration-only member stub substitution now strips only top-level
   by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
   so replay-first source-member signature matching and mangled identity remain
@@ -124,7 +130,7 @@ Future work can rely on these being in place:
   `break` after the first successful attachment and error logging on no-match.
 
 Latest recorded full-suite validation:
-`2553` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2554` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -146,6 +152,7 @@ Latest focused regressions added on the current branch:
 - `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 - `test_template_nested_ool_member_template_overload_ret0.cpp`
 
@@ -163,9 +170,9 @@ Rule for this work:
   documented.
 - next slices:
   - remove the remaining constructor/non-static declaration replay scans still
-    not keyed by source-member identity; then tighten constructor-template
-    signature matching to reduce shape-based fallback when substituted
-    signatures are unavailable.
+    not keyed by source-member identity; then remove remaining unresolved
+    single-candidate fallback acceptance in constructor attachment paths when
+    substituted-signature classification returns `nullopt`.
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
 
@@ -196,9 +203,9 @@ Still open, but not the next best slice:
 
 1. remove remaining declaration replay scans in non-static template-member
    attachment paths, starting with constructor attachment/replay paths that
-   still recover targets from instantiated members instead of source members
-   (next: tighten constructor-template matching to canonical substituted-signature
-   matching where shape fallback is still used);
+   still recover targets from instantiated members instead of source members;
+   then remove remaining constructor replay fallback acceptance that relies on
+   unresolved (`nullopt`) substitution outcomes;
    keep function-parameter adjustment rules centralized so replay/attachment
    compares canonical signatures across eager/lazy/declaration-only paths;
 2. update these docs with the next remaining replay-metadata gap.
@@ -212,8 +219,9 @@ Keep adding narrow regressions in these areas:
 - declaration/definition attachment where inner and outer template parameters
   interact;
 - remaining non-static declaration replay paths that still fall back to
-  partially substituted AST state, especially constructor-template attachment
-  paths that still require shape-based fallback disambiguation.
+  partially substituted AST state, especially constructor attachment paths that
+  still accept unresolved (`nullopt`) substitution outcomes in single-candidate
+  scenarios.
 
 ## Exit criteria
 
