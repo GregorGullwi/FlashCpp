@@ -62,10 +62,11 @@ Stop `IrGenerator_Call_Direct.cpp` from rescanning symbol tables and member hier
 
 - The sema-owned resolved-direct-call table and query surface already exist.
 - Direct-call lowering already consumes the sema-owned target first.
-- `IrGenerator_Call_Direct.cpp` no longer contains a real direct-call lookup-recovery block for resolved calls; the old compatibility scans/remaps have been removed, and the remaining `allow_lookup_recovery` path only preserves the sema-recorded compatibility boundary around unresolved call sites.
+- `IrGenerator_Call_Direct.cpp` no longer contains a real direct-call lookup-recovery block for resolved calls; the old compatibility scans/remaps have been removed, and the remaining `allow_lookup_recovery` path only preserves the non-normalized compatibility boundary after sema has already hard-failed normalized unresolved direct calls during annotation.
 - The prior coarse `unresolved_call_args_` escape hatch has been replaced with explicit sema-recorded direct-call fallback reasons, which is the intended intermediate step before deleting the remaining compatibility cases entirely.
 - Qualified-owner member lookup, global qualified-static-member scanning, template-type-parameter-qualified static-call recovery, dependent base-template qualified-call remap, stale precomputed pattern-owner remap, declaration-address overload rescans, and mangled-symbol retry lookup have now been removed from direct-call lowering because sema's existing owner/member recovery and sema-owned direct-call targets already resolve those call shapes.
-- Work still left in this phase: burn down the remaining reason-coded compatibility cases one by one, then delete the residual non-normalized recovery path and make normalized direct-call misses unconditional invariants.
+- The first post-hardening regressions have already been root-fixed in sema rather than reintroducing codegen fallback: ordinary direct-call target recovery now performs qualified namespace lookup, augments fallback candidate sets with ADL-only hidden-friend candidates, and reuses concrete parser-instantiated targets after dependent-unqualified POI recovery fails. Indirect function-pointer calls are also excluded from the ordinary direct-call invariant so the contract only applies to true direct calls.
+- Work still left in this phase: burn down the remaining reason-coded compatibility cases one by one in sema, then delete the residual non-normalized recovery path and finally remove the compatibility-reason bookkeeping itself.
 
 **Done when**
 

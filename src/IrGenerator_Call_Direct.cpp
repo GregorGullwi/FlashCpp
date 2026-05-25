@@ -1090,9 +1090,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// call wrappers that bypass the original call key, and explicit sema escape
 	// hatches. Semantically normalized ordinary direct calls should now either
 	// provide a sema-owned target or record a specific compatibility reason.
+	const bool ordinary_direct_call = !callExprNode.callee().is_indirect();
 	const std::optional<DirectCallFallbackReason> sema_direct_call_fallback_reason =
 		sema_services.getDirectCallFallbackReason(sema_call_key);
 	if (!matched_func_decl &&
+		ordinary_direct_call &&
 		sema_normalized_current_function_ &&
 		!sema_direct_call_fallback_reason.has_value() &&
 		!parser_resolved_direct_target &&
@@ -1100,14 +1102,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		throw InternalError("Normalized direct-call query remained NotYetAnalyzed");
 	}
 	const bool allow_lookup_recovery =
-		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
-		sema_direct_call_fallback_reason.has_value(); // sema recorded a known compatibility gap
+		!sema_normalized_current_function_; // body not tracked by normalized_bodies_
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.
 	// `allow_lookup_recovery` now survives only as the compatibility boundary for
-	// residual sema fallback reasons and non-normalized bodies; the actual codegen-side
-	// direct-call lookup/recovery work that used to live below has been removed.
+	// non-normalized bodies and synthesized wrapper paths; sema already hard-fails
+	// normalized direct calls that still only produce a fallback reason or no target.
+	// The actual codegen-side direct-call lookup/recovery work that used to live below
+	// has been removed.
 	// Audit 2026-04-27 and follow-up slices through 2026-05-25:
 	// the old declaration-address overload rescan, mangled-symbol retry,
 	// dependent qualified remaps, and stale pattern-owner remaps have all
@@ -1116,16 +1119,19 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// remaining sema-side gaps are burned down.
 
 	if (!matched_func_decl &&
+		ordinary_direct_call &&
 		sema_normalized_current_function_ &&
 		sema_direct_call_fallback_reason.has_value()) {
-		FLASH_LOG_FORMAT(Codegen,
-						 Debug,
-						 "Using sema-recorded direct-call fallback for '{}': {}",
-						 func_name_view,
-						 describeDirectCallFallbackReason(*sema_direct_call_fallback_reason));
+		throw InternalError(std::string(
+			StringBuilder()
+				.append("Phase 1: sema-normalized direct call recorded fallback reason for '")
+				.append(func_name_view)
+				.append("': ")
+				.append(describeDirectCallFallbackReason(*sema_direct_call_fallback_reason))
+				.commit()));
 	}
 
-	if (!matched_func_decl && !allow_lookup_recovery) {
+	if (!matched_func_decl && ordinary_direct_call && !allow_lookup_recovery) {
 		throw InternalError(std::string(
 			StringBuilder()
 				.append("Phase 1: sema-normalized direct call missing resolved target for '")
@@ -1388,8 +1394,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			// sema should annotate all resolved standard argument conversions.
-			// Exception: calls with an explicit direct-call fallback reason still use
-			// the legacy compatibility path while sema ownership is being completed.
 			if (!sema_applied_arg_conversion &&
 				param_ref_qualifier == CVReferenceQualifier::None &&
 				param_type->pointer_depth() == 0 &&
@@ -1397,8 +1401,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
 				if (standard_conversion.is_valid &&
 					standard_conversion.rank != ConversionRank::UserDefined) {
-					if (sema_normalized_current_function_ &&
-						!sema_direct_call_fallback_reason.has_value()) {
+					if (sema_normalized_current_function_) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, callExprNode.called_from());
