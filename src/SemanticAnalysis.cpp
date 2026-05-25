@@ -25,23 +25,23 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 	}
 }
 
+} // namespace
+
 const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason) {
 	switch (reason) {
 		case DirectCallFallbackReason::ReceiverMemberRecovery:
-			return "receiver member recovery";
+			return "receiver-member recovery";
 		case DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation:
-			return "dependent unqualified point-of-instantiation lookup";
+			return "dependent unqualified point-of-instantiation recovery";
 		case DirectCallFallbackReason::GlobalMangledLookupMiss:
 			return "global mangled lookup miss";
 		case DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss:
-			return "qualified/ordinary name lookup miss";
+			return "qualified or ordinary name lookup miss";
 		case DirectCallFallbackReason::StructMemberLookupMiss:
-			return "struct member lookup miss";
+			return "struct-member lookup miss";
 	}
-	return "unknown";
+	return "unknown direct-call fallback reason";
 }
-
-} // namespace
 
 void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
@@ -7930,7 +7930,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 	std::vector<TypeSpecifierNode> arg_types;
-	if (parser().tryCollectFunctionCallArgTypes(arguments, arg_types) && !arg_types.empty()) {
+	const bool arg_types_collected = parser().tryCollectFunctionCallArgTypes(arguments, arg_types);
+	if (arg_types_collected &&
+		!arg_types.empty() &&
+		!call_info.qualified_name.isValid()) {
 		const std::vector<ASTNode> adl_candidates =
 			symbols_.lookup_adl_only(decl.identifier_token().value(), arg_types);
 		appendUniqueOverloads(overloads, adl_candidates);
@@ -7943,7 +7946,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return func_decl;
 	}
 
-	if (!arg_types.empty()) {
+	if (arg_types_collected && !arg_types.empty()) {
 		const OverloadResolutionResult result = resolve_overload(overloads, arg_types);
 		if (result.has_match && !result.is_ambiguous && result.selected_overload != nullptr) {
 			if (const FunctionDeclarationNode* resolved_candidate =

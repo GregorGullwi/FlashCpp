@@ -5,7 +5,6 @@
 #include "TypeSizeQuery.h"
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type);
-static const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason);
 
 // ── Shared consteval-materialization helpers ────────────────────────────────
 
@@ -125,22 +124,6 @@ static TypeIndex getCallReturnTypeIndex(const TypeSpecifierNode& return_type) {
 	return native.is_valid()
 		? native.withCategory(return_type.type())
 		: TypeIndex{}.withCategory(return_type.type());
-}
-
-static const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason) {
-	switch (reason) {
-	case DirectCallFallbackReason::ReceiverMemberRecovery:
-		return "receiver-member recovery";
-	case DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation:
-		return "dependent unqualified point-of-instantiation recovery";
-	case DirectCallFallbackReason::GlobalMangledLookupMiss:
-		return "global mangled lookup miss";
-	case DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss:
-		return "qualified or ordinary name lookup miss";
-	case DirectCallFallbackReason::StructMemberLookupMiss:
-		return "struct-member lookup miss";
-	}
-	return "unknown direct-call fallback reason";
 }
 
 void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type) {
