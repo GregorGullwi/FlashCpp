@@ -4737,10 +4737,11 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		context.normalizePendingSemanticRoots();
 	};
 
+	static constexpr size_t kExpectedVariableTemplateCandidateCount = 10;
 	std::vector<std::string_view> candidate_names;
-	candidate_names.reserve(10);
+	candidate_names.reserve(kExpectedVariableTemplateCandidateCount);
 	std::unordered_set<std::string_view> seen_candidates;
-	seen_candidates.reserve(10);
+	seen_candidates.reserve(kExpectedVariableTemplateCandidateCount);
 
 	auto addCandidateName = [&](std::string_view candidate_name) {
 		if (candidate_name.empty()) {
