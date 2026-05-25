@@ -1268,6 +1268,26 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	return true;
 }
 
+static bool isMatchingMemberTemplate(
+	const StructMemberFunctionDecl& member,
+	std::string_view ool_func_name,
+	size_t ool_inner_template_param_count,
+	size_t ool_function_param_count) {
+	if (!member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+		return false;
+	}
+	const auto& template_func =
+		member.function_declaration.as<TemplateFunctionDeclarationNode>();
+	const FunctionDeclarationNode* func_decl =
+		get_function_decl_node(member.function_declaration);
+	if (func_decl == nullptr) {
+		return false;
+	}
+	return func_decl->decl_node().identifier_token().value() == ool_func_name &&
+		template_func.template_parameters().size() == ool_inner_template_param_count &&
+		func_decl->parameter_nodes().size() == ool_function_param_count;
+}
+
 static std::optional<bool> nestedOutOfLineMemberTemplateMatchesCandidate(
 	Parser& parser,
 	const ASTNode& candidate_member,
@@ -6581,22 +6601,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const size_t ool_function_param_count = ool_func.parameter_nodes().size();
 					for (const StructMemberFunctionDecl& source_member :
 						 pattern_struct.member_functions()) {
-						if (!source_member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-							continue;
-						}
-						const auto& source_template_func =
-							source_member.function_declaration.as<TemplateFunctionDeclarationNode>();
-						const FunctionDeclarationNode* source_func_decl =
-							get_function_decl_node(source_member.function_declaration);
-						if (source_func_decl == nullptr) {
-							continue;
-						}
-						if (source_func_decl->decl_node().identifier_token().value() ==
-								ool_func_name &&
-							source_template_func.template_parameters().size() ==
-								ool_inner_template_param_count &&
-							source_func_decl->parameter_nodes().size() ==
-								ool_function_param_count) {
+						if (isMatchingMemberTemplate(
+								source_member,
+								ool_func_name,
+								ool_inner_template_param_count,
+								ool_function_param_count)) {
 							relevant_source_member_templates.push_back(&source_member);
 						}
 					}
@@ -10042,24 +10051,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// we can gate signature matching on overload ambiguity (mirrors the
 					// pattern used at the partial-spec and primary-template call sites).
 					InlineVector<const StructMemberFunctionDecl*, 4> same_name_candidates;
+					const size_t ool_inner_template_param_count =
+						out_of_line_member.inner_template_params.size();
 					const size_t ool_function_param_count = ool_func.parameter_nodes().size();
 					for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
-						if (!mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-							continue;
-						}
-						const auto& nested_template_func =
-							mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
 						const FunctionDeclarationNode* nested_func_decl =
 							get_function_decl_node(mem_func.function_declaration);
 						if (nested_func_decl == nullptr) {
 							continue;
 						}
 						if (!nested_func_decl->has_any_body_source() &&
-							nested_template_func.template_parameters().size() ==
-								out_of_line_member.inner_template_params.size() &&
-							nested_func_decl->parameter_nodes().size() ==
-								ool_function_param_count &&
-							nested_func_decl->decl_node().identifier_token().value() == ool_func_name) {
+							isMatchingMemberTemplate(
+								mem_func,
+								ool_func_name,
+								ool_inner_template_param_count,
+								ool_function_param_count)) {
 							same_name_candidates.push_back(&mem_func);
 						}
 					}
@@ -12023,16 +12029,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				out_of_line_member.inner_template_params.size();
 			const size_t ool_function_param_count = ool_func.parameter_nodes().size();
 			for (const auto& mem_func : effective_member_functions) {
-				if (!mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-					continue;
-				}
-				const auto& candidate_template_func =
-					mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
-				const auto& candidate_func = candidate_template_func.function_decl_node();
-				if (candidate_func.decl_node().identifier_token().value() == ool_func_name &&
-					candidate_template_func.template_parameters().size() ==
-						ool_inner_template_param_count &&
-					candidate_func.parameter_nodes().size() == ool_function_param_count) {
+				if (isMatchingMemberTemplate(
+						mem_func,
+						ool_func_name,
+						ool_inner_template_param_count,
+						ool_function_param_count)) {
 					++relevant_member_template_count;
 				}
 			}
@@ -12128,20 +12129,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// resolve to instantiated stubs via source_member_to_stub identity mapping.
 			FunctionDeclarationNode* inst_func_decl = nullptr;
 			for (const auto& source_member : effective_member_functions) {
-				if (!source_member.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-					continue;
-				}
-				const auto& source_template_func =
-					source_member.function_declaration.as<TemplateFunctionDeclarationNode>();
-				const FunctionDeclarationNode* source_func_decl =
-					get_function_decl_node(source_member.function_declaration);
-				if (source_func_decl == nullptr) {
-					continue;
-				}
-				if (source_func_decl->decl_node().identifier_token().value() != ool_func_name ||
-					source_template_func.template_parameters().size() !=
-						ool_inner_template_param_count ||
-					source_func_decl->parameter_nodes().size() != ool_function_param_count) {
+				if (!isMatchingMemberTemplate(
+						source_member,
+						ool_func_name,
+						ool_inner_template_param_count,
+						ool_function_param_count)) {
 					continue;
 				}
 				ASTNode* matched_stub = findSourceMemberStubByIdentity(
