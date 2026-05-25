@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (primary-template nested OOL constructor-template attachment now resolves replay-first via source-member→stub identity with overload-safe StructTypeInfo sync)
+**Last updated:** 2026-05-27 (nested-struct OOL template member overload scan replaced with signature-based disambiguation)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -118,9 +118,16 @@ Useful assumptions before changing this area:
   source-member→stub identity is now registered during partial-spec member
   instantiation and used for nested OOL attachment/disambiguation, with the
   old instantiated-member scan-first path removed for this slice.
+- **nested-struct template member OOL scan now uses signature-based
+  disambiguation for overloads**: the name+arity-only scan that previously
+  mis-attached OOL bodies when two template member functions shared a name and
+  inner-template-parameter count but differed in non-template parameter types
+  has been replaced with a `nestedOutOfLineMemberTemplateMatchesCandidate`-gated
+  match (using the `same_name_count > 1` strictness gate). The loop now also
+  breaks after the first successful attachment and logs an error on no-match.
 
 Latest recorded full-suite validation:
-`2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2553` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -143,6 +150,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
+- `test_template_nested_ool_member_template_overload_ret0.cpp`
 
 ## What is still wrong
 
