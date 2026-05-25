@@ -1071,6 +1071,43 @@ struct SignatureValidationIndirection {
 	InlineVector<CVQualifier, 4> pointer_level_cv_qualifiers;
 };
 
+static void mergeAliasIndirectionForSignatureValidation(
+	SignatureValidationIndirection& effective,
+	const ResolvedAliasTypeInfo& resolved_alias,
+	bool shift_top_level_cv_to_alias_pointer_level) {
+	if (!resolved_alias.type_index.is_valid()) {
+		return;
+	}
+
+	const size_t combined_pointer_depth =
+		effective.pointer_depth + resolved_alias.pointer_depth;
+	const bool should_shift_top_level_cv =
+		shift_top_level_cv_to_alias_pointer_level &&
+		effective.pointer_depth == 0 &&
+		effective.reference_qualifier == ReferenceQualifier::None &&
+		resolved_alias.pointer_depth > 0;
+
+	if (should_shift_top_level_cv) {
+		effective.pointer_level_cv_qualifiers.push_back(effective.cv_qualifier);
+		for (size_t i = 1; i < resolved_alias.pointer_depth; ++i) {
+			effective.pointer_level_cv_qualifiers.push_back(CVQualifier::None);
+		}
+		effective.cv_qualifier = resolved_alias.cv_qualifier;
+	} else {
+		effective.cv_qualifier = static_cast<CVQualifier>(
+			static_cast<uint8_t>(effective.cv_qualifier) |
+			static_cast<uint8_t>(resolved_alias.cv_qualifier));
+	}
+
+	effective.pointer_depth = combined_pointer_depth;
+	effective.reference_qualifier = collapseReferenceQualifiers(
+		resolved_alias.reference_qualifier,
+		effective.reference_qualifier);
+	while (effective.pointer_level_cv_qualifiers.size() < effective.pointer_depth) {
+		effective.pointer_level_cv_qualifiers.push_back(CVQualifier::None);
+	}
+}
+
 static SignatureValidationIndirection computeSignatureValidationIndirection(
 	const TypeSpecifierNode& type_spec) {
 	SignatureValidationIndirection effective;
@@ -1084,16 +1121,32 @@ static SignatureValidationIndirection computeSignatureValidationIndirection(
 
 	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
 		resolved_alias.type_index.is_valid()) {
-		effective.pointer_depth += resolved_alias.pointer_depth;
-		effective.cv_qualifier = static_cast<CVQualifier>(
-			static_cast<uint8_t>(effective.cv_qualifier) |
-			static_cast<uint8_t>(resolved_alias.cv_qualifier));
-		effective.reference_qualifier = collapseReferenceQualifiers(
-			resolved_alias.reference_qualifier,
-			effective.reference_qualifier);
-		while (effective.pointer_level_cv_qualifiers.size() < effective.pointer_depth) {
-			effective.pointer_level_cv_qualifiers.push_back(CVQualifier::None);
-		}
+		mergeAliasIndirectionForSignatureValidation(
+			effective,
+			resolved_alias,
+			true);
+	}
+
+	return effective;
+}
+
+static SignatureValidationIndirection computeTemplateArgSignatureValidationIndirection(
+	const TypeInfo::TemplateArgInfo& arg_info) {
+	SignatureValidationIndirection effective;
+	effective.pointer_depth = arg_info.pointer_depth;
+	effective.reference_qualifier = arg_info.ref_qualifier;
+	effective.cv_qualifier = arg_info.cv_qualifier;
+	effective.pointer_level_cv_qualifiers.reserve(arg_info.pointer_cv_qualifiers.size());
+	for (CVQualifier level_cv : arg_info.pointer_cv_qualifiers) {
+		effective.pointer_level_cv_qualifiers.push_back(level_cv);
+	}
+
+	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(arg_info.type_index);
+		resolved_alias.type_index.is_valid()) {
+		mergeAliasIndirectionForSignatureValidation(
+			effective,
+			resolved_alias,
+			true);
 	}
 
 	return effective;
@@ -1236,25 +1289,30 @@ static bool dependentQualifiedTemplateArgMatchesForSignature(
 	const TypeInfo::TemplateArgInfo& out_of_line_arg,
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params) {
+	const SignatureValidationIndirection instantiated_indirection =
+		computeTemplateArgSignatureValidationIndirection(instantiated_arg);
+	const SignatureValidationIndirection out_of_line_indirection =
+		computeTemplateArgSignatureValidationIndirection(out_of_line_arg);
+
 	if (instantiated_arg.is_value != out_of_line_arg.is_value ||
 		instantiated_arg.is_pack != out_of_line_arg.is_pack ||
 		instantiated_arg.is_array != out_of_line_arg.is_array ||
-		instantiated_arg.pointer_depth != out_of_line_arg.pointer_depth ||
-		instantiated_arg.cv_qualifier != out_of_line_arg.cv_qualifier ||
-		instantiated_arg.ref_qualifier != out_of_line_arg.ref_qualifier ||
+		instantiated_indirection.pointer_depth != out_of_line_indirection.pointer_depth ||
+		instantiated_indirection.cv_qualifier != out_of_line_indirection.cv_qualifier ||
+		instantiated_indirection.reference_qualifier != out_of_line_indirection.reference_qualifier ||
 		instantiated_arg.is_template_template_arg != out_of_line_arg.is_template_template_arg ||
 		instantiated_arg.template_name != out_of_line_arg.template_name ||
 		instantiated_arg.member_pointer_kind != out_of_line_arg.member_pointer_kind ||
 		instantiated_arg.member_class_name != out_of_line_arg.member_class_name ||
-		instantiated_arg.pointer_cv_qualifiers.size() !=
-			out_of_line_arg.pointer_cv_qualifiers.size() ||
+		instantiated_indirection.pointer_level_cv_qualifiers.size() !=
+			out_of_line_indirection.pointer_level_cv_qualifiers.size() ||
 		instantiated_arg.array_dimensions.size() != out_of_line_arg.array_dimensions.size()) {
 		return false;
 	}
 
-	for (size_t i = 0; i < instantiated_arg.pointer_cv_qualifiers.size(); ++i) {
-		if (instantiated_arg.pointer_cv_qualifiers[i] !=
-			out_of_line_arg.pointer_cv_qualifiers[i]) {
+	for (size_t i = 0; i < instantiated_indirection.pointer_level_cv_qualifiers.size(); ++i) {
+		if (instantiated_indirection.pointer_level_cv_qualifiers[i] !=
+			out_of_line_indirection.pointer_level_cv_qualifiers[i]) {
 			return false;
 		}
 	}
