@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-24 (declaration-only member stub substitution now strips only top-level by-value cv qualifiers, preserving pointer/reference cv identity so replay-first OOL plain-member attachment materializes constructor+member template cases correctly)
+**Last updated:** 2026-05-25 (primary-template nested OOL constructor-template attachment now resolves replay-first via source-member→stub identity with overload-safe StructTypeInfo sync)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -51,6 +51,29 @@ Useful assumptions before changing this area:
   overloads)**: these paths now resolve the source declaration first, then map
   source-member→instantiated-stub identity before replaying the body, removing
   the old instantiated-member name/arity scan in this slice.
+- **primary-template plain out-of-line constructor attachment is now replay-first
+  and identity-map-backed (including same-name overloads)**: constructor replay
+  now resolves source constructor declarations through source-member→stub
+  identity, disambiguates overloads via substituted signature matching, and
+  synchronizes `StructTypeInfo` constructor bodies by matched instantiated
+  signature instead of name-only updates.
+- **partial-spec out-of-line constructor-template attachment is now replay-first
+  and identity-map-backed (including same-name overloads)**: constructor-template
+  attachment now resolves source constructor declarations through
+  source-member→stub identity before setting deferred body metadata, and
+  synchronizes `StructTypeInfo` constructor-template metadata by signature rather
+  than scan/name-only matching.
+- **nested-class out-of-line constructor-template attachment now also resolves
+  replay-first through source-member→stub identity (including same-name
+  overloads)**: nested replay now maps source constructor declarations to
+  instantiated stubs first, applies deferred body/initializer metadata on the
+  identity-resolved target, and syncs nested `StructTypeInfo` constructor-template
+  metadata via signature-equivalent matching.
+- **primary-template nested out-of-line constructor-template attachment is now
+  replay-first and identity-map-backed (including same-name overloads)**:
+  constructor-template stub attachment now resolves source constructor declarations
+  through source-member→stub identity, with overload-safe `StructTypeInfo`
+  synchronization by signature-equivalent matching.
 - **declaration-only member stub substitution now strips only top-level
   by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
   keeping replay-first source-member signature matching and mangled identity
@@ -115,6 +138,10 @@ Latest focused replay regressions added on the current branch:
 - `test_template_nttp_deferred_ctor_body_pointer_function_ret0.cpp`
 - `test_template_ool_plain_member_same_name_overload_ret0.cpp`
 - `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_ret0.cpp`
+- `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 
 ## What is still wrong
@@ -131,6 +158,9 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
+  - constructor-template attachment matching still allows shape-based fallback
+    when substituted signatures cannot be fully classified; this remains a
+    replay/attachment correctness risk in edge overload sets.
 ### 2. Dependent-name modeling is still too weak
 
 `DependentQualifiedNameRecord` is useful, but it is still not a complete
@@ -156,9 +186,9 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Remove the next remaining declaration replay scans outside static-member initializers**
-   - Continue replacing the remaining constructor/non-static replay attachment
-     paths that still recover targets from instantiated-member scans instead of
-     source-member identity.
+   - Tighten constructor-template attachment matching to prefer substituted
+     canonical signatures and reduce shape-based fallback use in replay-first
+     attachment helpers.
    - Keep function-parameter adjustment rules centralized in shared substitution
      helpers so replay/attachment compares canonical signatures instead of
      path-specific normalized variants.
@@ -194,6 +224,21 @@ The following are complete enough to rely on:
   partial specializations now also resolves through source-member→stub identity,
   including same-name overload cases, with no instantiated-member name/arity
   attachment scan in that slice;
+- primary-template plain out-of-line constructor replay now also resolves
+  source-member→stub identity first (including overload disambiguation by
+  substituted signature), and `StructTypeInfo` constructor-body synchronization
+  in this path no longer uses name-only matching;
+- partial-spec out-of-line constructor-template attachment now mirrors that
+  replay-first source-member→stub identity flow (including overload
+  disambiguation), and `StructTypeInfo` constructor-template metadata sync in
+  this path no longer relies on scan/name-only matching;
+- nested-class out-of-line constructor-template attachment now also resolves
+  source-member→stub identity first (including same-name overload handling), and
+  nested `StructTypeInfo` constructor-template metadata sync in this path no
+  longer relies on scan/name-only matching;
+- primary-template nested out-of-line constructor-template attachment now mirrors
+  that replay-first source-member→stub identity path, with no
+  instantiated-member scan-first target selection in this slice;
 - partial-spec nested out-of-line member-template attachment now mirrors that
   replay-first source-member→stub identity path (including same-name overload
   disambiguation), with no scan-first fallback in this slice;
