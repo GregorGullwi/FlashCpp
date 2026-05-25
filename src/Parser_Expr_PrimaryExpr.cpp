@@ -905,6 +905,19 @@ bool typeRefersToCurrentTemplateParam(
 	if (!type_spec.type_index().is_valid()) {
 		return true;
 	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+		if (type_info->isTypeAlias()) {
+			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
+				if (typeRefersToCurrentTemplateParam(*alias_type_spec, current_template_param_names)) {
+					return true;
+				}
+			}
+			if (type_info->type_index_.is_valid() &&
+				typeIndexContainsDependentPlaceholder(type_info->type_index_)) {
+				return true;
+			}
+		}
+	}
 	StringHandle token_handle = type_spec.token().handle();
 	if (token_handle.isValid() &&
 		std::find(current_template_param_names.begin(), current_template_param_names.end(), token_handle) != current_template_param_names.end()) {
@@ -912,6 +925,35 @@ bool typeRefersToCurrentTemplateParam(
 	}
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 		return std::find(current_template_param_names.begin(), current_template_param_names.end(), type_info->name()) != current_template_param_names.end();
+	}
+	return false;
+}
+
+bool identifierExpressionHasDeferredTemplateDependency(
+	const IdentifierNode& identifier,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	if (identifierRefersToCurrentTemplateParam(identifier.nameHandle(), current_template_param_names)) {
+		return true;
+	}
+	std::optional<ASTNode> symbol = gSymbolTable.lookup(
+		identifier.getOrInternNameHandle(),
+		gSymbolTable.get_current_scope_handle(),
+		&current_template_param_names);
+	if (!symbol.has_value()) {
+		return false;
+	}
+	if (symbol->is<TemplateParameterReferenceNode>()) {
+		return true;
+	}
+	if (symbol->is<DeclarationNode>()) {
+		return typeRefersToCurrentTemplateParam(
+			symbol->as<DeclarationNode>().type_specifier_node(),
+			current_template_param_names);
+	}
+	if (symbol->is<VariableDeclarationNode>()) {
+		return typeRefersToCurrentTemplateParam(
+			symbol->as<VariableDeclarationNode>().declaration().type_specifier_node(),
+			current_template_param_names);
 	}
 	return false;
 }
@@ -988,6 +1030,10 @@ bool expressionHasDeferredTemplateDependency(
 			using T = std::decay_t<decltype(inner)>;
 			if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				return true;
+			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
+				return identifierExpressionHasDeferredTemplateDependency(
+					inner,
+					current_template_param_names);
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.get_lhs(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.get_rhs(), current_template_param_names);
@@ -5099,34 +5145,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					FLASH_LOG_FORMAT(Templates, Debug, "SFINAE: template instantiation failed for call to '{}'", identifier_token.value());
 				} else {
 					FLASH_LOG(Parser, Error, "Template instantiation failed");
-				}
-				// Fallback: if we're inside a template definition with active template parameters
-				// and the callee is a known template function, create a deferred call instead of
-				// emitting a hard error. This handles cases where argument dependency detection
-				// failed to flag template-dependent types (e.g. a variable whose type is an outer
-				// template typedef but whose expression node is a simple IdentifierNode that does
-				// not match any active template parameter name). Standard C++ mandates that
-				// dependent calls in template definitions are resolved at instantiation time.
-				if (hasActiveTemplateParameters() &&
-					gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value()) {
-					FLASH_LOG_FORMAT(Templates, Debug,
-						"Creating deferred call for template '{}' inside template body (dependency not detected by AST walk)",
-						identifier_token.value());
-					auto type_node = emplace_node<TypeSpecifierNode>(
-						TypeCategory::Auto, TypeQualifier::None,
-						get_type_size_bits(TypeCategory::Auto),
-						identifier_token, CVQualifier::None);
-					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-					result = emplace_node<ExpressionNode>(
-						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(),
-										   std::move(args), identifier_token));
-					maybeAttachDependentUnqualifiedLookupRecord(
-						result->as<ExpressionNode>(),
-						identifier_token,
-						/*has_deferred_template_call_args=*/true,
-						current_template_definition_lookup_context_,
-						/*argument_dependent_lookup_included=*/true);
-					return ParseResult::success(*result);
 				}
 				return ParseResult::error("Failed to instantiate template function", identifier_token);
 			}
