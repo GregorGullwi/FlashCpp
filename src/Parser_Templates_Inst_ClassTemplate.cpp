@@ -311,13 +311,6 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name) {
-	size_t source_ctor_count = 0;
-	for (const StructMemberFunctionDecl& source_member : source_members) {
-		if (source_member.function_declaration.is<ConstructorDeclarationNode>()) {
-			++source_ctor_count;
-		}
-	}
-
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -344,14 +337,8 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 				std::span<const TemplateParameterNode>{},
 				std::span<const TemplateParameterNode>{});
 
-		bool matches_candidate = false;
-		if (signature_match.has_value()) {
-			matches_candidate = *signature_match;
-		} else if (source_ctor_count <= 1) {
-			// Preserve prior non-overload behavior when substitution cannot fully
-			// classify a single constructor declaration.
-			matches_candidate = true;
-		}
+		const bool matches_candidate =
+			signature_match.has_value() && *signature_match;
 
 		if (matches_candidate) {
 			resolved_matches.push_back(inst_ctor_decl);
@@ -378,15 +365,7 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name,
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
-	size_t source_ctor_count = 0;
-	for (const StructMemberFunctionDecl& source_member : source_members) {
-		if (source_member.function_declaration.is<ConstructorDeclarationNode>()) {
-			++source_ctor_count;
-		}
-	}
-
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
-	ConstructorDeclarationNode* unknown_single_candidate = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -427,15 +406,6 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 			substituted_signature_match.has_value() && *substituted_signature_match;
 
 		if (!matches_candidate) {
-			if (!substituted_signature_match.has_value() &&
-				source_ctor_count == 1 &&
-				inst_ctor_decl->template_parameters().size() ==
-					out_of_line_inner_template_params.size()) {
-				// Compatibility-only fallback: when there is exactly one source
-				// constructor declaration and substitution cannot classify it,
-				// keep replay attachment behavior explicit and narrow.
-				unknown_single_candidate = inst_ctor_decl;
-			}
 			continue;
 		}
 
@@ -445,11 +415,6 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	OutOfLineConstructorStubResolution resolution;
 	if (resolved_matches.size() == 1) {
 		resolution.ctor = resolved_matches.front();
-		return resolution;
-	}
-	if (resolved_matches.empty() &&
-		unknown_single_candidate != nullptr) {
-		resolution.ctor = unknown_single_candidate;
 		return resolution;
 	}
 	if (resolved_matches.size() > 1) {
@@ -12137,8 +12102,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (force_eager) {
 						throw InternalError(error_msg);
 					}
-					FLASH_LOG(Templates, Error, error_msg);
-					continue;
+					return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 				}
 
 				if (ctor_resolution.ctor == nullptr) {
@@ -12152,8 +12116,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (force_eager) {
 						throw InternalError(error_msg);
 					}
-					FLASH_LOG(Templates, Error, error_msg);
-					continue;
+					return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 				}
 
 				ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
@@ -12381,8 +12344,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (force_eager) {
 					throw InternalError(ambiguity_msg);
 				}
-				FLASH_LOG(Templates, Error, ambiguity_msg);
-			} else if (ctor_resolution.ctor != nullptr) {
+				return failTemplateInstantiation(ambiguity_msg, nullptr, std::nullopt);
+			}
+			if (ctor_resolution.ctor == nullptr) {
+				std::string error_msg = std::string(StringBuilder()
+					.append("Could not attach out-of-line constructor stub '")
+					.append(decl.identifier_token().value())
+					.append("' for instantiated class '")
+					.append(instantiated_name)
+					.append("' via replay identity map")
+					.commit());
+				if (force_eager) {
+					throw InternalError(error_msg);
+				}
+				return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
+			}
+
+			if (ctor_resolution.ctor != nullptr) {
 				ConstructorDeclarationNode& ctor = *ctor_resolution.ctor;
 				// Save current position
 				SaveHandle saved_pos = save_token_position();

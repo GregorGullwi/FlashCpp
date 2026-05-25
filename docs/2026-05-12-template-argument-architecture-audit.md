@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (constructor-template replay attachment now prefers canonical substituted-signature evidence over shape fallback)
+**Last updated:** 2026-05-25 (constructor replay attachment now requires canonical substituted-signature evidence; single-candidate `nullopt` fallback removed)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -74,11 +74,11 @@ Useful assumptions before changing this area:
   constructor-template stub attachment now resolves source constructor declarations
   through source-member→stub identity, with overload-safe `StructTypeInfo`
   synchronization by signature-equivalent matching.
-- **out-of-line constructor-template replay attachment no longer accepts
-  shape-based fallback in overload-sensitive matching**: constructor-template
-  attachment now requires canonical substituted-signature evidence for positive
-  matches, with only a narrow single-candidate unresolved compatibility path
-  retained when substitution cannot classify and no overload choice is required.
+- **out-of-line constructor replay attachment now requires canonical
+  substituted-signature evidence across both plain and constructor-template
+  helper paths**: single-candidate unresolved (`nullopt`) acceptance has been
+  removed; no-match cases now surface explicit replay-attachment diagnostics
+  instead of silent fallback attachment.
 - **declaration-only member stub substitution now strips only top-level
   by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
   keeping replay-first source-member signature matching and mangled identity
@@ -132,7 +132,7 @@ Useful assumptions before changing this area:
   breaks after the first successful attachment and logs an error on no-match.
 
 Latest recorded full-suite validation:
-`2554` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2554` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -155,6 +155,8 @@ Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
+- `test_template_ool_plain_ctor_nullopt_single_candidate_no_attach_fail.cpp`
+- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_fail.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 - `test_template_nested_ool_member_template_overload_ret0.cpp`
 
@@ -172,10 +174,10 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
-  - constructor attachment/replay still has narrow unresolved-signature fallback
-    behavior when substitution returns `nullopt`; this should be removed by
-    capturing the missing replay metadata or converting unresolved attachment
-    into explicit diagnostics.
+  - remaining constructor and non-constructor replay paths still produce
+    unresolved substitution outcomes (`nullopt`) because required replay-visible
+    metadata is not always captured early enough; these need metadata completion
+    so canonical matching succeeds more often without broad fallback machinery.
 ### 2. Dependent-name modeling is still too weak
 
 `DependentQualifiedNameRecord` is useful, but it is still not a complete
@@ -201,9 +203,10 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Remove the next remaining declaration replay scans outside static-member initializers**
-   - Remove remaining unresolved-signature fallback behavior in constructor
-     attachment helpers (including single-candidate `nullopt` acceptance), so
-     replay attachment either has canonical evidence or fails explicitly.
+   - Remove remaining declaration replay scans that still recover targets from
+     partially substituted instantiated members instead of source-member identity.
+   - Improve replay metadata capture in unresolved substitution (`nullopt`) paths
+     so canonical substituted-signature matching classifies more valid code.
    - Keep function-parameter adjustment rules centralized in shared substitution
      helpers so replay/attachment compares canonical signatures instead of
      path-specific normalized variants.
@@ -247,10 +250,10 @@ The following are complete enough to rely on:
   replay-first source-member→stub identity flow (including overload
   disambiguation), and `StructTypeInfo` constructor-template metadata sync in
   this path no longer relies on scan/name-only matching;
-- constructor-template replay-first attachment no longer admits shape-based
-  positive matches in overload-sensitive paths; canonical substituted-signature
-  evidence is now required, with only a narrow single-candidate unresolved
-  compatibility path retained;
+- constructor replay-first attachment no longer admits unresolved
+  single-candidate fallback acceptance in plain or constructor-template helper
+  paths; canonical substituted-signature evidence is now required for positive
+  attachment, and no-match surfaces explicit diagnostics;
 - nested-class out-of-line constructor-template attachment now also resolves
   source-member→stub identity first (including same-name overload handling), and
   nested `StructTypeInfo` constructor-template metadata sync in this path no
