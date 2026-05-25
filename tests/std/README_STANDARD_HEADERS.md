@@ -8,20 +8,20 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5755ms (retested 2026-05-23, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~970ms (retested 2026-05-25, Linux/libstdc++-14). |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5795ms (retested 2026-05-25, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~807ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
-| `<ratio>` | `test_std_ratio.cpp` | ❌ Compile Error | ~1562ms (retested 2026-05-17, Linux/libstdc++-14). The prior `__ratio_less_impl` bool-default hard stop is unblocked for remove-cv alias instantiation (`test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes); current first hard stop moved later to `__ratio_add_impl` default NTTP evaluation (`Undefined qualified identifier in constant expression: ratio_less$...::value`). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~2.76s (retested 2026-05-25, Linux/libstdc++-14). Deferred-base call-argument handling no longer hard-aborts with `Fatal error: Deferred base arguments should be resolved by specialized handlers`; current first hard stop is later codegen (`Type with no runtime size reached codegen in reference identifier lvalue lowering`, type category 28 in `_Optional_payload`). |
-| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~1.13s (retested 2026-05-25, Linux/libstdc++-14). No longer hard-stops in `main` on `Sema did not annotate converting constructor for normalized body`; `std::any a = 42;` now reaches full codegen/object emission. |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1.84s (retested 2026-05-24, Linux/libstdc++-14). |
+| `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | ~1965ms (retested 2026-05-25, Linux/libstdc++-14). Crashes during `__static_sign` template instantiation (signal 11). Prior `__ratio_less_impl` bool-default hard stop is unblocked; `test_std_ratio_less_remove_cv_type_instantiation_ret0.cpp` passes. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | (retested 2026-05-25, Linux/libstdc++-14). Current first hard stop: `ConstructorCallOp missing resolved constructor for '_Optional_payload_base'` in `_Optional_payload` codegen. |
+| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~1052ms (retested 2026-05-25, Linux/libstdc++-14). |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1524ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Compile Error | ~4.03s (retested 2026-05-24, Linux/libstdc++-14). Progressed past the sema-normalized constructor-target mismatch in `basic_string_view::substr`; current first hard stop is later IR conversion at `Type with no runtime size reached codegen in direct call return size (type=25)` in the `find` path, followed by missing resolved constructor for a normalized `basic_string_view` constructor call. |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | (retested 2026-05-25, Linux/libstdc++-14). Current first hard stop: `ConstructorCallOp missing resolved constructor for 'basic_string_view'` in IR conversion for `main`. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~3220ms (retested 2026-05-12, Linux/libstdc++-14). The deleted dependent `std::pair::swap` and current-class override of block-scope `using std::swap` stops remain fixed; current first hard error is lazy body replay failure for `basic_string<...>::clear`. |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~2.64s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
@@ -32,8 +32,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3.56s (retested 2026-05-23, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current first hard stop is still `bits/alloc_traits.h:904` while instantiating `__make_move_if_noexcept_iterator(...)`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.58s (retested 2026-05-24, Linux/libstdc++-14). Current first hard stop remains `bits/alloc_traits.h:904` (`Failed to instantiate template function`). |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~3034ms (retested 2026-05-25, Linux/libstdc++-14). Current first hard stop: `bits/alloc_traits.h:904` — `Failed to instantiate template function` for `__make_move_if_noexcept_iterator` (all 2 overloads fail: `__is_nothrow_constructible` intrinsic returns wrong value for move-constructible scalars). |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4226ms (retested 2026-05-25, Linux/libstdc++-14). Same first hard stop: `bits/alloc_traits.h:904` (`Failed to instantiate template function` for `__make_move_if_noexcept_iterator`). |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -47,7 +47,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~9408ms (retested 2026-05-04, Linux/libstdc++-14). No longer crashes; the `Cannot use copy initialization with explicit constructor` diagnostic is also fixed; current first hard error is `Itanium name mangling: unresolved 'auto' type reached mangling` for `__begin`. |
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
-| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7513ms (retested 2026-05-23, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
+| `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7529ms (retested 2026-05-25, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
 | `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~2481ms (retested 2026-04-11). Call to deleted function 'swap'. |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
@@ -100,6 +100,33 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-25 Linux/libstdc++ alias-template base class resolution fix
+
+Fix landed:
+
+- **`parse_qualified_identifier_with_templates` + alias-template base class: when a qualified name like `std::bool_constant<false>` is parsed with its template arguments consumed by the unified parser, the first resolution path now calls `instantiate_and_register_base_template` (which traverses alias chains) instead of only `try_instantiate_class_template` (which skips alias templates). This fixes "Base class 'std::bool_constant' not found" for any alias-template used directly as a base class with explicit template arguments.**
+
+Root cause: `parse_qualified_identifier_with_templates` consumes `<false>` for `std::bool_constant<false>`. The second code path (guarded by `peek() == "<"`) was never reached. The first path called `try_instantiate_class_template`, which explicitly skips alias templates, so the name stayed `std::bool_constant` → lookup failure.
+
+Regression coverage:
+
+- `tests/test_bool_const_base_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_bool_const_base_ret0.cpp` | ✅ Pass | ~800ms | New regression verifies `struct A : std::bool_constant<false>` and `struct B : std::bool_constant<true>` compile and their `::value` members are correct. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~807ms | Control retest still compiles. |
+| `<utility>` (`test_std_utility.cpp`) | ✅ Pass | ~1524ms | Control retest still compiles. |
+| `<any>` (`test_std_any.cpp`) | ✅ Pass | ~1052ms | Control retest still compiles. |
+| Full suite | ✅ 2522 pass / 181 expected-fail | — | No regressions introduced. |
+
+Next known blockers to address:
+- **`<memory>` / `<functional>`**: `__make_move_if_noexcept_iterator` fails because `__is_nothrow_constructible` intrinsic returns wrong value for move-constructible scalar types (FlashCpp evaluates `is_nothrow_move_constructible<int>` as `false` instead of `true`). Fix needed in `TypeTraitEvaluator.cpp` multi-arg evaluation path.
+- **`<ratio>`**: Crashes (SIGSEGV) during `__static_sign` template instantiation — pre-existing before this session.
+- **`<optional>` / `<string_view>`**: `ConstructorCallOp missing resolved constructor` for `_Optional_payload_base` / `basic_string_view` in codegen.
 
 ### 2026-05-25 Linux/libstdc++ deferred-base constexpr call argument + variable-template constexpr fallback follow-up
 
