@@ -6449,7 +6449,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
-	if (to_desc.category() != TypeCategory::Struct || !to_desc.type_index.is_valid())
+	if (!to_desc.type_index.is_valid())
 		return false;
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
 		return false;
@@ -6461,9 +6461,11 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	// Without this short-circuit, sources whose canonical id only differs by a
 	// const qualifier (e.g. accessing a member through a const `this`) reach the
 	// converting-ctor scan below and incorrectly trip the explicit-ctor error.
-	if (from_desc.type_index == to_desc.type_index &&
-		from_desc.category() == TypeCategory::Struct) {
-		return false;
+	if (from_desc.type_index == to_desc.type_index) {
+		const TypeInfo* same_type_info = tryGetTypeInfo(to_desc.type_index);
+		if (same_type_info && same_type_info->getStructInfo()) {
+			return false;
+		}
 	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None)
 		return false;
@@ -6657,11 +6659,51 @@ void SemanticAnalysis::tryAnnotateVariableInitializationConversion(
 	if (tryAnnotateCopyInitConvertingConstructor(init_expr, target_type_id, context_description, init_type_id)) {
 		return;
 	}
+	const void* init_expr_key = init_expr.is<ExpressionNode>()
+									? static_cast<const void*>(&init_expr.as<ExpressionNode>())
+									: nullptr;
+
+	auto queuePendingCopyInitAnnotationRetry = [&]() {
+		if (!allow_deferral || !init_expr_key) {
+			return;
+		}
+
+		for (const auto& pending : pending_copy_init_annotations_) {
+			if (pending.target_type_id != target_type_id || !pending.init_expr.is<ExpressionNode>()) {
+				continue;
+			}
+			const void* pending_key = static_cast<const void*>(&pending.init_expr.as<ExpressionNode>());
+			if (pending_key == init_expr_key) {
+				return;
+			}
+		}
+
+		pending_copy_init_annotations_.push_back({init_expr, target_type_id});
+	};
 
 	if (!init_type_id) {
-		if (allow_deferral && init_expr.is<ExpressionNode>()) {
-			pending_copy_init_annotations_.push_back({init_expr, target_type_id});
+		queuePendingCopyInitAnnotationRetry();
+		return;
+	}
+
+	// Constructors for heavily-templated standard-library types can be materialized
+	// only after lazy-member drain. If copy-init annotation did not produce a cast
+	// slot yet, retry once after deferred semantic roots/auto-return resolution.
+	if (allow_deferral && init_expr_key) {
+		const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
+		const TypeInfo* target_type_info = target_desc.type_index.is_valid()
+											   ? tryGetTypeInfo(target_desc.type_index)
+											   : nullptr;
+		if (target_type_info && target_type_info->getStructInfo() && init_type_id != target_type_id) {
+			const auto existing_slot = getSlot(init_expr_key);
+			if (!existing_slot.has_value() || !existing_slot->has_cast()) {
+				queuePendingCopyInitAnnotationRetry();
+			}
 		}
+	}
+
+	if (auto existing_slot = init_expr_key ? getSlot(init_expr_key) : std::optional<SemanticSlot>{};
+		existing_slot.has_value() && existing_slot->has_cast()) {
 		return;
 	}
 
