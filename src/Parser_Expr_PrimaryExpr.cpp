@@ -5100,6 +5100,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				} else {
 					FLASH_LOG(Parser, Error, "Template instantiation failed");
 				}
+				// Fallback: if we're inside a template definition with active template parameters
+				// and the callee is a known template function, create a deferred call instead of
+				// emitting a hard error. This handles cases where argument dependency detection
+				// failed to flag template-dependent types (e.g. a variable whose type is an outer
+				// template typedef but whose expression node is a simple IdentifierNode that does
+				// not match any active template parameter name). Standard C++ mandates that
+				// dependent calls in template definitions are resolved at instantiation time.
+				if (hasActiveTemplateParameters() &&
+					gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value()) {
+					FLASH_LOG(Templates, Debug,
+						"Creating deferred call for template '", identifier_token.value(),
+						"' inside template body (dependency not detected by AST walk)");
+					auto type_node = emplace_node<TypeSpecifierNode>(
+						TypeCategory::Auto, TypeQualifier::None,
+						get_type_size_bits(TypeCategory::Auto),
+						identifier_token, CVQualifier::None);
+					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+					result = emplace_node<ExpressionNode>(
+						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(),
+										   std::move(args), identifier_token));
+					maybeAttachDependentUnqualifiedLookupRecord(
+						result->as<ExpressionNode>(),
+						identifier_token,
+						/*has_deferred_template_call_args=*/true,
+						current_template_definition_lookup_context_,
+						/*argument_dependent_lookup_included=*/true);
+					return ParseResult::success(*result);
+				}
 				return ParseResult::error("Failed to instantiate template function", identifier_token);
 			}
 		}

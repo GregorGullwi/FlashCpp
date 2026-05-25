@@ -23,7 +23,86 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 2) `tests/std/test_std_ratio.cpp` — now reaches a link-time `__security_cookie` conflict
+## 2) Missing type traits in compile-time evaluator (FIXED)
+
+**Status**: Fixed in `src/ConstExprEvaluator_Members.cpp`.
+
+`IsConstructible`, `IsTriviallyConstructible`, `IsNothrowConstructible`, `IsDestructible`,
+`IsTriviallyDestructible`, `IsNothrowDestructible`, and `HasTrivialDestructor` all fell
+through to `default: result = false` in the `evaluate_type_trait()` switch statement.
+They now route through `evaluateTypeTrait()` from `TypeTraitEvaluator.h`, fixing
+`static_assert(__is_nothrow_constructible(int))` and similar forms that were wrongly
+evaluated as `false`.
+
+---
+
+## 3) Dependent function calls in template bodies not deferred (FIXED)
+
+**Status**: Fixed in `src/Parser_Expr_PrimaryExpr.cpp`.
+
+When parsing template member function bodies, calls to other template functions were
+immediately instantiated (eager resolution). If the argument types were template-
+dependent but `expressionHasDeferredTemplateDependency()` failed to detect that
+(because `IdentifierNode` is not handled in the visitor), FlashCpp would emit a hard
+"Failed to instantiate template function" error at definition time rather than deferring
+to instantiation time as C++20 [temp.res] requires.
+
+Fix: after all overload resolution fails, if `hasActiveTemplateParameters()` is true
+(we're inside a template definition) and the callee is a known template in the registry,
+create a deferred/dependent call expression instead of emitting an error.
+
+**Remaining**: `expressionHasDeferredTemplateDependency` still does not handle
+`IdentifierNode` — the fix is a safety net, not the ideal root-cause fix.
+
+---
+
+## 4) `std::_Optional_payload` / `std::_Tuple_impl` — type size 0 in IR codegen (OPEN)
+
+- **Symptom**: `IR conversion failed for node 'move': Type with no runtime size reached
+  codegen in reference identifier lvalue lowering (type=28, ...)` when compiling
+  `<optional>` and `<tuple>`.
+- **Root cause**: `type=28` is a struct/class type whose size was not computed before
+  codegen.  The payload/impl types are recursive union variants whose sizeof is not
+  resolved during template instantiation.
+- **Impact**: `test_std_optional`, `test_std_tuple` fail.
+
+---
+
+## 5) `deallocate` IR: dereference of non-StringHandle/TempVar pointer (OPEN)
+
+- **Symptom**: `IR conversion failed for node 'deallocate': Dereference pointer must be
+  StringHandle or TempVar` when compiling `<deque>`, `<stack>`, and related headers.
+- **Root cause**: The pointer operand arriving at the dereference lowering in
+  `IrGenerator_Expr_Conversions.cpp:1793` carries a value variant that is neither
+  `StringHandle` nor `TempVar` (likely an `int64_t` immediate from a null or constant
+  pointer).
+- **Impact**: `test_std_deque`, `test_std_stack` fail.
+
+---
+
+## 6) `__hash_enum` NTTP default evaluation failure (OPEN)
+
+- **Symptom**: `error: Could not evaluate non-type template default for parameter 1 of
+  '__hash_enum'` when compiling `<string>`, `<memory>`, `<stdexcept>`.
+- **Root cause**: `__hash_enum`'s second non-type template parameter has a default
+  `sizeof(_Tp) <= 8`. FlashCpp cannot evaluate this sizeof expression as an NTTP default
+  at instantiation time.
+- **Impact**: `test_std_string`, `test_std_memory`, `test_std_stdexcept` fail.
+
+---
+
+## 7) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
+
+- **Symptom**: `error: non-dependent name 'lexicographical_compare_three_way' was not
+  declared before the template definition (C++20 [temp.res]/9)` in `<map>`, `<set>`.
+- **Root cause**: FlashCpp enforces C++20 [temp.res]/9 strictly; the name is declared
+  later in the same translation unit (through `<algorithm>`) but FlashCpp requires it
+  to be visible at the point of the template definition.
+- **Impact**: `test_std_map`, `test_std_set` fail.
+
+---
+
+## 8) `tests/std/test_std_ratio.cpp` — now reaches a link-time `__security_cookie` conflict
 
 **Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
 
