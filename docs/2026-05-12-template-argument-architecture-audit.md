@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (nested constructor preselection/sync now prefer source-member or direct node identity; dependent placeholder signature detection widened for replay matching)
+**Last updated:** 2026-05-25 (non-constructor nested/member-template replay matching now requires canonical substituted-signature evidence; strict disambiguation pre-counts narrowed to relevant candidates)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -147,6 +147,12 @@ Useful assumptions before changing this area:
   `typeSpecStillUsesDependentPlaceholder(...)`** (instead of only direct
   `TypeInfo::isDependentPlaceholder()`), improving dependent signature
   classification coverage in canonical replay matching.
+- **non-constructor nested/member-template out-of-line replay disambiguation no
+  longer uses shape fallback when substituted-signature comparison returns
+  `nullopt`**: these paths now require canonical substituted-signature evidence
+  for positive attachment, and strict disambiguation pre-counts are narrowed to
+  relevant candidates (same name + inner template-parameter count + function
+  parameter count).
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
@@ -221,8 +227,9 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Remove the next remaining declaration replay scans outside static-member initializers**
-   - Remove remaining declaration replay scans that still recover targets from
-     partially substituted instantiated members instead of source-member identity.
+   - Continue with remaining declaration replay scans that still recover targets
+     from partially substituted instantiated members instead of source-member
+     identity.
    - Continue with remaining attachment/synchronization surfaces that still
      depend on signature-only matching where source-member identity can be
      preserved end-to-end.
