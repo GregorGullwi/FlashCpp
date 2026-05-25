@@ -10168,21 +10168,93 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 
-				for (auto& mem_func : nested_struct.member_functions()) {
-					if (!out_of_line_member.inner_template_params.empty() &&
-							   mem_func.function_declaration.is<TemplateFunctionDeclarationNode>() &&
-							   out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
-						ASTNode nested_func_node = mem_func.function_declaration;
-						auto& nested_template_func = nested_func_node.as<TemplateFunctionDeclarationNode>();
-						auto* nested_func_decl = get_function_decl_node_mut(nested_func_node);
-						const auto& out_of_line_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>().decl_node();
-						if (nested_func_decl != nullptr &&
-							!nested_func_decl->has_any_body_source() &&
-							nested_template_func.template_parameters().size() == out_of_line_member.inner_template_params.size() &&
-							nested_func_decl->decl_node().identifier_token().value() == out_of_line_decl.identifier_token().value()) {
-							nested_func_decl->set_template_body_position(out_of_line_member.body_start);
-							nested_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
+				if (!out_of_line_member.inner_template_params.empty() &&
+					out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& ool_func =
+						out_of_line_member.function_node.as<FunctionDeclarationNode>();
+					std::string_view ool_func_name =
+						ool_func.decl_node().identifier_token().value();
+
+					// Pre-count same-name same-arity candidates without a body so that
+					// we can gate signature matching on overload ambiguity (mirrors the
+					// pattern used at the partial-spec and primary-template call sites).
+					InlineVector<const StructMemberFunctionDecl*, 4> same_name_candidates;
+					for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
+						if (!mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+							continue;
 						}
+						const auto& nested_template_func =
+							mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
+						const FunctionDeclarationNode* nested_func_decl =
+							get_function_decl_node(mem_func.function_declaration);
+						if (nested_func_decl == nullptr) {
+							continue;
+						}
+						if (!nested_func_decl->has_any_body_source() &&
+							nested_template_func.template_parameters().size() ==
+								out_of_line_member.inner_template_params.size() &&
+							nested_func_decl->decl_node().identifier_token().value() == ool_func_name) {
+							same_name_candidates.push_back(&mem_func);
+						}
+					}
+
+					const size_t same_name_member_template_count = same_name_candidates.size();
+					FunctionDeclarationNode* matched_nested_func_decl = nullptr;
+					for (const StructMemberFunctionDecl* source_member : same_name_candidates) {
+						ASTNode* matched_stub = findSourceMemberStubByIdentity(
+							nested_source_member_identity_maps,
+							source_member->function_declaration);
+						if (matched_stub == nullptr ||
+							!matched_stub->is<TemplateFunctionDeclarationNode>()) {
+							continue;
+						}
+						if (same_name_member_template_count > 1) {
+							std::optional<bool> signature_match =
+								nestedOutOfLineMemberTemplateMatchesCandidate(
+									*this,
+									*matched_stub,
+									ool_func,
+									std::span<const TemplateParameterNode>(
+										template_params.data(),
+										template_params.size()),
+									std::span<const TemplateTypeArg>(
+										template_args_to_use.data(),
+										template_args_to_use.size()),
+									qualified_name,
+									std::span<const TemplateParameterNode>(
+										out_of_line_member.inner_template_params.data(),
+										out_of_line_member.inner_template_params.size()));
+							if (!signature_match.has_value() || !*signature_match) {
+								continue;
+							}
+						}
+						matched_nested_func_decl = get_function_decl_node_mut(*matched_stub);
+						if (matched_nested_func_decl == nullptr) {
+							continue;
+						}
+						break;
+					}
+
+					if (matched_nested_func_decl != nullptr) {
+						matched_nested_func_decl->set_template_body_position(out_of_line_member.body_start);
+						matched_nested_func_decl->set_definition_lookup_context(
+							out_of_line_member.definition_lookup_context);
+						FLASH_LOG(
+							Templates,
+							Debug,
+							"Set body position on nested struct template member: ",
+							ool_func_name);
+					} else {
+						FLASH_LOG(
+							Templates,
+							Error,
+							"Could not attach nested out-of-line member template '",
+							ool_func_name,
+							"' for nested struct '",
+							nested_struct.name().view(),
+							"' in instantiated class '",
+							StringTable::getStringView(qualified_name),
+							"'");
 					}
 				}
 			}

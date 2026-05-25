@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (primary-template nested OOL constructor-template attachment now resolves replay-first via source-member→stub identity with overload-safe StructTypeInfo sync)
+**Last updated:** 2026-05-27 (nested-struct OOL template member overload scan replaced with signature-based disambiguation)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -115,9 +115,16 @@ Future work can rely on these being in place:
   + declaration-location identities)**: same-name overload disambiguation now
   validates substituted signatures on identity-resolved stubs, and this slice
   no longer relies on instantiated-member scan-first matching.
+- **nested-struct template member OOL scan now uses signature-based
+  disambiguation for overloads**: the prior name+arity-only scan mis-attached
+  OOL bodies when two template member functions in a nested struct shared a
+  name and inner-template-parameter count but differed in non-template parameter
+  types; replaced with a `nestedOutOfLineMemberTemplateMatchesCandidate`-gated
+  match (using the established `same_name_count > 1` strictness gate), with a
+  `break` after the first successful attachment and error logging on no-match.
 
 Latest recorded full-suite validation:
-`2501` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
+`2553` regular tests compiled/linked/runtime-pass, `0` fail, `181` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -140,6 +147,7 @@ Latest focused regressions added on the current branch:
 - `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
+- `test_template_nested_ool_member_template_overload_ret0.cpp`
 
 ## Remaining work, in priority order
 
