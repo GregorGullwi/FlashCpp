@@ -1061,40 +1061,6 @@ static bool dependentTemplatePlaceholderNamesMatch(
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params);
 
-static bool constructorDeclarationsHaveMatchingParameterShape(
-	const ConstructorDeclarationNode& ctor_decl,
-	const FunctionDeclarationNode& out_of_line_stub,
-	std::span<const TemplateParameterNode> instantiated_template_params = {},
-	std::span<const TemplateParameterNode> out_of_line_template_params = {}) {
-	if (ctor_decl.parameter_nodes().size() != out_of_line_stub.parameter_nodes().size()) {
-		return false;
-	}
-
-	for (size_t i = 0; i < ctor_decl.parameter_nodes().size(); ++i) {
-		const TypeSpecifierNode* ctor_param = getDeclarationParamTypeNode(ctor_decl.parameter_nodes()[i]);
-		const TypeSpecifierNode* stub_param = getDeclarationParamTypeNode(out_of_line_stub.parameter_nodes()[i]);
-		if (!ctor_param || !stub_param) {
-			return false;
-		}
-		if (ctor_param->type() != stub_param->type() ||
-			ctor_param->pointer_depth() != stub_param->pointer_depth() ||
-			ctor_param->reference_qualifier() != stub_param->reference_qualifier() ||
-			ctor_param->cv_qualifier() != stub_param->cv_qualifier()) {
-			return false;
-		}
-		if (ctor_param->type_index() != stub_param->type_index() &&
-			!dependentTemplatePlaceholderNamesMatch(
-				ctor_param->token().value(),
-				stub_param->token().value(),
-				instantiated_template_params,
-				out_of_line_template_params)) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
 static bool functionDeclarationsHaveMatchingParameterShape(
 	const FunctionDeclarationNode& instantiated_decl,
 	const FunctionDeclarationNode& out_of_line_decl,
