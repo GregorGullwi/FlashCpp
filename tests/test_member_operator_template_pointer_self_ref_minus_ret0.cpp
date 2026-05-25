@@ -2,7 +2,7 @@ template<typename T>
 struct Iter {
 	T* ptr;
 
-	long operator-(const Iter& other) const;
+	decltype((T*)0 - (T*)0) operator-(const Iter& other) const;
 };
 
 int main() {

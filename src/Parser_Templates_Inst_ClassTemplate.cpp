@@ -99,6 +99,17 @@ struct SourceMemberIdentityMaps {
 	std::unordered_map<uint64_t, ASTNode> by_location;
 };
 
+template <typename InstantiatedDeclNode>
+static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
+	Parser& parser,
+	const InstantiatedDeclNode& instantiated_decl,
+	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle owner_type_name,
+	std::span<const TemplateParameterNode> instantiated_template_params,
+	std::span<const TemplateParameterNode> out_of_line_template_params);
+
 static const void* sourceMemberAstNodeKey(const ASTNode& node) {
 	if (!node.has_value())
 		return nullptr;
@@ -197,6 +208,80 @@ static ASTNode* findSourceMemberStubByIdentity(
 			return &it->second;
 		}
 	}
+	return nullptr;
+}
+
+static FunctionDeclarationNode* findPlainOutOfLineMemberStubByIdentity(
+	Parser& parser,
+	SourceMemberIdentityMaps& identity_maps,
+	std::span<const StructMemberFunctionDecl> source_members,
+	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	StringHandle owner_type_name) {
+	const std::string_view out_of_line_name =
+		out_of_line_decl.decl_node().identifier_token().value();
+
+	size_t same_name_source_member_count = 0;
+	for (const StructMemberFunctionDecl& source_member : source_members) {
+		if (!source_member.function_declaration.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const FunctionDeclarationNode* source_func_decl =
+			get_function_decl_node(source_member.function_declaration);
+		if (source_func_decl == nullptr) {
+			continue;
+		}
+		if (source_func_decl->decl_node().identifier_token().value() == out_of_line_name) {
+			++same_name_source_member_count;
+		}
+	}
+
+	for (const StructMemberFunctionDecl& source_member : source_members) {
+		if (!source_member.function_declaration.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const FunctionDeclarationNode* source_func_decl =
+			get_function_decl_node(source_member.function_declaration);
+		if (source_func_decl == nullptr ||
+			source_func_decl->decl_node().identifier_token().value() != out_of_line_name) {
+			continue;
+		}
+
+		ASTNode* matched_stub = findSourceMemberStubByIdentity(
+			identity_maps,
+			source_member.function_declaration);
+		if (matched_stub == nullptr || !matched_stub->is<FunctionDeclarationNode>()) {
+			continue;
+		}
+
+		FunctionDeclarationNode* inst_func_decl =
+			get_function_decl_node_mut(*matched_stub);
+		if (inst_func_decl == nullptr) {
+			continue;
+		}
+
+		std::optional<bool> signature_match =
+			declarationsMatchAfterTemplateSubstitution(
+				parser,
+				*inst_func_decl,
+				out_of_line_decl,
+				outer_template_params,
+				outer_template_args,
+				owner_type_name,
+				std::span<const TemplateParameterNode>{},
+				std::span<const TemplateParameterNode>{});
+		if (same_name_source_member_count > 1) {
+			if (!signature_match.has_value() || !*signature_match) {
+				continue;
+			}
+		} else if (signature_match.has_value() && !*signature_match) {
+			continue;
+		}
+
+		return inst_func_decl;
+	}
+
 	return nullptr;
 }
 
@@ -795,14 +880,6 @@ static bool isOutOfLineConstructorStubName(
 			(!template_base_name.empty() && member_name == template_base_name));
 }
 
-static bool functionDeclarationMatchesNameAndArity(
-	const FunctionDeclarationNode& candidate_decl,
-	std::string_view target_name,
-	size_t target_arity) {
-	return candidate_decl.decl_node().identifier_token().value() == target_name &&
-		candidate_decl.parameter_nodes().size() == target_arity;
-}
-
 static bool typeSpecifierLooksLikeDependentSignaturePlaceholder(
 	const TypeSpecifierNode& type_spec) {
 	if (type_spec.type() == TypeCategory::Template) {
@@ -942,8 +1019,8 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle owner_type_name,
-	std::span<const TemplateParameterNode> instantiated_template_params = {},
-	std::span<const TemplateParameterNode> out_of_line_template_params = {}) {
+	std::span<const TemplateParameterNode> instantiated_template_params,
+	std::span<const TemplateParameterNode> out_of_line_template_params) {
 	if (instantiated_decl.parameter_nodes().size() != out_of_line_decl.parameter_nodes().size()) {
 		return false;
 	}
@@ -1647,9 +1724,17 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			apply_bound_metadata_to_full_substitution,
 			apply_resolved_index_to_full_substitution);
 		if (!preserve_parameter_cv_qualifier) {
-			// Declaration-only member-instantiation historically cleared parameter-level cv here.
-			// Keep that behavior configurable to avoid semantic drift across refactored paths.
-			substituted_param_type.set_cv_qualifier(CVQualifier::None);
+			// Preserve cv-qualification that participates in pointee/referred type identity.
+			// Only strip top-level cv on by-value parameters, matching function-parameter
+			// adjustment rules while keeping pointer/reference signatures stable for
+			// out-of-line replay attachment and mangling.
+			const bool is_by_value_parameter =
+				substituted_param_type.pointer_depth() == 0 &&
+				!substituted_param_type.is_reference() &&
+				!substituted_param_type.is_rvalue_reference();
+			if (is_by_value_parameter) {
+				substituted_param_type.set_cv_qualifier(CVQualifier::None);
+			}
 		}
 
 		if (self_type_from_index.is_valid() &&
@@ -6235,9 +6320,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				" (base fallback: ", template_base_name, ")");
 			for (const auto& out_of_line_member : out_of_line_members) {
 				if (out_of_line_member.inner_template_params.empty()) {
-					// Plain (non-template) OOL member on a partial specialization: parse and
-					// substitute the body immediately, mirroring the primary-template OOL path
-					// at ~line 11291. (There is no inner template instantiation to defer to.)
+					// Plain (non-template) OOL member on a partial specialization: resolve the
+					// source declaration first, then map source-member -> instantiated stub
+					// replay-first before parsing/substituting the body.
 					if (!out_of_line_member.function_node.is<FunctionDeclarationNode>()) {
 						continue;
 					}
@@ -6253,30 +6338,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (is_plain_ctor_stub) {
 						continue;
 					}
-					for (auto& mem_func : instantiated_struct_ref.member_functions()) {
-						if (!mem_func.function_declaration.is<FunctionDeclarationNode>()) {
-							continue;
-						}
-						FunctionDeclarationNode& inst_func =
-							mem_func.function_declaration.as<FunctionDeclarationNode>();
-						if (!functionDeclarationMatchesNameAndArity(
-								inst_func,
-								plain_ool_name,
-								plain_ool_func.parameter_nodes().size())) {
-							continue;
-						}
-						if (inst_func.is_materialized()) {
-							continue;
-						}
+					FunctionDeclarationNode* inst_func = findPlainOutOfLineMemberStubByIdentity(
+						*this,
+						source_member_identity_maps,
+						std::span<const StructMemberFunctionDecl>(
+							pattern_struct.member_functions().data(),
+							pattern_struct.member_functions().size()),
+						plain_ool_func,
+						std::span<const TemplateParameterNode>(
+							template_params.data(),
+							template_params.size()),
+						std::span<const TemplateTypeArg>(
+							template_args_for_pattern.data(),
+							template_args_for_pattern.size()),
+						instantiated_name);
+					if (inst_func != nullptr) {
 						// Copy definition-site parameter names so the body can reference them.
 						copyDefinitionParameterIdentifiers(
-							inst_func.parameter_nodes(),
+							inst_func->parameter_nodes(),
 							plain_ool_func.parameter_nodes());
 
 						const std::span<const ASTNode> inst_func_params =
-							inst_func.parameter_nodes();
+							inst_func->parameter_nodes();
 						if (replayOutOfLineMemberBody(
-								inst_func,
+								*inst_func,
 								&instantiated_struct_ref,
 								instantiated_name,
 								struct_type_info.type_index_,
@@ -6296,7 +6381,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								"Parsed and substituted OOL plain member body "
 								"for partial-spec: ", plain_ool_name);
 						}
-						break;
+					} else {
+						FLASH_LOG(
+							Templates,
+							Error,
+							"Could not attach partial-spec plain out-of-line member '",
+							plain_ool_name,
+							"' for instantiated class '",
+							instantiated_name,
+							"' via replay identity map");
 					}
 					continue;
 				}
@@ -10830,7 +10923,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					TypeIndex{},
 					TypeIndex{},
 					SubstitutedDefaultArgumentPolicy::None,
-					false, // Declaration-only path: clear parameter cv-qualifier to preserve legacy behavior
+					false, // Declaration-only path: strip only top-level by-value cv-qualifiers
 					false, // Do not re-apply bound metadata to full substitution
 					true); // Force resolved TypeIndex onto full AST substitutions
 				pack_param_info_.resize(saved_pack_info);
@@ -11774,88 +11867,76 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const FunctionDeclarationNode& func_decl = out_of_line_member.function_node.as<FunctionDeclarationNode>();
 		const DeclarationNode& decl = func_decl.decl_node();
 
-		FLASH_LOG(Templates, Debug, "  Looking for match of out-of-line '", decl.identifier_token().value(),
-				  "' in ", instantiated_struct_ref.member_functions().size(), " struct member functions");
+		FLASH_LOG(Templates, Debug, "  Looking for replay-first match of out-of-line '", decl.identifier_token().value(),
+				  "' via source-member identity");
 
-		// Check if this function is in the instantiated struct's member functions
-		// We need to find the matching declaration in the instantiated struct and add the definition
+		// Replay-first plain-member attachment path: match the out-of-line definition
+		// against source declarations, then resolve directly to the instantiated stub
+		// through source-member -> stub identity.
 		bool found_match = false;
-		for (auto& mem_func : instantiated_struct_ref.member_functions()) {
-			if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
-				FunctionDeclarationNode& inst_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
-				const DeclarationNode& inst_decl = inst_func.decl_node();
-
-				// Check if function names match
-				if (functionDeclarationMatchesNameAndArity(
-						inst_func,
-						decl.identifier_token().value(),
-						func_decl.parameter_nodes().size())) {
-
-					std::optional<bool> signature_match =
-						declarationsMatchAfterTemplateSubstitution(
-							*this,
-							inst_func,
-							func_decl,
-							std::span<const TemplateParameterNode>(
-								out_of_line_member.template_params.data(),
-								out_of_line_member.template_params.size()),
-							std::span<const TemplateTypeArg>(
-								template_args_to_use.data(),
-								template_args_to_use.size()),
-							instantiated_name);
-					if (signature_match.has_value() && !*signature_match) {
-						FLASH_LOG(Parser, Warning,
-							"Substituted signature mismatch for out-of-line template member candidate '",
-							inst_decl.identifier_token().value(),
-							"' in instantiated class '",
-							StringTable::getStringView(instantiated_name),
-							"'");
+		if (FunctionDeclarationNode* inst_func = findPlainOutOfLineMemberStubByIdentity(
+				*this,
+				source_member_identity_maps,
+				std::span<const StructMemberFunctionDecl>(
+					effective_member_functions.data(),
+					effective_member_functions.size()),
+				func_decl,
+				std::span<const TemplateParameterNode>(
+					out_of_line_member.template_params.data(),
+					out_of_line_member.template_params.size()),
+				std::span<const TemplateTypeArg>(
+					template_args_to_use.data(),
+					template_args_to_use.size()),
+				instantiated_name);
+			inst_func != nullptr) {
+			const std::span<const ASTNode> inst_func_params = inst_func->parameter_nodes();
+			std::vector<ASTNode> definition_scope_params(
+				inst_func_params.begin(),
+				inst_func_params.end());
+			const auto& definition_params = func_decl.parameter_nodes();
+			if (definition_scope_params.size() == definition_params.size()) {
+				for (size_t param_index = 0; param_index < definition_scope_params.size(); ++param_index) {
+					DeclarationNode* scope_decl =
+						get_decl_from_symbol_mut(definition_scope_params[param_index]);
+					const DeclarationNode* def_decl =
+						get_decl_from_symbol(definition_params[param_index]);
+					if (!scope_decl || !def_decl) {
+						continue;
 					}
-
-					const std::span<const ASTNode> inst_func_params = inst_func.parameter_nodes();
-					std::vector<ASTNode> definition_scope_params(inst_func_params.begin(), inst_func_params.end());
-					const auto& definition_params = func_decl.parameter_nodes();
-					if (definition_scope_params.size() == definition_params.size()) {
-						for (size_t param_index = 0; param_index < definition_scope_params.size(); ++param_index) {
-							DeclarationNode* scope_decl = get_decl_from_symbol_mut(definition_scope_params[param_index]);
-							const DeclarationNode* def_decl = get_decl_from_symbol(definition_params[param_index]);
-							if (!scope_decl || !def_decl) {
-								continue;
-							}
-							if (!def_decl->identifier_token().value().empty()) {
-								scope_decl->set_identifier_token(def_decl->identifier_token());
-							}
-						}
-					}
-					found_match = replayOutOfLineMemberBody(
-						inst_func,
-						&instantiated_struct_ref,
-						instantiated_name,
-						struct_type_info.type_index_,
-						std::span<const ASTNode>(
-							definition_scope_params.data(),
-							definition_scope_params.size()),
-						out_of_line_member.body_start,
-						out_of_line_member.definition_lookup_context,
-						decl.identifier_token(),
-						std::span<const TemplateParameterNode>(
-							out_of_line_member.template_params.data(),
-							out_of_line_member.template_params.size()),
-						std::span<const TemplateTypeArg>(
-							template_args_to_use.data(),
-							template_args_to_use.size()),
-						"primary-template",
-						decl.identifier_token().value());
-
-					if (found_match) {
-						break;
+					if (!def_decl->identifier_token().value().empty()) {
+						scope_decl->set_identifier_token(def_decl->identifier_token());
 					}
 				}
 			}
+			found_match = replayOutOfLineMemberBody(
+				*inst_func,
+				&instantiated_struct_ref,
+				instantiated_name,
+				struct_type_info.type_index_,
+				std::span<const ASTNode>(
+					definition_scope_params.data(),
+					definition_scope_params.size()),
+				out_of_line_member.body_start,
+				out_of_line_member.definition_lookup_context,
+				decl.identifier_token(),
+				std::span<const TemplateParameterNode>(
+					out_of_line_member.template_params.data(),
+					out_of_line_member.template_params.size()),
+				std::span<const TemplateTypeArg>(
+					template_args_to_use.data(),
+					template_args_to_use.size()),
+				"primary-template",
+				decl.identifier_token().value());
+		}
+		if (found_match) {
+			continue;
+		}
+
+		for (auto& mem_func : instantiated_struct_ref.member_functions()) {
 			// Also check ConstructorDeclarationNode members for out-of-line constructor definitions
 			// The out-of-line definition uses the template name (e.g., "Buffer") but the
 			// instantiated constructor uses the instantiated name (e.g., "Buffer$hash")
-			else if (mem_func.is_constructor && mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
+			if (mem_func.is_constructor && mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 				auto& ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
 				std::string_view ool_name = decl.identifier_token().value();
 				std::string_view ctor_name = StringTable::getStringView(ctor.name());
