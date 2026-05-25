@@ -1,5 +1,6 @@
-// Expected-fail regression: primary-template plain out-of-line constructor replay
-// attachment no longer accepts unresolved-signature single-candidate fallback.
+// Regression: replay-first out-of-line constructor attachment should accept
+// canonical dependent member-type placeholders when substitution leaves both
+// sides in equivalent dependent form.
 
 struct NulloptCtorTag {
 	template <class U>
