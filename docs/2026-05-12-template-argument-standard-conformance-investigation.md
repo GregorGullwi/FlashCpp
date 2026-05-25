@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (constructor replay signature matching now canonicalizes dependent placeholder/member-type identity so previously unresolved nullopt attachment cases replay correctly without fallback)
+**Last updated:** 2026-05-25 (OOL signature matching now performs strict owner-artifact recovery for dependent member types via qualified member lookup; swapped dependent-member overload attachment no longer fails at the original short-vs-owner mismatch point)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -156,6 +156,11 @@ Future work can rely on these being in place:
   so valid replay-first attachments that previously collapsed to unresolved
   substituted-signature outcomes now classify as canonical matches without
   reintroducing single-candidate fallback acceptance.
+- **after substituted-signature mismatch, OOL matching now performs a strict
+  owner-artifact dependent-member recovery step**: when one side collapses to an
+  owner type, matching attempts qualified member-type resolution (`Owner::member`
+  / dependent member-chain) and only accepts if canonical type identity matches
+  the other side.
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
@@ -204,6 +209,9 @@ Rule for this work:
   still not keyed by source-member identity; then improve replay metadata
   capture for unresolved substitution (`nullopt`) outcomes so canonical
     substituted-signature classification can succeed in more valid cases.
+- immediate follow-up after the owner-artifact recovery fix: close remaining OOL
+  dependent-member swap regressions that now move past attachment mismatch but
+  still expose downstream constructor replay/body-selection gaps.
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
 
@@ -240,6 +248,9 @@ Still open, but not the next best slice:
    broad compatibility fallback;
    keep function-parameter adjustment rules centralized so replay/attachment
    compares canonical signatures across eager/lazy/declaration-only paths;
+   prioritize the pending OOL dependent-member swap follow-up immediately after
+   this (constructor replay annotation + member-template overload body
+   selection), since signature attachment now succeeds past the original mismatch;
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus

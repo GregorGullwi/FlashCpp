@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (constructor replay signature matching now canonicalizes dependent placeholder/member-type identity so previously unresolved nullopt attachment cases replay correctly without fallback)
+**Last updated:** 2026-05-25 (OOL signature matching now performs strict owner-artifact recovery for dependent member types via qualified member lookup; swapped dependent-member overload attachment no longer fails at the original short-vs-owner mismatch point)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -159,6 +159,11 @@ Useful assumptions before changing this area:
   so valid replay-first attachments that previously collapsed to unresolved
   substituted-signature outcomes now classify as canonical matches without
   reintroducing single-candidate fallback acceptance.
+- **after substituted-signature mismatch, OOL matching now performs a strict
+  owner-artifact dependent-member recovery step**: when one side collapses to an
+  owner type, matching attempts qualified member-type resolution (`Owner::member`
+  / dependent member-chain) and only accepts if canonical type identity matches
+  the other side.
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
@@ -208,6 +213,9 @@ The next highest-value remaining surface:
     unresolved substitution outcomes (`nullopt`) because required replay-visible
     metadata is not always captured early enough; these need metadata completion
     so canonical matching succeeds more often without broad fallback machinery.
+  - dependent-member OOL swap regressions now advance past the original
+    owner-vs-member mismatch but still expose downstream replay/body-selection
+    gaps (constructor replay IR annotation + member-template overload behavior).
 ### 2. Dependent-name modeling is still too weak
 
 `DependentQualifiedNameRecord` is useful, but it is still not a complete
@@ -241,6 +249,9 @@ they directly block items 1-2:
      preserved end-to-end.
    - Improve replay metadata capture in unresolved substitution (`nullopt`) paths
      so canonical substituted-signature matching classifies more valid code.
+   - Immediately follow with the remaining OOL dependent-member swap slice:
+     ensure replay-selected stubs and deferred body parsing stay aligned after
+     owner-artifact recovery in constructor/member-template overload sets.
    - Keep function-parameter adjustment rules centralized in shared substitution
      helpers so replay/attachment compares canonical signatures instead of
      path-specific normalized variants.

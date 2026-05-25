@@ -1284,6 +1284,231 @@ static TypeIndex canonicalizeTemplateSignatureMatchTypeIndex(TypeIndex type_inde
 	return type_index;
 }
 
+static TypeIndex canonicalizeTemplateSignatureMatchTypeSpecifierIndex(
+	const TypeSpecifierNode& type_spec) {
+	const TypeCategory category = type_spec.type_index().is_valid()
+		? type_spec.type_index().category()
+		: type_spec.type();
+	return canonicalizeTemplateSignatureMatchTypeIndex(
+		type_spec.type_index().withCategory(category));
+}
+
+static bool shouldPreferTokenOwnerTypeInfoForSignatureRecovery(
+	const TypeInfo* token_owner_type_info,
+	const TypeInfo* index_owner_type_info) {
+	if (token_owner_type_info == nullptr) {
+		return false;
+	}
+	if (index_owner_type_info == nullptr) {
+		return true;
+	}
+	if (StringTable::getStringView(token_owner_type_info->name()) !=
+		StringTable::getStringView(index_owner_type_info->name())) {
+		return true;
+	}
+	return is_struct_type(token_owner_type_info->typeEnum()) &&
+		!is_struct_type(index_owner_type_info->typeEnum());
+}
+
+static const TypeInfo* resolveDependentMemberPlaceholderAgainstOwnerArtifact(
+	const TypeSpecifierNode& member_source_original_type,
+	const TypeSpecifierNode& owner_artifact_substituted_type,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	static constexpr size_t kMemberChainReserve = 4;
+	const TypeInfo* member_source_type_info = nullptr;
+	if (member_source_original_type.type_index().is_valid()) {
+		member_source_type_info = tryGetTypeInfo(member_source_original_type.type_index());
+	}
+	if (member_source_type_info == nullptr) {
+		member_source_type_info = findTypeByName(
+			StringTable::getOrInternStringHandle(
+				member_source_original_type.token().value()));
+	}
+
+	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+		member_source_type_info != nullptr
+			? member_source_type_info->dependentQualifiedName()
+			: nullptr;
+
+	const TypeInfo* owner_artifact_type_info_from_index = nullptr;
+	if (owner_artifact_substituted_type.type_index().is_valid()) {
+		owner_artifact_type_info_from_index =
+			tryGetTypeInfo(owner_artifact_substituted_type.type_index());
+	}
+	const TypeInfo* owner_artifact_type_info_from_token = findTypeByName(
+		StringTable::getOrInternStringHandle(
+			owner_artifact_substituted_type.token().value()));
+	const bool prefer_token_owner_type_info =
+		shouldPreferTokenOwnerTypeInfoForSignatureRecovery(
+			owner_artifact_type_info_from_token,
+			owner_artifact_type_info_from_index);
+	const TypeInfo* owner_artifact_type_info =
+		prefer_token_owner_type_info
+			? owner_artifact_type_info_from_token
+			: owner_artifact_type_info_from_index;
+	if (owner_artifact_type_info == nullptr) {
+		owner_artifact_type_info = findTypeByName(
+			StringTable::getOrInternStringHandle(
+				owner_artifact_substituted_type.token().value()));
+	}
+	if (owner_artifact_type_info == nullptr) {
+		return nullptr;
+	}
+
+	const TypeIndex owner_artifact_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+		owner_artifact_type_info->registeredTypeIndex().withCategory(owner_artifact_type_info->typeEnum()));
+	if (!owner_artifact_canonical.is_valid()) {
+		return nullptr;
+	}
+
+	InlineVector<StringHandle, 4> member_chain_names;
+	member_chain_names.reserve(kMemberChainReserve);
+
+	bool use_dependent_member_chain =
+		dependent_record != nullptr &&
+		!dependent_record->member_chain.empty();
+
+	if (use_dependent_member_chain) {
+		TypeIndex expected_owner_canonical;
+		if (dependent_record->owner_type.is_valid()) {
+			expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+				dependent_record->owner_type);
+		}
+		if (!expected_owner_canonical.is_valid() &&
+			dependent_record->owner_name.isValid()) {
+			size_t owner_template_param_index = 0;
+			const TemplateParameterNode* owner_template_param = findTemplateParameterByName(
+				template_params,
+				StringTable::getStringView(dependent_record->owner_name),
+				&owner_template_param_index);
+			if (owner_template_param != nullptr &&
+				owner_template_param->kind() == TemplateParameterKind::Type &&
+				owner_template_param_index < template_args.size() &&
+				!template_args[owner_template_param_index].is_value) {
+				const TemplateTypeArg& owner_template_arg = template_args[owner_template_param_index];
+				expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+					owner_template_arg.type_index.withCategory(owner_template_arg.typeEnum()));
+			}
+		}
+		if (!expected_owner_canonical.is_valid() &&
+			dependent_record->owner_name.isValid()) {
+			if (const TypeInfo* named_owner = findTypeByName(dependent_record->owner_name);
+				named_owner != nullptr) {
+				expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+					named_owner->registeredTypeIndex().withCategory(named_owner->typeEnum()));
+			}
+		}
+		if (expected_owner_canonical.is_valid() &&
+			expected_owner_canonical != owner_artifact_canonical) {
+			use_dependent_member_chain = false;
+		}
+
+		if (use_dependent_member_chain) {
+			for (const TypeInfo::DependentQualifiedNameRecord::Member& member :
+				 dependent_record->member_chain) {
+				if (!member.name.isValid() || member.has_template_arguments) {
+					return nullptr;
+				}
+				member_chain_names.push_back(member.name);
+			}
+		}
+	}
+	if (member_chain_names.empty()) {
+		const std::string_view member_name = member_source_original_type.token().value();
+		if (member_name.empty()) {
+			return nullptr;
+		}
+		member_chain_names.push_back(StringTable::getOrInternStringHandle(member_name));
+	}
+
+	const std::string_view owner_artifact_name =
+		StringTable::getStringView(owner_artifact_type_info->name());
+	if (owner_artifact_name.empty()) {
+		return nullptr;
+	}
+
+	StringBuilder qualified_member_name_builder;
+	qualified_member_name_builder.append(owner_artifact_name);
+	for (StringHandle member_name : member_chain_names) {
+		qualified_member_name_builder.append("::");
+		qualified_member_name_builder.append(StringTable::getStringView(member_name));
+	}
+
+	const std::string_view qualified_member_name =
+		qualified_member_name_builder.commit();
+	if (qualified_member_name.empty()) {
+		return nullptr;
+	}
+	const TypeInfo* resolved_member_type_info = findTypeByName(
+		StringTable::getOrInternStringHandle(qualified_member_name));
+	if (resolved_member_type_info == nullptr) {
+		return nullptr;
+	}
+
+	const TypeIndex resolved_member_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+		resolved_member_type_info->registeredTypeIndex().withCategory(resolved_member_type_info->typeEnum()));
+	if (!resolved_member_canonical.is_valid()) {
+		return nullptr;
+	}
+	if (const TypeInfo* resolved_canonical_type_info = tryGetTypeInfo(resolved_member_canonical);
+		resolved_canonical_type_info != nullptr) {
+		return resolved_canonical_type_info;
+	}
+	return resolved_member_type_info;
+}
+
+static bool tryMatchDependentMemberPlaceholderOwnerArtifactSubstitution(
+	const TypeSpecifierNode& lhs_substituted_type,
+	const TypeSpecifierNode& rhs_substituted_type,
+	const TypeSpecifierNode& lhs_original_type,
+	const TypeSpecifierNode& rhs_original_type,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	auto attempt_direction =
+		[&](
+			const TypeSpecifierNode& member_source_original_type,
+			const TypeSpecifierNode& owner_artifact_substituted_type,
+			const TypeSpecifierNode& concrete_member_substituted_type) {
+			const TypeInfo* resolved_member_type_info =
+				resolveDependentMemberPlaceholderAgainstOwnerArtifact(
+					member_source_original_type,
+					owner_artifact_substituted_type,
+					template_params,
+					template_args);
+			if (resolved_member_type_info == nullptr) {
+				return false;
+			}
+
+			TypeSpecifierNode resolved_member_type = member_source_original_type;
+			resolved_member_type.set_type_index(
+				resolved_member_type_info->registeredTypeIndex().withCategory(
+					resolved_member_type_info->typeEnum()));
+			if (!typeSpecifiersMatchForSignatureValidation(
+					resolved_member_type,
+					concrete_member_substituted_type)) {
+				return false;
+			}
+
+			const TypeIndex resolved_member_canonical =
+				canonicalizeTemplateSignatureMatchTypeSpecifierIndex(resolved_member_type);
+			const TypeIndex other_side_canonical =
+				canonicalizeTemplateSignatureMatchTypeSpecifierIndex(concrete_member_substituted_type);
+			return resolved_member_canonical.is_valid() &&
+				resolved_member_canonical == other_side_canonical &&
+				resolved_member_canonical.category() == other_side_canonical.category();
+		};
+
+	return attempt_direction(
+			   rhs_original_type,
+			   lhs_substituted_type,
+			   rhs_substituted_type) ||
+		attempt_direction(
+			lhs_original_type,
+			rhs_substituted_type,
+			lhs_substituted_type);
+}
+
 static bool dependentQualifiedTemplateArgMatchesForSignature(
 	const TypeInfo::TemplateArgInfo& instantiated_arg,
 	const TypeInfo::TemplateArgInfo& out_of_line_arg,
@@ -1664,6 +1889,16 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 					? *substituted_out_of_line_param
 					: *out_of_line_param;
 			if (typeSpecifiersMatchForSignatureValidation(lhs_type, rhs_type)) {
+				continue;
+			}
+
+			if (tryMatchDependentMemberPlaceholderOwnerArtifactSubstitution(
+					lhs_type,
+					rhs_type,
+					*instantiated_param,
+					*out_of_line_param,
+					template_params,
+					template_args)) {
 				continue;
 			}
 
