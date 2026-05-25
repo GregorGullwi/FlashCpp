@@ -1842,6 +1842,12 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				return var_result;
 			}
 		}
+		if (hasDependentTemplateArguments(call_expr, context)) {
+			return EvalResult::error(
+				"Dependent function/variable template call in constant expression: " +
+					std::string(func_name),
+				EvalErrorType::TemplateDependentExpression);
+		}
 		return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
 	}
 
