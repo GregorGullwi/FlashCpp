@@ -318,7 +318,7 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 		}
 	}
 
-	std::vector<ConstructorDeclarationNode*> resolved_matches;
+	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -385,7 +385,7 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 		}
 	}
 
-	std::vector<ConstructorDeclarationNode*> resolved_matches;
+	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -1258,19 +1258,34 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 				out_of_line_template_params,
 				out_of_line_param->token().value()) != nullptr;
 
-		std::optional<TypeSpecifierNode> substituted_param;
+		std::optional<TypeSpecifierNode> substituted_instantiated_param;
+		if (!instantiated_is_template_param_placeholder) {
+			substituted_instantiated_param = substituteOutOfLineSignatureType(
+				parser,
+				*instantiated_param,
+				template_params,
+				template_args,
+				owner_type_name);
+		}
+
+		std::optional<TypeSpecifierNode> substituted_out_of_line_param;
 		if (!out_of_line_is_template_param_placeholder) {
-			substituted_param = substituteOutOfLineSignatureType(
+			substituted_out_of_line_param = substituteOutOfLineSignatureType(
 				parser,
 				*out_of_line_param,
 				template_params,
 				template_args,
 				owner_type_name);
 		}
-		if (substituted_param.has_value()) {
+		if (substituted_instantiated_param.has_value() ||
+			substituted_out_of_line_param.has_value()) {
 			if (!typeSpecifiersMatchForSignatureValidation(
-					*instantiated_param,
-					*substituted_param)) {
+					substituted_instantiated_param.has_value()
+						? *substituted_instantiated_param
+						: *instantiated_param,
+					substituted_out_of_line_param.has_value()
+						? *substituted_out_of_line_param
+						: *out_of_line_param)) {
 				return false;
 			}
 			continue;
@@ -9974,7 +9989,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					out_of_line_member.function_node.is<ConstructorDeclarationNode>()) {
 					const ConstructorDeclarationNode& out_of_line_ctor_decl =
 						out_of_line_member.function_node.as<ConstructorDeclarationNode>();
-					std::vector<ConstructorDeclarationNode*> resolved_ctor_matches;
+					InlineVector<ConstructorDeclarationNode*, 4> resolved_ctor_matches;
 					for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
 						if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 							continue;
