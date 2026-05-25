@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (non-constructor nested/member-template replay matching now requires canonical substituted-signature evidence; strict disambiguation pre-counts narrowed to relevant candidates)
+**Last updated:** 2026-05-25 (constructor replay signature matching now canonicalizes dependent placeholder/member-type identity so previously unresolved nullopt attachment cases replay correctly without fallback)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -150,6 +150,12 @@ Future work can rely on these being in place:
   for positive attachment, and strict disambiguation pre-counts are narrowed to
   relevant candidates (same name + inner template-parameter count + function
   parameter count).
+- **constructor and constructor-template out-of-line replay signature matching
+  now canonicalizes dependent placeholder/member-type identity** (including
+  dependent qualified-name records and effective alias/indirection metadata),
+  so valid replay-first attachments that previously collapsed to unresolved
+  substituted-signature outcomes now classify as canonical matches without
+  reintroducing single-candidate fallback acceptance.
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
@@ -175,8 +181,8 @@ Latest focused regressions added on the current branch:
 - `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
-- `test_template_ool_plain_ctor_nullopt_single_candidate_no_attach_fail.cpp`
-- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_fail.cpp`
+- `test_template_ool_plain_ctor_nullopt_single_candidate_no_attach_ret0.cpp`
+- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
 - `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 - `test_template_nested_ool_member_template_overload_ret0.cpp`

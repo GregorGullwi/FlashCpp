@@ -1042,8 +1042,8 @@ static void applyResolvedTemplateArgTypeMetadata(TypeSpecifierNode& target, cons
 }
 
 static bool dependentTemplatePlaceholderNamesMatch(
-	std::string_view instantiated_name,
-	std::string_view out_of_line_name,
+	const TypeSpecifierNode& instantiated_type,
+	const TypeSpecifierNode& out_of_line_type,
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params);
 
@@ -1064,6 +1064,94 @@ static bool typeSpecifierLooksLikeDependentSignaturePlaceholder(
 	return typeSpecStillUsesDependentPlaceholder(type_spec);
 }
 
+struct SignatureValidationIndirection {
+	size_t pointer_depth = 0;
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
+	CVQualifier cv_qualifier = CVQualifier::None;
+	InlineVector<CVQualifier, 4> pointer_level_cv_qualifiers;
+};
+
+static void mergeAliasIndirectionForSignatureValidation(
+	SignatureValidationIndirection& effective,
+	const ResolvedAliasTypeInfo& resolved_alias,
+	bool shift_top_level_cv_to_alias_pointer_level) {
+	if (!resolved_alias.type_index.is_valid()) {
+		return;
+	}
+
+	const size_t combined_pointer_depth =
+		effective.pointer_depth + resolved_alias.pointer_depth;
+	const bool should_shift_top_level_cv =
+		shift_top_level_cv_to_alias_pointer_level &&
+		effective.pointer_depth == 0 &&
+		effective.reference_qualifier == ReferenceQualifier::None &&
+		resolved_alias.pointer_depth > 0;
+
+	if (should_shift_top_level_cv) {
+		effective.pointer_level_cv_qualifiers.push_back(effective.cv_qualifier);
+		for (size_t i = 1; i < resolved_alias.pointer_depth; ++i) {
+			effective.pointer_level_cv_qualifiers.push_back(CVQualifier::None);
+		}
+		effective.cv_qualifier = resolved_alias.cv_qualifier;
+	} else {
+		effective.cv_qualifier = static_cast<CVQualifier>(
+			static_cast<uint8_t>(effective.cv_qualifier) |
+			static_cast<uint8_t>(resolved_alias.cv_qualifier));
+	}
+
+	effective.pointer_depth = combined_pointer_depth;
+	effective.reference_qualifier = collapseReferenceQualifiers(
+		resolved_alias.reference_qualifier,
+		effective.reference_qualifier);
+	while (effective.pointer_level_cv_qualifiers.size() < effective.pointer_depth) {
+		effective.pointer_level_cv_qualifiers.push_back(CVQualifier::None);
+	}
+}
+
+static SignatureValidationIndirection computeSignatureValidationIndirection(
+	const TypeSpecifierNode& type_spec) {
+	SignatureValidationIndirection effective;
+	effective.pointer_depth = type_spec.pointer_depth();
+	effective.reference_qualifier = type_spec.reference_qualifier();
+	effective.cv_qualifier = type_spec.cv_qualifier();
+	effective.pointer_level_cv_qualifiers.reserve(type_spec.pointer_levels().size());
+	for (const PointerLevel& level : type_spec.pointer_levels()) {
+		effective.pointer_level_cv_qualifiers.push_back(level.cv_qualifier);
+	}
+
+	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
+		resolved_alias.type_index.is_valid()) {
+		mergeAliasIndirectionForSignatureValidation(
+			effective,
+			resolved_alias,
+			true);
+	}
+
+	return effective;
+}
+
+static SignatureValidationIndirection computeTemplateArgSignatureValidationIndirection(
+	const TypeInfo::TemplateArgInfo& arg_info) {
+	SignatureValidationIndirection effective;
+	effective.pointer_depth = arg_info.pointer_depth;
+	effective.reference_qualifier = arg_info.ref_qualifier;
+	effective.cv_qualifier = arg_info.cv_qualifier;
+	effective.pointer_level_cv_qualifiers.reserve(arg_info.pointer_cv_qualifiers.size());
+	for (CVQualifier level_cv : arg_info.pointer_cv_qualifiers) {
+		effective.pointer_level_cv_qualifiers.push_back(level_cv);
+	}
+
+	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(arg_info.type_index);
+		resolved_alias.type_index.is_valid()) {
+		mergeAliasIndirectionForSignatureValidation(
+			effective,
+			resolved_alias,
+			true);
+	}
+
+	return effective;
+}
+
 static bool typeSpecifiersMatchForSignatureValidation(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs) {
@@ -1081,28 +1169,35 @@ static bool typeSpecifiersMatchForSignatureValidation(
 
 	const TypeIndex lhs_effective_type = normalizeTypeIndex(lhs);
 	const TypeIndex rhs_effective_type = normalizeTypeIndex(rhs);
+	const SignatureValidationIndirection lhs_effective_indirection =
+		computeSignatureValidationIndirection(lhs);
+	const SignatureValidationIndirection rhs_effective_indirection =
+		computeSignatureValidationIndirection(rhs);
 	if (lhs_effective_type.category() != rhs_effective_type.category() ||
 		lhs_effective_type != rhs_effective_type ||
-		lhs.pointer_depth() != rhs.pointer_depth() ||
-		lhs.reference_qualifier() != rhs.reference_qualifier()) {
+		lhs_effective_indirection.pointer_depth != rhs_effective_indirection.pointer_depth ||
+		lhs_effective_indirection.reference_qualifier !=
+			rhs_effective_indirection.reference_qualifier) {
 		return false;
 	}
 
-	if (lhs.pointer_depth() > 0) {
-		if (lhs.cv_qualifier() != rhs.cv_qualifier()) {
+	if (lhs_effective_indirection.pointer_depth > 0) {
+		if (lhs_effective_indirection.cv_qualifier !=
+			rhs_effective_indirection.cv_qualifier) {
 			return false;
 		}
 
-		const auto& lhs_levels = lhs.pointer_levels();
-		const auto& rhs_levels = rhs.pointer_levels();
+		const auto& lhs_levels = lhs_effective_indirection.pointer_level_cv_qualifiers;
+		const auto& rhs_levels = rhs_effective_indirection.pointer_level_cv_qualifiers;
 		for (size_t i = 0; i < lhs_levels.size() && i < rhs_levels.size(); ++i) {
-			if (lhs_levels[i].cv_qualifier != rhs_levels[i].cv_qualifier) {
+			if (lhs_levels[i] != rhs_levels[i]) {
 				return false;
 			}
 		}
 	}
 
-	if (lhs.is_reference() && lhs.cv_qualifier() != rhs.cv_qualifier()) {
+	if (lhs_effective_indirection.reference_qualifier != ReferenceQualifier::None &&
+		lhs_effective_indirection.cv_qualifier != rhs_effective_indirection.cv_qualifier) {
 		return false;
 	}
 
@@ -1152,12 +1247,341 @@ static const TemplateParameterNode* findTemplateParameterByName(
 	return nullptr;
 }
 
-static bool dependentTemplatePlaceholderNamesMatch(
-	std::string_view instantiated_name,
-	std::string_view out_of_line_name,
+static std::string normalizeDependentPlaceholderSignatureSpelling(
+	std::string_view spelling) {
+	std::string normalized;
+	normalized.reserve(spelling.size());
+
+	for (size_t i = 0; i < spelling.size();) {
+		char ch = spelling[i];
+		if (ch == '$') {
+			++i;
+			while (i < spelling.size()) {
+				if (spelling[i] == ':' &&
+					i + 1 < spelling.size() &&
+					spelling[i + 1] == ':') {
+					break;
+				}
+				++i;
+			}
+			continue;
+		}
+		normalized.push_back(ch);
+		++i;
+	}
+
+	return normalized;
+}
+
+static TypeIndex canonicalizeTemplateSignatureMatchTypeIndex(TypeIndex type_index) {
+	if (!type_index.is_valid()) {
+		return type_index;
+	}
+	if (const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
+		resolved_alias.type_index.is_valid()) {
+		return resolved_alias.type_index.withCategory(resolved_alias.typeEnum());
+	}
+	return type_index;
+}
+
+static bool dependentQualifiedTemplateArgMatchesForSignature(
+	const TypeInfo::TemplateArgInfo& instantiated_arg,
+	const TypeInfo::TemplateArgInfo& out_of_line_arg,
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params) {
+	const SignatureValidationIndirection instantiated_indirection =
+		computeTemplateArgSignatureValidationIndirection(instantiated_arg);
+	const SignatureValidationIndirection out_of_line_indirection =
+		computeTemplateArgSignatureValidationIndirection(out_of_line_arg);
+
+	if (instantiated_arg.is_value != out_of_line_arg.is_value ||
+		instantiated_arg.is_pack != out_of_line_arg.is_pack ||
+		instantiated_arg.is_array != out_of_line_arg.is_array ||
+		instantiated_indirection.pointer_depth != out_of_line_indirection.pointer_depth ||
+		instantiated_indirection.cv_qualifier != out_of_line_indirection.cv_qualifier ||
+		instantiated_indirection.reference_qualifier != out_of_line_indirection.reference_qualifier ||
+		instantiated_arg.is_template_template_arg != out_of_line_arg.is_template_template_arg ||
+		instantiated_arg.template_name != out_of_line_arg.template_name ||
+		instantiated_arg.member_pointer_kind != out_of_line_arg.member_pointer_kind ||
+		instantiated_arg.member_class_name != out_of_line_arg.member_class_name ||
+		instantiated_indirection.pointer_level_cv_qualifiers.size() !=
+			out_of_line_indirection.pointer_level_cv_qualifiers.size() ||
+		instantiated_arg.array_dimensions.size() != out_of_line_arg.array_dimensions.size()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < instantiated_indirection.pointer_level_cv_qualifiers.size(); ++i) {
+		if (instantiated_indirection.pointer_level_cv_qualifiers[i] !=
+			out_of_line_indirection.pointer_level_cv_qualifiers[i]) {
+			return false;
+		}
+	}
+	for (size_t i = 0; i < instantiated_arg.array_dimensions.size(); ++i) {
+		if (instantiated_arg.array_dimensions[i] != out_of_line_arg.array_dimensions[i]) {
+			return false;
+		}
+	}
+
+	auto dependent_param_names_match = [&](StringHandle instantiated_name,
+										 StringHandle out_of_line_name) {
+		if (instantiated_name == out_of_line_name) {
+			return true;
+		}
+		if (!instantiated_name.isValid() || !out_of_line_name.isValid()) {
+			return false;
+		}
+		size_t instantiated_index = 0;
+		size_t out_of_line_index = 0;
+		const TemplateParameterNode* instantiated_param = findTemplateParameterByName(
+			instantiated_template_params,
+			StringTable::getStringView(instantiated_name),
+			&instantiated_index);
+		const TemplateParameterNode* out_of_line_param = findTemplateParameterByName(
+			out_of_line_template_params,
+			StringTable::getStringView(out_of_line_name),
+			&out_of_line_index);
+		if (instantiated_param == nullptr || out_of_line_param == nullptr) {
+			return false;
+		}
+		return instantiated_index == out_of_line_index &&
+			instantiated_param->kind() == out_of_line_param->kind() &&
+			instantiated_param->is_variadic() == out_of_line_param->is_variadic();
+	};
+
+	if (!dependent_param_names_match(
+			instantiated_arg.dependent_name,
+			out_of_line_arg.dependent_name)) {
+		return false;
+	}
+
+	TypeIndex instantiated_type_index =
+		canonicalizeTemplateSignatureMatchTypeIndex(instantiated_arg.type_index);
+	TypeIndex out_of_line_type_index =
+		canonicalizeTemplateSignatureMatchTypeIndex(out_of_line_arg.type_index);
+	if (instantiated_type_index != out_of_line_type_index ||
+		instantiated_type_index.category() != out_of_line_type_index.category()) {
+		return false;
+	}
+
+	if (instantiated_arg.function_signature.has_value() !=
+		out_of_line_arg.function_signature.has_value()) {
+		return false;
+	}
+	if (instantiated_arg.function_signature.has_value() &&
+		!FlashCpp::equalFunctionSignatureIdentity(
+			*instantiated_arg.function_signature,
+			*out_of_line_arg.function_signature)) {
+		return false;
+	}
+
+	if (instantiated_arg.dependent_expr.has_value() !=
+		out_of_line_arg.dependent_expr.has_value()) {
+		return false;
+	}
+	if (instantiated_arg.dependent_expr.has_value() &&
+		!FlashCpp::equalDependentExpressionIdentity(
+			*instantiated_arg.dependent_expr,
+			*out_of_line_arg.dependent_expr)) {
+		return false;
+	}
+
+	if (instantiated_arg.is_value) {
+		if (instantiated_arg.value != out_of_line_arg.value ||
+			instantiated_arg.nttp_kind != out_of_line_arg.nttp_kind ||
+			instantiated_arg.nttp_entity_name != out_of_line_arg.nttp_entity_name ||
+			instantiated_arg.nttp_member_name != out_of_line_arg.nttp_member_name ||
+			instantiated_arg.nttp_pointer_offset != out_of_line_arg.nttp_pointer_offset) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool dependentQualifiedNameRecordsMatchForSignature(
+	const TypeInfo::DependentQualifiedNameRecord& instantiated_record,
+	const TypeInfo::DependentQualifiedNameRecord& out_of_line_record,
+	std::span<const TemplateParameterNode> instantiated_template_params,
+	std::span<const TemplateParameterNode> out_of_line_template_params) {
+	if (instantiated_record.owner_kind != out_of_line_record.owner_kind ||
+		instantiated_record.names_current_instantiation !=
+			out_of_line_record.names_current_instantiation ||
+		instantiated_record.member_chain.size() != out_of_line_record.member_chain.size() ||
+		instantiated_record.owner_template_arguments.size() !=
+			out_of_line_record.owner_template_arguments.size()) {
+		return false;
+	}
+
+	if (instantiated_record.owner_type.is_valid() ||
+		out_of_line_record.owner_type.is_valid()) {
+		TypeIndex instantiated_owner =
+			canonicalizeTemplateSignatureMatchTypeIndex(instantiated_record.owner_type);
+		TypeIndex out_of_line_owner =
+			canonicalizeTemplateSignatureMatchTypeIndex(out_of_line_record.owner_type);
+		if (instantiated_owner != out_of_line_owner ||
+			instantiated_owner.category() != out_of_line_owner.category()) {
+			return false;
+		}
+	}
+
+	if (instantiated_record.owner_name != out_of_line_record.owner_name) {
+		size_t instantiated_owner_index = 0;
+		size_t out_of_line_owner_index = 0;
+		const TemplateParameterNode* instantiated_owner_param = findTemplateParameterByName(
+			instantiated_template_params,
+			StringTable::getStringView(instantiated_record.owner_name),
+			&instantiated_owner_index);
+		const TemplateParameterNode* out_of_line_owner_param = findTemplateParameterByName(
+			out_of_line_template_params,
+			StringTable::getStringView(out_of_line_record.owner_name),
+			&out_of_line_owner_index);
+		if (instantiated_owner_param == nullptr ||
+			out_of_line_owner_param == nullptr ||
+			instantiated_owner_index != out_of_line_owner_index ||
+			instantiated_owner_param->kind() != out_of_line_owner_param->kind() ||
+			instantiated_owner_param->is_variadic() != out_of_line_owner_param->is_variadic()) {
+			return false;
+		}
+	}
+
+	for (size_t arg_index = 0;
+		 arg_index < instantiated_record.owner_template_arguments.size();
+		 ++arg_index) {
+		if (!dependentQualifiedTemplateArgMatchesForSignature(
+				instantiated_record.owner_template_arguments[arg_index],
+				out_of_line_record.owner_template_arguments[arg_index],
+				instantiated_template_params,
+				out_of_line_template_params)) {
+			return false;
+		}
+	}
+
+	for (size_t member_index = 0;
+		 member_index < instantiated_record.member_chain.size();
+		 ++member_index) {
+		const auto& instantiated_member = instantiated_record.member_chain[member_index];
+		const auto& out_of_line_member = out_of_line_record.member_chain[member_index];
+		if (instantiated_member.name != out_of_line_member.name ||
+			instantiated_member.has_template_arguments !=
+				out_of_line_member.has_template_arguments ||
+			instantiated_member.has_template_keyword !=
+				out_of_line_member.has_template_keyword ||
+			instantiated_member.template_arguments.size() !=
+				out_of_line_member.template_arguments.size()) {
+			return false;
+		}
+
+		for (size_t arg_index = 0;
+			 arg_index < instantiated_member.template_arguments.size();
+			 ++arg_index) {
+			if (!dependentQualifiedTemplateArgMatchesForSignature(
+					instantiated_member.template_arguments[arg_index],
+					out_of_line_member.template_arguments[arg_index],
+					instantiated_template_params,
+					out_of_line_template_params)) {
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+static bool dependentTemplatePlaceholderNamesMatch(
+	const TypeSpecifierNode& instantiated_type,
+	const TypeSpecifierNode& out_of_line_type,
+	std::span<const TemplateParameterNode> instantiated_template_params,
+	std::span<const TemplateParameterNode> out_of_line_template_params) {
+	auto identity_name = [](const TypeSpecifierNode& type_spec) {
+		if (type_spec.type_index().is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+				std::string_view type_name = StringTable::getStringView(type_info->name());
+				if (!type_name.empty()) {
+					return type_name;
+				}
+			}
+		}
+		return type_spec.token().value();
+	};
+
+	const std::string_view instantiated_name = identity_name(instantiated_type);
+	const std::string_view out_of_line_name = identity_name(out_of_line_type);
 	if (instantiated_name == out_of_line_name) {
+		return true;
+	}
+
+	const TypeInfo* instantiated_type_info = instantiated_type.type_index().is_valid()
+		? tryGetTypeInfo(instantiated_type.type_index())
+		: findTypeByName(StringTable::getOrInternStringHandle(instantiated_name));
+	const TypeInfo* out_of_line_type_info = out_of_line_type.type_index().is_valid()
+		? tryGetTypeInfo(out_of_line_type.type_index())
+		: findTypeByName(StringTable::getOrInternStringHandle(out_of_line_name));
+
+	if (instantiated_type_info != nullptr &&
+		out_of_line_type_info != nullptr &&
+		instantiated_type_info->isDependentPlaceholder() &&
+		out_of_line_type_info->isDependentPlaceholder()) {
+		const TypeInfo::DependentQualifiedNameRecord* instantiated_record =
+			instantiated_type_info->dependentQualifiedName();
+		const TypeInfo::DependentQualifiedNameRecord* out_of_line_record =
+			out_of_line_type_info->dependentQualifiedName();
+		if (instantiated_record != nullptr &&
+			out_of_line_record != nullptr &&
+			dependentQualifiedNameRecordsMatchForSignature(
+				*instantiated_record,
+				*out_of_line_record,
+				instantiated_template_params,
+				out_of_line_template_params)) {
+			return true;
+		}
+	}
+
+	auto owner_matches_named_placeholder =
+		[](const TypeInfo::DependentQualifiedNameRecord& dependent_record,
+		   const TypeInfo* owner_candidate_type_info,
+		   std::string_view owner_candidate_name) {
+			const std::string_view dependent_owner_name =
+				StringTable::getStringView(dependent_record.owner_name);
+			if (!dependent_owner_name.empty() &&
+				owner_candidate_name == dependent_owner_name) {
+				return true;
+			}
+			if (owner_candidate_type_info != nullptr) {
+				const std::string_view owner_candidate_type_name =
+					StringTable::getStringView(owner_candidate_type_info->name());
+				if (!owner_candidate_type_name.empty() &&
+					owner_candidate_type_name == dependent_owner_name) {
+					return true;
+				}
+			}
+			return false;
+		};
+
+	if (instantiated_type_info != nullptr &&
+		instantiated_type_info->isDependentPlaceholder()) {
+		if (const auto* instantiated_record = instantiated_type_info->dependentQualifiedName();
+			instantiated_record != nullptr &&
+			owner_matches_named_placeholder(
+				*instantiated_record,
+				out_of_line_type_info,
+				out_of_line_name)) {
+			return true;
+		}
+	}
+	if (out_of_line_type_info != nullptr &&
+		out_of_line_type_info->isDependentPlaceholder()) {
+		if (const auto* out_of_line_record = out_of_line_type_info->dependentQualifiedName();
+			out_of_line_record != nullptr &&
+			owner_matches_named_placeholder(
+				*out_of_line_record,
+				instantiated_type_info,
+				instantiated_name)) {
+			return true;
+		}
+	}
+
+	if (normalizeDependentPlaceholderSignatureSpelling(instantiated_name) ==
+		normalizeDependentPlaceholderSignatureSpelling(out_of_line_name)) {
 		return true;
 	}
 
@@ -1171,11 +1595,9 @@ static bool dependentTemplatePlaceholderNamesMatch(
 		out_of_line_template_params,
 		out_of_line_name,
 		&out_of_line_index);
-	if (instantiated_param == nullptr || out_of_line_param == nullptr) {
-		return false;
-	}
-
-	return instantiated_index == out_of_line_index &&
+	return instantiated_param != nullptr &&
+		out_of_line_param != nullptr &&
+		instantiated_index == out_of_line_index &&
 		instantiated_param->kind() == out_of_line_param->kind() &&
 		instantiated_param->is_variadic() == out_of_line_param->is_variadic();
 }
@@ -1233,16 +1655,27 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 		}
 		if (substituted_instantiated_param.has_value() ||
 			substituted_out_of_line_param.has_value()) {
-			if (!typeSpecifiersMatchForSignatureValidation(
-					substituted_instantiated_param.has_value()
-						? *substituted_instantiated_param
-						: *instantiated_param,
-					substituted_out_of_line_param.has_value()
-						? *substituted_out_of_line_param
-						: *out_of_line_param)) {
+			const TypeSpecifierNode& lhs_type =
+				substituted_instantiated_param.has_value()
+					? *substituted_instantiated_param
+					: *instantiated_param;
+			const TypeSpecifierNode& rhs_type =
+				substituted_out_of_line_param.has_value()
+					? *substituted_out_of_line_param
+					: *out_of_line_param;
+			if (typeSpecifiersMatchForSignatureValidation(lhs_type, rhs_type)) {
+				continue;
+			}
+
+			// One-sided substitutions can produce owner-only artifacts for dependent
+			// qualified names (e.g. `typename T::template AddPtr<int>::type`
+			// materializing as `T` when member lookup is deferred). In that case,
+			// fall through to the dependent-placeholder structural checks below
+			// instead of rejecting immediately.
+			if (!typeSpecifierLooksLikeDependentSignaturePlaceholder(*instantiated_param) &&
+				!typeSpecifierLooksLikeDependentSignaturePlaceholder(*out_of_line_param)) {
 				return false;
 			}
-			continue;
 		}
 
 		if (!instantiated_is_template_param_placeholder &&
@@ -1251,16 +1684,37 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 			!typeSpecifierLooksLikeDependentSignaturePlaceholder(*out_of_line_param)) {
 			return std::nullopt;
 		}
-		if (instantiated_param->pointer_depth() != out_of_line_param->pointer_depth() ||
-			instantiated_param->reference_qualifier() != out_of_line_param->reference_qualifier() ||
-			instantiated_param->cv_qualifier() != out_of_line_param->cv_qualifier()) {
+		const SignatureValidationIndirection instantiated_effective_indirection =
+			computeSignatureValidationIndirection(*instantiated_param);
+		const SignatureValidationIndirection out_of_line_effective_indirection =
+			computeSignatureValidationIndirection(*out_of_line_param);
+		if (instantiated_effective_indirection.pointer_depth !=
+				out_of_line_effective_indirection.pointer_depth ||
+			instantiated_effective_indirection.reference_qualifier !=
+				out_of_line_effective_indirection.reference_qualifier ||
+			instantiated_effective_indirection.cv_qualifier !=
+				out_of_line_effective_indirection.cv_qualifier) {
 			return false;
 		}
-		if (!dependentTemplatePlaceholderNamesMatch(
-				instantiated_param->token().value(),
-				out_of_line_param->token().value(),
-				instantiated_template_params,
-				out_of_line_template_params)) {
+		if (instantiated_effective_indirection.pointer_level_cv_qualifiers.size() !=
+			out_of_line_effective_indirection.pointer_level_cv_qualifiers.size()) {
+			return false;
+		}
+		for (size_t pointer_level_index = 0;
+			 pointer_level_index <
+			 instantiated_effective_indirection.pointer_level_cv_qualifiers.size();
+			 ++pointer_level_index) {
+			if (instantiated_effective_indirection.pointer_level_cv_qualifiers[pointer_level_index] !=
+				out_of_line_effective_indirection.pointer_level_cv_qualifiers[pointer_level_index]) {
+				return false;
+			}
+		}
+		const bool dependent_placeholder_name_match = dependentTemplatePlaceholderNamesMatch(
+			*instantiated_param,
+			*out_of_line_param,
+			instantiated_template_params,
+			out_of_line_template_params);
+		if (!dependent_placeholder_name_match) {
 			return false;
 		}
 	}
