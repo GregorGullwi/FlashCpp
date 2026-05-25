@@ -1,4 +1,3 @@
-#include <array>
 #include <limits>
 
 #include "Parser.h"
@@ -4629,9 +4628,75 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 	}
 
 	std::vector<TemplateTypeArg> template_args;
+	auto tryResolveDependentTypeArg = [&](const TemplateTypeArg& dependent_arg) -> std::optional<TemplateTypeArg> {
+		if (!dependent_arg.is_dependent &&
+			!dependent_arg.dependent_name.isValid() &&
+			!typeIndexContainsDependentPlaceholder(dependent_arg.type_index)) {
+			return std::nullopt;
+		}
+
+		auto tryResolveByName = [&](StringHandle candidate_name) -> std::optional<TemplateTypeArg> {
+			if (!candidate_name.isValid()) {
+				return std::nullopt;
+			}
+
+			if (std::optional<TemplateTypeArg> resolved =
+					resolveContextBinding(candidate_name, context.template_environment);
+				resolved.has_value()) {
+				return rebindDependentTemplateTypeArg(*resolved, dependent_arg);
+			}
+
+			std::string_view candidate_view = StringTable::getStringView(candidate_name);
+			size_t scope_pos = candidate_view.rfind("::");
+			if (scope_pos != std::string_view::npos && scope_pos + 2 < candidate_view.size()) {
+				StringHandle tail_name =
+					StringTable::getOrInternStringHandle(candidate_view.substr(scope_pos + 2));
+				if (std::optional<TemplateTypeArg> resolved_tail =
+						resolveContextBinding(tail_name, context.template_environment);
+					resolved_tail.has_value()) {
+					return rebindDependentTemplateTypeArg(*resolved_tail, dependent_arg);
+				}
+			}
+
+			return std::nullopt;
+		};
+
+		if (dependent_arg.dependent_name.isValid()) {
+			if (std::optional<TemplateTypeArg> resolved = tryResolveByName(dependent_arg.dependent_name);
+				resolved.has_value()) {
+				return resolved;
+			}
+		}
+
+		if (dependent_arg.type_index.is_valid()) {
+			if (const TypeInfo* dependent_type_info = tryGetTypeInfo(dependent_arg.type_index);
+				dependent_type_info != nullptr && dependent_type_info->name().isValid()) {
+				if (std::optional<TemplateTypeArg> resolved = tryResolveByName(dependent_type_info->name());
+					resolved.has_value()) {
+					return resolved;
+				}
+			}
+		}
+
+		for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
+			std::string_view param_name = context.template_param_names[i];
+			StringHandle param_handle = StringTable::getOrInternStringHandle(param_name);
+			if (dependent_arg.dependent_name.isValid() && param_handle == dependent_arg.dependent_name) {
+				return rebindDependentTemplateTypeArg(context.template_args[i], dependent_arg);
+			}
+		}
+
+		return std::nullopt;
+	};
+
 	for (const ASTNode& arg_node : call_expr.template_arguments()) {
 		if (arg_node.is<TypeSpecifierNode>()) {
-			template_args.emplace_back(arg_node.as<TypeSpecifierNode>());
+			TemplateTypeArg template_arg(arg_node.as<TypeSpecifierNode>());
+			if (std::optional<TemplateTypeArg> resolved_arg = tryResolveDependentTypeArg(template_arg);
+				resolved_arg.has_value()) {
+				template_arg = *resolved_arg;
+			}
+			template_args.push_back(std::move(template_arg));
 		} else if (arg_node.is<ExpressionNode>()) {
 			EvalResult arg_val = evaluate(arg_node, context);
 			if (!arg_val.success()) {
@@ -4655,26 +4720,61 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 
 	std::optional<ASTNode> var_node;
 	auto tryInstantiateByName = [&](std::string_view candidate_name) {
-		if (candidate_name.empty()) {
+		if (candidate_name.empty() || var_node.has_value()) {
 			return;
 		}
 		var_node = parser.try_instantiate_variable_template(candidate_name, template_args, nullptr);
 		context.normalizePendingSemanticRoots();
 	};
 
-	tryInstantiateByName(func_name);
+	std::vector<std::string_view> candidate_names;
+	candidate_names.reserve(10);
 
+	auto addCandidate = [&](std::string_view candidate_name) {
+		if (candidate_name.empty()) {
+			return;
+		}
+		for (std::string_view existing : candidate_names) {
+			if (existing == candidate_name) {
+				return;
+			}
+		}
+		candidate_names.push_back(candidate_name);
+	};
+
+	addCandidate(func_name);
 	if (call_expr.has_qualified_name()) {
-		tryInstantiateByName(call_expr.qualified_name());
+		addCandidate(call_expr.qualified_name());
 	}
 
-	static constexpr std::array<std::string_view, 2> namespace_prefixes = {"std::", "__gnu_cxx::"};
-	for (std::string_view namespace_prefix : namespace_prefixes) {
+	auto addNamespaceChainCandidates = [&](NamespaceHandle start_namespace) {
+		if (func_name.empty() || !start_namespace.isValid() || start_namespace.isGlobal()) {
+			return;
+		}
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		for (NamespaceHandle probe = start_namespace; probe.isValid() && !probe.isGlobal();
+			 probe = gNamespaceRegistry.getParent(probe)) {
+			StringHandle qualified_name_handle =
+				gNamespaceRegistry.buildQualifiedIdentifier(probe, func_name_handle);
+			addCandidate(StringTable::getStringView(qualified_name_handle));
+		}
+	};
+
+	if (const FunctionDeclarationNode* callee_function_decl =
+			call_expr.callee().function_declaration_or_null();
+		callee_function_decl != nullptr) {
+		addNamespaceChainCandidates(callee_function_decl->namespace_handle());
+	}
+
+	if (context.symbols != nullptr) {
+		addNamespaceChainCandidates(context.symbols->get_current_namespace_handle());
+	}
+
+	for (std::string_view candidate_name : candidate_names) {
+		tryInstantiateByName(candidate_name);
 		if (var_node.has_value()) {
 			break;
 		}
-		StringBuilder fallback_name_builder;
-		tryInstantiateByName(fallback_name_builder.append(namespace_prefix).append(func_name).commit());
 	}
 
 	if (var_node.has_value() && var_node->is<VariableDeclarationNode>()) {
@@ -4877,6 +4977,30 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 	// If simple lookup fails, try to find the function as a static member in struct types
 	if (!symbol_opt.has_value()) {
+		auto has_dependent_template_arguments = [&]() -> bool {
+			if (!call_expr.has_template_arguments()) {
+				return false;
+			}
+			for (const ASTNode& template_arg_node : call_expr.template_arguments()) {
+				if (template_arg_node.is<TypeSpecifierNode>()) {
+					if (typeSpecStillUsesDependentPlaceholder(
+							template_arg_node.as<TypeSpecifierNode>())) {
+						return true;
+					}
+					continue;
+				}
+				if (!template_arg_node.is<ExpressionNode>()) {
+					continue;
+				}
+				EvalResult eval_template_arg = evaluate(template_arg_node, context);
+				if (!eval_template_arg.success() &&
+					eval_template_arg.error_type == EvalErrorType::TemplateDependentExpression) {
+					return true;
+				}
+			}
+			return false;
+		};
+
 		// Search all struct types for a static member function with this name
 		// This handles cases like Point::static_sum where the parser creates a CallExprNode
 		// but the function name is just "static_sum" without the qualifier
@@ -4951,6 +5075,13 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			auto var_template_result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 			if (var_template_result.success())
 				return var_template_result;
+		}
+
+		if (has_dependent_template_arguments()) {
+			return EvalResult::error(
+				"Dependent function/variable template call in constant expression: " +
+					std::string(func_name),
+				EvalErrorType::TemplateDependentExpression);
 		}
 
 		return EvalResult::error("Undefined function in constant expression: " + std::string(func_name));
