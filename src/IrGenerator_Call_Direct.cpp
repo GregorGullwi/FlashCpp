@@ -415,9 +415,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	const auto& decl_node = callExprNode.callee().declaration();
 	StringHandle func_name = decl_node.identifier_token().handle();
 	std::string_view func_name_view = func_name.view();
-	std::string_view lookup_name_view = callExprNode.has_qualified_name()
-											? callExprNode.qualified_name()
-											: func_name_view;
 	const bool has_synthesized_template_suffix =
 		func_name_view.find('$') != std::string_view::npos;
 	auto sema_services = sema_.parserSemanticServices();
