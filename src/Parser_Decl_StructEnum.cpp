@@ -537,12 +537,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 
 						// Instantiate the template using the qualified name
-						// This handles namespace-qualified templates correctly
-						auto instantiated_node = try_instantiate_class_template(full_name, template_args, true);
-						if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
-							const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
-							full_name = StringTable::getStringView(class_decl.name());
-							FLASH_LOG_FORMAT(Templates, Debug, "Instantiated base class template: {}", full_name);
+						// This handles namespace-qualified templates correctly, including
+						// alias templates (e.g. std::bool_constant<false> → integral_constant$hash).
+						// We use instantiate_and_register_base_template which resolves both class
+						// templates and alias template chains.
+						std::string_view mutable_full_name = full_name;
+						std::string_view resolved = instantiate_and_register_base_template(mutable_full_name, template_args);
+						if (!resolved.empty()) {
+							full_name = mutable_full_name;
+							FLASH_LOG_FORMAT(Templates, Debug, "Resolved base class template: {}", full_name);
 						}
 					}
 
