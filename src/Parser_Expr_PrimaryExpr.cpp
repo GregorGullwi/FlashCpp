@@ -5109,9 +5109,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// dependent calls in template definitions are resolved at instantiation time.
 				if (hasActiveTemplateParameters() &&
 					gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value()) {
-					FLASH_LOG(Templates, Debug,
-						"Creating deferred call for template '", identifier_token.value(),
-						"' inside template body (dependency not detected by AST walk)");
+					FLASH_LOG_FORMAT(Templates, Debug,
+						"Creating deferred call for template '{}' inside template body (dependency not detected by AST walk)",
+						identifier_token.value());
 					auto type_node = emplace_node<TypeSpecifierNode>(
 						TypeCategory::Auto, TypeQualifier::None,
 						get_type_size_bits(TypeCategory::Auto),
