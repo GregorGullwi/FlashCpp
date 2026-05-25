@@ -4667,11 +4667,15 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		tryInstantiateByName(call_expr.qualified_name());
 	}
 
-	StringBuilder std_name_builder;
-	tryInstantiateByName(std_name_builder.append("std::").append(func_name).commit());
+	if (!var_node.has_value()) {
+		StringBuilder std_name_builder;
+		tryInstantiateByName(std_name_builder.append("std::").append(func_name).commit());
+	}
 
-	StringBuilder gnu_name_builder;
-	tryInstantiateByName(gnu_name_builder.append("__gnu_cxx::").append(func_name).commit());
+	if (!var_node.has_value()) {
+		StringBuilder gnu_name_builder;
+		tryInstantiateByName(gnu_name_builder.append("__gnu_cxx::").append(func_name).commit());
+	}
 
 	if (var_node.has_value() && var_node->is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var_decl = var_node->as<VariableDeclarationNode>();
