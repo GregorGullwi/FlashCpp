@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (nested constructor-template replay attachment now routes through replay-first identity helpers with canonical substituted-signature matching)
+**Last updated:** 2026-05-25 (nested constructor source-member preselection now uses direct source-member identity registration, removing signature-scan-first stub selection)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -135,6 +135,10 @@ Useful assumptions before changing this area:
   `findOutOfLineConstructorTemplateStubByIdentity` helper** (constructor-node
   and function-node definitions), so selection remains source-member-identity
   centered and canonical-substitution based.
+- **nested constructor source-member preselection in
+  `nested_source_member_identity_maps` no longer uses signature-equivalence
+  scan against `nested_struct_info->member_functions`**: registration now uses
+  direct source-member identity mapping for constructors and non-constructors.
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
@@ -180,11 +184,6 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
-  - nested constructor source-member preselection into
-    `nested_source_member_identity_maps` still uses signature-equivalence scan
-    against `nested_struct_info->member_functions`; this should be replaced with
-    source-member identity registration that does not depend on scan-first
-    constructor matching.
   - remaining constructor and non-constructor replay paths still produce
     unresolved substitution outcomes (`nullopt`) because required replay-visible
     metadata is not always captured early enough; these need metadata completion
@@ -216,9 +215,9 @@ they directly block items 1-2:
 1. **Remove the next remaining declaration replay scans outside static-member initializers**
    - Remove remaining declaration replay scans that still recover targets from
      partially substituted instantiated members instead of source-member identity.
-   - Start with nested constructor source-member preselection into
-     `nested_source_member_identity_maps`, replacing signature-scan-first stub
-     selection with source-member identity registration.
+   - Continue with remaining attachment/synchronization surfaces that still
+     depend on signature-only matching where source-member identity can be
+     preserved end-to-end.
    - Improve replay metadata capture in unresolved substitution (`nullopt`) paths
      so canonical substituted-signature matching classifies more valid code.
    - Keep function-parameter adjustment rules centralized in shared substitution

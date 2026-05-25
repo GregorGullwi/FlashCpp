@@ -9944,36 +9944,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			SourceMemberIdentityMaps nested_source_member_identity_maps;
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
-				ASTNode instantiated_stub = source_member.function_declaration;
-				if (source_member.function_declaration.is<ConstructorDeclarationNode>()) {
-					const ConstructorDeclarationNode& source_ctor =
-						source_member.function_declaration.as<ConstructorDeclarationNode>();
-					size_t struct_info_ctor_match_count = 0;
-					ASTNode struct_info_ctor_stub;
-					for (const auto& info_func : nested_struct_info->member_functions) {
-						if (!info_func.is_constructor ||
-							!info_func.function_decl.is<ConstructorDeclarationNode>()) {
-							continue;
-						}
-						const ConstructorDeclarationNode& info_ctor =
-							info_func.function_decl.as<ConstructorDeclarationNode>();
-						if (!constructorDeclarationsHaveEquivalentInstantiatedSignature(
-								info_ctor,
-								source_ctor)) {
-							continue;
-						}
-						++struct_info_ctor_match_count;
-						struct_info_ctor_stub = info_func.function_decl;
-					}
-					if (struct_info_ctor_match_count == 1 &&
-						struct_info_ctor_stub.has_value()) {
-						instantiated_stub = struct_info_ctor_stub;
-					}
-				}
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,
 					source_member.function_declaration,
-					instantiated_stub);
+					source_member.function_declaration);
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {

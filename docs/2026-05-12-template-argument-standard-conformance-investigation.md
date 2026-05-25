@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (nested constructor-template replay attachment now routes through replay-first identity helpers with canonical substituted-signature matching)
+**Last updated:** 2026-05-25 (nested constructor source-member preselection now uses direct source-member identity registration, removing signature-scan-first stub selection)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -132,6 +132,10 @@ Future work can rely on these being in place:
   `findOutOfLineConstructorTemplateStubByIdentity` helper** (constructor-node
   and function-node definitions), so selection remains source-member-identity
   centered and canonical-substitution based.
+- **nested constructor source-member preselection in
+  `nested_source_member_identity_maps` no longer uses signature-equivalence
+  scan against `nested_struct_info->member_functions`**: registration now uses
+  direct source-member identity mapping for constructors and non-constructors.
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
@@ -177,10 +181,7 @@ Rule for this work:
   documented.
 - next slices:
   - remove the remaining constructor/non-static declaration replay scans still
-    not keyed by source-member identity (next: nested constructor stub
-    preselection in `nested_source_member_identity_maps` still uses
-    signature-scan-first matching against `nested_struct_info`); then improve
-    replay metadata capture
+    not keyed by source-member identity; then improve replay metadata capture
     for unresolved substitution (`nullopt`) outcomes so canonical
     substituted-signature classification can succeed in more valid cases.
 
