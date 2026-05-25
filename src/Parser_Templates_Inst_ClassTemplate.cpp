@@ -500,6 +500,45 @@ static bool constructorDeclarationsHaveEquivalentInstantiatedSignature(
 	return true;
 }
 
+template <typename EligibleFn>
+static OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
+	StructTypeInfo& struct_info,
+	const ConstructorDeclarationNode& ctor_decl,
+	EligibleFn&& is_candidate_eligible) {
+	OutOfLineConstructorStubResolution resolution;
+	for (auto& info_func : struct_info.member_functions) {
+		if (!info_func.is_constructor ||
+			!info_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+
+		auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
+		if (!is_candidate_eligible(info_ctor) ||
+			!constructorDeclarationsHaveEquivalentInstantiatedSignature(
+				info_ctor,
+				ctor_decl)) {
+			continue;
+		}
+
+		if (resolution.ctor != nullptr) {
+			resolution.ambiguous = true;
+			return resolution;
+		}
+		resolution.ctor = &info_ctor;
+	}
+	return resolution;
+}
+
+static void setOutOfLineConstructorTemplateReplayMetadata(
+	ConstructorDeclarationNode& ctor_decl,
+	const OutOfLineMemberFunction& out_of_line_member) {
+	ctor_decl.set_template_body_position(out_of_line_member.body_start);
+	if (out_of_line_member.has_initializer_list) {
+		ctor_decl.set_template_initializer_list_position(
+			out_of_line_member.initializer_list_start);
+	}
+}
+
 bool Parser::static_initializer_requires_replay_metadata(
 	const std::optional<ASTNode>& initializer,
 	std::span<const TemplateParameterNode> template_params_for_substitution) {
@@ -6774,41 +6813,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
-				ctor_decl.set_template_body_position(out_of_line_member.body_start);
-				if (out_of_line_member.has_initializer_list) {
-					ctor_decl.set_template_initializer_list_position(
-						out_of_line_member.initializer_list_start);
-				}
+				setOutOfLineConstructorTemplateReplayMetadata(
+					ctor_decl,
+					out_of_line_member);
 
 				if (StructTypeInfo* ctor_instantiated_struct_info = struct_type_info.getStructInfo();
 					ctor_instantiated_struct_info != nullptr) {
-					size_t info_ctor_match_count = 0;
-					ConstructorDeclarationNode* matched_info_ctor = nullptr;
-					for (auto& info_func : ctor_instantiated_struct_info->member_functions) {
-						if (!info_func.is_constructor ||
-							!info_func.function_decl.is<ConstructorDeclarationNode>()) {
-							continue;
-						}
-						auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
-						if (info_ctor.has_template_body_position()) {
-							continue;
-						}
-						if (!constructorDeclarationsHaveEquivalentInstantiatedSignature(
-								info_ctor,
-								ctor_decl)) {
-							continue;
-						}
-						++info_ctor_match_count;
-						matched_info_ctor = &info_ctor;
-					}
+					OutOfLineConstructorStubResolution info_ctor_resolution =
+						findMatchingConstructorInStructInfo(
+							*ctor_instantiated_struct_info,
+							ctor_decl,
+							[](const ConstructorDeclarationNode& info_ctor) {
+								return !info_ctor.has_template_body_position();
+							});
 
-					if (info_ctor_match_count == 1 && matched_info_ctor != nullptr) {
-						matched_info_ctor->set_template_body_position(out_of_line_member.body_start);
-						if (out_of_line_member.has_initializer_list) {
-							matched_info_ctor->set_template_initializer_list_position(
-								out_of_line_member.initializer_list_start);
-						}
-					} else if (info_ctor_match_count > 1) {
+					if (info_ctor_resolution.ctor != nullptr) {
+						setOutOfLineConstructorTemplateReplayMetadata(
+							*info_ctor_resolution.ctor,
+							out_of_line_member);
+					} else if (info_ctor_resolution.ambiguous) {
 						FLASH_LOG(
 							Templates,
 							Error,
@@ -10088,40 +10111,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
 					if (!ctor_decl.is_materialized() &&
 						!ctor_decl.has_template_body_position()) {
-						ctor_decl.set_template_body_position(out_of_line_member.body_start);
-						if (out_of_line_member.has_initializer_list) {
-							ctor_decl.set_template_initializer_list_position(
-								out_of_line_member.initializer_list_start);
-						}
+						setOutOfLineConstructorTemplateReplayMetadata(
+							ctor_decl,
+							out_of_line_member);
 					}
 
 					if (nested_struct_info != nullptr) {
-						size_t info_ctor_match_count = 0;
-						ConstructorDeclarationNode* matched_info_ctor = nullptr;
-						for (auto& info_func : nested_struct_info->member_functions) {
-							if (!info_func.is_constructor ||
-								!info_func.function_decl.is<ConstructorDeclarationNode>()) {
-								continue;
-							}
-							auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
-							if (info_ctor.has_template_body_position()) {
-								continue;
-							}
-							if (!constructorDeclarationsHaveEquivalentInstantiatedSignature(
-									info_ctor,
-									ctor_decl)) {
-								continue;
-							}
-							++info_ctor_match_count;
-							matched_info_ctor = &info_ctor;
-						}
-						if (info_ctor_match_count == 1 && matched_info_ctor != nullptr) {
-							matched_info_ctor->set_template_body_position(out_of_line_member.body_start);
-							if (out_of_line_member.has_initializer_list) {
-								matched_info_ctor->set_template_initializer_list_position(
-									out_of_line_member.initializer_list_start);
-							}
-						} else if (info_ctor_match_count > 1) {
+						OutOfLineConstructorStubResolution info_ctor_resolution =
+							findMatchingConstructorInStructInfo(
+								*nested_struct_info,
+								ctor_decl,
+								[](const ConstructorDeclarationNode& info_ctor) {
+									return !info_ctor.has_template_body_position();
+								});
+						if (info_ctor_resolution.ctor != nullptr) {
+							setOutOfLineConstructorTemplateReplayMetadata(
+								*info_ctor_resolution.ctor,
+								out_of_line_member);
+						} else if (info_ctor_resolution.ambiguous) {
 							FLASH_LOG(
 								Templates,
 								Error,
@@ -12108,40 +12115,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
-				ctor_decl.set_template_body_position(out_of_line_member.body_start);
-				if (out_of_line_member.has_initializer_list) {
-					ctor_decl.set_template_initializer_list_position(
-						out_of_line_member.initializer_list_start);
-				}
+				setOutOfLineConstructorTemplateReplayMetadata(
+					ctor_decl,
+					out_of_line_member);
 
 				if (struct_info_ptr != nullptr) {
-					size_t info_ctor_match_count = 0;
-					ConstructorDeclarationNode* matched_info_ctor = nullptr;
-					for (auto& info_func : struct_info_ptr->member_functions) {
-						if (!info_func.is_constructor ||
-							!info_func.function_decl.is<ConstructorDeclarationNode>()) {
-							continue;
-						}
-						auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
-						if (info_ctor.has_template_body_position()) {
-							continue;
-						}
-						if (!constructorDeclarationsHaveEquivalentInstantiatedSignature(
-								info_ctor,
-								ctor_decl)) {
-							continue;
-						}
-						++info_ctor_match_count;
-						matched_info_ctor = &info_ctor;
-					}
+					OutOfLineConstructorStubResolution info_ctor_resolution =
+						findMatchingConstructorInStructInfo(
+							*struct_info_ptr,
+							ctor_decl,
+							[](const ConstructorDeclarationNode& info_ctor) {
+								return !info_ctor.has_template_body_position();
+							});
 
-					if (info_ctor_match_count == 1 && matched_info_ctor != nullptr) {
-						matched_info_ctor->set_template_body_position(out_of_line_member.body_start);
-						if (out_of_line_member.has_initializer_list) {
-							matched_info_ctor->set_template_initializer_list_position(
-								out_of_line_member.initializer_list_start);
-						}
-					} else if (info_ctor_match_count > 1) {
+					if (info_ctor_resolution.ctor != nullptr) {
+						setOutOfLineConstructorTemplateReplayMetadata(
+							*info_ctor_resolution.ctor,
+							out_of_line_member);
+					} else if (info_ctor_resolution.ambiguous) {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Ambiguous StructTypeInfo constructor-template sync for out-of-line constructor template '")
 							.append(ool_func_name)
@@ -12563,27 +12554,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ctor.set_definition(substituted_body);
 					// Also update the StructTypeInfo's copy (used by codegen)
 					if (struct_type_info.struct_info_) {
-						size_t info_ctor_match_count = 0;
-						ConstructorDeclarationNode* matched_info_ctor = nullptr;
-						for (auto& info_func : struct_type_info.struct_info_->member_functions) {
-							if (!info_func.is_constructor ||
-								!info_func.function_decl.is<ConstructorDeclarationNode>()) {
-								continue;
-							}
-
-							auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
-							if (info_ctor.is_materialized()) {
-								continue;
-							}
-							if (!constructorDeclarationsHaveEquivalentInstantiatedSignature(info_ctor, ctor)) {
-								continue;
-							}
-							++info_ctor_match_count;
-							matched_info_ctor = &info_ctor;
-						}
-						if (info_ctor_match_count == 1 && matched_info_ctor != nullptr) {
-							matched_info_ctor->set_definition(substituted_body);
-						} else if (info_ctor_match_count > 1) {
+						OutOfLineConstructorStubResolution info_ctor_resolution =
+							findMatchingConstructorInStructInfo(
+								*struct_type_info.struct_info_,
+								ctor,
+								[](const ConstructorDeclarationNode& info_ctor) {
+									return !info_ctor.is_materialized();
+								});
+						if (info_ctor_resolution.ctor != nullptr) {
+							info_ctor_resolution.ctor->set_definition(substituted_body);
+						} else if (info_ctor_resolution.ambiguous) {
 							std::string error_msg = std::string(StringBuilder()
 								.append("Ambiguous StructTypeInfo constructor sync for out-of-line constructor '")
 								.append(decl.identifier_token().value())
