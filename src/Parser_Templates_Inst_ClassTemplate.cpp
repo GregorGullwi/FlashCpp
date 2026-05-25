@@ -12044,84 +12044,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 			if (out_of_line_ctor_stub) {
-				for (auto& mem_func : instantiated_struct_ref.member_functions()) {
-					if (!mem_func.function_declaration.is<ConstructorDeclarationNode>())
-						continue;
-					auto& ctor_decl =
-						mem_func.function_declaration.as<ConstructorDeclarationNode>();
-					const size_t out_of_line_template_param_count =
-						out_of_line_member.inner_template_params.size();
-					auto matches_out_of_line_ctor_template =
-						[&](const ConstructorDeclarationNode& candidate) -> bool {
-							if (candidate.has_template_body_position()) {
-								return false;
-							}
-							if (candidate.template_parameters().empty() ||
-								candidate.template_parameters().size() != out_of_line_template_param_count) {
-								return false;
-							}
-
-							return outOfLineConstructorTemplateMatchesCandidate(
-								*this,
-								candidate,
-								ool_func,
-								std::span<const TemplateParameterNode>(
-									out_of_line_member.template_params.data(),
-									out_of_line_member.template_params.size()),
-								std::span<const TemplateTypeArg>(
-									template_args_to_use.data(),
-									template_args_to_use.size()),
-								instantiated_name,
-								std::span<const TemplateParameterNode>(
-									candidate.template_parameters().data(),
-									candidate.template_parameters().size()),
-								std::span<const TemplateParameterNode>(
-									out_of_line_member.inner_template_params.data(),
-									out_of_line_member.inner_template_params.size()));
-						};
-					if (matches_out_of_line_ctor_template(ctor_decl)) {
-						ctor_decl.set_template_body_position(out_of_line_member.body_start);
-						if (out_of_line_member.has_initializer_list) {
-							ctor_decl.set_template_initializer_list_position(
-								out_of_line_member.initializer_list_start);
-						}
-						for (auto& info_func : struct_info_ptr->member_functions) {
-							if (!info_func.is_constructor ||
-								!info_func.function_decl.is<ConstructorDeclarationNode>()) {
-								continue;
-							}
-
-							auto& info_ctor =
-								info_func.function_decl.as<ConstructorDeclarationNode>();
-							if (info_ctor.name() != ctor_decl.name() ||
-								info_ctor.template_parameters().size() != ctor_decl.template_parameters().size()) {
-								continue;
-							}
-							if (!matches_out_of_line_ctor_template(info_ctor)) {
-								continue;
-							}
-
-							info_ctor.set_template_body_position(out_of_line_member.body_start);
-							if (out_of_line_member.has_initializer_list) {
-								info_ctor.set_template_initializer_list_position(
-									out_of_line_member.initializer_list_start);
-							}
-							break;
-						}
-						FLASH_LOG(
-							Templates,
-							Debug,
-							"Set deferred body position on out-of-line constructor template: ",
-							ool_func_name);
-						found = true;
-						break;
-					}
-				}
-				if (!found) {
+				OutOfLineConstructorStubResolution ctor_resolution =
+					findOutOfLineConstructorTemplateStubByIdentity(
+						*this,
+						source_member_identity_maps,
+						std::span<const StructMemberFunctionDecl>(
+							effective_member_functions.data(),
+							effective_member_functions.size()),
+						ool_func,
+						std::span<const TemplateParameterNode>(
+							out_of_line_member.template_params.data(),
+							out_of_line_member.template_params.size()),
+						std::span<const TemplateTypeArg>(
+							template_args_to_use.data(),
+							template_args_to_use.size()),
+						instantiated_name,
+						std::span<const TemplateParameterNode>(
+							out_of_line_member.inner_template_params.data(),
+							out_of_line_member.inner_template_params.size()));
+				if (ctor_resolution.ambiguous) {
 					std::string error_msg = std::string(StringBuilder()
-						.append("Could not attach out-of-line constructor template stub '")
+						.append("Ambiguous replay-first attachment for out-of-line constructor template '")
 						.append(ool_func_name)
-						.append("' for instantiated class '")
+						.append("' in instantiated class '")
 						.append(instantiated_name)
 						.append("'")
 						.commit());
@@ -12129,7 +12074,78 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						throw InternalError(error_msg);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
+					continue;
 				}
+
+				if (ctor_resolution.ctor == nullptr) {
+					std::string error_msg = std::string(StringBuilder()
+						.append("Could not attach out-of-line constructor template stub '")
+						.append(ool_func_name)
+						.append("' for instantiated class '")
+						.append(instantiated_name)
+						.append("' via replay identity map")
+						.commit());
+					if (force_eager) {
+						throw InternalError(error_msg);
+					}
+					FLASH_LOG(Templates, Error, error_msg);
+					continue;
+				}
+
+				ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
+				ctor_decl.set_template_body_position(out_of_line_member.body_start);
+				if (out_of_line_member.has_initializer_list) {
+					ctor_decl.set_template_initializer_list_position(
+						out_of_line_member.initializer_list_start);
+				}
+
+				if (struct_info_ptr != nullptr) {
+					size_t info_ctor_match_count = 0;
+					ConstructorDeclarationNode* matched_info_ctor = nullptr;
+					for (auto& info_func : struct_info_ptr->member_functions) {
+						if (!info_func.is_constructor ||
+							!info_func.function_decl.is<ConstructorDeclarationNode>()) {
+							continue;
+						}
+						auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
+						if (info_ctor.has_template_body_position()) {
+							continue;
+						}
+						if (!constructorDeclarationsHaveEquivalentInstantiatedSignature(
+								info_ctor,
+								ctor_decl)) {
+							continue;
+						}
+						++info_ctor_match_count;
+						matched_info_ctor = &info_ctor;
+					}
+
+					if (info_ctor_match_count == 1 && matched_info_ctor != nullptr) {
+						matched_info_ctor->set_template_body_position(out_of_line_member.body_start);
+						if (out_of_line_member.has_initializer_list) {
+							matched_info_ctor->set_template_initializer_list_position(
+								out_of_line_member.initializer_list_start);
+						}
+					} else if (info_ctor_match_count > 1) {
+						std::string error_msg = std::string(StringBuilder()
+							.append("Ambiguous StructTypeInfo constructor-template sync for out-of-line constructor template '")
+							.append(ool_func_name)
+							.append("' in instantiated class '")
+							.append(instantiated_name)
+							.append("'")
+							.commit());
+						if (force_eager) {
+							throw InternalError(error_msg);
+						}
+						FLASH_LOG(Templates, Error, error_msg);
+					}
+				}
+
+				FLASH_LOG(
+					Templates,
+					Debug,
+					"Set deferred body position on out-of-line constructor template: ",
+					ool_func_name);
 				continue;
 			}
 

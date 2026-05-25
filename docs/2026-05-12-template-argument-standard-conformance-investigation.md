@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (nested-class OOL constructor-template attachment now resolves replay-first via source-member→stub identity with overload-safe nested StructTypeInfo sync)
+**Last updated:** 2026-05-25 (primary-template nested OOL constructor-template attachment now resolves replay-first via source-member→stub identity with overload-safe StructTypeInfo sync)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -66,6 +66,11 @@ Future work can rely on these being in place:
   same-name overloads)**: nested replay disambiguates constructor-template
   targets through source-member identity and updates nested `StructTypeInfo`
   constructor-template metadata via signature-equivalent matching.
+- **primary-template nested out-of-line constructor-template attachment now also
+  uses replay-first source-member→instantiated-stub identity lookup (including
+  same-name overloads)**: nested constructor-template targets are now attached
+  through source-member identity with signature-equivalent `StructTypeInfo`
+  synchronization.
 - **declaration-only member stub substitution now strips only top-level
   by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
   so replay-first source-member signature matching and mangled identity remain
@@ -133,6 +138,7 @@ Latest focused regressions added on the current branch:
 - `test_template_ool_ctor_same_name_overload_ret0.cpp`
 - `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 
 ## Remaining work, in priority order
@@ -149,8 +155,9 @@ Rule for this work:
   documented.
 - next slices:
   - remove the remaining constructor/non-static declaration replay scans still
-    not keyed by source-member identity, starting with primary-template nested
-    out-of-line constructor-template attachment.
+    not keyed by source-member identity; then tighten constructor-template
+    signature matching to reduce shape-based fallback when substituted
+    signatures are unavailable.
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
 
@@ -182,7 +189,8 @@ Still open, but not the next best slice:
 1. remove remaining declaration replay scans in non-static template-member
    attachment paths, starting with constructor attachment/replay paths that
    still recover targets from instantiated members instead of source members
-   (next: primary-template nested out-of-line constructor-template attachment);
+   (next: tighten constructor-template matching to canonical substituted-signature
+   matching where shape fallback is still used);
    keep function-parameter adjustment rules centralized so replay/attachment
    compares canonical signatures across eager/lazy/declaration-only paths;
 2. update these docs with the next remaining replay-metadata gap.
@@ -196,8 +204,8 @@ Keep adding narrow regressions in these areas:
 - declaration/definition attachment where inner and outer template parameters
   interact;
 - remaining non-static declaration replay paths that still fall back to
-  partially substituted AST state, especially primary-template nested
-  constructor-template attachment paths.
+  partially substituted AST state, especially constructor-template attachment
+  paths that still require shape-based fallback disambiguation.
 
 ## Exit criteria
 
