@@ -1134,6 +1134,9 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 			if (fallback_type_index.category() == TypeCategory::Struct && fallback_type_index.is_valid()) {
 				return fallback_type_index;
 			}
+			if (sema_normalized_current_function_) {
+				return fallback_type_index;
+			}
 
 			if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
 				std::optional<ASTNode> symbol = symbol_table.lookup(identifier->name());
@@ -1170,6 +1173,9 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 		auto resolveExprIsReference = [&](const ExpressionNode& expr) -> bool {
 			if (static_expr_type.has_value() && static_expr_type->is_reference()) {
 				return true;
+			}
+			if (sema_normalized_current_function_) {
+				return false;
 			}
 			if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
 				std::optional<ASTNode> symbol = symbol_table.lookup(identifier->name());
