@@ -851,6 +851,7 @@ private:
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context);
+	static bool hasDependentTemplateArguments(const CallExprNode& call_expr, EvaluationContext& context);
 
 	static EvalResult evaluate_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	static EvalResult evaluate_resolved_function_call(

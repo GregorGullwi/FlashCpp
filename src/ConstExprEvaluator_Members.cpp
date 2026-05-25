@@ -1836,37 +1836,13 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 
 	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
-		auto has_dependent_template_arguments = [&]() -> bool {
-			if (!call_expr.has_template_arguments()) {
-				return false;
-			}
-			for (const ASTNode& template_arg_node : call_expr.template_arguments()) {
-				if (template_arg_node.is<TypeSpecifierNode>()) {
-					if (typeSpecStillUsesDependentPlaceholder(
-							template_arg_node.as<TypeSpecifierNode>())) {
-						return true;
-					}
-					continue;
-				}
-				if (!template_arg_node.is<ExpressionNode>()) {
-					continue;
-				}
-				EvalResult eval_template_arg = evaluate(template_arg_node, context);
-				if (!eval_template_arg.success() &&
-					eval_template_arg.error_type == EvalErrorType::TemplateDependentExpression) {
-					return true;
-				}
-			}
-			return false;
-		};
-
 		if (call_expr.has_template_arguments() && context.parser) {
 			auto var_result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 			if (var_result.success()) {
 				return var_result;
 			}
 		}
-		if (has_dependent_template_arguments()) {
+		if (hasDependentTemplateArguments(call_expr, context)) {
 			return EvalResult::error(
 				"Dependent function/variable template call in constant expression: " +
 					std::string(func_name),
