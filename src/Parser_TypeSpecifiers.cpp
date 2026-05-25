@@ -3016,15 +3016,19 @@ ParseResult Parser::parse_type_specifier() {
 		// Check if this is a registered struct type (considering current namespace context)
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 
-		// Before the global lookup, try struct-scoped typedef lookup.
-		// When multiple template specializations (e.g., char_traits<char> and char_traits<wchar_t>)
-		// each define a member typedef with the same simple name (e.g., char_type), both
-		// registrations insert into getTypesByNameMap() with the simple key.  getTypesByNameMap().emplace()
-		// won't overwrite, so only the FIRST specialization's entry survives under the simple key.
-		// This causes a wrong-type error (e.g., wchar_t body resolves char_type to char).
-		// Fix: prefer the struct-qualified name "StructName::type_name" when we are inside a
-		// member-function or struct-parsing context.
-		auto tryStructScopedTypeAlias = [&]() -> const TypeInfo* {
+		// Before the global lookup, try struct-scoped type lookup in the enclosing class.
+		// This covers both typedef/using aliases AND nested struct/union/class types.
+		// It is needed because:
+		//   1. Multiple template specializations (e.g., char_traits<char> and char_traits<wchar_t>)
+		//      each define a member typedef with the same simple name (e.g., char_type). The first
+		//      registration wins the unqualified key in getTypesByNameMap(); later specializations
+		//      must be looked up by the qualified key "StructName::type_name".
+		//   2. Nested struct/union/class types (e.g., a private `union _Arg { ... };`) are only
+		//      registered under the qualified name "StructName::_Arg" and are invisible to the
+		//      plain unqualified lookup performed by lookupTypeInCurrentContext.
+		// Fix: a single pass over both context stacks resolves the qualified name for both cases.
+		auto tryStructScopedType = [&]() -> const TypeInfo* {
+			// Accept any non-placeholder qualified entry (typedefs and nested struct/union/class).
 			auto tryName = [&](std::string_view struct_name) -> const TypeInfo* {
 				if (struct_name.empty())
 					return nullptr;
@@ -3035,8 +3039,7 @@ ParseResult Parser::parse_type_specifier() {
 				if (it == getTypesByNameMap().end())
 					return nullptr;
 				const TypeInfo* info = it->second;
-				// Only accept concrete typedef entries (non-struct, non-placeholder)
-				if (info->isStruct() || info->is_incomplete_instantiation_)
+				if (info->is_incomplete_instantiation_)
 					return nullptr;
 				return info;
 			};
@@ -3046,7 +3049,7 @@ ParseResult Parser::parse_type_specifier() {
 				std::string_view sname = StringTable::getStringView(it->struct_name);
 				if (const TypeInfo* found = tryName(sname))
 					return found;
-				// Also search base classes for inherited typedefs (e.g., Derived inherits from Base<T>)
+				// Also search base classes for inherited typedefs and nested types
 				if (it->local_struct_info && !it->local_struct_info->base_classes.empty()) {
 					const TypeInfo* inherited = lookup_inherited_type_alias(
 						it->struct_name, type_name_handle);
@@ -3059,7 +3062,7 @@ ParseResult Parser::parse_type_specifier() {
 				 it != struct_parsing_context_stack_.rend(); ++it) {
 				if (const TypeInfo* found = tryName(it->struct_name))
 					return found;
-				// Also search base classes for inherited typedefs
+				// Also search base classes for inherited typedefs and nested types
 				if (it->local_struct_info && !it->local_struct_info->base_classes.empty()) {
 					StringHandle struct_name_handle = it->local_struct_info->getName();
 					const TypeInfo* inherited = lookup_inherited_type_alias(
@@ -3071,7 +3074,7 @@ ParseResult Parser::parse_type_specifier() {
 			return nullptr;
 		};
 
-		const TypeInfo* struct_scoped = tryStructScopedTypeAlias();
+		const TypeInfo* struct_scoped = tryStructScopedType();
 		const TypeInfo* type_info_ctx = struct_scoped ? struct_scoped : lookupTypeInCurrentContext(type_name_handle);
 		if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)

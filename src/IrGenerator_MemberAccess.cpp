@@ -1310,7 +1310,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		}
 		return 64;
 	};
-
 	// OPERATOR-> OVERLOAD RESOLUTION
 	// If this is arrow access (obj->member), check if the object has operator->() overload
 	if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
