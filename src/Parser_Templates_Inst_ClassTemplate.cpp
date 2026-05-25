@@ -99,11 +99,11 @@ struct SourceMemberIdentityMaps {
 	std::unordered_map<uint64_t, ASTNode> by_location;
 };
 
-template <typename InstantiatedDeclNode>
+template <typename InstantiatedDeclNode, typename OutOfLineDeclNode>
 static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	Parser& parser,
 	const InstantiatedDeclNode& instantiated_decl,
-	const FunctionDeclarationNode& out_of_line_decl,
+	const OutOfLineDeclNode& out_of_line_decl,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle owner_type_name,
@@ -117,6 +117,15 @@ static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	StringHandle owner_type_name,
+	std::span<const TemplateParameterNode> candidate_inner_template_params,
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params);
+static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
+	Parser& parser,
+	const ConstructorDeclarationNode& candidate,
+	const ConstructorDeclarationNode& out_of_line_decl,
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name,
@@ -356,11 +365,12 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 	return resolution;
 }
 
+template <typename OutOfLineDeclNode>
 static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubByIdentity(
 	Parser& parser,
 	SourceMemberIdentityMaps& identity_maps,
 	std::span<const StructMemberFunctionDecl> source_members,
-	const FunctionDeclarationNode& out_of_line_decl,
+	const OutOfLineDeclNode& out_of_line_decl,
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name,
@@ -1198,11 +1208,11 @@ static bool dependentTemplatePlaceholderNamesMatch(
 		instantiated_param->is_variadic() == out_of_line_param->is_variadic();
 }
 
-template <typename InstantiatedDeclNode>
+template <typename InstantiatedDeclNode, typename OutOfLineDeclNode>
 static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	Parser& parser,
 	const InstantiatedDeclNode& instantiated_decl,
-	const FunctionDeclarationNode& out_of_line_decl,
+	const OutOfLineDeclNode& out_of_line_decl,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle owner_type_name,
@@ -1358,6 +1368,30 @@ static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const FunctionDeclarationNode& out_of_line_decl,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	StringHandle owner_type_name,
+	std::span<const TemplateParameterNode> candidate_inner_template_params,
+	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
+		return false;
+	}
+
+	return declarationsMatchAfterTemplateSubstitution(
+		parser,
+		candidate,
+		out_of_line_decl,
+		outer_template_params,
+		outer_template_args,
+		owner_type_name,
+		candidate_inner_template_params,
+		out_of_line_inner_template_params);
+}
+
+static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
+	Parser& parser,
+	const ConstructorDeclarationNode& candidate,
+	const ConstructorDeclarationNode& out_of_line_decl,
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name,
@@ -9947,41 +9981,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					out_of_line_member.function_node.is<ConstructorDeclarationNode>()) {
 					const ConstructorDeclarationNode& out_of_line_ctor_decl =
 						out_of_line_member.function_node.as<ConstructorDeclarationNode>();
-					InlineVector<ConstructorDeclarationNode*, 4> resolved_ctor_matches;
-					for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
-						if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
-							continue;
-						}
-						const ConstructorDeclarationNode& source_ctor_decl =
-							source_member.function_declaration.as<ConstructorDeclarationNode>();
-						if (!constructorDeclarationsHaveEquivalentInstantiatedSignature(
-								source_ctor_decl,
-								out_of_line_ctor_decl)) {
-							continue;
-						}
-						ASTNode* matched_stub = findSourceMemberStubByIdentity(
+					OutOfLineConstructorStubResolution ctor_resolution =
+						findOutOfLineConstructorTemplateStubByIdentity(
+							*this,
 							nested_source_member_identity_maps,
-							source_member.function_declaration);
-						if (matched_stub == nullptr ||
-							!matched_stub->is<ConstructorDeclarationNode>()) {
-							continue;
-						}
-						ConstructorDeclarationNode& matched_ctor =
-							matched_stub->as<ConstructorDeclarationNode>();
-						if (matched_ctor.has_template_body_position()) {
-							continue;
-						}
-						resolved_ctor_matches.push_back(&matched_ctor);
-					}
+							std::span<const StructMemberFunctionDecl>(
+								nested_source_member_functions.data(),
+								nested_source_member_functions.size()),
+							out_of_line_ctor_decl,
+							std::span<const TemplateParameterNode>(
+								template_params.data(),
+								template_params.size()),
+							std::span<const TemplateTypeArg>(
+								template_args_to_use.data(),
+								template_args_to_use.size()),
+							qualified_name,
+							std::span<const TemplateParameterNode>(
+								out_of_line_member.inner_template_params.data(),
+								out_of_line_member.inner_template_params.size()));
 
-					if (resolved_ctor_matches.size() == 1) {
-						ConstructorDeclarationNode& ctor_decl = *resolved_ctor_matches.front();
-						ctor_decl.set_template_body_position(out_of_line_member.body_start);
-						if (out_of_line_member.has_initializer_list) {
-							ctor_decl.set_template_initializer_list_position(
-								out_of_line_member.initializer_list_start);
-						}
-					} else if (resolved_ctor_matches.size() > 1) {
+					if (ctor_resolution.ambiguous) {
 						FLASH_LOG(
 							Templates,
 							Error,
@@ -9990,6 +10009,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							"' in instantiated class '",
 							StringTable::getStringView(qualified_name),
 							"'");
+					} else if (ctor_resolution.ctor != nullptr) {
+						ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
+						setOutOfLineConstructorTemplateReplayMetadata(
+							ctor_decl,
+							out_of_line_member);
+					} else {
+						FLASH_LOG(
+							Templates,
+							Error,
+							"Could not attach nested out-of-line constructor template '",
+							out_of_line_ctor_decl.name(),
+							"' for instantiated class '",
+							StringTable::getStringView(qualified_name),
+							"' via replay identity map");
 					}
 					continue;
 				}

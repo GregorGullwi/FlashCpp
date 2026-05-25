@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (constructor replay attachment now requires canonical substituted-signature evidence; single-candidate `nullopt` fallback removed)
+**Last updated:** 2026-05-25 (nested constructor-template replay attachment now routes through replay-first identity helpers with canonical substituted-signature matching)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -130,9 +130,14 @@ Useful assumptions before changing this area:
   has been replaced with a `nestedOutOfLineMemberTemplateMatchesCandidate`-gated
   match (using the `same_name_count > 1` strictness gate). The loop now also
   breaks after the first successful attachment and logs an error on no-match.
+- **nested constructor-template OOL attachment path that previously used
+  local signature-scan-first matching now routes through the replay-first
+  `findOutOfLineConstructorTemplateStubByIdentity` helper** (constructor-node
+  and function-node definitions), so selection remains source-member-identity
+  centered and canonical-substitution based.
 
 Latest recorded full-suite validation:
-`2554` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
+`2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -157,6 +162,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
 - `test_template_ool_plain_ctor_nullopt_single_candidate_no_attach_fail.cpp`
 - `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_fail.cpp`
+- `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 - `test_template_nested_ool_member_template_overload_ret0.cpp`
 
@@ -174,6 +180,11 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
+  - nested constructor source-member preselection into
+    `nested_source_member_identity_maps` still uses signature-equivalence scan
+    against `nested_struct_info->member_functions`; this should be replaced with
+    source-member identity registration that does not depend on scan-first
+    constructor matching.
   - remaining constructor and non-constructor replay paths still produce
     unresolved substitution outcomes (`nullopt`) because required replay-visible
     metadata is not always captured early enough; these need metadata completion
@@ -205,6 +216,9 @@ they directly block items 1-2:
 1. **Remove the next remaining declaration replay scans outside static-member initializers**
    - Remove remaining declaration replay scans that still recover targets from
      partially substituted instantiated members instead of source-member identity.
+   - Start with nested constructor source-member preselection into
+     `nested_source_member_identity_maps`, replacing signature-scan-first stub
+     selection with source-member identity registration.
    - Improve replay metadata capture in unresolved substitution (`nullopt`) paths
      so canonical substituted-signature matching classifies more valid code.
    - Keep function-parameter adjustment rules centralized in shared substitution

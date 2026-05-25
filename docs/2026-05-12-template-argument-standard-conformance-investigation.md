@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (constructor replay attachment now requires canonical substituted-signature evidence; single-candidate `nullopt` fallback removed)
+**Last updated:** 2026-05-25 (nested constructor-template replay attachment now routes through replay-first identity helpers with canonical substituted-signature matching)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -127,9 +127,14 @@ Future work can rely on these being in place:
   types; replaced with a `nestedOutOfLineMemberTemplateMatchesCandidate`-gated
   match (using the established `same_name_count > 1` strictness gate), with a
   `break` after the first successful attachment and error logging on no-match.
+- **nested constructor-template OOL attachment path that previously used
+  local signature-scan-first matching now routes through the replay-first
+  `findOutOfLineConstructorTemplateStubByIdentity` helper** (constructor-node
+  and function-node definitions), so selection remains source-member-identity
+  centered and canonical-substitution based.
 
 Latest recorded full-suite validation:
-`2554` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
+`2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -154,6 +159,7 @@ Latest focused regressions added on the current branch:
 - `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
 - `test_template_ool_plain_ctor_nullopt_single_candidate_no_attach_fail.cpp`
 - `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_fail.cpp`
+- `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 - `test_template_nested_ool_member_template_overload_ret0.cpp`
 
@@ -171,7 +177,10 @@ Rule for this work:
   documented.
 - next slices:
   - remove the remaining constructor/non-static declaration replay scans still
-    not keyed by source-member identity; then improve replay metadata capture
+    not keyed by source-member identity (next: nested constructor stub
+    preselection in `nested_source_member_identity_maps` still uses
+    signature-scan-first matching against `nested_struct_info`); then improve
+    replay metadata capture
     for unresolved substitution (`nullopt`) outcomes so canonical
     substituted-signature classification can succeed in more valid cases.
 
