@@ -415,9 +415,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	const auto& decl_node = callExprNode.callee().declaration();
 	StringHandle func_name = decl_node.identifier_token().handle();
 	std::string_view func_name_view = func_name.view();
-	std::string_view lookup_name_view = callExprNode.has_qualified_name()
-											? callExprNode.qualified_name()
-											: func_name_view;
 	const bool has_synthesized_template_suffix =
 		func_name_view.find('$') != std::string_view::npos;
 	auto sema_services = sema_.parserSemanticServices();
@@ -1108,138 +1105,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.
-	// Any remaining codegen recovery below is strictly for non-normalized bodies or
-	// calls where sema recorded an explicit compatibility reason.
-	if (!matched_func_decl && allow_lookup_recovery) {
-		// Look up the function in the global symbol table to get all overloads
-		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
-		auto scoped_overloads = global_symbol_table_
-									? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
-									: symbol_table.lookup_all(decl_node.identifier_token().value());
-
-		// Find the matching overload by comparing the DeclarationNode address
-		// This works because the call expression holds a reference to the specific
-		// DeclarationNode that was selected by overload resolution
-		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}",
-						 lookup_name_view, scoped_overloads.size());
-		for (const auto& overload : scoped_overloads) {
-			const FunctionDeclarationNode* overload_func_decl = nullptr;
-			if (overload.is<FunctionDeclarationNode>()) {
-				overload_func_decl = &overload.as<FunctionDeclarationNode>();
-			} else if (overload.is<TemplateFunctionDeclarationNode>()) {
-				overload_func_decl = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
-			}
-
-			if (overload_func_decl) {
-				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
-				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}",
-								 (void*)overload_decl, (void*)&decl_node);
-				if (overload_decl == &decl_node ||
-					(has_precomputed_mangled && overload_func_decl->has_mangled_name() &&
-					 overload_func_decl->mangled_name() == callExprNode.mangled_name())) {
-						// Found the matching overload
-					matched_func_decl = overload_func_decl;
-					resolveMangledName(matched_func_decl);
-					FLASH_LOG_FORMAT(Codegen, Debug, "Matched overload, function_name: {}", function_name);
-					break;
-				}
-			}
-		}
-
-		// For instantiated template calls, the concrete specialization is registered under its
-		// mangled name in the symbol table. Prefer that over falling back to the template pattern.
-		if (!matched_func_decl && has_precomputed_mangled) {
-			auto mangled_symbol = lookupSymbol(callExprNode.mangled_name());
-			if (mangled_symbol.has_value()) {
-				if (mangled_symbol->is<FunctionDeclarationNode>()) {
-					matched_func_decl = &mangled_symbol->as<FunctionDeclarationNode>();
-					resolveMangledName(matched_func_decl);
-					FLASH_LOG_FORMAT(Codegen, Debug, "Matched function by mangled symbol lookup: {}", function_name);
-				} else if (mangled_symbol->is<TemplateFunctionDeclarationNode>()) {
-					matched_func_decl = &mangled_symbol->as<TemplateFunctionDeclarationNode>().function_decl_node();
-					resolveMangledName(matched_func_decl);
-					FLASH_LOG_FORMAT(Codegen, Debug, "Matched template function by mangled symbol lookup: {}", function_name);
-				}
-			}
-		}
-
-		// Remap stale pattern-owner manglings when an unqualified member call is being lowered
-		// inside an instantiated template class body.
-		if (!matched_func_decl && has_precomputed_mangled && current_struct_name_.isValid() &&
-			!callExprNode.has_qualified_name()) {
-			if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
-				matched_func_decl = instantiated_member;
-				has_precomputed_mangled = false;
-				resolveMangledName(matched_func_decl, current_struct_name_);
-				FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
-			}
-		}
-
-		// Audit 2026-04-27: the prior `scoped_overloads` and `gSymbolTable_overloads`
-		// single-overload codegen recovery branches here were probed across the
-		// full 2239-test corpus with hard-fail guards and never hit. Sema's
-		// resolved direct-call target plus the precomputed-mangled path above
-		// already cover these cases.
-
-		// Invariant (audit 2026-04-27): the resolved-target paths above already
-		// populate `matched_func_decl` for precomputed-mangled call sites
-		// (including consteval enforcement, C++20 [dcl.consteval]). The earlier
-		// `gSymbolTable` and `gSymbolTable_overloads` defensive scans, the
-		// "current-struct + base-class member by name" recovery, and the
-		// "qualified static member by struct iteration" recovery were all
-		// removed after probing showed zero hits.
-
-		// Legacy direct-call recovery remains only for bodies sema never normalized
-		// or calls where sema recorded an explicit compatibility reason.
-		// Handle dependent qualified function names: Base$dependentHash::member
-		// These occur when a template body contains Base<T>::member() and T is substituted
-		// but the hash was computed with the dependent type, not the concrete type.
-		size_t scope_pos = lookup_name_view.find("::");
-		std::string_view base_template_name;
-		if (scope_pos != std::string_view::npos) {
-			base_template_name = extractBaseTemplateName(lookup_name_view.substr(0, scope_pos));
-		}
-		if (!matched_func_decl && !base_template_name.empty() && scope_pos != std::string_view::npos) {
-			std::string_view member_name = lookup_name_view.substr(scope_pos + 2);
-
-			FLASH_LOG_FORMAT(Codegen, Debug, "Resolving dependent qualified call: base_template='{}', member='{}'", base_template_name, member_name);
-
-			// Search current struct's base classes for a matching template instantiation
-			if (current_struct_name_.isValid()) {
-				auto type_it = getTypesByNameMap().find(current_struct_name_);
-				if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
-					const StructTypeInfo* curr_struct = type_it->second->getStructInfo();
-					if (curr_struct) {
-						for (const auto& base_spec : curr_struct->base_classes) {
-							if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
-								if (base_type_info->isTemplateInstantiation() &&
-									StringTable::getStringView(base_type_info->baseTemplateName()) == base_template_name &&
-									base_type_info->isStruct()) {
-									const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-									if (base_struct_info) {
-										for (const auto& member_func : base_struct_info->member_functions) {
-											if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-												const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-												std::string_view func_id = func_decl.decl_node().identifier_token().value();
-												if (func_id == member_name) {
-													matched_func_decl = &func_decl;
-													resolveMangledName(matched_func_decl, base_struct_info->getName());
-													break;
-												}
-											}
-										}
-										if (matched_func_decl)
-											break;
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-
-	}
+	// `allow_lookup_recovery` now survives only as the compatibility boundary for
+	// residual sema fallback reasons and non-normalized bodies; the actual codegen-side
+	// direct-call lookup/recovery work that used to live below has been removed.
+	// Audit 2026-04-27 and follow-up slices through 2026-05-25:
+	// the old declaration-address overload rescan, mangled-symbol retry,
+	// dependent qualified remaps, and stale pattern-owner remaps have all
+	// been removed. Resolved direct-call targets now come from parser/sema,
+	// and fallback reasons only preserve the compatibility boundary while the
+	// remaining sema-side gaps are burned down.
 
 	if (!matched_func_decl &&
 		sema_normalized_current_function_ &&

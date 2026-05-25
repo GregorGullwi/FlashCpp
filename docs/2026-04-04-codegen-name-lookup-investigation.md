@@ -62,9 +62,9 @@ Stop `IrGenerator_Call_Direct.cpp` from rescanning symbol tables and member hier
 
 - The sema-owned resolved-direct-call table and query surface already exist.
 - Direct-call lowering already consumes the sema-owned target first.
-- The remaining large direct-call recovery block in `IrGenerator_Call_Direct.cpp` is now explicitly gated behind `allow_lookup_recovery`, so sema-normalized bodies no longer enter that codegen-side recovery path unless sema recorded a specific compatibility reason.
+- `IrGenerator_Call_Direct.cpp` no longer contains a real direct-call lookup-recovery block for resolved calls; the old compatibility scans/remaps have been removed, and the remaining `allow_lookup_recovery` path only preserves the sema-recorded compatibility boundary around unresolved call sites.
 - The prior coarse `unresolved_call_args_` escape hatch has been replaced with explicit sema-recorded direct-call fallback reasons, which is the intended intermediate step before deleting the remaining compatibility cases entirely.
-- Qualified-owner member lookup, global qualified-static-member scanning, and template-type-parameter-qualified static-call recovery have now been removed from the codegen fallback block because sema's existing owner/member recovery already resolves those call shapes.
+- Qualified-owner member lookup, global qualified-static-member scanning, template-type-parameter-qualified static-call recovery, dependent base-template qualified-call remap, stale precomputed pattern-owner remap, declaration-address overload rescans, and mangled-symbol retry lookup have now been removed from direct-call lowering because sema's existing owner/member recovery and sema-owned direct-call targets already resolve those call shapes.
 - Work still left in this phase: burn down the remaining reason-coded compatibility cases one by one, then delete the residual non-normalized recovery path and make normalized direct-call misses unconditional invariants.
 
 **Done when**
