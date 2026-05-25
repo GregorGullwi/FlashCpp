@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (nested constructor source-member preselection now uses direct source-member identity registration, removing signature-scan-first stub selection)
+**Last updated:** 2026-05-25 (nested constructor preselection/sync now prefer source-member or direct node identity; dependent placeholder signature detection widened for replay matching)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -139,6 +139,14 @@ Useful assumptions before changing this area:
   `nested_source_member_identity_maps` no longer uses signature-equivalence
   scan against `nested_struct_info->member_functions`**: registration now uses
   direct source-member identity mapping for constructors and non-constructors.
+- **constructor synchronization into `StructTypeInfo` now first checks direct
+  constructor-node identity before signature-equivalence scan**, reducing
+  dependence on scan-only matching when replay attachment already resolved a
+  concrete constructor node.
+- **replay signature placeholder detection now uses
+  `typeSpecStillUsesDependentPlaceholder(...)`** (instead of only direct
+  `TypeInfo::isDependentPlaceholder()`), improving dependent signature
+  classification coverage in canonical replay matching.
 
 Latest recorded full-suite validation:
 `2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.

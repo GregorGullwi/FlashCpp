@@ -463,6 +463,23 @@ static OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
 	const ConstructorDeclarationNode& ctor_decl,
 	EligibleFn&& is_candidate_eligible) {
 	OutOfLineConstructorStubResolution resolution;
+
+	// Prefer direct node identity when the StructTypeInfo stores the same
+	// constructor node instance as the replay-attached declaration.
+	for (auto& info_func : struct_info.member_functions) {
+		if (!info_func.is_constructor ||
+			!info_func.function_decl.is<ConstructorDeclarationNode>()) {
+			continue;
+		}
+		auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
+		if (&info_ctor == &ctor_decl) {
+			if (is_candidate_eligible(info_ctor)) {
+				resolution.ctor = &info_ctor;
+			}
+			return resolution;
+		}
+	}
+
 	for (auto& info_func : struct_info.member_functions) {
 		if (!info_func.is_constructor ||
 			!info_func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -1082,14 +1099,7 @@ static bool typeSpecifierLooksLikeDependentSignaturePlaceholder(
 	if (type_spec.type() == TypeCategory::Template) {
 		return true;
 	}
-	if (!type_spec.type_index().is_valid()) {
-		return false;
-	}
-	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-		type_info != nullptr && type_info->isDependentPlaceholder()) {
-		return true;
-	}
-	return false;
+	return typeSpecStillUsesDependentPlaceholder(type_spec);
 }
 
 static bool typeSpecifiersMatchForSignatureValidation(
