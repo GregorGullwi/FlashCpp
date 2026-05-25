@@ -4628,6 +4628,13 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		return EvalResult::error("No template arguments for variable template");
 	}
 
+	std::vector<StringHandle> template_param_name_handles;
+	template_param_name_handles.reserve(context.template_param_names.size());
+	for (std::string_view param_name : context.template_param_names) {
+		template_param_name_handles.push_back(
+			StringTable::getOrInternStringHandle(param_name));
+	}
+
 	std::vector<TemplateTypeArg> template_args;
 	auto tryResolveDependentTemplateArgument = [&](const TemplateTypeArg& dependent_arg) -> std::optional<TemplateTypeArg> {
 		if (!dependent_arg.is_dependent &&
@@ -4679,10 +4686,12 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 			}
 		}
 
-		for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
-			std::string_view param_name = context.template_param_names[i];
-			StringHandle param_handle = StringTable::getOrInternStringHandle(param_name);
-			if (dependent_arg.dependent_name.isValid() && param_handle == dependent_arg.dependent_name) {
+		if (!dependent_arg.dependent_name.isValid()) {
+			return std::nullopt;
+		}
+
+		for (size_t i = 0; i < template_param_name_handles.size() && i < context.template_args.size(); ++i) {
+			if (template_param_name_handles[i] == dependent_arg.dependent_name) {
 				return rebindDependentTemplateTypeArg(context.template_args[i], dependent_arg);
 			}
 		}

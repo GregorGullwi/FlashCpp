@@ -515,6 +515,26 @@ static std::string buildDeferredStaticAssertInstantiationError(
 	return error_msg;
 }
 
+template <typename NameSubstitutionMap>
+static void populateDeferredStaticAssertEvalTemplateBindings(
+	ConstExpr::EvaluationContext& eval_ctx,
+	const TemplateEnvironment& template_environment,
+	std::span<const std::string_view> template_param_order,
+	const NameSubstitutionMap& name_substitution_map) {
+	eval_ctx.template_environment = template_environment;
+	eval_ctx.template_param_names.assign(
+		template_param_order.begin(),
+		template_param_order.end());
+	eval_ctx.template_args.clear();
+	eval_ctx.template_args.reserve(template_param_order.size());
+	for (std::string_view param_name : template_param_order) {
+		auto arg_it = name_substitution_map.find(param_name);
+		if (arg_it != name_substitution_map.end()) {
+			eval_ctx.template_args.push_back(arg_it->second);
+		}
+	}
+}
+
 // Collect pack bindings referenced by a deferred base specifier and verify that
 // every participating pack expands to the same number of elements.
 static DeferredBasePackExpansionBindingInfo collectDeferredBasePackExpansionBindings(
@@ -6617,18 +6637,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Evaluate the substituted expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 				eval_ctx.struct_node = &instantiated_struct_ref;
-				eval_ctx.template_environment =
-					buildTemplateEnvironment(template_params, template_args_for_pattern, nullptr);
-				eval_ctx.template_param_names.assign(
-					sub_map.param_order.begin(),
-					sub_map.param_order.end());
-				eval_ctx.template_args.reserve(sub_map.param_order.size());
-				for (std::string_view param_name : sub_map.param_order) {
-					auto arg_it = sub_map.param_map.find(param_name);
-					if (arg_it != sub_map.param_map.end()) {
-						eval_ctx.template_args.push_back(arg_it->second);
-					}
-				}
+				populateDeferredStaticAssertEvalTemplateBindings(
+					eval_ctx,
+					buildTemplateEnvironment(template_params, template_args_for_pattern, nullptr),
+					sub_map.param_order,
+					sub_map.param_map);
 
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
 
@@ -12901,18 +12914,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Evaluate the substituted expression
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		eval_ctx.struct_node = &instantiated_struct.as<StructDeclarationNode>();
-		eval_ctx.template_environment =
-			buildTemplateEnvironment(template_params, template_args_to_use, nullptr);
-		eval_ctx.template_param_names.assign(
-			template_param_order.begin(),
-			template_param_order.end());
-		eval_ctx.template_args.reserve(template_param_order.size());
-		for (std::string_view param_name : template_param_order) {
-			auto arg_it = name_substitution_map.find(param_name);
-			if (arg_it != name_substitution_map.end()) {
-				eval_ctx.template_args.push_back(arg_it->second);
-			}
-		}
+		populateDeferredStaticAssertEvalTemplateBindings(
+			eval_ctx,
+			buildTemplateEnvironment(template_params, template_args_to_use, nullptr),
+			template_param_order,
+			name_substitution_map);
 
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
 
