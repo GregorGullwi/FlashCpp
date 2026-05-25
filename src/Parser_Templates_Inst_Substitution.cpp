@@ -999,7 +999,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeDeferredAlias
 				[&](const TemplateParameterNode& outer_param) {
 					effective_param_names.push_back(outer_param.nameHandle());
 				})) {
-			return std::nullopt;
+			// Outer binding has a stale/unresolvable parameter node.
+			// Fall back to ignoring the outer binding and use only the alias's own parameters.
+			// This handles cases like std::bool_constant<false> used as a base class outside
+			// the template context where the alias was originally parsed.
+			effective_template_parameters.clear();
+			effective_param_names.clear();
+			effective_template_args.clear();
+			outer_binding = nullptr;
 		}
 		for (const TemplateParameterNode& alias_param : alias_node.template_parameters()) {
 			effective_template_parameters.push_back(alias_param);

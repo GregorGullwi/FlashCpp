@@ -862,6 +862,16 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		if (consume(";"_tok)) {
 			// Return the function declaration node (needed for templates)
 			if (auto func_node = function_definition_result.node()) {
+				// Pre-compute and store the mangled name for declaration-only functions.
+				// Functions with bodies get their mangled name set by finalize_function_after_definition,
+				// but declaration-only functions need this done here so that codegen can look up
+				// has_mangled_name() and find the correct namespace-qualified name.
+				if (func_node->is<FunctionDeclarationNode>()) {
+					FunctionDeclarationNode& func_decl = func_node->as<FunctionDeclarationNode>();
+					if (!func_decl.has_template_body_position() && !func_decl.has_template_declaration_position()) {
+						compute_and_set_mangled_name(func_decl);
+					}
+				}
 				return saved_position.success(*func_node);
 			}
 			return saved_position.success();

@@ -1008,7 +1008,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (is_current_struct_or_unowned) {
 			matched_func_decl = resolved_target;
 			has_precomputed_mangled = false;
-			resolveMangledName(matched_func_decl, StringTable::getOrInternStringHandle(parent));
+			// For free functions (empty parent), pass StringHandle{} so resolveMangledName uses the
+			// function's own namespace_handle directly. Passing getOrInternStringHandle("") would
+			// give a valid-but-empty StringHandle, causing resolveOwnerManglingInfoForMangling to
+			// return GLOBAL_NAMESPACE and lose the declaration-site namespace.
+			resolveMangledName(matched_func_decl, parent.empty() ? StringHandle{} : StringTable::getOrInternStringHandle(parent));
 			FLASH_LOG_FORMAT(Codegen, Debug, "Using {} direct call target for: {}", source_label, func_name_view);
 			return;
 		}
