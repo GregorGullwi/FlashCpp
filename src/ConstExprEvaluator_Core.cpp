@@ -4312,123 +4312,116 @@ EvalResult Evaluator::evaluate_lambda_call(
 
 // Evaluate compiler builtin functions at compile time
 EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context) {
-	// Handle __builtin_clzll - count leading zeros for long long
-	if (func_name == "__builtin_clzll") {
+	auto evaluateIntegralBuiltinArgument = [&](std::string_view builtin_name) -> std::optional<unsigned long long> {
 		if (arguments.size() != 1) {
-			return EvalResult::error("__builtin_clzll requires exactly 1 argument");
+			return std::nullopt;
+		}
+		auto arg_result = evaluate(arguments[0], context);
+		if (!arg_result.success()) {
+			return std::nullopt;
+		}
+		if (std::get_if<bool>(&arg_result.value) ||
+			std::get_if<long long>(&arg_result.value) ||
+			std::get_if<unsigned long long>(&arg_result.value)) {
+			return arg_result.as_uint_raw();
+		}
+		(void)builtin_name;
+		return std::nullopt;
+	};
+	auto integralBuiltinArgumentError = [&](std::string_view builtin_name) {
+		if (arguments.size() != 1) {
+			return EvalResult::error(std::string(builtin_name) + " requires exactly 1 argument");
 		}
 		auto arg_result = evaluate(arguments[0], context);
 		if (!arg_result.success()) {
 			return arg_result;
 		}
-		unsigned long long value;
-		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
-			value = *ull_val;
-		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
-			value = static_cast<unsigned long long>(*ll_val);
-		} else {
-			return EvalResult::error("__builtin_clzll argument must be an integer");
-		}
-
-		if (value == 0) {
-			// __builtin_clzll(0) is undefined behavior in GCC/Clang. We return the
-			// bit width (64 on typical systems) which matches what some implementations
-			// do, and is a reasonable choice for constexpr evaluation. This allows
-			// code that guards against zero to work correctly at compile time.
-			return EvalResult::from_int(static_cast<long long>(sizeof(long long) * 8));
-		}
-
-		// Count leading zeros
+		return EvalResult::error(std::string(builtin_name) + " argument must be an integer");
+	};
+	auto countLeadingZeros = [](unsigned long long value, int bit_width) {
 		int count = 0;
-		unsigned long long mask = 1ULL << (sizeof(long long) * 8 - 1);
-		while ((value & mask) == 0 && mask != 0) {
+		for (int bit = bit_width - 1; bit >= 0; --bit) {
+			if (((value >> bit) & 1ULL) != 0) {
+				break;
+			}
 			count++;
-			mask >>= 1;
 		}
-		return EvalResult::from_int(static_cast<long long>(count));
-	}
+		return count;
+	};
+	auto countTrailingZeros = [](unsigned long long value, int bit_width) {
+		int count = 0;
+		for (int bit = 0; bit < bit_width; ++bit) {
+			if (((value >> bit) & 1ULL) != 0) {
+				break;
+			}
+			count++;
+		}
+		return count;
+	};
+	auto countSetBits = [](unsigned long long value, int bit_width) {
+		int count = 0;
+		for (int bit = 0; bit < bit_width; ++bit) {
+			count += static_cast<int>((value >> bit) & 1ULL);
+		}
+		return count;
+	};
+	auto findFirstSet = [](unsigned long long value, int bit_width) {
+		for (int bit = 0; bit < bit_width; ++bit) {
+			if (((value >> bit) & 1ULL) != 0) {
+				return bit + 1;
+			}
+		}
+		return 0;
+	};
+	auto evaluateBitBuiltin = [&](std::string_view builtin_name, int bit_width, auto operation) {
+		std::optional<unsigned long long> value = evaluateIntegralBuiltinArgument(builtin_name);
+		if (!value.has_value()) {
+			return integralBuiltinArgumentError(builtin_name);
+		}
+		const unsigned long long mask =
+			bit_width == 64 ? ~0ULL : ((1ULL << bit_width) - 1ULL);
+		return EvalResult::from_int(static_cast<long long>(operation(*value & mask, bit_width)));
+	};
+	constexpr int int_bit_width = static_cast<int>(sizeof(int) * CHAR_BIT);
+	constexpr int long_bit_width = static_cast<int>(sizeof(long) * CHAR_BIT);
+	constexpr int long_long_bit_width = static_cast<int>(sizeof(long long) * CHAR_BIT);
 
-	// Handle __builtin_clz - count leading zeros for int
 	if (func_name == "__builtin_clz") {
-		if (arguments.size() != 1) {
-			return EvalResult::error("__builtin_clz requires exactly 1 argument");
-		}
-		auto arg_result = evaluate(arguments[0], context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		unsigned int value;
-		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
-			value = static_cast<unsigned int>(*ull_val);
-		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
-			value = static_cast<unsigned int>(*ll_val);
-		} else {
-			return EvalResult::error("__builtin_clz argument must be an integer");
-		}
-
-		if (value == 0) {
-			return EvalResult::from_int(static_cast<long long>(sizeof(int) * 8));
-		}
-
-		int count = 0;
-		unsigned int mask = 1U << (sizeof(int) * 8 - 1);
-		while ((value & mask) == 0 && mask != 0) {
-			count++;
-			mask >>= 1;
-		}
-		return EvalResult::from_int(static_cast<long long>(count));
+		return evaluateBitBuiltin(func_name, int_bit_width, countLeadingZeros);
 	}
-
-	// Handle __builtin_ctzll - count trailing zeros for long long
-	if (func_name == "__builtin_ctzll") {
-		if (arguments.size() != 1) {
-			return EvalResult::error("__builtin_ctzll requires exactly 1 argument");
-		}
-		auto arg_result = evaluate(arguments[0], context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		unsigned long long value;
-		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
-			value = *ull_val;
-		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
-			value = static_cast<unsigned long long>(*ll_val);
-		} else {
-			return EvalResult::error("__builtin_ctzll argument must be an integer");
-		}
-
-		if (value == 0) {
-			return EvalResult::from_int(static_cast<long long>(sizeof(long long) * 8));
-		}
-
-		int count = 0;
-		while ((value & 1) == 0) {
-			count++;
-			value >>= 1;
-		}
-		return EvalResult::from_int(static_cast<long long>(count));
+	if (func_name == "__builtin_clzl") {
+		return evaluateBitBuiltin(func_name, long_bit_width, countLeadingZeros);
 	}
-
-	// Handle __builtin_ctz - count trailing zeros for int
+	if (func_name == "__builtin_clzll") {
+		return evaluateBitBuiltin(func_name, long_long_bit_width, countLeadingZeros);
+	}
 	if (func_name == "__builtin_ctz") {
-		if (arguments.size() != 1) {
-			return EvalResult::error("__builtin_ctz requires exactly 1 argument");
-		}
-		auto arg_result = evaluate(arguments[0], context);
-		if (!arg_result.success()) {
-			return arg_result;
-		}
-		unsigned int value;
-		if (const auto* ull_val = std::get_if<unsigned long long>(&arg_result.value)) {
-			value = static_cast<unsigned int>(*ull_val);
-		} else if (const auto* ll_val = std::get_if<long long>(&arg_result.value)) {
-			value = static_cast<unsigned int>(*ll_val);
-		} else {
-			return EvalResult::error("__builtin_ctz argument must be an integer");
-		}
-
-		if (value == 0) {
-			return EvalResult::from_int(static_cast<long long>(sizeof(int) * 8));
+		return evaluateBitBuiltin(func_name, int_bit_width, countTrailingZeros);
+	}
+	if (func_name == "__builtin_ctzl") {
+		return evaluateBitBuiltin(func_name, long_bit_width, countTrailingZeros);
+	}
+	if (func_name == "__builtin_ctzll") {
+		return evaluateBitBuiltin(func_name, long_long_bit_width, countTrailingZeros);
+	}
+	if (func_name == "__builtin_popcount") {
+		return evaluateBitBuiltin(func_name, int_bit_width, countSetBits);
+	}
+	if (func_name == "__builtin_popcountl") {
+		return evaluateBitBuiltin(func_name, long_bit_width, countSetBits);
+	}
+	if (func_name == "__builtin_popcountll") {
+		return evaluateBitBuiltin(func_name, long_long_bit_width, countSetBits);
+	}
+	if (func_name == "__builtin_ffs") {
+		return evaluateBitBuiltin(func_name, int_bit_width, findFirstSet);
+	}
+	if (func_name == "__builtin_ffsl") {
+		return evaluateBitBuiltin(func_name, long_bit_width, findFirstSet);
+	}
+	if (func_name == "__builtin_ffsll") {
+		return evaluateBitBuiltin(func_name, long_long_bit_width, findFirstSet);
+	}
 		}
 
 		int count = 0;
