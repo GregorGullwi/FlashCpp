@@ -104,6 +104,35 @@ bool functionSignatureStillNeedsTemplateMaterialization(const FunctionDeclaratio
 	return false;
 }
 
+bool typeSpecHasRuntimeLoweringShape(const TypeSpecifierNode& type_spec) {
+	if (isPlaceholderAutoType(type_spec.type())) {
+		return false;
+	}
+	if (type_spec.pointer_depth() > 0 ||
+		type_spec.is_reference() ||
+		type_spec.is_rvalue_reference() ||
+		type_spec.is_function_pointer() ||
+		type_spec.has_function_signature()) {
+		return true;
+	}
+	return getTypeSpecSizeBits(type_spec) > 0;
+}
+
+bool functionSignatureCanLowerForCodegen(const FunctionDeclarationNode& func_decl) {
+	if (!typeSpecHasRuntimeLoweringShape(func_decl.decl_node().type_specifier_node())) {
+		return false;
+	}
+	for (const auto& param : func_decl.parameter_nodes()) {
+		if (!param.is<DeclarationNode>()) {
+			return false;
+		}
+		if (!typeSpecHasRuntimeLoweringShape(param.as<DeclarationNode>().type_specifier_node())) {
+			return false;
+		}
+	}
+	return true;
+}
+
 } // namespace
 
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
@@ -1400,10 +1429,12 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 					}
 					if (!fn_has_auto) {
 						if (functionSignatureStillNeedsTemplateMaterialization(fn)) {
-							FLASH_LOG(Codegen, Debug,
-									  "Skipping member function with still-dependent signature in struct '",
-									  struct_name, "': ", fn.decl_node().identifier_token().value());
-							continue;
+							if (!functionSignatureCanLowerForCodegen(fn)) {
+								FLASH_LOG(Codegen, Debug,
+										  "Skipping member function with still-dependent signature in struct '",
+										  struct_name, "': ", fn.decl_node().identifier_token().value());
+								continue;
+							}
 						}
 						if (!fn.is_materialized() && !fn.is_implicit() &&
 							current_struct_name_.isValid() && member_name.isValid() &&
