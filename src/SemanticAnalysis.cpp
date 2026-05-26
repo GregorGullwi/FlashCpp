@@ -7812,6 +7812,35 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	auto recordDirectCallFallbackReason = [&](DirectCallFallbackReason reason) {
 		direct_call_fallback_reasons_[call_key] = reason;
 	};
+	auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
+		if (!mangled_name.isValid()) {
+			return nullptr;
+		}
+		if (std::optional<ASTNode> mangled_symbol = symbols_.lookup(mangled_name);
+			mangled_symbol.has_value()) {
+			return getCallTargetFunctionCandidate(*mangled_symbol);
+		}
+		return nullptr;
+	};
+	struct QualifiedLookupTarget {
+		NamespaceHandle namespace_handle;
+		std::string_view identifier;
+	};
+	auto resolveQualifiedLookupTarget = [&](std::string_view qualified_name) -> std::optional<QualifiedLookupTarget> {
+		const size_t scope_sep = qualified_name.rfind("::");
+		if (scope_sep == std::string_view::npos) {
+			return std::nullopt;
+		}
+		const std::string_view scope_prefix = qualified_name.substr(0, scope_sep);
+		const NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(scope_prefix);
+		if (!ns_handle.isValid()) {
+			return std::nullopt;
+		}
+		return QualifiedLookupTarget{
+			ns_handle,
+			qualified_name.substr(scope_sep + 2)
+		};
+	};
 	if (call_info.is_indirect) {
 		return nullptr;
 	}
@@ -7848,13 +7877,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (func_decl)
 		return func_decl;
 
-	if (call_info.mangled_name.isValid()) {
-		if (std::optional<ASTNode> mangled_symbol = symbols_.lookup(call_info.mangled_name);
-			mangled_symbol.has_value()) {
-			if (const FunctionDeclarationNode* mangled_candidate = getCallTargetFunctionCandidate(*mangled_symbol)) {
-				return mangled_candidate;
-			}
-		}
+	if (const FunctionDeclarationNode* mangled_candidate =
+			lookupFunctionByMangledName(call_info.mangled_name)) {
+		return mangled_candidate;
 	}
 
 	if (!call_info.has_receiver &&
@@ -7887,40 +7912,31 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		call_info.definition_lookup_record->value().resolved_function != nullptr) {
 		return call_info.definition_lookup_record->value().resolved_function;
 	}
+	if (call_info.definition_lookup_record != nullptr &&
+		call_info.definition_lookup_record->has_value()) {
+		if (const FunctionDeclarationNode* definition_mangled_candidate =
+				lookupFunctionByMangledName(
+					call_info.definition_lookup_record->value().resolved_mangled_name)) {
+			return definition_mangled_candidate;
+		}
+	}
 
 	if (call_info.function_declaration)
 		return call_info.function_declaration;
 
 	const DeclarationNode& decl = *call_info.declaration;
-	if (call_info.mangled_name.isValid()) {
-		if (std::optional<ASTNode> mangled_symbol = symbols_.lookup(call_info.mangled_name);
-			mangled_symbol.has_value()) {
-			if (const FunctionDeclarationNode* mangled_candidate = getCallTargetFunctionCandidate(*mangled_symbol)) {
-				return mangled_candidate;
-			}
-		}
-	}
 
 	const std::string_view name = call_info.qualified_name.isValid()
 									  ? call_info.qualified_name.view()
 									  : decl.identifier_token().value();
 	std::vector<ASTNode> overloads;
 	if (call_info.qualified_name.isValid()) {
-		const std::string_view qualified_name = call_info.qualified_name.view();
-		const size_t scope_sep = qualified_name.rfind("::");
-		if (scope_sep != std::string_view::npos) {
-			const std::vector<std::string_view> namespace_views =
-				splitQualifiedNamespace(qualified_name.substr(0, scope_sep));
-			std::vector<StringType<>> namespaces;
-			namespaces.reserve(namespace_views.size());
-			for (std::string_view component : namespace_views) {
-				namespaces.emplace_back(component);
-			}
-			const NamespaceHandle ns_handle =
-				gSymbolTable.resolve_namespace_handle(namespaces, /*force_global=*/true);
-			if (ns_handle.isValid()) {
-				overloads = symbols_.lookup_qualified_all(ns_handle, qualified_name.substr(scope_sep + 2));
-			}
+		if (const std::optional<QualifiedLookupTarget> qualified_lookup =
+				resolveQualifiedLookupTarget(call_info.qualified_name.view());
+			qualified_lookup.has_value()) {
+			overloads = symbols_.lookup_qualified_all(
+				qualified_lookup->namespace_handle,
+				qualified_lookup->identifier);
 		}
 	}
 	if (overloads.empty()) {
