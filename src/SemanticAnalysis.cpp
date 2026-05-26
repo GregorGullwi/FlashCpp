@@ -33,8 +33,6 @@ const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason) {
 			return "receiver-member recovery";
 		case DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation:
 			return "dependent unqualified point-of-instantiation recovery";
-		case DirectCallFallbackReason::GlobalMangledLookupMiss:
-			return "global mangled lookup miss";
 		case DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss:
 			return "qualified or ordinary name lookup miss";
 		case DirectCallFallbackReason::StructMemberLookupMiss:
@@ -7884,6 +7882,12 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 
+	if (call_info.definition_lookup_record != nullptr &&
+		call_info.definition_lookup_record->has_value() &&
+		call_info.definition_lookup_record->value().resolved_function != nullptr) {
+		return call_info.definition_lookup_record->value().resolved_function;
+	}
+
 	if (call_info.function_declaration)
 		return call_info.function_declaration;
 
@@ -7895,7 +7899,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				return mangled_candidate;
 			}
 		}
-		recordDirectCallFallbackReason(DirectCallFallbackReason::GlobalMangledLookupMiss);
 	}
 
 	const std::string_view name = call_info.qualified_name.isValid()
