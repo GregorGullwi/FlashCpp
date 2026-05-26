@@ -4317,28 +4317,18 @@ EvalResult Evaluator::evaluate_lambda_call(
 
 // Evaluate compiler builtin functions at compile time
 EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context) {
-	auto evaluateIntegralBuiltinArgument = [&]() -> std::optional<unsigned long long> {
-		if (arguments.size() != 1) {
-			return std::nullopt;
-		}
-		auto arg_result = evaluate(arguments[0], context);
-		if (!arg_result.success()) {
-			return std::nullopt;
-		}
-		if (std::get_if<bool>(&arg_result.value) ||
-			std::get_if<long long>(&arg_result.value) ||
-			std::get_if<unsigned long long>(&arg_result.value)) {
-			return arg_result.as_uint_raw();
-		}
-		return std::nullopt;
-	};
-	auto integralBuiltinArgumentError = [&](std::string_view builtin_name) {
+	auto evaluateIntegralBuiltinArgument = [&](std::string_view builtin_name) -> std::variant<EvalResult, unsigned long long> {
 		if (arguments.size() != 1) {
 			return EvalResult::error(std::string(builtin_name) + " requires exactly 1 argument");
 		}
 		auto arg_result = evaluate(arguments[0], context);
 		if (!arg_result.success()) {
 			return arg_result;
+		}
+		if (std::get_if<bool>(&arg_result.value) ||
+			std::get_if<long long>(&arg_result.value) ||
+			std::get_if<unsigned long long>(&arg_result.value)) {
+			return arg_result.as_uint_raw();
 		}
 		return EvalResult::error(std::string(builtin_name) + " argument must be an integer");
 	};
@@ -4378,13 +4368,14 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 		return 0;
 	};
 	auto evaluateBitBuiltin = [&](std::string_view builtin_name, int bit_width, auto operation) {
-		std::optional<unsigned long long> value = evaluateIntegralBuiltinArgument();
-		if (!value.has_value()) {
-			return integralBuiltinArgumentError(builtin_name);
+		auto value_result = evaluateIntegralBuiltinArgument(builtin_name);
+		if (const auto* error_result = std::get_if<EvalResult>(&value_result)) {
+			return *error_result;
 		}
+		const unsigned long long value = std::get<unsigned long long>(value_result);
 		const unsigned long long mask =
-			bit_width == 64 ? ~0ULL : ((1ULL << bit_width) - 1ULL);
-		return EvalResult::from_int(static_cast<long long>(operation(*value & mask, bit_width)));
+			bit_width >= 64 ? ~0ULL : (~0ULL >> (64 - bit_width));
+		return EvalResult::from_int(static_cast<long long>(operation(value & mask, bit_width)));
 	};
 	constexpr int int_bit_width = static_cast<int>(sizeof(int) * CHAR_BIT);
 	constexpr int long_bit_width = static_cast<int>(sizeof(long) * CHAR_BIT);
