@@ -3285,9 +3285,19 @@ private:	 // Resume private methods
 	ParseResult parse_postfix_expression(ExpressionContext context);	 // Phase 3: New postfix operator layer
 	ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
 	std::optional<ASTNode> try_synthesize_atomic_builtin_overload(std::string_view builtin_name, std::span<const TypeSpecifierNode> arg_types, const Token& call_token);
+	void finalizePostfixCallExpression(
+		std::optional<ASTNode>& result,
+		const Token& paren_token,
+		ChunkedVector<ASTNode>&& args,
+		std::vector<TypeSpecifierNode>&& arg_types);
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
+	const FunctionDeclarationNode* tryResolveConcreteCallOperator(
+		const std::optional<ASTNode>& object_expr,
+		std::span<const TypeSpecifierNode> arg_types,
+		size_t argument_count,
+		bool all_arg_types_known);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
-															const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args, std::span<const TypeSpecifierNode> arg_types);
+		const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args, std::span<const TypeSpecifierNode> arg_types);
 	// Shared member-template call dispatch once the caller knows whether arguments were
 	// syntactically present and whether any of them stayed dependent while collecting types.
 	std::optional<ASTNode> tryInstantiateMemberFunctionTemplateCall(

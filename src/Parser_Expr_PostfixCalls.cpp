@@ -107,6 +107,205 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	return match;
 }
 
+const FunctionDeclarationNode* Parser::tryResolveConcreteCallOperator(
+	const std::optional<ASTNode>& object_expr,
+	std::span<const TypeSpecifierNode> arg_types,
+	size_t argument_count,
+	bool all_arg_types_known) {
+	if (!object_expr.has_value())
+		return nullptr;
+	auto type_opt = get_expression_type(*object_expr);
+	if (!type_opt.has_value())
+		return nullptr;
+	const auto& type_spec = *type_opt;
+	if (!is_struct_type(type_spec.category()))
+		return nullptr;
+	TypeIndex type_idx = type_spec.type_index();
+	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+	if (!type_info)
+		return nullptr;
+	if (type_info->is_incomplete_instantiation_) {
+		instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
+		type_info = findTypeByName(type_info->name());
+		if (!type_info || type_info->is_incomplete_instantiation_) {
+			return nullptr;
+		}
+	}
+
+	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	if (!struct_info)
+		return nullptr;
+
+	std::vector<ASTNode> call_candidates;
+	std::unordered_set<const StructTypeInfo*> visited;
+	auto collect_visible_call_operators = [&](const StructTypeInfo* current_struct, const auto& self) -> void {
+		if (!current_struct || !visited.insert(current_struct).second) {
+			return;
+		}
+
+		bool has_local_call_operator = false;
+		for (const auto& member_func : current_struct->member_functions) {
+			if (member_func.operator_kind != OverloadableOperator::Call ||
+				!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (candidate.failed_substitution()) {
+				continue;
+			}
+			has_local_call_operator = true;
+			call_candidates.push_back(member_func.function_decl);
+		}
+		if (has_local_call_operator) {
+			return;
+		}
+
+		for (const auto& base_spec : current_struct->base_classes) {
+			if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_spec.type_index)) {
+				self(base_struct, self);
+			}
+		}
+	};
+	collect_visible_call_operators(struct_info, collect_visible_call_operators);
+
+	if (call_candidates.empty()) {
+		return nullptr;
+	}
+
+	if (all_arg_types_known) {
+		const OverloadResolutionResult op_result = resolve_overload(call_candidates, arg_types);
+		if (op_result.has_match && !op_result.is_ambiguous && op_result.selected_overload != nullptr) {
+			return &op_result.selected_overload->as<FunctionDeclarationNode>();
+		}
+		if (op_result.is_ambiguous) {
+			return nullptr;
+		}
+	}
+
+	const FunctionDeclarationNode* same_arity_candidate = nullptr;
+	bool ambiguous_same_arity = false;
+	for (const ASTNode& candidate_node : call_candidates) {
+		const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
+		const size_t min_required = countMinRequiredArgs(candidate);
+		const size_t max_accepted = candidate.is_variadic()
+			? std::numeric_limits<size_t>::max()
+			: candidate.parameter_nodes().size();
+		if (argument_count < min_required || argument_count > max_accepted) {
+			continue;
+		}
+		if (same_arity_candidate != nullptr) {
+			ambiguous_same_arity = true;
+			break;
+		}
+		same_arity_candidate = &candidate;
+	}
+	if (same_arity_candidate != nullptr && !ambiguous_same_arity) {
+		return same_arity_candidate;
+	}
+	if (call_candidates.size() == 1) {
+		return &call_candidates.front().as<FunctionDeclarationNode>();
+	}
+
+	if (all_arg_types_known) {
+		if (std::optional<ASTNode> instantiated_operator = tryResolveMemberFunctionTemplate(
+				object_expr,
+				"operator()"sv,
+				std::nullopt,
+				arg_types);
+			instantiated_operator.has_value() &&
+			instantiated_operator->is<FunctionDeclarationNode>()) {
+			return &instantiated_operator->as<FunctionDeclarationNode>();
+		}
+	}
+
+	return nullptr;
+}
+
+void Parser::finalizePostfixCallExpression(
+	std::optional<ASTNode>& result,
+	const Token& paren_token,
+	ChunkedVector<ASTNode>&& args,
+	std::vector<TypeSpecifierNode>&& arg_types) {
+	if (result->is<ExpressionNode>()) {
+		const ExpressionNode& expr = result->as<ExpressionNode>();
+		if (std::holds_alternative<MemberAccessNode>(expr)) {
+			const auto& member_access = std::get<MemberAccessNode>(expr);
+			bool is_function_pointer_call = false;
+			if (!member_function_context_stack_.empty()) {
+				const auto& member_ctx = member_function_context_stack_.back();
+				if (const TypeInfo* struct_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
+					if (const StructTypeInfo* struct_info = struct_type_info->getStructInfo()) {
+						std::string_view member_name = member_access.member_name();
+						for (const auto& member : struct_info->members) {
+							if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
+								is_function_pointer_call = member.type_index.category() == TypeCategory::FunctionPointer;
+								break;
+							}
+						}
+					}
+				}
+			}
+
+			if (is_function_pointer_call) {
+				Token member_token = member_access.member_token();
+				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_token, CVQualifier::None);
+				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_token);
+				[[maybe_unused]] auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+				result = emplace_node<ExpressionNode>(
+					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), member_token));
+				return;
+			}
+		}
+
+		if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+			const auto& unary_op = std::get<UnaryOperatorNode>(expr);
+			if (unary_op.op() == "&" && unary_op.is_prefix()) {
+				const ASTNode& operand = unary_op.get_operand();
+				if (operand.is<ExpressionNode>()) {
+					const ExpressionNode& op_expr = operand.as<ExpressionNode>();
+					if (std::holds_alternative<IdentifierNode>(op_expr)) {
+						const auto& id = std::get<IdentifierNode>(op_expr);
+						auto sym = gSymbolTable.lookup(id.name());
+						if (sym.has_value() && sym->is<FunctionDeclarationNode>()) {
+							const auto& func_decl = sym->as<FunctionDeclarationNode>();
+							result = emplace_node<ExpressionNode>(
+								makeResolvedCallExpr(func_decl, std::move(args), paren_token));
+							if (func_decl.has_mangled_name()) {
+								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+							}
+							return;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	Token operator_token(
+		Token::Type::Identifier,
+		"operator()"sv,
+		paren_token.line(),
+		paren_token.column(),
+		paren_token.file_index());
+	const bool all_arg_types_known = arg_types.size() == args.size();
+	const FunctionDeclarationNode* func_ref = tryResolveConcreteCallOperator(
+		result,
+		arg_types,
+		args.size(),
+		all_arg_types_known);
+	if (!func_ref) {
+		// Keep the deferred member-call representation for unresolved/dependent
+		// callable objects so sema can handle the remaining compatibility cases.
+		auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, operator_token, CVQualifier::None);
+		auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
+		func_ref = &emplace_node<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>()).as<FunctionDeclarationNode>();
+	}
+
+	result = emplace_node<ExpressionNode>(
+		makeResolvedMemberCallExpr(*result, *func_ref, std::move(args), operator_token));
+}
+
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 	std::string_view struct_name,
 	std::string_view member_name,
@@ -575,15 +774,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-			// Create operator() call as a member function call
-			Token operator_token(Token::Type::Identifier, "operator()"sv,
-								 paren_token.line(), paren_token.column(), paren_token.file_index());
-			auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, operator_token, CVQualifier::None);
-			auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
-			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
-
-			result = emplace_node<ExpressionNode>(
-				makeResolvedMemberCallExpr(*result, func_ref, std::move(args), operator_token));
+			finalizePostfixCallExpression(result, paren_token, std::move(args), std::move(args_result.arg_types));
 			continue;
 		}
 
@@ -668,114 +859,25 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 		// Check for function call operator () - for operator() overload or function pointer call
 		if (peek().is_punctuator() && peek() == "("_tok) {
-			// Check if the result is a member access to a function pointer
-			// If so, we should create a function pointer call instead of operator() call
-			bool is_function_pointer_call = false;
-			const MemberAccessNode* member_access = nullptr;
-
-			if (result->is<ExpressionNode>()) {
-				const ExpressionNode& expr = result->as<ExpressionNode>();
-				if (std::holds_alternative<MemberAccessNode>(expr)) {
-					member_access = &std::get<MemberAccessNode>(expr);
-
-					// Check if this member is a function pointer
-					// We need to look up the struct type and find the member
-					if (!member_function_context_stack_.empty()) {
-						const auto& member_ctx = member_function_context_stack_.back();
-						if (const TypeInfo* struct_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
-							const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-							if (struct_info) {
-								std::string_view member_name = member_access->member_name();
-								for (const auto& member : struct_info->members) {
-									if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
-										if (member.type_index.category() == TypeCategory::FunctionPointer) {
-											is_function_pointer_call = true;
-										}
-										break;
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// Check for (&func_name)(args) — address-of a named function called directly.
-			// This supports callable FunctionPointer NTTP substitution paths that
-			// materialize as address-of expressions in template instantiations.
-			const FunctionDeclarationNode* addressof_func_decl = nullptr;
-			if (!is_function_pointer_call && result->is<ExpressionNode>()) {
-				const ExpressionNode& expr = result->as<ExpressionNode>();
-				if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-					const UnaryOperatorNode& unary = std::get<UnaryOperatorNode>(expr);
-					if (unary.op() == "&" && unary.is_prefix()) {
-						const ASTNode& operand = unary.get_operand();
-						if (operand.is<ExpressionNode>()) {
-							const ExpressionNode& op_expr = operand.as<ExpressionNode>();
-							if (std::holds_alternative<IdentifierNode>(op_expr)) {
-								const auto& id = std::get<IdentifierNode>(op_expr);
-								auto sym = gSymbolTable.lookup(id.name());
-								if (sym.has_value() && sym->is<FunctionDeclarationNode>())
-									addressof_func_decl = &sym->as<FunctionDeclarationNode>();
-							}
-						}
-					}
-				}
-			}
-
 			Token paren_token = peek_info();
 			advance(); // consume '('
 
 			// Parse function arguments using unified helper
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 				.handle_pack_expansion = true,
-				.collect_types = false,
+				.collect_types = true,
 				.expand_simple_packs = false});
 			if (!args_result.success) {
 				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 			}
 			ChunkedVector<ASTNode> args = std::move(args_result.args);
+			std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-			if (is_function_pointer_call && member_access) {
-				// This is a call through a function pointer member (e.g., this->operation(value, x))
-				// Represent this as a CallExprNode with member-style/indirect handling in codegen.
-
-				// Create a placeholder function declaration with the member name
-				Token member_token(Token::Type::Identifier, member_access->member_name(),
-								   paren_token.line(), paren_token.column(), paren_token.file_index());
-				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_token, CVQualifier::None);
-				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_token);
-				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
-
-				// Create member function call node - code generation will detect this is a function pointer
-				result = emplace_node<ExpressionNode>(
-					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), member_token));
-			} else if (addressof_func_decl) {
-				// (&func_name)(args) — treat as a direct call to func_name
-				result = emplace_node<ExpressionNode>(
-					makeResolvedCallExpr(*addressof_func_decl, std::move(args), paren_token));
-				if (addressof_func_decl->has_mangled_name())
-					setCallMangledName(result->as<ExpressionNode>(), addressof_func_decl->mangled_name());
-			} else {
-				// Create operator() call as a member function call
-				// The member function name is "operator()"
-				Token operator_token(Token::Type::Identifier, "operator()"sv,
-									 paren_token.line(), paren_token.column(), paren_token.file_index());
-
-				// Create a temporary function declaration for operator()
-				// This will be resolved during code generation
-				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, operator_token, CVQualifier::None);
-				auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
-				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
-
-				// Create member function call node for operator()
-				result = emplace_node<ExpressionNode>(
-					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), operator_token));
-			}
+			finalizePostfixCallExpression(result, paren_token, std::move(args), std::move(arg_types));
 			continue;
 		}
 

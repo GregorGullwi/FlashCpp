@@ -11,21 +11,23 @@ active.
 
 - Codegen still reconstructs argument typing in
   `buildCodegenOverloadResolutionArgType(...)` and related call sites.
-- Several fallback paths identified in the 2026-04-27 audit are still active and
+- Several temporary compatibility/recovery paths identified in the 2026-04-27 audit are still active and
   should be removed by strengthening sema annotations/ownership first.
 
 ### Partly superseded
 
-- Some direct-call and fallback branches discussed in the original write-up were
+- Some direct-call and compatibility/recovery branches discussed in the original write-up were
   already removed or hardened by invariant checks.
-- The exact fallback inventory is now maintained in
+- The exact historical recovery inventory is now maintained in
   `docs/2026-04-27-fallback-comments-audit.md`.
 
 ### How to use this document now
 
 Use the phase intent and architecture rationale below as context, but treat
 `docs/2026-04-27-fallback-comments-audit.md` as the source of truth for
-"active vs dead" fallback status.
+"active vs dead" compatibility/recovery status. The filename is historical; the
+behavior tracked there should be treated as temporary implementation debt on
+the path to standard C++20 semantics.
 
 ## Concrete implementation plan
 
@@ -56,17 +58,18 @@ Stop `IrGenerator_Call_Direct.cpp` from rescanning symbol tables and member hier
 2. Store the final `FunctionDeclarationNode*` for ordinary direct calls during semantic normalization.
 3. Change direct-call lowering to consume that resolved target first.
 4. For sema-normalized bodies, turn the current name-based recovery chain into `InternalError` instead of more lookup.
-5. Keep only the minimum fallback needed for bodies sema never normalized yet, and document that boundary in code.
+5. Keep only the minimum temporary compatibility behavior needed for bodies sema never normalized yet, and document that boundary in code.
 
 **Current status**
 
 - The sema-owned resolved-direct-call table and query surface already exist.
 - Direct-call lowering already consumes the sema-owned target first.
 - `IrGenerator_Call_Direct.cpp` no longer contains a real direct-call lookup-recovery block for resolved calls; the old compatibility scans/remaps have been removed, and the remaining `allow_lookup_recovery` path only preserves the non-normalized compatibility boundary after sema has already hard-failed normalized unresolved direct calls during annotation.
-- The prior coarse `unresolved_call_args_` escape hatch has been replaced with explicit sema-recorded direct-call fallback reasons, which is the intended intermediate step before deleting the remaining compatibility cases entirely.
+- The prior coarse `unresolved_call_args_` escape hatch has been replaced with explicit sema-recorded direct-call compatibility reasons, which is the intended intermediate step before deleting the remaining compatibility cases entirely.
 - Qualified-owner member lookup, global qualified-static-member scanning, template-type-parameter-qualified static-call recovery, dependent base-template qualified-call remap, stale precomputed pattern-owner remap, declaration-address overload rescans, and mangled-symbol retry lookup have now been removed from direct-call lowering because sema's existing owner/member recovery and sema-owned direct-call targets already resolve those call shapes.
-- The first post-hardening regressions have already been root-fixed in sema rather than reintroducing codegen fallback: ordinary direct-call target recovery now performs qualified namespace lookup, augments fallback candidate sets with ADL-only hidden-friend candidates, reuses concrete parser-instantiated targets after dependent-unqualified POI recovery fails, and consumes parser-stored definition-bound call records for non-dependent template-body calls. Namespace-qualified free-function template instantiation now applies definition-time candidate filtering as well, without applying that filter to class-qualified member templates or dependent ADL completion, which remains point-of-instantiation lookup. Indirect function-pointer calls are also excluded from the ordinary direct-call invariant so the contract only applies to true direct calls. A 2026-05-26 follow-up tightened the residual sema compatibility path further: definition lookup records now contribute exact mangled identity before broad name scans, qualified-owner recovery reuses `resolve_namespace_handle(std::string_view)` so relative and leading-`::` qualifiers stay exact, and the duplicated late mangled retry was removed. The reason table is narrower again: `GlobalMangledLookupMiss` was removed because successful resolution erases it and terminal misses always replaced it with the final lookup-failure reason.
+- The first post-hardening regressions have already been root-fixed in sema rather than reintroducing codegen compatibility logic: ordinary direct-call target recovery now performs qualified namespace lookup, augments candidate sets with ADL-only hidden-friend candidates, reuses concrete parser-instantiated targets after dependent-unqualified POI recovery fails, and consumes parser-stored definition-bound call records for non-dependent template-body calls. Namespace-qualified free-function template instantiation now applies definition-time candidate filtering as well, without applying that filter to class-qualified member templates or dependent ADL completion, which remains point-of-instantiation lookup. Indirect function-pointer calls are also excluded from the ordinary direct-call invariant so the contract only applies to true direct calls. A 2026-05-26 follow-up tightened the residual sema compatibility path further: definition lookup records now contribute exact mangled identity before broad name scans, qualified-owner recovery reuses `resolve_namespace_handle(std::string_view)` so relative and leading-`::` qualifiers stay exact, the duplicated late mangled retry was removed, and postfix callable-object syntax now resolves concrete `operator()` members from the receiver type at parse time instead of defaulting to a placeholder member target. The reason table is narrower again: `GlobalMangledLookupMiss` was removed because successful resolution erases it and terminal misses always replaced it with the final lookup-failure reason. The latest follow-up also covers zero-argument and default-argument postfix call-operator forms through the shared parser finalization path (`test_postfix_call_operator_zero_default_ret0.cpp`), which reduces another source of non-standard placeholder-call construction before sema.
 - Work still left in this phase: burn down the remaining reason-coded compatibility cases one by one in sema, then delete the residual non-normalized recovery path and finally remove the compatibility-reason bookkeeping itself.
+- Standards-aligned endpoint: direct-call meaning must be determined entirely by parser-owned syntax identity plus sema-owned lookup and overload resolution, with no permissive recovery path influencing the accepted program. Any remaining compatibility branch should either become a proper diagnostic for ill-formed code or disappear once the missing sema ownership is implemented.
 
 **Done when**
 
