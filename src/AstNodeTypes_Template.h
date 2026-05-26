@@ -520,6 +520,7 @@ public:
 	TypeIndex owning_type_index() const { return owning_type_index_; }
 	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }	// Create token on demand
 	std::span<const ASTNode> parameter_nodes() const { return parameter_nodes_; }
+	std::span<ASTNode> parameter_nodes() { return parameter_nodes_; }
 	std::span<const MemberInitializer> member_initializers() const { return member_initializers_; }
 	std::span<const BaseInitializer> base_initializers() const { return base_initializers_; }
 	const std::optional<DelegatingInitializer>& delegating_initializer() const { return delegating_initializer_; }

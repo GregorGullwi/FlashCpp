@@ -2076,7 +2076,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::span<ASTNode> instantiated_params,
 		std::span<const ASTNode> definition_params);
 	static void copyDefinitionParameterTypes(
-		std::span<const ASTNode> instantiated_params,
+		std::span<ASTNode> instantiated_params,
 		std::span<const ASTNode> definition_params);
 	static StringHandle computeInstantiatedLookupName(
 		StringHandle original_name,

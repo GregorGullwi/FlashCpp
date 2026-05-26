@@ -1348,11 +1348,6 @@ static const TypeInfo* resolveDependentMemberPlaceholderAgainstOwnerArtifact(
 			? owner_artifact_type_info_from_token
 			: owner_artifact_type_info_from_index;
 	if (owner_artifact_type_info == nullptr) {
-		owner_artifact_type_info = findTypeByName(
-			StringTable::getOrInternStringHandle(
-				owner_artifact_substituted_type.token().value()));
-	}
-	if (owner_artifact_type_info == nullptr) {
 		return nullptr;
 	}
 
@@ -2129,15 +2124,14 @@ void Parser::copyDefinitionParameterIdentifiers(
 }
 
 void Parser::copyDefinitionParameterTypes(
-	std::span<const ASTNode> instantiated_params,
+	std::span<ASTNode> instantiated_params,
 	std::span<const ASTNode> definition_params) {
 	if (instantiated_params.size() != definition_params.size()) {
 		return;
 	}
 
 	for (size_t param_index = 0; param_index < instantiated_params.size(); ++param_index) {
-		ASTNode& instantiated_param = const_cast<ASTNode&>(instantiated_params[param_index]);
-		DeclarationNode* instantiated_decl = Parser::get_decl_from_symbol_mut(instantiated_param);
+		DeclarationNode* instantiated_decl = Parser::get_decl_from_symbol_mut(instantiated_params[param_index]);
 		const DeclarationNode* definition_decl = get_decl_from_symbol(definition_params[param_index]);
 		if (!instantiated_decl || !definition_decl) {
 			continue;

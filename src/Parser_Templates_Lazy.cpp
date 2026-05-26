@@ -407,33 +407,74 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
 		pack_param_info_.resize(saved_ctor_pack_info);
 
-		if (lazy_info.registry_key.isValid()) {
-			auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-			if (struct_it != getTypesByNameMap().end()) {
-				if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
-					for (auto& member_func : struct_info->member_functions) {
-						if (!member_func.is_constructor) {
-							continue;
-						}
-						if (getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
-							continue;
-						}
-						member_func.function_decl = new_ctor_node;
-						break;
-					}
-				}
-			}
-			if (auto struct_root = lookupLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
-				struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
-				for (auto& member_func : struct_root->as<StructDeclarationNode>().member_functions()) {
+		auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+		if (struct_it != getTypesByNameMap().end()) {
+			if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
+				bool replaced_lazy_stub = false;
+				for (auto& member_func : struct_info->member_functions) {
 					if (!member_func.is_constructor) {
 						continue;
 					}
-					if (getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
+					if (!lazy_info.registry_key.isValid() ||
+						getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
 						continue;
 					}
-					member_func.function_declaration = new_ctor_node;
+					member_func.function_decl = new_ctor_node;
+					replaced_lazy_stub = true;
 					break;
+				}
+				if (!replaced_lazy_stub) {
+					bool already_present = false;
+					for (const auto& member_func : struct_info->member_functions) {
+						if (!member_func.is_constructor ||
+							!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+							continue;
+						}
+						const auto& existing_ctor =
+							member_func.function_decl.as<ConstructorDeclarationNode>();
+						if (existing_ctor.mangled_name() == new_ctor_ref.mangled_name()) {
+							already_present = true;
+							break;
+						}
+					}
+					if (!already_present) {
+						struct_info->addConstructor(new_ctor_node, lazy_info.access);
+					}
+				}
+			}
+		}
+		if (auto struct_root = lookupLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
+			struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
+			bool replaced_lazy_stub = false;
+			for (auto& member_func : struct_root->as<StructDeclarationNode>().member_functions()) {
+				if (!member_func.is_constructor) {
+					continue;
+				}
+				if (!lazy_info.registry_key.isValid() ||
+					getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
+					continue;
+				}
+				member_func.function_declaration = new_ctor_node;
+				replaced_lazy_stub = true;
+				break;
+			}
+			if (!replaced_lazy_stub) {
+				auto& struct_decl = struct_root->as<StructDeclarationNode>();
+				bool already_present = false;
+				for (const auto& member_func : struct_decl.member_functions()) {
+					if (!member_func.is_constructor ||
+						!member_func.function_declaration.is<ConstructorDeclarationNode>()) {
+						continue;
+					}
+					const auto& existing_ctor =
+						member_func.function_declaration.as<ConstructorDeclarationNode>();
+					if (existing_ctor.mangled_name() == new_ctor_ref.mangled_name()) {
+						already_present = true;
+						break;
+					}
+				}
+				if (!already_present) {
+					struct_decl.add_constructor(new_ctor_node, lazy_info.access);
 				}
 			}
 		}

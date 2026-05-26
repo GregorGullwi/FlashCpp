@@ -895,6 +895,9 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	lazy_info.identity.original_lookup_name = replay_source_ctor->name();
 	lazy_info.identity.kind = DeferredMemberIdentity::Kind::Constructor;
 	lazy_info.identity.is_const_method = false;
+	lazy_info.registry_key = replay_source_ctor->has_lazy_member_registry_key()
+		? replay_source_ctor->lazy_member_registry_key()
+		: LazyMemberInstantiationRegistry::makeExactKey(lazy_info.identity);
 
 	InlineVector<StringHandle, 4> outer_param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
@@ -1045,7 +1048,8 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			candidate_infos.reserve(arg_types.size());
 			bool candidate_is_viable = true;
 			for (size_t arg_index = 0; arg_index < arg_types.size(); ++arg_index) {
-				if (!candidate->parameter_nodes()[arg_index].is<DeclarationNode>()) {
+				if (arg_index >= candidate->parameter_nodes().size() ||
+					!candidate->parameter_nodes()[arg_index].is<DeclarationNode>()) {
 					candidate_is_viable = false;
 					break;
 				}
@@ -1914,11 +1918,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			return substituted_type_index;
 		}
 
-		const std::string_view qualified_member_name = StringBuilder()
+		StringBuilder qualified_member_name_builder;
+		qualified_member_name_builder
 			.append(StringTable::getStringView(owner_type_info->name()))
 			.append("::")
-			.append(StringTable::getStringView(member_name))
-			.commit();
+			.append(StringTable::getStringView(member_name));
+		const std::string_view qualified_member_name =
+			qualified_member_name_builder.commit();
 		const TypeInfo* resolved_member_type_info = findTypeByName(
 			StringTable::getOrInternStringHandle(qualified_member_name));
 		if (resolved_member_type_info == nullptr) {
