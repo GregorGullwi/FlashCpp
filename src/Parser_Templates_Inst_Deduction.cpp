@@ -3139,8 +3139,7 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupFunctionTemplateCandidate
 	if (name_is_qualified) {
 		const size_t scope_sep = template_name.rfind("::");
 		std::string_view scope_prefix = template_name.substr(0, scope_sep);
-		qualified_owner_is_namespace =
-			gSymbolTable.resolve_namespace_handle(scope_prefix, /*force_global=*/false).isValid();
+		qualified_owner_is_namespace = gSymbolTable.resolve_namespace_handle(scope_prefix).isValid();
 	}
 
 	auto append_candidates = [&](const TemplateNameLookupResult& lookup_result) {

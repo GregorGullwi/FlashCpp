@@ -1413,6 +1413,10 @@ public:
 		return resolve_namespace_handle_impl(namespace_components, effective_force_global);
 	}
 
+	NamespaceHandle resolve_namespace_handle(std::string_view qualified_namespace) const {
+		return resolve_namespace_handle(qualified_namespace, false);
+	}
+
 private:
 	template <typename StringContainer>
 	NamespaceHandle resolve_namespace_handle_impl(const StringContainer& namespaces, bool force_global = false) const {
