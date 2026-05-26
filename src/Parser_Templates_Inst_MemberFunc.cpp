@@ -833,6 +833,27 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 			lhs.parameter_nodes().size() != rhs.parameter_nodes().size()) {
 			return false;
 		}
+		auto template_param_index =
+			[](std::span<const TemplateParameterNode> params, StringHandle name) -> std::optional<size_t> {
+			for (size_t i = 0; i < params.size(); ++i) {
+				if (params[i].nameHandle() == name) {
+					return i;
+				}
+			}
+			return std::nullopt;
+		};
+		auto dependent_type_equivalent =
+			[&](const TypeSpecifierNode& lhs_type, const TypeSpecifierNode& rhs_type) {
+			if (lhs_type.token().handle() == rhs_type.token().handle()) {
+				return true;
+			}
+			const std::optional<size_t> lhs_tpl_idx =
+				template_param_index(lhs.template_parameters(), lhs_type.token().handle());
+			const std::optional<size_t> rhs_tpl_idx =
+				template_param_index(rhs.template_parameters(), rhs_type.token().handle());
+			return lhs_tpl_idx.has_value() && rhs_tpl_idx.has_value() &&
+				lhs_tpl_idx.value() == rhs_tpl_idx.value();
+		};
 
 		for (size_t param_index = 0; param_index < lhs.parameter_nodes().size(); ++param_index) {
 			const TypeSpecifierNode* lhs_type = ctor_parameter_type(lhs.parameter_nodes()[param_index]);
@@ -846,6 +867,20 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 				lhs_type->pointer_depth() != rhs_type->pointer_depth() ||
 				lhs_type->reference_qualifier() != rhs_type->reference_qualifier() ||
 				lhs_type->cv_qualifier() != rhs_type->cv_qualifier()) {
+				const bool both_dependent_like =
+					(lhs_type->category() == TypeCategory::UserDefined ||
+					 lhs_type->category() == TypeCategory::TypeAlias ||
+					 lhs_type->category() == TypeCategory::Template) &&
+					(rhs_type->category() == TypeCategory::UserDefined ||
+					 rhs_type->category() == TypeCategory::TypeAlias ||
+					 rhs_type->category() == TypeCategory::Template);
+				if (both_dependent_like &&
+					lhs_type->pointer_depth() == rhs_type->pointer_depth() &&
+					lhs_type->reference_qualifier() == rhs_type->reference_qualifier() &&
+					lhs_type->cv_qualifier() == rhs_type->cv_qualifier() &&
+					dependent_type_equivalent(*lhs_type, *rhs_type)) {
+					continue;
+				}
 				return false;
 			}
 		}

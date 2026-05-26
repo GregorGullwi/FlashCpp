@@ -290,6 +290,17 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (!ctor) {
 			return;
 		}
+		const ConstructorDeclarationNode* ctor_to_queue = ctor;
+		if (!ctor_to_queue->is_materialized()) {
+			if (std::optional<ASTNode> materialized_ctor =
+					sema_.parserSemanticServices().ensureMemberFunctionMaterialized(
+						type_info_ref.name(),
+						*ctor_to_queue);
+				materialized_ctor.has_value() &&
+				materialized_ctor->is<ConstructorDeclarationNode>()) {
+				ctor_to_queue = &materialized_ctor->as<ConstructorDeclarationNode>();
+			}
+		}
 		// Always queue the selected constructor for deferred emission.  Late-instantiated
 		// concrete ctors (created by materializeMatchingConstructorTemplate during sema
 		// annotation — after beginStructDeclarationCodegen already ran) are NOT visited
@@ -299,7 +310,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		// double-emit is safe to ignore.
 		DeferredMemberFunctionInfo deferred_info;
 		deferred_info.struct_name = type_info_ref.name();
-		deferred_info.function_node = ASTNode(ctor);
+		deferred_info.function_node = ASTNode(ctor_to_queue);
 		deferred_member_functions_.push_back(std::move(deferred_info));
 	};
 	auto register_destructor_if_needed = [this](const DeclarationNode& inner_decl, const TypeInfo* type_info) {
@@ -2433,7 +2444,19 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										if (resolution.is_ambiguous) {
 											throw CompileError("Ambiguous constructor call");
 										}
-										matching_ctor = resolution.selected_overload;
+										bool template_ctor_ambiguous = false;
+										matching_ctor = parser_.materializeMatchingConstructorTemplate(
+											type_info->name(),
+											*type_info->struct_info_,
+											arg_types,
+											resolution.selected_overload,
+											template_ctor_ambiguous);
+										if (template_ctor_ambiguous) {
+											throw CompileError("Ambiguous constructor call");
+										}
+										if (!matching_ctor) {
+											matching_ctor = resolution.selected_overload;
+										}
 									}
 
 									if (!matching_ctor && !sema_normalized_current_function_) {
