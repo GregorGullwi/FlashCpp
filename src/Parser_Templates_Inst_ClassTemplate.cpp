@@ -3271,88 +3271,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 #endif
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 
-	// Push a parser-level instantiation context for provenance tracking and backtraces.
-	// The mode snapshot is taken at call time (before any inner mode changes).
-	StringHandle template_name_handle_for_ctx = StringTable::getOrInternStringHandle(template_name);
-	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, template_name_handle_for_ctx);
-
-	// Nesting depth limit: prevents stack overflow from infinite recursive template
-	// instantiation chains (e.g. mutually-recursive SFINAE constraints in libstdc++ iterators).
-	// This is independent from the total-call iteration_count below, which cannot prevent
-	// deep recursion.  Equivalent to GCC's -ftemplate-depth.
-	//
-	// NOTE: each nesting frame here pulls in substantial stack (parser state + template
-	// instantiation context + base-class substitution); empirically on Linux with a 16MB
-	// thread stack, the process starts SIGSEGV'ing on the stack guard page around depth
-	// 50-60 when parsing real libstdc++ headers.  Keep the guard well below that so we
-	// emit a diagnostic before the kernel kills us.
-	static thread_local size_t s_instantiation_nesting_depth = 0;
-	static thread_local bool s_instantiation_depth_warned = false;
-	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 40;
-	++s_instantiation_nesting_depth;
-	// Iteration counters are file-scope thread_locals reset once per parse() call;
-	// see resetTemplateInstantiationCounters().  The NestingGuard here only manages
-	// the depth counter and its associated "warned" flag.
-	struct NestingGuard {
-		~NestingGuard() {
-			if (--s_instantiation_nesting_depth == 0) {
-				// Reset the per-instantiation-tree "warned" flag when the outermost
-				// instantiation unwinds, so the next instantiation tree (which
-				// represents a genuinely new context) gets a fresh diagnostic.
-				s_instantiation_depth_warned = false;
-			}
-		}
-	} nesting_guard;
-	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
-		std::string_view error_msg = StringBuilder()
-			.append("Max template instantiation depth (")
-			.append(static_cast<uint64_t>(MAX_INSTANTIATION_NESTING_DEPTH))
-			.append(") exceeded for '")
-			.append(template_name)
-			.append("'. Possible recursive template instantiation.")
-			.commit();
-		if (!s_instantiation_depth_warned) {
-			FLASH_LOG(Templates, Error, error_msg);
-			s_instantiation_depth_warned = true;
-		}
-		if (force_eager) {
-			throw CompileError(std::string(error_msg));
-		}
-		return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
-	}
-
-	// Iteration guard: prevents retry storms for the entire compilation.
-	// Once the limit is hit, g_template_inst_iteration_limit_tripped stays true for
-	// the rest of this parse() call; it is only reset by resetTemplateInstantiationCounters()
-	// at the start of the next parse() call.
-	if (g_template_inst_iteration_limit_tripped) {
-		if (force_eager) {
-			throw CompileError("Template instantiation iteration limit was already exceeded earlier in this translation unit");
-		}
-		return failTemplateInstantiation(
-			"Template instantiation iteration limit was already exceeded earlier in this translation unit",
-			nullptr,
-			std::nullopt);
-	}
-	g_template_inst_iteration_count++;
-	if (g_template_inst_iteration_count > g_template_inst_max_iterations) {
-		std::string_view error_msg = StringBuilder()
-			.append("Template instantiation iteration limit exceeded (")
-			.append(static_cast<int64_t>(g_template_inst_max_iterations))
-			.append("). Last template: '")
-			.append(template_name)
-			.append("' with ")
-			.append(static_cast<uint64_t>(template_args.size()))
-			.append(" args. Possible infinite loop.")
-			.commit();
-		FLASH_LOG(Templates, Error, error_msg);
-		g_template_inst_iteration_limit_tripped = true;
-		if (force_eager) {
-			throw CompileError(std::string(error_msg));
-		}
-		return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
-	}
-
 	// Log entry to help debug which call sites are causing issues
 	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name,
 			  "', args=", template_args.size(), ", force_eager=", force_eager);
@@ -3597,6 +3515,89 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return std::nullopt; // Already instantiated and committed globally
 			}
 		}
+	}
+
+	// Push a parser-level instantiation context for provenance tracking and backtraces.
+	// The mode snapshot is taken at call time (before any inner mode changes). Completed
+	// cache hits above are not new instantiation work and must not consume template depth.
+	StringHandle template_name_handle_for_ctx = StringTable::getOrInternStringHandle(template_name);
+	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, template_name_handle_for_ctx);
+
+	// Nesting depth limit: prevents stack overflow from infinite recursive template
+	// instantiation chains (e.g. mutually-recursive SFINAE constraints in libstdc++ iterators).
+	// This is independent from the total-call iteration_count below, which cannot prevent
+	// deep recursion.  Equivalent to GCC's -ftemplate-depth.
+	//
+	// NOTE: each nesting frame here pulls in substantial stack (parser state + template
+	// instantiation context + base-class substitution); empirically on Linux with a 16MB
+	// thread stack, the process starts SIGSEGV'ing on the stack guard page around depth
+	// 50-60 when parsing real libstdc++ headers.  Keep the guard well below that so we
+	// emit a diagnostic before the kernel kills us.
+	static thread_local size_t s_instantiation_nesting_depth = 0;
+	static thread_local bool s_instantiation_depth_warned = false;
+	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 40;
+	++s_instantiation_nesting_depth;
+	// Iteration counters are file-scope thread_locals reset once per parse() call;
+	// see resetTemplateInstantiationCounters().  The NestingGuard here only manages
+	// the depth counter and its associated "warned" flag.
+	struct NestingGuard {
+		~NestingGuard() {
+			if (--s_instantiation_nesting_depth == 0) {
+				// Reset the per-instantiation-tree "warned" flag when the outermost
+				// instantiation unwinds, so the next instantiation tree (which
+				// represents a genuinely new context) gets a fresh diagnostic.
+				s_instantiation_depth_warned = false;
+			}
+		}
+	} nesting_guard;
+	if (s_instantiation_nesting_depth > MAX_INSTANTIATION_NESTING_DEPTH) {
+		std::string_view error_msg = StringBuilder()
+			.append("Max template instantiation depth (")
+			.append(static_cast<uint64_t>(MAX_INSTANTIATION_NESTING_DEPTH))
+			.append(") exceeded for '")
+			.append(template_name)
+			.append("'. Possible recursive template instantiation.")
+			.commit();
+		if (!s_instantiation_depth_warned) {
+			FLASH_LOG(Templates, Error, error_msg);
+			s_instantiation_depth_warned = true;
+		}
+		if (force_eager) {
+			throw CompileError(std::string(error_msg));
+		}
+		return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
+	}
+
+	// Iteration guard: prevents retry storms for the entire compilation.
+	// Once the limit is hit, g_template_inst_iteration_limit_tripped stays true for
+	// the rest of this parse() call; it is only reset by resetTemplateInstantiationCounters()
+	// at the start of the next parse() call.
+	if (g_template_inst_iteration_limit_tripped) {
+		if (force_eager) {
+			throw CompileError("Template instantiation iteration limit was already exceeded earlier in this translation unit");
+		}
+		return failTemplateInstantiation(
+			"Template instantiation iteration limit was already exceeded earlier in this translation unit",
+			nullptr,
+			std::nullopt);
+	}
+	g_template_inst_iteration_count++;
+	if (g_template_inst_iteration_count > g_template_inst_max_iterations) {
+		std::string_view error_msg = StringBuilder()
+			.append("Template instantiation iteration limit exceeded (")
+			.append(static_cast<int64_t>(g_template_inst_max_iterations))
+			.append("). Last template: '")
+			.append(template_name)
+			.append("' with ")
+			.append(static_cast<uint64_t>(template_args.size()))
+			.append(" args. Possible infinite loop.")
+			.commit();
+		FLASH_LOG(Templates, Error, error_msg);
+		g_template_inst_iteration_limit_tripped = true;
+		if (force_eager) {
+			throw CompileError(std::string(error_msg));
+		}
+		return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 	}
 
 	// Build InstantiationKey for cycle detection
