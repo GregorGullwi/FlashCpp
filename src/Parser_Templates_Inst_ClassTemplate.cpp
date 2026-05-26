@@ -3265,11 +3265,117 @@ static std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTN
 	return unresolved_name;
 }
 
+static const StructDeclarationNode* getCachedTemplateStructDecl(const ASTNode* cached_node) {
+	if (!cached_node || !cached_node->is<StructDeclarationNode>()) {
+		return nullptr;
+	}
+	return &cached_node->as<StructDeclarationNode>();
+}
+
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, std::span<const TemplateTypeArg> template_args, bool force_eager) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(ClassTemplateInstantiation);
 #endif
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
+
+	// Resolve template template parameter aliases: when inside a template function body
+	// re-parse, "Container" may be a template template parameter bound to a concrete
+	// template (e.g., "MyVec").  Look up the substitution and redirect.
+	// Must be done before the early cache check so the cache key uses the resolved name.
+	{
+		StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
+		for (const auto& subst : template_param_substitutions_) {
+			if (subst.is_template_template_param && subst.param_name == name_handle &&
+				subst.concrete_template_name.isValid()) {
+				std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
+				FLASH_LOG(Templates, Debug, "Redirecting template template param '", template_name,
+						  "' -> '", concrete_name, "'");
+				return try_instantiate_class_template(concrete_name, template_args, force_eager);
+			}
+		}
+	}
+
+	// Resolve relative/unqualified namespace prefix so the cache key is canonical.
+	// Must be done before the early cache check for the same reason as above.
+	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+		std::vector<StringHandle> namespace_components;
+		std::string_view namespace_path = template_name.substr(0, last_colon);
+		size_t component_start = 0;
+		while (component_start < namespace_path.size()) {
+			size_t separator = namespace_path.find("::", component_start);
+			std::string_view component = separator == std::string_view::npos
+											 ? namespace_path.substr(component_start)
+											 : namespace_path.substr(component_start, separator - component_start);
+			namespace_components.push_back(StringTable::getOrInternStringHandle(component));
+			component_start = separator == std::string_view::npos ? namespace_path.size() : separator + 2;
+		}
+
+		auto resolve_relative_namespace = [&](NamespaceHandle start) -> NamespaceHandle {
+			NamespaceHandle current = start;
+			for (StringHandle component : namespace_components) {
+				current = gNamespaceRegistry.lookupNamespace(current, component);
+				if (!current.isValid()) {
+					return current;
+				}
+			}
+			return current;
+		};
+
+		StringHandle identifier_handle = StringTable::getOrInternStringHandle(template_name.substr(last_colon + 2));
+		for (NamespaceHandle probe = gSymbolTable.get_current_namespace_handle(); probe.isValid();
+			 probe = gNamespaceRegistry.getParent(probe)) {
+			NamespaceHandle resolved_namespace = resolve_relative_namespace(probe);
+			if (resolved_namespace.isValid()) {
+				template_name = StringTable::getStringView(
+					gNamespaceRegistry.buildQualifiedIdentifier(resolved_namespace, identifier_handle));
+				break;
+			}
+			if (probe.isGlobal()) {
+				break;
+			}
+		}
+	}
+
+	// Completed cache hits are not new instantiation work; return them before
+	// consuming parser instantiation depth.  The name is fully resolved above.
+	{
+		std::string_view normalized_template_name = template_name;
+		if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+			normalized_template_name = template_name.substr(last_colon + 2);
+		}
+		bool can_use_raw_cache_key = true;
+		if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+			template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
+			const auto& raw_params = template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+			if (template_args.size() < raw_params.size()) {
+				can_use_raw_cache_key = false;
+			}
+		}
+		if (can_use_raw_cache_key) {
+			StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
+			FlashCpp::TemplateInstantiationKey cache_key =
+				FlashCpp::makeInstantiationKey(template_name_handle, template_args);
+			auto cached = gTemplateRegistry.getInstantiation(cache_key);
+			if (cached.has_value()) {
+				const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(&cached.value());
+				bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
+				bool cached_is_shape_only = cached_struct && cached_struct->is_shape_only();
+				bool cached_failed_substitution = cached_struct && cached_struct->is_failed_substitution();
+				if (!(current_wants_full && cached_is_shape_only)) {
+#if WITH_PARSER_RUNTIME_STATS
+					if (runtime_stats_enabled_) {
+						++runtime_stats_.class_template_instantiation_cache_hits;
+					}
+#endif
+					FLASH_LOG_FORMAT(Templates, Debug, "Early cache hit for '{}' with {} args", template_name, template_args.size());
+					if (cached_is_shape_only || cached_failed_substitution) {
+						return cached;
+					}
+					return std::nullopt;
+				}
+			}
+		}
+	}
 
 	// Push a parser-level instantiation context for provenance tracking and backtraces.
 	// The mode snapshot is taken at call time (before any inner mode changes).
@@ -3356,61 +3462,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Log entry to help debug which call sites are causing issues
 	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name,
 			  "', args=", template_args.size(), ", force_eager=", force_eager);
-
-	// Resolve template template parameter aliases: when inside a template function body
-	// re-parse, "Container" may be a template template parameter bound to a concrete
-	// template (e.g., "MyVec").  Look up the substitution and redirect.
-	{
-		StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
-		for (const auto& subst : template_param_substitutions_) {
-			if (subst.is_template_template_param && subst.param_name == name_handle &&
-				subst.concrete_template_name.isValid()) {
-				std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
-				FLASH_LOG(Templates, Debug, "Redirecting template template param '", template_name,
-						  "' -> '", concrete_name, "'");
-				return try_instantiate_class_template(concrete_name, template_args, force_eager);
-			}
-		}
-	}
-
-	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-		std::vector<StringHandle> namespace_components;
-		std::string_view namespace_path = template_name.substr(0, last_colon);
-		size_t component_start = 0;
-		while (component_start < namespace_path.size()) {
-			size_t separator = namespace_path.find("::", component_start);
-			std::string_view component = separator == std::string_view::npos
-											 ? namespace_path.substr(component_start)
-											 : namespace_path.substr(component_start, separator - component_start);
-			namespace_components.push_back(StringTable::getOrInternStringHandle(component));
-			component_start = separator == std::string_view::npos ? namespace_path.size() : separator + 2;
-		}
-
-		auto resolve_relative_namespace = [&](NamespaceHandle start) -> NamespaceHandle {
-			NamespaceHandle current = start;
-			for (StringHandle component : namespace_components) {
-				current = gNamespaceRegistry.lookupNamespace(current, component);
-				if (!current.isValid()) {
-					return current;
-				}
-			}
-			return current;
-		};
-
-		StringHandle identifier_handle = StringTable::getOrInternStringHandle(template_name.substr(last_colon + 2));
-		for (NamespaceHandle probe = gSymbolTable.get_current_namespace_handle(); probe.isValid();
-			 probe = gNamespaceRegistry.getParent(probe)) {
-			NamespaceHandle resolved_namespace = resolve_relative_namespace(probe);
-			if (resolved_namespace.isValid()) {
-				template_name = StringTable::getStringView(
-					gNamespaceRegistry.buildQualifiedIdentifier(resolved_namespace, identifier_handle));
-				break;
-			}
-			if (probe.isGlobal()) {
-				break;
-			}
-		}
-	}
 
 	// Early check: verify this is actually a class template before proceeding
 	// This prevents errors when function templates like 'declval' are passed to this function
@@ -3553,12 +3604,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	FlashCpp::TemplateInstantiationKey cache_key =
 		FlashCpp::makeInstantiationKey(template_name_handle, template_args);
 	bool current_wants_full = (template_instantiation_mode_ != TemplateInstantiationMode::ShapeOnly);
-	auto getCachedStructDecl = [](const ASTNode* cached_node) -> const StructDeclarationNode* {
-		if (!cached_node || !cached_node->is<StructDeclarationNode>()) {
-			return nullptr;
-		}
-		return &cached_node->as<StructDeclarationNode>();
-	};
 	bool can_use_raw_cache_key = true;
 	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -3576,7 +3621,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// struct.  This is safe because ShapeOnly entries are always committed to
 			// the cache, so a concurrent ShapeOnly path will still hit them.
 			const ASTNode* cached_node = cached.has_value() ? &cached.value() : nullptr;
-			const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+			const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
 			bool cached_is_shape_only = cached_struct && cached_struct->is_shape_only();
 			bool cached_failed_substitution = cached_struct && cached_struct->is_failed_substitution();
 			if (current_wants_full && cached_is_shape_only) {
@@ -4480,7 +4525,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (existing_type != getTypesByNameMap().end()) {
 		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
-		const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+		const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
 		if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
@@ -4751,7 +4796,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 			const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
-			const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+			const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
 			if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 				FLASH_LOG(Templates, Debug, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
 			} else {
@@ -8409,7 +8454,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (existing_type != getTypesByNameMap().end()) {
 		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
-		const StructDeclarationNode* cached_struct = getCachedStructDecl(cached_node);
+		const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
 		if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 			FLASH_LOG(Templates, Debug, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
 		} else {
