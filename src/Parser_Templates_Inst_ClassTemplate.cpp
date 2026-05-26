@@ -3868,6 +3868,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				param_type_index = self_type_rewrite->to_type_index;
 			}
 			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+				param_decl.type_node(),
 				param_type_spec,
 				param_type_index);
 			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()

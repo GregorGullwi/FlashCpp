@@ -137,34 +137,6 @@ before stopping on a multiply defined `__security_cookie`.
 
 ---
 
-## 9) OOL swapped dependent-member overloads: attachment mismatch fixed, downstream replay/body issues remain (OPEN)
-
-- **Current status**:
-  - The original signature-attachment mismatch (`owner` type vs concrete dependent member
-    type after substitution) is now fixed in
-    `declarationsMatchAfterTemplateSubstitution` by strict owner-artifact member-type
-    recovery (`Owner::member` / dependent member-chain + canonical type equality check).
-  - The original hard attachment failure no longer reproduces at that point.
-- **Current frontier**:
-  - `tests/test_template_ool_ctor_tmpl_dep_member_type_swap_ret0.cpp` now gets past OOL
-    attachment but fails later during IR conversion:
-    `Sema did not annotate brace-init constructor for normalized body`.
-  - `tests/test_template_ool_member_tmpl_dep_member_type_swap_ret0.cpp` now compiles and
-    links, but returns `1` at runtime (expected `0`), indicating a remaining replay/body
-    selection mismatch in the swapped-overload path.
-- **Reproducer tests**:
-  - `tests/test_template_ool_ctor_tmpl_dep_member_type_swap_ret0.cpp`
-  - `tests/test_template_ool_member_tmpl_dep_member_type_swap_ret0.cpp`
-- **Affected code path**:
-  - `src/Parser_Templates_Inst_ClassTemplate.cpp`
-    (`declarationsMatchAfterTemplateSubstitution`, nested/template OOL stub selection,
-    deferred body replay metadata attachment)
-- **Next fix direction**:
-  - Keep the new strict owner-artifact recovery step.
-  - Audit post-attachment replay target selection/body metadata wiring for swapped
-    overloads (constructor-template and member-function-template cases), then verify
-    sema/body parsing sees the same selected overload identity that replay used.
-
 ### 2b) Link-time `__security_cookie` multiple-definition conflict
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but

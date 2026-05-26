@@ -1577,6 +1577,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												template_ctor_ambiguous);
 											if (template_ctor_ambiguous) {
 												resolution.is_ambiguous = true;
+											} else if (resolution.selected_overload != nullptr) {
+												resolution.is_ambiguous = false;
 											}
 											if (resolution.is_ambiguous) {
 												throw CompileError("Ambiguous constructor call");

@@ -8253,6 +8253,8 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		template_ctor_ambiguous);
 	if (template_ctor_ambiguous) {
 		resolution.is_ambiguous = true;
+	} else if (resolution.selected_overload != nullptr) {
+		resolution.is_ambiguous = false;
 	}
 	if (!resolution.selected_overload) {
 		resolution.selected_overload = resolveUniqueArityConstructor(*struct_info, num_args);

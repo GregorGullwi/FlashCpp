@@ -218,6 +218,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				}
 				resolve_self_type(param_type_index);
 				param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+					param_decl.type_node(),
 					param_type_spec,
 					param_type_index);
 

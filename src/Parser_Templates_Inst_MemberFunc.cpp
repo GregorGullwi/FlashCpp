@@ -1969,60 +1969,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			target.set_size_in_bits(resolved_size_bits);
 		}
 	};
-	auto resolve_owner_artifact_member_type_from_node =
-		[](const ASTNode& original_type_node,
-		   const TypeSpecifierNode& original_type_spec,
-		   TypeIndex substituted_type_index) {
-		if (!substituted_type_index.is_valid()) {
-			return substituted_type_index;
-		}
-
-		const TypeInfo* owner_type_info = tryGetTypeInfo(substituted_type_index);
-		if (owner_type_info == nullptr || !is_struct_type(owner_type_info->typeEnum())) {
-			return substituted_type_index;
-		}
-
-		StringHandle member_name{};
-		if (original_type_node.is<QualifiedIdentifierNode>()) {
-			member_name = original_type_node.as<QualifiedIdentifierNode>().nameHandle();
-		}
-		if (!member_name.isValid()) {
-			member_name = original_type_spec.token().handle();
-		}
-		if (!member_name.isValid() || member_name == owner_type_info->name()) {
-			return substituted_type_index;
-		}
-
-		StringBuilder qualified_member_name_builder;
-		qualified_member_name_builder
-			.append(StringTable::getStringView(owner_type_info->name()))
-			.append("::")
-			.append(StringTable::getStringView(member_name));
-		const std::string_view qualified_member_name =
-			qualified_member_name_builder.commit();
-		const TypeInfo* resolved_member_type_info = findTypeByName(
-			StringTable::getOrInternStringHandle(qualified_member_name));
-		if (resolved_member_type_info == nullptr) {
-			return substituted_type_index;
-		}
-
-		const TypeIndex resolved_member_type_index =
-			resolved_member_type_info->registeredTypeIndex().withCategory(
-				resolved_member_type_info->typeEnum());
-		const ResolvedAliasTypeInfo resolved_alias =
-			resolveAliasTypeInfo(resolved_member_type_index);
-		return resolved_alias.type_index.is_valid()
-			? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
-			: resolved_member_type_index;
-	};
-
 	// Substitute the return type if it's a template parameter
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_specifier_node();
 	auto [return_type_index, return_resolved_arg] = resolve_template_type(return_type_spec.type_index());
 	return_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
-		return_type_spec,
-		return_type_index);
-	return_type_index = resolve_owner_artifact_member_type_from_node(
 		orig_decl.type_node(),
 		return_type_spec,
 		return_type_index);
@@ -2315,9 +2265,6 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			// Resolve the template parameter type (to get function_signature if available)
 			auto [param_type_index, resolved_arg] = resolve_template_type(param_type_spec.type_index());
 			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
-				param_type_spec,
-				param_type_index);
-			param_type_index = resolve_owner_artifact_member_type_from_node(
 				param_decl.type_node(),
 				param_type_spec,
 				param_type_index);
