@@ -2078,6 +2078,9 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	static void copyDefinitionParameterTypes(
 		std::span<ASTNode> instantiated_params,
 		std::span<const ASTNode> definition_params);
+	static void syncOutOfLineConstructorTemplateParameters(
+		std::span<ASTNode> instantiated_params,
+		std::span<const ASTNode> definition_params);
 	static StringHandle computeInstantiatedLookupName(
 		StringHandle original_name,
 		OverloadableOperator op_kind,

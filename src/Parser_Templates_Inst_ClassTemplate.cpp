@@ -2183,6 +2183,14 @@ void Parser::copyDefinitionParameterTypes(
 	}
 }
 
+void Parser::syncOutOfLineConstructorTemplateParameters(
+	std::span<ASTNode> instantiated_params,
+	std::span<const ASTNode> definition_params) {
+	// Keep declaration-side type nodes so inner template-parameter bindings remain aligned
+	// even when the out-of-line definition renames those template parameters.
+	copyDefinitionParameterIdentifiers(instantiated_params, definition_params);
+}
+
 bool Parser::replayOutOfLineMemberBody(
 	FunctionDeclarationNode& inst_func,
 	StructDeclarationNode* instantiated_struct_decl,
@@ -7591,7 +7599,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setOutOfLineConstructorTemplateReplayMetadata(
 					ctor_decl,
 					out_of_line_member);
-				copyDefinitionParameterTypes(
+				syncOutOfLineConstructorTemplateParameters(
 					ctor_decl.parameter_nodes(),
 					ool_func.parameter_nodes());
 
@@ -7620,7 +7628,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							*info_ctor_resolution.ctor,
 							out_of_line_member);
-						copyDefinitionParameterTypes(
+						syncOutOfLineConstructorTemplateParameters(
 							info_ctor_resolution.ctor->parameter_nodes(),
 							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
@@ -10817,7 +10825,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							ctor_decl,
 							out_of_line_member);
-						copyDefinitionParameterTypes(
+						syncOutOfLineConstructorTemplateParameters(
 							ctor_decl.parameter_nodes(),
 							out_of_line_ctor_decl.parameter_nodes());
 					} else {
@@ -10888,7 +10896,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							ctor_decl,
 							out_of_line_member);
-						copyDefinitionParameterTypes(
+						syncOutOfLineConstructorTemplateParameters(
 							ctor_decl.parameter_nodes(),
 							out_of_line_ctor_stub_decl.parameter_nodes());
 					}
@@ -10905,7 +10913,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							setOutOfLineConstructorTemplateReplayMetadata(
 								*info_ctor_resolution.ctor,
 								out_of_line_member);
-							copyDefinitionParameterTypes(
+							syncOutOfLineConstructorTemplateParameters(
 								info_ctor_resolution.ctor->parameter_nodes(),
 								out_of_line_ctor_stub_decl.parameter_nodes());
 						} else if (info_ctor_resolution.ambiguous) {
@@ -12991,7 +12999,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setOutOfLineConstructorTemplateReplayMetadata(
 					ctor_decl,
 					out_of_line_member);
-				copyDefinitionParameterTypes(
+				syncOutOfLineConstructorTemplateParameters(
 					ctor_decl.parameter_nodes(),
 					ool_func.parameter_nodes());
 
@@ -13008,7 +13016,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							*info_ctor_resolution.ctor,
 							out_of_line_member);
-						copyDefinitionParameterTypes(
+						syncOutOfLineConstructorTemplateParameters(
 							info_ctor_resolution.ctor->parameter_nodes(),
 							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
