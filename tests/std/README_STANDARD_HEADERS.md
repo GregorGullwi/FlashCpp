@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5795ms (retested 2026-05-25, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~844ms (retested 2026-05-26, Linux/libstdc++-14). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~892ms (`TOTAL`) / ~0.96s wall (retested 2026-05-26, Linux/libstdc++-14). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -32,8 +32,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~6.75s (`TOTAL`) / ~7.19s wall (retested 2026-05-26, Linux/libstdc++-14). Completed class-template cache hits no longer consume template-depth budget; current first hard error moved from `std::pmr::polymorphic_allocator` to depth-guarded recursive `basic_string` instantiation. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.81s (`TOTAL`) / ~5.13s wall (retested 2026-05-26, Linux/libstdc++-14). `bits/hashtable_policy.h:617` `__builtin_clzl` initializer evaluation still succeeds; completed cache hits no longer consume depth, but the current first hard error remains depth-guarded `rebind`. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~7.84s wall (retested 2026-05-26, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded recursive `basic_string` instantiation. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~5.63s wall (retested 2026-05-26, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded `rebind`. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -174,8 +174,28 @@ Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 | `<any>` (`test_std_any.cpp`) | ✅ Pass | ~1052ms | Control retest still compiles. |
 | Full suite | ✅ 2522 pass / 181 expected-fail | — | No regressions introduced. |
 
+### 2026-05-26 Linux/libstdc++ concrete typedef-alias member-type lookup follow-up
+
+Fix landed:
+
+- **Concrete qualified member-type lookups now follow typedef / alias chains before giving up on `Alias::member`.** When the literal qualified key is absent from the type map, `parse_type_specifier()` now splits the name, resolves the concrete base alias, and reuses `lookup_inherited_type_alias(...)` to find the member type on the instantiated target.
+- **This keeps alias-heavy library code at the parser / semantic layer instead of collapsing `Alias::member` to an invalid zero-sized type** that later leaks into semantic analysis or IR.
+
+Regression coverage:
+
+- `tests/test_typedef_alias_member_type_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_typedef_alias_member_type_ret0.cpp` | ✅ Pass | regression compile | New regression verifies `Alias::type`, `Alias::value_type`, and chained alias-member lookup all resolve to the instantiated member type. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~892ms (`TOTAL`) / ~0.96s wall | Control retest still compiles. |
+| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | ~5.63s wall | Still stops on template-depth guarded `rebind`; earlier `__make_move_if_noexcept_iterator` failures are now diagnostic noise, not the first hard stop. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | ~7.84s wall | Still stops on template-depth guarded recursive `basic_string`; earlier `__make_move_if_noexcept_iterator` failures are also non-fatal noise. |
+
 Next known blockers to address:
-- **`<memory>` / `<functional>`**: `__make_move_if_noexcept_iterator` fails because `__is_nothrow_constructible` intrinsic returns wrong value for move-constructible scalar types (FlashCpp evaluates `is_nothrow_move_constructible<int>` as `false` instead of `true`). Fix needed in `TypeTraitEvaluator.cpp` multi-arg evaluation path.
+- **`<memory>` / `<functional>`**: current first hard stops are still template-depth guarded `basic_string` / `rebind`; the earlier `__make_move_if_noexcept_iterator` overload failures are no longer the first fatal frontier in focused Linux retests.
 - **`<ratio>`**: Crashes (SIGSEGV) during `__static_sign` template instantiation — pre-existing before this session.
 - **`<optional>` / `<string_view>`**: `ConstructorCallOp missing resolved constructor` for `_Optional_payload_base` / `basic_string_view` in codegen.
 
