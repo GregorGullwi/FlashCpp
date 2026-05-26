@@ -2138,18 +2138,26 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				if (!is_copy_elision_candidate) {
 						// Evaluate the initializer to check if it's an rvalue
 					ExprResult init_operands = visitExpressionNode(init_node.as<ExpressionNode>());
-						// Check if this is an rvalue (TempVar) - function return value
+						// Check if this is an rvalue (TempVar) of the same struct type.
+						// Only treat it as "direct initialization from rvalue" when it IS the same
+						// struct type (e.g. a function returning T). For different-type TempVars
+						// (e.g. string literals that become char* pointers), fall through to the
+						// constructor call path so the correct converting constructor is invoked.
 					bool is_rvalue = std::holds_alternative<TempVar>(init_operands.value);
 					if (is_rvalue) {
-						const TypeInfo* target_type_info = tryGetTypeInfo(type_node.type_index());
-						const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
 						const bool is_same_type_xvalue_init =
 							isSameTypeXValueSource(init_node, init_operands, type_node);
-						if (target_struct_info && is_same_type_xvalue_init) {
-							diagnoseDeletedSameTypeConstructorUsage(*target_struct_info, true);
+						if (is_same_type_xvalue_init) {
+							const TypeInfo* target_type_info = tryGetTypeInfo(type_node.type_index());
+							const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
+							if (target_struct_info) {
+								diagnoseDeletedSameTypeConstructorUsage(*target_struct_info, true);
+							}
+							// For same-type rvalues (function returning T), use direct initialization
+							appendExprResultToOperands(init_operands);
 						}
-							// For rvalues, use direct initialization (no constructor call)
-						appendExprResultToOperands(init_operands);
+						// For different-type rvalues (converting constructor needed), fall through
+						// to the constructor call path below.
 					}
 						// For lvalues, skip adding to operands - will use constructor call below
 				}
@@ -2680,9 +2688,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (is_converting_ctor && init_node.is<ExpressionNode>()) {
 								const void* key = &init_node.as<ExpressionNode>();
 								const auto slot = sema_.getSlot(key);
+								FLASH_LOG(Codegen, Error, "DBG copy-init sema lookup: key=", key, " slot_has_value=", slot.has_value(), " has_cast=", (slot.has_value() ? slot->has_cast() : false), " var=", decl.identifier_token().value());
 								if (slot.has_value() && slot->has_cast()) {
 									const ImplicitCastInfo& cast_info =
 										sema_.castInfoTable()[slot->cast_info_index.value - 1];
+									FLASH_LOG(Codegen, Error, "DBG cast_kind=", (int)cast_info.cast_kind, " has_ctor=", (bool)cast_info.selected_constructor, " target_cat=", (int)sema_.typeContext().get(cast_info.target_type_id).category(), " target_idx=", sema_.typeContext().get(cast_info.target_type_id).type_index.index(), " type_node.type_index=", type_node.type_index().index());
 									if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 										cast_info.selected_constructor) {
 										const CanonicalTypeDesc& target_desc =

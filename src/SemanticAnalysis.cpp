@@ -6557,12 +6557,14 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		if (parameters.empty() || countMinRequiredArgs(ctor_decl) > 1) {
 			continue;
 		}
-		if (!parameters[0].is<DeclarationNode>())
+		if (!parameters[0].is<DeclarationNode>()) {
 			continue;
+		}
 
 		const ASTNode& param_type_node = parameters[0].as<DeclarationNode>().type_node();
-		if (!param_type_node.is<TypeSpecifierNode>())
+		if (!param_type_node.is<TypeSpecifierNode>()) {
 			continue;
+		}
 		const auto& param_type = param_type_node.as<TypeSpecifierNode>();
 
 		const TypeConversionResult conversion = can_convert_type(arg_type, param_type);
@@ -6622,15 +6624,18 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	}
 
 	const auto& selected_params = best_non_explicit->parameter_nodes();
-	if (selected_params.empty() || !selected_params[0].is<DeclarationNode>())
+	if (selected_params.empty() || !selected_params[0].is<DeclarationNode>()) {
 		return false;
+	}
 	const ASTNode& selected_param_type_node = selected_params[0].as<DeclarationNode>().type_node();
-	if (!selected_param_type_node.is<TypeSpecifierNode>())
+	if (!selected_param_type_node.is<TypeSpecifierNode>()) {
 		return false;
+	}
 
 	const CanonicalTypeId param_type_id = canonicalizeType(selected_param_type_node.as<TypeSpecifierNode>());
-	if (!param_type_id)
+	if (!param_type_id) {
 		return false;
+	}
 
 	diagnoseScopedEnumConversion(expr_node, param_type_id, context_description, expr_type_id);
 
@@ -6652,6 +6657,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	setSlot(key, slot);
 	stats_.slots_filled++;
 
+	FLASH_LOG(General, Error, "DBG sema setSlot: key=", key, " target_type_index=", to_desc.type_index.index(), " for type=", StringTable::getStringView(to_type_info->name()));
 	FLASH_LOG(General, Debug,
 			  "SemanticAnalysis: annotated copy-init converting constructor for target struct type index ",
 			  to_desc.type_index.index());
