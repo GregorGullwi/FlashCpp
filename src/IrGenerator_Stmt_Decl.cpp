@@ -1439,6 +1439,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							bool has_matching_constructor = false;
 							const ConstructorDeclarationNode* matching_ctor = nullptr;
 							size_t num_initializers = initializers.size();
+							bool missing_sema_resolved_ctor = false;
 
 								// Special case: if empty initializer list and struct needs a trivial default constructor
 								// This handles template specializations where the constructor is generated later
@@ -1510,7 +1511,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											reportMismatchedSemaResolvedConstructor(type_info->name(), "brace initialization");
 										}
 									} else if (require_sema_resolved_ctor) {
-										throw InternalError("Sema did not annotate brace-init constructor for normalized body");
+										missing_sema_resolved_ctor = true;
 									}
 								}
 								if (!has_matching_constructor) {
@@ -1523,6 +1524,24 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										for (const auto& init_arg : initializers) {
 											std::optional<TypeSpecifierNode> arg_type_opt =
 												tryBuildCodegenOverloadResolutionArgType(init_arg);
+											if (!arg_type_opt.has_value() &&
+												missing_sema_resolved_ctor &&
+												init_arg.is<ExpressionNode>()) {
+												const auto& expr = init_arg.as<ExpressionNode>();
+												if (std::holds_alternative<IdentifierNode>(expr)) {
+													const auto& ident = std::get<IdentifierNode>(expr);
+													std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+													if (init_symbol.has_value()) {
+														if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+															TypeSpecifierNode recovered_type =
+																init_decl->type_specifier_node();
+															recovered_type.set_reference_qualifier(
+																ReferenceQualifier::LValueReference);
+															arg_type_opt = recovered_type;
+														}
+													}
+												}
+											}
 											if (!arg_type_opt.has_value()) {
 												all_arg_types_known = false;
 												break;
@@ -1534,15 +1553,65 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										// copy/move ctor coexists with a compiler-generated implicit one
 										// having the same signature.
 											auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+											bool template_ctor_ambiguous = false;
+											resolution.selected_overload = parser_.materializeMatchingConstructorTemplate(
+												struct_info.getName(),
+												struct_info,
+												arg_types,
+												resolution.selected_overload,
+												template_ctor_ambiguous);
+											if (template_ctor_ambiguous) {
+												resolution.is_ambiguous = true;
+											}
 											if (resolution.is_ambiguous) {
 												throw CompileError("Ambiguous constructor call");
 											}
-											if (resolution.has_match) {
+											if (resolution.selected_overload != nullptr || resolution.has_match) {
 												matching_ctor = resolution.selected_overload;
+											}
+											if (matching_ctor == nullptr && missing_sema_resolved_ctor) {
+												const ConstructorDeclarationNode* unique_materialized_ctor = nullptr;
+												for (const auto& ctor_member : struct_info.member_functions) {
+													if (!ctor_member.is_constructor ||
+														!ctor_member.function_decl.is<ConstructorDeclarationNode>()) {
+														continue;
+													}
+													const auto& candidate_ctor =
+														ctor_member.function_decl.as<ConstructorDeclarationNode>();
+													if (candidate_ctor.has_template_parameters() ||
+														!candidate_ctor.is_materialized() ||
+														candidate_ctor.mangled_name().empty()) {
+														continue;
+													}
+													size_t min_required = countMinRequiredArgs(candidate_ctor);
+													if (arg_types.size() < min_required ||
+														arg_types.size() > candidate_ctor.parameter_nodes().size()) {
+														continue;
+													}
+													if (unique_materialized_ctor != nullptr) {
+														unique_materialized_ctor = nullptr;
+														break;
+													}
+													unique_materialized_ctor = &candidate_ctor;
+												}
+												if (unique_materialized_ctor != nullptr) {
+													matching_ctor = unique_materialized_ctor;
+												}
 											}
 											has_matching_constructor = (matching_ctor != nullptr);
 										}
 									}
+								}
+								if (!has_matching_constructor && require_sema_resolved_ctor && missing_sema_resolved_ctor) {
+									FLASH_LOG(
+										Codegen,
+										Error,
+										"Missing sema-resolved brace-init ctor for var='",
+										node.declaration().identifier_token().value(),
+										"' target='",
+										StringTable::getStringView(struct_info.name),
+										"'");
+									throw InternalError("Sema did not annotate brace-init constructor for normalized body");
 								}
 								if (!has_matching_constructor && !require_sema_resolved_ctor) {
 									auto arity_resolution = resolve_constructor_overload_arity(struct_info, num_initializers, true);

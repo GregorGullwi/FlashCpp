@@ -7518,6 +7518,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setOutOfLineConstructorTemplateReplayMetadata(
 					ctor_decl,
 					out_of_line_member);
+				copyDefinitionParameterTypes(
+					ctor_decl.parameter_nodes(),
+					ool_func.parameter_nodes());
 
 				if (StructTypeInfo* ctor_instantiated_struct_info = struct_type_info.getStructInfo();
 					ctor_instantiated_struct_info != nullptr) {
@@ -7533,6 +7536,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							*info_ctor_resolution.ctor,
 							out_of_line_member);
+						copyDefinitionParameterTypes(
+							info_ctor_resolution.ctor->parameter_nodes(),
+							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
 						FLASH_LOG(
 							Templates,
@@ -10727,6 +10733,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							ctor_decl,
 							out_of_line_member);
+						copyDefinitionParameterTypes(
+							ctor_decl.parameter_nodes(),
+							out_of_line_ctor_decl.parameter_nodes());
 					} else {
 						FLASH_LOG(
 							Templates,
@@ -10795,6 +10804,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							ctor_decl,
 							out_of_line_member);
+						copyDefinitionParameterTypes(
+							ctor_decl.parameter_nodes(),
+							out_of_line_ctor_stub_decl.parameter_nodes());
 					}
 
 					if (nested_struct_info != nullptr) {
@@ -10809,6 +10821,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							setOutOfLineConstructorTemplateReplayMetadata(
 								*info_ctor_resolution.ctor,
 								out_of_line_member);
+							copyDefinitionParameterTypes(
+								info_ctor_resolution.ctor->parameter_nodes(),
+								out_of_line_ctor_stub_decl.parameter_nodes());
 						} else if (info_ctor_resolution.ambiguous) {
 							FLASH_LOG(
 								Templates,
@@ -12242,7 +12257,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							effective_template_args,
 							outer_parent_snapshot);
 						lazy_ctor_info.access = mem_func.access;
-						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
+						StringHandle lazy_registry_key =
+							LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
+						if (lazy_registry_key.isValid()) {
+							new_ctor_ref.set_lazy_member_registry_key(lazy_registry_key);
+						}
 					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ",
@@ -12888,6 +12907,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setOutOfLineConstructorTemplateReplayMetadata(
 					ctor_decl,
 					out_of_line_member);
+				copyDefinitionParameterTypes(
+					ctor_decl.parameter_nodes(),
+					ool_func.parameter_nodes());
 
 				if (struct_info_ptr != nullptr) {
 					OutOfLineConstructorStubResolution info_ctor_resolution =
@@ -12902,6 +12924,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							*info_ctor_resolution.ctor,
 							out_of_line_member);
+						copyDefinitionParameterTypes(
+							info_ctor_resolution.ctor->parameter_nodes(),
+							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Ambiguous StructTypeInfo constructor-template sync for out-of-line constructor template '")

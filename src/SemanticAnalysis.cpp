@@ -2825,26 +2825,37 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		}
 		const auto& init = var.initializer();
 		if (init.has_value()) {
+			auto annotateStructInitListCtor = [&]() {
+				if (!init->is<InitializerListNode>() || !vtype.has_value() || !vtype.is<TypeSpecifierNode>()) {
+					return;
+				}
+				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
+				if (ts.category() != TypeCategory::Struct) {
+					return;
+				}
+				const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
+				const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
+				if (si && si->hasAnyConstructor()) {
+					const InitializerListNode& il = init->as<InitializerListNode>();
+					tryAnnotateInitListConstructorArgs(il, *si);
+				}
+			};
+
 			// For struct types initialized via InitializerListNode (direct-init syntax
 			// like `Pair p(42, 3.14)`), annotate each initializer argument with the
 			// matching constructor parameter type.
-			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
-				if (ts.category() == TypeCategory::Struct) {
-					const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
-					const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
-					if (si && si->hasAnyConstructor()) {
-						const InitializerListNode& il = init->as<InitializerListNode>();
-						tryAnnotateInitListConstructorArgs(il, *si);
-					}
-				}
-			}
+			annotateStructInitListCtor();
 			// Normalize the initializer expression first so that expression kind-specific
 			// semantic state (e.g. resolved call return types for auto-return functions)
 			// is available when inferring the initializer type for copy-init annotation.
 			// This mirrors the return-statement pattern where normalizeExpression runs
 			// before tryAnnotateReturnConversion.
 			normalizeExpression(*init, ctx);
+			// Some normalization paths rebuild direct-init initializer-list nodes or
+			// materialize late template members while walking the arguments. Refresh the
+			// constructor annotation afterward so the final normalized node retains the
+			// selected constructor for codegen.
+			annotateStructInitListCtor();
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
 				tryAnnotateVariableInitializationConversion(
