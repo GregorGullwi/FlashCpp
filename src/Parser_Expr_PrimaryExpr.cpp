@@ -296,6 +296,13 @@ std::optional<ASTNode> Parser::tryInstantiateAdlTemplateCandidates(
 		return std::nullopt;
 	}
 
+	// ADL completes dependent lookup at the point of instantiation. Do not let
+	// the caller template's definition-time ordinary-lookup cutoff hide an ADL
+	// function template found in an associated namespace.
+	ScopedDefinitionLookupContext adl_lookup_context(
+		current_template_definition_lookup_context_,
+		nullptr);
+
 	std::vector<NamespaceHandle> ordered_namespaces(
 		adl_template_namespaces.begin(),
 		adl_template_namespaces.end());

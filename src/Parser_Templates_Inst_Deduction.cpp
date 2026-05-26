@@ -3132,6 +3132,29 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupFunctionTemplateCandidate
 	const StringHandle template_name_handle =
 		StringTable::getOrInternStringHandle(template_name);
 	const bool name_is_qualified = template_name.find("::") != std::string_view::npos;
+	const bool has_definition_lookup_context =
+		current_template_definition_lookup_context_ != nullptr &&
+		current_template_definition_lookup_context_->is_valid();
+	bool qualified_owner_is_namespace = false;
+	if (name_is_qualified) {
+		const size_t scope_sep = template_name.rfind("::");
+		std::string_view scope_prefix = template_name.substr(0, scope_sep);
+		bool force_global_namespace_lookup = false;
+		if (scope_prefix.starts_with("::")) {
+			force_global_namespace_lookup = true;
+			scope_prefix.remove_prefix(2);
+		}
+		const std::vector<std::string_view> namespace_views = splitQualifiedNamespace(scope_prefix);
+		std::vector<StringType<>> namespace_components;
+		namespace_components.reserve(namespace_views.size());
+		for (std::string_view component : namespace_views) {
+			if (!component.empty()) {
+				namespace_components.emplace_back(component);
+			}
+		}
+		qualified_owner_is_namespace =
+			gSymbolTable.resolve_namespace_handle(namespace_components, force_global_namespace_lookup).isValid();
+	}
 
 	auto append_candidates = [&](const TemplateNameLookupResult& lookup_result) {
 		for (const TemplateNameLookupCandidate& candidate : lookup_result.candidates) {
@@ -3221,7 +3244,9 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupFunctionTemplateCandidate
 		}
 	}
 
-	if (!candidates.empty() && !name_is_qualified) {
+	if (!candidates.empty() &&
+		(!name_is_qualified ||
+		 (qualified_owner_is_namespace && has_definition_lookup_context))) {
 		std::vector<ASTNode> declarations =
 			materializeFunctionTemplateCandidateDeclarations(candidates);
 		filterPhase1OrdinaryFunctionOverloads(declarations);

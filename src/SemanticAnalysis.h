@@ -53,7 +53,6 @@ struct ResolvedFunctionQueryResult {
 enum class DirectCallFallbackReason : uint8_t {
 	ReceiverMemberRecovery,
 	DependentUnqualifiedPointOfInstantiation,
-	GlobalMangledLookupMiss,
 	QualifiedOrOrdinaryNameLookupMiss,
 	StructMemberLookupMiss,
 };
