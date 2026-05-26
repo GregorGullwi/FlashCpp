@@ -9,6 +9,7 @@
 #include <vector>
 #include <functional>
 #include <algorithm>
+#include "InlineVector.h"
 #include "AstNodeTypes.h"
 #include "Token.h"
 #include "StackString.h"
@@ -1372,6 +1373,48 @@ public:
 			return NamespaceRegistry::GLOBAL_NAMESPACE;
 		}
 		return resolve_namespace_handle_impl(namespaces, force_global);
+	}
+
+	NamespaceHandle resolve_namespace_handle(std::string_view qualified_namespace, bool force_global) const {
+		if (qualified_namespace.empty()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
+
+		bool effective_force_global = force_global;
+		if (qualified_namespace.starts_with("::")) {
+			effective_force_global = true;
+			qualified_namespace.remove_prefix(2);
+		}
+
+		if (qualified_namespace.empty()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
+
+		InlineVector<std::string_view, 4> namespace_components;
+		size_t start = 0;
+		while (true) {
+			size_t pos = qualified_namespace.find("::", start);
+			std::string_view component = (pos == std::string_view::npos)
+											 ? qualified_namespace.substr(start)
+											 : qualified_namespace.substr(start, pos - start);
+			if (!component.empty()) {
+				namespace_components.push_back(component);
+			}
+			if (pos == std::string_view::npos) {
+				break;
+			}
+			start = pos + 2;
+		}
+
+		if (namespace_components.empty()) {
+			return NamespaceRegistry::GLOBAL_NAMESPACE;
+		}
+
+		return resolve_namespace_handle_impl(namespace_components, effective_force_global);
+	}
+
+	NamespaceHandle resolve_namespace_handle(std::string_view qualified_namespace) const {
+		return resolve_namespace_handle(qualified_namespace, false);
 	}
 
 private:
