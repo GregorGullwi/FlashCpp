@@ -2839,26 +2839,37 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		}
 		const auto& init = var.initializer();
 		if (init.has_value()) {
+			auto annotateStructInitListCtor = [&]() {
+				if (!init->is<InitializerListNode>() || !vtype.has_value() || !vtype.is<TypeSpecifierNode>()) {
+					return;
+				}
+				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
+				if (ts.category() != TypeCategory::Struct) {
+					return;
+				}
+				const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
+				const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
+				if (si && si->hasAnyConstructor()) {
+					const InitializerListNode& il = init->as<InitializerListNode>();
+					tryAnnotateInitListConstructorArgs(il, *si);
+				}
+			};
+
 			// For struct types initialized via InitializerListNode (direct-init syntax
 			// like `Pair p(42, 3.14)`), annotate each initializer argument with the
 			// matching constructor parameter type.
-			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
-				if (ts.category() == TypeCategory::Struct) {
-					const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
-					const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
-					if (si && si->hasAnyConstructor()) {
-						const InitializerListNode& il = init->as<InitializerListNode>();
-						tryAnnotateInitListConstructorArgs(il, *si);
-					}
-				}
-			}
+			annotateStructInitListCtor();
 			// Normalize the initializer expression first so that expression kind-specific
 			// semantic state (e.g. resolved call return types for auto-return functions)
 			// is available when inferring the initializer type for copy-init annotation.
 			// This mirrors the return-statement pattern where normalizeExpression runs
 			// before tryAnnotateReturnConversion.
 			normalizeExpression(*init, ctx);
+			// Some normalization paths rebuild direct-init initializer-list nodes or
+			// materialize late template members while walking the arguments. Refresh the
+			// constructor annotation afterward so the final normalized node retains the
+			// selected constructor for codegen.
+			annotateStructInitListCtor();
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
 				tryAnnotateVariableInitializationConversion(
@@ -2867,6 +2878,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 					" in variable initialization",
 					true);
 			}
+			annotateStructInitListCtor();
 		}
 	} else if (node.is<StructuredBindingNode>()) {
 		const auto& binding = node.as<StructuredBindingNode>();
@@ -5911,6 +5923,22 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		return arg_type;
 	}
 
+	if (arg.is<ExpressionNode>()) {
+		const auto& expr = arg.as<ExpressionNode>();
+		if (const auto* ident = std::get_if<IdentifierNode>(&expr)) {
+			std::optional<ASTNode> arg_symbol = symbols_.lookup(ident->name());
+			if (arg_symbol.has_value()) {
+				if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
+					TypeSpecifierNode recovered_type =
+						arg_decl->type_specifier_node();
+					applyExpressionValueCategory(recovered_type);
+					storeArgType(recovered_type);
+					return recovered_type;
+				}
+			}
+		}
+	}
+
 	if (inferred_type_id)
 		*inferred_type_id = {};
 	return std::nullopt;
@@ -8350,6 +8378,8 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		template_ctor_ambiguous);
 	if (template_ctor_ambiguous) {
 		resolution.is_ambiguous = true;
+	} else if (resolution.selected_overload != nullptr) {
+		resolution.is_ambiguous = false;
 	}
 	if (!resolution.selected_overload) {
 		resolution.selected_overload = resolveUniqueArityConstructor(*struct_info, num_args);
@@ -8623,6 +8653,67 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		if (const ConstructorDeclarationNode* unique_arity_ctor = resolveUniqueArityConstructor(struct_info, initializers.size())) {
 			init_list.set_resolved_constructor(unique_arity_ctor);
 		}
+		return;
+	}
+
+	auto try_select_same_type_ctor = [&]() -> const ConstructorDeclarationNode* {
+		if (arg_types.size() != 1) {
+			return nullptr;
+		}
+
+		TypeIndex target_struct_type_index{};
+		if (const TypeInfo* target_type_info = findTypeByName(struct_info.getName())) {
+			target_struct_type_index = target_type_info->registeredTypeIndex();
+		}
+		if (!target_struct_type_index.is_valid()) {
+			return nullptr;
+		}
+
+		TypeSpecifierNode source_type = arg_types.front();
+		const bool source_is_lvalue = source_type.is_lvalue_reference();
+		const bool source_is_xvalue = source_type.is_rvalue_reference();
+		source_type.set_reference_qualifier(ReferenceQualifier::None);
+		if (source_type.category() != TypeCategory::Struct ||
+			source_type.type_index() != target_struct_type_index) {
+			return nullptr;
+		}
+
+		const bool prefer_move_ctor = source_is_xvalue;
+		if (prefer_move_ctor) {
+			if (struct_info.isMoveConstructorDeleted()) {
+				throw CompileError(std::string(StringBuilder()
+					.append("Call to deleted move constructor of '")
+					.append(StringTable::getStringView(struct_info.getName()))
+					.append("'")
+					.commit()));
+			}
+			if (struct_info.findMoveConstructor(true) == nullptr && struct_info.isCopyConstructorDeleted()) {
+				throw CompileError(std::string(StringBuilder()
+					.append("Call to deleted copy constructor of '")
+					.append(StringTable::getStringView(struct_info.getName()))
+					.append("'")
+					.commit()));
+			}
+		} else if (source_is_lvalue && struct_info.isCopyConstructorDeleted()) {
+			throw CompileError(std::string(StringBuilder()
+				.append("Call to deleted copy constructor of '")
+				.append(StringTable::getStringView(struct_info.getName()))
+				.append("'")
+				.commit()));
+		}
+
+		const StructMemberFunction* same_type_ctor =
+			struct_info.findPreferredSameTypeConstructor(prefer_move_ctor, true);
+		if (same_type_ctor == nullptr ||
+			!same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			return nullptr;
+		}
+
+		return &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+	};
+
+	if (const ConstructorDeclarationNode* same_type_ctor = try_select_same_type_ctor()) {
+		init_list.set_resolved_constructor(same_type_ctor);
 		return;
 	}
 

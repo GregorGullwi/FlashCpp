@@ -513,6 +513,49 @@ static void setOutOfLineConstructorTemplateReplayMetadata(
 	}
 }
 
+static StringHandle registerLazyConstructorStub(
+	ConstructorDeclarationNode& ctor_decl,
+	ASTNode ctor_node,
+	StringHandle template_owner_name,
+	StringHandle instantiated_name,
+	AccessSpecifier access,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	const TemplateEnvironmentSnapshot* outer_parent_snapshot) {
+	LazyMemberFunctionInfo lazy_ctor_info;
+	{
+		auto& id = lazy_ctor_info.identity;
+		id.original_member_node = ctor_node;
+		id.template_owner_name = template_owner_name;
+		id.instantiated_owner_name = instantiated_name;
+		id.original_lookup_name = ctor_decl.name();
+		id.kind = DeferredMemberIdentity::Kind::Constructor;
+		id.is_const_method = false;
+	}
+	for (const TemplateParameterNode& template_param : outer_template_params) {
+		lazy_ctor_info.template_params.push_back(template_param);
+	}
+	for (const TemplateTypeArg& template_arg : outer_template_args) {
+		lazy_ctor_info.template_args.push_back(template_arg);
+	}
+	lazy_ctor_info.outer_template_environment_snapshot =
+		buildTemplateEnvironmentSnapshotFromBindings(
+			outer_template_params,
+			outer_template_args,
+			outer_parent_snapshot);
+	lazy_ctor_info.access = access;
+	lazy_ctor_info.registry_key = ctor_decl.has_lazy_member_registry_key()
+		? ctor_decl.lazy_member_registry_key()
+		: StringHandle{};
+	StringHandle lazy_registry_key =
+		LazyMemberInstantiationRegistry::getInstance().registerLazyMember(
+			std::move(lazy_ctor_info));
+	if (lazy_registry_key.isValid()) {
+		ctor_decl.set_lazy_member_registry_key(lazy_registry_key);
+	}
+	return lazy_registry_key;
+}
+
 bool Parser::static_initializer_requires_replay_metadata(
 	const std::optional<ASTNode>& initializer,
 	std::span<const TemplateParameterNode> template_params_for_substitution) {
@@ -1284,6 +1327,277 @@ static TypeIndex canonicalizeTemplateSignatureMatchTypeIndex(TypeIndex type_inde
 	return type_index;
 }
 
+static TypeIndex canonicalizeTemplateSignatureMatchTypeSpecifierIndex(
+	const TypeSpecifierNode& type_spec) {
+	const TypeCategory category = type_spec.type_index().is_valid()
+		? type_spec.type_index().category()
+		: type_spec.type();
+	return canonicalizeTemplateSignatureMatchTypeIndex(
+		type_spec.type_index().withCategory(category));
+}
+
+static bool shouldPreferTokenOwnerTypeInfoForSignatureRecovery(
+	const TypeInfo* token_owner_type_info,
+	const TypeInfo* index_owner_type_info) {
+	if (token_owner_type_info == nullptr) {
+		return false;
+	}
+	if (index_owner_type_info == nullptr) {
+		return true;
+	}
+	if (StringTable::getStringView(token_owner_type_info->name()) !=
+		StringTable::getStringView(index_owner_type_info->name())) {
+		return true;
+	}
+	return is_struct_type(token_owner_type_info->typeEnum()) &&
+		!is_struct_type(index_owner_type_info->typeEnum());
+}
+
+static const TypeInfo* resolveDependentMemberPlaceholderAgainstOwnerArtifact(
+	const TypeSpecifierNode& member_source_original_type,
+	const TypeSpecifierNode& owner_artifact_substituted_type,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	static constexpr size_t kMemberChainReserve = 4;
+	const TypeInfo* member_source_type_info = nullptr;
+	if (member_source_original_type.type_index().is_valid()) {
+		member_source_type_info = tryGetTypeInfo(member_source_original_type.type_index());
+	}
+	if (member_source_type_info == nullptr) {
+		member_source_type_info = findTypeByName(
+			StringTable::getOrInternStringHandle(
+				member_source_original_type.token().value()));
+	}
+
+	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+		member_source_type_info != nullptr
+			? member_source_type_info->dependentQualifiedName()
+			: nullptr;
+
+	const TypeInfo* owner_artifact_type_info_from_index = nullptr;
+	if (owner_artifact_substituted_type.type_index().is_valid()) {
+		owner_artifact_type_info_from_index =
+			tryGetTypeInfo(owner_artifact_substituted_type.type_index());
+	}
+	const TypeInfo* owner_artifact_type_info_from_token = findTypeByName(
+		StringTable::getOrInternStringHandle(
+			owner_artifact_substituted_type.token().value()));
+	const bool prefer_token_owner_type_info =
+		shouldPreferTokenOwnerTypeInfoForSignatureRecovery(
+			owner_artifact_type_info_from_token,
+			owner_artifact_type_info_from_index);
+	const TypeInfo* owner_artifact_type_info =
+		prefer_token_owner_type_info
+			? owner_artifact_type_info_from_token
+			: owner_artifact_type_info_from_index;
+	if (owner_artifact_type_info == nullptr) {
+		return nullptr;
+	}
+
+	const TypeIndex owner_artifact_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+		owner_artifact_type_info->registeredTypeIndex().withCategory(owner_artifact_type_info->typeEnum()));
+	if (!owner_artifact_canonical.is_valid()) {
+		return nullptr;
+	}
+
+	InlineVector<StringHandle, 4> member_chain_names;
+	member_chain_names.reserve(kMemberChainReserve);
+
+	bool use_dependent_member_chain =
+		dependent_record != nullptr &&
+		!dependent_record->member_chain.empty();
+
+	if (use_dependent_member_chain) {
+		TypeIndex expected_owner_canonical;
+		if (dependent_record->owner_type.is_valid()) {
+			expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+				dependent_record->owner_type);
+		}
+		if (!expected_owner_canonical.is_valid() &&
+			dependent_record->owner_name.isValid()) {
+			size_t owner_template_param_index = 0;
+			const TemplateParameterNode* owner_template_param = findTemplateParameterByName(
+				template_params,
+				StringTable::getStringView(dependent_record->owner_name),
+				&owner_template_param_index);
+			if (owner_template_param != nullptr &&
+				owner_template_param->kind() == TemplateParameterKind::Type &&
+				owner_template_param_index < template_args.size() &&
+				!template_args[owner_template_param_index].is_value) {
+				const TemplateTypeArg& owner_template_arg = template_args[owner_template_param_index];
+				expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+					owner_template_arg.type_index.withCategory(owner_template_arg.typeEnum()));
+			}
+		}
+		if (!expected_owner_canonical.is_valid() &&
+			dependent_record->owner_name.isValid()) {
+			if (const TypeInfo* named_owner = findTypeByName(dependent_record->owner_name);
+				named_owner != nullptr) {
+				expected_owner_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+					named_owner->registeredTypeIndex().withCategory(named_owner->typeEnum()));
+			}
+		}
+		if (expected_owner_canonical.is_valid() &&
+			expected_owner_canonical != owner_artifact_canonical) {
+			use_dependent_member_chain = false;
+		}
+
+		if (use_dependent_member_chain) {
+			for (const TypeInfo::DependentQualifiedNameRecord::Member& member :
+				 dependent_record->member_chain) {
+				if (!member.name.isValid() || member.has_template_arguments) {
+					return nullptr;
+				}
+				member_chain_names.push_back(member.name);
+			}
+		}
+	}
+	if (member_chain_names.empty()) {
+		const std::string_view member_name = member_source_original_type.token().value();
+		if (member_name.empty()) {
+			return nullptr;
+		}
+		member_chain_names.push_back(StringTable::getOrInternStringHandle(member_name));
+	}
+
+	const std::string_view owner_artifact_name =
+		StringTable::getStringView(owner_artifact_type_info->name());
+	if (owner_artifact_name.empty()) {
+		return nullptr;
+	}
+
+	StringBuilder qualified_member_name_builder;
+	qualified_member_name_builder.append(owner_artifact_name);
+	for (StringHandle member_name : member_chain_names) {
+		qualified_member_name_builder.append("::");
+		qualified_member_name_builder.append(StringTable::getStringView(member_name));
+	}
+
+	const std::string_view qualified_member_name =
+		qualified_member_name_builder.commit();
+	if (qualified_member_name.empty()) {
+		return nullptr;
+	}
+	const TypeInfo* resolved_member_type_info = findTypeByName(
+		StringTable::getOrInternStringHandle(qualified_member_name));
+	if (resolved_member_type_info == nullptr) {
+		return nullptr;
+	}
+
+	const TypeIndex resolved_member_canonical = canonicalizeTemplateSignatureMatchTypeIndex(
+		resolved_member_type_info->registeredTypeIndex().withCategory(resolved_member_type_info->typeEnum()));
+	if (!resolved_member_canonical.is_valid()) {
+		return nullptr;
+	}
+	if (const TypeInfo* resolved_canonical_type_info = tryGetTypeInfo(resolved_member_canonical);
+		resolved_canonical_type_info != nullptr) {
+		return resolved_canonical_type_info;
+	}
+	return resolved_member_type_info;
+}
+
+static bool tryMatchDependentMemberPlaceholderOwnerArtifactSubstitution(
+	const TypeSpecifierNode& lhs_substituted_type,
+	const TypeSpecifierNode& rhs_substituted_type,
+	const TypeSpecifierNode& lhs_original_type,
+	const TypeSpecifierNode& rhs_original_type,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	auto attempt_direction =
+		[&](
+			const TypeSpecifierNode& member_source_original_type,
+			const TypeSpecifierNode& owner_artifact_substituted_type,
+			const TypeSpecifierNode& concrete_member_substituted_type) {
+			const TypeInfo* resolved_member_type_info =
+				resolveDependentMemberPlaceholderAgainstOwnerArtifact(
+					member_source_original_type,
+					owner_artifact_substituted_type,
+					template_params,
+					template_args);
+			if (resolved_member_type_info == nullptr) {
+				return false;
+			}
+
+			TypeSpecifierNode resolved_member_type = member_source_original_type;
+			resolved_member_type.set_type_index(
+				resolved_member_type_info->registeredTypeIndex().withCategory(
+					resolved_member_type_info->typeEnum()));
+			if (!typeSpecifiersMatchForSignatureValidation(
+					resolved_member_type,
+					concrete_member_substituted_type)) {
+				return false;
+			}
+
+			const TypeIndex resolved_member_canonical =
+				canonicalizeTemplateSignatureMatchTypeSpecifierIndex(resolved_member_type);
+			const TypeIndex other_side_canonical =
+				canonicalizeTemplateSignatureMatchTypeSpecifierIndex(concrete_member_substituted_type);
+			return resolved_member_canonical.is_valid() &&
+				resolved_member_canonical == other_side_canonical &&
+				resolved_member_canonical.category() == other_side_canonical.category();
+		};
+
+	auto resolveTypeInfoForSignatureMatch = [](const TypeSpecifierNode& type_spec) -> const TypeInfo* {
+		if (type_spec.type_index().is_valid()) {
+			if (const TypeInfo* from_index = tryGetTypeInfo(type_spec.type_index());
+				from_index != nullptr) {
+				return from_index;
+			}
+		}
+		return findTypeByName(
+			StringTable::getOrInternStringHandle(type_spec.token().value()));
+	};
+
+	const TypeInfo* lhs_substituted_type_info =
+		resolveTypeInfoForSignatureMatch(lhs_substituted_type);
+	const TypeInfo* rhs_substituted_type_info =
+		resolveTypeInfoForSignatureMatch(rhs_substituted_type);
+
+	const bool lhs_is_owner_artifact =
+		lhs_substituted_type_info != nullptr &&
+		is_struct_type(lhs_substituted_type_info->typeEnum());
+	const bool rhs_is_owner_artifact =
+		rhs_substituted_type_info != nullptr &&
+		is_struct_type(rhs_substituted_type_info->typeEnum());
+
+	const bool lhs_looks_dependent =
+		typeSpecifierLooksLikeDependentSignaturePlaceholder(lhs_original_type);
+	const bool rhs_looks_dependent =
+		typeSpecifierLooksLikeDependentSignaturePlaceholder(rhs_original_type);
+
+	bool matched = false;
+	if (lhs_is_owner_artifact && !rhs_is_owner_artifact) {
+		if (lhs_looks_dependent) {
+			matched = matched || attempt_direction(
+				lhs_original_type,
+				lhs_substituted_type,
+				rhs_substituted_type);
+		}
+		if (rhs_looks_dependent) {
+			matched = matched || attempt_direction(
+				rhs_original_type,
+				lhs_substituted_type,
+				rhs_substituted_type);
+		}
+	}
+	if (rhs_is_owner_artifact && !lhs_is_owner_artifact) {
+		if (lhs_looks_dependent) {
+			matched = matched || attempt_direction(
+				lhs_original_type,
+				rhs_substituted_type,
+				lhs_substituted_type);
+		}
+		if (rhs_looks_dependent) {
+			matched = matched || attempt_direction(
+				rhs_original_type,
+				rhs_substituted_type,
+				lhs_substituted_type);
+		}
+	}
+
+	return matched;
+}
+
 static bool dependentQualifiedTemplateArgMatchesForSignature(
 	const TypeInfo::TemplateArgInfo& instantiated_arg,
 	const TypeInfo::TemplateArgInfo& out_of_line_arg,
@@ -1667,6 +1981,16 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 				continue;
 			}
 
+			if (tryMatchDependentMemberPlaceholderOwnerArtifactSubstitution(
+					lhs_type,
+					rhs_type,
+					*instantiated_param,
+					*out_of_line_param,
+					template_params,
+					template_args)) {
+				continue;
+			}
+
 			// One-sided substitutions can produce owner-only artifacts for dependent
 			// qualified names (e.g. `typename T::template AddPtr<int>::type`
 			// materializing as `T` when member lookup is deferred). In that case,
@@ -1840,6 +2164,32 @@ void Parser::copyDefinitionParameterIdentifiers(
 			instantiated_decl->set_identifier_token(definition_decl->identifier_token());
 		}
 	}
+}
+
+void Parser::copyDefinitionParameterTypes(
+	std::span<ASTNode> instantiated_params,
+	std::span<const ASTNode> definition_params) {
+	if (instantiated_params.size() != definition_params.size()) {
+		return;
+	}
+
+	for (size_t param_index = 0; param_index < instantiated_params.size(); ++param_index) {
+		DeclarationNode* instantiated_decl = Parser::get_decl_from_symbol_mut(instantiated_params[param_index]);
+		const DeclarationNode* definition_decl = get_decl_from_symbol(definition_params[param_index]);
+		if (!instantiated_decl || !definition_decl) {
+			continue;
+		}
+		instantiated_decl->set_type_node(definition_decl->type_specifier_node());
+	}
+}
+
+void Parser::syncOutOfLineConstructorTemplateParameters(
+	std::span<ASTNode> instantiated_params,
+	std::span<const ASTNode> definition_params) {
+	// Keep the declaration-side type nodes untouched so inner template-parameter bindings
+	// remain aligned even when the out-of-line definition renames those template parameters;
+	// only identifiers need to follow the definition spelling for body replay.
+	copyDefinitionParameterIdentifiers(instantiated_params, definition_params);
 }
 
 bool Parser::replayOutOfLineMemberBody(
@@ -3517,6 +3867,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				param_type_index == self_type_rewrite->from_type_index) {
 				param_type_index = self_type_rewrite->to_type_index;
 			}
+			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+				param_decl.type_node(),
+				param_type_spec,
+				param_type_index);
 			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()
 				? full_substituted_param_node.as<TypeSpecifierNode>()
 				: TypeSpecifierNode(
@@ -3527,7 +3881,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					  param_type_spec.cv_qualifier());
 			// Apply the resolved TypeIndex (self-type rewrite or alias resolution).
 			if (param_type_index.is_valid()) {
-				substituted_param_type.set_type_index(param_type_index);
+				substituted_param_type.set_type_index(
+					param_type_index.withCategory(param_type_index.category()));
+				substituted_param_type.set_category(param_type_index.category());
 			}
 			if (!full_substituted_param_node.is<TypeSpecifierNode>()) {
 				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
@@ -5114,6 +5470,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.is_no_unique_address);
 			}
 
+			SourceMemberIdentityMaps struct_info_source_member_identity_maps;
+
 			// Copy member functions from pattern
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
 				if (mem_func.is_constructor) {
@@ -5160,6 +5518,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
+					registerSourceMemberStubIdentity(
+						struct_info_source_member_identity_maps,
+						mem_func.function_declaration,
+						new_ctor_node);
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					struct_info->addDestructor(
@@ -6448,6 +6810,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						source_member_identity_maps,
 						mem_func.function_declaration,
 						new_ctor_node);
+					if (!orig_ctor.is_materialized() &&
+						shouldCommitTemplateInstantiationArtifacts()) {
+						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+							instantiated_struct_ref.has_outer_template_bindings()
+								? &instantiated_struct_ref.outer_template_environment_snapshot()
+								: nullptr;
+						StringHandle lazy_registry_key = registerLazyConstructorStub(
+							new_ctor_ref,
+							new_ctor_node,
+							StringTable::getOrInternStringHandle(template_name),
+							instantiated_name,
+							mem_func.access,
+							effective_pattern_template_params,
+							effective_pattern_template_args,
+							outer_parent_snapshot);
+						if (lazy_registry_key.isValid() &&
+							instantiated_struct_info_mut != nullptr) {
+							OutOfLineConstructorStubResolution info_ctor_resolution =
+								findMatchingConstructorInStructInfo(
+									*instantiated_struct_info_mut,
+									new_ctor_ref,
+									[](const ConstructorDeclarationNode&) {
+										return true;
+									});
+							if (info_ctor_resolution.ctor != nullptr) {
+								info_ctor_resolution.ctor->set_lazy_member_registry_key(
+									lazy_registry_key);
+							}
+						}
+					}
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
@@ -7155,6 +7547,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 
+				size_t relevant_source_ctor_template_count = 0;
+				for (const StructMemberFunctionDecl& source_member :
+					 pattern_struct.member_functions()) {
+					if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
+						continue;
+					}
+					const auto& source_ctor =
+						source_member.function_declaration.as<ConstructorDeclarationNode>();
+					if (source_ctor.template_parameters().size() !=
+							out_of_line_member.inner_template_params.size() ||
+						source_ctor.parameter_nodes().size() !=
+							ool_func.parameter_nodes().size()) {
+						continue;
+					}
+					++relevant_source_ctor_template_count;
+				}
+				if (relevant_source_ctor_template_count == 0) {
+					continue;
+				}
+
 				OutOfLineConstructorStubResolution ctor_resolution =
 					findOutOfLineConstructorTemplateStubByIdentity(
 						*this,
@@ -7200,21 +7612,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setOutOfLineConstructorTemplateReplayMetadata(
 					ctor_decl,
 					out_of_line_member);
+				syncOutOfLineConstructorTemplateParameters(
+					ctor_decl.parameter_nodes(),
+					ool_func.parameter_nodes());
 
 				if (StructTypeInfo* ctor_instantiated_struct_info = struct_type_info.getStructInfo();
 					ctor_instantiated_struct_info != nullptr) {
 					OutOfLineConstructorStubResolution info_ctor_resolution =
-						findMatchingConstructorInStructInfo(
-							*ctor_instantiated_struct_info,
-							ctor_decl,
-							[](const ConstructorDeclarationNode& info_ctor) {
-								return !info_ctor.has_template_body_position();
-							});
+						findOutOfLineConstructorTemplateStubByIdentity(
+							*this,
+							struct_info_source_member_identity_maps,
+							std::span<const StructMemberFunctionDecl>(
+								pattern_struct.member_functions().data(),
+								pattern_struct.member_functions().size()),
+							ool_func,
+							std::span<const TemplateParameterNode>(
+								template_params.data(),
+								template_params.size()),
+							std::span<const TemplateTypeArg>(
+								template_args_for_pattern.data(),
+								template_args_for_pattern.size()),
+							instantiated_name,
+							std::span<const TemplateParameterNode>(
+								out_of_line_member.inner_template_params.data(),
+								out_of_line_member.inner_template_params.size()));
 
 					if (info_ctor_resolution.ctor != nullptr) {
 						setOutOfLineConstructorTemplateReplayMetadata(
 							*info_ctor_resolution.ctor,
 							out_of_line_member);
+						syncOutOfLineConstructorTemplateParameters(
+							info_ctor_resolution.ctor->parameter_nodes(),
+							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
 						FLASH_LOG(
 							Templates,
@@ -10412,6 +10841,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							ctor_decl,
 							out_of_line_member);
+						syncOutOfLineConstructorTemplateParameters(
+							ctor_decl.parameter_nodes(),
+							out_of_line_ctor_decl.parameter_nodes());
 					} else {
 						FLASH_LOG(
 							Templates,
@@ -10480,6 +10912,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							ctor_decl,
 							out_of_line_member);
+						syncOutOfLineConstructorTemplateParameters(
+							ctor_decl.parameter_nodes(),
+							out_of_line_ctor_stub_decl.parameter_nodes());
 					}
 
 					if (nested_struct_info != nullptr) {
@@ -10494,6 +10929,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							setOutOfLineConstructorTemplateReplayMetadata(
 								*info_ctor_resolution.ctor,
 								out_of_line_member);
+							syncOutOfLineConstructorTemplateParameters(
+								info_ctor_resolution.ctor->parameter_nodes(),
+								out_of_line_ctor_stub_decl.parameter_nodes());
 						} else if (info_ctor_resolution.ambiguous) {
 							FLASH_LOG(
 								Templates,
@@ -11901,33 +12339,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// with member-initializers) propagated from the original above.
 					if (is_implicit_instantiation &&
 						!ctor_decl.is_materialized() &&
-						ctor_decl.has_template_body_position() &&
 						shouldCommitTemplateInstantiationArtifacts()) {
-						LazyMemberFunctionInfo lazy_ctor_info;
-						{
-							auto& id = lazy_ctor_info.identity;
-							// Store the instantiated stub as original_member_node. The lazy
-							// materializer uses this node's template_body_position for re-parsing,
-							// and matches it by raw pointer when updating struct_info.
-							id.original_member_node = new_ctor_node;
-							id.template_owner_name = StringTable::getOrInternStringHandle(template_name);
-							id.instantiated_owner_name = instantiated_name;
-							id.original_lookup_name = instantiated_name; // constructor name = class name
-							id.kind = DeferredMemberIdentity::Kind::Constructor;
-							id.is_const_method = false;
-						}
-						lazy_ctor_info.template_params = template_params;
-						lazy_ctor_info.template_args = template_args_to_use;
 						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
 							instantiated_struct_ref.has_outer_template_bindings()
 								? &instantiated_struct_ref.outer_template_environment_snapshot()
 								: nullptr;
-						lazy_ctor_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+						registerLazyConstructorStub(
+							new_ctor_ref,
+							new_ctor_node,
+							StringTable::getOrInternStringHandle(template_name),
+							instantiated_name,
+							mem_func.access,
 							effective_template_params,
 							effective_template_args,
 							outer_parent_snapshot);
-						lazy_ctor_info.access = mem_func.access;
-						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
 					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ",
@@ -11992,6 +12417,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						source_member_identity_maps,
 						mem_func.function_declaration,
 						new_ctor_node);
+					if (is_implicit_instantiation &&
+						!ctor_decl.is_materialized() &&
+						shouldCommitTemplateInstantiationArtifacts()) {
+						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+							instantiated_struct_ref.has_outer_template_bindings()
+								? &instantiated_struct_ref.outer_template_environment_snapshot()
+								: nullptr;
+						registerLazyConstructorStub(
+							new_ctor_ref,
+							new_ctor_node,
+							StringTable::getOrInternStringHandle(template_name),
+							instantiated_name,
+							mem_func.access,
+							effective_template_params,
+							effective_template_args,
+							outer_parent_snapshot);
+					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception creating no-body constructor stub for ",
 							  ctor_decl.name(), ": ", e.what());
@@ -12148,6 +12590,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_params,
 					template_args_to_use,
 					ret_type_index);
+				ret_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+					return_type_spec,
+					ret_type_index);
 
 				ASTNode new_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
 					? substituted_return_type_node
@@ -12248,10 +12693,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeCategory new_param_type = param_type_spec.type();
 						TypeIndex new_param_type_index = param_type_spec.type_index();
 
-						// Only substitute UserDefined types (not Auto, which is inner template)
-						if (new_param_type == TypeCategory::UserDefined) {
+						// Substitute outer-dependent types (but not inner-template placeholders like Auto/U).
+						if (new_param_type == TypeCategory::UserDefined ||
+							new_param_type == TypeCategory::TypeAlias ||
+							new_param_type == TypeCategory::Template) {
 							TypeIndex subst_idx = substitute_template_parameter(
 								param_type_spec, template_params, template_args_to_use);
+							subst_idx = resolveOwnerAliasTypeIndex(
+								[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+									return substitute_template_parameter(type_spec, params, args);
+								},
+								class_decl,
+								param_type_spec,
+								template_params,
+								template_args_to_use,
+								subst_idx);
+							subst_idx = resolveDependentMemberPlaceholderFromOwnerArtifact(
+								param_type_spec,
+								subst_idx);
 							new_param_type = subst_idx.category();
 							new_param_type_index = subst_idx;
 						}
@@ -12556,6 +13015,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				setOutOfLineConstructorTemplateReplayMetadata(
 					ctor_decl,
 					out_of_line_member);
+				syncOutOfLineConstructorTemplateParameters(
+					ctor_decl.parameter_nodes(),
+					ool_func.parameter_nodes());
 
 				if (struct_info_ptr != nullptr) {
 					OutOfLineConstructorStubResolution info_ctor_resolution =
@@ -12570,6 +13032,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOutOfLineConstructorTemplateReplayMetadata(
 							*info_ctor_resolution.ctor,
 							out_of_line_member);
+						syncOutOfLineConstructorTemplateParameters(
+							info_ctor_resolution.ctor->parameter_nodes(),
+							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Ambiguous StructTypeInfo constructor-template sync for out-of-line constructor template '")
@@ -12613,6 +13078,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (!matched_stub->is<TemplateFunctionDeclarationNode>()) {
 					continue;
 				}
+				FunctionDeclarationNode* matched_template_func_decl =
+					get_function_decl_node_mut(*matched_stub);
+				if (matched_template_func_decl == nullptr) {
+					continue;
+				}
+				if (matched_template_func_decl->has_template_body_position()) {
+					continue;
+				}
 				if (relevant_member_template_count > 1) {
 					std::optional<bool> signature_match = nestedOutOfLineMemberTemplateMatchesCandidate(
 						*this,
@@ -12632,7 +13105,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 				}
-				inst_func_decl = get_function_decl_node_mut(*matched_stub);
+				inst_func_decl = matched_template_func_decl;
 				if (inst_func_decl == nullptr) {
 					continue;
 				}
@@ -12643,11 +13116,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Set the body position and definition-time lookup context from the
 				// out-of-line definition so two-phase lookup uses the definition namespace.
 				inst_func_decl->set_template_body_position(out_of_line_member.body_start);
+				copyDefinitionParameterTypes(
+					inst_func_decl->parameter_nodes(),
+					ool_func.parameter_nodes());
 				copyDefinitionParameterIdentifiers(
 					inst_func_decl->parameter_nodes(),
 					ool_func.parameter_nodes());
 				inst_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
-				FLASH_LOG(Templates, Debug, "Set body position on nested template member: ", ool_func_name);
+				FLASH_LOG(
+					Templates,
+					Debug,
+					"Set body position on nested template member: ",
+					ool_func_name,
+					", stub=",
+					reinterpret_cast<uintptr_t>(inst_func_decl),
+					", body_pos=",
+					static_cast<size_t>(out_of_line_member.body_start));
 				found = true;
 			}
 

@@ -87,6 +87,7 @@ struct LazyMemberFunctionInfo {
 	InlineVector<TemplateParameterNode, 4> template_params; // Template parameters from class template
 	InlineVector<TemplateTypeArg, 4> template_args; // Concrete template arguments used for instantiation
 	TemplateEnvironmentSnapshot outer_template_environment_snapshot;
+	TemplateDefinitionLookupContext definition_lookup_context;
 	StringHandle registry_key;
 	AccessSpecifier access;						// Access specifier (public/private/protected)
 	bool is_virtual = false;					 // Virtual function flag

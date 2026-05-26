@@ -217,6 +217,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						param_type_index);
 				}
 				resolve_self_type(param_type_index);
+				param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+					param_decl.type_node(),
+					param_type_spec,
+					param_type_index);
 
 				TypeSpecifierNode substituted_param_type(
 					param_type_index.category(),
@@ -341,6 +345,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				outer_environment);
 			FlashCpp::TemplateParameterScope template_scope;
 			registerTypeParamsInScope(substitution_environment, template_scope, true);
+			ScopedDefinitionLookupContext definition_ctx_scope(
+				current_template_definition_lookup_context_,
+				lazy_info.definition_lookup_context.is_valid()
+					? &lazy_info.definition_lookup_context
+					: current_template_definition_lookup_context_);
 
 			// When re-parsing a deferred template constructor body with concrete types,
 			// we're no longer in a dependent template context.
@@ -399,37 +408,80 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
 		pack_param_info_.resize(saved_ctor_pack_info);
 
-		registerLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
-		normalizePendingSemanticRoots();
-
 		auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 		if (struct_it != getTypesByNameMap().end()) {
 			if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
+				bool replaced_lazy_stub = false;
 				for (auto& member_func : struct_info->member_functions) {
 					if (!member_func.is_constructor) {
 						continue;
 					}
-					if (getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
+					if (!lazy_info.registry_key.isValid() ||
+						getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
 						continue;
 					}
 					member_func.function_decl = new_ctor_node;
+					replaced_lazy_stub = true;
 					break;
+				}
+				if (!replaced_lazy_stub) {
+					bool already_present = false;
+					for (const auto& member_func : struct_info->member_functions) {
+						if (!member_func.is_constructor ||
+							!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+							continue;
+						}
+						const auto& existing_ctor =
+							member_func.function_decl.as<ConstructorDeclarationNode>();
+						if (existing_ctor.mangled_name() == new_ctor_ref.mangled_name()) {
+							already_present = true;
+							break;
+						}
+					}
+					if (!already_present) {
+						struct_info->addConstructor(new_ctor_node, lazy_info.access);
+					}
 				}
 			}
 		}
 		if (auto struct_root = lookupLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
 			struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
+			bool replaced_lazy_stub = false;
 			for (auto& member_func : struct_root->as<StructDeclarationNode>().member_functions()) {
 				if (!member_func.is_constructor) {
 					continue;
 				}
-				if (getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
+				if (!lazy_info.registry_key.isValid() ||
+					getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
 					continue;
 				}
 				member_func.function_declaration = new_ctor_node;
+				replaced_lazy_stub = true;
 				break;
 			}
+			if (!replaced_lazy_stub) {
+				auto& struct_decl = struct_root->as<StructDeclarationNode>();
+				bool already_present = false;
+				for (const auto& member_func : struct_decl.member_functions()) {
+					if (!member_func.is_constructor ||
+						!member_func.function_declaration.is<ConstructorDeclarationNode>()) {
+						continue;
+					}
+					const auto& existing_ctor =
+						member_func.function_declaration.as<ConstructorDeclarationNode>();
+					if (existing_ctor.mangled_name() == new_ctor_ref.mangled_name()) {
+						already_present = true;
+						break;
+					}
+				}
+				if (!already_present) {
+					struct_decl.add_constructor(new_ctor_node, lazy_info.access);
+				}
+			}
 		}
+
+		registerLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
+		normalizePendingSemanticRoots();
 
 		return new_ctor_node;
 	}
@@ -615,6 +667,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	if (has_saved_body_position) {
 		FLASH_LOG(Templates, Debug, "Lazy member function body: re-parsing from saved position");
+		FLASH_LOG(
+			Templates,
+			Debug,
+			"Lazy member replay metadata: key=",
+			lazy_info.registry_key,
+			", node=",
+			reinterpret_cast<uintptr_t>(&func_decl),
+			", body_pos=",
+			static_cast<size_t>(func_decl.template_body_position()));
 		// Re-parse the function body from saved position
 		// This is needed for member struct templates where body parsing is deferred
 

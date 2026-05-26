@@ -1230,49 +1230,57 @@ ParseResult Parser::parse_type_specifier() {
 		// Preserve simple dependent qualified member types like T::value_type or T::size_type
 		// as placeholder types so template instantiation can resolve them later.
 		// Without this, they can collapse to bare T before instantiation.
-		if (type_name.find("::") != std::string_view::npos && peek() != "<"_tok &&
-			isTemplateParameterTrackingActive()) {
+		if (type_name.find("::") != std::string_view::npos && peek() != "<"_tok) {
 			std::string_view base_part = type_name.substr(0, type_name.find("::"));
+			StringHandle base_handle = StringTable::getOrInternStringHandle(base_part);
 			bool is_dependent_qualified_type = false;
 			for (const auto& param_name : currentTemplateParamNames()) {
-				if (param_name == StringTable::getOrInternStringHandle(base_part)) {
+				if (param_name == base_handle) {
 					is_dependent_qualified_type = true;
 					break;
 				}
 			}
+			if (!is_dependent_qualified_type) {
+				if (auto base_type_it = getTypesByNameMap().find(base_handle);
+					base_type_it != getTypesByNameMap().end() &&
+					base_type_it->second != nullptr &&
+					base_type_it->second->isDependentPlaceholder()) {
+					is_dependent_qualified_type = true;
+				}
+			}
 
-				if (is_dependent_qualified_type) {
-					if (auto typename_error = diagnoseMissingTypenameForDependentOwner(
-							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
-							last_qualified_token,
-							false);
-						typename_error.has_value()) {
-						return *typename_error;
-					}
-					StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-					StringHandle owner_handle =
-						StringTable::getOrInternStringHandle(base_part);
-					TypeIndex owner_type_index{};
-					if (auto owner_it = getTypesByNameMap().find(owner_handle);
-						owner_it != getTypesByNameMap().end() &&
-						owner_it->second != nullptr) {
-						owner_type_index = owner_it->second->registeredTypeIndex();
-					}
-					auto type_it = getTypesByNameMap().find(type_handle);
-					TypeIndex type_idx;
-					if (type_it == getTypesByNameMap().end()) {
+			if (is_dependent_qualified_type) {
+				if (auto typename_error = diagnoseMissingTypenameForDependentOwner(
+						TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+						last_qualified_token,
+						false);
+					typename_error.has_value()) {
+					return *typename_error;
+				}
+				StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+				StringHandle owner_handle =
+					StringTable::getOrInternStringHandle(base_part);
+				TypeIndex owner_type_index{};
+				if (auto owner_it = getTypesByNameMap().find(owner_handle);
+					owner_it != getTypesByNameMap().end() &&
+					owner_it->second != nullptr) {
+					owner_type_index = owner_it->second->registeredTypeIndex();
+				}
+				auto type_it = getTypesByNameMap().find(type_handle);
+				TypeIndex type_idx;
+				if (type_it == getTypesByNameMap().end()) {
 					TypeInfo& placeholder_type = add_empty_type_entry();
 					placeholder_type.fallback_size_bits_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
 					placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
-						placeholder_type.setDependentQualifiedName(
-							makeDependentQualifiedNameRecord(
-								owner_handle,
-								owner_type_index,
-								TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
-								InlineVector<TypeInfo::TemplateArgInfo, 4>{},
-								type_name.substr(type_name.find("::") + 2),
+					placeholder_type.setDependentQualifiedName(
+						makeDependentQualifiedNameRecord(
+							owner_handle,
+							owner_type_index,
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+							InlineVector<TypeInfo::TemplateArgInfo, 4>{},
+							type_name.substr(type_name.find("::") + 2),
 							{}));
 					getTypesByNameMap()[type_handle] = &placeholder_type;
 					type_idx = placeholder_type.type_index_;
@@ -2962,11 +2970,98 @@ ParseResult Parser::parse_type_specifier() {
 		// IMPORTANT: Skip this check during SoftProbe mode, because in that case
 		// the template parameters have been substituted with concrete types in getTypesByNameMap(), and we
 		// should use the substituted types instead of creating dependent type placeholders.
-		if (isTemplateBodyWithActiveParameters() &&
+		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+		bool names_active_template_param = false;
+		for (const auto& param_name : currentTemplateParamNames()) {
+			if (param_name == type_name_handle) {
+				names_active_template_param = true;
+				break;
+			}
+		}
+		const bool should_preserve_dependent_qualified_template_param =
+			names_active_template_param && peek() == "::"_tok;
+		if ((isTemplateBodyWithActiveParameters() ||
+			 should_preserve_dependent_qualified_template_param) &&
 			template_instantiation_mode_ != TemplateInstantiationMode::SoftProbe) {
-			StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
 			for (const auto& param_name : currentTemplateParamNames()) {
 				if (param_name == type_name_handle) {
+					if (peek() == "::"_tok) {
+						StringBuilder dependent_type_builder;
+						dependent_type_builder.append(type_name);
+						Token nested_token = type_name_token;
+						TypeInfo::DependentQualifiedNameRecord dependent_name_record;
+						dependent_name_record.owner_kind =
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+						dependent_name_record.owner_name = type_name_handle;
+						if (auto owner_it = getTypesByNameMap().find(type_name_handle);
+							owner_it != getTypesByNameMap().end() &&
+							owner_it->second != nullptr) {
+							dependent_name_record.owner_type = owner_it->second->registeredTypeIndex();
+						}
+
+						while (peek() == "::"_tok) {
+							advance();
+							bool has_template_keyword = false;
+							if (peek() == "template"_tok) {
+								advance();
+								has_template_keyword = true;
+							}
+							if (!peek().is_identifier()) {
+								return ParseResult::error("Expected identifier after '::'", peek_info());
+							}
+
+							nested_token = peek_info();
+							advance();
+							dependent_type_builder.append("::").append(nested_token.value());
+							TypeInfo::DependentQualifiedNameRecord::Member member_record;
+							member_record.name = nested_token.handle();
+							member_record.has_template_keyword = has_template_keyword;
+
+							if (peek() == "<"_tok) {
+								auto nested_template_args = parse_explicit_template_arguments();
+								if (!nested_template_args.has_value()) {
+									return ParseResult::error("Failed to parse template arguments for dependent nested type", nested_token);
+								}
+								member_record.template_arguments =
+									convertToTemplateArgInfo(*nested_template_args);
+								member_record.has_template_arguments = true;
+								dependent_type_builder.append("<")
+									.append(nested_template_args->size())
+									.append(" args>");
+							}
+							dependent_name_record.member_chain.push_back(std::move(member_record));
+						}
+
+						std::string_view dependent_type_name = dependent_type_builder.commit();
+						StringHandle dependent_type_handle =
+							StringTable::getOrInternStringHandle(dependent_type_name);
+						auto dependent_type_it = getTypesByNameMap().find(dependent_type_handle);
+						TypeIndex dependent_type_idx;
+						if (dependent_type_it == getTypesByNameMap().end()) {
+							TypeInfo& placeholder_type = add_empty_type_entry();
+							placeholder_type.fallback_size_bits_ = 0;
+							placeholder_type.name_ = dependent_type_handle;
+							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							placeholder_type.setDependentQualifiedName(dependent_name_record);
+							getTypesByNameMap()[dependent_type_handle] = &placeholder_type;
+							dependent_type_idx = placeholder_type.type_index_;
+						} else {
+							dependent_type_idx = dependent_type_it->second->type_index_;
+							if (dependent_type_it->second != nullptr &&
+								dependent_type_it->second->isDependentMemberType() &&
+								!dependent_type_it->second->hasDependentQualifiedName()) {
+								dependent_type_it->second->setDependentQualifiedName(dependent_name_record);
+							}
+						}
+
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(
+							dependent_type_idx.withCategory(TypeCategory::UserDefined),
+							0,
+							nested_token,
+							cv_qualifier,
+							ReferenceQualifier::None));
+					}
 					// This is a template parameter - create a dependent type placeholder
 					// Look up the TypeInfo for this parameter (it should have been registered when
 					// the template parameters were parsed)
@@ -3014,8 +3109,6 @@ ParseResult Parser::parse_type_specifier() {
 		}
 
 		// Check if this is a registered struct type (considering current namespace context)
-		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
-
 		// Before the global lookup, try struct-scoped type lookup in the enclosing class.
 		// This covers both typedef/using aliases AND nested struct/union/class types.
 		// It is needed because:

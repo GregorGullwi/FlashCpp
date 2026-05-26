@@ -1117,23 +1117,145 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 		   param_type.type_index() == *struct_info.own_type_index_;
 }
 
-inline ConstructorOverloadResolutionResult resolve_constructor_overload(
-	const StructTypeInfo& struct_info,
+inline int compareConstructorTemplatePreference(
+	const ConstructorDeclarationNode& lhs,
+	const ConstructorDeclarationNode& rhs) {
+	const bool lhs_is_template = lhs.has_template_parameters();
+	const bool rhs_is_template = rhs.has_template_parameters();
+	if (lhs_is_template == rhs_is_template) {
+		return 0;
+	}
+	return lhs_is_template ? 1 : -1;
+}
+
+inline bool tryBuildConstructorConversionInfos(
+	const ConstructorDeclarationNode& ctor_decl,
 	std::span<const TypeSpecifierNode> argument_types,
-	bool skip_implicit = false) {
+	std::vector<ArgumentConversionInfo>& conversion_infos) {
+	const auto& parameters = ctor_decl.parameter_nodes();
+	size_t min_required = countMinRequiredArgs(ctor_decl);
+	if (argument_types.size() < min_required || argument_types.size() > parameters.size()) {
+		return false;
+	}
+
+	conversion_infos.clear();
+	conversion_infos.reserve(argument_types.size());
+	for (size_t i = 0; i < argument_types.size(); ++i) {
+		if (!parameters[i].is<DeclarationNode>()) {
+			return false;
+		}
+
+		const auto& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
+		const ArgumentConversionInfo conversion =
+			buildArgumentConversionInfo(argument_types[i], param_type);
+		if (!conversion.is_valid) {
+			return false;
+		}
+		conversion_infos.push_back(conversion);
+	}
+	return true;
+}
+
+inline const ConstructorDeclarationNode* selectBestConstructorCandidate(
+	std::span<const ConstructorDeclarationNode* const> candidates,
+	std::span<const TypeSpecifierNode> argument_types,
+	bool& is_ambiguous) {
 	const ConstructorDeclarationNode* best_match = nullptr;
 	std::vector<ArgumentConversionInfo> best_infos;
 	int num_best_matches = 0;
 	std::vector<const ConstructorDeclarationNode*> tied_candidates;
-	auto compare_constructor_template_preference = [](const ConstructorDeclarationNode& lhs,
-													  const ConstructorDeclarationNode& rhs) {
-		const bool lhs_is_template = lhs.has_template_parameters();
-		const bool rhs_is_template = rhs.has_template_parameters();
-		if (lhs_is_template == rhs_is_template) {
-			return 0;
+	is_ambiguous = false;
+
+	for (const ConstructorDeclarationNode* candidate : candidates) {
+		if (candidate == nullptr) {
+			continue;
 		}
-		return lhs_is_template ? 1 : -1;
-	};
+
+		std::vector<ArgumentConversionInfo> conversion_infos;
+		if (!tryBuildConstructorConversionInfos(*candidate, argument_types, conversion_infos)) {
+			continue;
+		}
+
+		if (!best_match) {
+			best_match = candidate;
+			best_infos = conversion_infos;
+			num_best_matches = 1;
+			tied_candidates.clear();
+			tied_candidates.push_back(candidate);
+			continue;
+		}
+
+		const ConversionInfoComparison this_vs_best =
+			compareConversionInfoLists(argument_types, conversion_infos, best_infos);
+		bool this_is_better = this_vs_best.lhs_is_better;
+		bool this_is_worse = this_vs_best.lhs_is_worse;
+		if (!this_is_better && !this_is_worse) {
+			const int template_preference =
+				compareConstructorTemplatePreference(*candidate, *best_match);
+			if (template_preference < 0) {
+				this_is_better = true;
+			} else if (template_preference > 0) {
+				this_is_worse = true;
+			}
+		}
+
+		if (this_is_better && !this_is_worse) {
+			std::vector<const ConstructorDeclarationNode*> old_tied = std::move(tied_candidates);
+			best_match = candidate;
+			best_infos = conversion_infos;
+			num_best_matches = 1;
+			tied_candidates.clear();
+			tied_candidates.push_back(candidate);
+			for (const auto* prev : old_tied) {
+				if (prev == candidate) {
+					continue;
+				}
+				std::vector<ArgumentConversionInfo> prev_infos;
+				if (!tryBuildConstructorConversionInfos(*prev, argument_types, prev_infos)) {
+					continue;
+				}
+
+				const ConversionInfoComparison prev_vs_best =
+					compareConversionInfoLists(argument_types, prev_infos, best_infos);
+				bool prev_better = prev_vs_best.lhs_is_better;
+				bool prev_worse = prev_vs_best.lhs_is_worse;
+				if (!prev_better && !prev_worse) {
+					const int template_preference =
+						compareConstructorTemplatePreference(*prev, *best_match);
+					if (template_preference < 0) {
+						prev_better = true;
+					} else if (template_preference > 0) {
+						prev_worse = true;
+					}
+				}
+				if (!prev_better && prev_worse) {
+					continue;
+				}
+
+				num_best_matches++;
+				tied_candidates.push_back(prev);
+			}
+		} else if (!this_is_better && this_is_worse) {
+			continue;
+		} else {
+			num_best_matches++;
+			tied_candidates.push_back(candidate);
+		}
+	}
+
+	if (num_best_matches > 1) {
+		is_ambiguous = true;
+		return nullptr;
+	}
+	return best_match;
+}
+
+inline ConstructorOverloadResolutionResult resolve_constructor_overload(
+	const StructTypeInfo& struct_info,
+	std::span<const TypeSpecifierNode> argument_types,
+	bool skip_implicit = false) {
+	std::vector<const ConstructorDeclarationNode*> viable_candidates;
+	viable_candidates.reserve(struct_info.member_functions.size());
 
 	for (const auto& member_func : struct_info.member_functions) {
 		if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -1162,123 +1284,18 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 				continue;
 			}
 		}
-
-		std::vector<ArgumentConversionInfo> conversion_infos;
-		bool all_convertible = true;
-		for (size_t i = 0; i < argument_types.size(); ++i) {
-			if (!parameters[i].is<DeclarationNode>()) {
-				all_convertible = false;
-				break;
-			}
-
-			const auto& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
-			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(argument_types[i], param_type);
-			if (!conversion.is_valid) {
-				all_convertible = false;
-				break;
-			}
-			conversion_infos.push_back(conversion);
-		}
-
-		if (!all_convertible) {
-			continue;
-		}
-
-		if (!best_match) {
-			best_match = &ctor_decl;
-			best_infos = conversion_infos;
-			num_best_matches = 1;
-			tied_candidates.clear();
-			tied_candidates.push_back(&ctor_decl);
-			continue;
-		}
-
-		const ConversionInfoComparison this_vs_best =
-			compareConversionInfoLists(argument_types, conversion_infos, best_infos);
-		bool this_is_better = this_vs_best.lhs_is_better;
-		bool this_is_worse = this_vs_best.lhs_is_worse;
-		if (!this_is_better && !this_is_worse) {
-			const int template_preference =
-				compare_constructor_template_preference(ctor_decl, *best_match);
-			if (template_preference < 0) {
-				this_is_better = true;
-			} else if (template_preference > 0) {
-				this_is_worse = true;
-			}
-		}
-
-		if (this_is_better && !this_is_worse) {
-			// This constructor is strictly better than the current best.
-			// Re-evaluate all previously accumulated tied/incomparable
-			// candidates against the new best ranks — any that are not
-			// strictly worse must be kept so that ambiguity is detected.
-			std::vector<const ConstructorDeclarationNode*> old_tied = std::move(tied_candidates);
-			best_match = &ctor_decl;
-			best_infos = conversion_infos;
-			num_best_matches = 1;
-			tied_candidates.clear();
-			tied_candidates.push_back(&ctor_decl);
-			for (const auto* prev : old_tied) {
-				if (prev == &ctor_decl)
-					continue;
-				const auto& prev_params = prev->parameter_nodes();
-				std::vector<ArgumentConversionInfo> prev_infos;
-				bool prev_valid = true;
-				for (size_t k = 0; k < argument_types.size(); ++k) {
-					if (!prev_params[k].is<DeclarationNode>()) {
-						prev_valid = false;
-						break;
-					}
-					const auto& pt = prev_params[k].as<DeclarationNode>().type_specifier_node();
-					const ArgumentConversionInfo conv = buildArgumentConversionInfo(argument_types[k], pt);
-					if (!conv.is_valid) {
-						prev_valid = false;
-						break;
-					}
-					prev_infos.push_back(conv);
-				}
-				if (!prev_valid)
-					continue;
-				const ConversionInfoComparison prev_vs_best =
-					compareConversionInfoLists(argument_types, prev_infos, best_infos);
-				bool prev_better = prev_vs_best.lhs_is_better;
-				bool prev_worse = prev_vs_best.lhs_is_worse;
-				if (!prev_better && !prev_worse) {
-					const int template_preference =
-						compare_constructor_template_preference(*prev, *best_match);
-					if (template_preference < 0) {
-						prev_better = true;
-					} else if (template_preference > 0) {
-						prev_worse = true;
-					}
-				}
-				if (!prev_better && prev_worse) {
-					// Strictly worse than new best — discard.
-				} else {
-					// Tied or incomparable — keep for ambiguity detection.
-					num_best_matches++;
-					tied_candidates.push_back(prev);
-				}
-			}
-		} else if (!this_is_better && this_is_worse) {
-			// This constructor is strictly worse — skip it
-		} else {
-			// Equally good on every argument (exact tie) OR better on some
-			// arguments and worse on others (incomparable).  In both cases
-			// neither candidate dominates the other — potentially ambiguous.
-			num_best_matches++;
-			tied_candidates.push_back(&ctor_decl);
-		}
+		viable_candidates.push_back(&ctor_decl);
 	}
 
+	bool is_ambiguous = false;
+	const ConstructorDeclarationNode* best_match =
+		selectBestConstructorCandidate(viable_candidates, argument_types, is_ambiguous);
 	if (!best_match) {
+		if (is_ambiguous) {
+			return ConstructorOverloadResolutionResult::ambiguous();
+		}
 		return ConstructorOverloadResolutionResult::no_match();
 	}
-
-	if (num_best_matches > 1) {
-		return ConstructorOverloadResolutionResult::ambiguous();
-	}
-
 	return ConstructorOverloadResolutionResult(best_match);
 }
 

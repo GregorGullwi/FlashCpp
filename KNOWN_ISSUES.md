@@ -135,6 +135,8 @@ before stopping on a multiply defined `__security_cookie`.
   compilation.
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
+---
+
 ### 2b) Link-time `__security_cookie` multiple-definition conflict
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
