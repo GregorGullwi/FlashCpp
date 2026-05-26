@@ -7822,17 +7822,24 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return nullptr;
 	};
-	auto lookupQualifiedNameOverloads = [&](std::string_view qualified_name) -> std::vector<ASTNode> {
+	struct QualifiedLookupTarget {
+		NamespaceHandle namespace_handle;
+		std::string_view identifier;
+	};
+	auto resolveQualifiedLookupTarget = [&](std::string_view qualified_name) -> std::optional<QualifiedLookupTarget> {
 		const size_t scope_sep = qualified_name.rfind("::");
 		if (scope_sep == std::string_view::npos) {
-			return {};
+			return std::nullopt;
 		}
 		const std::string_view scope_prefix = qualified_name.substr(0, scope_sep);
 		const NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(scope_prefix);
 		if (!ns_handle.isValid()) {
-			return {};
+			return std::nullopt;
 		}
-		return symbols_.lookup_qualified_all(ns_handle, qualified_name.substr(scope_sep + 2));
+		return QualifiedLookupTarget{
+			ns_handle,
+			qualified_name.substr(scope_sep + 2)
+		};
 	};
 	if (call_info.is_indirect) {
 		return nullptr;
@@ -7924,7 +7931,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 									  : decl.identifier_token().value();
 	std::vector<ASTNode> overloads;
 	if (call_info.qualified_name.isValid()) {
-		overloads = lookupQualifiedNameOverloads(call_info.qualified_name.view());
+		if (const std::optional<QualifiedLookupTarget> qualified_lookup =
+				resolveQualifiedLookupTarget(call_info.qualified_name.view());
+			qualified_lookup.has_value()) {
+			overloads = symbols_.lookup_qualified_all(
+				qualified_lookup->namespace_handle,
+				qualified_lookup->identifier);
+		}
 	}
 	if (overloads.empty()) {
 		overloads = symbols_.lookup_all(name);
