@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-25 (OOL signature matching now performs strict owner-artifact recovery for dependent member types via qualified member lookup; swapped dependent-member overload attachment no longer fails at the original short-vs-owner mismatch point)
+**Last updated:** 2026-05-26 (dependent-member swapped OOL constructor replay now preserves definition-side parameter identifiers and re-normalizes late-materialized constructor bodies before IR)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -161,9 +161,16 @@ Future work can rely on these being in place:
   owner type, matching attempts qualified member-type resolution (`Owner::member`
   / dependent member-chain) and only accepts if canonical type identity matches
   the other side.
+- **dependent-member swapped out-of-line constructor replay now preserves the
+  definition-side parameter identifiers on identity-resolved constructor stubs
+  and their `StructTypeInfo` copies**, then re-enqueues the owning instantiated
+  struct for semantic normalization after late body materialization. This keeps
+  constructor-call and initializer annotations aligned with the replay-selected
+  body before IR generation, closing the first downstream swap regression
+  exposed after owner-artifact recovery.
 
 Latest recorded full-suite validation:
-`2557` regular tests compiled/linked/runtime-pass, `0` fail, `183` expected-fail tests.
+`2540` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -191,6 +198,8 @@ Latest focused regressions added on the current branch:
 - `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
 - `out_of_line_template_member_with_ctor_ret0.cpp`
 - `test_template_nested_ool_member_template_overload_ret0.cpp`
+- `test_template_ool_ctor_dependent_member_swap_body_ret0.cpp`
+- `test_template_ool_member_template_dependent_member_swap_body_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -209,9 +218,9 @@ Rule for this work:
   still not keyed by source-member identity; then improve replay metadata
   capture for unresolved substitution (`nullopt`) outcomes so canonical
     substituted-signature classification can succeed in more valid cases.
-- immediate follow-up after the owner-artifact recovery fix: close remaining OOL
-  dependent-member swap regressions that now move past attachment mismatch but
-  still expose downstream constructor replay/body-selection gaps.
+- continue looking for remaining OOL dependent-member swap regressions in
+  less-covered member-template and nested replay surfaces now that the first
+  constructor replay/body-selection gap has been closed.
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
 
@@ -248,9 +257,9 @@ Still open, but not the next best slice:
    broad compatibility fallback;
    keep function-parameter adjustment rules centralized so replay/attachment
    compares canonical signatures across eager/lazy/declaration-only paths;
-   prioritize the pending OOL dependent-member swap follow-up immediately after
-   this (constructor replay annotation + member-template overload body
-   selection), since signature attachment now succeeds past the original mismatch;
+   prioritize remaining OOL dependent-member swap follow-ups in member-template
+   or nested overload sets where replay-selected stubs and deferred body parsing
+   can still drift after owner-artifact recovery;
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
