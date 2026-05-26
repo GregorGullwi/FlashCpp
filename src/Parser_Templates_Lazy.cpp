@@ -344,6 +344,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				outer_environment);
 			FlashCpp::TemplateParameterScope template_scope;
 			registerTypeParamsInScope(substitution_environment, template_scope, true);
+			ScopedDefinitionLookupContext definition_ctx_scope(
+				current_template_definition_lookup_context_,
+				lazy_info.definition_lookup_context.is_valid()
+					? &lazy_info.definition_lookup_context
+					: current_template_definition_lookup_context_);
 
 			// When re-parsing a deferred template constructor body with concrete types,
 			// we're no longer in a dependent template context.
@@ -402,9 +407,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
 		pack_param_info_.resize(saved_ctor_pack_info);
 
-		registerLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
-		normalizePendingSemanticRoots();
-
 		auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 		if (struct_it != getTypesByNameMap().end()) {
 			if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
@@ -433,6 +435,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				break;
 			}
 		}
+
+		registerLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
+		normalizePendingSemanticRoots();
 
 		return new_ctor_node;
 	}

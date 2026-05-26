@@ -8501,6 +8501,67 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		return;
 	}
 
+	auto try_select_same_type_ctor = [&]() -> const ConstructorDeclarationNode* {
+		if (arg_types.size() != 1) {
+			return nullptr;
+		}
+
+		TypeIndex target_struct_type_index{};
+		if (const TypeInfo* target_type_info = findTypeByName(struct_info.getName())) {
+			target_struct_type_index = target_type_info->registeredTypeIndex();
+		}
+		if (!target_struct_type_index.is_valid()) {
+			return nullptr;
+		}
+
+		TypeSpecifierNode source_type = arg_types.front();
+		const bool source_is_lvalue = source_type.is_lvalue_reference();
+		const bool source_is_xvalue = source_type.is_rvalue_reference();
+		source_type.set_reference_qualifier(ReferenceQualifier::None);
+		if (source_type.category() != TypeCategory::Struct ||
+			source_type.type_index() != target_struct_type_index) {
+			return nullptr;
+		}
+
+		const bool prefer_move_ctor = source_is_xvalue;
+		if (prefer_move_ctor) {
+			if (struct_info.isMoveConstructorDeleted()) {
+				throw CompileError(std::string(StringBuilder()
+					.append("Call to deleted move constructor of '")
+					.append(StringTable::getStringView(struct_info.getName()))
+					.append("'")
+					.commit()));
+			}
+			if (struct_info.findMoveConstructor(true) == nullptr && struct_info.isCopyConstructorDeleted()) {
+				throw CompileError(std::string(StringBuilder()
+					.append("Call to deleted copy constructor of '")
+					.append(StringTable::getStringView(struct_info.getName()))
+					.append("'")
+					.commit()));
+			}
+		} else if (source_is_lvalue && struct_info.isCopyConstructorDeleted()) {
+			throw CompileError(std::string(StringBuilder()
+				.append("Call to deleted copy constructor of '")
+				.append(StringTable::getStringView(struct_info.getName()))
+				.append("'")
+				.commit()));
+		}
+
+		const StructMemberFunction* same_type_ctor =
+			struct_info.findPreferredSameTypeConstructor(prefer_move_ctor, true);
+		if (same_type_ctor == nullptr ||
+			!same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+			return nullptr;
+		}
+
+		return &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+	};
+
+	if (const ConstructorDeclarationNode* same_type_ctor = try_select_same_type_ctor()) {
+		init_list.set_resolved_constructor(same_type_ctor);
+		return;
+	}
+
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
 	bool template_ctor_ambiguous = false;
 	resolution.selected_overload = parser().materializeMatchingConstructorTemplate(

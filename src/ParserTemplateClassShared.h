@@ -177,22 +177,16 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 	if (original_type_spec.type_index().is_valid()) {
 		original_type_info = tryGetTypeInfo(original_type_spec.type_index());
 	}
-	if (original_type_info == nullptr ||
-		!original_type_info->isDependentPlaceholder()) {
-		return substituted_type_index;
-	}
-
 	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-		original_type_info->dependentQualifiedName();
-	if (dependent_record == nullptr) {
-		return substituted_type_index;
-	}
+		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
+			? original_type_info->dependentQualifiedName()
+			: nullptr;
 
 	StringBuilder qualified_member_name_builder;
 	qualified_member_name_builder.append(
 		StringTable::getStringView(owner_type_info->name()));
 	bool appended_member = false;
-	if (!dependent_record->member_chain.empty()) {
+	if (dependent_record != nullptr && !dependent_record->member_chain.empty()) {
 		for (const auto& member : dependent_record->member_chain) {
 			if (!member.name.isValid() || member.has_template_arguments) {
 				return substituted_type_index;
