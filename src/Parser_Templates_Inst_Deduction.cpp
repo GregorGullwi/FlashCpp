@@ -3138,15 +3138,22 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupFunctionTemplateCandidate
 	bool qualified_owner_is_namespace = false;
 	if (name_is_qualified) {
 		const size_t scope_sep = template_name.rfind("::");
-		const std::vector<std::string_view> namespace_views =
-			splitQualifiedNamespace(template_name.substr(0, scope_sep));
+		std::string_view scope_prefix = template_name.substr(0, scope_sep);
+		bool force_global_namespace_lookup = false;
+		if (scope_prefix.starts_with("::")) {
+			force_global_namespace_lookup = true;
+			scope_prefix.remove_prefix(2);
+		}
+		const std::vector<std::string_view> namespace_views = splitQualifiedNamespace(scope_prefix);
 		std::vector<StringType<>> namespace_components;
 		namespace_components.reserve(namespace_views.size());
 		for (std::string_view component : namespace_views) {
-			namespace_components.emplace_back(component);
+			if (!component.empty()) {
+				namespace_components.emplace_back(component);
+			}
 		}
 		qualified_owner_is_namespace =
-			gSymbolTable.resolve_namespace_handle(namespace_components, /*force_global=*/true).isValid();
+			gSymbolTable.resolve_namespace_handle(namespace_components, force_global_namespace_lookup).isValid();
 	}
 
 	auto append_candidates = [&](const TemplateNameLookupResult& lookup_result) {
