@@ -849,6 +849,7 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings = nullptr,
 		std::unordered_map<std::string_view, EvalResult>* mutable_stored_capture_bindings = nullptr);
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
+	static std::optional<EvalResult> try_evaluate_builtin_function_call(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
 
 	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context);
 	static bool hasDependentTemplateArguments(const CallExprNode& call_expr, EvaluationContext& context);

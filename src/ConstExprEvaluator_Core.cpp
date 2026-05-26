@@ -2281,12 +2281,9 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings /*no default*/) {
 	std::string_view func_name = func_decl.decl_node().identifier_token().value();
-	if (func_name.starts_with("__builtin")) {
-		EvalResult builtin_result = evaluate_builtin_function(func_name, arguments, context);
-		if (builtin_result.success() ||
-			!builtin_result.error_message.starts_with("Unknown builtin function: ")) {
-			return builtin_result;
-		}
+	if (std::optional<EvalResult> builtin_result =
+			try_evaluate_builtin_function_call(func_name, arguments, context)) {
+		return *builtin_result;
 	}
 
 	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
@@ -4320,7 +4317,7 @@ EvalResult Evaluator::evaluate_lambda_call(
 
 // Evaluate compiler builtin functions at compile time
 EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context) {
-	auto evaluateIntegralBuiltinArgument = [&](std::string_view builtin_name) -> std::optional<unsigned long long> {
+	auto evaluateIntegralBuiltinArgument = [&]() -> std::optional<unsigned long long> {
 		if (arguments.size() != 1) {
 			return std::nullopt;
 		}
@@ -4333,7 +4330,6 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 			std::get_if<unsigned long long>(&arg_result.value)) {
 			return arg_result.as_uint_raw();
 		}
-		(void)builtin_name;
 		return std::nullopt;
 	};
 	auto integralBuiltinArgumentError = [&](std::string_view builtin_name) {
@@ -4382,7 +4378,7 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 		return 0;
 	};
 	auto evaluateBitBuiltin = [&](std::string_view builtin_name, int bit_width, auto operation) {
-		std::optional<unsigned long long> value = evaluateIntegralBuiltinArgument(builtin_name);
+		std::optional<unsigned long long> value = evaluateIntegralBuiltinArgument();
 		if (!value.has_value()) {
 			return integralBuiltinArgumentError(builtin_name);
 		}
@@ -4497,6 +4493,21 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 
 	// Not a known builtin function - return a special error that callers can check
 	return EvalResult::error("Unknown builtin function: " + std::string(func_name));
+}
+
+std::optional<EvalResult> Evaluator::try_evaluate_builtin_function_call(
+	std::string_view func_name,
+	const ChunkedVector<ASTNode>& arguments,
+	EvaluationContext& context) {
+	if (!func_name.starts_with("__builtin")) {
+		return std::nullopt;
+	}
+	EvalResult builtin_result = evaluate_builtin_function(func_name, arguments, context);
+	if (builtin_result.success() ||
+		!builtin_result.error_message.starts_with("Unknown builtin function: ")) {
+		return builtin_result;
+	}
+	return std::nullopt;
 }
 
 
@@ -4994,12 +5005,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	if (symbol_node.is<FunctionDeclarationNode>()) {
 		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
 
-		if (func_name.starts_with("__builtin")) {
-			EvalResult builtin_result = evaluate_builtin_function(func_name, call_expr.arguments(), context);
-			if (builtin_result.success() ||
-				!builtin_result.error_message.starts_with("Unknown builtin function: ")) {
-				return builtin_result;
-			}
+		if (std::optional<EvalResult> builtin_result =
+				try_evaluate_builtin_function_call(func_name, call_expr.arguments(), context)) {
+			return *builtin_result;
 		}
 
 		// For static storage duration, also try non-constexpr functions with simple bodies
