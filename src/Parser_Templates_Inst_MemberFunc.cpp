@@ -12,6 +12,208 @@ std::string_view unqualifiedTypeComponent(std::string_view type_name) {
 	return scope_pos == std::string_view::npos ? type_name : type_name.substr(scope_pos + 2);
 }
 
+const TypeSpecifierNode* getConstructorParameterTypeNode(const ASTNode& param) {
+	if (!param.is<DeclarationNode>()) {
+		return nullptr;
+	}
+	return &param.as<DeclarationNode>().type_specifier_node();
+}
+
+bool constructorDeclarationsHaveEquivalentSignature(
+	const ConstructorDeclarationNode& lhs,
+	const ConstructorDeclarationNode& rhs) {
+	if (lhs.template_parameters().size() != rhs.template_parameters().size() ||
+		lhs.parameter_nodes().size() != rhs.parameter_nodes().size()) {
+		return false;
+	}
+
+	auto template_param_index =
+		[](std::span<const TemplateParameterNode> params,
+		   StringHandle name) -> std::optional<size_t> {
+		for (size_t i = 0; i < params.size(); ++i) {
+			if (params[i].nameHandle() == name) {
+				return i;
+			}
+		}
+		return std::nullopt;
+	};
+	auto dependent_type_equivalent =
+		[&](const TypeSpecifierNode& lhs_type, const TypeSpecifierNode& rhs_type) {
+		if (lhs_type.token().handle() == rhs_type.token().handle()) {
+			return true;
+		}
+		const std::optional<size_t> lhs_tpl_idx =
+			template_param_index(lhs.template_parameters(), lhs_type.token().handle());
+		const std::optional<size_t> rhs_tpl_idx =
+			template_param_index(rhs.template_parameters(), rhs_type.token().handle());
+		return lhs_tpl_idx.has_value() && rhs_tpl_idx.has_value() &&
+			lhs_tpl_idx.value() == rhs_tpl_idx.value();
+	};
+
+	for (size_t param_index = 0; param_index < lhs.parameter_nodes().size();
+		 ++param_index) {
+		const TypeSpecifierNode* lhs_type =
+			getConstructorParameterTypeNode(lhs.parameter_nodes()[param_index]);
+		const TypeSpecifierNode* rhs_type =
+			getConstructorParameterTypeNode(rhs.parameter_nodes()[param_index]);
+		if (lhs_type == nullptr || rhs_type == nullptr) {
+			return false;
+		}
+		if (lhs_type->matches_signature(*rhs_type)) {
+			continue;
+		}
+
+		if (lhs_type->type_index() != rhs_type->type_index() ||
+			lhs_type->category() != rhs_type->category() ||
+			lhs_type->pointer_depth() != rhs_type->pointer_depth() ||
+			lhs_type->reference_qualifier() != rhs_type->reference_qualifier() ||
+			lhs_type->cv_qualifier() != rhs_type->cv_qualifier()) {
+			const bool both_dependent_like =
+				(lhs_type->category() == TypeCategory::UserDefined ||
+				 lhs_type->category() == TypeCategory::TypeAlias ||
+				 lhs_type->category() == TypeCategory::Template) &&
+				(rhs_type->category() == TypeCategory::UserDefined ||
+				 rhs_type->category() == TypeCategory::TypeAlias ||
+				 rhs_type->category() == TypeCategory::Template);
+			if (both_dependent_like &&
+				lhs_type->pointer_depth() == rhs_type->pointer_depth() &&
+				lhs_type->reference_qualifier() == rhs_type->reference_qualifier() &&
+				lhs_type->cv_qualifier() == rhs_type->cv_qualifier() &&
+				dependent_type_equivalent(*lhs_type, *rhs_type)) {
+				continue;
+			}
+			return false;
+		}
+	}
+
+	return true;
+}
+
+class ConstructorMaterializationLookup {
+public:
+	struct Entry {
+		const ConstructorDeclarationNode* ctor = nullptr;
+		AccessSpecifier access = AccessSpecifier::Public;
+		bool is_template = false;
+	};
+
+	explicit ConstructorMaterializationLookup(const StructTypeInfo& struct_info) {
+		entries_.reserve(struct_info.member_functions.size());
+		template_entry_indices_.reserve(struct_info.member_functions.size());
+		for (const auto& member_func : struct_info.member_functions) {
+			if (!member_func.is_constructor ||
+				!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+			entries_.push_back(Entry{
+				&ctor,
+				member_func.access,
+				ctor.has_template_parameters()});
+			const size_t entry_index = entries_.size() - 1;
+			entry_index_by_node_.emplace(static_cast<const void*>(&ctor), entry_index);
+			if (ctor.has_lazy_member_registry_key()) {
+				entry_index_by_registry_key_.emplace(
+					ctor.lazy_member_registry_key(),
+					entry_index);
+			}
+			if (ctor.has_template_parameters()) {
+				template_entry_indices_.push_back(entry_index);
+			} else if (ctor.is_materialized() && !ctor.mangled_name().empty()) {
+				materialized_by_mangled_name_.emplace(
+					ctor.mangled_name(),
+					&ctor);
+			}
+		}
+	}
+
+	const Entry* resolve(
+		const ConstructorDeclarationNode& candidate,
+		std::optional<bool> require_template,
+		bool* is_ambiguous = nullptr) const {
+		if (is_ambiguous != nullptr) {
+			*is_ambiguous = false;
+		}
+
+		auto is_eligible = [&](const Entry& entry) {
+			return !require_template.has_value() ||
+				entry.is_template == *require_template;
+		};
+		if (auto direct_it =
+				entry_index_by_node_.find(static_cast<const void*>(&candidate));
+			direct_it != entry_index_by_node_.end()) {
+			const Entry& direct_entry = entries_[direct_it->second];
+			if (is_eligible(direct_entry)) {
+				return &direct_entry;
+			}
+		}
+		if (candidate.has_lazy_member_registry_key()) {
+			if (auto key_it =
+					entry_index_by_registry_key_.find(
+						candidate.lazy_member_registry_key());
+				key_it != entry_index_by_registry_key_.end()) {
+				const Entry& keyed_entry = entries_[key_it->second];
+				if (is_eligible(keyed_entry)) {
+					return &keyed_entry;
+				}
+			}
+		}
+
+		const Entry* signature_match = nullptr;
+		for (const Entry& entry : entries_) {
+			if (!is_eligible(entry) ||
+				!constructorDeclarationsHaveEquivalentSignature(
+					*entry.ctor,
+					candidate)) {
+				continue;
+			}
+			if (signature_match != nullptr && signature_match->ctor != entry.ctor) {
+				if (is_ambiguous != nullptr) {
+					*is_ambiguous = true;
+				}
+				return nullptr;
+			}
+			signature_match = &entry;
+		}
+		return signature_match;
+	}
+
+	const ConstructorDeclarationNode* findExistingMaterialized(
+		std::string_view mangled_name) const {
+		if (mangled_name.empty()) {
+			return nullptr;
+		}
+		auto it = materialized_by_mangled_name_.find(mangled_name);
+		return it != materialized_by_mangled_name_.end()
+			? it->second
+			: nullptr;
+	}
+
+	void recordMaterialized(const ConstructorDeclarationNode& ctor) {
+		if (!ctor.mangled_name().empty()) {
+			materialized_by_mangled_name_[ctor.mangled_name()] = &ctor;
+		}
+	}
+
+	std::span<const size_t> templateEntryIndices() const {
+		return std::span<const size_t>(
+			template_entry_indices_.data(),
+			template_entry_indices_.size());
+	}
+
+	const Entry& entryAt(size_t index) const {
+		return entries_[index];
+	}
+
+private:
+	std::vector<Entry> entries_;
+	std::vector<size_t> template_entry_indices_;
+	std::unordered_map<const void*, size_t> entry_index_by_node_;
+	std::unordered_map<StringHandle, size_t, StringHash> entry_index_by_registry_key_;
+	std::unordered_map<std::string_view, const ConstructorDeclarationNode*> materialized_by_mangled_name_;
+};
+
 std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_name) {
 	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 	if (type_it == getTypesByNameMap().end()) {
@@ -1018,45 +1220,31 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	const ConstructorDeclarationNode* preferred_ctor,
 	bool& is_ambiguous) {
 	is_ambiguous = false;
-
-	auto findExistingMaterializedCtor = [&](std::string_view mangled_name) -> const ConstructorDeclarationNode* {
-		if (mangled_name.empty()) {
-			return nullptr;
-		}
-		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
-				continue;
-			}
-			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-			if (ctor.has_template_parameters() || !ctor.is_materialized()) {
-				continue;
-			}
-			if (ctor.mangled_name() == mangled_name) {
-				return &ctor;
-			}
-		}
-		return nullptr;
-	};
+	ConstructorMaterializationLookup ctor_lookup(struct_info);
 
 	auto attachInstantiatedCtor = [&](const ConstructorDeclarationNode& source_ctor, ASTNode instantiated_node) -> const ConstructorDeclarationNode* {
 		if (!instantiated_node.is<ConstructorDeclarationNode>()) {
 			return nullptr;
 		}
 		auto& instantiated_ctor = instantiated_node.as<ConstructorDeclarationNode>();
-		if (const ConstructorDeclarationNode* existing_ctor = findExistingMaterializedCtor(instantiated_ctor.mangled_name())) {
+		if (const ConstructorDeclarationNode* existing_ctor =
+				ctor_lookup.findExistingMaterialized(
+					instantiated_ctor.mangled_name())) {
 			return existing_ctor;
 		}
 
 		AccessSpecifier ctor_access = AccessSpecifier::Public;
-		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
-				continue;
-			}
-			if (member_func.function_decl.raw_pointer() != static_cast<const void*>(&source_ctor)) {
-				continue;
-			}
-			ctor_access = member_func.access;
-			break;
+		bool source_ctor_is_ambiguous = false;
+		if (const auto* source_entry =
+				ctor_lookup.resolve(
+					source_ctor,
+					std::nullopt,
+					&source_ctor_is_ambiguous);
+			source_entry != nullptr) {
+			ctor_access = source_entry->access;
+		} else if (source_ctor_is_ambiguous) {
+			is_ambiguous = true;
+			return nullptr;
 		}
 
 		if (auto type_it = getTypesByNameMap().find(instantiated_struct_name);
@@ -1085,6 +1273,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			}
 		}
 
+		ctor_lookup.recordMaterialized(instantiated_ctor);
 		registerLateMaterializedOwningStructRoot(instantiated_struct_name);
 		normalizePendingSemanticRoots();
 		return &instantiated_ctor;
@@ -1147,36 +1336,11 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 
 		const bool should_probe_other_templates =
 			preferred_template_ctor == nullptr ||
-			[&]() {
-				size_t template_ctor_count = 0;
-				for (const auto& member_func : struct_info.member_functions) {
-					if (!member_func.is_constructor ||
-						!member_func.function_decl.is<ConstructorDeclarationNode>()) {
-						continue;
-					}
-					const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-					if (!ctor.has_template_parameters()) {
-						continue;
-					}
-					++template_ctor_count;
-					if (template_ctor_count > 1) {
-						return true;
-					}
-				}
-				return false;
-			}();
+			ctor_lookup.templateEntryIndices().size() > 1;
 
 		if (should_probe_other_templates) {
-			for (const auto& member_func : struct_info.member_functions) {
-				if (!member_func.is_constructor ||
-					!member_func.function_decl.is<ConstructorDeclarationNode>()) {
-					continue;
-				}
-
-				const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-				if (!ctor_decl.has_template_parameters()) {
-					continue;
-				}
+			for (size_t entry_index : ctor_lookup.templateEntryIndices()) {
+				const auto& ctor_decl = *ctor_lookup.entryAt(entry_index).ctor;
 				if (preferred_template_ctor != nullptr && &ctor_decl == preferred_template_ctor) {
 					continue;
 				}
@@ -1198,6 +1362,19 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	};
 
 	if (preferred_ctor != nullptr) {
+		bool preferred_ctor_is_ambiguous = false;
+		if (const auto* resolved_preferred =
+				ctor_lookup.resolve(
+					*preferred_ctor,
+					preferred_ctor->has_template_parameters(),
+					&preferred_ctor_is_ambiguous);
+			resolved_preferred != nullptr) {
+			preferred_ctor = resolved_preferred->ctor;
+		} else if (preferred_ctor_is_ambiguous) {
+			is_ambiguous = true;
+			return nullptr;
+		}
+
 		if (!preferred_ctor->has_template_parameters()) {
 			return preferred_ctor;
 		}
