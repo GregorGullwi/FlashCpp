@@ -2281,6 +2281,14 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* outer_bindings /*no default*/) {
 	std::string_view func_name = func_decl.decl_node().identifier_token().value();
+	if (func_name.starts_with("__builtin")) {
+		EvalResult builtin_result = evaluate_builtin_function(func_name, arguments, context);
+		if (builtin_result.success() ||
+			!builtin_result.error_message.starts_with("Unknown builtin function: ")) {
+			return builtin_result;
+		}
+	}
+
 	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
 		context.storage_duration != ConstExpr::StorageDuration::Static) {
 		return EvalResult::error(
@@ -4985,6 +4993,14 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	// Check if it's a FunctionDeclarationNode (regular function)
 	if (symbol_node.is<FunctionDeclarationNode>()) {
 		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
+
+		if (func_name.starts_with("__builtin")) {
+			EvalResult builtin_result = evaluate_builtin_function(func_name, call_expr.arguments(), context);
+			if (builtin_result.success() ||
+				!builtin_result.error_message.starts_with("Unknown builtin function: ")) {
+				return builtin_result;
+			}
+		}
 
 		// For static storage duration, also try non-constexpr functions with simple bodies
 		// (static initializers can call any function whose body is available)
