@@ -13275,6 +13275,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			if (ctor_resolution.ctor != nullptr) {
 				ConstructorDeclarationNode& ctor = *ctor_resolution.ctor;
+				copyDefinitionParameterIdentifiers(
+					ctor.parameter_nodes(),
+					func_decl.parameter_nodes());
 				// Save current position
 				SaveHandle saved_pos = save_token_position();
 
@@ -13495,6 +13498,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									return !info_ctor.is_materialized();
 								});
 						if (info_ctor_resolution.ctor != nullptr) {
+							copyDefinitionParameterIdentifiers(
+								info_ctor_resolution.ctor->parameter_nodes(),
+								func_decl.parameter_nodes());
 							info_ctor_resolution.ctor->set_definition(substituted_body);
 						} else if (info_ctor_resolution.ambiguous) {
 							std::string error_msg = std::string(StringBuilder()
@@ -13510,6 +13516,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG(Templates, Error, error_msg);
 						}
 					}
+					// The out-of-line constructor body is replayed after the
+					// instantiated class root may already have gone through semantic analysis.
+					// Re-enqueue the owning struct so constructor-call and
+					// initializer annotations are produced from the identity-resolved
+					// body before IR generation, instead of relying on codegen-side
+					// overload recovery.
+					registerLateMaterializedOwningStructRoot(instantiated_name);
+					normalizePendingSemanticRoots();
 					found_match = true;
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for out-of-line constructor ",
