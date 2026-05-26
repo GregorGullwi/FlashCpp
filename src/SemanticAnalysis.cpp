@@ -5912,7 +5912,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 	if (arg.is<ExpressionNode>()) {
 		const auto& expr = arg.as<ExpressionNode>();
 		if (const auto* ident = std::get_if<IdentifierNode>(&expr)) {
-			std::optional<ASTNode> arg_symbol = gSymbolTable.lookup(ident->name());
+			std::optional<ASTNode> arg_symbol = symbols_.lookup(ident->name());
 			if (arg_symbol.has_value()) {
 				if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
 					TypeSpecifierNode recovered_type =

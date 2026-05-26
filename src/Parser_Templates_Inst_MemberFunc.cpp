@@ -1110,61 +1110,10 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	auto select_best_concrete_ctor =
 		[&](std::span<const ConstructorDeclarationNode* const> concrete_candidates)
 			-> const ConstructorDeclarationNode* {
-		const ConstructorDeclarationNode* best_match = nullptr;
-		std::vector<ArgumentConversionInfo> best_infos;
-		bool ambiguous_best_match = false;
-
-		for (const ConstructorDeclarationNode* candidate : concrete_candidates) {
-			if (candidate == nullptr) {
-				continue;
-			}
-
-			std::vector<ArgumentConversionInfo> candidate_infos;
-			candidate_infos.reserve(arg_types.size());
-			bool candidate_is_viable = true;
-			for (size_t arg_index = 0; arg_index < arg_types.size(); ++arg_index) {
-				if (arg_index >= candidate->parameter_nodes().size() ||
-					!candidate->parameter_nodes()[arg_index].is<DeclarationNode>()) {
-					candidate_is_viable = false;
-					break;
-				}
-
-				const auto& param_type =
-					candidate->parameter_nodes()[arg_index].as<DeclarationNode>().type_specifier_node();
-				const ArgumentConversionInfo conversion =
-					buildArgumentConversionInfo(arg_types[arg_index], param_type);
-				if (!conversion.is_valid) {
-					candidate_is_viable = false;
-					break;
-				}
-				candidate_infos.push_back(conversion);
-			}
-
-			if (!candidate_is_viable) {
-				continue;
-			}
-
-			if (best_match == nullptr) {
-				best_match = candidate;
-				best_infos = std::move(candidate_infos);
-				ambiguous_best_match = false;
-				continue;
-			}
-
-			const ConversionInfoComparison candidate_vs_best =
-				compareConversionInfoLists(arg_types, candidate_infos, best_infos);
-			if (candidate_vs_best.lhs_is_better && !candidate_vs_best.lhs_is_worse) {
-				best_match = candidate;
-				best_infos = std::move(candidate_infos);
-				ambiguous_best_match = false;
-				continue;
-			}
-			if (!candidate_vs_best.lhs_is_better && !candidate_vs_best.lhs_is_worse) {
-				ambiguous_best_match = true;
-			}
-		}
-
-		if (ambiguous_best_match) {
+		bool concrete_ctor_is_ambiguous = false;
+		const ConstructorDeclarationNode* best_match =
+			selectBestConstructorCandidate(concrete_candidates, arg_types, concrete_ctor_is_ambiguous);
+		if (concrete_ctor_is_ambiguous) {
 			is_ambiguous = true;
 			return nullptr;
 		}
