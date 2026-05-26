@@ -5571,6 +5571,74 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+				TypeIndex pre_materialization_type_index = resolved_type_info != nullptr ? resolved_type_info->type_index_ : TypeIndex{};
+
+				// If member not found and there are base classes without struct info (ShapeOnly
+				// instantiations), force-materialize them and retry the lookup.
+				// This handles cases like is_enum<T>::value where T's base integral_constant<bool,V>
+				// was only instantiated in ShapeOnly mode and has no recorded static members.
+				if (!static_member && context.parser != nullptr && !struct_info->base_classes.empty()) {
+					struct BaseToMaterialize {
+						std::string_view template_name;
+						std::vector<TemplateTypeArg> args;
+					};
+					std::vector<BaseToMaterialize> bases_to_materialize;
+					bases_to_materialize.reserve(struct_info->base_classes.size());
+					for (const auto& base : struct_info->base_classes) {
+						if (!base.type_index.is_valid() || base.type_index.index() >= gTypeInfo.size()) {
+							continue;
+						}
+						const TypeInfo& base_type_info = gTypeInfo[base.type_index.index()];
+						if (base_type_info.getStructInfo() != nullptr) {
+							continue;
+						}
+						if (!base_type_info.isTemplateInstantiation()) {
+							continue;
+						}
+						std::string_view base_template_name = StringTable::getStringView(base_type_info.baseTemplateName());
+						if (base_template_name.empty()) {
+							continue;
+						}
+						std::vector<TemplateTypeArg> base_args;
+						base_args.reserve(base_type_info.templateArgs().size());
+						for (const auto& arg_info : base_type_info.templateArgs()) {
+							base_args.push_back(toTemplateTypeArg(arg_info));
+						}
+						bases_to_materialize.push_back({base_template_name, std::move(base_args)});
+					}
+
+					bool any_materialized = false;
+					for (const auto& base_to_materialize : bases_to_materialize) {
+						FLASH_LOG(ConstExpr, Debug, "Force-materializing ShapeOnly base '", base_to_materialize.template_name, "' to find member '", StringTable::getStringView(member_handle), "'");
+						context.parser->materializeTemplateInstantiationForLookup(base_to_materialize.template_name, base_to_materialize.args);
+						any_materialized = true;
+					}
+					if (any_materialized) {
+						const TypeInfo* refreshed_type_info = nullptr;
+						if (pre_materialization_type_index.is_valid()) {
+							refreshed_type_info = tryGetTypeInfo(pre_materialization_type_index);
+						}
+						if (refreshed_type_info == nullptr && struct_handle.isValid()) {
+							auto refreshed_type_it = getTypesByNameMap().find(struct_handle);
+							if (refreshed_type_it != getTypesByNameMap().end() &&
+								refreshed_type_it->second != nullptr) {
+								refreshed_type_info = refreshed_type_it->second;
+							}
+						}
+						if (refreshed_type_info != nullptr && refreshed_type_info->isStruct()) {
+							resolved_type_info = refreshed_type_info;
+							struct_info = refreshed_type_info->getStructInfo();
+						}
+						if (struct_info != nullptr) {
+							auto [retry_member, retry_owner] = struct_info->findStaticMemberRecursive(member_handle);
+							static_member = retry_member;
+							owner_struct = retry_owner;
+						} else {
+							static_member = nullptr;
+							owner_struct = nullptr;
+						}
+					}
+				}
 
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Static member found: ", (static_member != nullptr),
