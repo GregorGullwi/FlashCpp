@@ -449,7 +449,36 @@ static bool constructorDeclarationsHaveEquivalentInstantiatedSignature(
 		if (lhs_param == nullptr || rhs_param == nullptr) {
 			return false;
 		}
-		if (!typeSpecifiersMatchForSignatureValidation(*lhs_param, *rhs_param)) {
+		if (typeSpecifiersMatchForSignatureValidation(*lhs_param, *rhs_param)) {
+			continue;
+		}
+
+		auto identity_name = [](const TypeSpecifierNode& type_spec) {
+			if (type_spec.type_index().is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+					std::string_view type_name = StringTable::getStringView(type_info->name());
+					if (!type_name.empty()) {
+						return type_name;
+					}
+				}
+			}
+			return type_spec.token().value();
+		};
+		if (lhs_param->pointer_depth() != rhs_param->pointer_depth() ||
+			lhs_param->reference_qualifier() != rhs_param->reference_qualifier() ||
+			lhs_param->cv_qualifier() != rhs_param->cv_qualifier() ||
+			lhs_param->pointer_levels().size() != rhs_param->pointer_levels().size()) {
+			return false;
+		}
+		for (size_t pointer_level_index = 0;
+			 pointer_level_index < lhs_param->pointer_levels().size();
+			 ++pointer_level_index) {
+			if (lhs_param->pointer_levels()[pointer_level_index].cv_qualifier !=
+				rhs_param->pointer_levels()[pointer_level_index].cv_qualifier) {
+				return false;
+			}
+		}
+		if (identity_name(*lhs_param) != identity_name(*rhs_param)) {
 			return false;
 		}
 	}
@@ -1070,6 +1099,105 @@ static std::vector<TemplateTypeArg> materializeTemplateArgsExpandingPacks(
 		}
 	}
 	return result;
+}
+
+template <typename ParamContainer, typename ArgContainer, typename InstantiateFn>
+static TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
+	const TypeSpecifierNode& original_type_spec,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	InstantiateFn&& instantiate_class_template,
+	TypeIndex substituted_type_index) {
+	if (!substituted_type_index.is_valid()) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* owner_type_info = tryGetTypeInfo(substituted_type_index);
+	if (owner_type_info == nullptr || !is_struct_type(owner_type_info->typeEnum())) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* original_type_info = nullptr;
+	if (original_type_spec.type_index().is_valid()) {
+		original_type_info = tryGetTypeInfo(original_type_spec.type_index());
+	}
+	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
+			? original_type_info->dependentQualifiedName()
+			: nullptr;
+	if (dependent_record == nullptr || dependent_record->member_chain.empty()) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* current_type_info = owner_type_info;
+	for (const auto& member : dependent_record->member_chain) {
+		if (!member.name.isValid()) {
+			return substituted_type_index;
+		}
+
+		if (member.has_template_arguments) {
+			std::vector<TemplateTypeArg> concrete_template_args;
+			concrete_template_args.reserve(member.template_arguments.size());
+			for (const auto& arg_info : member.template_arguments) {
+				TemplateTypeArg concrete_arg =
+					materializeTemplateArg(arg_info, template_params, template_args);
+				if (!concrete_arg.is_value && concrete_arg.type_index.is_valid()) {
+					if (const TypeInfo* concrete_type_info =
+							tryGetTypeInfo(concrete_arg.type_index);
+						concrete_type_info != nullptr) {
+						concrete_arg.type_index =
+							concrete_type_info->registeredTypeIndex().withCategory(
+								concrete_type_info->typeEnum());
+						concrete_arg.setCategory(concrete_type_info->typeEnum());
+					}
+				}
+				concrete_template_args.push_back(std::move(concrete_arg));
+			}
+
+			const std::string_view current_name = StringTable::getStringView(current_type_info->name());
+			if (current_name.empty()) {
+				return substituted_type_index;
+			}
+			const std::string template_name = std::string(StringBuilder()
+				.append(current_name)
+				.append("::")
+				.append(StringTable::getStringView(member.name))
+				.commit());
+			std::optional<ASTNode> instantiated_member_template =
+				instantiate_class_template(
+					template_name,
+					std::span<const TemplateTypeArg>(
+						concrete_template_args.data(),
+						concrete_template_args.size()),
+					false);
+			if (!instantiated_member_template.has_value() ||
+				!instantiated_member_template->is<StructDeclarationNode>()) {
+				return substituted_type_index;
+			}
+
+			const StringHandle instantiated_name =
+				instantiated_member_template->as<StructDeclarationNode>().name();
+			current_type_info = findTypeByName(instantiated_name);
+		} else {
+			const std::string_view current_name = StringTable::getStringView(current_type_info->name());
+			if (current_name.empty()) {
+				return substituted_type_index;
+			}
+			const std::string qualified_member_name = std::string(StringBuilder()
+				.append(current_name)
+				.append("::")
+				.append(StringTable::getStringView(member.name))
+				.commit());
+			current_type_info = findTypeByName(
+				StringTable::getOrInternStringHandle(qualified_member_name));
+		}
+
+		if (current_type_info == nullptr) {
+			return substituted_type_index;
+		}
+	}
+
+	return current_type_info->registeredTypeIndex().withCategory(current_type_info->typeEnum());
 }
 
 static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
@@ -2349,14 +2477,12 @@ bool Parser::replayOutOfLineMemberBody(
 	return parsed_and_substituted;
 }
 
-static bool syncReplayedOutOfLineMemberToStructInfo(
-	Parser& parser,
+static OutOfLineFunctionStubResolution findReplayedOutOfLineMemberInStructInfo(
 	StructTypeInfo* struct_info,
-	FunctionDeclarationNode& replayed_func,
-	const FunctionDeclarationNode& definition_func,
-	const ASTNode& substituted_body) {
+	FunctionDeclarationNode& replayed_func) {
+	OutOfLineFunctionStubResolution resolution;
 	if (struct_info == nullptr) {
-		return true;
+		return resolution;
 	}
 
 	OutOfLineFunctionStubResolution info_func_resolution =
@@ -2366,19 +2492,45 @@ static bool syncReplayedOutOfLineMemberToStructInfo(
 			[](const FunctionDeclarationNode& info_func) {
 				return !info_func.is_materialized();
 			});
-	if (info_func_resolution.ambiguous) {
-		return false;
-	}
-	if (info_func_resolution.func == nullptr) {
-		return true;
+	if (info_func_resolution.func != nullptr || info_func_resolution.ambiguous) {
+		return info_func_resolution;
 	}
 
-	copyDefinitionParameterIdentifiers(
-		info_func_resolution.func->parameter_nodes(),
-		definition_func.parameter_nodes());
-	info_func_resolution.func->set_definition(substituted_body);
-	parser.finalize_function_after_definition(*info_func_resolution.func, true);
-	return true;
+	for (auto& info_func : struct_info->member_functions) {
+		if (info_func.is_constructor ||
+			!info_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		auto& info_decl = info_func.function_decl.as<FunctionDeclarationNode>();
+		FLASH_LOG(
+			Templates,
+			Debug,
+			"StructTypeInfo replay sync candidate: name=",
+			info_decl.decl_node().identifier_token().value(),
+			", params=",
+			static_cast<size_t>(info_decl.parameter_nodes().size()),
+			", materialized=",
+			info_decl.is_materialized());
+		if (info_decl.is_materialized() ||
+			info_decl.decl_node().identifier_token().value() !=
+				replayed_func.decl_node().identifier_token().value() ||
+			info_decl.parameter_nodes().size() != replayed_func.parameter_nodes().size() ||
+			info_decl.is_static() != replayed_func.is_static() ||
+			info_decl.is_const_member_function() != replayed_func.is_const_member_function() ||
+			info_decl.is_volatile_member_function() != replayed_func.is_volatile_member_function()) {
+			continue;
+		}
+		if (resolution.func != nullptr) {
+			resolution.ambiguous = true;
+			resolution.func = nullptr;
+			return resolution;
+		}
+		resolution.func = &info_decl;
+	}
+	if (resolution.func != nullptr || resolution.ambiguous) {
+		return resolution;
+	}
+	return info_func_resolution;
 }
 
 // Resolve any stored template arguments on a deferred base member-type chain after a class
@@ -3980,6 +4132,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
 				param_decl.type_node(),
 				param_type_spec,
+				param_type_index);
+			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
+				param_type_spec,
+				tmpl_params,
+				tmpl_args,
+				[this](
+					std::string_view template_name,
+					std::span<const TemplateTypeArg> template_args,
+					bool force_eager) {
+					return try_instantiate_class_template(
+						template_name,
+						template_args,
+						force_eager);
+				},
 				param_type_index);
 			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()
 				? full_substituted_param_node.as<TypeSpecifierNode>()
@@ -7533,12 +7699,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_pattern.size()),
 								"partial-spec",
 								plain_ool_name)) {
-							if (!syncReplayedOutOfLineMemberToStructInfo(
-									*this,
-									struct_info_ptr,
-									*inst_func,
-									plain_ool_func,
-									*inst_func->get_definition())) {
+							OutOfLineFunctionStubResolution info_func_resolution =
+								findReplayedOutOfLineMemberInStructInfo(
+									struct_type_info.getStructInfo(),
+									*inst_func);
+							if (info_func_resolution.ambiguous) {
 								FLASH_LOG(
 									Templates,
 									Error,
@@ -7547,6 +7712,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									"' in instantiated class '",
 									instantiated_name,
 									"'");
+							} else if (info_func_resolution.func != nullptr &&
+								inst_func->is_materialized()) {
+								copyDefinitionParameterIdentifiers(
+									info_func_resolution.func->parameter_nodes(),
+									plain_ool_func.parameter_nodes());
+								info_func_resolution.func->set_definition(*inst_func->get_definition());
+								finalize_function_after_definition(*info_func_resolution.func, true);
 							}
 							registerLateMaterializedOwningStructRoot(instantiated_name);
 							normalizePendingSemanticRoots();
@@ -13349,12 +13521,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				"primary-template",
 				decl.identifier_token().value());
 			if (found_match) {
-				if (!syncReplayedOutOfLineMemberToStructInfo(
-						*this,
+				OutOfLineFunctionStubResolution info_func_resolution =
+					findReplayedOutOfLineMemberInStructInfo(
 						struct_info_ptr,
-						*inst_func,
-						func_decl,
-						*inst_func->get_definition())) {
+						*inst_func);
+				if (info_func_resolution.ambiguous) {
 					std::string error_msg = std::string(StringBuilder()
 						.append("Ambiguous StructTypeInfo sync for out-of-line member '")
 						.append(decl.identifier_token().value())
@@ -13366,6 +13537,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						throw InternalError(error_msg);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
+				} else if (info_func_resolution.func != nullptr &&
+					inst_func->is_materialized()) {
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Syncing replayed out-of-line member into StructTypeInfo: ",
+						decl.identifier_token().value());
+					copyDefinitionParameterIdentifiers(
+						info_func_resolution.func->parameter_nodes(),
+						func_decl.parameter_nodes());
+					info_func_resolution.func->set_definition(*inst_func->get_definition());
+					finalize_function_after_definition(*info_func_resolution.func, true);
+				} else {
+					FLASH_LOG(
+						Templates,
+						Debug,
+						"Skipped StructTypeInfo sync for replayed out-of-line member '",
+						decl.identifier_token().value(),
+						"' (matched=",
+						info_func_resolution.func != nullptr,
+						", materialized=",
+						inst_func->is_materialized(),
+						")");
 				}
 				registerLateMaterializedOwningStructRoot(instantiated_name);
 				normalizePendingSemanticRoots();
