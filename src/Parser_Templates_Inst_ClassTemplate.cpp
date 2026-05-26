@@ -1286,11 +1286,7 @@ static TypeIndex canonicalizeTemplateSignatureMatchTypeIndex(TypeIndex type_inde
 
 static TypeIndex canonicalizeTemplateSignatureMatchTypeSpecifierIndex(
 	const TypeSpecifierNode& type_spec) {
-	const TypeCategory category = type_spec.type_index().is_valid()
-		? type_spec.type_index().category()
-		: type_spec.type();
-	return canonicalizeTemplateSignatureMatchTypeIndex(
-		type_spec.type_index().withCategory(category));
+	return canonicalizeTemplateSignatureMatchTypeIndex(type_spec.type_index());
 }
 
 static bool shouldPreferTokenOwnerTypeInfoForSignatureRecovery(
@@ -1347,11 +1343,6 @@ static const TypeInfo* resolveDependentMemberPlaceholderAgainstOwnerArtifact(
 		prefer_token_owner_type_info
 			? owner_artifact_type_info_from_token
 			: owner_artifact_type_info_from_index;
-	if (owner_artifact_type_info == nullptr) {
-		owner_artifact_type_info = findTypeByName(
-			StringTable::getOrInternStringHandle(
-				owner_artifact_substituted_type.token().value()));
-	}
 	if (owner_artifact_type_info == nullptr) {
 		return nullptr;
 	}
@@ -1500,11 +1491,11 @@ static bool tryMatchDependentMemberPlaceholderOwnerArtifactSubstitution(
 		};
 
 	return attempt_direction(
-			   rhs_original_type,
+			   lhs_original_type,
 			   lhs_substituted_type,
 			   rhs_substituted_type) ||
 		attempt_direction(
-			lhs_original_type,
+			rhs_original_type,
 			rhs_substituted_type,
 			lhs_substituted_type);
 }
