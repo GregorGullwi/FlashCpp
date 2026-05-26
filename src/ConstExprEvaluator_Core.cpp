@@ -4374,7 +4374,8 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 		}
 		const unsigned long long value = std::get<unsigned long long>(value_result);
 		const unsigned long long mask =
-			bit_width >= 64 ? ~0ULL : (~0ULL >> (64 - bit_width));
+			bit_width >= 64 ? ~0ULL :
+			(bit_width <= 0 ? 0ULL : (~0ULL >> (64 - bit_width)));
 		return EvalResult::from_int(static_cast<long long>(operation(value & mask, bit_width)));
 	};
 	constexpr int int_bit_width = static_cast<int>(sizeof(int) * CHAR_BIT);
