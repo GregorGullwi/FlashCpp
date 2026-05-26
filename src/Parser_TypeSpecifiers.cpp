@@ -3189,18 +3189,18 @@ ParseResult Parser::parse_type_specifier() {
 		// path (lines 1233–1308).  By the time we reach here, any remaining
 		// `::` qualified name whose base is in the type map as a non-dependent
 		// entry is safe to resolve via the alias-chain follower.
-		constexpr size_t scope_resolution_len = 2;
+		constexpr size_t scope_resolution_len = std::string_view{"::"}.size();
 		const size_t first_scope = type_name.find("::");
 		if (!type_info_ctx && first_scope != std::string_view::npos) {
 			std::string_view base_part = type_name.substr(0, first_scope);
-			std::string_view member_chain = type_name.substr(first_scope + scope_resolution_len);
+			std::string_view member_chain_str = type_name.substr(first_scope + scope_resolution_len);
 			StringHandle base_handle = StringTable::getOrInternStringHandle(base_part);
 			const TypeInfo* base_info = lookupTypeInCurrentContext(base_handle);
 			if (base_info == nullptr) {
 				base_info = findTypeByName(base_handle);
 			}
 			if (base_info != nullptr && !base_info->isDependentPlaceholder()) {
-				type_info_ctx = resolveBaseClassMemberTypeChain(base_part, buildQualifiedTypeMemberChain(member_chain));
+				type_info_ctx = resolveBaseClassMemberTypeChain(base_part, buildQualifiedTypeMemberChain(member_chain_str));
 			}
 		}
 

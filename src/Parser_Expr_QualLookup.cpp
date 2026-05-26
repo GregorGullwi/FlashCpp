@@ -1216,6 +1216,7 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 }
 
 std::vector<QualifiedTypeMemberAccess> Parser::buildQualifiedTypeMemberChain(std::string_view member_chain) const {
+	constexpr size_t scope_resolution_len = std::string_view{"::"}.size();
 	std::vector<QualifiedTypeMemberAccess> member_type_chain;
 	while (!member_chain.empty()) {
 		size_t next_separator = member_chain.find("::");
@@ -1229,7 +1230,7 @@ std::vector<QualifiedTypeMemberAccess> Parser::buildQualifiedTypeMemberChain(std
 		if (next_separator == std::string_view::npos) {
 			break;
 		}
-		member_chain = member_chain.substr(next_separator + 2);
+		member_chain = member_chain.substr(next_separator + scope_resolution_len);
 	}
 	return member_type_chain;
 }
