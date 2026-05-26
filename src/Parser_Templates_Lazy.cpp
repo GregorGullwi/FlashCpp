@@ -407,32 +407,34 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
 		pack_param_info_.resize(saved_ctor_pack_info);
 
-		auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-		if (struct_it != getTypesByNameMap().end()) {
-			if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
-				for (auto& member_func : struct_info->member_functions) {
+		if (lazy_info.registry_key.isValid()) {
+			auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+			if (struct_it != getTypesByNameMap().end()) {
+				if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
+					for (auto& member_func : struct_info->member_functions) {
+						if (!member_func.is_constructor) {
+							continue;
+						}
+						if (getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
+							continue;
+						}
+						member_func.function_decl = new_ctor_node;
+						break;
+					}
+				}
+			}
+			if (auto struct_root = lookupLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
+				struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
+				for (auto& member_func : struct_root->as<StructDeclarationNode>().member_functions()) {
 					if (!member_func.is_constructor) {
 						continue;
 					}
-					if (getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
+					if (getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
 						continue;
 					}
-					member_func.function_decl = new_ctor_node;
+					member_func.function_declaration = new_ctor_node;
 					break;
 				}
-			}
-		}
-		if (auto struct_root = lookupLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
-			struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
-			for (auto& member_func : struct_root->as<StructDeclarationNode>().member_functions()) {
-				if (!member_func.is_constructor) {
-					continue;
-				}
-				if (getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
-					continue;
-				}
-				member_func.function_declaration = new_ctor_node;
-				break;
 			}
 		}
 
