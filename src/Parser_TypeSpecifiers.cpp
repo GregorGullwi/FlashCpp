@@ -3169,6 +3169,42 @@ ParseResult Parser::parse_type_specifier() {
 
 		const TypeInfo* struct_scoped = tryStructScopedType();
 		const TypeInfo* type_info_ctx = struct_scoped ? struct_scoped : lookupTypeInCurrentContext(type_name_handle);
+
+		// Resolve concrete `Alias::member` qualified names where `Alias` is itself a
+		// typedef / type-alias for an instantiated type.  The direct lookup above can
+		// only succeed when the literal key "Alias::member" is in the type map, but
+		// member types of template instantiations are registered under the mangled
+		// instantiation name (e.g. "S_char_::type"), NOT under the typedef name
+		// ("X::type").
+		//
+		// Example that was broken:
+		//   template<typename T> struct S { using type = T; };
+		//   using X = S<char>;
+		//   using T = X::type;   // was returning an empty/invalid type (size 0)
+		//                        // should resolve to char
+		//
+		// Dependent qualified names (where `base_part` is a template parameter or a
+		// dependent placeholder) are handled earlier in this function by the
+		// template-parameter path (lines 1125–1228) and the dependent-placeholder
+		// path (lines 1233–1308).  By the time we reach here, any remaining
+		// `::` qualified name whose base is in the type map as a non-dependent
+		// entry is safe to resolve via the alias-chain follower.
+		if (const size_t last_scope = type_name.rfind("::");
+			!type_info_ctx && last_scope != std::string_view::npos) {
+			std::string_view base_part  = type_name.substr(0, last_scope);
+			std::string_view member_part = type_name.substr(last_scope + 2);
+			StringHandle base_handle   = StringTable::getOrInternStringHandle(base_part);
+			StringHandle member_handle = StringTable::getOrInternStringHandle(member_part);
+			const TypeInfo* base_info  = lookupTypeInCurrentContext(base_handle);
+			if (base_info != nullptr && !base_info->isDependentPlaceholder()) {
+				// lookup_inherited_type_alias handles the alias-chain following:
+				// it sees that `base_handle` has no struct_info, follows its type_index
+				// to the concrete instantiated struct, then searches that struct's
+				// member-type registry for `member_handle`.
+				type_info_ctx = lookup_inherited_type_alias(base_handle, member_handle);
+			}
+		}
+
 		if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
 			const TypeInfo* original_type_info = type_info_ctx; // Keep reference to original for checking ref qualifiers
