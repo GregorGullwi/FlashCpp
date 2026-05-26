@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5795ms (retested 2026-05-25, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~807ms (retested 2026-05-25, Linux/libstdc++-14). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~844ms (retested 2026-05-26, Linux/libstdc++-14). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -32,8 +32,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~6.97s (`TOTAL`) / ~7.42s wall (retested 2026-05-25, Linux/libstdc++-14). `alloc_traits.h:904` `__make_move_if_noexcept_iterator` is no longer the first hard stop; current first hard error is `Could not evaluate non-type template default for parameter 1 of '__hash_enum'`. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4226ms (retested 2026-05-25, Linux/libstdc++-14). Same first hard stop: `bits/alloc_traits.h:904` (`Failed to instantiate template function` for `__make_move_if_noexcept_iterator`). |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~6.82s (`TOTAL`) / ~7.25s wall (retested 2026-05-26, Linux/libstdc++-14). Current first hard error is `Max template instantiation depth (40) exceeded for 'std::pmr::polymorphic_allocator'`. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.90s (`TOTAL`) / ~5.22s wall (retested 2026-05-26, Linux/libstdc++-14). `bits/hashtable_policy.h:617` `__builtin_clzl` initializer evaluation now succeeds; current first hard error is `Max template instantiation depth (40) exceeded for 'rebind'`. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -100,6 +100,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-26 Linux/libstdc++ constexpr long bit builtin follow-up
+
+Fix landed:
+
+- **Constexpr evaluation now handles the GCC/Clang long-width integer bit builtins used by libstdc++ (`__builtin_clzl`, `__builtin_ctzl`, `__builtin_popcountl`, `__builtin_ffsl`) through the same semantic constexpr builtin path as the existing `int`/`long long` forms.**
+- **Registered the `clz`/`ctz`/`popcount`/`ffs` builtin families up front so constexpr calls resolve as compiler intrinsics rather than ordinary non-constexpr function declarations.**
+
+Regression coverage:
+
+- `tests/test_constexpr_builtin_long_bitops_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_constexpr_builtin_long_bitops_ret0.cpp` | ✅ Pass | focused runner | New regression verifies constexpr `long` and `long long` `clz`/`ctz`/`popcount`/`ffs` builtin evaluation. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~0.84s (`TOTAL`) / ~0.90s wall | Control retest still compiles. |
+| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | ~4.90s (`TOTAL`) / ~5.22s wall | Progresses past the prior `__builtin_clzl(__n - 1ul)` initializer-expression failure in `bits/hashtable_policy.h`; current first stop is template-depth guarded `rebind`. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | ~6.82s (`TOTAL`) / ~7.25s wall | Current first stop is template-depth guarded `std::pmr::polymorphic_allocator`. |
 
 ### 2026-05-25 Linux/libstdc++ alias-template base class resolution fix
 

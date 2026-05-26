@@ -1610,6 +1610,19 @@ void Parser::register_builtin_functions() {
 	register_builtin("__builtin_labs", TypeCategory::Long, TypeCategory::Long);
 	register_builtin("__builtin_llabs", TypeCategory::LongLong, TypeCategory::LongLong);
 
+	register_builtin("__builtin_clz", TypeCategory::Int, TypeCategory::Int);
+	register_builtin("__builtin_clzl", TypeCategory::Int, TypeCategory::Long);
+	register_builtin("__builtin_clzll", TypeCategory::Int, TypeCategory::LongLong);
+	register_builtin("__builtin_ctz", TypeCategory::Int, TypeCategory::Int);
+	register_builtin("__builtin_ctzl", TypeCategory::Int, TypeCategory::Long);
+	register_builtin("__builtin_ctzll", TypeCategory::Int, TypeCategory::LongLong);
+	register_builtin("__builtin_popcount", TypeCategory::Int, TypeCategory::Int);
+	register_builtin("__builtin_popcountl", TypeCategory::Int, TypeCategory::Long);
+	register_builtin("__builtin_popcountll", TypeCategory::Int, TypeCategory::LongLong);
+	register_builtin("__builtin_ffs", TypeCategory::Int, TypeCategory::Int);
+	register_builtin("__builtin_ffsl", TypeCategory::Int, TypeCategory::Long);
+	register_builtin("__builtin_ffsll", TypeCategory::Int, TypeCategory::LongLong);
+
 	// Register floating point abs builtins
 	register_builtin("__builtin_fabs", TypeCategory::Double, TypeCategory::Double);
 	register_builtin("__builtin_fabsf", TypeCategory::Float, TypeCategory::Float);
