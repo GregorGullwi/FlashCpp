@@ -457,6 +457,34 @@ static bool constructorDeclarationsHaveEquivalentInstantiatedSignature(
 	return true;
 }
 
+static bool functionDeclarationsHaveEquivalentInstantiatedSignature(
+	const FunctionDeclarationNode& lhs,
+	const FunctionDeclarationNode& rhs) {
+	if (lhs.decl_node().identifier_token().value() !=
+			rhs.decl_node().identifier_token().value() ||
+		lhs.parameter_nodes().size() != rhs.parameter_nodes().size() ||
+		lhs.is_static() != rhs.is_static() ||
+		lhs.is_const_member_function() != rhs.is_const_member_function() ||
+		lhs.is_volatile_member_function() != rhs.is_volatile_member_function()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < lhs.parameter_nodes().size(); ++i) {
+		const TypeSpecifierNode* lhs_param =
+			getDeclarationParamTypeNode(lhs.parameter_nodes()[i]);
+		const TypeSpecifierNode* rhs_param =
+			getDeclarationParamTypeNode(rhs.parameter_nodes()[i]);
+		if (lhs_param == nullptr || rhs_param == nullptr) {
+			return false;
+		}
+		if (!typeSpecifiersMatchForSignatureValidation(*lhs_param, *rhs_param)) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 template <typename EligibleFn>
 static OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
 	StructTypeInfo& struct_info,
@@ -500,6 +528,56 @@ static OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
 		}
 		resolution.ctor = &info_ctor;
 	}
+	return resolution;
+}
+
+struct OutOfLineFunctionStubResolution {
+	FunctionDeclarationNode* func = nullptr;
+	bool ambiguous = false;
+};
+
+template <typename EligibleFn>
+static OutOfLineFunctionStubResolution findMatchingFunctionInStructInfo(
+	StructTypeInfo& struct_info,
+	const FunctionDeclarationNode& func_decl,
+	EligibleFn&& is_candidate_eligible) {
+	OutOfLineFunctionStubResolution resolution;
+
+	for (auto& info_func : struct_info.member_functions) {
+		if (info_func.is_constructor ||
+			!info_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		auto& info_decl = info_func.function_decl.as<FunctionDeclarationNode>();
+		if (&info_decl == &func_decl) {
+			if (is_candidate_eligible(info_decl)) {
+				resolution.func = &info_decl;
+			}
+			return resolution;
+		}
+	}
+
+	for (auto& info_func : struct_info.member_functions) {
+		if (info_func.is_constructor ||
+			!info_func.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+
+		auto& info_decl = info_func.function_decl.as<FunctionDeclarationNode>();
+		if (!is_candidate_eligible(info_decl) ||
+			!functionDeclarationsHaveEquivalentInstantiatedSignature(
+				info_decl,
+				func_decl)) {
+			continue;
+		}
+
+		if (resolution.func != nullptr) {
+			resolution.ambiguous = true;
+			return resolution;
+		}
+		resolution.func = &info_decl;
+	}
+
 	return resolution;
 }
 
@@ -2269,6 +2347,38 @@ bool Parser::replayOutOfLineMemberBody(
 	restore_lexer_position_only(saved_pos);
 	discard_saved_token(saved_pos);
 	return parsed_and_substituted;
+}
+
+static bool syncReplayedOutOfLineMemberToStructInfo(
+	Parser& parser,
+	StructTypeInfo* struct_info,
+	FunctionDeclarationNode& replayed_func,
+	const FunctionDeclarationNode& definition_func,
+	const ASTNode& substituted_body) {
+	if (struct_info == nullptr) {
+		return true;
+	}
+
+	OutOfLineFunctionStubResolution info_func_resolution =
+		findMatchingFunctionInStructInfo(
+			*struct_info,
+			replayed_func,
+			[](const FunctionDeclarationNode& info_func) {
+				return !info_func.is_materialized();
+			});
+	if (info_func_resolution.ambiguous) {
+		return false;
+	}
+	if (info_func_resolution.func == nullptr) {
+		return true;
+	}
+
+	copyDefinitionParameterIdentifiers(
+		info_func_resolution.func->parameter_nodes(),
+		definition_func.parameter_nodes());
+	info_func_resolution.func->set_definition(substituted_body);
+	parser.finalize_function_after_definition(*info_func_resolution.func, true);
+	return true;
 }
 
 // Resolve any stored template arguments on a deferred base member-type chain after a class
@@ -7423,6 +7533,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_pattern.size()),
 								"partial-spec",
 								plain_ool_name)) {
+							if (!syncReplayedOutOfLineMemberToStructInfo(
+									*this,
+									struct_info_ptr,
+									*inst_func,
+									plain_ool_func,
+									*inst_func->get_definition())) {
+								FLASH_LOG(
+									Templates,
+									Error,
+									"Ambiguous StructTypeInfo sync for partial-spec plain out-of-line member '",
+									plain_ool_name,
+									"' in instantiated class '",
+									instantiated_name,
+									"'");
+							}
+							registerLateMaterializedOwningStructRoot(instantiated_name);
+							normalizePendingSemanticRoots();
 							FLASH_LOG(Templates, Debug,
 								"Parsed and substituted OOL plain member body "
 								"for partial-spec: ", plain_ool_name);
@@ -13221,6 +13348,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					template_args_to_use.size()),
 				"primary-template",
 				decl.identifier_token().value());
+			if (found_match) {
+				if (!syncReplayedOutOfLineMemberToStructInfo(
+						*this,
+						struct_info_ptr,
+						*inst_func,
+						func_decl,
+						*inst_func->get_definition())) {
+					std::string error_msg = std::string(StringBuilder()
+						.append("Ambiguous StructTypeInfo sync for out-of-line member '")
+						.append(decl.identifier_token().value())
+						.append("' in instantiated class '")
+						.append(instantiated_name)
+						.append("'")
+						.commit());
+					if (force_eager) {
+						throw InternalError(error_msg);
+					}
+					FLASH_LOG(Templates, Error, error_msg);
+				}
+				registerLateMaterializedOwningStructRoot(instantiated_name);
+				normalizePendingSemanticRoots();
+			}
 		}
 		if (found_match) {
 			continue;
