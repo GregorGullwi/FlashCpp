@@ -511,7 +511,6 @@ static void setOutOfLineConstructorTemplateReplayMetadata(
 		ctor_decl.set_template_initializer_list_position(
 			out_of_line_member.initializer_list_start);
 	}
-	ctor_decl.set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 }
 
 bool Parser::static_initializer_requires_replay_metadata(
@@ -12242,10 +12241,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							effective_template_params,
 							effective_template_args,
 							outer_parent_snapshot);
-						if (ctor_decl.has_definition_lookup_context()) {
-							lazy_ctor_info.definition_lookup_context =
-								ctor_decl.definition_lookup_context();
-						}
 						lazy_ctor_info.access = mem_func.access;
 						LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
 					}

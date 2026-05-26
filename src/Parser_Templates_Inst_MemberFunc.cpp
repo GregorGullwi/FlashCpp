@@ -895,10 +895,6 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	lazy_info.identity.original_lookup_name = replay_source_ctor->name();
 	lazy_info.identity.kind = DeferredMemberIdentity::Kind::Constructor;
 	lazy_info.identity.is_const_method = false;
-	if (replay_source_ctor->has_definition_lookup_context()) {
-		lazy_info.definition_lookup_context =
-			replay_source_ctor->definition_lookup_context();
-	}
 
 	InlineVector<StringHandle, 4> outer_param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
