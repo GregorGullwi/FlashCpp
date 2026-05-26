@@ -9,20 +9,20 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5795ms (retested 2026-05-25, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~702ms (`TOTAL`) / ~0.75s wall (retested 2026-05-26, Linux/libstdc++-14). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~706ms (`TOTAL`) / ~0.76s wall (retested 2026-05-26, Linux/libstdc++-14). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
-| `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | ~2.28s wall (retested 2026-05-26, Linux/libstdc++-14). Still crashes with SIGSEGV while instantiating `__static_sign` (`__are_both_ratios` warnings appear first). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~2.13s wall (retested 2026-05-26, Linux/libstdc++-14). First stop still reaches unresolved placeholder/type conversion in `_Optional_payload_base`: `Type with no runtime size reached codegen ...` then `Unresolved semantic type reached IR type conversion: category 25`. |
+| `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | ~2.29s wall (retested 2026-05-26, Linux/libstdc++-14). Still crashes with SIGSEGV while instantiating `__static_sign` (`__are_both_ratios` warnings appear first). |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~2.14s wall (retested 2026-05-26, Linux/libstdc++-14). First stop still reaches unresolved placeholder/type conversion in `_Optional_payload_base`: `Type with no runtime size reached codegen ...` then `Unresolved semantic type reached IR type conversion: category 25`. |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~1052ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1524ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~4.02s wall (retested 2026-05-26, Linux/libstdc++-14). First stop remains unresolved direct-call return type (`Type with no runtime size reached codegen in direct call return size`, type category 25) with repeated `to_address` instantiation failures; `_CharT` constructor-call struct-info failures still appear in `char_traits`. |
-| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~5.44s (`TOTAL`) / ~5.80s wall (retested 2026-05-26, Linux/libstdc++-14). Completed class-template cache hits no longer consume template-depth budget; current first hard error is now depth-guarded recursive `basic_string` instantiation. |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~5.45s (`TOTAL`) / ~5.82s wall (retested 2026-05-26, Linux/libstdc++-14). Completed class-template cache hits no longer consume template-depth budget; current first hard error is now depth-guarded recursive `basic_string` instantiation. |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~2.64s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
 | `<span>` | `test_std_span.cpp` | ✅ Compiled | ~27ms (retested 2026-05-22, Linux/libstdc++-14). Statement/declaration disambiguation now keeps qualified class-template direct-initialization on the declaration path, so `std::span<int> s(arr, 5);` no longer falls through to a spurious call-expression parse. |
@@ -32,8 +32,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
 | `<stack>` | `test_std_stack.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
-| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~5.83s (`TOTAL`) / ~6.21s wall (retested 2026-05-26, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded recursive `basic_string` instantiation. |
-| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.18s (`TOTAL`) / ~4.46s wall (retested 2026-05-26, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded `rebind`. |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~5.84s (`TOTAL`) / ~6.22s wall (retested 2026-05-26, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded recursive `basic_string` instantiation. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.19s (`TOTAL`) / ~4.47s wall (retested 2026-05-26, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded `rebind`. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
@@ -60,7 +60,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | 💥 Crash | ~1.95s wall (retested 2026-05-26, Linux/libstdc++-14). Still terminates with SIGSEGV after `std::__atomic_ref` template-arity warnings; trace shows crash while current template is `std::integral_constant`. |
+| `<latch>` | `test_std_latch.cpp` | 💥 Crash | ~1.96s wall (retested 2026-05-26, Linux/libstdc++-14). Still terminates with SIGSEGV after `std::__atomic_ref` template-arity warnings; trace shows crash while current template is `std::integral_constant`. |
 | `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
@@ -117,14 +117,14 @@ Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 | Header/Test | Status | Time | First-order stop / note |
 |-------------|--------|------|-------------------------|
 | `test_current_instantiation_member_alias_base_ret0.cpp` | ✅ Pass | focused runner | New regression verifies a nested base clause reached through a member alias template (`rebound<T>`) can name the current specialization without re-instantiating it into an error. |
-| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~702ms (`TOTAL`) / ~0.75s wall | Control retest still compiles. |
-| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | ~5.44s (`TOTAL`) / ~5.80s wall | No material change yet; first hard stop is still depth-guarded recursive `basic_string` instantiation. |
-| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | ~5.83s (`TOTAL`) / ~6.21s wall | No material change yet; first hard stop is still depth-guarded recursive `basic_string` instantiation. |
-| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | ~4.18s (`TOTAL`) / ~4.46s wall | No material change yet; first hard stop is still depth-guarded `rebind`. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~706ms (`TOTAL`) / ~0.76s wall | Control retest still compiles. |
+| `<string>` (`test_std_string.cpp`) | ❌ Compile Error | ~5.45s (`TOTAL`) / ~5.82s wall | No material change yet; first hard stop is still depth-guarded recursive `basic_string` instantiation. |
+| `<memory>` (`test_std_memory.cpp`) | ❌ Compile Error | ~5.84s (`TOTAL`) / ~6.22s wall | No material change yet; first hard stop is still depth-guarded recursive `basic_string` instantiation. |
+| `<functional>` (`test_std_functional.cpp`) | ❌ Compile Error | ~4.19s (`TOTAL`) / ~4.47s wall | No material change yet; first hard stop is still depth-guarded `rebind`. |
 | `<string_view>` (`test_std_string_view.cpp`) | ❌ Codegen Error | ~4.02s wall | No material change yet; still reaches unresolved direct-call return type plus `_CharT` constructor-call struct-info failures. |
-| `<optional>` (`test_std_optional.cpp`) | ❌ Codegen Error | ~2.13s wall | No material change yet; still reaches `_Optional_payload_base` unresolved runtime-size / category-25 codegen gaps. |
-| `<ratio>` (`test_std_ratio.cpp`) | 💥 Crash | ~2.28s wall | No material change yet; still SIGSEGVs during `__static_sign`. |
-| `<latch>` (`test_std_latch.cpp`) | 💥 Crash | ~1.95s wall | No material change yet; still SIGSEGVs in the later atomic implementation path. |
+| `<optional>` (`test_std_optional.cpp`) | ❌ Codegen Error | ~2.14s wall | No material change yet; still reaches `_Optional_payload_base` unresolved runtime-size / category-25 codegen gaps. |
+| `<ratio>` (`test_std_ratio.cpp`) | 💥 Crash | ~2.29s wall | No material change yet; still SIGSEGVs during `__static_sign`. |
+| `<latch>` (`test_std_latch.cpp`) | 💥 Crash | ~1.96s wall | No material change yet; still SIGSEGVs in the later atomic implementation path. |
 
 ### 2026-05-26 Linux/libstdc++ class-template cache depth follow-up
 
