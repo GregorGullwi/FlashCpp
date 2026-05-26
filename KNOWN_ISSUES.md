@@ -91,7 +91,34 @@ create a deferred/dependent call expression instead of emitting an error.
 
 ---
 
-## 7) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
+## 7) Concrete typedef alias member type access returns zero-sized type (FIXED)
+
+**Status**: Fixed in `src/Parser_TypeSpecifiers.cpp`.
+
+**Symptom**: `using X = S<char>; using T = X::type;` produced a zero-sized
+incomplete type instead of resolving to `char`.
+
+**Root cause**: In `parse_type_specifier()`, when the full qualified name
+`"X::type"` was looked up in the type map it was not found (the member type of
+an instantiated template is registered under the mangled name, e.g.
+`"S_char_::type"`, not `"X::type"`). No fallback code split the name and
+followed the typedef alias chain, so the parser silently returned an
+invalid/zero-sized `TypeIndex{}`.
+
+By contrast, `S<char>::type` (direct access) and `GetType<X>` (via alias
+template) worked correctly; only the `Alias::member` pattern was broken.
+
+**Fix**: after the direct lookup fails for a qualified name containing `::`,
+`parse_type_specifier()` now splits the name into `(base_part, member_part)`,
+looks up `base_part` in the type registry, and — if the base is a concrete
+non-dependent type — delegates to `lookup_inherited_type_alias(base, member)`
+which already handles the full alias-chain-following logic.
+
+**Regression test**: `tests/test_typedef_alias_member_type_ret0.cpp`
+
+---
+
+## 8) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
 
 - **Symptom**: `error: non-dependent name 'lexicographical_compare_three_way' was not
   declared before the template definition (C++20 [temp.res]/9)` in `<map>`, `<set>`.
@@ -102,7 +129,7 @@ create a deferred/dependent call expression instead of emitting an error.
 
 ---
 
-## 8) `tests/std/test_std_ratio.cpp` — now reaches a link-time `__security_cookie` conflict
+## 9) `tests/std/test_std_ratio.cpp` — now reaches a link-time `__security_cookie` conflict
 
 **Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
 

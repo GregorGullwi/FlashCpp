@@ -3169,6 +3169,41 @@ ParseResult Parser::parse_type_specifier() {
 
 		const TypeInfo* struct_scoped = tryStructScopedType();
 		const TypeInfo* type_info_ctx = struct_scoped ? struct_scoped : lookupTypeInCurrentContext(type_name_handle);
+
+		// Resolve concrete `Alias::member` qualified names where `Alias` is itself a
+		// typedef / type-alias for an instantiated type.  The direct lookup above can
+		// only succeed when the literal key "Alias::member" is in the type map, but
+		// member types of template instantiations are registered under the mangled
+		// instantiation name (e.g. "S_char_::type"), NOT under the typedef name
+		// ("X::type").
+		//
+		// Example that was broken:
+		//   template<typename T> struct S { using type = T; };
+		//   using X = S<char>;
+		//   using T = X::type;   // was returning an empty/invalid type (size 0)
+		//                        // should resolve to char
+		//
+		// Dependent qualified names (where `base_part` is a template parameter or a
+		// dependent placeholder) are handled earlier in this function by the
+		// template-parameter path (lines 1125–1228) and the dependent-placeholder
+		// path (lines 1233–1308).  By the time we reach here, any remaining
+		// `::` qualified name whose base is in the type map as a non-dependent
+		// entry is safe to resolve via the alias-chain follower.
+		constexpr size_t scope_resolution_len = std::string_view{"::"}.size();
+		const size_t first_scope = type_name.find("::");
+		if (!type_info_ctx && first_scope != std::string_view::npos) {
+			std::string_view base_part = type_name.substr(0, first_scope);
+			std::string_view member_chain_str = type_name.substr(first_scope + scope_resolution_len);
+			StringHandle base_handle = StringTable::getOrInternStringHandle(base_part);
+			const TypeInfo* base_info = lookupTypeInCurrentContext(base_handle);
+			if (base_info == nullptr) {
+				base_info = findTypeByName(base_handle);
+			}
+			if (base_info != nullptr && !base_info->isDependentPlaceholder()) {
+				type_info_ctx = resolveBaseClassMemberTypeChain(base_part, buildQualifiedTypeMemberChain(member_chain_str));
+			}
+		}
+
 		if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
 			const TypeInfo* original_type_info = type_info_ctx; // Keep reference to original for checking ref qualifiers

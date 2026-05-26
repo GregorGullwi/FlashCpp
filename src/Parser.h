@@ -3427,6 +3427,7 @@ private:	 // Resume private methods
 	// Centralizes the parsing so all call sites get consistent behavior.
 	// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
 	std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
+	std::vector<QualifiedTypeMemberAccess> buildQualifiedTypeMemberChain(std::string_view member_chain) const;
 	const TypeInfo* resolveBaseClassMemberTypeChain(
 		std::string_view base_class_name,
 		std::span<const QualifiedTypeMemberAccess> member_type_chain);
