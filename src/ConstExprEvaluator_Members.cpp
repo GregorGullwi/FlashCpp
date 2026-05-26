@@ -5571,6 +5571,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+				TypeIndex pre_materialization_type_index = resolved_type_info != nullptr ? resolved_type_info->type_index_ : TypeIndex{};
 
 				// If member not found and there are base classes without struct info (ShapeOnly
 				// instantiations), force-materialize them and retry the lookup.
@@ -5613,9 +5614,29 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						any_materialized = true;
 					}
 					if (any_materialized) {
-						auto [retry_member, retry_owner] = struct_info->findStaticMemberRecursive(member_handle);
-						static_member = retry_member;
-						owner_struct = retry_owner;
+						const TypeInfo* refreshed_type_info = nullptr;
+						if (pre_materialization_type_index.is_valid()) {
+							refreshed_type_info = tryGetTypeInfo(pre_materialization_type_index);
+						}
+						if (refreshed_type_info == nullptr && struct_handle.isValid()) {
+							auto refreshed_type_it = getTypesByNameMap().find(struct_handle);
+							if (refreshed_type_it != getTypesByNameMap().end() &&
+								refreshed_type_it->second != nullptr) {
+								refreshed_type_info = refreshed_type_it->second;
+							}
+						}
+						if (refreshed_type_info != nullptr && refreshed_type_info->isStruct()) {
+							resolved_type_info = refreshed_type_info;
+							struct_info = refreshed_type_info->getStructInfo();
+						}
+						if (struct_info != nullptr) {
+							auto [retry_member, retry_owner] = struct_info->findStaticMemberRecursive(member_handle);
+							static_member = retry_member;
+							owner_struct = retry_owner;
+						} else {
+							static_member = nullptr;
+							owner_struct = nullptr;
+						}
 					}
 				}
 
