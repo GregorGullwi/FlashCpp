@@ -161,6 +161,84 @@ TypeIndex resolveOwnerAliasTypeIndex(
 	return current_type_index;
 }
 
+inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
+	const TypeSpecifierNode& original_type_spec,
+	TypeIndex substituted_type_index) {
+	if (!substituted_type_index.is_valid()) {
+		return substituted_type_index;
+	}
+	const TypeInfo* owner_type_info = tryGetTypeInfo(substituted_type_index);
+	if (owner_type_info == nullptr ||
+		!is_struct_type(owner_type_info->typeEnum())) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* original_type_info = nullptr;
+	if (original_type_spec.type_index().is_valid()) {
+		original_type_info = tryGetTypeInfo(original_type_spec.type_index());
+	}
+	if (original_type_info == nullptr ||
+		!original_type_info->isDependentPlaceholder()) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+		original_type_info->dependentQualifiedName();
+	if (dependent_record == nullptr) {
+		return substituted_type_index;
+	}
+
+	StringBuilder qualified_member_name_builder;
+	qualified_member_name_builder.append(
+		StringTable::getStringView(owner_type_info->name()));
+	bool appended_member = false;
+	if (!dependent_record->member_chain.empty()) {
+		for (const auto& member : dependent_record->member_chain) {
+			if (!member.name.isValid() || member.has_template_arguments) {
+				return substituted_type_index;
+			}
+			qualified_member_name_builder.append("::");
+			qualified_member_name_builder.append(StringTable::getStringView(member.name));
+			appended_member = true;
+		}
+	} else {
+		const std::string_view token_name = original_type_spec.token().value();
+		if (token_name.empty()) {
+			return substituted_type_index;
+		}
+		qualified_member_name_builder.append("::");
+		qualified_member_name_builder.append(token_name);
+		appended_member = true;
+	}
+
+	if (!appended_member) {
+		return substituted_type_index;
+	}
+
+	const std::string_view qualified_member_name = qualified_member_name_builder.commit();
+	if (qualified_member_name.empty()) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* resolved_member_type_info = findTypeByName(
+		StringTable::getOrInternStringHandle(qualified_member_name));
+	if (resolved_member_type_info == nullptr) {
+		return substituted_type_index;
+	}
+
+	const TypeIndex resolved_type_index = resolved_member_type_info->registeredTypeIndex().withCategory(
+		resolved_member_type_info->typeEnum());
+	if (!resolved_type_index.is_valid()) {
+		return substituted_type_index;
+	}
+
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_type_index);
+	if (resolved_alias.type_index.is_valid()) {
+		return resolved_alias.type_index.withCategory(resolved_alias.typeEnum());
+	}
+	return resolved_type_index;
+}
+
 template <
 	typename ParamContainer,
 	typename ArgContainer,
@@ -197,6 +275,9 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 			substituted_type_index,
 			instantiated_owner_type_index);
 	}
+	substituted_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+		original_type_spec,
+		substituted_type_index);
 
 	TypeSpecifierNode substituted_type = full_substituted_node.is<TypeSpecifierNode>()
 		? full_substituted_node.as<TypeSpecifierNode>()

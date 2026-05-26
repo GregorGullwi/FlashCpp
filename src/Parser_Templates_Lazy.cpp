@@ -217,6 +217,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						param_type_index);
 				}
 				resolve_self_type(param_type_index);
+				param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
+					param_type_spec,
+					param_type_index);
 
 				TypeSpecifierNode substituted_param_type(
 					param_type_index.category(),
@@ -615,6 +618,15 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	if (has_saved_body_position) {
 		FLASH_LOG(Templates, Debug, "Lazy member function body: re-parsing from saved position");
+		FLASH_LOG(
+			Templates,
+			Debug,
+			"Lazy member replay metadata: key=",
+			lazy_info.registry_key,
+			", node=",
+			reinterpret_cast<uintptr_t>(&func_decl),
+			", body_pos=",
+			static_cast<size_t>(func_decl.template_body_position()));
 		// Re-parse the function body from saved position
 		// This is needed for member struct templates where body parsing is deferred
 
