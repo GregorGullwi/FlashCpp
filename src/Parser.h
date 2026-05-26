@@ -3279,6 +3279,11 @@ private:	 // Resume private methods
 	ParseResult parse_postfix_expression(ExpressionContext context);	 // Phase 3: New postfix operator layer
 	ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
 	std::optional<ASTNode> try_synthesize_atomic_builtin_overload(std::string_view builtin_name, std::span<const TypeSpecifierNode> arg_types, const Token& call_token);
+	void finalizePostfixCallExpression(
+		std::optional<ASTNode>& result,
+		const Token& paren_token,
+		ChunkedVector<ASTNode>&& args,
+		std::vector<TypeSpecifierNode>&& arg_types);
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
 	const FunctionDeclarationNode* tryResolveConcreteCallOperator(
 		const std::optional<ASTNode>& object_expr,
