@@ -2186,8 +2186,9 @@ void Parser::copyDefinitionParameterTypes(
 void Parser::syncOutOfLineConstructorTemplateParameters(
 	std::span<ASTNode> instantiated_params,
 	std::span<const ASTNode> definition_params) {
-	// Keep declaration-side type nodes so inner template-parameter bindings remain aligned
-	// even when the out-of-line definition renames those template parameters.
+	// Keep the declaration-side type nodes untouched so inner template-parameter bindings
+	// remain aligned even when the out-of-line definition renames those template parameters;
+	// only identifiers need to follow the definition spelling for body replay.
 	copyDefinitionParameterIdentifiers(instantiated_params, definition_params);
 }
 
