@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-26 (dependent-member swapped OOL constructor replay now preserves definition-side parameter identifiers and re-normalizes late-materialized constructor bodies before IR)
+**Last updated:** 2026-05-26 (constructor-template materialization now reuses owner-local identity/lazy/signature lookup instead of repeated constructor rescans)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -76,6 +76,12 @@ Future work can rely on these being in place:
   helper paths**: single-candidate unresolved (`nullopt`) acceptance has been
   removed; no-match cases now surface explicit replay-attachment diagnostics
   instead of silent fallback attachment.
+- **constructor-template materialization now reuses an owner-local constructor
+  lookup instead of repeated scans**: `materializeMatchingConstructorTemplate`
+  now indexes constructors once per owner and reuses direct source identity,
+  lazy registry keys, signature-equivalent body-source recovery, and cached
+  mangled-name matches for preferred-ctor resolution, access propagation, and
+  duplicate-materialization checks.
 - **declaration-only member stub substitution now strips only top-level
   by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
   so replay-first source-member signature matching and mangled identity remain
@@ -214,13 +220,16 @@ Rule for this work:
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
 - next slices:
-- continue removing remaining constructor/non-static declaration replay scans
-  still not keyed by source-member identity; then improve replay metadata
-  capture for unresolved substitution (`nullopt`) outcomes so canonical
-    substituted-signature classification can succeed in more valid cases.
+- continue improving replay metadata capture for unresolved substitution
+  (`nullopt`) outcomes in the remaining non-constructor declaration replay
+  paths so canonical substituted-signature classification can succeed in more
+  valid cases.
 - continue looking for remaining OOL dependent-member swap regressions in
   less-covered member-template and nested replay surfaces now that the first
   constructor replay/body-selection gap has been closed.
+- extend dependent/current-instantiation lookup only where needed to unblock
+  replay attachment for still-failing type-parameter-qualified member-template
+  references (for example `T::AddPtr`-shaped lookups).
 
 ### 2. Expand dependent-name/current-instantiation modeling only as needed
 
@@ -249,17 +258,17 @@ Still open, but not the next best slice:
 
 ## Recommended implementation order
 
-1. remove remaining declaration replay scans in non-static template-member
-   attachment paths, starting with constructor attachment/replay paths that
-   still recover targets from instantiated members instead of source members;
-   then improve replay metadata capture for unresolved (`nullopt`)
-   substituted-signature outcomes so attachment remains evidence-driven without
-   broad compatibility fallback;
+1. improve replay metadata capture in the remaining non-static
+   template-member attachment paths so unresolved (`nullopt`)
+   substituted-signature outcomes classify more often and attachment remains
+   evidence-driven without broad compatibility fallback;
    keep function-parameter adjustment rules centralized so replay/attachment
    compares canonical signatures across eager/lazy/declaration-only paths;
    prioritize remaining OOL dependent-member swap follow-ups in member-template
    or nested overload sets where replay-selected stubs and deferred body parsing
    can still drift after owner-artifact recovery;
+   extend dependent/current-instantiation lookup only where it directly unblocks
+   those replay paths (including `T::AddPtr`-shaped member-template lookups);
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus
