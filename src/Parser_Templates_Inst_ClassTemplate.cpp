@@ -3278,9 +3278,66 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 #endif
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name));
 
+	// Resolve template template parameter aliases: when inside a template function body
+	// re-parse, "Container" may be a template template parameter bound to a concrete
+	// template (e.g., "MyVec").  Look up the substitution and redirect.
+	// Must be done before the early cache check so the cache key uses the resolved name.
+	{
+		StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
+		for (const auto& subst : template_param_substitutions_) {
+			if (subst.is_template_template_param && subst.param_name == name_handle &&
+				subst.concrete_template_name.isValid()) {
+				std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
+				FLASH_LOG(Templates, Debug, "Redirecting template template param '", template_name,
+						  "' -> '", concrete_name, "'");
+				return try_instantiate_class_template(concrete_name, template_args, force_eager);
+			}
+		}
+	}
+
+	// Resolve relative/unqualified namespace prefix so the cache key is canonical.
+	// Must be done before the early cache check for the same reason as above.
+	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+		std::vector<StringHandle> namespace_components;
+		std::string_view namespace_path = template_name.substr(0, last_colon);
+		size_t component_start = 0;
+		while (component_start < namespace_path.size()) {
+			size_t separator = namespace_path.find("::", component_start);
+			std::string_view component = separator == std::string_view::npos
+											 ? namespace_path.substr(component_start)
+											 : namespace_path.substr(component_start, separator - component_start);
+			namespace_components.push_back(StringTable::getOrInternStringHandle(component));
+			component_start = separator == std::string_view::npos ? namespace_path.size() : separator + 2;
+		}
+
+		auto resolve_relative_namespace = [&](NamespaceHandle start) -> NamespaceHandle {
+			NamespaceHandle current = start;
+			for (StringHandle component : namespace_components) {
+				current = gNamespaceRegistry.lookupNamespace(current, component);
+				if (!current.isValid()) {
+					return current;
+				}
+			}
+			return current;
+		};
+
+		StringHandle identifier_handle = StringTable::getOrInternStringHandle(template_name.substr(last_colon + 2));
+		for (NamespaceHandle probe = gSymbolTable.get_current_namespace_handle(); probe.isValid();
+			 probe = gNamespaceRegistry.getParent(probe)) {
+			NamespaceHandle resolved_namespace = resolve_relative_namespace(probe);
+			if (resolved_namespace.isValid()) {
+				template_name = StringTable::getStringView(
+					gNamespaceRegistry.buildQualifiedIdentifier(resolved_namespace, identifier_handle));
+				break;
+			}
+			if (probe.isGlobal()) {
+				break;
+			}
+		}
+	}
+
 	// Completed cache hits are not new instantiation work; return them before
-	// consuming parser instantiation depth. Keep the full cache path below for
-	// names that are normalized or redirected after the early checks.
+	// consuming parser instantiation depth.  The name is fully resolved above.
 	{
 		std::string_view normalized_template_name = template_name;
 		if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
@@ -3405,61 +3462,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Log entry to help debug which call sites are causing issues
 	FLASH_LOG(Templates, Debug, "try_instantiate_class_template: template='", template_name,
 			  "', args=", template_args.size(), ", force_eager=", force_eager);
-
-	// Resolve template template parameter aliases: when inside a template function body
-	// re-parse, "Container" may be a template template parameter bound to a concrete
-	// template (e.g., "MyVec").  Look up the substitution and redirect.
-	{
-		StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
-		for (const auto& subst : template_param_substitutions_) {
-			if (subst.is_template_template_param && subst.param_name == name_handle &&
-				subst.concrete_template_name.isValid()) {
-				std::string_view concrete_name = StringTable::getStringView(subst.concrete_template_name);
-				FLASH_LOG(Templates, Debug, "Redirecting template template param '", template_name,
-						  "' -> '", concrete_name, "'");
-				return try_instantiate_class_template(concrete_name, template_args, force_eager);
-			}
-		}
-	}
-
-	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
-		std::vector<StringHandle> namespace_components;
-		std::string_view namespace_path = template_name.substr(0, last_colon);
-		size_t component_start = 0;
-		while (component_start < namespace_path.size()) {
-			size_t separator = namespace_path.find("::", component_start);
-			std::string_view component = separator == std::string_view::npos
-											 ? namespace_path.substr(component_start)
-											 : namespace_path.substr(component_start, separator - component_start);
-			namespace_components.push_back(StringTable::getOrInternStringHandle(component));
-			component_start = separator == std::string_view::npos ? namespace_path.size() : separator + 2;
-		}
-
-		auto resolve_relative_namespace = [&](NamespaceHandle start) -> NamespaceHandle {
-			NamespaceHandle current = start;
-			for (StringHandle component : namespace_components) {
-				current = gNamespaceRegistry.lookupNamespace(current, component);
-				if (!current.isValid()) {
-					return current;
-				}
-			}
-			return current;
-		};
-
-		StringHandle identifier_handle = StringTable::getOrInternStringHandle(template_name.substr(last_colon + 2));
-		for (NamespaceHandle probe = gSymbolTable.get_current_namespace_handle(); probe.isValid();
-			 probe = gNamespaceRegistry.getParent(probe)) {
-			NamespaceHandle resolved_namespace = resolve_relative_namespace(probe);
-			if (resolved_namespace.isValid()) {
-				template_name = StringTable::getStringView(
-					gNamespaceRegistry.buildQualifiedIdentifier(resolved_namespace, identifier_handle));
-				break;
-			}
-			if (probe.isGlobal()) {
-				break;
-			}
-		}
-	}
 
 	// Early check: verify this is actually a class template before proceeding
 	// This prevents errors when function templates like 'declval' are passed to this function
