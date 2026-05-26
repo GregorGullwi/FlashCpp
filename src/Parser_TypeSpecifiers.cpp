@@ -3190,19 +3190,17 @@ ParseResult Parser::parse_type_specifier() {
 		// `::` qualified name whose base is in the type map as a non-dependent
 		// entry is safe to resolve via the alias-chain follower.
 		constexpr size_t scope_resolution_len = 2;
-		const size_t last_scope = type_name.rfind("::");
-		if (!type_info_ctx && last_scope != std::string_view::npos) {
-			std::string_view base_part  = type_name.substr(0, last_scope);
-			std::string_view member_part = type_name.substr(last_scope + scope_resolution_len);
-			StringHandle base_handle   = StringTable::getOrInternStringHandle(base_part);
-			StringHandle member_handle = StringTable::getOrInternStringHandle(member_part);
-			const TypeInfo* base_info  = lookupTypeInCurrentContext(base_handle);
+		const size_t first_scope = type_name.find("::");
+		if (!type_info_ctx && first_scope != std::string_view::npos) {
+			std::string_view base_part = type_name.substr(0, first_scope);
+			std::string_view member_chain = type_name.substr(first_scope + scope_resolution_len);
+			StringHandle base_handle = StringTable::getOrInternStringHandle(base_part);
+			const TypeInfo* base_info = lookupTypeInCurrentContext(base_handle);
+			if (base_info == nullptr) {
+				base_info = findTypeByName(base_handle);
+			}
 			if (base_info != nullptr && !base_info->isDependentPlaceholder()) {
-				// lookup_inherited_type_alias handles the alias-chain following:
-				// it sees that `base_handle` has no struct_info, follows its type_index
-				// to the concrete instantiated struct, then searches that struct's
-				// member-type registry for `member_handle`.
-				type_info_ctx = lookup_inherited_type_alias(base_handle, member_handle);
+				type_info_ctx = resolveBaseClassMemberTypeChain(base_part, buildQualifiedTypeMemberChain(member_chain));
 			}
 		}
 

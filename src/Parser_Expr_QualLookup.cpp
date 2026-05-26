@@ -1215,6 +1215,25 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 	return info;
 }
 
+std::vector<QualifiedTypeMemberAccess> Parser::buildQualifiedTypeMemberChain(std::string_view member_chain) const {
+	std::vector<QualifiedTypeMemberAccess> member_type_chain;
+	while (!member_chain.empty()) {
+		size_t next_separator = member_chain.find("::");
+		std::string_view member_name = member_chain.substr(0, next_separator);
+		if (size_t template_pos = member_name.find('<'); template_pos != std::string_view::npos) {
+			member_name = member_name.substr(0, template_pos);
+		}
+		QualifiedTypeMemberAccess member_access;
+		member_access.member_name = StringTable::getOrInternStringHandle(member_name);
+		member_type_chain.push_back(std::move(member_access));
+		if (next_separator == std::string_view::npos) {
+			break;
+		}
+		member_chain = member_chain.substr(next_separator + 2);
+	}
+	return member_type_chain;
+}
+
 const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 	std::string_view base_class_name,
 	std::span<const QualifiedTypeMemberAccess> member_type_chain) {
@@ -1644,25 +1663,9 @@ TypeIndex Parser::substitute_template_parameter(
 			return qualified_member_type;
 		}
 
-		std::vector<QualifiedTypeMemberAccess> member_type_chain;
-		while (!member_chain.empty()) {
-			size_t next_separator = member_chain.find("::");
-			std::string_view member_name = member_chain.substr(0, next_separator);
-			if (size_t template_pos = member_name.find('<'); template_pos != std::string_view::npos) {
-				member_name = member_name.substr(0, template_pos);
-			}
-			QualifiedTypeMemberAccess member_access;
-			member_access.member_name = StringTable::getOrInternStringHandle(member_name);
-			member_type_chain.push_back(std::move(member_access));
-			if (next_separator == std::string_view::npos) {
-				break;
-			}
-			member_chain = member_chain.substr(next_separator + 2);
-		}
-
 		return resolveBaseClassMemberTypeChain(
 			materialized_base.instantiated_name,
-			member_type_chain);
+			buildQualifiedTypeMemberChain(member_chain));
 	};
 	// Gray-set (DFS in-progress set) for cycle detection in the placeholder arg
 	// graph.  A TypeIndex is present while we are actively recursing into it.

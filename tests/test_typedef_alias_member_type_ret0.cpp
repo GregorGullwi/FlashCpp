@@ -42,21 +42,29 @@ using X = IntWrapper;  // X is an alias for an alias for Wrapper<int>
 using NestedChain = X::type;
 static_assert(sizeof(NestedChain) == sizeof(int), "X::type via nested alias should be int");
 
-// Pattern 5: function using the resolved types
+// Pattern 5: multi-segment alias-member chain
+using WrappedOuter = Outer<long>;
+using DoubleNested = WrappedOuter::type::type;
+static_assert(sizeof(DoubleNested) == sizeof(long), "WrappedOuter::type::type should be long");
+
+// Pattern 6: function using the resolved types
 ViaTypedef make_int()       { return 42; }
 CharViaTypedef make_char()  { return 'A'; }
 CharValueType make_val()    { return 'B'; }
 NestedChain make_nested()   { return 99; }
+DoubleNested make_double_nested() { return 123L; }
 
 int main() {
     ViaTypedef    a = make_int();
     CharViaTypedef b = make_char();
     CharValueType  c = make_val();
     NestedChain    d = make_nested();
+    DoubleNested   e = make_double_nested();
 
     if (a != 42)   return 1;
     if (b != 'A')  return 2;
     if (c != 'B')  return 3;
     if (d != 99)   return 4;
+    if (e != 123L) return 5;
     return 0;
 }
