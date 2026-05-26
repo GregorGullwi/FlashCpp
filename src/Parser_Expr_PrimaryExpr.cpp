@@ -556,17 +556,32 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurrentInstantiationTemplateOwner(
 	std::string_view primary_template_name,
 	std::span<const TemplateTypeArg> template_args) {
-	if (member_function_context_stack_.empty()) {
+	const TypeInfo* current_type_info = nullptr;
+	StringHandle current_struct_name{};
+	StructDeclarationNode* current_struct_node = nullptr;
+
+	if (!member_function_context_stack_.empty()) {
+		const auto& member_ctx = member_function_context_stack_.back();
+		current_type_info = tryGetTypeInfo(member_ctx.struct_type_index);
+		current_struct_name = member_ctx.struct_name;
+		current_struct_node = member_ctx.struct_node;
+	} else if (!struct_parsing_context_stack_.empty()) {
+		const auto& struct_ctx = struct_parsing_context_stack_.back();
+		current_struct_name = StringTable::getOrInternStringHandle(struct_ctx.struct_name);
+		current_struct_node = struct_ctx.struct_node;
+		if (current_struct_name.isValid()) {
+			current_type_info = findTypeByName(current_struct_name);
+		}
+	}
+
+	if (!current_struct_name.isValid()) {
 		return std::nullopt;
 	}
 
-	const auto& member_ctx = member_function_context_stack_.back();
-	const TypeInfo* current_type_info = tryGetTypeInfo(member_ctx.struct_type_index);
 	StringHandle primary_template_name_handle =
 		primary_template_name.empty()
 		? StringHandle{}
 		: StringTable::getOrInternStringHandle(primary_template_name);
-	StringHandle current_struct_name = member_ctx.struct_name;
 	StringHandle current_base_template_name{};
 	if (current_type_info != nullptr && current_type_info->isTemplateInstantiation()) {
 		current_base_template_name = current_type_info->baseTemplateName();
@@ -649,8 +664,8 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 		}
 	}
 	result.instantiated_name = StringTable::getStringView(instantiated_name);
-	if (member_ctx.struct_node != nullptr) {
-		result.instantiated_struct_node = ASTNode(member_ctx.struct_node);
+	if (current_struct_node != nullptr) {
+		result.instantiated_struct_node = ASTNode(current_struct_node);
 	}
 	return result;
 }

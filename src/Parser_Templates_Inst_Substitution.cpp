@@ -2509,6 +2509,13 @@ bool Parser::resolveAliasTemplateInstantiation(TypeSpecifierNode& type_spec) {
 std::string_view Parser::instantiate_and_register_base_template(
 	std::string_view& base_class_name,
 	std::span<const TemplateTypeArg> template_args) {
+	if (auto current_instantiation =
+			tryResolveCurrentInstantiationTemplateOwner(base_class_name, template_args);
+		current_instantiation.has_value() &&
+		!current_instantiation->instantiated_name.empty()) {
+		base_class_name = current_instantiation->instantiated_name;
+		return base_class_name;
+	}
 
 	// First check if the base class is a template alias (like bool_constant)
 	auto alias_entry = gTemplateRegistry.lookup_alias_template(base_class_name);
