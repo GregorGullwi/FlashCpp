@@ -890,9 +890,9 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 
 	const ConstructorDeclarationNode* replay_source_ctor = &ctor_decl;
 	if (!replay_source_ctor->has_any_body_source()) {
-		if (auto struct_root = lookupLateMaterializedOwningStructRoot(instantiated_struct_name);
-			struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
-			for (const auto& member_func : struct_root->as<StructDeclarationNode>().member_functions()) {
+		auto try_find_body_source_in_struct_decl =
+			[&](const StructDeclarationNode& struct_decl) -> const ConstructorDeclarationNode* {
+			for (const auto& member_func : struct_decl.member_functions()) {
 				if (!member_func.is_constructor ||
 					!member_func.function_declaration.is<ConstructorDeclarationNode>()) {
 					continue;
@@ -904,16 +904,56 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 					continue;
 				}
 				if (ctor_signatures_match(root_ctor, ctor_decl)) {
-					replay_source_ctor = &root_ctor;
-					break;
+					return &root_ctor;
 				}
+			}
+			return nullptr;
+		};
+
+		if (auto owner_symbol = lookup_symbol(instantiated_struct_name);
+			owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
+			if (const ConstructorDeclarationNode* struct_decl_ctor =
+					try_find_body_source_in_struct_decl(
+						owner_symbol->as<StructDeclarationNode>());
+				struct_decl_ctor != nullptr) {
+				replay_source_ctor = struct_decl_ctor;
+			}
+		}
+
+		if (!replay_source_ctor->has_any_body_source()) {
+			if (auto struct_root = lookupLateMaterializedOwningStructRoot(instantiated_struct_name);
+				struct_root.has_value() && struct_root->is<StructDeclarationNode>()) {
+				if (const ConstructorDeclarationNode* struct_root_ctor =
+						try_find_body_source_in_struct_decl(
+							struct_root->as<StructDeclarationNode>());
+					struct_root_ctor != nullptr) {
+					replay_source_ctor = struct_root_ctor;
+				}
+			}
+		}
+	}
+
+	const ConstructorDeclarationNode* materialization_source_ctor =
+		replay_source_ctor;
+	if (!materialization_source_ctor->has_any_body_source()) {
+		if (std::optional<LazyMemberFunctionInfo> registered_lazy_ctor =
+				LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+					LazyMemberKey::exact(
+						instantiated_struct_name,
+						*materialization_source_ctor));
+			registered_lazy_ctor.has_value() &&
+			registered_lazy_ctor->identity.original_member_node.is<ConstructorDeclarationNode>()) {
+			const ConstructorDeclarationNode& registered_ctor =
+				registered_lazy_ctor->identity.original_member_node.as<ConstructorDeclarationNode>();
+			if (registered_ctor.has_any_body_source()) {
+				materialization_source_ctor = &registered_ctor;
 			}
 		}
 	}
 
 	auto deduction_candidate = deduceTemplateCandidateViability(
 		template_params,
-		*replay_source_ctor,
+		*materialization_source_ctor,
 		arg_types,
 		0);
 	if (!deduction_candidate.has_value()) {
@@ -924,10 +964,10 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 
 	LazyMemberFunctionInfo lazy_info;
 	lazy_info.identity.original_member_node =
-		emplace_node<ConstructorDeclarationNode>(*replay_source_ctor);
+		emplace_node<ConstructorDeclarationNode>(*materialization_source_ctor);
 	lazy_info.identity.template_owner_name = instantiated_struct_name;
 	lazy_info.identity.instantiated_owner_name = instantiated_struct_name;
-	lazy_info.identity.original_lookup_name = replay_source_ctor->name();
+	lazy_info.identity.original_lookup_name = materialization_source_ctor->name();
 	lazy_info.identity.kind = DeferredMemberIdentity::Kind::Constructor;
 	lazy_info.identity.is_const_method = false;
 	lazy_info.registry_key = replay_source_ctor->has_lazy_member_registry_key()
@@ -937,12 +977,12 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	InlineVector<StringHandle, 4> outer_param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
 	populateTemplateEnvironmentLegacyViews(
-		replay_source_ctor->outer_template_environment_snapshot(),
+		materialization_source_ctor->outer_template_environment_snapshot(),
 		outer_param_names,
 		outer_args);
 	const TemplateEnvironmentSnapshot* outer_parent_snapshot =
-		replay_source_ctor->has_outer_template_bindings()
-			? &replay_source_ctor->outer_template_environment_snapshot()
+		materialization_source_ctor->has_outer_template_bindings()
+			? &materialization_source_ctor->outer_template_environment_snapshot()
 			: nullptr;
 	lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 		template_params,

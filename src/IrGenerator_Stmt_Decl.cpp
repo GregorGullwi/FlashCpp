@@ -1536,19 +1536,23 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											std::optional<TypeSpecifierNode> arg_type_opt =
 												tryBuildCodegenOverloadResolutionArgType(init_arg);
 											if (!arg_type_opt.has_value() &&
-												missing_sema_resolved_ctor &&
-												init_arg.is<ExpressionNode>()) {
-												const auto& expr = init_arg.as<ExpressionNode>();
-												if (std::holds_alternative<IdentifierNode>(expr)) {
-													const auto& ident = std::get<IdentifierNode>(expr);
-													std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
-													if (init_symbol.has_value()) {
-														if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
-															TypeSpecifierNode recovered_type =
-																init_decl->type_specifier_node();
-															recovered_type.set_reference_qualifier(
-																ReferenceQualifier::LValueReference);
-															arg_type_opt = recovered_type;
+												missing_sema_resolved_ctor) {
+												if (init_arg.is<ExpressionNode>()) {
+													const auto& expr = init_arg.as<ExpressionNode>();
+													if (std::holds_alternative<IdentifierNode>(expr)) {
+														const auto& ident = std::get<IdentifierNode>(expr);
+														std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+														if (!init_symbol.has_value()) {
+															init_symbol = gSymbolTable.lookup(ident.name());
+														}
+														if (init_symbol.has_value()) {
+															if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+																TypeSpecifierNode recovered_type =
+																	init_decl->type_specifier_node();
+																recovered_type.set_reference_qualifier(
+																	ReferenceQualifier::LValueReference);
+																arg_type_opt = recovered_type;
+															}
 														}
 													}
 												}
@@ -1599,6 +1603,24 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 														arg_types.size() > candidate_ctor.parameter_nodes().size()) {
 														continue;
 													}
+													bool candidate_is_compatible = true;
+													for (size_t arg_index = 0; arg_index < arg_types.size(); ++arg_index) {
+														const DeclarationNode* param_decl =
+															get_decl_from_symbol(candidate_ctor.parameter_nodes()[arg_index]);
+														if (param_decl == nullptr) {
+															candidate_is_compatible = false;
+															break;
+														}
+														const auto& param_type =
+															param_decl->type_specifier_node();
+														if (!can_convert_type(arg_types[arg_index], param_type).is_valid) {
+															candidate_is_compatible = false;
+															break;
+														}
+													}
+													if (!candidate_is_compatible) {
+														continue;
+													}
 													if (unique_materialized_ctor != nullptr) {
 														unique_materialized_ctor = nullptr;
 														break;
@@ -1611,6 +1633,62 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											}
 											has_matching_constructor = (matching_ctor != nullptr);
 										}
+									}
+								}
+								if (!has_matching_constructor && require_sema_resolved_ctor && missing_sema_resolved_ctor) {
+									const ConstructorDeclarationNode* shape_compatible_ctor = nullptr;
+									for (const auto& ctor_member : struct_info.member_functions) {
+										if (!ctor_member.is_constructor ||
+											!ctor_member.function_decl.is<ConstructorDeclarationNode>()) {
+											continue;
+										}
+										const auto& candidate_ctor =
+											ctor_member.function_decl.as<ConstructorDeclarationNode>();
+										if (candidate_ctor.has_template_parameters() ||
+											!candidate_ctor.is_materialized() ||
+											candidate_ctor.mangled_name().empty() ||
+											candidate_ctor.parameter_nodes().size() != initializers.size()) {
+											continue;
+										}
+
+										bool candidate_is_shape_compatible = true;
+										for (size_t arg_index = 0; arg_index < initializers.size(); ++arg_index) {
+											const DeclarationNode* param_decl =
+												get_decl_from_symbol(candidate_ctor.parameter_nodes()[arg_index]);
+											if (param_decl == nullptr) {
+												candidate_is_shape_compatible = false;
+												break;
+											}
+											const auto& param_type =
+												param_decl->type_specifier_node();
+											const ASTNode& init_arg = initializers[arg_index];
+											if (!init_arg.is<ExpressionNode>()) {
+												continue;
+											}
+											const auto& expr = init_arg.as<ExpressionNode>();
+											if (std::holds_alternative<NumericLiteralNode>(expr) ||
+												std::holds_alternative<BoolLiteralNode>(expr)) {
+												if (param_type.category() == TypeCategory::Struct &&
+													!param_type.is_reference() &&
+													!param_type.is_rvalue_reference() &&
+													param_type.pointer_depth() == 0) {
+													candidate_is_shape_compatible = false;
+													break;
+												}
+											}
+										}
+										if (!candidate_is_shape_compatible) {
+											continue;
+										}
+										if (shape_compatible_ctor != nullptr) {
+											shape_compatible_ctor = nullptr;
+											break;
+										}
+										shape_compatible_ctor = &candidate_ctor;
+									}
+									if (shape_compatible_ctor != nullptr) {
+										has_matching_constructor = true;
+										matching_ctor = shape_compatible_ctor;
 									}
 								}
 								if (!has_matching_constructor && require_sema_resolved_ctor && missing_sema_resolved_ctor) {

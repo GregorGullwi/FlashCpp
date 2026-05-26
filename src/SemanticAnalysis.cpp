@@ -2864,6 +2864,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 					" in variable initialization",
 					true);
 			}
+			annotateStructInitListCtor();
 		}
 	} else if (node.is<StructuredBindingNode>()) {
 		const auto& binding = node.as<StructuredBindingNode>();
@@ -5906,6 +5907,22 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		applyExpressionValueCategory(arg_type);
 		storeArgType(arg_type);
 		return arg_type;
+	}
+
+	if (arg.is<ExpressionNode>()) {
+		const auto& expr = arg.as<ExpressionNode>();
+		if (const auto* ident = std::get_if<IdentifierNode>(&expr)) {
+			std::optional<ASTNode> arg_symbol = gSymbolTable.lookup(ident->name());
+			if (arg_symbol.has_value()) {
+				if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
+					TypeSpecifierNode recovered_type =
+						arg_decl->type_specifier_node();
+					applyExpressionValueCategory(recovered_type);
+					storeArgType(recovered_type);
+					return recovered_type;
+				}
+			}
+		}
 	}
 
 	if (inferred_type_id)

@@ -513,6 +513,49 @@ static void setOutOfLineConstructorTemplateReplayMetadata(
 	}
 }
 
+static StringHandle registerLazyConstructorStub(
+	ConstructorDeclarationNode& ctor_decl,
+	ASTNode ctor_node,
+	StringHandle template_owner_name,
+	StringHandle instantiated_name,
+	AccessSpecifier access,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	const TemplateEnvironmentSnapshot* outer_parent_snapshot) {
+	LazyMemberFunctionInfo lazy_ctor_info;
+	{
+		auto& id = lazy_ctor_info.identity;
+		id.original_member_node = ctor_node;
+		id.template_owner_name = template_owner_name;
+		id.instantiated_owner_name = instantiated_name;
+		id.original_lookup_name = ctor_decl.name();
+		id.kind = DeferredMemberIdentity::Kind::Constructor;
+		id.is_const_method = false;
+	}
+	for (const TemplateParameterNode& template_param : outer_template_params) {
+		lazy_ctor_info.template_params.push_back(template_param);
+	}
+	for (const TemplateTypeArg& template_arg : outer_template_args) {
+		lazy_ctor_info.template_args.push_back(template_arg);
+	}
+	lazy_ctor_info.outer_template_environment_snapshot =
+		buildTemplateEnvironmentSnapshotFromBindings(
+			outer_template_params,
+			outer_template_args,
+			outer_parent_snapshot);
+	lazy_ctor_info.access = access;
+	lazy_ctor_info.registry_key = ctor_decl.has_lazy_member_registry_key()
+		? ctor_decl.lazy_member_registry_key()
+		: StringHandle{};
+	StringHandle lazy_registry_key =
+		LazyMemberInstantiationRegistry::getInstance().registerLazyMember(
+			std::move(lazy_ctor_info));
+	if (lazy_registry_key.isValid()) {
+		ctor_decl.set_lazy_member_registry_key(lazy_registry_key);
+	}
+	return lazy_registry_key;
+}
+
 bool Parser::static_initializer_requires_replay_metadata(
 	const std::optional<ASTNode>& initializer,
 	std::span<const TemplateParameterNode> template_params_for_substitution) {
@@ -5406,6 +5449,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.is_no_unique_address);
 			}
 
+			SourceMemberIdentityMaps struct_info_source_member_identity_maps;
+
 			// Copy member functions from pattern
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
 				if (mem_func.is_constructor) {
@@ -5452,6 +5497,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
+					registerSourceMemberStubIdentity(
+						struct_info_source_member_identity_maps,
+						mem_func.function_declaration,
+						new_ctor_node);
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					struct_info->addDestructor(
@@ -6740,6 +6789,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						source_member_identity_maps,
 						mem_func.function_declaration,
 						new_ctor_node);
+					if (!orig_ctor.is_materialized() &&
+						shouldCommitTemplateInstantiationArtifacts()) {
+						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+							instantiated_struct_ref.has_outer_template_bindings()
+								? &instantiated_struct_ref.outer_template_environment_snapshot()
+								: nullptr;
+						StringHandle lazy_registry_key = registerLazyConstructorStub(
+							new_ctor_ref,
+							new_ctor_node,
+							StringTable::getOrInternStringHandle(template_name),
+							instantiated_name,
+							mem_func.access,
+							effective_pattern_template_params,
+							effective_pattern_template_args,
+							outer_parent_snapshot);
+						if (lazy_registry_key.isValid() &&
+							instantiated_struct_info_mut != nullptr) {
+							OutOfLineConstructorStubResolution info_ctor_resolution =
+								findMatchingConstructorInStructInfo(
+									*instantiated_struct_info_mut,
+									new_ctor_ref,
+									[](const ConstructorDeclarationNode&) {
+										return true;
+									});
+							if (info_ctor_resolution.ctor != nullptr) {
+								info_ctor_resolution.ctor->set_lazy_member_registry_key(
+									lazy_registry_key);
+							}
+						}
+					}
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
@@ -7519,12 +7598,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (StructTypeInfo* ctor_instantiated_struct_info = struct_type_info.getStructInfo();
 					ctor_instantiated_struct_info != nullptr) {
 					OutOfLineConstructorStubResolution info_ctor_resolution =
-						findMatchingConstructorInStructInfo(
-							*ctor_instantiated_struct_info,
-							ctor_decl,
-							[](const ConstructorDeclarationNode& info_ctor) {
-								return !info_ctor.has_template_body_position();
-							});
+						findOutOfLineConstructorTemplateStubByIdentity(
+							*this,
+							struct_info_source_member_identity_maps,
+							std::span<const StructMemberFunctionDecl>(
+								pattern_struct.member_functions().data(),
+								pattern_struct.member_functions().size()),
+							ool_func,
+							std::span<const TemplateParameterNode>(
+								template_params.data(),
+								template_params.size()),
+							std::span<const TemplateTypeArg>(
+								template_args_for_pattern.data(),
+								template_args_for_pattern.size()),
+							instantiated_name,
+							std::span<const TemplateParameterNode>(
+								out_of_line_member.inner_template_params.data(),
+								out_of_line_member.inner_template_params.size()));
 
 					if (info_ctor_resolution.ctor != nullptr) {
 						setOutOfLineConstructorTemplateReplayMetadata(
@@ -12225,37 +12315,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// with member-initializers) propagated from the original above.
 					if (is_implicit_instantiation &&
 						!ctor_decl.is_materialized() &&
-						ctor_decl.has_template_body_position() &&
 						shouldCommitTemplateInstantiationArtifacts()) {
-						LazyMemberFunctionInfo lazy_ctor_info;
-						{
-							auto& id = lazy_ctor_info.identity;
-							// Store the instantiated stub as original_member_node. The lazy
-							// materializer uses this node's template_body_position for re-parsing,
-							// and matches it by raw pointer when updating struct_info.
-							id.original_member_node = new_ctor_node;
-							id.template_owner_name = StringTable::getOrInternStringHandle(template_name);
-							id.instantiated_owner_name = instantiated_name;
-							id.original_lookup_name = instantiated_name; // constructor name = class name
-							id.kind = DeferredMemberIdentity::Kind::Constructor;
-							id.is_const_method = false;
-						}
-						lazy_ctor_info.template_params = template_params;
-						lazy_ctor_info.template_args = template_args_to_use;
 						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
 							instantiated_struct_ref.has_outer_template_bindings()
 								? &instantiated_struct_ref.outer_template_environment_snapshot()
 								: nullptr;
-						lazy_ctor_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
+						registerLazyConstructorStub(
+							new_ctor_ref,
+							new_ctor_node,
+							StringTable::getOrInternStringHandle(template_name),
+							instantiated_name,
+							mem_func.access,
 							effective_template_params,
 							effective_template_args,
 							outer_parent_snapshot);
-						lazy_ctor_info.access = mem_func.access;
-						StringHandle lazy_registry_key =
-							LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_ctor_info));
-						if (lazy_registry_key.isValid()) {
-							new_ctor_ref.set_lazy_member_registry_key(lazy_registry_key);
-						}
 					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ",
@@ -12320,6 +12393,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						source_member_identity_maps,
 						mem_func.function_declaration,
 						new_ctor_node);
+					if (is_implicit_instantiation &&
+						!ctor_decl.is_materialized() &&
+						shouldCommitTemplateInstantiationArtifacts()) {
+						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
+							instantiated_struct_ref.has_outer_template_bindings()
+								? &instantiated_struct_ref.outer_template_environment_snapshot()
+								: nullptr;
+						registerLazyConstructorStub(
+							new_ctor_ref,
+							new_ctor_node,
+							StringTable::getOrInternStringHandle(template_name),
+							instantiated_name,
+							mem_func.access,
+							effective_template_params,
+							effective_template_args,
+							outer_parent_snapshot);
+					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception creating no-body constructor stub for ",
 							  ctor_decl.name(), ": ", e.what());
