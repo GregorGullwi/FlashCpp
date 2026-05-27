@@ -1563,7 +1563,10 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 				TypedValue this_arg;
 				this_arg.setType(operandType);
-				this_arg.size_in_bits = SizeInBits{64};
+				this_arg.ir_type = toIrType(operandType);
+				this_arg.size_in_bits = SizeInBits{get_type_size_bits(TypeCategory::FunctionPointer)};
+				this_arg.pointer_depth = PointerDepth{1};
+				this_arg.type_index = operand_type_index.withCategory(operandType);
 				this_arg.value = this_addr;
 				call_op.args.push_back(this_arg);
 

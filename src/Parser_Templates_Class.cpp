@@ -101,8 +101,7 @@ void Parser::synthesize_implicit_copy_constructor_if_needed(
 		}
 	}
 	if (copy_param_size_bits == 0) {
-		// References are pointer-sized in this ABI model; avoid carrying unknown 0-size metadata.
-		copy_param_size_bits = 64;
+		copy_param_size_bits = get_type_size_bits(TypeCategory::FunctionPointer);
 	}
 
 	Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);

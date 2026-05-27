@@ -3118,6 +3118,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
+						register_destructor_if_needed(decl, type_info);
 					} else if (!has_rvalue_initializer) {
 							// No initializer - check if we need to call default constructor
 							// Call default constructor if:
