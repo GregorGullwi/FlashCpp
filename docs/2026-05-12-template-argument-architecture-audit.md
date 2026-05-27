@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-26 (constructor-template materialization now reuses owner-local identity/lazy/signature lookup instead of repeated constructor rescans)
+**Last updated:** 2026-05-27 (template-parameter-qualified static-member expression typing now resolves through current-instantiation bindings during replay)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -177,9 +177,15 @@ Useful assumptions before changing this area:
   constructor-call and initializer annotations aligned with the replay-selected
   body before IR generation, and closes the first downstream swap regression
   exposed after owner-artifact recovery.
+- **template-parameter-qualified static-member expression typing now resolves
+  simple type-parameter qualifiers through the current instantiated member
+  context**, so replayed bodies such as `auto x = T::value;` deduce `auto` from
+  the concrete static member instead of leaving a placeholder for codegen.
+  Template-body substitution also re-deduces local placeholder variables after
+  initializer substitution.
 
 Latest recorded full-suite validation:
-`2540` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
+`2558` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -209,6 +215,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_overload_ret0.cpp`
 - `test_template_ool_ctor_dependent_member_swap_body_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_swap_body_ret0.cpp`
+- `test_template_param_qualified_static_member_auto_ret0.cpp`
 
 ## What is still wrong
 
@@ -264,6 +271,10 @@ they directly block items 1-2:
    - Continue with any remaining OOL dependent-member swap slices in
      member-template or nested overload sets where replay-selected stubs and
      deferred body parsing can still drift after owner-artifact recovery.
+   - Continue the type-parameter-qualified lookup slice beyond simple static
+     members into member-template/type chains that still block replay attachment
+     (for example `T::template AddPtr<int>::type` in less-covered member-template
+     and nested OOL surfaces).
    - Keep function-parameter adjustment rules centralized in shared substitution
      helpers so replay/attachment compares canonical signatures instead of
      path-specific normalized variants.

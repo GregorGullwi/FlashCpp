@@ -1863,6 +1863,21 @@ ASTNode Parser::substituteTemplateParameters(
 				sub_decl_ref.set_type_node(fresh_type_node);
 			}
 		}
+		if (substituted_decl.is<DeclarationNode>() && initializer.has_value()) {
+			DeclarationNode& sub_decl_ref = substituted_decl.as<DeclarationNode>();
+			if (isPlaceholderAutoType(sub_decl_ref.type_specifier_node().type())) {
+				if (std::optional<TypeSpecifierNode> deduced_type =
+						get_expression_type(*initializer)) {
+					sub_decl_ref.set_type_node(*deduced_type);
+				} else if (!isDependentTemplateContext()) {
+					throw CompileError(std::string(StringBuilder()
+						.append("Unable to deduce 'auto' type for instantiated local variable '")
+						.append(sub_decl_ref.identifier_token().value())
+						.append("' from initializer expression")
+						.commit()));
+				}
+			}
+		}
 
 		ASTNode new_var_node = emplace_node<VariableDeclarationNode>(substituted_decl, initializer, var_decl.storage_class());
 		VariableDeclarationNode& new_var = new_var_node.as<VariableDeclarationNode>();
