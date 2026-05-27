@@ -83,7 +83,7 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 void Parser::synthesize_implicit_copy_constructor_if_needed(
 	StructTypeInfo& struct_info,
 	TypeIndex self_type_index,
-	std::string_view instantiated_name) {
+	StringHandle instantiated_name) {
 	if (!struct_info.hasAnyConstructor() ||
 		struct_info.findCopyConstructor(true) ||
 		struct_info.findMoveConstructor(true) ||

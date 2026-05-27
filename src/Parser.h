@@ -2969,7 +2969,7 @@ private:
 	void synthesize_implicit_copy_constructor_if_needed(
 		StructTypeInfo& struct_info,
 		TypeIndex self_type_index,
-		std::string_view instantiated_name);
+		StringHandle instantiated_name);
 
 	std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<TemplateParameterNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<TemplateParameterNode, 4>& inner_template_params, const InlineVector<StringHandle, 4>& inner_template_param_names);	 // NEW: Parse out-of-line template member function
 	bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
