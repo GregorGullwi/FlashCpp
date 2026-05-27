@@ -112,7 +112,7 @@ public:
 				member_func.access,
 				ctor.has_template_parameters()});
 			const size_t entry_index = entries_.size() - 1;
-			entry_index_by_node_.emplace(static_cast<const void*>(&ctor), entry_index);
+			entry_index_by_node_.emplace(&ctor, entry_index);
 			if (ctor.has_lazy_member_registry_key()) {
 				entry_index_by_registry_key_.emplace(
 					ctor.lazy_member_registry_key(),
@@ -141,7 +141,7 @@ public:
 				entry.is_template == *require_template;
 		};
 		if (auto direct_it =
-				entry_index_by_node_.find(static_cast<const void*>(&candidate));
+				entry_index_by_node_.find(&candidate);
 			direct_it != entry_index_by_node_.end()) {
 			const Entry& direct_entry = entries_[direct_it->second];
 			if (is_eligible(direct_entry)) {
@@ -209,7 +209,7 @@ public:
 private:
 	std::vector<Entry> entries_;
 	std::vector<size_t> template_entry_indices_;
-	std::unordered_map<const void*, size_t> entry_index_by_node_;
+	std::unordered_map<const ConstructorDeclarationNode*, size_t> entry_index_by_node_;
 	std::unordered_map<StringHandle, size_t, StringHash> entry_index_by_registry_key_;
 	std::unordered_map<std::string_view, const ConstructorDeclarationNode*> materialized_by_mangled_name_;
 };
@@ -1023,73 +1023,6 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		return std::nullopt;
 	}
 
-	auto ctor_parameter_type = [](const ASTNode& param) -> const TypeSpecifierNode* {
-		if (!param.is<DeclarationNode>()) {
-			return nullptr;
-		}
-		return &param.as<DeclarationNode>().type_specifier_node();
-	};
-	auto ctor_signatures_match = [&](const ConstructorDeclarationNode& lhs,
-								 const ConstructorDeclarationNode& rhs) {
-		if (lhs.template_parameters().size() != rhs.template_parameters().size() ||
-			lhs.parameter_nodes().size() != rhs.parameter_nodes().size()) {
-			return false;
-		}
-		auto template_param_index =
-			[](std::span<const TemplateParameterNode> params, StringHandle name) -> std::optional<size_t> {
-			for (size_t i = 0; i < params.size(); ++i) {
-				if (params[i].nameHandle() == name) {
-					return i;
-				}
-			}
-			return std::nullopt;
-		};
-		auto dependent_type_equivalent =
-			[&](const TypeSpecifierNode& lhs_type, const TypeSpecifierNode& rhs_type) {
-			if (lhs_type.token().handle() == rhs_type.token().handle()) {
-				return true;
-			}
-			const std::optional<size_t> lhs_tpl_idx =
-				template_param_index(lhs.template_parameters(), lhs_type.token().handle());
-			const std::optional<size_t> rhs_tpl_idx =
-				template_param_index(rhs.template_parameters(), rhs_type.token().handle());
-			return lhs_tpl_idx.has_value() && rhs_tpl_idx.has_value() &&
-				lhs_tpl_idx.value() == rhs_tpl_idx.value();
-		};
-
-		for (size_t param_index = 0; param_index < lhs.parameter_nodes().size(); ++param_index) {
-			const TypeSpecifierNode* lhs_type = ctor_parameter_type(lhs.parameter_nodes()[param_index]);
-			const TypeSpecifierNode* rhs_type = ctor_parameter_type(rhs.parameter_nodes()[param_index]);
-			if (lhs_type == nullptr || rhs_type == nullptr) {
-				return false;
-			}
-
-			if (lhs_type->type_index() != rhs_type->type_index() ||
-				lhs_type->category() != rhs_type->category() ||
-				lhs_type->pointer_depth() != rhs_type->pointer_depth() ||
-				lhs_type->reference_qualifier() != rhs_type->reference_qualifier() ||
-				lhs_type->cv_qualifier() != rhs_type->cv_qualifier()) {
-				const bool both_dependent_like =
-					(lhs_type->category() == TypeCategory::UserDefined ||
-					 lhs_type->category() == TypeCategory::TypeAlias ||
-					 lhs_type->category() == TypeCategory::Template) &&
-					(rhs_type->category() == TypeCategory::UserDefined ||
-					 rhs_type->category() == TypeCategory::TypeAlias ||
-					 rhs_type->category() == TypeCategory::Template);
-				if (both_dependent_like &&
-					lhs_type->pointer_depth() == rhs_type->pointer_depth() &&
-					lhs_type->reference_qualifier() == rhs_type->reference_qualifier() &&
-					lhs_type->cv_qualifier() == rhs_type->cv_qualifier() &&
-					dependent_type_equivalent(*lhs_type, *rhs_type)) {
-					continue;
-				}
-				return false;
-			}
-		}
-
-		return true;
-	};
-
 	const ConstructorDeclarationNode* replay_source_ctor = &ctor_decl;
 	if (!replay_source_ctor->has_any_body_source()) {
 		auto try_find_body_source_in_struct_decl =
@@ -1105,7 +1038,9 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 				if (!root_ctor.has_any_body_source()) {
 					continue;
 				}
-				if (ctor_signatures_match(root_ctor, ctor_decl)) {
+				if (constructorDeclarationsHaveEquivalentSignature(
+						root_ctor,
+						ctor_decl)) {
 					return &root_ctor;
 				}
 			}
