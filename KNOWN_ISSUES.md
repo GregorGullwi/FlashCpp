@@ -35,19 +35,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 3) `deallocate` IR: dereference of non-StringHandle/TempVar pointer (OPEN)
-
-- **Symptom**: `IR conversion failed for node 'deallocate': Dereference pointer must be
-  StringHandle or TempVar` when compiling `<deque>`, `<stack>`, and related headers.
-- **Root cause**: The pointer operand arriving at the dereference lowering in
-  `IrGenerator_Expr_Conversions.cpp:1793` carries a value variant that is neither
-  `StringHandle` nor `TempVar` (likely an `int64_t` immediate from a null or constant
-  pointer).
-- **Impact**: `test_std_deque`, `test_std_stack` fail.
-
----
-
-## 4) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
+## 3) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
 
 - **Symptom**: `error: non-dependent name 'lexicographical_compare_three_way' was not
   declared before the template definition (C++20 [temp.res]/9)` in `<map>`, `<set>`.
@@ -58,7 +46,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 5) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict (OPEN)
+## 4) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict (OPEN)
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 

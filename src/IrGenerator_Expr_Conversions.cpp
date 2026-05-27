@@ -1880,13 +1880,25 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 		op.pointer.pointer_depth = PointerDepth{pointer_depth};
 
-		// Get the pointer value - it's at index 2 in operandIrOperands
+		// Get the pointer value - it's at index 2 in operandIrOperands.
+		// Materialize immediate pointer constants so downstream dereference lowering
+		// always consumes an address-carrying storage location.
 		if (const auto* string = std::get_if<StringHandle>(&operandIrOperands.value)) {
 			op.pointer.value = *string;
 		} else if (const auto* temp_var = std::get_if<TempVar>(&operandIrOperands.value)) {
 			op.pointer.value = *temp_var;
+		} else if (const auto* imm_ptr = std::get_if<unsigned long long>(&operandIrOperands.value)) {
+			TempVar materialized_ptr = var_counter.next();
+			AssignmentOp materialize_ptr;
+			materialize_ptr.result = materialized_ptr;
+			materialize_ptr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, materialized_ptr);
+			materialize_ptr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, *imm_ptr);
+			materialize_ptr.is_pointer_store = false;
+			materialize_ptr.dereference_rhs_references = false;
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_ptr), Token()));
+			op.pointer.value = materialized_ptr;
 		} else {
-			throw InternalError("Dereference pointer must be StringHandle or TempVar");
+			throw InternalError("Dereference pointer has unsupported operand value kind");
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
