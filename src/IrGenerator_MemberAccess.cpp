@@ -2353,7 +2353,11 @@ static bool isTriviallyCopyableStruct(const StructTypeInfo* struct_info) {
 	if (struct_info->hasUserDefinedDestructor())
 		return false;
 	// Recursively check all non-static data members of class type
+	// Pointer and reference members are scalar indirections: skip them to avoid
+	// recursing into the pointee StructTypeInfo (which can cycle on self-referential types).
 	for (const auto& member : struct_info->members) {
+		if (member.pointer_depth > 0 || member.is_reference())
+			continue;
 		if (isIrStructType(toIrType(member.memberType()))) {
 			if (member.type_index.index() >= getTypeInfoCount())
 				return false;
@@ -2386,7 +2390,11 @@ static bool isTrivialStruct(const StructTypeInfo* struct_info) {
 	if (struct_info->hasUserDefinedConstructor())
 		return false;
 	// Recursively check all non-static data members of class type
+	// Pointer and reference members are scalar indirections: skip them to avoid
+	// recursing into the pointee StructTypeInfo (which can cycle on self-referential types).
 	for (const auto& member : struct_info->members) {
+		if (member.pointer_depth > 0 || member.is_reference())
+			continue;
 		if (isIrStructType(toIrType(member.memberType()))) {
 			if (member.type_index.index() >= getTypeInfoCount())
 				return false;
