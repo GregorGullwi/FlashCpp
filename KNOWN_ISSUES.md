@@ -23,40 +23,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 2) Missing type traits in compile-time evaluator (FIXED)
-
-**Status**: Fixed in `src/ConstExprEvaluator_Members.cpp`.
-
-`IsConstructible`, `IsTriviallyConstructible`, `IsNothrowConstructible`, `IsDestructible`,
-`IsTriviallyDestructible`, `IsNothrowDestructible`, and `HasTrivialDestructor` all fell
-through to `default: result = false` in the `evaluate_type_trait()` switch statement.
-They now route through `evaluateTypeTrait()` from `TypeTraitEvaluator.h`, fixing
-`static_assert(__is_nothrow_constructible(int))` and similar forms that were wrongly
-evaluated as `false`.
-
----
-
-## 3) Dependent function calls in template bodies not deferred (FIXED)
-
-**Status**: Fixed in `src/Parser_Expr_PrimaryExpr.cpp`.
-
-When parsing template member function bodies, calls to other template functions were
-immediately instantiated (eager resolution). If the argument types were template-
-dependent but `expressionHasDeferredTemplateDependency()` failed to detect that
-(because `IdentifierNode` is not handled in the visitor), FlashCpp would emit a hard
-"Failed to instantiate template function" error at definition time rather than deferring
-to instantiation time as C++20 [temp.res] requires.
-
-Fix: after all overload resolution fails, if `hasActiveTemplateParameters()` is true
-(we're inside a template definition) and the callee is a known template in the registry,
-create a deferred/dependent call expression instead of emitting an error.
-
-**Remaining**: `expressionHasDeferredTemplateDependency` still does not handle
-`IdentifierNode` — the fix is a safety net, not the ideal root-cause fix.
-
----
-
-## 4) `std::_Optional_payload` / `std::_Tuple_impl` — type size 0 in IR codegen (OPEN)
+## 2) `std::_Optional_payload` / `std::_Tuple_impl` — type size 0 in IR codegen (OPEN)
 
 - **Symptom**: `IR conversion failed for node 'move': Type with no runtime size reached
   codegen in reference identifier lvalue lowering (type=28, ...)` when compiling
@@ -68,7 +35,7 @@ create a deferred/dependent call expression instead of emitting an error.
 
 ---
 
-## 5) `deallocate` IR: dereference of non-StringHandle/TempVar pointer (OPEN)
+## 3) `deallocate` IR: dereference of non-StringHandle/TempVar pointer (OPEN)
 
 - **Symptom**: `IR conversion failed for node 'deallocate': Dereference pointer must be
   StringHandle or TempVar` when compiling `<deque>`, `<stack>`, and related headers.
@@ -80,54 +47,7 @@ create a deferred/dependent call expression instead of emitting an error.
 
 ---
 
-## 6) `__hash_enum` NTTP default evaluation — `IsEnum` missing from ConstExprEvaluator (FIXED)
-
-**Status**: Fixed in `src/ConstExprEvaluator_Members.cpp`. Regression test: `tests/test_is_enum_default_nttp_partial_spec_ret0.cpp`.
-
-- **Symptom**: `template<typename Tp, bool = is_enum<Tp>::value> struct hash_enum` — when
-  `hash_enum<Color>` (default NTTP) was instantiated, `__is_enum(Color)` wrongly evaluated
-  to `false` inside `evaluate_type_trait()`, so the filled NTTP arg was `[Color, false]`
-  rather than `[Color, true]`, and the partial specialization for `true` was never selected.
-- **Root cause**: `TypeTraitKind::IsEnum` (along with `IsNullptr`, `IsMemberObjectPointer`,
-  `IsMemberFunctionPointer`, `IsFunction`, `IsUnion`, `IsClass`) was absent from the
-  `switch` in `ConstExprEvaluator_Members.cpp::evaluate_type_trait()`, falling through to
-  `default: result = false`. The fix adds explicit cases for each of these kinds.
-- **Note on prior description**: The root cause was *not* `sizeof(_Tp) <= 8`; the actual
-  libstdc++ `__hash_enum` default is `is_enum<_Tp>::value` (all GCC 12/13/14 versions).
-- **Remaining blocker for `<string>/<memory>/<stdexcept>`**: These headers now fail with
-  "Max template instantiation depth (40) exceeded for 'basic_string'" — a separate issue
-  from the NTTP evaluation. The `__hash_enum` NTTP error is no longer the first failure.
-
----
-
-## 7) Concrete typedef alias member type access returns zero-sized type (FIXED)
-
-**Status**: Fixed in `src/Parser_TypeSpecifiers.cpp`.
-
-**Symptom**: `using X = S<char>; using T = X::type;` produced a zero-sized
-incomplete type instead of resolving to `char`.
-
-**Root cause**: In `parse_type_specifier()`, when the full qualified name
-`"X::type"` was looked up in the type map it was not found (the member type of
-an instantiated template is registered under the mangled name, e.g.
-`"S_char_::type"`, not `"X::type"`). No fallback code split the name and
-followed the typedef alias chain, so the parser silently returned an
-invalid/zero-sized `TypeIndex{}`.
-
-By contrast, `S<char>::type` (direct access) and `GetType<X>` (via alias
-template) worked correctly; only the `Alias::member` pattern was broken.
-
-**Fix**: after the direct lookup fails for a qualified name containing `::`,
-`parse_type_specifier()` now splits the name into `(base_part, member_part)`,
-looks up `base_part` in the type registry, and — if the base is a concrete
-non-dependent type — delegates to `lookup_inherited_type_alias(base, member)`
-which already handles the full alias-chain-following logic.
-
-**Regression test**: `tests/test_typedef_alias_member_type_ret0.cpp`
-
----
-
-## 8) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
+## 4) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
 
 - **Symptom**: `error: non-dependent name 'lexicographical_compare_three_way' was not
   declared before the template definition (C++20 [temp.res]/9)` in `<map>`, `<set>`.
@@ -138,27 +58,11 @@ which already handles the full alias-chain-following logic.
 
 ---
 
-## 9) `tests/std/test_std_ratio.cpp` — now reaches a link-time `__security_cookie` conflict
-
-**Status**: Crash (SIGSEGV/exit 139) fixed. Two root-cause bugs were fixed:
-
-1. **Infinite mutual recursion** between `materializeStoredTemplateArgs` and
-   `substituteQualifiedIdentifier` (cycle guards added in `ExpressionSubstitutor`).
-2. **Explicit template type args ignored** for zero-param function template calls in
-   the constexpr evaluator (`ConstExprEvaluator_Core.cpp`).
-
-**Current frontier**: The previous `__ratio_less_impl` / remove-cv alias
-instantiation stop, default-NTTP declared-type materialization issue, MSVC
-`type_traits` dependent member-template argument parse failure, deferred-base
-call-expression invariant, `std::ratio_less<third, half>` constexpr
-comparison failure, the later pointer/null IR-conversion failures in
-`wcsnlen_s` / `strnlen_s`, and the link-time unresolved CRT helper symbols are
-fixed. On current `main`, `test_std_ratio.cpp` now compiles and links further
-before stopping on a multiply defined `__security_cookie`.
+## 5) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict (OPEN)
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
-### 2a) Standard-library template-instantiation noise during `<ratio>` compile
+### 5a) Standard-library template-instantiation noise during `<ratio>` compile
 
 - **Symptom**: compiling `tests/std/test_std_ratio.cpp` now emits
   `[ERROR][Templates] [depth=1]: All 2 template overload(s) failed for 'swap'`,
@@ -173,7 +77,7 @@ before stopping on a multiply defined `__security_cookie`.
 
 ---
 
-### 2b) Link-time `__security_cookie` multiple-definition conflict
+### 5b) Link-time `__security_cookie` multiple-definition conflict
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
   fails to link with `LIBCMT.lib(gs_cookie.obj) : error LNK2005:
