@@ -1085,7 +1085,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		throw InternalError("Normalized direct-call query remained NotYetAnalyzed");
 	}
 	const bool allow_lookup_recovery =
-		!sema_normalized_current_function_; // body not tracked by normalized_bodies_
+		!sema_normalized_current_function_ ||
+		sema_direct_call_fallback_reason.has_value(); // keep legacy codegen lookup recovery when sema explicitly records a fallback reason
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.
@@ -1105,13 +1106,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		ordinary_direct_call &&
 		sema_normalized_current_function_ &&
 		sema_direct_call_fallback_reason.has_value()) {
-		throw InternalError(std::string(
-			StringBuilder()
-				.append("Phase 1: sema-normalized direct call recorded fallback reason for '")
-				.append(func_name_view)
-				.append("': ")
-				.append(describeDirectCallFallbackReason(*sema_direct_call_fallback_reason))
-				.commit()));
+		FLASH_LOG(Codegen, Warning,
+				  "Sema-normalized direct call falling back to compatibility lookup for '",
+				  func_name_view, "': ",
+				  describeDirectCallFallbackReason(*sema_direct_call_fallback_reason));
 	}
 
 	if (!matched_func_decl && ordinary_direct_call && !allow_lookup_recovery) {
