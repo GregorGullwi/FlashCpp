@@ -3551,6 +3551,21 @@ private:	 // Resume private methods
 			if (decl_tok.file_index() != cutoff_file_idx) {
 				return false;
 			}
+			// Before comparing source lines, verify both map to the same source file.
+			// token.file_index_ is set from current_file_index_ at lex time and can be
+			// stale (e.g. if the line_map_ was exhausted when the token was created,
+			// current_file_index_ stays at whatever file was last mapped, causing tokens
+			// from different source files to share the same file_index_ value).
+			// getSourceFileIndex() reads the line_map_ directly by preprocessed line,
+			// giving the authoritative source-file attribution.  If the declaration and
+			// the template-definition cutoff belong to different source files they cannot
+			// be ordered by source-line number, so conservatively say "not after".
+			size_t decl_src_file = lexer_.getSourceFileIndex(decl_tok.line());
+			size_t cutoff_src_file = lexer_.getSourceFileIndex(cutoff_line);
+			if (decl_src_file != SIZE_MAX && cutoff_src_file != SIZE_MAX &&
+				decl_src_file != cutoff_src_file) {
+				return false;
+			}
 			size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
 			size_t cutoff_src_line = lexer_.getSourceLine(cutoff_line);
 			if (decl_src_line > 0 && cutoff_src_line > 0) {
