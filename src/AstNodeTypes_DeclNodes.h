@@ -1883,10 +1883,27 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 			}
 		}
 
+		TypeIndex next_type_index = type_info->type_index_;
+		if (type_info->isTypeAlias()) {
+			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
+				TypeIndex alias_spec_type_index = alias_type_spec->type_index();
+				if (!alias_spec_type_index.is_valid() &&
+					alias_type_spec->category() != TypeCategory::Invalid) {
+					alias_spec_type_index = nativeTypeIndex(alias_type_spec->category());
+				}
+				if (alias_spec_type_index.is_valid() &&
+					(!next_type_index.is_valid() ||
+					 next_type_index.index() == current_type_index.index())) {
+					next_type_index =
+						alias_spec_type_index.withCategory(alias_type_spec->category());
+				}
+			}
+		}
+
 		if (!type_info->isTypeAlias() ||
-			!type_info->type_index_.is_valid() ||
-			type_info->type_index_.index() == current_type_index.index()) {
-			if (type_info->isTypeAlias() && !type_info->type_index_.is_valid() && type_info->typeEnum() != TypeCategory::Invalid) {
+			!next_type_index.is_valid() ||
+			next_type_index.index() == current_type_index.index()) {
+			if (type_info->isTypeAlias() && !next_type_index.is_valid() && type_info->typeEnum() != TypeCategory::Invalid) {
 				TypeIndex canonical_type_index = nativeTypeIndex(type_info->typeEnum());
 				resolved.type_index = canonical_type_index.is_valid()
 										  ? canonical_type_index
@@ -1897,7 +1914,7 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 			return resolved;
 		}
 
-		current_type_index = type_info->type_index_;
+		current_type_index = next_type_index;
 	}
 
 	if (const TypeInfo* type_info = tryGetTypeInfo(current_type_index)) {

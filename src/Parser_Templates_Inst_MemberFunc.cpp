@@ -81,6 +81,84 @@ StringHandle getMemberTemplateOwnerName(StringHandle qualified_lookup_name, cons
 
 	return {};
 }
+
+void propagateSubstitutedFunctionSignature(
+	TypeSpecifierNode& target,
+	const TypeSpecifierNode& original,
+	const TemplateTypeArg* resolved_arg) {
+	if (original.has_function_signature()) {
+		target.set_function_signature(original.function_signature());
+	} else if (resolved_arg && resolved_arg->function_signature.has_value()) {
+		target.set_function_signature(*resolved_arg->function_signature);
+	}
+}
+
+void applyResolvedSubstitutedTypeMetadata(
+	TypeSpecifierNode& target,
+	const TemplateTypeArg* resolved_arg,
+	TypeIndex source_type_index) {
+	if (resolved_arg) {
+		for (size_t i = 0; i < resolved_arg->pointer_depth; ++i) {
+			CVQualifier cv = i < resolved_arg->pointer_cv_qualifiers.size()
+								 ? resolved_arg->pointer_cv_qualifiers[i]
+								 : CVQualifier::None;
+			target.add_pointer_level(cv);
+		}
+		if (target.reference_qualifier() == ReferenceQualifier::None &&
+			resolved_arg->ref_qualifier != ReferenceQualifier::None) {
+			target.set_reference_qualifier(resolved_arg->ref_qualifier);
+		}
+	}
+
+	if (source_type_index.is_valid()) {
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(source_type_index);
+		if (alias_info.type_index.is_valid() && alias_info.type_index != source_type_index) {
+			target.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
+		}
+		target.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
+		if (target.reference_qualifier() == ReferenceQualifier::None &&
+			alias_info.reference_qualifier != ReferenceQualifier::None) {
+			target.set_reference_qualifier(alias_info.reference_qualifier);
+		}
+		if (!target.has_function_signature() && alias_info.function_signature.has_value()) {
+			target.set_function_signature(*alias_info.function_signature);
+		}
+	}
+
+	const int resolved_size_bits = getTypeSpecSizeBits(target);
+	if (resolved_size_bits > 0) {
+		target.set_size_in_bits(resolved_size_bits);
+	}
+}
+
+ASTNode rebuildResolvedSubstitutedTypeSpec(
+	const TypeSpecifierNode& original_type_spec,
+	TypeIndex resolved_type_index,
+	const TemplateTypeArg* resolved_arg) {
+	ASTNode substituted_type = ASTNode::emplace_node<TypeSpecifierNode>(
+		resolved_type_index.category(),
+		original_type_spec.qualifier(),
+		get_type_size_bits(resolved_type_index.category()),
+		original_type_spec.token(),
+		original_type_spec.cv_qualifier());
+
+	auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
+	substituted_type_spec.set_type_index(resolved_type_index);
+	for (const auto& ptr_level : original_type_spec.pointer_levels()) {
+		substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+	}
+	substituted_type_spec.set_reference_qualifier(
+		original_type_spec.reference_qualifier());
+	propagateSubstitutedFunctionSignature(
+		substituted_type_spec,
+		original_type_spec,
+		resolved_arg);
+	applyResolvedSubstitutedTypeMetadata(
+		substituted_type_spec,
+		resolved_arg,
+		resolved_type_index);
+	return substituted_type;
+}
 }
 
 bool Parser::tryAppendMemberDefaultTemplateArg(
@@ -197,10 +275,10 @@ TemplateNameLookupRequest Parser::buildMemberFunctionTemplateLookupRequest(
 	return request;
 }
 
-std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
+InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
 	std::string_view struct_name,
 	std::string_view member_name) {
-	std::vector<TemplateNameLookupCandidate> candidates;
+	InlineVector<TemplateNameLookupCandidate, 4> candidates;
 	std::unordered_set<const void*> seen_declarations;
 	const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 	const StringHandle requested_owner = StringTable::getOrInternStringHandle(struct_name);
@@ -473,7 +551,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
 
 	// Route member template lookup through the semantic two-phase lookup request.
-	std::vector<TemplateNameLookupCandidate> template_candidates =
+	InlineVector<TemplateNameLookupCandidate, 4> template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
@@ -491,7 +569,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	struct CandidateResult {
 		const ASTNode* template_node = nullptr;
 		StringHandle lookup_name{};
-		std::vector<TemplateTypeArg> template_args;
+		InlineVector<TemplateTypeArg, 4> template_args;
 		int specificity = 0;
 		size_t overload_index = 0;  // assigned externally to template_candidates index; used to build
 		                            // discriminated cache keys when multiple overloads exist
@@ -524,12 +602,15 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				func_decl,
 				arg_types,
 				0)) {
+			InlineVector<TemplateTypeArg, 4> deduced_template_args;
+			deduced_template_args.reserve(shared_deduction->template_args.size());
+			for (const TemplateTypeArg& template_arg : shared_deduction->template_args) {
+				deduced_template_args.push_back(template_arg);
+			}
 			return CandidateResult{
 				&template_node_cand,
 				lookup_candidate.identity.lookup_name,
-				std::vector<TemplateTypeArg>(
-					shared_deduction->template_args.begin(),
-					shared_deduction->template_args.end()),
+				std::move(deduced_template_args),
 				computeFunctionTemplateSpecificity(template_func)};
 		}
 
@@ -594,7 +675,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		}
 
-		std::vector<TemplateTypeArg> template_args;
+		InlineVector<TemplateTypeArg, 4> template_args;
+		template_args.reserve(template_params.size());
 		size_t arg_index = 0;
 		for (const auto& template_param_node : template_params) {
 			const TemplateParameterNode& param = template_param_node;
@@ -689,7 +771,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// (preserves the pre-partial-ordering behavior and avoids spurious ambiguity errors).
 	size_t best_idx = std::numeric_limits<size_t>::max();
 	int best_specificity = -1;
-	std::vector<CandidateResult> viable;
+	InlineVector<CandidateResult, 4> viable;
+	viable.reserve(template_candidates.size());
 	for (size_t i = 0; i < template_candidates.size(); ++i) {
 		auto candidate = tryDeduceCandidate(template_candidates[i]);
 		if (!candidate.has_value()) {
@@ -708,8 +791,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	if (viable.size() > 1) {
-		std::vector<ASTNode> shape_overloads;
-		std::vector<size_t> shape_candidate_indices;
+		InlineVector<ASTNode, 4> shape_overloads;
+		InlineVector<size_t, 4> shape_candidate_indices;
 		shape_overloads.reserve(viable.size());
 		shape_candidate_indices.reserve(viable.size());
 		for (size_t i = 0; i < viable.size(); ++i) {
@@ -993,8 +1076,8 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
 	}
 	for (const auto& outer_arg : outer_args) {
-		const std::vector<ASTNode> no_params;
-		const std::vector<TemplateTypeArg> no_args;
+		const InlineVector<ASTNode, 1> no_params;
+		const InlineVector<TemplateTypeArg, 1> no_args;
 		lazy_info.template_args.push_back(materializeTemplateArg(
 			outer_arg,
 			no_params,
@@ -1123,7 +1206,8 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	auto materialize_template_ctor_candidates =
 		[&](const ConstructorDeclarationNode* preferred_template_ctor)
 			-> const ConstructorDeclarationNode* {
-		std::vector<const ConstructorDeclarationNode*> concrete_matches;
+		InlineVector<const ConstructorDeclarationNode*, 4> concrete_matches;
+		concrete_matches.reserve(struct_info.member_functions.size());
 
 		auto try_materialize_candidate =
 			[&](const ConstructorDeclarationNode& template_ctor) {
@@ -1377,7 +1461,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Route member template overload discovery through the semantic two-phase lookup request.
-	std::vector<TemplateNameLookupCandidate> template_candidates =
+	InlineVector<TemplateNameLookupCandidate, 4> template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
@@ -1489,11 +1573,13 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			}
 		}
 
-		const std::vector<TypeSpecifierNode> empty_call_arg_types;
+		const InlineVector<TypeSpecifierNode, 1> empty_call_arg_types;
 		std::span<const TypeSpecifierNode> call_arg_types =
 			current_explicit_call_arg_types_ != nullptr
 				? *current_explicit_call_arg_types_
-				: empty_call_arg_types;
+				: std::span<const TypeSpecifierNode>(
+					empty_call_arg_types.data(),
+					empty_call_arg_types.size());
 		// Prefer the declaring owner from inheritance lookup; fall back to deriving
 		// the owner from the candidate's qualified name rather than re-using the
 		// requested receiver (which may be a derived type, not the declaring base).
@@ -1792,7 +1878,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			return {type_index, nullptr};
 		}
-		if (type_index.category() == TypeCategory::UserDefined) {
+		if (type_index.category() == TypeCategory::UserDefined ||
+			type_index.category() == TypeCategory::TypeAlias ||
+			type_index.category() == TypeCategory::Template) {
 			const TypeInfo* ti = tryGetTypeInfo(type_index);
 			if (!ti) {
 				return {type_index, nullptr};
@@ -1857,7 +1945,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			type_index.category() == TypeCategory::UserDefined) {
 			const TypeInfo* ti = tryGetTypeInfo(type_index);
 			if (ti && ti->isTemplateInstantiation()) {
-				std::vector<TemplateTypeArg> concrete_args =
+				auto concrete_args =
 					materializePlaceholderTemplateArgs(*ti, template_params, template_args);
 
 				if (outer_binding) {
@@ -1908,47 +1996,35 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		return {type_index, nullptr};
 	};
 
-	// Propagates function_signature to a substituted TypeSpecifierNode:
-	// prefers the original type spec's signature, falls back to the template arg's signature.
-	auto propagate_function_signature = [](TypeSpecifierNode& target,
-										   const TypeSpecifierNode& original, const TemplateTypeArg* resolved_arg) {
-		if (original.has_function_signature()) {
-			target.set_function_signature(original.function_signature());
-		} else if (resolved_arg && resolved_arg->function_signature.has_value()) {
-			target.set_function_signature(*resolved_arg->function_signature);
+	auto merge_alias_target_type_spec = [](TypeSpecifierNode& target, const TypeSpecifierNode& alias_type_spec) {
+		if (alias_type_spec.type_index().is_valid()) {
+			target.set_type_index(alias_type_spec.type_index().withCategory(alias_type_spec.type()));
 		}
-	};
-	auto apply_resolved_type_metadata = [](TypeSpecifierNode& target, const TemplateTypeArg* resolved_arg, TypeIndex source_type_index) {
-		if (resolved_arg) {
-			for (size_t i = 0; i < resolved_arg->pointer_depth; ++i) {
-				CVQualifier cv = i < resolved_arg->pointer_cv_qualifiers.size()
-									 ? resolved_arg->pointer_cv_qualifiers[i]
-									 : CVQualifier::None;
-				target.add_pointer_level(cv);
-			}
-			if (target.reference_qualifier() == ReferenceQualifier::None &&
-				resolved_arg->ref_qualifier != ReferenceQualifier::None) {
-				target.set_reference_qualifier(resolved_arg->ref_qualifier);
-			}
+		target.set_category(alias_type_spec.type());
+		target.add_cv_qualifier(alias_type_spec.cv_qualifier());
+		for (const auto& ptr_level : alias_type_spec.pointer_levels()) {
+			target.add_pointer_level(ptr_level.cv_qualifier);
 		}
-
-		if (source_type_index.is_valid()) {
-			const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(source_type_index);
-			if (alias_info.type_index.is_valid() && alias_info.type_index != source_type_index) {
-				target.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
-			}
-			target.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
-			if (target.reference_qualifier() == ReferenceQualifier::None &&
-				alias_info.reference_qualifier != ReferenceQualifier::None) {
-				target.set_reference_qualifier(alias_info.reference_qualifier);
-			}
-			if (!target.has_function_signature() && alias_info.function_signature.has_value()) {
-				target.set_function_signature(*alias_info.function_signature);
-			}
+		target.set_reference_qualifier(collapseReferenceQualifiers(
+			alias_type_spec.reference_qualifier(),
+			target.reference_qualifier()));
+		if (!target.has_function_signature() && alias_type_spec.has_function_signature()) {
+			target.set_function_signature(alias_type_spec.function_signature());
 		}
-
-		const int resolved_size_bits = getTypeSpecSizeBits(target);
-		if (resolved_size_bits > 0) {
+		if (alias_type_spec.is_array()) {
+			const std::span<const size_t> target_dimensions = target.array_dimensions();
+			InlineVector<size_t, 4> merged_dimensions;
+			merged_dimensions.reserve(
+				target_dimensions.size() + alias_type_spec.array_dimensions().size());
+			for (size_t dimension : target_dimensions) {
+				merged_dimensions.push_back(dimension);
+			}
+			for (size_t dimension : alias_type_spec.array_dimensions()) {
+				merged_dimensions.push_back(dimension);
+			}
+			target.set_array_dimensions(merged_dimensions);
+		}
+		if (const int resolved_size_bits = getTypeSpecSizeBits(target); resolved_size_bits > 0) {
 			target.set_size_in_bits(resolved_size_bits);
 		}
 	};
@@ -1966,22 +2042,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 						orig_decl.identifier_token().file_index());
 
 	// Create return type node
-	ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
-		return_type_index.category(),
-		TypeQualifier::None,
-		get_type_size_bits(return_type_index.category()),
-		Token(),
-		CVQualifier::None);
-
-	// Copy pointer levels and set type_index from the resolved type
-	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
-	substituted_return_type_spec.set_type_index(return_type_index);
-	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-	}
-	substituted_return_type_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
-	propagate_function_signature(substituted_return_type_spec, return_type_spec, return_resolved_arg);
-	apply_resolved_type_metadata(substituted_return_type_spec, return_resolved_arg, return_type_index);
+	ASTNode substituted_return_type = rebuildResolvedSubstitutedTypeSpec(
+		return_type_spec,
+		return_type_index,
+		return_resolved_arg);
 
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
@@ -2260,38 +2324,57 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					param_type_index = *resolved_outer;
 				}
 			}
-			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+			InlineVector<TemplateParameterNode, 4> member_template_resolution_params;
+			InlineVector<TemplateTypeArg, 4> member_template_resolution_args;
+			if (func_decl.has_outer_template_bindings()) {
+				for (size_t outer_index = 0;
+					 outer_index < func_decl.outer_template_param_names().size() &&
+					 outer_index < func_decl.outer_template_args().size();
+					 ++outer_index) {
+					member_template_resolution_params.push_back(
+						rebuildOuterTemplateParameter(
+							func_decl.outer_template_param_names()[outer_index],
+							func_decl.outer_template_args()[outer_index]));
+					member_template_resolution_args.push_back(
+						toTemplateTypeArg(func_decl.outer_template_args()[outer_index]));
+				}
+			}
+			for (const auto& template_param : template_params) {
+				member_template_resolution_params.push_back(template_param);
+			}
+			for (const auto& template_arg : template_args) {
+				member_template_resolution_args.push_back(template_arg);
+			}
+			param_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
+				*this,
 				&original_param_type_node,
 				param_type_spec,
-				template_params,
-				template_args,
-				[this](
-					std::string_view template_name,
-					std::span<const TemplateTypeArg> template_args,
-					bool force_eager) {
-					return try_instantiate_class_template(
-						template_name,
-						template_args,
-						force_eager);
-				},
-				param_type_index);
+				member_template_resolution_params,
+				member_template_resolution_args,
+				param_type_index,
+				true,
+				true,
+				true);
 
 			// Create the substituted parameter type specifier
-			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
-				param_type_index.category(),
-				TypeQualifier::None,
-				get_type_size_bits(param_type_index.category()),
-				Token(), CVQualifier::None);
+			auto substituted_param_type = rebuildResolvedSubstitutedTypeSpec(
+				param_type_spec,
+				param_type_index,
+				resolved_arg);
 
-			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
-			substituted_param_type_spec.set_type_index(param_type_index);
-			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+			if (const TypeInfo* param_type_info = tryGetTypeInfo(param_type_index);
+				param_type_info != nullptr &&
+				param_type_info->isTypeAlias()) {
+				if (const TypeSpecifierNode* alias_type_spec = param_type_info->aliasTypeSpecifier();
+					alias_type_spec != nullptr &&
+					!typeSpecStillUsesDependentPlaceholder(*alias_type_spec)) {
+					merge_alias_target_type_spec(
+						substituted_param_type_spec,
+						*alias_type_spec);
+				}
 			}
-			substituted_param_type_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
-			propagate_function_signature(substituted_param_type_spec, param_type_spec, resolved_arg);
-			apply_resolved_type_metadata(substituted_param_type_spec, resolved_arg, param_type_index);
+			normalizeSubstitutedTypeSpec(substituted_param_type_spec);
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());

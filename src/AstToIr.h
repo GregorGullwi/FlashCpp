@@ -1038,11 +1038,11 @@ private:
 		TypeIndex target_type_index,
 		bool source_is_const) const;
 
-	// Determine whether an initializer expression node yields a const-qualified object.
-	// Returns true for:
-	//  - a ConstCastNode whose target type has the 'const' CV-qualifier
-	//  - an IdentifierNode that resolves (in symbol_table) to a const-typed VariableDeclarationNode
-	// Used to pick the correct const/non-const conversion-operator overload.
+	// Determine whether an expression node yields a const-qualified object.
+	// Covers direct declaration constness plus semantic expression types such as
+	// const-qualified reference-returning calls.
+	// Used to pick the correct const/non-const conversion-operator overload and
+	// to reject assignments to non-modifiable const expressions.
 	bool isExprConstQualified(const ASTNode& expr_node) const;
 
 	// Emit a call to a user-defined conversion operator and return the converted ExprResult.

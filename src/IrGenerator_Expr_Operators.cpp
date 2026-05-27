@@ -1333,6 +1333,13 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 
 ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {
 	const auto& op = binaryOperatorNode.op();
+	const bool is_assignment_like = op == "=" || isCompoundAssignmentOp(op);
+
+	if (is_assignment_like &&
+		binaryOperatorNode.get_lhs().is<ExpressionNode>() &&
+		isExprConstQualified(binaryOperatorNode.get_lhs())) {
+		throw CompileError("Assignment to const-qualified expression is not allowed");
+	}
 
 	// Special handling for comma operator
 	// The comma operator evaluates both operands left-to-right and returns the right operand
