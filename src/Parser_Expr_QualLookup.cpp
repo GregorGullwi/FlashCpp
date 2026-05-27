@@ -2463,6 +2463,34 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 		}
 
+		// The spaceship operator <=> returns a std::*_ordering type per C++20 [expr.spaceship].
+		// For built-in types: floating-point → std::partial_ordering, otherwise → std::strong_ordering.
+		if (op_kind == tok::Spaceship) {
+			const bool is_float =
+				(lhs_type_opt.has_value() &&
+				 (lhs_type_opt->category() == TypeCategory::Float ||
+				  lhs_type_opt->category() == TypeCategory::Double ||
+				  lhs_type_opt->category() == TypeCategory::LongDouble)) ||
+				(rhs_type_opt.has_value() &&
+				 (rhs_type_opt->category() == TypeCategory::Float ||
+				  rhs_type_opt->category() == TypeCategory::Double ||
+				  rhs_type_opt->category() == TypeCategory::LongDouble));
+			const char* qualified_name = is_float ? "std::partial_ordering" : "std::strong_ordering";
+			const char* unqualified_name = is_float ? "partial_ordering" : "strong_ordering";
+			const TypeInfo* ordering_type = findTypeByName(StringTable::getOrInternStringHandle(qualified_name));
+			if (!ordering_type) {
+				ordering_type = findTypeByName(StringTable::getOrInternStringHandle(unqualified_name));
+			}
+			if (ordering_type) {
+				return TypeSpecifierNode(ordering_type->type_index_.withCategory(TypeCategory::Struct),
+					ordering_type->sizeInBits(), Token{}, CVQualifier::None, ReferenceQualifier::None);
+			}
+			FLASH_LOG_FORMAT(Parser, Error,
+				"operator<=> requires std::*_ordering from <compare>; missing '{}' type",
+				is_float ? "partial_ordering" : "strong_ordering");
+			return std::nullopt;
+		}
+
 		// For bitwise/arithmetic operators, check the LHS type
 		// If LHS is an enum, check for free function operator overloads
 		if (lhs_type_opt.has_value() && lhs_type_opt->category() == TypeCategory::Enum) {

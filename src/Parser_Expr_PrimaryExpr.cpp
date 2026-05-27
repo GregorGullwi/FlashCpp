@@ -460,10 +460,26 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 			}
 		} else if (had_qualified_overloads &&
 			current_template_definition_lookup_context_ != nullptr &&
-			current_template_definition_lookup_context_->is_valid() &&
-			!phase1_violation_token_.has_value()) {
-			phase1_violation_token_ = qual_id.identifier_token();
-			identifierType.reset();
+			current_template_definition_lookup_context_->is_valid()) {
+			// All overloads were filtered out by the phase-1 cutoff, but the name IS
+			// visible at instantiation time.  C++20 [temp.res]/9 declares this
+			// "ill-formed, no diagnostic required" — GCC, Clang, and MSVC all accept
+			// it silently.  Additionally, FlashCpp's preprocessor can order header
+			// content differently from standard preprocessors (e.g. stl_algobase.h
+			// delivered after stl_tree.h's class body), producing false-positive
+			// phase-1 violations for names that would pass under GCC/Clang.
+			// Resolution: fall back to the unfiltered overloads so the call succeeds.
+			// We deliberately do NOT set phase1_violation_token_ here.
+			if (!phase1_violation_token_.has_value()) {
+				const std::vector<ASTNode> all_qualified_overloads =
+					gSymbolTable.lookup_qualified_all(qual_id.namespace_handle(), qual_id.nameHandle());
+				OverloadResolutionResult resolution =
+					resolve_overload(all_qualified_overloads, arg_types);
+				if (!resolution.is_ambiguous && resolution.has_match &&
+					resolution.selected_overload != nullptr) {
+					identifierType = *resolution.selected_overload;
+				}
+			}
 		}
 	}
 	return std::nullopt;
