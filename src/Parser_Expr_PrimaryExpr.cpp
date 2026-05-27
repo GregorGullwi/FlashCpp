@@ -445,8 +445,6 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 		std::vector<ASTNode> qualified_overloads =
 			gSymbolTable.lookup_qualified_all(qual_id.namespace_handle(), qual_id.nameHandle());
 		const bool had_qualified_overloads = !qualified_overloads.empty();
-		// Keep a copy of unfiltered overloads for the fallback path below.
-		const std::vector<ASTNode> all_qualified_overloads = qualified_overloads;
 		filterPhase1OrdinaryFunctionOverloads(qualified_overloads);
 		if (!qualified_overloads.empty()) {
 			OverloadResolutionResult resolution =
@@ -473,6 +471,8 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 			// Resolution: fall back to the unfiltered overloads so the call succeeds.
 			// We deliberately do NOT set phase1_violation_token_ here.
 			if (!phase1_violation_token_.has_value()) {
+				const std::vector<ASTNode> all_qualified_overloads =
+					gSymbolTable.lookup_qualified_all(qual_id.namespace_handle(), qual_id.nameHandle());
 				OverloadResolutionResult resolution =
 					resolve_overload(all_qualified_overloads, arg_types);
 				if (!resolution.is_ambiguous && resolution.has_match &&
