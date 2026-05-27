@@ -736,7 +736,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 						candidate.template_node)),
 				member_name,
 				candidate.lookup_name,
-				candidate.lookup_name,
+				shape_key_qualified_name,
 				*candidate.template_node,
 				candidate.template_args,
 				shape_key,
@@ -808,7 +808,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		}(),
 		member_name,
 		best.lookup_name,
-		best.lookup_name,
+		key_qualified_name,
 		*best.template_node, best.template_args, key, arg_types, true);
 }
 
@@ -1750,8 +1750,21 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		0,
 		nullptr);
 
-	// Generate mangled name for the instantiation
-	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(member_name, template_args);
+	// Generate mangled name for the instantiation.  Overloaded member templates
+	// can deduce the same template arguments for different declarations, so the
+	// instantiation key may carry a "$olN" discriminator.  Mirror that
+	// discriminator in the synthetic function identifier to keep the materialized
+	// overload bodies and call targets distinct.
+	std::string_view mangle_base_name = member_name;
+	std::string_view qualified_name_view = StringTable::getStringView(qualified_name);
+	size_t overload_discriminator_pos = qualified_name_view.rfind("$ol");
+	if (overload_discriminator_pos != std::string_view::npos) {
+		mangle_base_name = StringBuilder()
+			.append(member_name)
+			.append(qualified_name_view.substr(overload_discriminator_pos))
+			.commit();
+	}
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(mangle_base_name, template_args);
 
 	// Get the original function's declaration
 	const DeclarationNode& orig_decl = func_decl.decl_node();

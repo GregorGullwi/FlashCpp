@@ -2026,9 +2026,6 @@ static bool dependentTemplatePlaceholderNamesMatch(
 
 	const std::string_view instantiated_name = identity_name(instantiated_type);
 	const std::string_view out_of_line_name = identity_name(out_of_line_type);
-	if (instantiated_name == out_of_line_name) {
-		return true;
-	}
 
 	const TypeInfo* instantiated_type_info = instantiated_type.type_index().is_valid()
 		? tryGetTypeInfo(instantiated_type.type_index())
@@ -2046,14 +2043,43 @@ static bool dependentTemplatePlaceholderNamesMatch(
 		const TypeInfo::DependentQualifiedNameRecord* out_of_line_record =
 			out_of_line_type_info->dependentQualifiedName();
 		if (instantiated_record != nullptr &&
-			out_of_line_record != nullptr &&
-			dependentQualifiedNameRecordsMatchForSignature(
+			out_of_line_record != nullptr) {
+			return dependentQualifiedNameRecordsMatchForSignature(
 				*instantiated_record,
 				*out_of_line_record,
 				instantiated_template_params,
-				out_of_line_template_params)) {
+				out_of_line_template_params);
+		}
+	}
+
+	if (instantiated_name == out_of_line_name) {
+		const std::string_view instantiated_token_name =
+			instantiated_type.token().value();
+		const std::string_view out_of_line_token_name =
+			out_of_line_type.token().value();
+		if (instantiated_token_name == out_of_line_token_name ||
+			instantiated_token_name.empty() ||
+			out_of_line_token_name.empty()) {
 			return true;
 		}
+		size_t instantiated_token_index = 0;
+		size_t out_of_line_token_index = 0;
+		const TemplateParameterNode* instantiated_token_param =
+			findTemplateParameterByName(
+				instantiated_template_params,
+				instantiated_token_name,
+				&instantiated_token_index);
+		const TemplateParameterNode* out_of_line_token_param =
+			findTemplateParameterByName(
+				out_of_line_template_params,
+				out_of_line_token_name,
+				&out_of_line_token_index);
+		return instantiated_token_param != nullptr &&
+			out_of_line_token_param != nullptr &&
+			instantiated_token_index == out_of_line_token_index &&
+			instantiated_token_param->kind() == out_of_line_token_param->kind() &&
+			instantiated_token_param->is_variadic() ==
+				out_of_line_token_param->is_variadic();
 	}
 
 	auto owner_matches_named_placeholder =
@@ -11363,6 +11389,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					if (matched_nested_func_decl != nullptr) {
 						matched_nested_func_decl->set_template_body_position(out_of_line_member.body_start);
+						copyDefinitionParameterIdentifiers(
+							matched_nested_func_decl->parameter_nodes(),
+							ool_func.parameter_nodes());
 						matched_nested_func_decl->set_definition_lookup_context(
 							out_of_line_member.definition_lookup_context);
 						FLASH_LOG(
@@ -11408,6 +11437,37 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												 instantiated_name, qualified_name, template_params, template_args_to_use,
 												 outer_parent_snapshot,
 												 shouldCommitTemplateInstantiationArtifacts());
+			if (shouldCommitTemplateInstantiationArtifacts()) {
+				OuterTemplateBinding nested_member_outer_binding;
+				collectOuterTemplateBinding(
+					template_params,
+					template_args_to_use,
+					nested_member_outer_binding);
+				for (const StructMemberFunctionDecl& nested_member_func :
+					 nested_struct.member_functions()) {
+					if (!nested_member_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+						continue;
+					}
+					const FunctionDeclarationNode* nested_func_decl =
+						get_function_decl_node(nested_member_func.function_declaration);
+					if (nested_func_decl == nullptr) {
+						continue;
+					}
+					StringHandle nested_member_qualified_name =
+						StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(StringTable::getStringView(qualified_name))
+								.append("::")
+								.append(nested_func_decl->decl_node().identifier_token().value())
+								.commit());
+					gTemplateRegistry.registerTemplate(
+						nested_member_qualified_name,
+						nested_member_func.function_declaration);
+					gTemplateRegistry.registerOuterTemplateBinding(
+						nested_member_qualified_name,
+						nested_member_outer_binding);
+				}
+			}
 
 			// Mark nested struct as needing a trivial default constructor when it
 			// has no explicit constructors.  Without this, default member
