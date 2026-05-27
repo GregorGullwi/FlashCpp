@@ -1869,6 +1869,11 @@ ASTNode Parser::substituteTemplateParameters(
 				if (std::optional<TypeSpecifierNode> deduced_type =
 						get_expression_type(*initializer)) {
 					sub_decl_ref.set_type_node(*deduced_type);
+				} else if (!isDependentTemplateContext()) {
+					throw CompileError(
+						"Unable to deduce 'auto' type for instantiated local variable '" +
+						std::string(sub_decl_ref.identifier_token().value()) +
+						"' from initializer expression");
 				}
 			}
 		}

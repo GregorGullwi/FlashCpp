@@ -2941,17 +2941,24 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
 				struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(full_qualified_name));
 			}
-			if (struct_type_it == getTypesByNameMap().end() &&
-				is_template_parameter(struct_name) &&
-				!member_function_context_stack_.empty()) {
+			auto resolveTemplateParameterQualifiedOwner = [&]() -> const TypeInfo* {
+				if (!is_template_parameter(struct_name) ||
+					member_function_context_stack_.empty()) {
+					return nullptr;
+				}
 				const auto& member_ctx = member_function_context_stack_.back();
-				if (const TypeInfo* current_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
-					if (const TypeInfo::TemplateArgInfo* bound_arg =
-							current_type_info->findLegacyInstantiationArgByName(struct_name)) {
-						if (const TypeInfo* bound_type_info = tryGetTypeInfo(bound_arg->type_index)) {
-							struct_type_it = getTypesByNameMap().find(bound_type_info->name());
-						}
-					}
+				const TypeInfo* current_type_info = tryGetTypeInfo(member_ctx.struct_type_index);
+				if (!current_type_info) {
+					return nullptr;
+				}
+				const TypeInfo::TemplateArgInfo* bound_arg =
+					current_type_info->findLegacyInstantiationArgByName(struct_name);
+				return bound_arg ? tryGetTypeInfo(bound_arg->type_index) : nullptr;
+			};
+			if (struct_type_it == getTypesByNameMap().end()) {
+				if (const TypeInfo* bound_type_info =
+						resolveTemplateParameterQualifiedOwner()) {
+					struct_type_it = getTypesByNameMap().find(bound_type_info->name());
 				}
 			}
 
