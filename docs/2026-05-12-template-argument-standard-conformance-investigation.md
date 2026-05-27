@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-27 (OOL member-function-template signatures now resolve type-parameter-qualified member-template type chains during replay)
+**Last updated:** 2026-05-27 (OOL member-function-template bodies now preserve type-parameter-qualified member-template alias metadata)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -187,9 +187,17 @@ Future work can rely on these being in place:
   segments are materialized through concrete owner bindings and only
   accepted when canonical type identity matches, without restoring
   broad shape fallback attachment.
+- **OOL member-function-template body replay now preserves concrete alias
+  metadata for type-parameter-qualified member-template type parameters**:
+  direct dereference, forwarding, and reference-to-alias-parameter forwarding of
+  `typename T::template AddPtr<int>::type` now materialize body-local parameter
+  metadata as the resolved pointer type instead of a zero-sized alias placeholder.
+  Alias-owner recovery is narrowed to evidence-backed dependent-owner records or
+  a unique concrete struct owner, so existing alias-template default NTTP and
+  non-template-intermediate member-alias paths remain stable.
 
 Latest recorded full-suite validation:
-`2559` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
+`2595` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
 
 Latest focused regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -221,6 +229,8 @@ Latest focused regressions added on the current branch:
 - `test_template_ool_member_template_dependent_member_swap_body_ret0.cpp`
 - `test_template_param_qualified_static_member_auto_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_template_type_param_deref_ret0.cpp`
+- `test_template_ool_member_template_dependent_member_template_type_param_forward_deref_ret0.cpp`
+- `test_template_ool_member_template_dependent_member_template_type_param_ref_forward_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -239,9 +249,11 @@ Rule for this work:
   (`nullopt`) outcomes in the remaining non-constructor declaration replay
   paths so canonical substituted-signature classification can succeed in more
   valid cases.
-- close the remaining OOL member-function-template body metadata gap where
-  parameters typed through `T::template AddPtr<int>::type` can still carry
-  placeholder ABI/codegen state when directly dereferenced or forwarded.
+- overloaded OOL member-function-template declarations whose parameter types
+  differ only by concrete member-template alias targets still need stronger
+  source-member identity and alias-target disambiguation; a reduced
+  `AddPtr<int>`/`AddPtr<long>` case can still select the wrong `$olN`
+  materialization and fail to attach the replayed body.
 - continue looking for remaining OOL dependent-member swap regressions in
   less-covered member-template and nested replay surfaces now that the first
   constructor replay/body-selection gap has been closed.
@@ -285,8 +297,9 @@ Still open, but not the next best slice:
    prioritize remaining OOL dependent-member swap follow-ups in member-template
    or nested overload sets where replay-selected stubs and deferred body parsing
    can still drift after owner-artifact recovery;
-   close the `T::AddPtr` parameter body metadata gap for direct dereference or
-   forwarding before broadening to nested/overloaded member-template chains;
+   continue into overloaded member-template alias parameter chains now that the
+   non-overloaded `T::AddPtr` body metadata gap is covered for direct
+   dereference, forwarding, and reference forwarding;
 2. update these docs with the next remaining replay-metadata gap.
 
 ## Regression focus

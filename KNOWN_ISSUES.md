@@ -48,16 +48,16 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 4) OOL member-function-template dependent member-template pointer parameter dereference (OPEN)
+## 4) OOL member-function-template overloads with dependent member-template alias parameters can fail attachment (OPEN)
 
-- **Symptom**: A reduced out-of-line member-function-template body using
-  `typename T::template AddPtr<int>::type` as a parameter can still crash at
-  runtime when the body directly dereferences or forwards that parameter as an
-  `int*`, even though signature replay now accepts the member-template type
-  chain.
-- **Root cause**: The replay/signature path can resolve the chain for matching,
-  but some lazy member-function-template body/codegen surfaces still preserve
-  placeholder ABI metadata for the parameter.
-- **Impact**: Regression coverage currently checks pointer substitution through
-  `sizeof(value)` rather than direct dereference until the remaining body/codegen
-  metadata gap is closed.
+- **Symptom**: Two out-of-line member-function-template overloads whose
+  signatures differ only by `typename T::template AddPtr<int>::type` vs
+  `typename T::template AddPtr<long>::type` can fail replay identity attachment;
+  later calls may both select the `$ol0` materialization and link against a body
+  that was never emitted.
+- **Root cause**: The new alias-metadata path handles single-declaration body
+  replay, but same-name overload preselection still does not fully distinguish
+  member-template alias targets after owner substitution.
+- **Impact**: Keep the next replay-metadata slice focused on overloaded
+  member-template alias parameters once the non-overloaded forwarding paths stay
+  stable.

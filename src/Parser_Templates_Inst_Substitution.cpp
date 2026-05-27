@@ -1427,6 +1427,17 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		if (alias_node == nullptr) {
 			return false;
 		}
+		if (alias_node->is_deferred()) {
+			return false;
+		}
+		if (const TypeInfo* alias_target_info =
+				tryGetTypeInfo(alias_node->target_type_node().type_index());
+			alias_target_info != nullptr &&
+			(alias_target_info->isTemplateInstantiation() ||
+			 alias_target_info->isDependentMemberType() ||
+			 alias_target_info->hasDependentQualifiedName())) {
+			return false;
+		}
 		std::optional<TemplateTypeArg> rebound_arg =
 			tryRebindAliasTargetTemplateArg(*alias_node, template_args);
 		if (!rebound_arg.has_value() || rebound_arg->is_value) {
@@ -1694,7 +1705,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 	}
 	if (alias_node != nullptr &&
-		result.resolved_type_info != nullptr) {
+		result.resolved_type_info != nullptr &&
+		!templateArgsStillNeedAliasLookupMaterialization(template_args)) {
 		// Prefer a direct alias target over the helper instantiation itself.
 		// Member-alias targets are checked after this because an alias target like
 		// `Owner<B>::template type<T, F>` must first select `Owner<B>` and then
@@ -1706,17 +1718,32 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					effective_template_params,
 					effective_template_args);
 			concrete_member_alias != nullptr) {
-			const TypeInfo* resolved_member_info = concrete_member_alias;
-			ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(
-				concrete_member_alias->registeredTypeIndex().withCategory(
-					concrete_member_alias->typeEnum()));
-			if (resolved_member_alias.terminal_type_info != nullptr &&
-				!alias_preserves_surface_type(resolved_member_alias)) {
-				resolved_member_info = resolved_member_alias.terminal_type_info;
+			bool member_alias_has_dependent_args = false;
+			for (const auto& arg_info : concrete_member_alias->templateArgs()) {
+				TemplateTypeArg arg = toTemplateTypeArg(arg_info);
+				if (arg.is_dependent ||
+					arg.dependent_name.isValid() ||
+					arg.dependent_expr.has_value() ||
+					(!arg.is_value &&
+					 arg.type_index.is_valid() &&
+					 typeIndexContainsDependentPlaceholder(arg.type_index))) {
+					member_alias_has_dependent_args = true;
+					break;
+				}
 			}
-			result.resolved_type_info = resolved_member_info;
-			result.instantiated_name =
-				StringTable::getStringView(resolved_member_info->name());
+			if (!member_alias_has_dependent_args) {
+				const TypeInfo* resolved_member_info = concrete_member_alias;
+				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(
+					concrete_member_alias->registeredTypeIndex().withCategory(
+						concrete_member_alias->typeEnum()));
+				if (resolved_member_alias.terminal_type_info != nullptr &&
+					!alias_preserves_surface_type(resolved_member_alias)) {
+					resolved_member_info = resolved_member_alias.terminal_type_info;
+				}
+				result.resolved_type_info = resolved_member_info;
+				result.instantiated_name =
+					StringTable::getStringView(resolved_member_info->name());
+			}
 		}
 	}
 	if (alias_node != nullptr &&
@@ -1758,10 +1785,14 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					resolved_type_info.sizeInBits().value,
 					&alias_registration_type_spec,
 					&resolved_type_info);
+			} else if (!is_qualified_alias_template) {
+				alias_type_info = &add_type_alias_copy(
+					alias_handle,
+					alias_target_index,
+					resolved_type_info.sizeInBits().value,
+					alias_registration_type_spec,
+					resolved_type_info);
 			}
-			// Only normalize entries that were already created by earlier
-			// parsing/materialization. Creating fresh aliases here changes
-			// ordinary alias-chain lookup and can perturb sizeof/NTTP behavior.
 			return alias_type_info;
 		};
 
@@ -2262,7 +2293,39 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	if (dependent_base_info == nullptr && dependent_name->owner_name.isValid()) {
 		dependent_base_info = findTypeByName(dependent_name->owner_name);
 	}
-	if (!dependent_base_info || !dependent_base_info->isTemplateInstantiation()) {
+	if ((dependent_base_info == nullptr ||
+		 !is_struct_type(dependent_base_info->typeEnum())) &&
+		dependent_name->owner_name.isValid()) {
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			if (template_params[i].nameHandle() == dependent_name->owner_name &&
+				!template_args[i].is_value) {
+				dependent_base_info = tryGetTypeInfo(template_args[i].type_index);
+				break;
+			}
+		}
+	}
+	if (dependent_base_info == nullptr ||
+		!is_struct_type(dependent_base_info->typeEnum())) {
+		const TypeInfo* unique_owner_type_info = nullptr;
+		for (size_t i = 0; i < template_args.size(); ++i) {
+			if (template_args[i].is_value) {
+				continue;
+			}
+			const TypeInfo* candidate_owner_info =
+				tryGetTypeInfo(template_args[i].type_index);
+			if (candidate_owner_info == nullptr ||
+				!is_struct_type(candidate_owner_info->typeEnum())) {
+				continue;
+			}
+			if (unique_owner_type_info != nullptr) {
+				unique_owner_type_info = nullptr;
+				break;
+			}
+			unique_owner_type_info = candidate_owner_info;
+		}
+		dependent_base_info = unique_owner_type_info;
+	}
+	if (!dependent_base_info || !is_struct_type(dependent_base_info->typeEnum())) {
 		return nullptr;
 	}
 	std::string_view dependent_base_name =
@@ -2375,34 +2438,36 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return direct_concrete_member_it->second;
 	}
 
-	StringHandle base_template_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-		dependent_base_info->sourceNamespace(),
-		dependent_base_info->baseTemplateName());
-	if (dependent_name->owner_name.isValid()) {
-		base_template_name_handle = dependent_name->owner_name;
-	}
-	InlineVector<TemplateTypeArg, 4> concrete_base_args =
-		!dependent_name->owner_template_arguments.empty()
-			? materialize_template_args_with_environment(
-				  dependent_name->owner_template_arguments)
-			: materialize_template_args_from_type_info(*dependent_base_info);
-	if (template_args_still_dependent(concrete_base_args)) {
-		return nullptr;
-	}
-	AliasTemplateMaterializationResult materialized_alias_base =
-		materializeTemplateInstantiationForLookup(
-			StringTable::getStringView(base_template_name_handle),
-			concrete_base_args);
-	if (materialized_alias_base.instantiated_name.empty() &&
-		base_template_name_handle != dependent_base_info->baseTemplateName()) {
-		materialized_alias_base = materializeTemplateInstantiationForLookup(
-			StringTable::getStringView(dependent_base_info->baseTemplateName()),
-			concrete_base_args);
-	}
-	std::string_view materialized_alias_base_name =
-		materialized_alias_base.canonicalName();
-	if (materialized_alias_base_name.empty()) {
-		return nullptr;
+	std::string_view materialized_alias_base_name = dependent_base_name;
+	if (dependent_base_info->isTemplateInstantiation()) {
+		StringHandle base_template_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+			dependent_base_info->sourceNamespace(),
+			dependent_base_info->baseTemplateName());
+		if (dependent_name->owner_name.isValid()) {
+			base_template_name_handle = dependent_name->owner_name;
+		}
+		InlineVector<TemplateTypeArg, 4> concrete_base_args =
+			!dependent_name->owner_template_arguments.empty()
+				? materialize_template_args_with_environment(
+					  dependent_name->owner_template_arguments)
+				: materialize_template_args_from_type_info(*dependent_base_info);
+		if (template_args_still_dependent(concrete_base_args)) {
+			return nullptr;
+		}
+		AliasTemplateMaterializationResult materialized_alias_base =
+			materializeTemplateInstantiationForLookup(
+				StringTable::getStringView(base_template_name_handle),
+				concrete_base_args);
+		if (materialized_alias_base.instantiated_name.empty() &&
+			base_template_name_handle != dependent_base_info->baseTemplateName()) {
+			materialized_alias_base = materializeTemplateInstantiationForLookup(
+				StringTable::getStringView(dependent_base_info->baseTemplateName()),
+				concrete_base_args);
+		}
+		materialized_alias_base_name = materialized_alias_base.canonicalName();
+		if (materialized_alias_base_name.empty()) {
+			return nullptr;
+		}
 	}
 
 	StringHandle member_alias_handle =
@@ -2413,6 +2478,53 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				.append(dependent_member_path)
 				.commit());
 	StringHandle materialized_member_alias_handle = member_alias_handle;
+	if (!gTemplateRegistry.lookup_alias_template(materialized_member_alias_handle).has_value()) {
+		if (dependent_name->owner_name.isValid()) {
+			StringHandle pattern_member_alias_handle =
+				StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(StringTable::getStringView(dependent_name->owner_name))
+						.append("::")
+						.append(dependent_member_path)
+						.commit());
+			if (gTemplateRegistry.lookup_alias_template(pattern_member_alias_handle).has_value()) {
+				materialized_member_alias_handle = pattern_member_alias_handle;
+			}
+		}
+	}
+	if (!gTemplateRegistry.lookup_alias_template(materialized_member_alias_handle).has_value()) {
+		if (dependent_base_info->baseTemplateName().isValid()) {
+			StringHandle pattern_member_alias_handle =
+				StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(StringTable::getStringView(dependent_base_info->baseTemplateName()))
+						.append("::")
+						.append(dependent_member_path)
+						.commit());
+			if (gTemplateRegistry.lookup_alias_template(pattern_member_alias_handle).has_value()) {
+				materialized_member_alias_handle = pattern_member_alias_handle;
+			}
+		}
+	}
+	if (!gTemplateRegistry.lookup_alias_template(materialized_member_alias_handle).has_value()) {
+		const size_t instantiated_marker = dependent_base_name.find('$');
+		const size_t nested_owner_sep = dependent_base_name.find("::");
+		if (instantiated_marker != std::string_view::npos &&
+			nested_owner_sep != std::string_view::npos &&
+			instantiated_marker < nested_owner_sep) {
+			StringHandle pattern_member_alias_handle =
+				StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(dependent_base_name.substr(0, instantiated_marker))
+						.append(dependent_base_name.substr(nested_owner_sep))
+						.append("::")
+						.append(dependent_member_path)
+						.commit());
+			if (gTemplateRegistry.lookup_alias_template(pattern_member_alias_handle).has_value()) {
+				materialized_member_alias_handle = pattern_member_alias_handle;
+			}
+		}
+	}
 	if (!gTemplateRegistry.lookup_alias_template(materialized_member_alias_handle).has_value()) {
 		std::string_view inherited_member_alias_name =
 			lookup_inherited_member_template_name(
