@@ -1395,22 +1395,50 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
 	if (!own_type_index_.has_value())
 		return false;
-	// Direct match (works for non-template types and properly substituted template params)
-	if (param_type_index == *own_type_index_)
+	auto resolveSemanticTypeIndex = [](TypeIndex idx) {
+		for (size_t depth = 0; depth < 8; ++depth) {
+			const TypeInfo* type_info = tryGetTypeInfo(idx);
+			if (!type_info || !type_info->type_index_.is_valid()) {
+				break;
+			}
+			if (type_info->type_index_ == idx) {
+				break;
+			}
+			idx = type_info->type_index_;
+		}
+		return idx;
+	};
+
+	const TypeIndex own_type_index = resolveSemanticTypeIndex(*own_type_index_);
+	const TypeIndex normalized_param_type_index = resolveSemanticTypeIndex(param_type_index);
+
+	// Direct semantic match (works for non-template types and aliases forwarding to the same type).
+	if (normalized_param_type_index == own_type_index) {
 		return true;
-	// Template instantiation fallback: check if param refers to our base template pattern
-	if ((*own_type_index_).index() >= gTypeInfo.size() || param_type_index.index() >= gTypeInfo.size())
+	}
+
+	if (own_type_index.index() >= gTypeInfo.size() || normalized_param_type_index.index() >= gTypeInfo.size()) {
 		return false;
-	const TypeInfo& own_info = gTypeInfo[(*own_type_index_).index()];
-	if (!own_info.isTemplateInstantiation())
-		return false;
-	const TypeInfo& param_info = gTypeInfo[param_type_index.index()];
-	// Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
-	if (own_info.baseTemplateName() == param_info.name())
+	}
+
+	const TypeInfo& own_info = gTypeInfo[own_type_index.index()];
+	const TypeInfo& param_info = gTypeInfo[normalized_param_type_index.index()];
+
+	// Name-equivalent struct types are logically the same even when produced from different slots.
+	if (own_info.name() == param_info.name()) {
 		return true;
-	// Note: We intentionally do NOT match different instantiations of the same template
-	// (e.g., Wrapper<double> should not match for Wrapper<int>'s own type check).
-	// The base pattern check above handles the unsubstituted case.
+	}
+
+	// Template instantiation fallback: allow matching the underlying base template pattern.
+	if (own_info.isTemplateInstantiation() && own_info.baseTemplateName() == param_info.name()) {
+		return true;
+	}
+	if (param_info.isTemplateInstantiation() && param_info.baseTemplateName() == own_info.name()) {
+		return true;
+	}
+
+	// Intentionally do NOT match different instantiations of the same template
+	// (e.g., Wrapper<double> should not match Wrapper<int>).
 	return false;
 }
 

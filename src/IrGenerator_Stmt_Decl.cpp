@@ -2688,11 +2688,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (is_converting_ctor && init_node.is<ExpressionNode>()) {
 								const void* key = &init_node.as<ExpressionNode>();
 								const auto slot = sema_.getSlot(key);
-								FLASH_LOG(Codegen, Error, "DBG copy-init sema lookup: key=", key, " slot_has_value=", slot.has_value(), " has_cast=", (slot.has_value() ? slot->has_cast() : false), " var=", decl.identifier_token().value());
 								if (slot.has_value() && slot->has_cast()) {
 									const ImplicitCastInfo& cast_info =
 										sema_.castInfoTable()[slot->cast_info_index.value - 1];
-									FLASH_LOG(Codegen, Error, "DBG cast_kind=", (int)cast_info.cast_kind, " has_ctor=", (bool)cast_info.selected_constructor, " target_cat=", (int)sema_.typeContext().get(cast_info.target_type_id).category(), " target_idx=", sema_.typeContext().get(cast_info.target_type_id).type_index.index(), " type_node.type_index=", type_node.type_index().index());
 									if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
 										cast_info.selected_constructor) {
 										const CanonicalTypeDesc& target_desc =

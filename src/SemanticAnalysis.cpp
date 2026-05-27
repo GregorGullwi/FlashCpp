@@ -6657,7 +6657,6 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	setSlot(key, slot);
 	stats_.slots_filled++;
 
-	FLASH_LOG(General, Error, "DBG sema setSlot: key=", key, " target_type_index=", to_desc.type_index.index(), " for type=", StringTable::getStringView(to_type_info->name()));
 	FLASH_LOG(General, Debug,
 			  "SemanticAnalysis: annotated copy-init converting constructor for target struct type index ",
 			  to_desc.type_index.index());
