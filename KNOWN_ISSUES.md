@@ -80,14 +80,23 @@ create a deferred/dependent call expression instead of emitting an error.
 
 ---
 
-## 6) `__hash_enum` NTTP default evaluation failure (OPEN)
+## 6) `__hash_enum` NTTP default evaluation — `IsEnum` missing from ConstExprEvaluator (FIXED)
 
-- **Symptom**: `error: Could not evaluate non-type template default for parameter 1 of
-  '__hash_enum'` when compiling `<string>`, `<memory>`, `<stdexcept>`.
-- **Root cause**: `__hash_enum`'s second non-type template parameter has a default
-  `sizeof(_Tp) <= 8`. FlashCpp cannot evaluate this sizeof expression as an NTTP default
-  at instantiation time.
-- **Impact**: `test_std_string`, `test_std_memory`, `test_std_stdexcept` fail.
+**Status**: Fixed in `src/ConstExprEvaluator_Members.cpp`. Regression test: `tests/test_is_enum_default_nttp_partial_spec_ret0.cpp`.
+
+- **Symptom**: `template<typename Tp, bool = is_enum<Tp>::value> struct hash_enum` — when
+  `hash_enum<Color>` (default NTTP) was instantiated, `__is_enum(Color)` wrongly evaluated
+  to `false` inside `evaluate_type_trait()`, so the filled NTTP arg was `[Color, false]`
+  rather than `[Color, true]`, and the partial specialization for `true` was never selected.
+- **Root cause**: `TypeTraitKind::IsEnum` (along with `IsNullptr`, `IsMemberObjectPointer`,
+  `IsMemberFunctionPointer`, `IsFunction`, `IsUnion`, `IsClass`) was absent from the
+  `switch` in `ConstExprEvaluator_Members.cpp::evaluate_type_trait()`, falling through to
+  `default: result = false`. The fix adds explicit cases for each of these kinds.
+- **Note on prior description**: The root cause was *not* `sizeof(_Tp) <= 8`; the actual
+  libstdc++ `__hash_enum` default is `is_enum<_Tp>::value` (all GCC 12/13/14 versions).
+- **Remaining blocker for `<string>/<memory>/<stdexcept>`**: These headers now fail with
+  "Max template instantiation depth (40) exceeded for 'basic_string'" — a separate issue
+  from the NTTP evaluation. The `__hash_enum` NTTP error is no longer the first failure.
 
 ---
 
