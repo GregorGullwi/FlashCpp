@@ -3,6 +3,7 @@
 #include "SemanticAnalysis.h"
 #include "CallNodeHelpers.h"
 #include "TypeSizeQuery.h"
+#include "TypeTraitEvaluator.h"
 
 // Returns the ExprResult for a sizeof/alignof/offsetof result with the correct size_t
 // type for the current target data model (unsigned long long on LLP64/Windows,
@@ -2333,81 +2334,6 @@ bool AstToIr::isScalarType(TypeCategory type, bool is_reference, size_t pointer_
 	return is_standard_arithmetic_type(type) || type == TypeCategory::Enum || type == TypeCategory::Nullptr || type == TypeCategory::MemberObjectPointer || type == TypeCategory::MemberFunctionPointer;
 }
 
-// Recursively check whether a struct is trivially copyable:
-// no virtual functions, no user-defined copy/move ctors or assignment, no user-defined dtor,
-// all non-static data members of class type are trivially copyable,
-// and all base classes are also trivially copyable.
-static bool isTriviallyCopyableStruct(const StructTypeInfo* struct_info) {
-	if (!struct_info)
-		return false;
-	if (struct_info->has_vtable)
-		return false;
-	if (struct_info->hasCopyConstructor())
-		return false;
-	if (struct_info->hasMoveConstructor())
-		return false;
-	if (struct_info->hasCopyAssignmentOperator())
-		return false;
-	if (struct_info->hasMoveAssignmentOperator())
-		return false;
-	if (struct_info->hasUserDefinedDestructor())
-		return false;
-	// Recursively check all non-static data members of class type
-	for (const auto& member : struct_info->members) {
-		if (isIrStructType(toIrType(member.memberType()))) {
-			if (member.type_index.index() >= getTypeInfoCount())
-				return false;
-			const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
-			if (!isTriviallyCopyableStruct(member_info))
-				return false;
-		}
-	}
-	// Recursively check all base classes
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred)
-			continue; // Deferred (template param) base – assume ok
-		if (base.type_index.index() >= getTypeInfoCount())
-			return false;
-		const StructTypeInfo* base_info = getTypeInfo(base.type_index).getStructInfo();
-		if (!isTriviallyCopyableStruct(base_info))
-			return false;
-	}
-	return true;
-}
-
-// Recursively check whether a struct is trivial:
-// trivially copyable AND trivial default constructor, all non-static data members trivial,
-// and all base classes trivial.
-static bool isTrivialStruct(const StructTypeInfo* struct_info) {
-	if (!struct_info)
-		return false;
-	if (!isTriviallyCopyableStruct(struct_info))
-		return false;
-	if (struct_info->hasUserDefinedConstructor())
-		return false;
-	// Recursively check all non-static data members of class type
-	for (const auto& member : struct_info->members) {
-		if (isIrStructType(toIrType(member.memberType()))) {
-			if (member.type_index.index() >= getTypeInfoCount())
-				return false;
-			const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
-			if (!isTrivialStruct(member_info))
-				return false;
-		}
-	}
-	// Recursively check all base classes
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred)
-			continue;
-		if (base.type_index.index() >= getTypeInfoCount())
-			return false;
-		const StructTypeInfo* base_info = getTypeInfo(base.type_index).getStructInfo();
-		if (!isTrivialStruct(base_info))
-			return false;
-	}
-	return true;
-}
-
 bool AstToIr::isArithmeticType(TypeCategory type) const {
 	return ::isArithmeticType(type);
 }
@@ -2756,7 +2682,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				   type_spec.type_index().is_valid() &&
 				   !is_reference && pointer_depth == 0) {
 			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-			result = type_info ? isTriviallyCopyableStruct(type_info->getStructInfo()) : false;
+			result = type_info ? isStructTriviallyCopyable(type_info->getStructInfo()) : false;
 		}
 		break;
 
@@ -2769,7 +2695,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				   type_spec.type_index().is_valid() &&
 				   !is_reference && pointer_depth == 0) {
 			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-			result = type_info ? isTrivialStruct(type_info->getStructInfo()) : false;
+			result = type_info ? isStructTrivial(type_info->getStructInfo()) : false;
 		}
 		break;
 
