@@ -11411,6 +11411,37 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												 instantiated_name, qualified_name, template_params, template_args_to_use,
 												 outer_parent_snapshot,
 												 shouldCommitTemplateInstantiationArtifacts());
+			if (shouldCommitTemplateInstantiationArtifacts()) {
+				OuterTemplateBinding nested_member_outer_binding;
+				collectOuterTemplateBinding(
+					template_params,
+					template_args_to_use,
+					nested_member_outer_binding);
+				for (const StructMemberFunctionDecl& nested_member_func :
+					 nested_struct.member_functions()) {
+					if (!nested_member_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+						continue;
+					}
+					const FunctionDeclarationNode* nested_func_decl =
+						get_function_decl_node(nested_member_func.function_declaration);
+					if (nested_func_decl == nullptr) {
+						continue;
+					}
+					StringHandle nested_member_qualified_name =
+						StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(StringTable::getStringView(qualified_name))
+								.append("::")
+								.append(nested_func_decl->decl_node().identifier_token().value())
+								.commit());
+					gTemplateRegistry.registerTemplate(
+						nested_member_qualified_name,
+						nested_member_func.function_declaration);
+					gTemplateRegistry.registerOuterTemplateBinding(
+						nested_member_qualified_name,
+						nested_member_outer_binding);
+				}
+			}
 
 			// Mark nested struct as needing a trivial default constructor when it
 			// has no explicit constructors.  Without this, default member
