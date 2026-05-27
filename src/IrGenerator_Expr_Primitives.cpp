@@ -1107,6 +1107,44 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		}
 	}
 	if (!symbol.has_value()) {
+		if (current_struct_name_.isValid()) {
+			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+			if (current_struct_it != getTypesByNameMap().end() &&
+				current_struct_it->second->isStruct()) {
+				const StructTypeInfo* current_struct_info = current_struct_it->second->getStructInfo();
+				if (current_struct_info) {
+					const auto member_function_result =
+						current_struct_info->findMemberFunctionRecursive(identifierNode.nameHandle());
+					if (const StructMemberFunction* member_function = member_function_result.first) {
+						if (member_function->function_decl.is<FunctionDeclarationNode>()) {
+							const auto& function_decl =
+								member_function->function_decl.as<FunctionDeclarationNode>();
+							if (function_decl.is_static()) {
+								std::string_view mangled = generateMangledNameForCall(function_decl, StringHandle{}, {});
+
+								TempVar func_addr_var = var_counter.next();
+								FunctionAddressOp op;
+								op.result.setType(TypeCategory::FunctionPointer);
+								op.result.ir_type = IrType::FunctionPointer;
+								op.result.size_in_bits = SizeInBits{64};
+								op.result.value = func_addr_var;
+								op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
+								op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+								ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
+
+								return makeExprResult(
+									nativeTypeIndex(TypeCategory::FunctionPointer),
+									SizeInBits{64},
+									IrOperand{func_addr_var},
+									PointerDepth{},
+									ValueStorage::ContainsAddress);
+							}
+						}
+					}
+				}
+			}
+		}
+
 		FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 		FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 		FLASH_LOG(Codegen, Error, "  Current struct: ", current_struct_name_);

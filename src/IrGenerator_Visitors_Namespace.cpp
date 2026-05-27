@@ -532,10 +532,22 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							.append("'")
 							.commit()));
 					}
+					auto isFloatingBuiltinReturnExpr = [&]() {
+						if (!expr_opt.has_value() || !expr_opt->is<CallExprNode>()) {
+							return false;
+						}
+						const std::string_view callee_name =
+							expr_opt->as<CallExprNode>().callee().declaration().identifier_token().value();
+						return callee_name.starts_with("__builtin_"sv);
+					};
 					// sema should annotate standard arithmetic return conversions.
 					// Same-type size mismatches are not type conversions.
 					if (sema_normalized_current_function_ && expr_type != return_type &&
 						is_standard_arithmetic_type(expr_type) && is_standard_arithmetic_type(return_type)) {
+						if (isFloatingBuiltinReturnExpr()) {
+							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
+							goto return_conversion_done;
+						}
 						throw InternalError(
 							std::string("sema missed return conversion (") +
 							std::string(getTypeName(expr_type)) + " -> " +
@@ -546,6 +558,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				}
 			}
 		}
+return_conversion_done:
 
 		// For reference returns, prefer materializing the referred-to address in IR when we
 		// have direct member lvalue metadata. This avoids relying on backend reconstruction

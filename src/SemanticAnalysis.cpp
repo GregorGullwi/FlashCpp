@@ -401,6 +401,25 @@ struct PointerConversionInfo {
 	const FunctionDeclarationNode* function = nullptr;
 };
 
+std::optional<TypeCategory> getBuiltinCallReturnCategory(std::string_view callee_name) {
+	if (callee_name == "__builtin_huge_valf"sv || callee_name == "__builtin_huge_valf__"sv ||
+		callee_name == "__builtin_nanf"sv || callee_name == "__builtin_nanf__"sv ||
+		callee_name == "__builtin_nansf"sv || callee_name == "__builtin_nansf__"sv) {
+		return TypeCategory::Float;
+	}
+	if (callee_name == "__builtin_huge_val"sv || callee_name == "__builtin_huge_val__"sv ||
+		callee_name == "__builtin_nan"sv || callee_name == "__builtin_nan__"sv ||
+		callee_name == "__builtin_nans"sv || callee_name == "__builtin_nans__"sv) {
+		return TypeCategory::Double;
+	}
+	if (callee_name == "__builtin_huge_vall"sv || callee_name == "__builtin_huge_vall__"sv ||
+		callee_name == "__builtin_nanl"sv || callee_name == "__builtin_nanl__"sv ||
+		callee_name == "__builtin_nansl"sv || callee_name == "__builtin_nansl__"sv) {
+		return TypeCategory::LongDouble;
+	}
+	return std::nullopt;
+}
+
 // Builds a CanonicalTypeDesc for a base class subobject, inheriting the CV
 // qualifier of the derived object so that const-ness propagates through
 // inheritance when looking up pointer conversion operators.
@@ -5079,6 +5098,35 @@ CanonicalTypeId SemanticAnalysis::inferStaticMemberTypeFromContext(const Identif
 	return {};
 }
 
+CanonicalTypeId SemanticAnalysis::inferStaticMemberFunctionTypeFromContext(const IdentifierNode& identifier) {
+	const MemberContext* member_context = getCurrentMemberContext();
+	if (!member_context || !member_context->type_index.is_valid()) {
+		return {};
+	}
+
+	const StructTypeInfo* current_struct_info = tryGetStructTypeInfo(member_context->type_index);
+	if (!current_struct_info) {
+		return {};
+	}
+
+	const StringHandle member_name = identifier.getOrInternNameHandle();
+	const auto member_function_result = current_struct_info->findMemberFunctionRecursive(member_name);
+	const StructMemberFunction* member_function = member_function_result.first;
+	if (!member_function) {
+		return {};
+	}
+
+	const FunctionDeclarationNode* function_decl =
+		getCallTargetFunctionCandidate(member_function->function_decl);
+	if (!function_decl || !function_decl->is_static()) {
+		return {};
+	}
+
+	return canonicalizeType(
+		FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(
+			*function_decl));
+}
+
 // --- Expression type inference ---
 
 CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
@@ -5162,6 +5210,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			if (e.binding() == IdentifierBinding::StaticMember) {
 				if (const CanonicalTypeId static_member_type_id = inferStaticMemberTypeFromContext(e)) {
 					return static_member_type_id;
+				}
+				if (const CanonicalTypeId static_member_function_type_id =
+						inferStaticMemberFunctionTypeFromContext(e)) {
+					return static_member_function_type_id;
 				}
 			}
 
@@ -5808,6 +5860,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (const CanonicalTypeId resolved_type_id =
 						inferCallReturnType(resolveCallArgAnnotationTarget(call_info, &e))) {
 					return resolved_type_id;
+				}
+
+				if (std::optional<TypeCategory> builtin_return_type =
+						getBuiltinCallReturnCategory(e.callee().declaration().identifier_token().value());
+					builtin_return_type.has_value()) {
+					CanonicalTypeDesc desc;
+					desc.type_index = nativeTypeIndex(*builtin_return_type);
+					return type_context_.intern(desc);
 				}
 
 				const DeclarationNode& decl = e.callee().declaration();

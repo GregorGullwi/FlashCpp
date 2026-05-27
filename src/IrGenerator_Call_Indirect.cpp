@@ -281,6 +281,54 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (callee_type_query.state == TypeSpecifierQueryResult::State::Available) {
 			callee_type = callee_type_query.type;
 		}
+		if (isInconclusiveCallableType(callee_type) &&
+			std::holds_alternative<IdentifierNode>(object_node.as<ExpressionNode>()) &&
+			current_struct_name_.isValid()) {
+			const auto& identifier = std::get<IdentifierNode>(object_node.as<ExpressionNode>());
+			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+			if (current_struct_it != getTypesByNameMap().end() &&
+				current_struct_it->second->isStruct()) {
+				const StructTypeInfo* current_struct_info = current_struct_it->second->getStructInfo();
+				if (current_struct_info) {
+					const auto member_function_result =
+						current_struct_info->findMemberFunctionRecursive(identifier.nameHandle());
+					if (const StructMemberFunction* member_function = member_function_result.first) {
+						if (member_function->function_decl.is<FunctionDeclarationNode>()) {
+							const auto& function_decl =
+								member_function->function_decl.as<FunctionDeclarationNode>();
+							if (function_decl.is_static()) {
+								FunctionSignature signature;
+								const TypeSpecifierNode& return_type =
+									function_decl.decl_node().type_specifier_node();
+								signature.return_type_index = return_type.type_index();
+								signature.return_pointer_depth =
+									static_cast<int>(return_type.pointer_depth());
+								signature.return_reference_qualifier =
+									return_type.reference_qualifier();
+								for (const auto& param_node : function_decl.parameter_nodes()) {
+									if (!param_node.is<DeclarationNode>()) {
+										continue;
+									}
+									const auto& param_type =
+										param_node.as<DeclarationNode>().type_specifier_node();
+									signature.parameter_type_indices.push_back(
+										param_type.type_index());
+								}
+
+								TypeSpecifierNode function_pointer_type(
+									TypeCategory::FunctionPointer,
+									TypeQualifier::None,
+									64,
+									function_decl.decl_node().identifier_token(),
+									CVQualifier::None);
+								function_pointer_type.set_function_signature(signature);
+								callee_type = function_pointer_type;
+							}
+						}
+					}
+				}
+			}
+		}
 		const bool callee_type_unusable_for_callable =
 			isInconclusiveCallableType(callee_type) ||
 			(callee_type.has_value() &&
