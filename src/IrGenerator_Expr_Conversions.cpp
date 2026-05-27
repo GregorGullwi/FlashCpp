@@ -1795,14 +1795,14 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			TempVar materialized_ptr = var_counter.next();
 			AssignmentOp materialize_ptr;
 			materialize_ptr.result = materialized_ptr;
-			materialize_ptr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_ptr);
-			materialize_ptr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, *imm_ptr);
+			materialize_ptr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, materialized_ptr);
+			materialize_ptr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, *imm_ptr);
 			materialize_ptr.is_pointer_store = false;
 			materialize_ptr.dereference_rhs_references = false;
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_ptr), Token()));
 			op.pointer.value = materialized_ptr;
 		} else {
-			throw InternalError("Dereference pointer must be StringHandle or TempVar");
+			throw InternalError("Dereference pointer has unsupported operand value kind");
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, op, Token()));
