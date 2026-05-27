@@ -231,14 +231,7 @@ bool markLazyReceiverMemberOdrUsed(
 }
 
 bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
-	const size_t min_required = countMinRequiredArgs(candidate);
-	if (argument_count < min_required) {
-		return false;
-	}
-	if (candidate.is_variadic()) {
-		return true;
-	}
-	return argument_count <= candidate.parameter_nodes().size();
+	return isFunctionCandidateViableForArgCount(candidate, argument_count);
 }
 
 ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
