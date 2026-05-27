@@ -36,18 +36,18 @@ bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candida
 
 } // namespace
 
-const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason) {
+const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason reason) {
 	switch (reason) {
-		case DirectCallFallbackReason::ReceiverMemberRecovery:
+		case DirectCallCompatibilityReason::ReceiverMemberRecovery:
 			return "receiver-member recovery";
-		case DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation:
+		case DirectCallCompatibilityReason::DependentUnqualifiedPointOfInstantiation:
 			return "dependent unqualified point-of-instantiation recovery";
-		case DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss:
+		case DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss:
 			return "qualified or ordinary name lookup miss";
-		case DirectCallFallbackReason::StructMemberLookupMiss:
+		case DirectCallCompatibilityReason::StructMemberLookupMiss:
 			return "struct-member lookup miss";
 	}
-	return "unknown direct-call fallback reason";
+	return "unknown direct-call compatibility reason";
 }
 
 void applyDeclarationArrayBoundsToTypeSpec(
@@ -1515,12 +1515,12 @@ const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(con
 	return owner_->getResolvedDirectCall(key);
 }
 
-std::optional<DirectCallFallbackReason> ParserSemanticServices::getDirectCallFallbackReason(const void* key) const {
-	return owner_->getDirectCallFallbackReason(key);
+std::optional<DirectCallCompatibilityReason> ParserSemanticServices::getDirectCallCompatibilityReason(const void* key) const {
+	return owner_->getDirectCallCompatibilityReason(key);
 }
 
-std::optional<DirectCallFallbackReason> ParserSemanticServices::getDirectCallFallbackReason(const CallExprNode* key) const {
-	return owner_->getDirectCallFallbackReason(key);
+std::optional<DirectCallCompatibilityReason> ParserSemanticServices::getDirectCallCompatibilityReason(const CallExprNode* key) const {
+	return owner_->getDirectCallCompatibilityReason(key);
 }
 
 std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
@@ -7851,8 +7851,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			}
 		}
 	};
-	auto recordDirectCallFallbackReason = [&](DirectCallFallbackReason reason) {
-		direct_call_fallback_reasons_[call_key] = reason;
+	auto recordDirectCallCompatibilityReason = [&](DirectCallCompatibilityReason reason) {
+		direct_call_compatibility_reasons_[call_key] = reason;
 	};
 	auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
 		if (!mangled_name.isValid()) {
@@ -7905,7 +7905,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, recovered_func_decl)) {
 			return recovered_func_decl;
 		}
-		recordDirectCallFallbackReason(DirectCallFallbackReason::ReceiverMemberRecovery);
+		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::ReceiverMemberRecovery);
 		return nullptr;
 	}
 
@@ -7945,7 +7945,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (call_info.raw_function_declaration != nullptr) {
 			return call_info.raw_function_declaration;
 		}
-		recordDirectCallFallbackReason(DirectCallFallbackReason::DependentUnqualifiedPointOfInstantiation);
+		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::DependentUnqualifiedPointOfInstantiation);
 		return nullptr;
 	}
 
@@ -8001,7 +8001,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 	if (overloads.empty()) {
 		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-			recordDirectCallFallbackReason(DirectCallFallbackReason::QualifiedOrOrdinaryNameLookupMiss);
+			recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss);
 			return nullptr;
 		}
 		return func_decl;
@@ -8061,7 +8061,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (!func_decl) {
-		recordDirectCallFallbackReason(DirectCallFallbackReason::StructMemberLookupMiss);
+		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::StructMemberLookupMiss);
 	}
 
 	return func_decl;
@@ -8213,17 +8213,17 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
-		const std::optional<DirectCallFallbackReason> fallback_reason = getDirectCallFallbackReason(call_key);
+		const std::optional<DirectCallCompatibilityReason> compatibility_reason = getDirectCallCompatibilityReason(call_key);
 		const std::string_view call_name = call_info.qualified_name.isValid()
 											   ? call_info.qualified_name.view()
 											   : call_info.declaration->identifier_token().value();
-		if (!call_info.is_indirect && normalized_call_expr && fallback_reason.has_value()) {
+		if (!call_info.is_indirect && normalized_call_expr && compatibility_reason.has_value()) {
 			throw InternalError(std::string(
 				StringBuilder()
-					.append("Phase 1: sema-normalized direct call recorded fallback reason for '")
+					.append("Phase 1: sema-normalized direct call recorded compatibility reason for '")
 					.append(call_name)
 					.append("': ")
-					.append(describeDirectCallFallbackReason(*fallback_reason))
+					.append(describeDirectCallCompatibilityReason(*compatibility_reason))
 					.commit()));
 		}
 		if (!call_info.is_indirect && normalized_call_expr) {
@@ -8258,7 +8258,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	} else {
 		resolved_direct_call_table_.erase(call_key);
 	}
-	direct_call_fallback_reasons_.erase(call_key);
+	direct_call_compatibility_reasons_.erase(call_key);
 
 	annotateResolvedCallResultType(call_expr_node, *func_decl);
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);
