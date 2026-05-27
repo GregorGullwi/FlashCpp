@@ -1074,12 +1074,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// hatches. Semantically normalized ordinary direct calls should now either
 	// provide a sema-owned target or record a specific compatibility reason.
 	const bool ordinary_direct_call = !callExprNode.callee().is_indirect();
-	const std::optional<DirectCallFallbackReason> sema_direct_call_fallback_reason =
-		sema_services.getDirectCallFallbackReason(sema_call_key);
+	const std::optional<DirectCallCompatibilityReason> sema_direct_call_compatibility_reason =
+		sema_services.getDirectCallCompatibilityReason(sema_call_key);
 	if (!matched_func_decl &&
 		ordinary_direct_call &&
 		sema_normalized_current_function_ &&
-		!sema_direct_call_fallback_reason.has_value() &&
+		!sema_direct_call_compatibility_reason.has_value() &&
 		!parser_resolved_direct_target &&
 		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 		throw InternalError("Normalized direct-call query remained NotYetAnalyzed");
@@ -1091,26 +1091,26 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// callee selection instead of rescanning symbol tables and member hierarchies again.
 	// `allow_lookup_recovery` now survives only as the compatibility boundary for
 	// non-normalized bodies and synthesized wrapper paths; sema already hard-fails
-	// normalized direct calls that still only produce a fallback reason or no target.
+	// normalized direct calls that still only produce a compatibility reason or no target.
 	// The actual codegen-side direct-call lookup/recovery work that used to live below
 	// has been removed.
 	// Audit 2026-04-27 and follow-up slices through 2026-05-25:
 	// the old declaration-address overload rescan, mangled-symbol retry,
 	// dependent qualified remaps, and stale pattern-owner remaps have all
 	// been removed. Resolved direct-call targets now come from parser/sema,
-	// and fallback reasons only preserve the compatibility boundary while the
+	// and compatibility reasons only preserve the compatibility boundary while the
 	// remaining sema-side gaps are burned down.
 
 	if (!matched_func_decl &&
 		ordinary_direct_call &&
 		sema_normalized_current_function_ &&
-		sema_direct_call_fallback_reason.has_value()) {
+		sema_direct_call_compatibility_reason.has_value()) {
 		throw InternalError(std::string(
 			StringBuilder()
-				.append("Phase 1: sema-normalized direct call recorded fallback reason for '")
+				.append("Phase 1: sema-normalized direct call recorded compatibility reason for '")
 				.append(func_name_view)
 				.append("': ")
-				.append(describeDirectCallFallbackReason(*sema_direct_call_fallback_reason))
+				.append(describeDirectCallCompatibilityReason(*sema_direct_call_compatibility_reason))
 				.commit()));
 	}
 

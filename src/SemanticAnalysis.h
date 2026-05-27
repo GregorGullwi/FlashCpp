@@ -50,14 +50,14 @@ struct ResolvedFunctionQueryResult {
 	}
 };
 
-enum class DirectCallFallbackReason : uint8_t {
+enum class DirectCallCompatibilityReason : uint8_t {
 	ReceiverMemberRecovery,
 	DependentUnqualifiedPointOfInstantiation,
 	QualifiedOrOrdinaryNameLookupMiss,
 	StructMemberLookupMiss,
 };
 
-const char* describeDirectCallFallbackReason(DirectCallFallbackReason reason);
+const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason reason);
 
 struct ResolvedMemberAccessQueryResult {
 	enum class State : uint8_t {
@@ -114,8 +114,8 @@ public:
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
-	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const void* key) const;
-	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const CallExprNode* key) const;
+	std::optional<DirectCallCompatibilityReason> getDirectCallCompatibilityReason(const void* key) const;
+	std::optional<DirectCallCompatibilityReason> getDirectCallCompatibilityReason(const CallExprNode* key) const;
 
 	std::optional<ASTNode> ensureMemberFunctionMaterialized(
 		StringHandle struct_name,
@@ -237,27 +237,27 @@ public:
 		return node.has_value() && normalized_ast_nodes_.count(node.raw_pointer()) > 0;
 	}
 
-	// Returns the explicit sema-recorded compatibility reason for a direct-call
-	// fallback. Normalized bodies should only use codegen recovery when sema
+	// Returns the explicit sema-recorded compatibility reason for a direct call.
+	// Normalized bodies should only use codegen recovery when sema
 	// recorded one of these legacy escape hatches for the specific call.
-	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const void* call) const {
-		auto it = direct_call_fallback_reasons_.find(call);
-		if (it == direct_call_fallback_reasons_.end()) {
+	std::optional<DirectCallCompatibilityReason> getDirectCallCompatibilityReason(const void* call) const {
+		auto it = direct_call_compatibility_reasons_.find(call);
+		if (it == direct_call_compatibility_reasons_.end()) {
 			return std::nullopt;
 		}
 		return it->second;
 	}
 
-	std::optional<DirectCallFallbackReason> getDirectCallFallbackReason(const CallExprNode* call) const {
-		return getDirectCallFallbackReason(static_cast<const void*>(call));
+	std::optional<DirectCallCompatibilityReason> getDirectCallCompatibilityReason(const CallExprNode* call) const {
+		return getDirectCallCompatibilityReason(static_cast<const void*>(call));
 	}
 
-	bool hasDirectCallFallbackReason(const void* call) const {
-		return direct_call_fallback_reasons_.count(call) > 0;
+	bool hasDirectCallCompatibilityReason(const void* call) const {
+		return direct_call_compatibility_reasons_.count(call) > 0;
 	}
 
-	bool hasDirectCallFallbackReason(const CallExprNode* call) const {
-		return hasDirectCallFallbackReason(static_cast<const void*>(call));
+	bool hasDirectCallCompatibilityReason(const CallExprNode* call) const {
+		return hasDirectCallCompatibilityReason(static_cast<const void*>(call));
 	}
  
 	// Look up the compound assignment back-conversion slot (keyed by BinaryOperatorNode address).
@@ -723,7 +723,7 @@ private:
 	// and had to leave an explicit compatibility reason for codegen-side direct-call
 	// recovery. This is narrower than a generic "unresolved" bit: each entry should
 	// correspond to a known legacy gap that we plan to eliminate.
-	std::unordered_map<const void*, DirectCallFallbackReason> direct_call_fallback_reasons_;
+	std::unordered_map<const void*, DirectCallCompatibilityReason> direct_call_compatibility_reasons_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
