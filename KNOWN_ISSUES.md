@@ -23,23 +23,11 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 2) `std::_Optional_payload` / `std::_Tuple_impl` — type size 0 in IR codegen (OPEN)
-
-- **Symptom**: `IR conversion failed for node 'move': Type with no runtime size reached
-  codegen in reference identifier lvalue lowering (type=28, ...)` when compiling
-  `<optional>` and `<tuple>`.
-- **Root cause**: `type=28` is a struct/class type whose size was not computed before
-  codegen.  The payload/impl types are recursive union variants whose sizeof is not
-  resolved during template instantiation.
-- **Impact**: `test_std_optional`, `test_std_tuple` fail.
-
----
-
-## 3) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict (OPEN)
+## 2) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict (OPEN)
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
-### 4a) Standard-library template-instantiation noise during `<ratio>` compile
+### 2a) Standard-library template-instantiation noise during `<ratio>` compile
 
 - **Symptom**: compiling `tests/std/test_std_ratio.cpp` now emits
   `[ERROR][Templates] [depth=1]: All 2 template overload(s) failed for 'swap'`,
@@ -54,7 +42,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-### 4b) Link-time `__security_cookie` multiple-definition conflict
+### 2b) Link-time `__security_cookie` multiple-definition conflict
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
   fails to link with `LIBCMT.lib(gs_cookie.obj) : error LNK2005:

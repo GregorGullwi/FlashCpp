@@ -1199,8 +1199,15 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// For compound assignments, we need to return a TempVar with lvalue metadata
 				// For simple assignments and function calls, we can return the reference directly
 			if (context == ExpressionContext::LValueAddress) {
-				TypeCategory pointee_type = type_node.type();
-				int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference identifier lvalue lowering");
+				TypeSpecifierNode resolved_type_node = makeConcreteAliasResolvedCodegenSizeQueryType(type_node, "reference identifier lvalue lowering");
+				TypeCategory pointee_type = resolved_type_node.type();
+				int pointee_size = queryConcreteAliasResolvedTypeSizeBits(resolved_type_node).size_bits;
+				if (pointee_size <= 0) {
+					FLASH_LOG(Codegen, Warning, "Reference identifier '", identifierNode.name(),
+							  "' has unresolved pointee size in lvalue lowering",
+							  "; using pointer-size fallback");
+					pointee_size = POINTER_SIZE_BITS;
+				}
 
 				TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 
