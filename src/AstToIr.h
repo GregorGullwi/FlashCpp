@@ -1075,6 +1075,93 @@ private:
 																  const TypeSpecifierNode& param_type,
 																  const CallArgReferenceBindingInfo* binding_info,
 																  const Token& source_token);
+	const FunctionDeclarationNode* findCurrentStructStaticMemberFunction(StringHandle member_name) const {
+		if (!current_struct_name_.isValid()) {
+			return nullptr;
+		}
+
+		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+		if (current_struct_it == getTypesByNameMap().end() ||
+			!current_struct_it->second ||
+			!current_struct_it->second->isStruct()) {
+			return nullptr;
+		}
+
+		const StructTypeInfo* current_struct_info = current_struct_it->second->getStructInfo();
+		if (!current_struct_info) {
+			return nullptr;
+		}
+
+		const auto member_function_result =
+			current_struct_info->findMemberFunctionRecursive(member_name);
+		const StructMemberFunction* member_function = member_function_result.first;
+		if (!member_function || !member_function->function_decl.is<FunctionDeclarationNode>()) {
+			return nullptr;
+		}
+
+		const auto& function_decl = member_function->function_decl.as<FunctionDeclarationNode>();
+		return function_decl.is_static() ? &function_decl : nullptr;
+	}
+
+	std::optional<TypeSpecifierNode> tryBuildCurrentStructStaticMemberFunctionPointerType(
+		StringHandle member_name) const {
+		const FunctionDeclarationNode* function_decl =
+			findCurrentStructStaticMemberFunction(member_name);
+		if (!function_decl) {
+			return std::nullopt;
+		}
+
+		FunctionSignature signature;
+		const TypeSpecifierNode& return_type = function_decl->decl_node().type_specifier_node();
+		signature.return_type_index = return_type.type_index();
+		signature.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
+		signature.return_reference_qualifier = return_type.reference_qualifier();
+		for (const auto& param_node : function_decl->parameter_nodes()) {
+			if (!param_node.is<DeclarationNode>()) {
+				continue;
+			}
+			const auto& param_type =
+				param_node.as<DeclarationNode>().type_specifier_node();
+			signature.parameter_type_indices.push_back(param_type.type_index());
+		}
+
+		TypeSpecifierNode function_pointer_type(
+			TypeCategory::FunctionPointer,
+			TypeQualifier::None,
+			64,
+			function_decl->decl_node().identifier_token(),
+			CVQualifier::None);
+		function_pointer_type.set_function_signature(signature);
+		return function_pointer_type;
+	}
+
+	std::optional<ExprResult> tryEmitCurrentStructStaticMemberFunctionAddress(
+		StringHandle member_name,
+		const Token& token) {
+		const FunctionDeclarationNode* function_decl =
+			findCurrentStructStaticMemberFunction(member_name);
+		if (!function_decl) {
+			return std::nullopt;
+		}
+
+		std::string_view mangled = generateMangledNameForCall(*function_decl, StringHandle{}, {});
+		TempVar func_addr_var = var_counter.next();
+		FunctionAddressOp op;
+		op.result.setType(TypeCategory::FunctionPointer);
+		op.result.ir_type = IrType::FunctionPointer;
+		op.result.size_in_bits = SizeInBits{64};
+		op.result.value = func_addr_var;
+		op.function_name = member_name;
+		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), token));
+
+		return makeExprResult(
+			nativeTypeIndex(TypeCategory::FunctionPointer),
+			SizeInBits{64},
+			IrOperand{func_addr_var},
+			PointerDepth{},
+			ValueStorage::ContainsAddress);
+	}
 
 	// ========== Lambda Capture Helper Functions ==========
 

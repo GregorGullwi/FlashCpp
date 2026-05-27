@@ -5862,8 +5862,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return resolved_type_id;
 				}
 
+				const FunctionDeclarationNode* builtin_call_decl =
+					e.callee().function_declaration_or_null();
 				if (std::optional<TypeCategory> builtin_return_type =
-						getBuiltinCallReturnCategory(e.callee().declaration().identifier_token().value());
+						builtin_call_decl
+							? getBuiltinCallReturnCategory(
+								builtin_call_decl->decl_node().identifier_token().value())
+							: std::nullopt;
 					builtin_return_type.has_value()) {
 					CanonicalTypeDesc desc;
 					desc.type_index = nativeTypeIndex(*builtin_return_type);

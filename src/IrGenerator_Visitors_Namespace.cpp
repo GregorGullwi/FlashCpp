@@ -536,8 +536,13 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						if (!expr_opt.has_value() || !expr_opt->is<CallExprNode>()) {
 							return false;
 						}
+						const FunctionDeclarationNode* func_decl =
+							expr_opt->as<CallExprNode>().callee().function_declaration_or_null();
+						if (!func_decl) {
+							return false;
+						}
 						const std::string_view callee_name =
-							expr_opt->as<CallExprNode>().callee().declaration().identifier_token().value();
+							func_decl->decl_node().identifier_token().value();
 						return callee_name.starts_with("__builtin_"sv);
 					};
 					// sema should annotate standard arithmetic return conversions.
