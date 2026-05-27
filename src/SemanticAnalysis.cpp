@@ -16,6 +16,7 @@
 #include "ParserInternal.h"
 #include "NameMangling.h"
 #include <algorithm>
+#include <limits>
 
 namespace {
 
@@ -23,6 +24,14 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 	if (!sema.isParserAttached()) {
 		throw InternalError(std::string("ParserSemanticServices::") + operation + " requires an attached parser");
 	}
+}
+
+bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
+	const size_t min_required = countMinRequiredArgs(candidate);
+	const size_t max_accepted = candidate.is_variadic()
+		? std::numeric_limits<size_t>::max()
+		: candidate.parameter_nodes().size();
+	return argument_count >= min_required && argument_count <= max_accepted;
 }
 
 } // namespace
@@ -7595,7 +7604,7 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 				if (!candidate) {
 					continue;
 				}
-				if (candidate->parameter_nodes().size() == arguments.size()) {
+				if (isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
 					if (name_match) {
 						ambiguous = true;
 						break;
@@ -7998,7 +8007,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return func_decl;
 	}
 
-	if (arg_types_collected && !arg_types.empty()) {
+	if (arg_types_collected) {
 		const OverloadResolutionResult result = resolve_overload(overloads, arg_types);
 		if (result.has_match && !result.is_ambiguous && result.selected_overload != nullptr) {
 			if (const FunctionDeclarationNode* resolved_candidate =
@@ -8032,7 +8041,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
 			for (const auto& overload : overloads) {
 				if (const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(overload)) {
-					if (arguments.size() == candidate->parameter_nodes().size()) {
+					if (isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
 						return candidate;
 					}
 				}
