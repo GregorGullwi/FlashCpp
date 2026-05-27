@@ -181,7 +181,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		bool is_extern = declaration_kind == ExternTemplateDeclarationKind::Extern;
 		if (peek() == "extern"_tok) {
 			if (is_extern) {
-				return ParseResult::error("Unexpected duplicate 'extern' before template declaration", current_token_);
+				return ParseResult::error("Unexpected duplicate 'extern' before template declaration", peek_info());
 			}
 			is_extern = true;
 			advance(); // consume 'extern'
