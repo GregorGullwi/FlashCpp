@@ -5987,30 +5987,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Debug, "Copied deleted constructor flags from pattern StructTypeInfo: default=",
 							  pattern_struct_info->has_deleted_default_constructor, ", copy=",
 							  pattern_struct_info->has_deleted_copy_constructor);
-					if (struct_info->hasAnyConstructor() &&
-						!struct_info->findCopyConstructor(true) &&
-						!struct_info->findMoveConstructor(true) &&
-						!struct_info->has_deleted_copy_constructor &&
-						!struct_info->has_deleted_move_constructor) {
-						Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
-						auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-							instantiated_name,
-							instantiated_name);
-						auto copy_param_type = emplace_node<TypeSpecifierNode>(
-							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
-							struct_info->sizeInBits().value,
-							ctor_name_token,
-							CVQualifier::Const,
-							ReferenceQualifier::LValueReference);
-						Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
-						auto param_decl_node = emplace_node<DeclarationNode>(copy_param_type, param_token);
-						copy_ctor_ref.add_parameter_node(param_decl_node);
-						auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
-						(void)copy_block_ref;
-						copy_ctor_ref.set_definition(copy_block_node);
-						copy_ctor_ref.set_is_implicit(true);
-						struct_info->addConstructor(copy_ctor_node, AccessSpecifier::Public);
-					}
+					synthesize_implicit_copy_constructor_if_needed(
+						*struct_info,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+						instantiated_name);
 
 					FLASH_LOG(Templates, Debug, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 					for (const auto& static_member : pattern_struct_info->static_members) {
@@ -14628,32 +14608,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 	}
-	if (struct_info_ptr->hasAnyConstructor() &&
-		!struct_info_ptr->findCopyConstructor(true) &&
-		!struct_info_ptr->findMoveConstructor(true) &&
-		!struct_info_ptr->has_deleted_copy_constructor &&
-		!struct_info_ptr->has_deleted_move_constructor) {
-		const TypeIndex self_type_index =
-			struct_info_ptr->own_type_index_.value_or(struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
-		Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
-		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-			instantiated_name,
-			instantiated_name);
-		auto copy_param_type = emplace_node<TypeSpecifierNode>(
-			self_type_index.withCategory(TypeCategory::Struct),
-			struct_info_ptr->sizeInBits().value,
-			ctor_name_token,
-			CVQualifier::Const,
-			ReferenceQualifier::LValueReference);
-		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
-		auto param_decl_node = emplace_node<DeclarationNode>(copy_param_type, param_token);
-		copy_ctor_ref.add_parameter_node(param_decl_node);
-		auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
-		(void)copy_block_ref;
-		copy_ctor_ref.set_definition(copy_block_node);
-		copy_ctor_ref.set_is_implicit(true);
-		struct_info_ptr->addConstructor(copy_ctor_node, AccessSpecifier::Public);
-	}
+	const TypeIndex self_type_index =
+		struct_info_ptr->own_type_index_.value_or(struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
+	synthesize_implicit_copy_constructor_if_needed(
+		*struct_info_ptr,
+		self_type_index.withCategory(TypeCategory::Struct),
+		instantiated_name);
 
 	// Re-evaluate deferred static_asserts with substituted template parameters
 	FLASH_LOG(Templates, Debug, "Checking deferred static_asserts for struct '", class_decl.name(),

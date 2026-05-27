@@ -80,6 +80,51 @@ void addUnscopedEnumEnumeratorsAsStaticMembers(
 
 } // namespace
 
+void Parser::synthesize_implicit_copy_constructor_if_needed(
+	StructTypeInfo& struct_info,
+	TypeIndex self_type_index,
+	std::string_view instantiated_name) {
+	if (!struct_info.hasAnyConstructor() ||
+		struct_info.findCopyConstructor(true) ||
+		struct_info.findMoveConstructor(true) ||
+		struct_info.isCopyConstructorDeleted() ||
+		struct_info.isMoveConstructorDeleted()) {
+		return;
+	}
+
+	int copy_param_size_bits = struct_info.sizeInBits().value;
+	if (copy_param_size_bits == 0 && self_type_index.is_valid()) {
+		if (const TypeInfo* self_type_info = tryGetTypeInfo(self_type_index)) {
+			if (self_type_info->hasStoredSize()) {
+				copy_param_size_bits = self_type_info->sizeInBits().value;
+			}
+		}
+	}
+	if (copy_param_size_bits == 0) {
+		// References are pointer-sized in this ABI model; avoid carrying unknown 0-size metadata.
+		copy_param_size_bits = 64;
+	}
+
+	Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
+	auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+		instantiated_name,
+		instantiated_name);
+	auto copy_param_type = emplace_node<TypeSpecifierNode>(
+		self_type_index.withCategory(TypeCategory::Struct),
+		copy_param_size_bits,
+		ctor_name_token,
+		CVQualifier::Const,
+		ReferenceQualifier::LValueReference);
+	Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+	auto param_decl_node = emplace_node<DeclarationNode>(copy_param_type, param_token);
+	copy_ctor_ref.add_parameter_node(param_decl_node);
+	auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
+	(void)copy_block_ref;
+	copy_ctor_ref.set_definition(copy_block_node);
+	copy_ctor_ref.set_is_implicit(true);
+	struct_info.addConstructor(copy_ctor_node, AccessSpecifier::Public);
+}
+
 ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr) {
 	if (peek() != ":"_tok) {
 		return ParseResult::success();
@@ -2651,30 +2696,10 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_decl.is_final);
 				}
 			}
-			if (struct_info_ptr->hasAnyConstructor() &&
-				!struct_info_ptr->findCopyConstructor(true) &&
-				!struct_info_ptr->findMoveConstructor(true) &&
-				!struct_info_ptr->isCopyConstructorDeleted() &&
-				!struct_info_ptr->isMoveConstructorDeleted()) {
-				Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
-				auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					instantiated_name,
-					instantiated_name);
-				auto copy_param_type = emplace_node<TypeSpecifierNode>(
-					struct_type_info.type_index_.withCategory(TypeCategory::Struct),
-					struct_info_ptr->sizeInBits().value,
-					ctor_name_token,
-					CVQualifier::Const,
-					ReferenceQualifier::LValueReference);
-				Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
-				auto param_decl_node = emplace_node<DeclarationNode>(copy_param_type, param_token);
-				copy_ctor_ref.add_parameter_node(param_decl_node);
-				auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
-				(void)copy_block_ref;
-				copy_ctor_ref.set_definition(copy_block_node);
-				copy_ctor_ref.set_is_implicit(true);
-				struct_info_ptr->addConstructor(copy_ctor_node, AccessSpecifier::Public);
-			}
+			synthesize_implicit_copy_constructor_if_needed(
+				*struct_info_ptr,
+				struct_type_info.type_index_.withCategory(TypeCategory::Struct),
+				instantiated_name);
 
 			// If no constructor was found, mark that we need a default one
 			struct_info_ptr->needs_default_constructor = !has_constructor;
@@ -4127,30 +4152,10 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 			}
-			if (struct_info->hasAnyConstructor() &&
-				!struct_info->findCopyConstructor(true) &&
-				!struct_info->findMoveConstructor(true) &&
-				!struct_info->isCopyConstructorDeleted() &&
-				!struct_info->isMoveConstructorDeleted()) {
-				Token ctor_name_token(Token::Type::Identifier, StringTable::getStringView(instantiated_name), 0, 0, 0);
-				auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-					instantiated_name,
-					instantiated_name);
-				auto copy_param_type = emplace_node<TypeSpecifierNode>(
-					struct_type_info.type_index_.withCategory(TypeCategory::Struct),
-					struct_info->sizeInBits().value,
-					ctor_name_token,
-					CVQualifier::Const,
-					ReferenceQualifier::LValueReference);
-				Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
-				auto param_decl_node = emplace_node<DeclarationNode>(copy_param_type, param_token);
-				copy_ctor_ref.add_parameter_node(param_decl_node);
-				auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
-				(void)copy_block_ref;
-				copy_ctor_ref.set_definition(copy_block_node);
-				copy_ctor_ref.set_is_implicit(true);
-				struct_info->addConstructor(copy_ctor_node, AccessSpecifier::Public);
-			}
+			synthesize_implicit_copy_constructor_if_needed(
+				*struct_info,
+				struct_type_info.type_index_.withCategory(TypeCategory::Struct),
+				instantiated_name);
 
 			// Finalize the struct layout with base classes
 			bool finalize_success;
