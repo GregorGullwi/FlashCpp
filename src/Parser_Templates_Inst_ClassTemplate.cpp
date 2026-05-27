@@ -5987,6 +5987,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Debug, "Copied deleted constructor flags from pattern StructTypeInfo: default=",
 							  pattern_struct_info->has_deleted_default_constructor, ", copy=",
 							  pattern_struct_info->has_deleted_copy_constructor);
+					synthesize_implicit_copy_constructor_if_needed(
+						*struct_info,
+						struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+						instantiated_name);
 
 					FLASH_LOG(Templates, Debug, "Copying ", pattern_struct_info->static_members.size(), " static members from pattern");
 					for (const auto& static_member : pattern_struct_info->static_members) {
@@ -14604,6 +14608,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 	}
+	const TypeIndex self_type_index =
+		struct_info_ptr->own_type_index_.value_or(struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct));
+	synthesize_implicit_copy_constructor_if_needed(
+		*struct_info_ptr,
+		self_type_index.withCategory(TypeCategory::Struct),
+		instantiated_name);
 
 	// Re-evaluate deferred static_asserts with substituted template parameters
 	FLASH_LOG(Templates, Debug, "Checking deferred static_asserts for struct '", class_decl.name(),

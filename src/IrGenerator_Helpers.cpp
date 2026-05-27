@@ -236,6 +236,11 @@ void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
 
 void AstToIr::registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name) {
 	if (!scope_stack_.empty()) {
+		for (const auto& variable : scope_stack_.back()) {
+			if (variable.variable_name == var_name) {
+				return;
+			}
+		}
 		scope_stack_.back().push_back({var_name, struct_name});
 	}
 }
