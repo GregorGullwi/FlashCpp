@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-27 (template-parameter-qualified static-member expression typing now resolves through current-instantiation bindings during replay)
+**Last updated:** 2026-05-27 (OOL member-function-template signatures now resolve type-parameter-qualified member-template type chains during replay)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -183,9 +183,16 @@ Useful assumptions before changing this area:
   the concrete static member instead of leaving a placeholder for codegen.
   Template-body substitution also re-deduces local placeholder variables after
   initializer substitution.
+- **OOL member-function-template replay signature matching now resolves concrete
+  type-parameter-qualified member-template type chains**, including
+  `typename T::template AddPtr<int>::type` parameter types. The
+  recovery remains evidence-driven: dependent member-template chain
+  segments are materialized through concrete owner bindings and only
+  accepted when canonical type identity matches, without restoring
+  broad shape fallback attachment.
 
 Latest recorded full-suite validation:
-`2558` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
+`2559` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -216,6 +223,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_ool_ctor_dependent_member_swap_body_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_swap_body_ret0.cpp`
 - `test_template_param_qualified_static_member_auto_ret0.cpp`
+- `test_template_ool_member_template_dependent_member_template_type_param_deref_ret0.cpp`
 
 ## What is still wrong
 
@@ -235,6 +243,10 @@ The next highest-value remaining surface:
     substitution outcomes (`nullopt`) because required replay-visible metadata
     is not always captured early enough; these need metadata completion so
     canonical matching succeeds more often without broad fallback machinery.
+  - direct dereference/forwarding of OOL member-function-template parameters
+    whose type came from `T::template AddPtr<int>::type` still exposes
+    placeholder ABI/body-codegen metadata; close that body metadata gap before
+    expanding the signature-matching slice broadly.
   - dependent-member OOL swap regressions now cover the first constructor
     replay/body-selection gap; continue looking for remaining swap-shaped gaps
     in less-covered member-template and nested replay surfaces.
@@ -271,16 +283,16 @@ they directly block items 1-2:
    - Continue with any remaining OOL dependent-member swap slices in
      member-template or nested overload sets where replay-selected stubs and
      deferred body parsing can still drift after owner-artifact recovery.
-   - Continue the type-parameter-qualified lookup slice beyond simple static
-     members into member-template/type chains that still block replay attachment
-     (for example `T::template AddPtr<int>::type` in less-covered member-template
-     and nested OOL surfaces).
+   - Continue the type-parameter-qualified lookup slice into nested/overloaded
+     member-template type-chain replay surfaces, and close the remaining body
+     metadata gap where direct dereference/forwarding of parameters typed through
+     `T::template AddPtr<int>::type` can still preserve placeholder ABI state.
    - Keep function-parameter adjustment rules centralized in shared substitution
      helpers so replay/attachment compares canonical signatures instead of
      path-specific normalized variants.
-   - Extend dependent/current-instantiation lookup just enough to cover
-     type-parameter-qualified member-template references that still fail before
-     replay can attach them (for example `T::AddPtr`-shaped lookups).
+   - Extend dependent/current-instantiation lookup only where nested or
+     overloaded type-parameter-qualified member-template references still fail
+     before replay can attach them.
 
 2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
    - Expand richer dependent-base and unknown-specialization records only when
