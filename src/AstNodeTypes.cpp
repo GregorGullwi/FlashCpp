@@ -1395,8 +1395,11 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
 	if (!own_type_index_.has_value())
 		return false;
-	auto resolveSemanticTypeIndex = [](TypeIndex idx) {
-		for (size_t depth = 0; depth < 8; ++depth) {
+
+	constexpr size_t kMaxTypeAliasResolutionDepth = 8;
+
+	auto resolveSemanticTypeIndex = [&](TypeIndex idx) {
+		for (size_t depth = 0; depth < kMaxTypeAliasResolutionDepth; ++depth) {
 			const TypeInfo* type_info = tryGetTypeInfo(idx);
 			if (!type_info || !type_info->type_index_.is_valid()) {
 				break;
