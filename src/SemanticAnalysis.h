@@ -462,6 +462,7 @@ private:
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
 	CanonicalTypeId inferResolvedSymbolType(const ASTNode& symbol);
 	CanonicalTypeId inferStaticMemberTypeFromContext(const IdentifierNode& identifier);
+	CanonicalTypeId inferStaticMemberFunctionTypeFromContext(const IdentifierNode& identifier);
 	ValueCategory inferExpressionValueCategory(const ASTNode& node);
 	const MemberContext* getCurrentMemberContext() const;
 	std::optional<ResolvedMemberAccessObjectInfo> resolveMemberAccessObjectInfo(const MemberAccessNode& member_access);

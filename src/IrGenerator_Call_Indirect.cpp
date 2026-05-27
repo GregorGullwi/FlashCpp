@@ -281,6 +281,17 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (callee_type_query.state == TypeSpecifierQueryResult::State::Available) {
 			callee_type = callee_type_query.type;
 		}
+		if (isInconclusiveCallableType(callee_type) &&
+			std::holds_alternative<IdentifierNode>(object_node.as<ExpressionNode>()) &&
+			current_struct_name_.isValid()) {
+			const auto& identifier = std::get<IdentifierNode>(object_node.as<ExpressionNode>());
+			if (auto static_member_function_type =
+					tryBuildCurrentStructStaticMemberFunctionPointerType(
+						identifier.nameHandle());
+				static_member_function_type.has_value()) {
+				callee_type = *static_member_function_type;
+			}
+		}
 		const bool callee_type_unusable_for_callable =
 			isInconclusiveCallableType(callee_type) ||
 			(callee_type.has_value() &&

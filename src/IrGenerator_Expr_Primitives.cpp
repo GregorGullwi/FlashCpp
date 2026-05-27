@@ -1107,6 +1107,14 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		}
 	}
 	if (!symbol.has_value()) {
+		if (auto static_member_function_address =
+				tryEmitCurrentStructStaticMemberFunctionAddress(
+					StringTable::getOrInternStringHandle(identifierNode.name()),
+					Token());
+			static_member_function_address.has_value()) {
+			return *static_member_function_address;
+		}
+
 		FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 		FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
 		FLASH_LOG(Codegen, Error, "  Current struct: ", current_struct_name_);
