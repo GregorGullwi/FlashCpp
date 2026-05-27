@@ -274,6 +274,9 @@ const StructTypeInfo* resolvePseudoDestructorObjectStruct(const ASTNode& object,
 	return nullptr;
 }
 
+// Recursive C++20 class-property predicate for trivially-copyable class types.
+// Pointer/reference members are treated as scalar indirections, so their
+// pointee class metadata is intentionally not recursed into.
 bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
 	if (!struct_info)
 		return false;
@@ -315,6 +318,9 @@ bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
 	return true;
 }
 
+// Recursive C++20 class-property predicate for trivial class types.
+// This extends the trivially-copyable predicate with the additional
+// trivial-default-constructor requirement.
 bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
 	if (!struct_info)
 		return false;
