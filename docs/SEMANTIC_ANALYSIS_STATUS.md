@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-05-26
+**Last Updated:** 2026-05-27
 
 This is the consolidated status document for sema-related planning and architecture notes.
 
@@ -63,6 +63,7 @@ FlashCpp currently follows a parse -> sema -> IR pipeline:
 - **Arity-based direct-constructor compatibility branch**: the branch at ~line 2363 is now explicitly guarded behind `!sema_normalized_current_function_`, so sema-normalized bodies no longer take codegen arity recovery in this path; it remains transitional behavior for non-normalized bodies only.
 - **Variable-init arithmetic compatibility tightening (IrGenerator_Stmt_Decl.cpp)**: sema-normalized bodies now require sema-owned implicit conversion annotations for all standard arithmetic variable-initialization conversions, including integer→`bool`; the prior bool carve-out in the compatibility guard was removed.
 - **Binary operator conversion gap (`IrGenerator_Expr_Operators.cpp`)**: this is *not* parser API recovery. `generateTypeConversion` is still called directly for uncovered cases (pointer arithmetic and unscoped/scoped enum operands where sema annotations are partial). This remains a documented semantic-coverage gap, not a desired long-term behavior.
+- **Struct triviality/trivially-copyable trait ownership (`TypeTraitEvaluator.cpp`, `IrGenerator_Helpers.cpp`, `IrGenerator_MemberAccess.cpp`)**: removed duplicated codegen-local recursive trait implementations and centralized the recursive predicates in sema-owned/shared `TypeTraitEvaluator` helpers (`isStructTriviallyCopyable`, `isStructTrivial`). Deferred implicit-member codegen and codegen trait lowering now both consume the shared sema-owned predicates.
 - **Local enum type lookup hardening (parser)**: `lookupTypeInCurrentContext(...)` now prefers active-scope enum declarations and, in function/block scopes, prefers the most recent matching enum `TypeInfo` entry. This keeps `TypeSpecifierNode` enum type indices concrete in local shadowing cases (no invalid enum `TypeIndex` recovery in this path). Regression: `test_local_enum_shadow_type_lookup_ret0.cpp`.
 - **Scoped enum comparison sema coverage**: `SemanticAnalysis::tryAnnotateBinaryOperandConversions(...)` now annotates same-type scoped-enum comparison operand promotions; codegen now hard-fails sema-normalized bodies if those promotions are missing instead of silently taking the enum compatibility branch.
 - `AstToIr::visitSizeofNode(...)` now resolves `sizeof(member_access)` member sizing through `resolveMemberAccessType(...)` (sema-owned member resolution first) and no longer scans instantiated type names (`base`, `base_...`, `base$...`) as a codegen-side recovery path.

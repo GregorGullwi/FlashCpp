@@ -1,108 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
-
-namespace {
-
-bool isTriviallyCopyableForDeferredImplicitMembers(const StructTypeInfo* struct_info) {
-	if (!struct_info) {
-		return false;
-	}
-	if (struct_info->has_vtable) {
-		return false;
-	}
-	if (struct_info->hasCopyConstructor()) {
-		return false;
-	}
-	if (struct_info->hasMoveConstructor()) {
-		return false;
-	}
-	if (struct_info->hasCopyAssignmentOperator()) {
-		return false;
-	}
-	if (struct_info->hasMoveAssignmentOperator()) {
-		return false;
-	}
-	if (struct_info->hasUserDefinedDestructor()) {
-		return false;
-	}
-
-	for (const auto& member : struct_info->members) {
-		if (member.pointer_depth > 0 || member.is_reference()) {
-			continue;
-		}
-		if (!isIrStructType(toIrType(member.memberType()))) {
-			continue;
-		}
-		if (member.type_index.index() >= getTypeInfoCount()) {
-			return false;
-		}
-		const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
-		if (!isTriviallyCopyableForDeferredImplicitMembers(member_info)) {
-			return false;
-		}
-	}
-
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred) {
-			continue;
-		}
-		if (base.type_index.index() >= getTypeInfoCount()) {
-			return false;
-		}
-		const StructTypeInfo* base_info = getTypeInfo(base.type_index).getStructInfo();
-		if (!isTriviallyCopyableForDeferredImplicitMembers(base_info)) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-bool isTrivialForDeferredImplicitMembers(const StructTypeInfo* struct_info) {
-	if (!struct_info) {
-		return false;
-	}
-	if (!isTriviallyCopyableForDeferredImplicitMembers(struct_info)) {
-		return false;
-	}
-	if (struct_info->hasUserDefinedConstructor()) {
-		return false;
-	}
-
-	for (const auto& member : struct_info->members) {
-		if (member.pointer_depth > 0 || member.is_reference()) {
-			continue;
-		}
-		if (!isIrStructType(toIrType(member.memberType()))) {
-			continue;
-		}
-		if (member.type_index.index() >= getTypeInfoCount()) {
-			return false;
-		}
-		const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
-		if (!isTrivialForDeferredImplicitMembers(member_info)) {
-			return false;
-		}
-	}
-
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred) {
-			continue;
-		}
-		if (base.type_index.index() >= getTypeInfoCount()) {
-			return false;
-		}
-		const StructTypeInfo* base_info = getTypeInfo(base.type_index).getStructInfo();
-		if (!isTrivialForDeferredImplicitMembers(base_info)) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-} // namespace
+#include "TypeTraitEvaluator.h"
 
 void AstToIr::normalizePendingSemanticRoots() {
 	sema_.parserSemanticServices().normalizePendingSemanticRoots();
@@ -132,9 +31,9 @@ bool AstToIr::shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct
 		return false;
 	}
 	if (ctor.parameter_nodes().empty()) {
-		return isTrivialForDeferredImplicitMembers(&struct_info);
+		return isStructTrivial(&struct_info);
 	}
-	return isTriviallyCopyableForDeferredImplicitMembers(&struct_info);
+	return isStructTriviallyCopyable(&struct_info);
 }
 
 bool AstToIr::shouldDeferImplicitAssignmentCodegen(const StructTypeInfo& struct_info, const FunctionDeclarationNode& fn) const {
@@ -144,7 +43,7 @@ bool AstToIr::shouldDeferImplicitAssignmentCodegen(const StructTypeInfo& struct_
 	if (fn.decl_node().identifier_token().value() != "operator=") {
 		return false;
 	}
-	return isTriviallyCopyableForDeferredImplicitMembers(&struct_info);
+	return isStructTriviallyCopyable(&struct_info);
 }
 
 void AstToIr::exitScope() {

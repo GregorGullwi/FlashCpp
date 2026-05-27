@@ -274,7 +274,89 @@ const StructTypeInfo* resolvePseudoDestructorObjectStruct(const ASTNode& object,
 	return nullptr;
 }
 
+bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
+	if (!struct_info)
+		return false;
+	if (struct_info->has_vtable)
+		return false;
+	if (struct_info->hasCopyConstructor())
+		return false;
+	if (struct_info->hasMoveConstructor())
+		return false;
+	if (struct_info->hasCopyAssignmentOperator())
+		return false;
+	if (struct_info->hasMoveAssignmentOperator())
+		return false;
+	if (struct_info->hasUserDefinedDestructor())
+		return false;
+
+	for (const auto& member : struct_info->members) {
+		// Pointer/reference members are scalar indirections; their pointee type
+		// does not participate in class triviality/trivially-copyable checks.
+		if (member.pointer_depth > 0 || member.is_reference())
+			continue;
+		if (!is_struct_type(member.type_index.category()))
+			continue;
+		const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+		const StructTypeInfo* member_struct = member_type_info ? member_type_info->getStructInfo() : nullptr;
+		if (!isStructTriviallyCopyableImpl(member_struct))
+			return false;
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred)
+			continue;
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
+		if (!isStructTriviallyCopyableImpl(base_struct))
+			return false;
+	}
+
+	return true;
+}
+
+bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
+	if (!struct_info)
+		return false;
+	if (!isStructTriviallyCopyableImpl(struct_info))
+		return false;
+	if (struct_info->hasUserDefinedConstructor())
+		return false;
+
+	for (const auto& member : struct_info->members) {
+		// Pointer/reference members are scalar indirections; their pointee type
+		// does not participate in class triviality checks.
+		if (member.pointer_depth > 0 || member.is_reference())
+			continue;
+		if (!is_struct_type(member.type_index.category()))
+			continue;
+		const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+		const StructTypeInfo* member_struct = member_type_info ? member_type_info->getStructInfo() : nullptr;
+		if (!isStructTrivialImpl(member_struct))
+			return false;
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred)
+			continue;
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
+		if (!isStructTrivialImpl(base_struct))
+			return false;
+	}
+
+	return true;
+}
+
 } // namespace
+
+bool isStructTriviallyCopyable(const StructTypeInfo* struct_info) {
+	return isStructTriviallyCopyableImpl(struct_info);
+}
+
+bool isStructTrivial(const StructTypeInfo* struct_info) {
+	return isStructTrivialImpl(struct_info);
+}
 
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	if (!struct_info)
@@ -556,7 +638,7 @@ TypeTraitResult evaluateTypeTrait(
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;
 		} else if (struct_info && !is_reference && pointer_depth == 0) {
-			result = !struct_info->has_vtable;
+			result = isStructTriviallyCopyable(struct_info);
 		}
 		break;
 
@@ -564,7 +646,7 @@ TypeTraitResult evaluateTypeTrait(
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;
 		} else if (struct_info && !is_reference && pointer_depth == 0) {
-			result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
+			result = isStructTrivial(struct_info);
 		}
 		break;
 

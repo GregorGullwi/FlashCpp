@@ -39,6 +39,12 @@ bool isUnsigned(TypeCategory cat);
 // use the is_noexcept() flag that was eagerly evaluated at parse time.
 bool isStructNothrowDestructible(const StructTypeInfo* struct_info);
 
+// Shared helpers: determine whether a struct/class is trivially copyable/trivial.
+// These are sema-owned trait predicates reused by parser, constexpr evaluation,
+// and codegen trait/deferred-implicit-member consumers.
+bool isStructTriviallyCopyable(const StructTypeInfo* struct_info);
+bool isStructTrivial(const StructTypeInfo* struct_info);
+
 // Shared helper: determine whether a pseudo-destructor call expression is noexcept.
 // Resolves the object's type via symbol lookup (handles template specializations)
 // and falls back to getTypesByNameMap() lookup by type name token for non-template types.
