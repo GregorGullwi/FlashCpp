@@ -1842,22 +1842,12 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 										outer_arg_infos,
 										tn_handle);
 								resolved_outer.has_value()) {
-								return {*resolved_outer, nullptr};
+									return {*resolved_outer, nullptr};
 							}
 						}
-						if (ti->isDependentPlaceholder()) {
-							if (const auto* dependent_record = ti->dependentQualifiedName();
-								dependent_record != nullptr &&
-								dependent_record->owner_name.isValid()) {
-								if (std::optional<TypeIndex> resolved_outer =
-										resolveStampedOuterTemplateBindingType(
-											outer_param_names,
-											outer_arg_infos,
-											dependent_record->owner_name);
-									resolved_outer.has_value()) {
-									return {*resolved_outer, nullptr};
-								}
-							}
+						if (auto resolved_outer = resolveDependentPlaceholderFromOuterBindings(
+								ti, outer_param_names, outer_arg_infos)) {
+							return {*resolved_outer, nullptr};
 						}
 					}
 				}
@@ -2263,23 +2253,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				param_type_spec,
 				param_type_index);
 			if (func_decl.has_outer_template_bindings()) {
-				if (const TypeInfo* param_type_info = tryGetTypeInfo(param_type_spec.type_index());
-					param_type_info != nullptr &&
-					param_type_info->isDependentPlaceholder()) {
-					if (const auto* dependent_record =
-							param_type_info->dependentQualifiedName();
-						dependent_record != nullptr &&
-						dependent_record->owner_name.isValid()) {
-						if (std::optional<TypeIndex> resolved_outer =
-								resolveStampedOuterTemplateBindingType(
-									func_decl.outer_template_param_names(),
-									func_decl.outer_template_args(),
-									dependent_record->owner_name);
-							resolved_outer.has_value()) {
-							param_type_index =
-								*resolved_outer;
-						}
-					}
+				if (auto resolved_outer = resolveDependentPlaceholderFromOuterBindings(
+						tryGetTypeInfo(param_type_spec.type_index()),
+						func_decl.outer_template_param_names(),
+						func_decl.outer_template_args())) {
+					param_type_index = *resolved_outer;
 				}
 			}
 			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(

@@ -340,6 +340,48 @@ inline std::optional<TypeIndex> resolveStampedOuterTemplateBindingType(
 	return std::nullopt;
 }
 
+template <typename NameContainer, typename ArgInfoContainer>
+inline std::optional<TypeIndex> resolveDependentPlaceholderFromOuterBindings(
+	const TypeInfo* type_info,
+	const NameContainer& outer_param_names,
+	const ArgInfoContainer& outer_arg_infos) {
+	if (type_info == nullptr || !type_info->isDependentPlaceholder()) {
+		return std::nullopt;
+	}
+	const auto* dependent_record = type_info->dependentQualifiedName();
+	if (dependent_record == nullptr || !dependent_record->owner_name.isValid()) {
+		return std::nullopt;
+	}
+	return resolveStampedOuterTemplateBindingType(
+		outer_param_names,
+		outer_arg_infos,
+		dependent_record->owner_name);
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline std::optional<TypeIndex> resolveDependentPlaceholderFromTemplateParams(
+	const TypeInfo* type_info,
+	const ParamContainer& tmpl_params,
+	const ArgContainer& tmpl_args) {
+	if (type_info == nullptr || !type_info->isDependentPlaceholder()) {
+		return std::nullopt;
+	}
+	const auto* dependent_record = type_info->dependentQualifiedName();
+	if (dependent_record == nullptr || !dependent_record->owner_name.isValid()) {
+		return std::nullopt;
+	}
+	for (size_t i = 0; i < tmpl_params.size() && i < tmpl_args.size(); ++i) {
+		const TemplateParameterNode* template_param = tryGetTemplateParameterNode(tmpl_params[i]);
+		if (template_param == nullptr ||
+			template_param->nameHandle() != dependent_record->owner_name ||
+			tmpl_args[i].is_value) {
+			continue;
+		}
+		return tmpl_args[i].type_index.withCategory(tmpl_args[i].typeEnum());
+	}
+	return std::nullopt;
+}
+
 template <typename ParamContainer, typename ArgContainer, typename InstantiateFn>
 inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
 	const ASTNode* original_type_node,

@@ -4249,29 +4249,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				original_param_type_node,
 				param_type_spec,
 				param_type_index);
-			if (const TypeInfo* param_type_info = tryGetTypeInfo(param_type_spec.type_index());
-				param_type_info != nullptr &&
-				param_type_info->isDependentPlaceholder()) {
-				if (const auto* dependent_record =
-						param_type_info->dependentQualifiedName();
-					dependent_record != nullptr &&
-					dependent_record->owner_name.isValid()) {
-					for (size_t param_index = 0;
-						 param_index < tmpl_params.size() && param_index < tmpl_args.size();
-						 ++param_index) {
-						const TemplateParameterNode* template_param =
-							tryGetTemplateParameterNode(tmpl_params[param_index]);
-						if (template_param == nullptr ||
-							template_param->nameHandle() != dependent_record->owner_name ||
-							tmpl_args[param_index].is_value) {
-							continue;
-						}
-						param_type_index =
-							tmpl_args[param_index].type_index.withCategory(
-								tmpl_args[param_index].typeEnum());
-						break;
-					}
-				}
+			if (auto resolved_param = resolveDependentPlaceholderFromTemplateParams(
+					tryGetTypeInfo(param_type_spec.type_index()), tmpl_params, tmpl_args)) {
+				param_type_index = *resolved_param;
 			}
 			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 				param_type_spec,
