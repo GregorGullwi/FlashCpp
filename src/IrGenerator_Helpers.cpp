@@ -28,6 +28,9 @@ bool isTriviallyCopyableForDeferredImplicitMembers(const StructTypeInfo* struct_
 	}
 
 	for (const auto& member : struct_info->members) {
+		if (member.pointer_depth > 0 || member.is_reference()) {
+			continue;
+		}
 		if (!isIrStructType(toIrType(member.memberType()))) {
 			continue;
 		}
@@ -68,6 +71,9 @@ bool isTrivialForDeferredImplicitMembers(const StructTypeInfo* struct_info) {
 	}
 
 	for (const auto& member : struct_info->members) {
+		if (member.pointer_depth > 0 || member.is_reference()) {
+			continue;
+		}
 		if (!isIrStructType(toIrType(member.memberType()))) {
 			continue;
 		}
