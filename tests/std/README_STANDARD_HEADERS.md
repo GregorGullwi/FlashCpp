@@ -2986,3 +2986,13 @@ The current friend class implementation stores `StringHandle` names and matches 
 4. **Simplify `checkFriendClassAccess`** — compare `TypeIndex` values (O(1) integer comparison). For template instantiations, also check the primary template's `TypeIndex`. No string manipulation needed.
 
 **Incremental path**: Try eager `TypeIndex` resolution at registration time, fall back to `StringHandle` for forward-reference cases. Check `TypeIndex` first in the access checker, then fall through to string matching for unresolved entries. This gets correctness for most cases without requiring the deferred resolution pass upfront.
+
+### Recent Fixes (2026-05-27)
+
+1. **`extern template class ...;` now stays declaration-only in namespace parsing too**: when namespace-level parsing consumed `extern` before dispatching to `parse_template_declaration`, the template parser was still instantiating the template as if it were a non-extern explicit instantiation. This broke real libstdc++ declarations such as `extern template class allocator<char>;` in `bits/allocator.h` and stopped `<iterator>` early with `Could not explicitly instantiate template 'allocator'`. The parser now forwards extern-template context in both top-level and namespace extern paths, so these declarations suppress implicit instantiation as intended.
+
+2. **Regression coverage added**: `tests/test_extern_template_does_not_instantiate_ret0.cpp` verifies that `extern template class T<...>;` does not instantiate templates (using a `static_assert` that would fail if instantiated).
+
+3. **Targeted std-header retest after the fix** (Linux/libstdc++-14, `x64/Sharded/FlashCpp`, `--timing`):
+   - `tests/std/test_std_iterator.cpp`: now advances past the old `allocator` explicit-instantiation stop and fails later at `Max template instantiation depth (40) exceeded for 'basic_string'` (~6431ms warm total).
+   - `tests/std/test_std_memory.cpp`: currently fails on the same later depth limit (`basic_string`) at ~6715ms total.

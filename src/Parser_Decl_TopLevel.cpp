@@ -275,7 +275,7 @@ ParseResult Parser::parse_top_level_node() {
 			// Don't restore, we've already consumed 'extern', and parse_template_declaration
 			// will consume 'template'. Discard the saved position.
 			discard_saved_token(extern_saved_pos);
-			auto template_result = parse_template_declaration();
+			auto template_result = parse_extern_template_declaration();
 			if (!template_result.is_error()) {
 				return saved_position.success();
 			}
@@ -732,7 +732,7 @@ ParseResult Parser::parse_namespace() {
 			} else if (peek() == "template"_tok) {
 				// extern template class allocator<char>; — explicit instantiation declaration
 				discard_saved_token(extern_saved_pos);
-				decl_result = parse_template_declaration();
+				decl_result = parse_extern_template_declaration();
 			} else {
 				// Regular extern declaration (not extern "C")
 				restore_token_position(extern_saved_pos);
