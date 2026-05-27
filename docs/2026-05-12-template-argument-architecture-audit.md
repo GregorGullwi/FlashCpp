@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-26 (dependent-member swapped OOL constructor replay now preserves definition-side parameter identifiers and re-normalizes late-materialized constructor bodies before IR)
+**Last updated:** 2026-05-26 (constructor-template materialization now reuses owner-local identity/lazy/signature lookup instead of repeated constructor rescans)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -79,6 +79,12 @@ Useful assumptions before changing this area:
   helper paths**: single-candidate unresolved (`nullopt`) acceptance has been
   removed; no-match cases now surface explicit replay-attachment diagnostics
   instead of silent fallback attachment.
+- **constructor-template materialization now builds a per-owner constructor
+  lookup once and reuses source-aware matches**: preferred-constructor
+  resolution, access propagation, duplicate-materialization checks, lazy
+  registry reuse, and template-constructor probing in
+  `materializeMatchingConstructorTemplate` no longer rescan
+  `StructTypeInfo::member_functions` independently.
 - **declaration-only member stub substitution now strips only top-level
   by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
   keeping replay-first source-member signature matching and mangled identity
@@ -218,10 +224,10 @@ The next highest-value remaining surface:
 
 - remaining declaration replay paths outside static-member initializers that
   still recover intent from partially substituted AST state.
-  - remaining constructor and non-constructor replay paths still produce
-    unresolved substitution outcomes (`nullopt`) because required replay-visible
-    metadata is not always captured early enough; these need metadata completion
-    so canonical matching succeeds more often without broad fallback machinery.
+  - remaining non-constructor replay paths still produce unresolved
+    substitution outcomes (`nullopt`) because required replay-visible metadata
+    is not always captured early enough; these need metadata completion so
+    canonical matching succeeds more often without broad fallback machinery.
   - dependent-member OOL swap regressions now cover the first constructor
     replay/body-selection gap; continue looking for remaining swap-shaped gaps
     in less-covered member-template and nested replay surfaces.
@@ -249,13 +255,10 @@ they directly block items 1-2:
 
 ## Highest-impact next steps
 
-1. **Remove the next remaining declaration replay scans outside static-member initializers**
-   - Continue with remaining declaration replay scans that still recover targets
-     from partially substituted instantiated members instead of source-member
-     identity.
-   - Continue with remaining attachment/synchronization surfaces that still
-     depend on signature-only matching where source-member identity can be
-     preserved end-to-end.
+1. **Finish the remaining replay-metadata and attachment gaps outside static-member initializers**
+   - Continue with non-constructor attachment/synchronization surfaces that
+     still depend on signature-only matching where source-member identity can
+     be preserved end-to-end.
    - Improve replay metadata capture in unresolved substitution (`nullopt`) paths
      so canonical substituted-signature matching classifies more valid code.
    - Continue with any remaining OOL dependent-member swap slices in
@@ -264,6 +267,9 @@ they directly block items 1-2:
    - Keep function-parameter adjustment rules centralized in shared substitution
      helpers so replay/attachment compares canonical signatures instead of
      path-specific normalized variants.
+   - Extend dependent/current-instantiation lookup just enough to cover
+     type-parameter-qualified member-template references that still fail before
+     replay can attach them (for example `T::AddPtr`-shaped lookups).
 
 2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
    - Expand richer dependent-base and unknown-specialization records only when
