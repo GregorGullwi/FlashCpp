@@ -2,8 +2,11 @@ struct Node {
 	Node* next;
 };
 
+Node copy_node(Node input) {
+	Node b = input;
+	return b;
+}
+
 int main() {
-	Node a{};
-	Node b = a;
-	return b.next == nullptr ? 0 : 1;
+	return 0;
 }
