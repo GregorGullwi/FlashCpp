@@ -81,6 +81,84 @@ StringHandle getMemberTemplateOwnerName(StringHandle qualified_lookup_name, cons
 
 	return {};
 }
+
+void propagateSubstitutedFunctionSignature(
+	TypeSpecifierNode& target,
+	const TypeSpecifierNode& original,
+	const TemplateTypeArg* resolved_arg) {
+	if (original.has_function_signature()) {
+		target.set_function_signature(original.function_signature());
+	} else if (resolved_arg && resolved_arg->function_signature.has_value()) {
+		target.set_function_signature(*resolved_arg->function_signature);
+	}
+}
+
+void applyResolvedSubstitutedTypeMetadata(
+	TypeSpecifierNode& target,
+	const TemplateTypeArg* resolved_arg,
+	TypeIndex source_type_index) {
+	if (resolved_arg) {
+		for (size_t i = 0; i < resolved_arg->pointer_depth; ++i) {
+			CVQualifier cv = i < resolved_arg->pointer_cv_qualifiers.size()
+								 ? resolved_arg->pointer_cv_qualifiers[i]
+								 : CVQualifier::None;
+			target.add_pointer_level(cv);
+		}
+		if (target.reference_qualifier() == ReferenceQualifier::None &&
+			resolved_arg->ref_qualifier != ReferenceQualifier::None) {
+			target.set_reference_qualifier(resolved_arg->ref_qualifier);
+		}
+	}
+
+	if (source_type_index.is_valid()) {
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(source_type_index);
+		if (alias_info.type_index.is_valid() && alias_info.type_index != source_type_index) {
+			target.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
+		}
+		target.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
+		if (target.reference_qualifier() == ReferenceQualifier::None &&
+			alias_info.reference_qualifier != ReferenceQualifier::None) {
+			target.set_reference_qualifier(alias_info.reference_qualifier);
+		}
+		if (!target.has_function_signature() && alias_info.function_signature.has_value()) {
+			target.set_function_signature(*alias_info.function_signature);
+		}
+	}
+
+	const int resolved_size_bits = getTypeSpecSizeBits(target);
+	if (resolved_size_bits > 0) {
+		target.set_size_in_bits(resolved_size_bits);
+	}
+}
+
+ASTNode rebuildResolvedSubstitutedTypeSpec(
+	const TypeSpecifierNode& original_type_spec,
+	TypeIndex resolved_type_index,
+	const TemplateTypeArg* resolved_arg) {
+	ASTNode substituted_type = ASTNode::emplace_node<TypeSpecifierNode>(
+		resolved_type_index.category(),
+		TypeQualifier::None,
+		get_type_size_bits(resolved_type_index.category()),
+		Token(),
+		CVQualifier::None);
+
+	auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
+	substituted_type_spec.set_type_index(resolved_type_index);
+	for (const auto& ptr_level : original_type_spec.pointer_levels()) {
+		substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+	}
+	substituted_type_spec.set_reference_qualifier(
+		original_type_spec.reference_qualifier());
+	propagateSubstitutedFunctionSignature(
+		substituted_type_spec,
+		original_type_spec,
+		resolved_arg);
+	applyResolvedSubstitutedTypeMetadata(
+		substituted_type_spec,
+		resolved_arg,
+		resolved_type_index);
+	return substituted_type;
+}
 }
 
 bool Parser::tryAppendMemberDefaultTemplateArg(
@@ -1910,50 +1988,6 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		return {type_index, nullptr};
 	};
 
-	// Propagates function_signature to a substituted TypeSpecifierNode:
-	// prefers the original type spec's signature, falls back to the template arg's signature.
-	auto propagate_function_signature = [](TypeSpecifierNode& target,
-										   const TypeSpecifierNode& original, const TemplateTypeArg* resolved_arg) {
-		if (original.has_function_signature()) {
-			target.set_function_signature(original.function_signature());
-		} else if (resolved_arg && resolved_arg->function_signature.has_value()) {
-			target.set_function_signature(*resolved_arg->function_signature);
-		}
-	};
-	auto apply_resolved_type_metadata = [](TypeSpecifierNode& target, const TemplateTypeArg* resolved_arg, TypeIndex source_type_index) {
-		if (resolved_arg) {
-			for (size_t i = 0; i < resolved_arg->pointer_depth; ++i) {
-				CVQualifier cv = i < resolved_arg->pointer_cv_qualifiers.size()
-									 ? resolved_arg->pointer_cv_qualifiers[i]
-									 : CVQualifier::None;
-				target.add_pointer_level(cv);
-			}
-			if (target.reference_qualifier() == ReferenceQualifier::None &&
-				resolved_arg->ref_qualifier != ReferenceQualifier::None) {
-				target.set_reference_qualifier(resolved_arg->ref_qualifier);
-			}
-		}
-
-		if (source_type_index.is_valid()) {
-			const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(source_type_index);
-			if (alias_info.type_index.is_valid() && alias_info.type_index != source_type_index) {
-				target.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
-			}
-			target.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
-			if (target.reference_qualifier() == ReferenceQualifier::None &&
-				alias_info.reference_qualifier != ReferenceQualifier::None) {
-				target.set_reference_qualifier(alias_info.reference_qualifier);
-			}
-			if (!target.has_function_signature() && alias_info.function_signature.has_value()) {
-				target.set_function_signature(*alias_info.function_signature);
-			}
-		}
-
-		const int resolved_size_bits = getTypeSpecSizeBits(target);
-		if (resolved_size_bits > 0) {
-			target.set_size_in_bits(resolved_size_bits);
-		}
-	};
 	auto merge_alias_target_type_spec = [](TypeSpecifierNode& target, const TypeSpecifierNode& alias_type_spec) {
 		if (alias_type_spec.type_index().is_valid()) {
 			target.set_type_index(alias_type_spec.type_index().withCategory(alias_type_spec.type()));
@@ -1996,22 +2030,10 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 						orig_decl.identifier_token().file_index());
 
 	// Create return type node
-	ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
-		return_type_index.category(),
-		TypeQualifier::None,
-		get_type_size_bits(return_type_index.category()),
-		Token(),
-		CVQualifier::None);
-
-	// Copy pointer levels and set type_index from the resolved type
-	auto& substituted_return_type_spec = substituted_return_type.as<TypeSpecifierNode>();
-	substituted_return_type_spec.set_type_index(return_type_index);
-	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-	}
-	substituted_return_type_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
-	propagate_function_signature(substituted_return_type_spec, return_type_spec, return_resolved_arg);
-	apply_resolved_type_metadata(substituted_return_type_spec, return_resolved_arg, return_type_index);
+	ASTNode substituted_return_type = rebuildResolvedSubstitutedTypeSpec(
+		return_type_spec,
+		return_type_index,
+		return_resolved_arg);
 
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
@@ -2323,21 +2345,12 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				true);
 
 			// Create the substituted parameter type specifier
-			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
-				param_type_index.category(),
-				TypeQualifier::None,
-				get_type_size_bits(param_type_index.category()),
-				Token(), CVQualifier::None);
+			auto substituted_param_type = rebuildResolvedSubstitutedTypeSpec(
+				param_type_spec,
+				param_type_index,
+				resolved_arg);
 
-			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
-			substituted_param_type_spec.set_type_index(param_type_index);
-			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-			}
-			substituted_param_type_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
-			propagate_function_signature(substituted_param_type_spec, param_type_spec, resolved_arg);
-			apply_resolved_type_metadata(substituted_param_type_spec, resolved_arg, param_type_index);
 			if (const TypeInfo* param_type_info = tryGetTypeInfo(param_type_index);
 				param_type_info != nullptr &&
 				param_type_info->isTypeAlias()) {

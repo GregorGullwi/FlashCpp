@@ -94,6 +94,69 @@ static void buildTemplateParameterReplayState(
 	}
 }
 
+template <typename ParamContainer, typename ArgContainer>
+static TypeIndex resolveDependentMemberTemplateArtifactsForParam(
+	Parser& parser,
+	ASTNode* original_param_type_node,
+	const TypeSpecifierNode& param_type_spec,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	TypeIndex substituted_type_index,
+	bool resolve_materialized_member_alias) {
+	if (auto resolved_param = resolveDependentPlaceholderFromTemplateParams(
+			tryGetTypeInfo(param_type_spec.type_index()),
+			template_params,
+			template_args)) {
+		substituted_type_index = *resolved_param;
+	}
+	return resolveDependentMemberTemplateSubstitutionArtifacts(
+		parser,
+		original_param_type_node,
+		param_type_spec,
+		template_params,
+		template_args,
+		substituted_type_index,
+		true,
+		true,
+		resolve_materialized_member_alias);
+}
+
+template <typename ParamContainer, typename ArgContainer>
+static ASTNode buildMaterializedParamTypeNode(
+	const TypeSpecifierNode& param_type_spec,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	TypeCategory new_param_type,
+	TypeIndex new_param_type_index) {
+	ASTNode new_param_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
+		new_param_type,
+		param_type_spec.qualifier(),
+		get_type_size_bits(new_param_type),
+		param_type_spec.token(),
+		param_type_spec.cv_qualifier());
+	auto& new_param_spec = new_param_type_node.as<TypeSpecifierNode>();
+	new_param_spec.set_type_index(new_param_type_index);
+	for (const auto& pl : param_type_spec.pointer_levels()) {
+		new_param_spec.add_pointer_level(pl.cv_qualifier);
+	}
+	new_param_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
+	if (param_type_spec.has_function_signature()) {
+		new_param_spec.set_function_signature(param_type_spec.function_signature());
+	} else if (new_param_type_index.category() == TypeCategory::FunctionPointer ||
+			   new_param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+		if (const auto* arg = findTemplateArgByName(
+				param_type_spec.token().value(),
+				template_params,
+				template_args)) {
+			if (arg->function_signature.has_value()) {
+				new_param_spec.set_function_signature(*arg->function_signature);
+			}
+		}
+	}
+	normalizeSubstitutedTypeSpec(new_param_spec);
+	return new_param_type_node;
+}
+
 struct SourceMemberIdentityMaps {
 	std::unordered_map<const void*, ASTNode> by_node;
 	std::unordered_map<uint64_t, ASTNode> by_location;
@@ -2952,22 +3015,15 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 		{
 			ASTNode original_param_type_node = param_decl.type_node();
 			TypeIndex dependent_member_type_index = substituted_param_type.type_index();
-			if (auto resolved_outer_param = resolveDependentPlaceholderFromTemplateParams(
-					tryGetTypeInfo(param_type_spec.type_index()),
+			dependent_member_type_index =
+				resolveDependentMemberTemplateArtifactsForParam(
+					*this,
+					&original_param_type_node,
+					param_type_spec,
 					template_params,
-					template_args_inline)) {
-				dependent_member_type_index = *resolved_outer_param;
-			}
-			dependent_member_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
-				*this,
-				&original_param_type_node,
-				param_type_spec,
-				template_params,
-				template_args_inline,
-				dependent_member_type_index,
-				true,
-				true,
-				false);
+					template_args_inline,
+					dependent_member_type_index,
+					false);
 			if (dependent_member_type_index.is_valid() &&
 				dependent_member_type_index != substituted_param_type.type_index()) {
 				substituted_param_type.set_type_index(
@@ -4177,19 +4233,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				original_param_type_node,
 				param_type_spec,
 				param_type_index);
-			if (auto resolved_param = resolveDependentPlaceholderFromTemplateParams(
-					tryGetTypeInfo(param_type_spec.type_index()), tmpl_params, tmpl_args)) {
-				param_type_index = *resolved_param;
-			}
-			param_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
+			param_type_index = resolveDependentMemberTemplateArtifactsForParam(
 				*this,
 				&original_param_type_node,
 				param_type_spec,
 				tmpl_params,
 				tmpl_args,
 				param_type_index,
-				true,
-				true,
 				false);
 			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()
 				? full_substituted_param_node.as<TypeSpecifierNode>()
@@ -7344,48 +7394,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									original_param_type_node,
 									param_type_spec,
 									subst_idx);
-								if (auto resolved_outer_param = resolveDependentPlaceholderFromTemplateParams(
-										tryGetTypeInfo(param_type_spec.type_index()),
-										template_params,
-										template_args_for_pattern)) {
-									subst_idx = *resolved_outer_param;
-								}
-								subst_idx = resolveDependentMemberTemplateSubstitutionArtifacts(
+								subst_idx = resolveDependentMemberTemplateArtifactsForParam(
 									*this,
 									&original_param_type_node,
 									param_type_spec,
 									template_params,
 									template_args_for_pattern,
 									subst_idx,
-									true,
-									true,
 									true);
 								new_param_type = subst_idx.category();
 								new_param_type_index = subst_idx;
 							}
 
-							ASTNode new_param_type_node = emplace_node<TypeSpecifierNode>(
-								new_param_type, param_type_spec.qualifier(),
-								get_type_size_bits(new_param_type), param_type_spec.token(), param_type_spec.cv_qualifier());
-							auto& new_param_spec = new_param_type_node.as<TypeSpecifierNode>();
-							new_param_spec.set_type_index(new_param_type_index);
-							for (const auto& pl : param_type_spec.pointer_levels())
-								new_param_spec.add_pointer_level(pl.cv_qualifier);
-							new_param_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
-							if (param_type_spec.has_function_signature()) {
-								new_param_spec.set_function_signature(param_type_spec.function_signature());
-							} else if (new_param_type_index.category() == TypeCategory::FunctionPointer ||
-									   new_param_type_index.category() == TypeCategory::MemberFunctionPointer) {
-								if (const auto* arg = findTemplateArgByName(
-										param_type_spec.token().value(),
-										template_params,
-										template_args_for_pattern)) {
-									if (arg->function_signature.has_value()) {
-										new_param_spec.set_function_signature(*arg->function_signature);
-									}
-								}
-							}
-							normalizeSubstitutedTypeSpec(new_param_spec);
+							ASTNode new_param_type_node = buildMaterializedParamTypeNode(
+								param_type_spec,
+								template_params,
+								template_args_for_pattern,
+								new_param_type,
+								new_param_type_index);
 
 							auto new_param_decl = emplace_node<DeclarationNode>(
 								new_param_type_node, param_decl.identifier_token());
@@ -13126,48 +13152,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								original_param_type_node,
 								param_type_spec,
 								subst_idx);
-							if (auto resolved_outer_param = resolveDependentPlaceholderFromTemplateParams(
-									tryGetTypeInfo(param_type_spec.type_index()),
-									template_params,
-									template_args_to_use)) {
-								subst_idx = *resolved_outer_param;
-							}
-							subst_idx = resolveDependentMemberTemplateSubstitutionArtifacts(
+							subst_idx = resolveDependentMemberTemplateArtifactsForParam(
 								*this,
 								&original_param_type_node,
 								param_type_spec,
 								template_params,
 								template_args_to_use,
 								subst_idx,
-								true,
-								true,
 								true);
 							new_param_type = subst_idx.category();
 							new_param_type_index = subst_idx;
 						}
 
-						ASTNode new_param_type_node = emplace_node<TypeSpecifierNode>(
-							new_param_type, param_type_spec.qualifier(),
-							get_type_size_bits(new_param_type), param_type_spec.token(), param_type_spec.cv_qualifier());
-						auto& new_param_spec = new_param_type_node.as<TypeSpecifierNode>();
-						new_param_spec.set_type_index(new_param_type_index);
-						for (const auto& pl : param_type_spec.pointer_levels())
-							new_param_spec.add_pointer_level(pl.cv_qualifier);
-						new_param_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
-						if (param_type_spec.has_function_signature()) {
-							new_param_spec.set_function_signature(param_type_spec.function_signature());
-						} else if (new_param_type_index.category() == TypeCategory::FunctionPointer ||
-								   new_param_type_index.category() == TypeCategory::MemberFunctionPointer) {
-							if (const auto* arg = findTemplateArgByName(
-									param_type_spec.token().value(),
-									template_params,
-									template_args_to_use)) {
-								if (arg->function_signature.has_value()) {
-									new_param_spec.set_function_signature(*arg->function_signature);
-								}
-							}
-						}
-						normalizeSubstitutedTypeSpec(new_param_spec);
+						ASTNode new_param_type_node = buildMaterializedParamTypeNode(
+							param_type_spec,
+							template_params,
+							template_args_to_use,
+							new_param_type,
+							new_param_type_index);
 
 						auto new_param_decl = emplace_node<DeclarationNode>(
 							new_param_type_node, param_decl.identifier_token());
