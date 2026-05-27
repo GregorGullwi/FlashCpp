@@ -137,10 +137,10 @@ ASTNode rebuildResolvedSubstitutedTypeSpec(
 	const TemplateTypeArg* resolved_arg) {
 	ASTNode substituted_type = ASTNode::emplace_node<TypeSpecifierNode>(
 		resolved_type_index.category(),
-		TypeQualifier::None,
+		original_type_spec.qualifier(),
 		get_type_size_bits(resolved_type_index.category()),
-		Token(),
-		CVQualifier::None);
+		original_type_spec.token(),
+		original_type_spec.cv_qualifier());
 
 	auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
 	substituted_type_spec.set_type_index(resolved_type_index);
