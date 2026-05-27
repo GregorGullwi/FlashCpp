@@ -691,14 +691,30 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 
 		Token range_token(Token::Type::Identifier, range_name, 0, 0, 0);
 		ASTNode range_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*inferred_range_type);
-		ASTNode range_decl_node = ASTNode::emplace_node<DeclarationNode>(range_type_node, range_token);
 		if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
-			range_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+			ASTNode range_decl_node = ASTNode::emplace_node<DeclarationNode>(range_type_node, range_token);
+			ASTNode range_pointer_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*inferred_range_type);
+			range_pointer_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::None);
+			range_pointer_type_node.as<TypeSpecifierNode>().add_pointer_level();
+			ASTNode range_pointer_decl_node = ASTNode::emplace_node<DeclarationNode>(range_pointer_type_node, range_token);
+			ASTNode range_address_expr = ASTNode::emplace_node<ExpressionNode>(
+				UnaryOperatorNode(Token(Token::Type::Operator, "&"sv, 0, 0, 0), range_expr, true));
+			sema_.registerCodegenSynthesizedOverloadArgType(
+				range_address_expr,
+				range_pointer_type_node.as<TypeSpecifierNode>());
+			ASTNode range_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(
+				range_pointer_decl_node,
+				range_address_expr);
+			visit(range_var_decl_node);
+			range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
+			range_decl_ptr = &range_decl_node.as<DeclarationNode>();
+		} else {
+			ASTNode range_decl_node = ASTNode::emplace_node<DeclarationNode>(range_type_node, range_token);
+			ASTNode range_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(range_decl_node, range_expr);
+			visit(range_var_decl_node);
+			range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
+			range_decl_ptr = &range_decl_node.as<DeclarationNode>();
 		}
-		ASTNode range_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(range_decl_node, range_expr);
-		visit(range_var_decl_node);
-		range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
-		range_decl_ptr = &range_decl_node.as<DeclarationNode>();
 	}
 
 	const DeclarationNode& range_decl = *range_decl_ptr;

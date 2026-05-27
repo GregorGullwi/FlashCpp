@@ -1997,7 +1997,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 			bool is_struct_with_constructor = false;
-			if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0) {
+			if (type_node.category() == TypeCategory::Struct &&
+				type_node.pointer_depth() == 0 &&
+				!type_node.is_reference() &&
+				!type_node.is_rvalue_reference()) {
 				const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 				if (type_info && type_info->struct_info_ && type_info->struct_info_->hasAnyConstructor()) {
 					is_struct_with_constructor = true;
