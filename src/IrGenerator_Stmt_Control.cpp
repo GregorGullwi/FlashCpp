@@ -692,9 +692,13 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 		Token range_token(Token::Type::Identifier, range_name, 0, 0, 0);
 		ASTNode range_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*inferred_range_type);
 		ASTNode range_decl_node = ASTNode::emplace_node<DeclarationNode>(range_type_node, range_token);
-		ASTNode range_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(range_decl_node, range_expr);
-		visit(range_var_decl_node);
-		range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
+		if (std::holds_alternative<MemberAccessNode>(expr_variant)) {
+			range_object_expr = range_expr;
+		} else {
+			ASTNode range_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(range_decl_node, range_expr);
+			visit(range_var_decl_node);
+			range_object_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(range_token));
+		}
 		range_decl_ptr = &range_decl_node.as<DeclarationNode>();
 	}
 

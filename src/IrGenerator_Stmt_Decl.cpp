@@ -2794,7 +2794,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 								// For converting constructors in copy initialization, check if constructor is explicit
-							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
+							if (!sema_selected_converting_ctor && type_info->struct_info_) {
 									// Find converting constructors that take the initializer type as single parameter.
 									// Scan all candidates: only error when every match is explicit.
 								bool found_matching_ctor = false;
@@ -2821,6 +2821,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 														 !isSameStructTypeForInitialization(param_type.type_index(), init_type_index))) {
 														param_matches = false;
 													}
+												} else if (!isIrStructType(toIrType(init_type)) &&
+														   !isIrStructType(toIrType(param_type.type()))) {
+													TypeConversionResult conv = can_convert_type(init_type, param_type.type());
+													param_matches = conv.is_valid && conv.rank != ConversionRank::UserDefined;
 												}
 
 												if (param_matches) {
@@ -2861,6 +2865,67 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												  decl.identifier_token().value(), "(value) instead of = value");
 										throw CompileError("Cannot use copy initialization with explicit constructor");
 									}
+								}
+							}
+
+							if (!sema_selected_converting_ctor && type_info->struct_info_) {
+								ConversionRank best_rank = ConversionRank::NoMatch;
+								bool best_is_ambiguous = false;
+								for (const auto& func : type_info->struct_info_->member_functions) {
+									if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) {
+										continue;
+									}
+									const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
+									if (ctor_node.is_explicit()) {
+										continue;
+									}
+									const auto& params = ctor_node.parameter_nodes();
+									if (params.empty() || !params[0].is<DeclarationNode>()) {
+										continue;
+									}
+									bool all_have_defaults = true;
+									for (size_t i = 1; i < params.size(); ++i) {
+										if (!params[i].is<DeclarationNode>() ||
+											!params[i].as<DeclarationNode>().has_default_value()) {
+											all_have_defaults = false;
+											break;
+										}
+									}
+									if (!all_have_defaults) {
+										continue;
+									}
+									const TypeSpecifierNode& param_type =
+										params[0].as<DeclarationNode>().type_specifier_node();
+									TypeSpecifierNode param_value_type = param_type;
+									param_value_type.set_reference_qualifier(ReferenceQualifier::None);
+
+									TypeConversionResult conv = TypeConversionResult::no_match();
+									if (param_value_type.type() == init_type) {
+										conv = TypeConversionResult::exact_match();
+										if (isIrStructType(toIrType(init_type)) &&
+											(!init_type_index.is_valid() || !param_value_type.type_index().is_valid() ||
+											 !isSameStructTypeForInitialization(param_value_type.type_index(), init_type_index))) {
+											conv = TypeConversionResult::no_match();
+										}
+									} else if (!isIrStructType(toIrType(init_type)) &&
+											   !isIrStructType(toIrType(param_value_type.type()))) {
+										conv = can_convert_type(init_type, param_value_type.type());
+									}
+									if (!conv.is_valid || conv.rank == ConversionRank::UserDefined) {
+										continue;
+									}
+									if (static_cast<int>(conv.rank) < static_cast<int>(best_rank)) {
+										sema_selected_converting_ctor = &ctor_node;
+										sema_selected_param_type = &param_type;
+										best_rank = conv.rank;
+										best_is_ambiguous = false;
+									} else if (conv.rank == best_rank) {
+										best_is_ambiguous = true;
+									}
+								}
+								if (best_is_ambiguous) {
+									sema_selected_converting_ctor = nullptr;
+									sema_selected_param_type = nullptr;
 								}
 							}
 
@@ -3053,12 +3118,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
-							// Register for destructor if needed
-						if (type_info->struct_info_ && type_info->struct_info_->hasDestructor()) {
-							registerVariableWithDestructor(
-								std::string(decl.identifier_token().value()),
-								std::string(StringTable::getStringView(type_info->name())));
-						}
 					} else if (!has_rvalue_initializer) {
 							// No initializer - check if we need to call default constructor
 							// Call default constructor if:
