@@ -11389,9 +11389,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					if (matched_nested_func_decl != nullptr) {
 						matched_nested_func_decl->set_template_body_position(out_of_line_member.body_start);
-						copyDefinitionParameterTypes(
-							matched_nested_func_decl->parameter_nodes(),
-							ool_func.parameter_nodes());
 						copyDefinitionParameterIdentifiers(
 							matched_nested_func_decl->parameter_nodes(),
 							ool_func.parameter_nodes());
