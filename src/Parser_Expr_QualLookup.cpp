@@ -2941,6 +2941,19 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				std::string_view full_qualified_name = gNamespaceRegistry.getQualifiedName(ns_handle);
 				struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(full_qualified_name));
 			}
+			if (struct_type_it == getTypesByNameMap().end() &&
+				is_template_parameter(struct_name) &&
+				!member_function_context_stack_.empty()) {
+				const auto& member_ctx = member_function_context_stack_.back();
+				if (const TypeInfo* current_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
+					if (const TypeInfo::TemplateArgInfo* bound_arg =
+							current_type_info->findLegacyInstantiationArgByName(struct_name)) {
+						if (const TypeInfo* bound_type_info = tryGetTypeInfo(bound_arg->type_index)) {
+							struct_type_it = getTypesByNameMap().find(bound_type_info->name());
+						}
+					}
+				}
+			}
 
 			if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
