@@ -4,6 +4,7 @@
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "ParserTemplateClassShared.h"
 #include "TypeTraitEvaluator.h"
 
 static void buildVariableTemplateParameterReplayState(
@@ -2306,24 +2307,8 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	}
 	if (dependent_base_info == nullptr ||
 		!is_struct_type(dependent_base_info->typeEnum())) {
-		const TypeInfo* unique_owner_type_info = nullptr;
-		for (size_t i = 0; i < template_args.size(); ++i) {
-			if (template_args[i].is_value) {
-				continue;
-			}
-			const TypeInfo* candidate_owner_info =
-				tryGetTypeInfo(template_args[i].type_index);
-			if (candidate_owner_info == nullptr ||
-				!is_struct_type(candidate_owner_info->typeEnum())) {
-				continue;
-			}
-			if (unique_owner_type_info != nullptr) {
-				unique_owner_type_info = nullptr;
-				break;
-			}
-			unique_owner_type_info = candidate_owner_info;
-		}
-		dependent_base_info = unique_owner_type_info;
+		dependent_base_info =
+			findUniqueStructOwnerTypeFromTemplateArgs(template_args);
 	}
 	if (!dependent_base_info || !is_struct_type(dependent_base_info->typeEnum())) {
 		return nullptr;

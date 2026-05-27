@@ -1954,6 +1954,34 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			target.set_size_in_bits(resolved_size_bits);
 		}
 	};
+	auto merge_alias_target_type_spec = [](TypeSpecifierNode& target, const TypeSpecifierNode& alias_type_spec) {
+		if (alias_type_spec.type_index().is_valid()) {
+			target.set_type_index(alias_type_spec.type_index().withCategory(alias_type_spec.type()));
+		}
+		target.set_category(alias_type_spec.type());
+		target.add_cv_qualifier(alias_type_spec.cv_qualifier());
+		for (const auto& ptr_level : alias_type_spec.pointer_levels()) {
+			target.add_pointer_level(ptr_level.cv_qualifier);
+		}
+		target.set_reference_qualifier(collapseReferenceQualifiers(
+			alias_type_spec.reference_qualifier(),
+			target.reference_qualifier()));
+		if (!target.has_function_signature() && alias_type_spec.has_function_signature()) {
+			target.set_function_signature(alias_type_spec.function_signature());
+		}
+		if (alias_type_spec.is_array()) {
+			const std::span<const size_t> target_dimensions = target.array_dimensions();
+			std::vector<size_t> merged_dimensions(target_dimensions.begin(), target_dimensions.end());
+			merged_dimensions.insert(
+				merged_dimensions.end(),
+				alias_type_spec.array_dimensions().begin(),
+				alias_type_spec.array_dimensions().end());
+			target.set_array_dimensions(merged_dimensions);
+		}
+		if (const int resolved_size_bits = getTypeSpecSizeBits(target); resolved_size_bits > 0) {
+			target.set_size_in_bits(resolved_size_bits);
+		}
+	};
 	// Substitute the return type if it's a template parameter
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_specifier_node();
 	auto [return_type_index, return_resolved_arg] = resolve_template_type(return_type_spec.type_index());
@@ -2283,30 +2311,16 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (const auto& template_arg : template_args) {
 				member_template_resolution_args.push_back(template_arg);
 			}
-			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+			param_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
+				*this,
 				&original_param_type_node,
 				param_type_spec,
 				member_template_resolution_params,
 				member_template_resolution_args,
-				[this](
-					std::string_view template_name,
-					std::span<const TemplateTypeArg> template_args,
-					bool force_eager) {
-					return try_instantiate_class_template(
-						template_name,
-						template_args,
-						force_eager);
-				},
-				param_type_index);
-			if (const TypeInfo* materialized_member_alias =
-					materializeInstantiatedMemberAliasTarget(
-						param_type_spec,
-						member_template_resolution_params,
-						member_template_resolution_args)) {
-				param_type_index =
-					materialized_member_alias->registeredTypeIndex().withCategory(
-						materialized_member_alias->typeEnum());
-			}
+				param_type_index,
+				true,
+				true,
+				true);
 
 			// Create the substituted parameter type specifier
 			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
@@ -2330,7 +2344,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				if (const TypeSpecifierNode* alias_type_spec = param_type_info->aliasTypeSpecifier();
 					alias_type_spec != nullptr &&
 					!typeSpecStillUsesDependentPlaceholder(*alias_type_spec)) {
-					substituted_param_type_spec = *alias_type_spec;
+					merge_alias_target_type_spec(
+						substituted_param_type_spec,
+						*alias_type_spec);
 				}
 			}
 			normalizeSubstitutedTypeSpec(substituted_param_type_spec);

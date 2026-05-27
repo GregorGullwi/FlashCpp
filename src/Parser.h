@@ -489,6 +489,17 @@ class Parser {
 	friend class SemanticAnalysis;
 	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
 	friend struct DeferredBaseReplayContextScope;
+	template <typename ParserLike, typename ParamContainer, typename ArgContainer>
+	friend TypeIndex resolveDependentMemberTemplateSubstitutionArtifacts(
+		ParserLike& parser,
+		const ASTNode* original_type_node,
+		const TypeSpecifierNode& original_type_spec,
+		const ParamContainer& template_params,
+		const ArgContainer& template_args,
+		TypeIndex substituted_type_index,
+		bool resolve_concrete_owner,
+		bool resolve_concrete_owner_artifact,
+		bool resolve_materialized_member_alias);
 
 public:
 	static constexpr size_t default_ast_tree_size_ = 256 * 1024;

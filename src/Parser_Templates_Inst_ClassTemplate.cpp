@@ -1101,105 +1101,6 @@ static std::vector<TemplateTypeArg> materializeTemplateArgsExpandingPacks(
 	return result;
 }
 
-template <typename ParamContainer, typename ArgContainer, typename InstantiateFn>
-static TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
-	const TypeSpecifierNode& original_type_spec,
-	const ParamContainer& template_params,
-	const ArgContainer& template_args,
-	InstantiateFn&& instantiate_class_template,
-	TypeIndex substituted_type_index) {
-	if (!substituted_type_index.is_valid()) {
-		return substituted_type_index;
-	}
-
-	const TypeInfo* owner_type_info = tryGetTypeInfo(substituted_type_index);
-	if (owner_type_info == nullptr || !is_struct_type(owner_type_info->typeEnum())) {
-		return substituted_type_index;
-	}
-
-	const TypeInfo* original_type_info = nullptr;
-	if (original_type_spec.type_index().is_valid()) {
-		original_type_info = tryGetTypeInfo(original_type_spec.type_index());
-	}
-	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
-			? original_type_info->dependentQualifiedName()
-			: nullptr;
-	if (dependent_record == nullptr || dependent_record->member_chain.empty()) {
-		return substituted_type_index;
-	}
-
-	const TypeInfo* current_type_info = owner_type_info;
-	for (const auto& member : dependent_record->member_chain) {
-		if (!member.name.isValid()) {
-			return substituted_type_index;
-		}
-
-		if (member.has_template_arguments) {
-			std::vector<TemplateTypeArg> concrete_template_args;
-			concrete_template_args.reserve(member.template_arguments.size());
-			for (const auto& arg_info : member.template_arguments) {
-				TemplateTypeArg concrete_arg =
-					materializeTemplateArg(arg_info, template_params, template_args);
-				if (!concrete_arg.is_value && concrete_arg.type_index.is_valid()) {
-					if (const TypeInfo* concrete_type_info =
-							tryGetTypeInfo(concrete_arg.type_index);
-						concrete_type_info != nullptr) {
-						concrete_arg.type_index =
-							concrete_type_info->registeredTypeIndex().withCategory(
-								concrete_type_info->typeEnum());
-						concrete_arg.setCategory(concrete_type_info->typeEnum());
-					}
-				}
-				concrete_template_args.push_back(std::move(concrete_arg));
-			}
-
-			const std::string_view current_name = StringTable::getStringView(current_type_info->name());
-			if (current_name.empty()) {
-				return substituted_type_index;
-			}
-			const std::string template_name = std::string(StringBuilder()
-				.append(current_name)
-				.append("::")
-				.append(StringTable::getStringView(member.name))
-				.commit());
-			std::optional<ASTNode> instantiated_member_template =
-				instantiate_class_template(
-					template_name,
-					std::span<const TemplateTypeArg>(
-						concrete_template_args.data(),
-						concrete_template_args.size()),
-					false);
-			if (!instantiated_member_template.has_value() ||
-				!instantiated_member_template->is<StructDeclarationNode>()) {
-				return substituted_type_index;
-			}
-
-			const StringHandle instantiated_name =
-				instantiated_member_template->as<StructDeclarationNode>().name();
-			current_type_info = findTypeByName(instantiated_name);
-		} else {
-			const std::string_view current_name = StringTable::getStringView(current_type_info->name());
-			if (current_name.empty()) {
-				return substituted_type_index;
-			}
-			const std::string qualified_member_name = std::string(StringBuilder()
-				.append(current_name)
-				.append("::")
-				.append(StringTable::getStringView(member.name))
-				.commit());
-			current_type_info = findTypeByName(
-				StringTable::getOrInternStringHandle(qualified_member_name));
-		}
-
-		if (current_type_info == nullptr) {
-			return substituted_type_index;
-		}
-	}
-
-	return current_type_info->registeredTypeIndex().withCategory(current_type_info->typeEnum());
-}
-
 static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param) {
 	if (!param.is<DeclarationNode>()) {
 		return nullptr;
@@ -3057,35 +2958,16 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 					template_args_inline)) {
 				dependent_member_type_index = *resolved_outer_param;
 			}
-			dependent_member_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
-				param_type_spec,
-				template_params,
-				template_args_inline,
-				[this](
-					std::string_view template_name,
-					std::span<const TemplateTypeArg> template_args,
-					bool force_eager) {
-					return try_instantiate_class_template(
-						template_name,
-						template_args,
-						force_eager);
-				},
-				dependent_member_type_index);
-			dependent_member_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+			dependent_member_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
+				*this,
 				&original_param_type_node,
 				param_type_spec,
 				template_params,
 				template_args_inline,
-				[this](
-					std::string_view template_name,
-					std::span<const TemplateTypeArg> template_args,
-					bool force_eager) {
-					return try_instantiate_class_template(
-						template_name,
-						template_args,
-						force_eager);
-				},
-				dependent_member_type_index);
+				dependent_member_type_index,
+				true,
+				true,
+				false);
 			if (dependent_member_type_index.is_valid() &&
 				dependent_member_type_index != substituted_param_type.type_index()) {
 				substituted_param_type.set_type_index(
@@ -4299,35 +4181,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					tryGetTypeInfo(param_type_spec.type_index()), tmpl_params, tmpl_args)) {
 				param_type_index = *resolved_param;
 			}
-			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
-				param_type_spec,
-				tmpl_params,
-				tmpl_args,
-				[this](
-					std::string_view template_name,
-					std::span<const TemplateTypeArg> template_args,
-					bool force_eager) {
-					return try_instantiate_class_template(
-						template_name,
-						template_args,
-						force_eager);
-				},
-				param_type_index);
-			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+			param_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
+				*this,
 				&original_param_type_node,
 				param_type_spec,
 				tmpl_params,
 				tmpl_args,
-				[this](
-					std::string_view template_name,
-					std::span<const TemplateTypeArg> template_args,
-					bool force_eager) {
-					return try_instantiate_class_template(
-						template_name,
-						template_args,
-						force_eager);
-				},
-				param_type_index);
+				param_type_index,
+				true,
+				true,
+				false);
 			TypeSpecifierNode substituted_param_type = full_substituted_param_node.is<TypeSpecifierNode>()
 				? full_substituted_param_node.as<TypeSpecifierNode>()
 				: TypeSpecifierNode(
@@ -7487,44 +7350,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										template_args_for_pattern)) {
 									subst_idx = *resolved_outer_param;
 								}
-								subst_idx = resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
-									param_type_spec,
-									template_params,
-									template_args_for_pattern,
-									[this](
-										std::string_view template_name,
-										std::span<const TemplateTypeArg> template_args,
-										bool force_eager) {
-										return try_instantiate_class_template(
-											template_name,
-											template_args,
-											force_eager);
-									},
-									subst_idx);
-								subst_idx = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+								subst_idx = resolveDependentMemberTemplateSubstitutionArtifacts(
+									*this,
 									&original_param_type_node,
 									param_type_spec,
 									template_params,
 									template_args_for_pattern,
-									[this](
-										std::string_view template_name,
-										std::span<const TemplateTypeArg> template_args,
-										bool force_eager) {
-										return try_instantiate_class_template(
-											template_name,
-											template_args,
-											force_eager);
-									},
-									subst_idx);
-								if (const TypeInfo* materialized_member_alias =
-										materializeInstantiatedMemberAliasTarget(
-											param_type_spec,
-											template_params,
-											template_args_for_pattern)) {
-									subst_idx =
-										materialized_member_alias->registeredTypeIndex().withCategory(
-											materialized_member_alias->typeEnum());
-								}
+									subst_idx,
+									true,
+									true,
+									true);
 								new_param_type = subst_idx.category();
 								new_param_type_index = subst_idx;
 							}
@@ -13297,44 +13132,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_to_use)) {
 								subst_idx = *resolved_outer_param;
 							}
-							subst_idx = resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
-								param_type_spec,
-								template_params,
-								template_args_to_use,
-								[this](
-									std::string_view template_name,
-									std::span<const TemplateTypeArg> template_args,
-									bool force_eager) {
-									return try_instantiate_class_template(
-										template_name,
-										template_args,
-										force_eager);
-								},
-								subst_idx);
-							subst_idx = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+							subst_idx = resolveDependentMemberTemplateSubstitutionArtifacts(
+								*this,
 								&original_param_type_node,
 								param_type_spec,
 								template_params,
 								template_args_to_use,
-								[this](
-									std::string_view template_name,
-									std::span<const TemplateTypeArg> template_args,
-									bool force_eager) {
-									return try_instantiate_class_template(
-										template_name,
-										template_args,
-										force_eager);
-								},
-								subst_idx);
-							if (const TypeInfo* materialized_member_alias =
-									materializeInstantiatedMemberAliasTarget(
-										param_type_spec,
-										template_params,
-										template_args_to_use)) {
-								subst_idx =
-									materialized_member_alias->registeredTypeIndex().withCategory(
-										materialized_member_alias->typeEnum());
-							}
+								subst_idx,
+								true,
+								true,
+								true);
 							new_param_type = subst_idx.category();
 							new_param_type_index = subst_idx;
 						}
@@ -13811,47 +13618,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								template_args_to_use.data(),
 								template_args_to_use.size());
 							TypeIndex resolved_index = owner_index.is_valid()
-								? resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
+								? resolveDependentMemberTemplateSubstitutionArtifacts(
+									  *this,
+									  nullptr,
 									  definition_type,
 									  outer_params_span,
 									  outer_args_span,
-									  [this](
-										  std::string_view template_name,
-										  std::span<const TemplateTypeArg> args,
-										  bool force_eager) {
-										  return try_instantiate_class_template(
-											  template_name,
-											  args,
-											  force_eager);
-									  },
-									  owner_index)
+									  owner_index,
+									  true,
+									  true,
+									  true)
 								: definition_type.type_index();
 							ASTNode definition_type_node = definition_decl->type_node();
-							resolved_index =
-								resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
-									&definition_type_node,
-									definition_type,
-									outer_params_span,
-									outer_args_span,
-									[this](
-										std::string_view template_name,
-										std::span<const TemplateTypeArg> args,
-										bool force_eager) {
-										return try_instantiate_class_template(
-											template_name,
-											args,
-											force_eager);
-									},
-									resolved_index);
-							if (const TypeInfo* materialized_member_alias =
-									materializeInstantiatedMemberAliasTarget(
-										definition_type,
-										outer_params_span,
-										outer_args_span)) {
-								resolved_index =
-									materialized_member_alias->registeredTypeIndex().withCategory(
-										materialized_member_alias->typeEnum());
-							}
+							resolved_index = resolveDependentMemberTemplateSubstitutionArtifacts(
+								*this,
+								&definition_type_node,
+								definition_type,
+								outer_params_span,
+								outer_args_span,
+								resolved_index,
+								false,
+								true,
+								true);
 							if (!resolved_index.is_valid() || resolved_index == owner_index) {
 								continue;
 							}
