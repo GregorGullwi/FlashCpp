@@ -1650,6 +1650,9 @@ static const TypeInfo* resolveDependentMemberPlaceholderAgainstOwnerArtifact(
 		}
 
 		if (use_dependent_member_chain) {
+			// Keep template-id chain entries here: they are resolved by the strict
+			// concrete-owner path below and never fall through to the legacy string
+			// lookup path.
 			for (const TypeInfo::DependentQualifiedNameRecord::Member& member :
 				 dependent_record->member_chain) {
 				if (!member.name.isValid()) {

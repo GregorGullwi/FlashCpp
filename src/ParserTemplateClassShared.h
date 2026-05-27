@@ -319,6 +319,27 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 		: resolved_member_type_index;
 }
 
+template <typename NameContainer, typename ArgInfoContainer>
+inline std::optional<TypeIndex> resolveStampedOuterTemplateBindingType(
+	const NameContainer& outer_param_names,
+	const ArgInfoContainer& outer_arg_infos,
+	StringHandle dependent_owner_name) {
+	if (!dependent_owner_name.isValid()) {
+		return std::nullopt;
+	}
+	for (size_t i = 0;
+		 i < outer_param_names.size() && i < outer_arg_infos.size();
+		 ++i) {
+		if (outer_param_names[i] != dependent_owner_name ||
+			outer_arg_infos[i].is_value) {
+			continue;
+		}
+		return outer_arg_infos[i].type_index.withCategory(
+			outer_arg_infos[i].typeEnum());
+	}
+	return std::nullopt;
+}
+
 template <typename ParamContainer, typename ArgContainer, typename InstantiateFn>
 inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
 	const ASTNode* original_type_node,
