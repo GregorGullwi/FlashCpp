@@ -2026,9 +2026,6 @@ static bool dependentTemplatePlaceholderNamesMatch(
 
 	const std::string_view instantiated_name = identity_name(instantiated_type);
 	const std::string_view out_of_line_name = identity_name(out_of_line_type);
-	if (instantiated_name == out_of_line_name) {
-		return true;
-	}
 
 	const TypeInfo* instantiated_type_info = instantiated_type.type_index().is_valid()
 		? tryGetTypeInfo(instantiated_type.type_index())
@@ -2046,14 +2043,43 @@ static bool dependentTemplatePlaceholderNamesMatch(
 		const TypeInfo::DependentQualifiedNameRecord* out_of_line_record =
 			out_of_line_type_info->dependentQualifiedName();
 		if (instantiated_record != nullptr &&
-			out_of_line_record != nullptr &&
-			dependentQualifiedNameRecordsMatchForSignature(
+			out_of_line_record != nullptr) {
+			return dependentQualifiedNameRecordsMatchForSignature(
 				*instantiated_record,
 				*out_of_line_record,
 				instantiated_template_params,
-				out_of_line_template_params)) {
+				out_of_line_template_params);
+		}
+	}
+
+	if (instantiated_name == out_of_line_name) {
+		const std::string_view instantiated_token_name =
+			instantiated_type.token().value();
+		const std::string_view out_of_line_token_name =
+			out_of_line_type.token().value();
+		if (instantiated_token_name == out_of_line_token_name ||
+			instantiated_token_name.empty() ||
+			out_of_line_token_name.empty()) {
 			return true;
 		}
+		size_t instantiated_token_index = 0;
+		size_t out_of_line_token_index = 0;
+		const TemplateParameterNode* instantiated_token_param =
+			findTemplateParameterByName(
+				instantiated_template_params,
+				instantiated_token_name,
+				&instantiated_token_index);
+		const TemplateParameterNode* out_of_line_token_param =
+			findTemplateParameterByName(
+				out_of_line_template_params,
+				out_of_line_token_name,
+				&out_of_line_token_index);
+		return instantiated_token_param != nullptr &&
+			out_of_line_token_param != nullptr &&
+			instantiated_token_index == out_of_line_token_index &&
+			instantiated_token_param->kind() == out_of_line_token_param->kind() &&
+			instantiated_token_param->is_variadic() ==
+				out_of_line_token_param->is_variadic();
 	}
 
 	auto owner_matches_named_placeholder =
@@ -11363,6 +11389,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					if (matched_nested_func_decl != nullptr) {
 						matched_nested_func_decl->set_template_body_position(out_of_line_member.body_start);
+						copyDefinitionParameterTypes(
+							matched_nested_func_decl->parameter_nodes(),
+							ool_func.parameter_nodes());
 						copyDefinitionParameterIdentifiers(
 							matched_nested_func_decl->parameter_nodes(),
 							ool_func.parameter_nodes());
