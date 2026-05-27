@@ -1508,6 +1508,45 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			const auto& arg_decl_node = *decl_ptr;
+			const FunctionDeclarationNode* callee_function_decl =
+				callExprNode.callee().function_declaration_or_null();
+			const bool is_variadic_pack_argument =
+				!param_type &&
+				callee_function_decl &&
+				callee_function_decl->is_variadic() &&
+				arg_index >= callee_function_decl->parameter_nodes().size();
+			if (is_variadic_pack_argument &&
+				arg_decl_node.type_specifier_node().category() == TypeCategory::Struct &&
+				!arg_decl_node.type_specifier_node().is_reference() &&
+				!arg_decl_node.type_specifier_node().is_rvalue_reference()) {
+				const TypeSpecifierNode& arg_type_node = arg_decl_node.type_specifier_node();
+				int struct_size_bits = static_cast<int>(arg_type_node.size_in_bits());
+				if (struct_size_bits == 0) {
+					struct_size_bits = requireConcreteAliasResolvedCodegenSizeBits(
+						arg_type_node,
+						"variadic struct argument materialization");
+				}
+
+				TypedValue source_value = makeTypedValue(
+					arg_type_node.type_index().withCategory(arg_type_node.type()),
+					SizeInBits{struct_size_bits},
+					IrValue(identifier_name));
+				TempVar by_value_temp = var_counter.next();
+				AssignmentOp copy_op;
+				copy_op.result = by_value_temp;
+				copy_op.lhs = makeTypedValue(
+					arg_type_node.type_index().withCategory(arg_type_node.type()),
+					SizeInBits{struct_size_bits},
+					IrValue(by_value_temp));
+				copy_op.rhs = source_value;
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(copy_op), callExprNode.called_from()));
+
+				call_arguments.push_back(makeTypedValue(
+					arg_type_node.type_index().withCategory(arg_type_node.type()),
+					SizeInBits{struct_size_bits},
+					IrValue(by_value_temp)));
+				return;
+			}
 			call_arguments.push_back(buildDirectIdentifierCallArgument(
 				arg_decl_node,
 				identifier_name,

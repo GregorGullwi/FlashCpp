@@ -2522,7 +2522,24 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (!passOperandArg(lhsExprResult, lhsCat, lhsSize, "LHS", call_op))
 					return ExprResult{};
 			} else {
-				call_op.args.push_back(toTypedValue(lhsExprResult));
+				TypedValue lhs_arg = toTypedValue(lhsExprResult);
+				if (!param_types.empty() &&
+					param_types[0].category() == TypeCategory::Struct &&
+					param_types[0].type_index().is_valid()) {
+					lhs_arg.setType(TypeCategory::Struct);
+					lhs_arg.ir_type = IrType::Struct;
+					lhs_arg.type_index = param_types[0].type_index();
+					if (lhs_arg.size_in_bits.value == 0) {
+						int param_size_bits = static_cast<int>(param_types[0].size_in_bits());
+						if (param_size_bits == 0) {
+							param_size_bits = requireConcreteAliasResolvedCodegenSizeBits(
+								param_types[0],
+								"free-function operator lhs argument");
+						}
+						lhs_arg.size_in_bits = SizeInBits{param_size_bits};
+					}
+				}
+				call_op.args.push_back(std::move(lhs_arg));
 			}
 
 			// Pass RHS as second argument
@@ -2530,7 +2547,24 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (!passOperandArg(rhsExprResult, rhsCat, rhsSize, "RHS", call_op))
 					return ExprResult{};
 			} else {
-				call_op.args.push_back(toTypedValue(rhsExprResult));
+				TypedValue rhs_arg = toTypedValue(rhsExprResult);
+				if (param_types.size() >= 2 &&
+					param_types[1].category() == TypeCategory::Struct &&
+					param_types[1].type_index().is_valid()) {
+					rhs_arg.setType(TypeCategory::Struct);
+					rhs_arg.ir_type = IrType::Struct;
+					rhs_arg.type_index = param_types[1].type_index();
+					if (rhs_arg.size_in_bits.value == 0) {
+						int param_size_bits = static_cast<int>(param_types[1].size_in_bits());
+						if (param_size_bits == 0) {
+							param_size_bits = requireConcreteAliasResolvedCodegenSizeBits(
+								param_types[1],
+								"free-function operator rhs argument");
+						}
+						rhs_arg.size_in_bits = SizeInBits{param_size_bits};
+					}
+				}
+				call_op.args.push_back(std::move(rhs_arg));
 			}
 
 			// Capture return metadata before the move invalidates call_op.
