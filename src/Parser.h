@@ -3049,6 +3049,12 @@ public:	// Public methods for template instantiation
 		}
 		return std::nullopt;
 	}
+	std::optional<ASTNode> instantiateClassTemplateForSignatureReplay(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> template_args,
+		bool force_eager = false) {
+		return try_instantiate_class_template(template_name, template_args, force_eager);
+	}
 
 private:	 // Resume private methods
 
