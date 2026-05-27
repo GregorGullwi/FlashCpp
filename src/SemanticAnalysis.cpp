@@ -230,10 +230,6 @@ bool markLazyReceiverMemberOdrUsed(
 	return search_bases(receiver_type_info, search_bases);
 }
 
-bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
-	return isFunctionCandidateViableForArgCount(candidate, argument_count);
-}
-
 ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
 	const DeclarationNode& original_decl = original_var_decl.declaration();
 	const TypeSpecifierNode& placeholder_type = original_decl.type_specifier_node();
@@ -7184,7 +7180,7 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 				best_match = &candidate;
 				break;
 			}
-			if (!callableOperatorAcceptsArgumentCount(candidate, arg_count))
+			if (!isFunctionCandidateViableForArgCount(candidate, arg_count))
 				continue;
 			if (!default_argument_match) {
 				default_argument_match = &candidate;
