@@ -1829,6 +1829,27 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 							}
 						}
 					}
+					if (func_decl.has_outer_template_bindings()) {
+						const InlineVector<StringHandle, 4>& outer_param_names =
+							func_decl.outer_template_param_names();
+						const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_arg_infos =
+							func_decl.outer_template_args();
+						if (StringHandle tn_handle = StringTable::getOrInternStringHandle(tn);
+							tn_handle.isValid()) {
+							if (std::optional<TypeIndex> resolved_outer =
+									resolveStampedOuterTemplateBindingType(
+										outer_param_names,
+										outer_arg_infos,
+										tn_handle);
+								resolved_outer.has_value()) {
+									return {*resolved_outer, nullptr};
+							}
+						}
+						if (auto resolved_outer = resolveDependentPlaceholderFromOuterBindings(
+								ti, outer_param_names, outer_arg_infos)) {
+							return {*resolved_outer, nullptr};
+						}
+					}
 				}
 			}
 		}
@@ -2225,10 +2246,34 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				continue;
 
 			// Resolve the template parameter type (to get function_signature if available)
+			ASTNode original_param_type_node = param_decl.type_node();
 			auto [param_type_index, resolved_arg] = resolve_template_type(param_type_spec.type_index());
 			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
-				param_decl.type_node(),
+				original_param_type_node,
 				param_type_spec,
+				param_type_index);
+			if (func_decl.has_outer_template_bindings()) {
+				if (auto resolved_outer = resolveDependentPlaceholderFromOuterBindings(
+						tryGetTypeInfo(param_type_spec.type_index()),
+						func_decl.outer_template_param_names(),
+						func_decl.outer_template_args())) {
+					param_type_index = *resolved_outer;
+				}
+			}
+			param_type_index = resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+				&original_param_type_node,
+				param_type_spec,
+				template_params,
+				template_args,
+				[this](
+					std::string_view template_name,
+					std::span<const TemplateTypeArg> template_args,
+					bool force_eager) {
+					return try_instantiate_class_template(
+						template_name,
+						template_args,
+						force_eager);
+				},
 				param_type_index);
 
 			// Create the substituted parameter type specifier

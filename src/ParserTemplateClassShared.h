@@ -319,6 +319,193 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 		: resolved_member_type_index;
 }
 
+template <typename NameContainer, typename ArgInfoContainer>
+inline std::optional<TypeIndex> resolveStampedOuterTemplateBindingType(
+	const NameContainer& outer_param_names,
+	const ArgInfoContainer& outer_arg_infos,
+	StringHandle dependent_owner_name) {
+	if (!dependent_owner_name.isValid()) {
+		return std::nullopt;
+	}
+	for (size_t i = 0;
+		 i < outer_param_names.size() && i < outer_arg_infos.size();
+		 ++i) {
+		if (outer_param_names[i] != dependent_owner_name ||
+			outer_arg_infos[i].is_value) {
+			continue;
+		}
+		return outer_arg_infos[i].type_index.withCategory(
+			outer_arg_infos[i].typeEnum());
+	}
+	return std::nullopt;
+}
+
+template <typename NameContainer, typename ArgInfoContainer>
+inline std::optional<TypeIndex> resolveDependentPlaceholderFromOuterBindings(
+	const TypeInfo* type_info,
+	const NameContainer& outer_param_names,
+	const ArgInfoContainer& outer_arg_infos) {
+	if (type_info == nullptr || !type_info->isDependentPlaceholder()) {
+		return std::nullopt;
+	}
+	const auto* dependent_record = type_info->dependentQualifiedName();
+	if (dependent_record == nullptr || !dependent_record->owner_name.isValid()) {
+		return std::nullopt;
+	}
+	return resolveStampedOuterTemplateBindingType(
+		outer_param_names,
+		outer_arg_infos,
+		dependent_record->owner_name);
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline std::optional<TypeIndex> resolveDependentPlaceholderFromTemplateParams(
+	const TypeInfo* type_info,
+	const ParamContainer& tmpl_params,
+	const ArgContainer& tmpl_args) {
+	if (type_info == nullptr || !type_info->isDependentPlaceholder()) {
+		return std::nullopt;
+	}
+	const auto* dependent_record = type_info->dependentQualifiedName();
+	if (dependent_record == nullptr || !dependent_record->owner_name.isValid()) {
+		return std::nullopt;
+	}
+	for (size_t i = 0; i < tmpl_params.size() && i < tmpl_args.size(); ++i) {
+		const TemplateParameterNode* template_param = tryGetTemplateParameterNode(tmpl_params[i]);
+		if (template_param == nullptr ||
+			template_param->nameHandle() != dependent_record->owner_name ||
+			tmpl_args[i].is_value) {
+			continue;
+		}
+		return tmpl_args[i].type_index.withCategory(tmpl_args[i].typeEnum());
+	}
+	return std::nullopt;
+}
+
+template <typename ParamContainer, typename ArgContainer, typename InstantiateFn>
+inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtifact(
+	const ASTNode* original_type_node,
+	const TypeSpecifierNode& original_type_spec,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	InstantiateFn&& instantiate_class_template,
+	TypeIndex substituted_type_index) {
+	if (!substituted_type_index.is_valid()) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* owner_type_info = tryGetTypeInfo(substituted_type_index);
+	if (owner_type_info == nullptr || !is_struct_type(owner_type_info->typeEnum())) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* original_type_info = nullptr;
+	if (original_type_spec.type_index().is_valid()) {
+		original_type_info = tryGetTypeInfo(original_type_spec.type_index());
+	}
+	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
+			? original_type_info->dependentQualifiedName()
+			: nullptr;
+	if (dependent_record == nullptr && original_type_node != nullptr) {
+		if (original_type_node->is<QualifiedIdentifierNode>()) {
+			dependent_record =
+				original_type_node->as<QualifiedIdentifierNode>().dependentQualifiedName();
+		} else if (original_type_node->is<ExpressionNode>()) {
+			const ExpressionNode& expr = original_type_node->as<ExpressionNode>();
+			if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expr)) {
+				dependent_record = qualified->dependentQualifiedName();
+			}
+		}
+	}
+	if (dependent_record == nullptr || dependent_record->member_chain.empty()) {
+		return substituted_type_index;
+	}
+
+	const TypeInfo* current_type_info = owner_type_info;
+	for (const auto& member : dependent_record->member_chain) {
+		if (!member.name.isValid()) {
+			return substituted_type_index;
+		}
+
+		if (member.has_template_arguments) {
+			std::vector<TemplateTypeArg> concrete_template_args;
+			concrete_template_args.reserve(member.template_arguments.size());
+			for (const auto& arg_info : member.template_arguments) {
+				TemplateTypeArg concrete_arg =
+					materializeTemplateArg(arg_info, template_params, template_args);
+				if (concrete_arg.is_dependent ||
+					concrete_arg.dependent_name.isValid() ||
+					concrete_arg.dependent_expr.has_value()) {
+					return substituted_type_index;
+				}
+				if (!concrete_arg.is_value && concrete_arg.type_index.is_valid()) {
+					if (const TypeInfo* concrete_type_info =
+							tryGetTypeInfo(concrete_arg.type_index);
+						concrete_type_info != nullptr) {
+						concrete_arg.type_index =
+							concrete_type_info->registeredTypeIndex().withCategory(
+								concrete_type_info->typeEnum());
+						concrete_arg.setCategory(concrete_type_info->typeEnum());
+					}
+				}
+				concrete_template_args.push_back(std::move(concrete_arg));
+			}
+
+			const std::string_view current_name =
+				StringTable::getStringView(current_type_info->name());
+			if (current_name.empty()) {
+				return substituted_type_index;
+			}
+			const std::string template_name = std::string(StringBuilder()
+				.append(current_name)
+				.append("::")
+				.append(StringTable::getStringView(member.name))
+				.commit());
+			std::optional<ASTNode> instantiated_member_template =
+				instantiate_class_template(
+					template_name,
+					std::span<const TemplateTypeArg>(
+						concrete_template_args.data(),
+						concrete_template_args.size()),
+					false);
+			if (!instantiated_member_template.has_value() ||
+				!instantiated_member_template->is<StructDeclarationNode>()) {
+				return substituted_type_index;
+			}
+
+			const StringHandle instantiated_name =
+				instantiated_member_template->as<StructDeclarationNode>().name();
+			current_type_info = findTypeByName(instantiated_name);
+		} else {
+			const std::string_view current_name =
+				StringTable::getStringView(current_type_info->name());
+			if (current_name.empty()) {
+				return substituted_type_index;
+			}
+			const std::string qualified_member_name = std::string(StringBuilder()
+				.append(current_name)
+				.append("::")
+				.append(StringTable::getStringView(member.name))
+				.commit());
+			current_type_info = findTypeByName(
+				StringTable::getOrInternStringHandle(qualified_member_name));
+		}
+
+		if (current_type_info == nullptr) {
+			return substituted_type_index;
+		}
+	}
+
+	TypeIndex resolved_type_index =
+		current_type_info->registeredTypeIndex().withCategory(current_type_info->typeEnum());
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_type_index);
+	if (resolved_alias.type_index.is_valid()) {
+		return resolved_alias.type_index.withCategory(resolved_alias.typeEnum());
+	}
+	return resolved_type_index;
+}
+
 template <
 	typename ParamContainer,
 	typename ArgContainer,

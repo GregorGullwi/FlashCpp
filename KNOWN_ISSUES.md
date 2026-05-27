@@ -4,8 +4,6 @@ This file records confirmed bugs and quality-of-implementation (QoI) deficiencie
 FlashCpp C++20 compiler. Each entry includes the root cause, the affected code path, and
 (where applicable) a recommended fix.
 
----
-
 ## 1) MSVC `<limits>` now stops later on `numeric_limits` constexpr member initialization
 
 - **Symptom**: On Windows/MSVC STL, `tests/std/test_std_limits.cpp` now gets past
@@ -58,3 +56,19 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Fix direction**: Audit where FlashCpp synthesizes or exports the GS cookie
   runtime state and make it coexist with the CRT-provided definition instead of
   emitting a second strong symbol.
+
+---
+
+## 5) OOL member-function-template dependent member-template pointer parameter dereference (OPEN)
+
+- **Symptom**: A reduced out-of-line member-function-template body using
+  `typename T::template AddPtr<int>::type` as a parameter can still crash at
+  runtime when the body directly dereferences or forwards that parameter as an
+  `int*`, even though signature replay now accepts the member-template type
+  chain.
+- **Root cause**: The replay/signature path can resolve the chain for matching,
+  but some lazy member-function-template body/codegen surfaces still preserve
+  placeholder ABI metadata for the parameter.
+- **Impact**: Regression coverage currently checks pointer substitution through
+  `sizeof(value)` rather than direct dereference until the remaining body/codegen
+  metadata gap is closed.
