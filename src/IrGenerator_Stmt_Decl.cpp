@@ -236,6 +236,21 @@ std::optional<TypeSpecifierNode> AstToIr::tryBuildCodegenOverloadResolutionArgTy
 	}
 }
 
+bool AstToIr::isSameStructTypeForInitialization(TypeIndex lhs_type_index, TypeIndex rhs_type_index) const {
+	if (!lhs_type_index.is_valid() || !rhs_type_index.is_valid()) {
+		return false;
+	}
+	if (lhs_type_index == rhs_type_index) {
+		return true;
+	}
+	const StructTypeInfo* lhs_struct_info = tryGetStructTypeInfo(lhs_type_index);
+	const StructTypeInfo* rhs_struct_info = tryGetStructTypeInfo(rhs_type_index);
+	if (lhs_struct_info && rhs_struct_info && isSameClassOrInstantiation(lhs_struct_info, rhs_struct_info)) {
+		return true;
+	}
+	return sema_.isLogicallySameStructType(lhs_type_index, rhs_type_index);
+}
+
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
 	if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
 		return std::nullopt;
@@ -251,7 +266,8 @@ std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& ini
 	const bool is_xvalue_source = init_type.is_rvalue_reference();
 	init_type.set_reference_qualifier(ReferenceQualifier::None);
 
-	if (init_type.category() != TypeCategory::Struct || init_type.type_index() != target_type.type_index()) {
+	if (init_type.category() != TypeCategory::Struct ||
+		!isSameStructTypeForInitialization(init_type.type_index(), target_type.type_index())) {
 		return std::nullopt;
 	}
 
@@ -270,7 +286,11 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		return *same_type_ctor_preference;
 	}
 
-	return init_operands.category() == TypeCategory::Struct && target_type.category() == TypeCategory::Struct && init_operands.type_index.is_valid() && init_operands.type_index == target_type.type_index() && isExprResultXValue(init_operands);
+	return init_operands.category() == TypeCategory::Struct &&
+		   target_type.category() == TypeCategory::Struct &&
+		   init_operands.type_index.is_valid() &&
+		   isSameStructTypeForInitialization(init_operands.type_index, target_type.type_index()) &&
+		   isExprResultXValue(init_operands);
 }
 
 void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
@@ -1482,7 +1502,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 														const TypeSpecifierNode& init_type = init_decl->type_specifier_node();
 														// Check if initializer is of the same struct type
 														if (init_type.category() == TypeCategory::Struct &&
-															init_type.type_index() == type_index) {
+															isSameStructTypeForInitialization(init_type.type_index(), type_index)) {
 															init_is_same_struct_type = true;
 														}
 													}
@@ -2442,7 +2462,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							const TypeSpecifierNode& ctor_type = direct_ctor->type_node();
 							ctor_constructs_target_type =
 								ctor_type.category() == type_node.category() &&
-								ctor_type.type_index() == type_node.type_index();
+								isSameStructTypeForInitialization(ctor_type.type_index(), type_node.type_index());
 						}
 						const bool require_sema_resolved_ctor =
 							sema_normalized_current_function_ &&
@@ -2493,7 +2513,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 														const TypeSpecifierNode& arg_type = arg_decl->type_specifier_node();
 														// Check if argument is of the same struct type
 														if (arg_type.category() == TypeCategory::Struct &&
-															arg_type.type_index() == type_node.type_index()) {
+															isSameStructTypeForInitialization(arg_type.type_index(), type_node.type_index())) {
 															arg_is_same_struct_type = true;
 														}
 													}
@@ -2683,7 +2703,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 								// Check if types differ
-							is_converting_ctor = (init_cat != TypeCategory::Struct) || (init_type_index != type_node.type_index());
+							is_converting_ctor =
+								(init_cat != TypeCategory::Struct) ||
+								!isSameStructTypeForInitialization(init_type_index, type_node.type_index());
 
 							if (is_converting_ctor && init_node.is<ExpressionNode>()) {
 								const void* key = &init_node.as<ExpressionNode>();
@@ -2696,7 +2718,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										const CanonicalTypeDesc& target_desc =
 											sema_.typeContext().get(cast_info.target_type_id);
 										if (target_desc.category() == TypeCategory::Struct &&
-											target_desc.type_index == type_node.type_index()) {
+											isSameStructTypeForInitialization(target_desc.type_index, type_node.type_index())) {
 											const CanonicalTypeDesc& source_desc =
 												sema_.typeContext().get(cast_info.source_type_id);
 											if (source_desc.category() != TypeCategory::Invalid) {
@@ -2741,7 +2763,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 														// For class types, require exact type match, not just Type::Struct kind.
 													if (isIrStructType(toIrType(init_type)) &&
 														(!init_type_index.is_valid() || !param_type.type_index().is_valid() ||
-														 param_type.type_index() != init_type_index)) {
+														 !isSameStructTypeForInitialization(param_type.type_index(), init_type_index))) {
 														param_matches = false;
 													}
 												}

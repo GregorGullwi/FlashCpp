@@ -6511,7 +6511,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	// Without this short-circuit, sources whose canonical id only differs by a
 	// const qualifier (e.g. accessing a member through a const `this`) reach the
 	// converting-ctor scan below and incorrectly trip the explicit-ctor error.
-	if (from_desc.type_index == to_desc.type_index) {
+	if (isLogicallySameStructType(from_desc.type_index, to_desc.type_index)) {
 		const TypeInfo* same_type_info = tryGetTypeInfo(to_desc.type_index);
 		if (same_type_info && same_type_info->getStructInfo()) {
 			return false;
