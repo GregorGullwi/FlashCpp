@@ -3650,6 +3650,7 @@ bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 // Returns true for:
 //   - a ConstCastNode whose target type has the 'const' CV-qualifier
 //   - an IdentifierNode resolved (via symbol_table) to a const-typed VariableDeclarationNode
+//   - any expression whose semantic type resolves to a const-qualified type
 bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 	if (!expr_node.is<ExpressionNode>())
 		return false;
@@ -3701,6 +3702,10 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 				}
 			}
 		}
+	}
+
+	if (auto expr_type = parser_.get_expression_type(expr_node); expr_type.has_value()) {
+		return expr_type->is_const();
 	}
 
 	return false;
