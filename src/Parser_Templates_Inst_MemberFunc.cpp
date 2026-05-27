@@ -275,10 +275,10 @@ TemplateNameLookupRequest Parser::buildMemberFunctionTemplateLookupRequest(
 	return request;
 }
 
-std::vector<TemplateNameLookupCandidate> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
+InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplateCandidatesForInstantiation(
 	std::string_view struct_name,
 	std::string_view member_name) {
-	std::vector<TemplateNameLookupCandidate> candidates;
+	InlineVector<TemplateNameLookupCandidate, 4> candidates;
 	std::unordered_set<const void*> seen_declarations;
 	const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 	const StringHandle requested_owner = StringTable::getOrInternStringHandle(struct_name);
@@ -551,7 +551,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	ScopedParserInstantiationContext inst_ctx_guard(*this, template_instantiation_mode_, qualified_name);
 
 	// Route member template lookup through the semantic two-phase lookup request.
-	std::vector<TemplateNameLookupCandidate> template_candidates =
+	InlineVector<TemplateNameLookupCandidate, 4> template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
@@ -569,7 +569,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	struct CandidateResult {
 		const ASTNode* template_node = nullptr;
 		StringHandle lookup_name{};
-		std::vector<TemplateTypeArg> template_args;
+		InlineVector<TemplateTypeArg, 4> template_args;
 		int specificity = 0;
 		size_t overload_index = 0;  // assigned externally to template_candidates index; used to build
 		                            // discriminated cache keys when multiple overloads exist
@@ -602,12 +602,15 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				func_decl,
 				arg_types,
 				0)) {
+			InlineVector<TemplateTypeArg, 4> deduced_template_args;
+			deduced_template_args.reserve(shared_deduction->template_args.size());
+			for (const TemplateTypeArg& template_arg : shared_deduction->template_args) {
+				deduced_template_args.push_back(template_arg);
+			}
 			return CandidateResult{
 				&template_node_cand,
 				lookup_candidate.identity.lookup_name,
-				std::vector<TemplateTypeArg>(
-					shared_deduction->template_args.begin(),
-					shared_deduction->template_args.end()),
+				std::move(deduced_template_args),
 				computeFunctionTemplateSpecificity(template_func)};
 		}
 
@@ -672,7 +675,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		}
 
-		std::vector<TemplateTypeArg> template_args;
+		InlineVector<TemplateTypeArg, 4> template_args;
+		template_args.reserve(template_params.size());
 		size_t arg_index = 0;
 		for (const auto& template_param_node : template_params) {
 			const TemplateParameterNode& param = template_param_node;
@@ -767,7 +771,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	// (preserves the pre-partial-ordering behavior and avoids spurious ambiguity errors).
 	size_t best_idx = std::numeric_limits<size_t>::max();
 	int best_specificity = -1;
-	std::vector<CandidateResult> viable;
+	InlineVector<CandidateResult, 4> viable;
+	viable.reserve(template_candidates.size());
 	for (size_t i = 0; i < template_candidates.size(); ++i) {
 		auto candidate = tryDeduceCandidate(template_candidates[i]);
 		if (!candidate.has_value()) {
@@ -786,8 +791,8 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 	}
 
 	if (viable.size() > 1) {
-		std::vector<ASTNode> shape_overloads;
-		std::vector<size_t> shape_candidate_indices;
+		InlineVector<ASTNode, 4> shape_overloads;
+		InlineVector<size_t, 4> shape_candidate_indices;
 		shape_overloads.reserve(viable.size());
 		shape_candidate_indices.reserve(viable.size());
 		for (size_t i = 0; i < viable.size(); ++i) {
@@ -1071,8 +1076,8 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));
 	}
 	for (const auto& outer_arg : outer_args) {
-		const std::vector<ASTNode> no_params;
-		const std::vector<TemplateTypeArg> no_args;
+		const InlineVector<ASTNode, 1> no_params;
+		const InlineVector<TemplateTypeArg, 1> no_args;
 		lazy_info.template_args.push_back(materializeTemplateArg(
 			outer_arg,
 			no_params,
@@ -1201,7 +1206,8 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 	auto materialize_template_ctor_candidates =
 		[&](const ConstructorDeclarationNode* preferred_template_ctor)
 			-> const ConstructorDeclarationNode* {
-		std::vector<const ConstructorDeclarationNode*> concrete_matches;
+		InlineVector<const ConstructorDeclarationNode*, 4> concrete_matches;
+		concrete_matches.reserve(struct_info.member_functions.size());
 
 		auto try_materialize_candidate =
 			[&](const ConstructorDeclarationNode& template_ctor) {
@@ -1455,7 +1461,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 	}
 
 	// Route member template overload discovery through the semantic two-phase lookup request.
-	std::vector<TemplateNameLookupCandidate> template_candidates =
+	InlineVector<TemplateNameLookupCandidate, 4> template_candidates =
 		lookupMemberFunctionTemplateCandidatesForInstantiation(struct_name, member_name);
 
 	if (template_candidates.empty()) {
@@ -1567,11 +1573,13 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			}
 		}
 
-		const std::vector<TypeSpecifierNode> empty_call_arg_types;
+		const InlineVector<TypeSpecifierNode, 1> empty_call_arg_types;
 		std::span<const TypeSpecifierNode> call_arg_types =
 			current_explicit_call_arg_types_ != nullptr
 				? *current_explicit_call_arg_types_
-				: empty_call_arg_types;
+				: std::span<const TypeSpecifierNode>(
+					empty_call_arg_types.data(),
+					empty_call_arg_types.size());
 		// Prefer the declaring owner from inheritance lookup; fall back to deriving
 		// the owner from the candidate's qualified name rather than re-using the
 		// requested receiver (which may be a derived type, not the declaring base).
@@ -1937,7 +1945,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			type_index.category() == TypeCategory::UserDefined) {
 			const TypeInfo* ti = tryGetTypeInfo(type_index);
 			if (ti && ti->isTemplateInstantiation()) {
-				std::vector<TemplateTypeArg> concrete_args =
+				auto concrete_args =
 					materializePlaceholderTemplateArgs(*ti, template_params, template_args);
 
 				if (outer_binding) {
@@ -2005,11 +2013,15 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 		if (alias_type_spec.is_array()) {
 			const std::span<const size_t> target_dimensions = target.array_dimensions();
-			std::vector<size_t> merged_dimensions(target_dimensions.begin(), target_dimensions.end());
-			merged_dimensions.insert(
-				merged_dimensions.end(),
-				alias_type_spec.array_dimensions().begin(),
-				alias_type_spec.array_dimensions().end());
+			InlineVector<size_t, 4> merged_dimensions;
+			merged_dimensions.reserve(
+				target_dimensions.size() + alias_type_spec.array_dimensions().size());
+			for (size_t dimension : target_dimensions) {
+				merged_dimensions.push_back(dimension);
+			}
+			for (size_t dimension : alias_type_spec.array_dimensions()) {
+				merged_dimensions.push_back(dimension);
+			}
 			target.set_array_dimensions(merged_dimensions);
 		}
 		if (const int resolved_size_bits = getTypeSpecSizeBits(target); resolved_size_bits > 0) {

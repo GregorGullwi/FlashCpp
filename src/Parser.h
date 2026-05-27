@@ -1779,7 +1779,7 @@ private:
 		StringHandle owner_name,
 		StringHandle member_name,
 		bool is_dependent) const;
-	std::vector<TemplateNameLookupCandidate> lookupMemberFunctionTemplateCandidatesForInstantiation(
+	InlineVector<TemplateNameLookupCandidate, 4> lookupMemberFunctionTemplateCandidatesForInstantiation(
 		std::string_view struct_name,
 		std::string_view member_name);
 	std::vector<ASTNode> materializeFunctionTemplateCandidateDeclarations(

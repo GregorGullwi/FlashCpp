@@ -5,6 +5,17 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const StructTypeInfo* struct_info,
 	bool set_qualified_name);
 
+// Helper to build qualified name strings for template/member lookup
+// Returns a StringHandle that can be passed to findTypeByName
+inline StringHandle buildQualifiedName(std::string_view owner, std::string_view member) {
+	return StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(owner)
+			.append("::")
+			.append(member)
+			.commit());
+}
+
 inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
 	if (resolved_alias.type_index.is_valid()) {
@@ -21,10 +32,14 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	}
 	if (!resolved_alias.array_dimensions.empty()) {
 		const std::span<const size_t> type_dimensions = type_spec.array_dimensions();
-		std::vector<size_t> array_dimensions(type_dimensions.begin(), type_dimensions.end());
-		array_dimensions.insert(array_dimensions.end(),
-								resolved_alias.array_dimensions.begin(),
-								resolved_alias.array_dimensions.end());
+		InlineVector<size_t, 4> array_dimensions;
+		array_dimensions.reserve(type_dimensions.size() + resolved_alias.array_dimensions.size());
+		for (size_t dimension : type_dimensions) {
+			array_dimensions.push_back(dimension);
+		}
+		for (size_t dimension : resolved_alias.array_dimensions) {
+			array_dimensions.push_back(dimension);
+		}
 		type_spec.set_array_dimensions(array_dimensions);
 	}
 	if (const int resolved_size_bits = getTypeSpecSizeBits(type_spec); resolved_size_bits > 0) {
@@ -569,7 +584,7 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 		}
 
 		if (member.has_template_arguments) {
-			std::vector<TemplateTypeArg> concrete_template_args;
+			InlineVector<TemplateTypeArg, 4> concrete_template_args;
 			concrete_template_args.reserve(member.template_arguments.size());
 			for (const auto& arg_info : member.template_arguments) {
 				TemplateTypeArg concrete_arg =
@@ -587,18 +602,16 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 				concrete_template_args.push_back(std::move(concrete_arg));
 			}
 
-			const std::string_view current_name = StringTable::getStringView(current_type_info->name());
+			const std::string_view current_name =
+				StringTable::getStringView(current_type_info->name());
 			if (current_name.empty()) {
 				return substituted_type_index;
 			}
-			const std::string template_name = std::string(StringBuilder()
-				.append(current_name)
-				.append("::")
-				.append(StringTable::getStringView(member.name))
-				.commit());
+			const std::string_view member_name = StringTable::getStringView(member.name);
+			const StringHandle template_name = buildQualifiedName(current_name, member_name);
 			std::optional<ASTNode> instantiated_member_template =
 				instantiate_class_template(
-					template_name,
+					StringTable::getStringView(template_name),
 					std::span<const TemplateTypeArg>(
 						concrete_template_args.data(),
 						concrete_template_args.size()),
@@ -612,17 +625,13 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 				instantiated_member_template->as<StructDeclarationNode>().name();
 			current_type_info = findTypeByName(instantiated_name);
 		} else {
-			const std::string_view current_name = StringTable::getStringView(current_type_info->name());
+			const std::string_view current_name =
+				StringTable::getStringView(current_type_info->name());
 			if (current_name.empty()) {
 				return substituted_type_index;
 			}
-			const std::string qualified_member_name = std::string(StringBuilder()
-				.append(current_name)
-				.append("::")
-				.append(StringTable::getStringView(member.name))
-				.commit());
-			current_type_info = findTypeByName(
-				StringTable::getOrInternStringHandle(qualified_member_name));
+			const std::string_view member_name = StringTable::getStringView(member.name);
+			current_type_info = findTypeByName(buildQualifiedName(current_name, member_name));
 		}
 
 		if (current_type_info == nullptr) {
@@ -704,75 +713,66 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 		}
 		if (!member_template_name.empty()) {
 			auto try_resolve_for_owner = [&](const TypeInfo* owner_type_info) -> TypeIndex {
-			if (owner_type_info != nullptr && is_struct_type(owner_type_info->typeEnum())) {
-				std::vector<TemplateTypeArg> concrete_template_args;
-				concrete_template_args.reserve(original_type_info->templateArgs().size());
-				for (const auto& arg_info : original_type_info->templateArgs()) {
-					TemplateTypeArg concrete_arg =
-						materializeTemplateArg(arg_info, template_params, template_args);
-					if (concrete_arg.is_dependent ||
-						concrete_arg.dependent_name.isValid() ||
-						concrete_arg.dependent_expr.has_value()) {
-						return substituted_type_index;
+				if (owner_type_info != nullptr && is_struct_type(owner_type_info->typeEnum())) {
+					InlineVector<TemplateTypeArg, 4> concrete_template_args;
+					concrete_template_args.reserve(original_type_info->templateArgs().size());
+					for (const auto& arg_info : original_type_info->templateArgs()) {
+						TemplateTypeArg concrete_arg =
+							materializeTemplateArg(arg_info, template_params, template_args);
+						if (concrete_arg.is_dependent ||
+							concrete_arg.dependent_name.isValid() ||
+							concrete_arg.dependent_expr.has_value()) {
+							return substituted_type_index;
+						}
+						concrete_template_args.push_back(std::move(concrete_arg));
 					}
-					concrete_template_args.push_back(std::move(concrete_arg));
-				}
-				const std::string concrete_template_name = std::string(StringBuilder()
-					.append(StringTable::getStringView(owner_type_info->name()))
-					.append("::")
-					.append(member_template_name)
-					.commit());
-				std::optional<ASTNode> instantiated_member_template =
-					instantiate_class_template(
-						concrete_template_name,
-						std::span<const TemplateTypeArg>(
-							concrete_template_args.data(),
-							concrete_template_args.size()),
-						false);
-				if (instantiated_member_template.has_value() &&
-					instantiated_member_template->is<StructDeclarationNode>()) {
-					std::string_view instantiated_name =
-						StringTable::getStringView(
-							instantiated_member_template->as<StructDeclarationNode>().name());
-					std::string qualified_instantiated_name;
-					if (instantiated_name.find("::") == std::string_view::npos) {
-						qualified_instantiated_name = std::string(StringBuilder()
-							.append(StringTable::getStringView(owner_type_info->name()))
-							.append("::")
-							.append(instantiated_name)
-							.commit());
-					}
-					std::string_view original_type_name =
-						StringTable::getStringView(original_type_info->name());
-					const size_t member_sep = original_type_name.rfind("::");
-					const std::string_view terminal_member =
-						member_sep != std::string_view::npos
-							? original_type_name.substr(member_sep + 2)
-							: std::string_view{};
-					if (!terminal_member.empty()) {
-						auto lookup_member_type = [&](std::string_view instantiated_owner_name) -> const TypeInfo* {
-							if (instantiated_owner_name.empty()) {
-								return nullptr;
+					const std::string_view owner_name_view =
+						StringTable::getStringView(owner_type_info->name());
+					const StringHandle concrete_template_name =
+						buildQualifiedName(owner_name_view, member_template_name);
+					std::optional<ASTNode> instantiated_member_template =
+						instantiate_class_template(
+							StringTable::getStringView(concrete_template_name),
+							std::span<const TemplateTypeArg>(
+								concrete_template_args.data(),
+								concrete_template_args.size()),
+							false);
+					if (instantiated_member_template.has_value() &&
+						instantiated_member_template->is<StructDeclarationNode>()) {
+						std::string_view instantiated_name =
+							StringTable::getStringView(
+								instantiated_member_template->as<StructDeclarationNode>().name());
+						StringHandle qualified_instantiated_name;
+						if (instantiated_name.find("::") == std::string_view::npos) {
+							qualified_instantiated_name =
+								buildQualifiedName(owner_name_view, instantiated_name);
+						}
+						std::string_view original_type_name =
+							StringTable::getStringView(original_type_info->name());
+						const size_t member_sep = original_type_name.rfind("::");
+						const std::string_view terminal_member =
+							member_sep != std::string_view::npos
+								? original_type_name.substr(member_sep + 2)
+								: std::string_view{};
+						if (!terminal_member.empty()) {
+							auto lookup_member_type = [&](std::string_view instantiated_owner_name) -> const TypeInfo* {
+								if (instantiated_owner_name.empty()) {
+									return nullptr;
+								}
+								return findTypeByName(buildQualifiedName(instantiated_owner_name, terminal_member));
+							};
+							const TypeInfo* member_type_info =
+								lookup_member_type(StringTable::getStringView(qualified_instantiated_name));
+							if (member_type_info == nullptr) {
+								member_type_info = lookup_member_type(instantiated_name);
 							}
-							return findTypeByName(StringTable::getOrInternStringHandle(
-								StringBuilder()
-									.append(instantiated_owner_name)
-									.append("::")
-									.append(terminal_member)
-									.commit()));
-						};
-						const TypeInfo* member_type_info =
-							lookup_member_type(qualified_instantiated_name);
-						if (member_type_info == nullptr) {
-							member_type_info = lookup_member_type(instantiated_name);
-						}
-						if (member_type_info != nullptr) {
-							return member_type_info->registeredTypeIndex().withCategory(
-								member_type_info->typeEnum());
+							if (member_type_info != nullptr) {
+								return member_type_info->registeredTypeIndex().withCategory(
+									member_type_info->typeEnum());
+							}
 						}
 					}
 				}
-			}
 				return TypeIndex{};
 			};
 			if (!owner_name.empty()) {
@@ -828,14 +828,14 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 	}
 
 	const TypeInfo* current_type_info = owner_type_info;
-	std::string current_lookup_name(StringTable::getStringView(owner_type_info->name()));
+	std::string_view current_lookup_name = StringTable::getStringView(owner_type_info->name());
 	for (const auto& member : dependent_record->member_chain) {
 		if (!member.name.isValid()) {
 			return substituted_type_index;
 		}
 
 		if (member.has_template_arguments) {
-			std::vector<TemplateTypeArg> concrete_template_args;
+			InlineVector<TemplateTypeArg, 4> concrete_template_args;
 			concrete_template_args.reserve(member.template_arguments.size());
 			for (const auto& arg_info : member.template_arguments) {
 				TemplateTypeArg concrete_arg =
@@ -863,14 +863,11 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 			if (current_name.empty()) {
 				return substituted_type_index;
 			}
-			const std::string template_name = std::string(StringBuilder()
-				.append(current_name)
-				.append("::")
-				.append(StringTable::getStringView(member.name))
-				.commit());
+			const std::string_view member_name = StringTable::getStringView(member.name);
+			const StringHandle template_name = buildQualifiedName(current_name, member_name);
 			std::optional<ASTNode> instantiated_member_template =
 				instantiate_class_template(
-					template_name,
+					StringTable::getStringView(template_name),
 					std::span<const TemplateTypeArg>(
 						concrete_template_args.data(),
 						concrete_template_args.size()),
@@ -884,41 +881,34 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 				instantiated_member_template->as<StructDeclarationNode>().name();
 			std::string_view instantiated_name_view =
 				StringTable::getStringView(instantiated_name);
-			std::string qualified_instantiated_name;
+			StringHandle qualified_instantiated_name;
+			const std::string_view template_name_view = StringTable::getStringView(template_name);
 			if (instantiated_name_view.find("::") == std::string_view::npos) {
-				const size_t owner_sep = template_name.rfind("::");
-				if (owner_sep != std::string::npos) {
-					qualified_instantiated_name = std::string(StringBuilder()
-						.append(std::string_view(template_name).substr(0, owner_sep))
-						.append("::")
-						.append(instantiated_name_view)
-						.commit());
+				const size_t owner_sep = template_name_view.rfind("::");
+				if (owner_sep != std::string_view::npos) {
+					qualified_instantiated_name = buildQualifiedName(
+						template_name_view.substr(0, owner_sep),
+						instantiated_name_view);
 				}
 			}
 			const TypeInfo* instantiated_type_info = nullptr;
-			if (!qualified_instantiated_name.empty()) {
-				instantiated_type_info = findTypeByName(
-					StringTable::getOrInternStringHandle(qualified_instantiated_name));
+			if (qualified_instantiated_name.isValid()) {
+				instantiated_type_info = findTypeByName(qualified_instantiated_name);
 				if (instantiated_type_info != nullptr) {
-					current_lookup_name = qualified_instantiated_name;
+					current_lookup_name = StringTable::getStringView(qualified_instantiated_name);
 				}
 			}
 			if (instantiated_type_info == nullptr) {
 				instantiated_type_info = findTypeByName(instantiated_name);
-				current_lookup_name = std::string(instantiated_name_view);
+				current_lookup_name = instantiated_name_view;
 			}
 			current_type_info = instantiated_type_info;
 		} else {
 			if (current_lookup_name.empty()) {
 				return substituted_type_index;
 			}
-			const std::string qualified_member_name = std::string(StringBuilder()
-				.append(current_lookup_name)
-				.append("::")
-				.append(StringTable::getStringView(member.name))
-				.commit());
-			current_type_info = findTypeByName(
-				StringTable::getOrInternStringHandle(qualified_member_name));
+			const std::string_view member_name = StringTable::getStringView(member.name);
+			current_type_info = findTypeByName(buildQualifiedName(current_lookup_name, member_name));
 		}
 
 		if (current_type_info == nullptr) {
