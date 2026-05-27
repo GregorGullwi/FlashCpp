@@ -35,22 +35,11 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 3) `lexicographical_compare_three_way` — non-dependent name lookup (OPEN)
-
-- **Symptom**: `error: non-dependent name 'lexicographical_compare_three_way' was not
-  declared before the template definition (C++20 [temp.res]/9)` in `<map>`, `<set>`.
-- **Root cause**: FlashCpp enforces C++20 [temp.res]/9 strictly; the name is declared
-  later in the same translation unit (through `<algorithm>`) but FlashCpp requires it
-  to be visible at the point of the template definition.
-- **Impact**: `test_std_map`, `test_std_set` fail.
-
----
-
-## 4) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict (OPEN)
+## 3) `tests/std/test_std_ratio.cpp` — link-time `__security_cookie` conflict (OPEN)
 
 **Remaining blockers** (non-crashing, but prevent `.o` output):
 
-### 5a) Standard-library template-instantiation noise during `<ratio>` compile
+### 4a) Standard-library template-instantiation noise during `<ratio>` compile
 
 - **Symptom**: compiling `tests/std/test_std_ratio.cpp` now emits
   `[ERROR][Templates] [depth=1]: All 2 template overload(s) failed for 'swap'`,
@@ -65,7 +54,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-### 5b) Link-time `__security_cookie` multiple-definition conflict
+### 4b) Link-time `__security_cookie` multiple-definition conflict
 
 - **Symptom**: `tests/std/test_std_ratio.cpp` now compiles successfully but
   fails to link with `LIBCMT.lib(gs_cookie.obj) : error LNK2005:

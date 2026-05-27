@@ -2485,6 +2485,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				return TypeSpecifierNode(ordering_type->type_index_.withCategory(TypeCategory::Struct),
 					ordering_type->sizeInBits(), Token{}, CVQualifier::None, ReferenceQualifier::None);
 			}
+			FLASH_LOG_FORMAT(Parser, Error,
+				"operator<=> requires std::*_ordering from <compare>; missing '{}' type",
+				is_float ? "partial_ordering" : "strong_ordering");
 			return std::nullopt;
 		}
 
