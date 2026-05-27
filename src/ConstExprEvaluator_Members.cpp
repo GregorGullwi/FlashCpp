@@ -9886,6 +9886,38 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 			// For struct types, we need runtime type info, so fall through to default
 		break;
 
+	case TypeTraitKind::IsEnum:
+		result = (type_cat == TypeCategory::Enum) & !is_reference & (pointer_depth == 0);
+		break;
+
+	case TypeTraitKind::IsNullptr:
+		result = (type_cat == TypeCategory::Nullptr) & !is_reference & (pointer_depth == 0);
+		break;
+
+	case TypeTraitKind::IsMemberObjectPointer:
+		result = (type_cat == TypeCategory::MemberObjectPointer) & !is_reference & (pointer_depth == 0);
+		break;
+
+	case TypeTraitKind::IsMemberFunctionPointer:
+		result = (type_cat == TypeCategory::MemberFunctionPointer) & !is_reference & (pointer_depth == 0);
+		break;
+
+	case TypeTraitKind::IsFunction:
+		result = (type_cat == TypeCategory::Function) & !is_reference & (pointer_depth == 0);
+		break;
+
+	case TypeTraitKind::IsUnion:
+	case TypeTraitKind::IsClass:
+		{
+			// IsUnion and IsClass require struct_info to distinguish union vs non-union structs;
+			// delegate to the TypeTraitEvaluator which has access to struct metadata.
+			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr);
+			if (trait_result.success) {
+				return EvalResult::from_bool(trait_result.value);
+			}
+			return EvalResult::error("Failed to evaluate __is_union / __is_class");
+		}
+
 	case TypeTraitKind::IsCompleteOrUnbounded:
 		{
 			const StructTypeInfo* struct_info = nullptr;
