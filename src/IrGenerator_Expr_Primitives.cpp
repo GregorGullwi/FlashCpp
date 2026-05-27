@@ -1180,16 +1180,6 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// - Reference parameters: stored in VariableDeclOp with is_reference=true during code generation
 			// - Local reference variables: created with DeclarationNode that has reference TypeSpecifierNode
 		if (type_node.is_reference()) {
-			auto resolveReferencePointeeSize = [&](std::string_view lowering_context) {
-				int size_bits = queryConcreteAliasResolvedTypeSizeBits(type_node).size_bits;
-				if (size_bits <= 0) {
-					FLASH_LOG(Codegen, Warning, "Reference identifier '", identifierNode.name(),
-							  "' has unresolved pointee size in ", lowering_context,
-							  "; using pointer-size fallback");
-					size_bits = POINTER_SIZE_BITS;
-				}
-				return size_bits;
-			};
 				// Check if this is actually a local reference variable (not a parameter)
 				// Local reference variables are stored on the stack and hold a pointer value
 				// We can detect this by checking if a VariableDeclOp was generated with is_reference=true
@@ -1210,7 +1200,13 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// For simple assignments and function calls, we can return the reference directly
 			if (context == ExpressionContext::LValueAddress) {
 				TypeCategory pointee_type = type_node.type();
-				int pointee_size = resolveReferencePointeeSize("lvalue lowering");
+				int pointee_size = queryConcreteAliasResolvedTypeSizeBits(type_node).size_bits;
+				if (pointee_size <= 0) {
+					FLASH_LOG(Codegen, Warning, "Reference identifier '", identifierNode.name(),
+							  "' has unresolved pointee size in lvalue lowering",
+							  "; using pointer-size fallback");
+					pointee_size = POINTER_SIZE_BITS;
+				}
 
 				TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
 
@@ -1246,7 +1242,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// For non-array references in Load context, we need to dereference to get the value
 
 			TypeCategory pointee_type = type_node.category();
-			int pointee_size = resolveReferencePointeeSize("load lowering");
+			int pointee_size = requireConcreteAliasResolvedCodegenSizeBits(type_node, "reference identifier load lowering");
 
 			TypeCategory semantic_pointee_type = type_node.type();
 
