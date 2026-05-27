@@ -154,6 +154,10 @@ ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::
 // Parse template declaration: template<typename T> ...
 // Also handles explicit template instantiation: template void Func<int>(); or template class Container<int>;
 ParseResult Parser::parse_template_declaration() {
+	return parse_template_declaration(false);
+}
+
+ParseResult Parser::parse_template_declaration(bool is_extern_template_declaration) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(TemplateDeclaration);
 #endif
@@ -170,7 +174,7 @@ ParseResult Parser::parse_template_declaration() {
 	//         template void Container<int>::set(int);  // Explicit member function instantiation
 	if (peek() != "<"_tok) {
 		// Check if this is an extern declaration (suppresses implicit instantiation)
-		bool is_extern = false;
+		bool is_extern = is_extern_template_declaration;
 		if (peek() == "extern"_tok) {
 			is_extern = true;
 			advance(); // consume 'extern'

@@ -1599,6 +1599,7 @@ private:
 	ParseResult parse_template_friend_declaration(StructDeclarationNode& struct_node);  // NEW: Parse template friend declarations
 	void registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info);	// Helper: register friend in StructTypeInfo (all kinds)
 	ParseResult parse_template_declaration();  // NEW: Parse template declarations
+	ParseResult parse_template_declaration(bool is_extern_template_declaration);
 	ParseResult parse_concept_declaration();	 // NEW: Parse C++20 concept declarations
 	ParseResult parse_requires_expression();	 // NEW: Parse C++20 requires expressions
 	ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);	// NEW: Parse member function templates
