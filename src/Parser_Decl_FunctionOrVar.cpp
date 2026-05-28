@@ -947,6 +947,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		global_decl_node.set_is_constinit(is_constinit);
 		global_decl_node.set_linkage(specs.linkage);
 
+		// Validate: constexpr/constinit are incompatible with dllimport
+		if (specs.linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {
+			return ParseResult::error("'constexpr' and '__declspec(dllimport)' are incompatible", global_decl_node.declaration().identifier_token());
+		}
+
 		// Parse the initializer against the registered declaration node so later
 		// unsized-array inference updates the same AST object already stored in the
 		// symbol table and returned VariableDeclarationNode.
@@ -1017,6 +1022,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 
 		global_decl_node.set_initializer(initializer);
+
+		// Validate: __declspec(dllimport) data must not have a definition (initializer)
+		if (specs.linkage == Linkage::DllImport && initializer.has_value()) {
+			return ParseResult::error("definition of dllimport data is not allowed", identifier_token);
+		}
 
 		// Semantic checks for constexpr/constinit - only enforce for global/static variables
 		// For local constexpr variables, they can fall back to runtime initialization (like const)
@@ -1124,6 +1134,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				next_var_decl.set_is_constinit(is_constinit);
 				next_var_decl.set_linkage(specs.linkage);
 
+				// Validate: constexpr/constinit are incompatible with dllimport
+				if (specs.linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {
+					return ParseResult::error("'constexpr' and '__declspec(dllimport)' are incompatible", next_identifier_token);
+				}
+
 				if (!gSymbolTable.insert(next_identifier_token.value(), next_var_node)) {
 					return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, next_identifier_token);
 				}
@@ -1157,6 +1172,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				}
 
 				next_var_decl.set_initializer(next_initializer);
+
+				// Validate: __declspec(dllimport) data must not have a definition (initializer)
+				if (specs.linkage == Linkage::DllImport && next_initializer.has_value()) {
+					return ParseResult::error("definition of dllimport data is not allowed", next_identifier_token);
+				}
 
 				// Add to block
 				block_ref.add_statement_node(next_var_node);

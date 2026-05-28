@@ -1053,6 +1053,11 @@ ParseResult Parser::parse_variable_declaration() {
 		var_decl.set_is_constinit(is_constinit);
 		var_decl.set_linkage(linkage);
 
+		// Validate: constexpr/constinit are incompatible with dllimport
+		if (linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {
+			return ParseResult::error("'constexpr' and '__declspec(dllimport)' are incompatible", decl.identifier_token());
+		}
+
 		// Add the VariableDeclarationNode to the symbol table
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
 		const Token& identifier_token = decl.identifier_token();
@@ -1236,6 +1241,11 @@ ParseResult Parser::parse_variable_declaration() {
 	}
 	first_var_decl.set_initializer(first_init_expr);
 
+	// Validate: __declspec(dllimport) data must not have a definition (initializer)
+	if (first_var_decl.linkage() == Linkage::DllImport && first_init_expr.has_value()) {
+		return ParseResult::error("definition of dllimport data is not allowed", first_decl.identifier_token());
+	}
+
 	// Check for use of deleted default constructor: Struct s{} where default ctor is deleted
 	if (type_specifier.category() == TypeCategory::Struct && !type_specifier.is_pointer() &&
 		first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
@@ -1322,7 +1332,13 @@ ParseResult Parser::parse_variable_declaration() {
 				inferUnsizedArraySizeFromInitializer(next_decl, next_type_specifier, init_expr);
 			}
 
-			var_decl_node.as<VariableDeclarationNode>().set_initializer(init_expr);
+			auto& var_decl_ref = var_decl_node.as<VariableDeclarationNode>();
+			var_decl_ref.set_initializer(init_expr);
+
+			// Validate: __declspec(dllimport) data must not have a definition (initializer)
+			if (var_decl_ref.linkage() == Linkage::DllImport && init_expr.has_value()) {
+				return ParseResult::error("definition of dllimport data is not allowed", var_decl_ref.declaration().identifier_token());
+			}
 
 			// Add this declaration to the block
 			block_ref.add_statement_node(var_decl_node);
