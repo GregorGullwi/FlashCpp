@@ -3176,6 +3176,72 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	// Check if the namespace name contains template parameters (hash-based naming)
 	std::string_view base_template_name = extractBaseTemplateName(ns_name);
 	if (base_template_name.empty()) {
+		// Handle nested member-template qualifiers where template arguments belong
+		// to the namespace path component (e.g. Owner::Inner<int>::type::value).
+		if (qual_id.has_template_arguments()) {
+			size_t tail_separator = ns_name.rfind("::");
+			if (tail_separator != std::string_view::npos &&
+				tail_separator + 2 < ns_name.size()) {
+				std::string_view owner_template_name = ns_name.substr(0, tail_separator);
+				std::string_view owner_tail = ns_name.substr(tail_separator + 2);
+				std::vector<TemplateTypeArg> owner_template_args;
+				owner_template_args.reserve(qual_id.template_arguments().size());
+				bool owner_args_valid = true;
+				for (const ASTNode& template_arg_node : qual_id.template_arguments()) {
+					ASTNode substituted_arg = substitute(template_arg_node);
+					if (substituted_arg.is<TypeSpecifierNode>()) {
+						owner_template_args.push_back(
+							TemplateTypeArg(substituted_arg.as<TypeSpecifierNode>()));
+						continue;
+					}
+					if (substituted_arg.is<ExpressionNode>()) {
+						if (auto constant_value =
+								parser_.try_evaluate_constant_expression(substituted_arg);
+							constant_value.has_value()) {
+							TemplateTypeArg value_arg(
+								constant_value->value,
+								constant_value->type_index.is_valid()
+									? constant_value->type_index
+									: TypeIndex{}.withCategory(constant_value->type));
+							value_arg.setValueIdentity(constant_value->identity);
+							owner_template_args.push_back(std::move(value_arg));
+							continue;
+						}
+					}
+					owner_args_valid = false;
+					break;
+				}
+				if (owner_args_valid && !owner_template_args.empty()) {
+					Parser::AliasTemplateMaterializationResult materialized_owner =
+						parser_.materializeTemplateInstantiationForLookup(
+							owner_template_name,
+							owner_template_args);
+					std::string_view materialized_owner_name =
+						materialized_owner.canonicalName();
+					if (!materialized_owner_name.empty()) {
+						StringHandle rewritten_namespace_handle =
+							StringTable::getOrInternStringHandle(
+								StringBuilder()
+									.append(materialized_owner_name)
+									.append("::")
+									.append(owner_tail)
+									.commit());
+						NamespaceHandle rewritten_namespace =
+							gNamespaceRegistry.getOrCreateNamespace(
+								NamespaceRegistry::GLOBAL_NAMESPACE,
+								rewritten_namespace_handle);
+						QualifiedIdentifierNode& rewritten_qual_id =
+							gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+								rewritten_namespace,
+								qual_id.identifier_token());
+						ExpressionNode& rewritten_expr =
+							gChunkedAnyStorage.emplace_back<ExpressionNode>(
+								rewritten_qual_id);
+						return ASTNode(&rewritten_expr);
+					}
+				}
+			}
+		}
 		// Not a template instantiation, return as-is
 		FLASH_LOG(Templates, Debug, "  No template parameters in namespace, returning as-is");
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(qual_id);
