@@ -8443,6 +8443,100 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 			}
+			// Fallback: if template_name is of the form "Owner::Member", check if
+		// Owner's base classes have a template named "Base::Member".  This
+		// handles the case where Derived<T> inherits a member template from
+		// Base<T> and the caller says "Derived$hash::Inner".
+		if (size_t sep = template_name.rfind("::"); sep != std::string_view::npos) {
+				std::string_view owner_name = template_name.substr(0, sep);
+				std::string_view member_name = template_name.substr(sep + 2);
+				StringHandle owner_handle = StringTable::getOrInternStringHandle(owner_name);
+				const TypeInfo* owner_type_info = findTypeByName(owner_handle);
+				if (owner_type_info != nullptr) {
+					// Try via StructTypeInfo (works if Derived is already fully instantiated).
+					if (const StructTypeInfo* owner_struct = owner_type_info->getStructInfo()) {
+						for (const BaseClassSpecifier& base_spec : owner_struct->base_classes) {
+							if (base_spec.is_deferred || base_spec.name.empty()) {
+								continue;
+							}
+							std::string base_member = std::string(StringBuilder()
+								.append(base_spec.name)
+								.append("::")
+								.append(member_name)
+								.commit());
+							if (auto base_opt = gTemplateRegistry.lookupTemplate(base_member); base_opt.has_value()) {
+								FLASH_LOG_FORMAT(Templates, Debug,
+									"Inherited member template lookup: '{}' -> '{}'",
+									template_name, base_member);
+								template_opt = base_opt;
+								break;
+							}
+							// Also try the original (uninstantiated) base template name.
+							if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
+								std::string_view base_orig = StringTable::getStringView(base_type_info->baseTemplateName());
+								if (!base_orig.empty() && base_orig != base_spec.name) {
+									std::string orig_base_member = std::string(StringBuilder()
+										.append(base_orig)
+										.append("::")
+										.append(member_name)
+										.commit());
+									if (auto orig_opt = gTemplateRegistry.lookupTemplate(orig_base_member);
+										orig_opt.has_value()) {
+										FLASH_LOG_FORMAT(Templates, Debug,
+											"Inherited member template lookup (orig): '{}' -> '{}'",
+											template_name, orig_base_member);
+										template_opt = orig_opt;
+										break;
+									}
+								}
+							}
+						}
+					}
+					// Try via the original (uninstantiated) template declaration — this
+					// works even when Derived's StructTypeInfo is not yet built (e.g.,
+					// when evaluating a static constexpr initializer during Derived's own
+					// instantiation).
+					if (!template_opt.has_value()) {
+						std::string_view owner_orig = StringTable::getStringView(owner_type_info->baseTemplateName());
+						if (owner_orig.empty()) {
+							// Fall back to stripping $hash suffix
+							if (size_t dollar = owner_name.find('$'); dollar != std::string_view::npos) {
+								owner_orig = owner_name.substr(0, dollar);
+							}
+						}
+						if (!owner_orig.empty()) {
+							if (auto orig_tmpl_opt = gTemplateRegistry.lookupTemplate(owner_orig);
+								orig_tmpl_opt.has_value() &&
+								orig_tmpl_opt->is<TemplateClassDeclarationNode>()) {
+								const StructDeclarationNode& orig_decl =
+									orig_tmpl_opt->as<TemplateClassDeclarationNode>().class_decl_node();
+								for (const DeferredTemplateBaseClassSpecifier& dtbs :
+									 orig_decl.deferred_template_base_classes()) {
+									std::string_view base_tmpl =
+										StringTable::getStringView(dtbs.base_template_name);
+									if (base_tmpl.empty()) {
+										continue;
+									}
+									std::string base_member = std::string(StringBuilder()
+										.append(base_tmpl)
+										.append("::")
+										.append(member_name)
+										.commit());
+									if (auto base_opt = gTemplateRegistry.lookupTemplate(base_member);
+										base_opt.has_value()) {
+										FLASH_LOG_FORMAT(Templates, Debug,
+											"Inherited member template lookup (deferred): '{}' -> '{}'",
+											template_name, base_member);
+										template_opt = base_opt;
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+		}
+		if (!template_opt.has_value()) {
 			std::string error_msg = std::string(StringBuilder()
 				.append("No primary class template found for '")
 				.append(template_name)
@@ -8453,6 +8547,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			FLASH_LOG(Templates, Error, error_msg);
 			return std::nullopt; // No template with this name
+		}
 		}
 		template_node = *template_opt;
 	}
