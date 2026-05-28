@@ -1628,7 +1628,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			(void)tryMaterializeTemplateAliasTarget();
 		}
 		if (alias_node != nullptr &&
-			result.resolved_type_info == nullptr) {
+			result.resolved_type_info == nullptr &&
+			result.instantiated_name.empty()) {
 			if (const TypeInfo* concrete_member_alias =
 					materializeInstantiatedMemberAliasTarget(
 						alias_node->target_type_node(),
