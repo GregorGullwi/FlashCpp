@@ -586,8 +586,8 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 		}
 	}
 	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
-			? original_type_info->dependentQualifiedName()
+		template_source_type_info != nullptr && template_source_type_info->isDependentPlaceholder()
+			? template_source_type_info->dependentQualifiedName()
 			: nullptr;
 	if (dependent_record == nullptr || dependent_record->member_chain.empty()) {
 		return substituted_type_index;
@@ -686,8 +686,8 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 		}
 	}
 	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
-			? original_type_info->dependentQualifiedName()
+		template_source_type_info != nullptr && template_source_type_info->isDependentPlaceholder()
+			? template_source_type_info->dependentQualifiedName()
 			: nullptr;
 	if (dependent_record == nullptr && original_type_info != nullptr) {
 		const ResolvedAliasTypeInfo resolved_alias =

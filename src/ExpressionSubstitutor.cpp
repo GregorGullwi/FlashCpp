@@ -1959,9 +1959,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				templateArgsStillDependent(std::span<const TemplateTypeArg>(substituted_template_args.data(), substituted_template_args.size()));
 			const bool has_variable_template_candidate =
 				gTemplateRegistry.lookupVariableTemplate(func_name).has_value() ||
-				(call.has_qualified_name() && gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value());
+				(call.has_qualified_name() &&
+					gTemplateRegistry.lookupVariableTemplate(call.qualified_name()).has_value());
 			std::optional<ASTNode> var_template_node;
-			if (has_variable_template_candidate) {
+			if (gTemplateRegistry.lookupVariableTemplate(func_name).has_value()) {
 				var_template_node =
 					parser_.try_instantiate_variable_template(
 						func_name,

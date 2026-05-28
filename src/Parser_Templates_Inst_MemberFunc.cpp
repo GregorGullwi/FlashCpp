@@ -860,7 +860,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 
 			for (ASTNode& param_node : function_decl.parameter_nodes()) {
 				DeclarationNode* param_decl =
-					const_cast<DeclarationNode*>(get_decl_from_symbol(param_node));
+					Parser::get_decl_from_symbol_mut(param_node);
 				if (param_decl == nullptr) {
 					continue;
 				}
