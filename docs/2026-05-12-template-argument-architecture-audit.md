@@ -216,14 +216,27 @@ Useful assumptions before changing this area:
   owner/member chain plus concrete alias arguments during placeholder rebinding
   and materialization. Covered nested alias uses therefore resolve through
   semantic dependent-name records instead of collapsing to terminal-name lookup.
+- **nested dependent member-template records now keep prefix segments aligned
+  with member-template arguments, and alias rebinding can re-enter outer
+  template bindings through the un-hashed base alias name**: paths such as
+  `Provider<T>::Node::template Apply<U>` no longer mis-attach `Apply`'s template
+  arguments to the preceding `Node` segment, and materialization can recover
+  `T -> int` through the stored outer binding when the alias target is an outer
+  class-template parameter.
 - **dependent alias resolution now re-enters semantic owner/member-chain
   resolution after direct alias substitution before touching the legacy
   `base::member` textual path**: covered alias-template chains no longer depend
   on terminal-name reconstruction once the substituted target already carries a
   semantic dependent-qualified-name record.
+- **explicit member-template calls no longer cache the first overload before
+  call-argument types are known**: parser-side explicit-template instantiation
+  now carries collected call argument types into overload selection and rejects
+  pointer-depth-incompatible candidates before cache hits, so calls such as
+  `holder.pick<char>(&value)` do not materialize the value overload first and
+  then reuse that losing candidate.
 
 Latest recorded full-suite validation:
-`2598` regular tests compiled/linked/runtime-pass, `0` fail, `185` expected-fail tests.
+`2603` regular tests compiled/linked/runtime-pass, `0` fail, `188` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -246,6 +259,8 @@ Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
 - `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
+- `test_template_ool_member_template_nested_alias_overload_ret0.cpp`
+- `test_explicit_member_template_pointer_overload_cache_ret0.cpp`
 - `test_template_ool_plain_ctor_nullopt_single_candidate_no_attach_ret0.cpp`
 - `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
 - `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
@@ -314,11 +329,17 @@ they directly block items 1-2:
 ## Highest-impact next steps
 
 1. **Finish the remaining replay-metadata and attachment gaps outside static-member initializers**
+   - Delete the remaining terminal-name / `base::member` string-split fallback in
+     `resolveDependentMemberAlias(...)` once the last recordless
+     parameter-materialization callers preserve semantic owner/member-chain
+     metadata end-to-end.
    - Continue with non-constructor attachment/synchronization surfaces that
      still depend on signature-only matching where source-member identity can
-     be preserved end-to-end.
+     be preserved end-to-end, especially any declaration-copy or lazy-shape
+     path that still erases dependent owner/member-template identity too early.
    - Improve replay metadata capture in unresolved substitution (`nullopt`) paths
-     so canonical substituted-signature matching classifies more valid code.
+     so canonical substituted-signature matching classifies more valid code
+     outside the now-covered nested member-template alias / explicit-call slice.
    - Continue with any remaining OOL dependent-member swap slices in
      member-template or nested overload sets where replay-selected stubs and
      deferred body parsing can still drift after owner-artifact recovery.
@@ -395,6 +416,14 @@ The following are complete enough to rely on:
   nodes, registers qualified names, and attaches outer template bindings so the
   replay path can materialize bodies with the correct class-template parameters
   in scope.
+- nested dependent member-template alias materialization now preserves prefix
+  owner/member-chain alignment for paths like
+  `Provider<T>::Node::template Apply<U>`, and concrete alias rebinding can
+  recover outer class-template bindings through the stored base alias name.
+- explicit member-template overload selection no longer instantiates and caches
+  the first candidate before parsing call arguments; explicit-call overload
+  resolution now sees collected call argument types before cache hits and can
+  reject pointer-depth-incompatible candidates.
 - deferred class-template constructor bodies now store template-parameter names
   at parse time, so replay sets `hasActiveTemplateParameters() = true`; replay
   substitution now preserves full typed NTTP identity metadata and reuses the

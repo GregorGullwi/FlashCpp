@@ -1664,6 +1664,54 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 		const auto& template_args = completed_template_args;
 		auto key = FlashCpp::makeInstantiationKey(candidate_qualified_name, template_args);
 
+		// Determine call arg types for this explicit call path.  Do this before
+		// the cache lookup so we can skip stale cached overloads whose pointer
+		// depth doesn't match the current call's arguments.
+		const InlineVector<TypeSpecifierNode, 1> empty_call_arg_types_storage;
+		std::span<const TypeSpecifierNode> call_arg_types =
+			current_explicit_call_arg_types_ != nullptr
+				? *current_explicit_call_arg_types_
+				: std::span<const TypeSpecifierNode>(
+					empty_call_arg_types_storage.data(),
+					empty_call_arg_types_storage.size());
+
+		// Pointer-depth overload pre-filter: reject a candidate whose DECLARED
+		// parameter pointer-depth is clearly incompatible with the call arguments.
+		// We only apply the directional check "call arg is a pointer but the
+		// declared parameter is a value", because the reverse (arg is a null
+		// pointer / value, param is a pointer) is still valid in C++ via implicit
+		// null-pointer conversion.  This check uses the declared (pre-substitution)
+		// parameter types, which already carry the correct pointer depth even for
+		// dependent alias parameters (e.g. Apply<U> vs Apply<U>*).
+		if (!call_arg_types.empty()) {
+			const auto& decl_params = func_decl.parameter_nodes();
+			bool incompatible = false;
+			for (size_t pi = 0;
+				 pi < call_arg_types.size() && pi < decl_params.size();
+				 ++pi) {
+				const auto& pn = decl_params[pi];
+				if (!pn.is<DeclarationNode>()) {
+					continue;
+				}
+				const DeclarationNode& pdecl = pn.as<DeclarationNode>();
+				if (pdecl.is_parameter_pack()) {
+					break;  // variadic: don't apply the check to pack params
+				}
+				const TypeSpecifierNode& pts = pdecl.type_specifier_node();
+				const size_t param_ptr = pts.pointer_depth();
+				const size_t arg_ptr   = call_arg_types[pi].pointer_depth();
+				if (arg_ptr > 0 && param_ptr == 0) {
+					// Call passes a concrete pointer but this overload expects a
+					// value: this overload cannot be viable.
+					incompatible = true;
+					break;
+				}
+			}
+			if (incompatible) {
+				continue;
+			}
+		}
+
 		// Check if we already have this instantiation
 		auto existing_inst = gTemplateRegistry.getInstantiation(key);
 		if (existing_inst.has_value()) {
@@ -1708,13 +1756,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 			}
 		}
 
-		const InlineVector<TypeSpecifierNode, 1> empty_call_arg_types;
-		std::span<const TypeSpecifierNode> call_arg_types =
-			current_explicit_call_arg_types_ != nullptr
-				? *current_explicit_call_arg_types_
-				: std::span<const TypeSpecifierNode>(
-					empty_call_arg_types.data(),
-					empty_call_arg_types.size());
 		// Prefer the declaring owner from inheritance lookup; fall back to deriving
 		// the owner from the candidate's qualified name rather than re-using the
 		// requested receiver (which may be a derived type, not the declaring base).
@@ -2767,6 +2808,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
+
 	auto orig_body = func_decl.get_definition();
 	if (!materialize_body) {
 		compute_and_set_mangled_name(new_func_ref);

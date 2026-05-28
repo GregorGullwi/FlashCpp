@@ -1893,12 +1893,21 @@ static bool dependentQualifiedTemplateArgMatchesForSignature(
 		return false;
 	}
 
+	// When both sides carry a valid dependent_name (i.e. they refer to a template
+	// parameter by name), the dependent_name check above is the authoritative
+	// comparison.  TypeIndex values for template parameters are context-specific
+	// and can differ between the in-class declaration context and each OOL
+	// definition context — do NOT reject the match based on those indices.
+	const bool has_dependent_name =
+		instantiated_arg.dependent_name.isValid() && out_of_line_arg.dependent_name.isValid();
+
 	TypeIndex instantiated_type_index =
 		canonicalizeTemplateSignatureMatchTypeIndex(instantiated_arg.type_index);
 	TypeIndex out_of_line_type_index =
 		canonicalizeTemplateSignatureMatchTypeIndex(out_of_line_arg.type_index);
-	if (instantiated_type_index != out_of_line_type_index ||
-		instantiated_type_index.category() != out_of_line_type_index.category()) {
+	if (!has_dependent_name &&
+		(instantiated_type_index != out_of_line_type_index ||
+		 instantiated_type_index.category() != out_of_line_type_index.category())) {
 		return false;
 	}
 
@@ -1942,7 +1951,20 @@ static bool dependentQualifiedNameRecordsMatchForSignature(
 	const TypeInfo::DependentQualifiedNameRecord& out_of_line_record,
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params) {
-	if (instantiated_record.owner_kind != out_of_line_record.owner_kind ||
+	using OwnerKind = TypeInfo::DependentQualifiedNameRecord::OwnerKind;
+	// DependentInstantiation and UnknownSpecialization both represent a
+	// dependent template instantiation; they differ only due to parse context
+	// at which the type was recorded.  For OOL-signature matching purposes they
+	// are equivalent and should be accepted as the same kind.
+	auto owner_kind_compatible = [](OwnerKind a, OwnerKind b) -> bool {
+		if (a == b) return true;
+		auto is_dep_or_unknown = [](OwnerKind k) {
+			return k == OwnerKind::DependentInstantiation ||
+			       k == OwnerKind::UnknownSpecialization;
+		};
+		return is_dep_or_unknown(a) && is_dep_or_unknown(b);
+	};
+	if (!owner_kind_compatible(instantiated_record.owner_kind, out_of_line_record.owner_kind) ||
 		instantiated_record.names_current_instantiation !=
 			out_of_line_record.names_current_instantiation ||
 		instantiated_record.member_chain.size() != out_of_line_record.member_chain.size() ||
@@ -12302,6 +12324,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					inst_alias_name,
 					*alias_opt,
 					&outer_binding);
+				// Also register the outer binding for the un-hashed base alias name
+				// so that lookups by base template name (e.g. "Provider::Node::Apply"
+				// as stored in TypeInfo::baseTemplateName()) can find the outer binding
+				// (e.g. T=int) even when the alias TypeInfo records the un-hashed form.
+				// Only do this when all outer params are concrete (non-dependent); a
+				// dependent-param instantiation (e.g. Provider<T>) must not overwrite
+				// a concrete binding that was registered earlier.
+				const bool all_concrete_args = std::all_of(
+					outer_binding.param_args.begin(),
+					outer_binding.param_args.end(),
+					[](const TemplateTypeArg& arg) { return !arg.is_dependent; });
+				if (all_concrete_args) {
+					StringHandle base_alias_handle =
+						StringTable::getOrInternStringHandle(base_alias_name);
+					// Don't overwrite an already-registered concrete binding: the first
+					// concrete registration (from the intended instantiation, e.g.
+					// Provider<int> from Outer<int>) wins over later spurious ones.
+					if (gTemplateRegistry.getOuterTemplateBinding(base_alias_handle) == nullptr) {
+						gTemplateRegistry.registerOuterTemplateBinding(
+							base_alias_handle,
+							outer_binding);
+					}
+				}
 			}
 		}
 	}

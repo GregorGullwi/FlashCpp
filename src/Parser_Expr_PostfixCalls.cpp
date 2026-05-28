@@ -35,6 +35,13 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	auto struct_name = StringTable::getStringView(type_info->name());
 	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 	if (explicit_template_args.has_value()) {
+		// Propagate call argument types so overload resolution can reject mismatched
+		// overloads (e.g. value vs pointer).  Without this, the first successful
+		// overload candidate is always returned regardless of argument compatibility.
+		FlashCpp::ScopedState guard_explicit_call_arg_types(current_explicit_call_arg_types_);
+		if (!arg_types.empty()) {
+			current_explicit_call_arg_types_ = &arg_types;
+		}
 		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args);
 	} else if (!arg_types.empty()) {
 		return try_instantiate_member_function_template(struct_name, member_name, arg_types);
@@ -319,6 +326,15 @@ std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
 	// syntactically non-empty call still has no collected types here, preserving the
 	// old behavior by deferring deduction is safer than forcing a hard failure.
 	if (explicit_template_args.has_value()) {
+		// Propagate call argument types so that explicit member template calls
+		// (e.g. outer.pick<char>(&nine)) can discriminate between overloads that
+		// differ only in pointer depth.  Without this, the value overload would
+		// always be chosen over the pointer overload because the overload loop
+		// returns on the first successfully-instantiated candidate.
+		FlashCpp::ScopedState guard_explicit_call_arg_types(current_explicit_call_arg_types_);
+		if (!call_arg_types.empty()) {
+			current_explicit_call_arg_types_ = &call_arg_types;
+		}
 		return try_instantiate_member_function_template_explicit(
 			struct_name,
 			member_name,
@@ -458,12 +474,14 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		explicit_template_args.destroy_pattern_ = TokenDestroyPattern::Discard;
 
 		const FunctionDeclarationNode* known_member_func = nullptr;
-		if (explicit_template_args) {
-			std::optional<ASTNode> instantiated_template = tryResolveMemberFunctionTemplate(result, member_name_token.value(), explicit_template_args.read_template_type_args(), {});
-			FLASH_LOG(Parser, Debug, "parse_member_postfix: tryResolveMemberFunctionTemplate result has_value=", instantiated_template.has_value());
-		} else {
+		if (!explicit_template_args) {
 			known_member_func = tryResolveConcreteMemberFunction(result, member_name_token.value());
 		}
+		// Note: when explicit_template_args is set, we do NOT do an early instantiation
+		// here (before parsing arguments), because the result would be discarded and —
+		// more importantly — it would cache the FIRST overload candidate, preventing the
+		// later call (tryInstantiateMemberFunctionTemplateCall below, which has the actual
+		// call-argument types) from selecting the correct overload.
 
 		advance(); // consume '('
 

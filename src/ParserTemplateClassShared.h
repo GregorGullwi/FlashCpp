@@ -322,9 +322,15 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 	if (dependent_record != nullptr && !dependent_record->member_chain.empty()) {
 		for (const auto& member : dependent_record->member_chain) {
 			if (!member.name.isValid()) {
+				qualified_member_name_builder.reset();
 				return substituted_type_index;
 			}
 			if (member.has_template_arguments) {
+				// Cannot instantiate a member template alias here (no template params/args
+				// available in the non-template overload). Reset the in-progress builder
+				// and return the best available type — the original dependent placeholder
+				// if one exists, so downstream template-aware callers can finish resolution.
+				qualified_member_name_builder.reset();
 				return original_type_spec.type_index().is_valid()
 					? original_type_spec.type_index()
 					: substituted_type_index;
@@ -348,6 +354,7 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 			member_suffix = token_name;
 		}
 		if (member_suffix.empty()) {
+			qualified_member_name_builder.reset();
 			return substituted_type_index;
 		}
 		if (member_suffix.find("::") == std::string_view::npos) {
@@ -375,6 +382,7 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 	}
 
 	if (!appended_member) {
+		qualified_member_name_builder.reset();
 		return substituted_type_index;
 	}
 
