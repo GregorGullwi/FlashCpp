@@ -60,7 +60,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~1.86s wall (retested 2026-05-27, Linux/libstdc++-14). No longer crashes in deferred implicit-member triviality analysis for self-referential pointer members; current first stop is `if constexpr` condition not constant for `_EntersWait::value` plus a normalized member-call receiver query gap. |
+| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~2.18s wall (retested 2026-05-28, Linux/libstdc++-14). Variadic fixed-parameter conversion annotation now applies (the prior `int -> long` direct-call Phase 15 miss in `__platform_wait`/`__platform_notify` is gone); current first stops remain deferred constructor materialization/receiver-normalization gaps around `_Spin` and `_EntersWait::value`. |
 | `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
@@ -120,6 +120,25 @@ Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 | `test_if_constexpr_ret97.cpp` | ✅ Pass | focused runner | Existing `if constexpr` baseline still passes. |
 | `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~794ms (`TOTAL`) / ~0.85s wall | Control retest still compiles. |
 | `<latch>` (`test_std_latch.cpp`) | ❌ Codegen Error | ~1.85s wall | No material change yet; still hits `_EntersWait::value` constant-expression failure plus deferred-constructor/member-call normalization gaps. |
+
+### 2026-05-28 Linux/libstdc++ variadic fixed-parameter conversion annotation follow-up
+
+Fix landed:
+
+- **Sema now annotates implicit conversions for the fixed parameter prefix of variadic calls instead of skipping conversion annotation for variadic functions wholesale.** This removes Phase 15 direct-call misses like `int -> long` for declarations such as `long f(long, ...)`.
+- Checked for code-size reduction opportunities and reused the existing argument-annotation flow by limiting the loop to `min(argument_count, fixed_parameter_count)` rather than introducing a new variadic-only path.
+
+Regression coverage:
+
+- `tests/test_variadic_fixed_param_conversion_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_variadic_fixed_param_conversion_ret0.cpp` | ✅ Pass | focused runner | New regression verifies sema records fixed-parameter conversions for variadic calls (`int` argument accepted by `long` fixed parameter). |
+| `<latch>` (`test_std_latch.cpp`) | ❌ Codegen Error | ~2.18s wall | Prior `Phase 15: sema missed function call argument conversion (int -> long)` in `__platform_wait`/`__platform_notify` no longer appears; first hard stops are now deferred-constructor/receiver-normalization gaps (`_Spin`, `_EntersWait::value`). |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~825ms (`TOTAL`) / ~0.88s wall | Control retest still compiles. |
 
 ### 2026-05-27 Linux/libstdc++ deferred implicit-member pointer triviality follow-up
 

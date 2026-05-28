@@ -7556,18 +7556,19 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 														  const ChunkedVector<ASTNode>& arguments,
 														  const FunctionDeclarationNode& func_decl,
 														  const char* context_description) {
-	if (func_decl.is_variadic())
+	const auto& param_nodes = func_decl.parameter_nodes();
+	if (arguments.size() < countMinRequiredArgs(func_decl))
+		return;
+	if (!func_decl.is_variadic() && arguments.size() > param_nodes.size())
 		return;
 
-	const auto& param_nodes = func_decl.parameter_nodes();
-	if (arguments.size() < countMinRequiredArgs(func_decl) || arguments.size() > param_nodes.size())
-		return;
+	const size_t annotate_arg_count = std::min(arguments.size(), param_nodes.size());
 
 	auto& ref_bindings = call_ref_bindings_[call_key];
 	ref_bindings.clear();
-	ref_bindings.resize(arguments.size());
+	ref_bindings.resize(annotate_arg_count);
 
-	for (size_t i = 0; i < arguments.size(); ++i) {
+	for (size_t i = 0; i < annotate_arg_count; ++i) {
 		const ASTNode& arg = arguments[i];
 		if (!arg.is<ExpressionNode>())
 			continue;
