@@ -47,7 +47,7 @@ void AstToIr::visitIfStatementNode(const IfStatementNode& node) {
 		// Handle C++17 if constexpr - evaluate condition at compile time
 	if (node.is_constexpr()) {
 			// Evaluate the condition at compile time
-		ConstExpr::EvaluationContext ctx = makeEvalContext(gSymbolTable);
+		ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 		auto result = ConstExpr::Evaluator::evaluate(node.get_condition(), ctx);
 
 		if (!result.success()) {
