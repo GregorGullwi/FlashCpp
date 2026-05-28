@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-28 (OOL member-template alias-target overload replay now preserves dependent owner/member-template identity end-to-end)
+**Last updated:** 2026-05-28 (nested member-template alias materialization now preserves outer owner/member-template metadata through explicit template-argument parsing and alias rebinding)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep completed work only when it changes what the next refactor
@@ -205,6 +205,14 @@ Future work can rely on these being in place:
   now concretizes those definition-side alias targets after attachment, and the
   nested dependent-member swap replay path now concretizes non-template
   dependent member aliases before overload-shape reuse.
+- **nested member-template alias arguments now preserve outer owner/member-template
+  metadata through explicit-template-argument parsing and alias rebinding**:
+  qualified alias-template arguments such as `Use<Fn>::Alias<int>` stay on the
+  type path instead of being misclassified as dependent value expressions, and
+  deferred aliases like `Provider<T>::Node::template Apply<U>` now keep the full
+  owner/member chain plus concrete alias arguments during placeholder rebinding
+  and materialization. Covered nested alias uses therefore resolve through
+  semantic dependent-name records instead of collapsing to terminal-name lookup.
 
 Latest recorded full-suite validation:
 `2598` regular tests compiled/linked/runtime-pass, `0` fail, `185` expected-fail tests.
@@ -242,6 +250,7 @@ Latest focused regressions added on the current branch:
 - `test_template_ool_member_template_dependent_member_template_type_param_deref_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_template_type_param_forward_deref_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_template_type_param_ref_forward_ret0.cpp`
+- `test_member_template_alias_preserves_outer_metadata_ret0.cpp`
 
 ## Remaining work, in priority order
 
@@ -256,6 +265,9 @@ Rule for this work:
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
 - next slices:
+- remove the remaining terminal-name / `base::member` string-split alias lookup
+  in `resolveDependentMemberAlias(...)` once all surviving dependent member-alias
+  callers preserve full semantic owner/member-chain metadata end-to-end;
 - continue improving replay metadata capture for unresolved substitution
   (`nullopt`) outcomes in the remaining non-constructor declaration replay
   paths so canonical substituted-signature classification can succeed in more

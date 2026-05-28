@@ -1506,6 +1506,25 @@ ParseResult Parser::parse_type_specifier() {
 								concrete_member_info != nullptr) {
 								return buildTypeFromInfo(*concrete_member_info, type_name_token, true);
 							}
+							if (const TypeInfo* alias_target_info =
+									tryGetTypeInfo(alias_node.target_type_node().type_index());
+								alias_target_info != nullptr &&
+								alias_target_info->isDependentMemberType() &&
+								alias_target_info->hasDependentQualifiedName()) {
+								const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+									alias_target_info->dependentQualifiedName();
+								const bool has_nested_or_templated_member_chain =
+									dependent_record != nullptr &&
+									(dependent_record->member_chain.size() > 1 ||
+									 std::ranges::any_of(
+										 dependent_record->member_chain,
+										 [](const TypeInfo::DependentQualifiedNameRecord::Member& member) {
+											 return member.has_template_arguments;
+										 }));
+								if (has_nested_or_templated_member_chain) {
+									return buildTypeFromInfo(*alias_target_info, type_name_token, false);
+								}
+							}
 							const TypeInfo& member_type_info =
 								findOrCreateQualifiedMemberType(resolved_instantiated_type_name, *targetMemberName);
 							return buildTypeFromInfo(member_type_info, type_name_token, true);
@@ -2310,6 +2329,25 @@ ParseResult Parser::parse_type_specifier() {
 						all_segment_infos.push_back({had_template_keyword, dependent_member_template_args});
 						for (const DependentMemberSegmentInfo& seg : nested_segment_infos)
 							all_segment_infos.push_back(seg);
+						InlineVector<std::string_view, 4> dependent_member_components;
+						size_t member_component_start = 0;
+						while (member_component_start < dependent_member_path.size()) {
+							size_t member_component_sep =
+								dependent_member_path.find("::", member_component_start);
+							std::string_view member_component =
+								member_component_sep == std::string_view::npos
+									? dependent_member_path.substr(member_component_start)
+									: dependent_member_path.substr(
+										  member_component_start,
+										  member_component_sep - member_component_start);
+							if (!member_component.empty()) {
+								dependent_member_components.push_back(member_component);
+							}
+							if (member_component_sep == std::string_view::npos) {
+								break;
+							}
+							member_component_start = member_component_sep + 2;
+						}
 						type_info.setDependentQualifiedName(
 							makeDependentQualifiedNameRecord(
 								StringTable::getOrInternStringHandle(type_name),
@@ -2318,7 +2356,27 @@ ParseResult Parser::parse_type_specifier() {
 								convertToTemplateArgInfo(*template_args),
 								dependent_member_path,
 								all_segment_infos));
-						if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
+						std::optional<size_t> terminal_template_member_index;
+						for (size_t i = 0; i < all_segment_infos.size(); ++i) {
+							if (all_segment_infos[i].template_args.has_value()) {
+								terminal_template_member_index = i;
+							}
+						}
+						if (terminal_template_member_index.has_value() &&
+							*terminal_template_member_index < dependent_member_components.size()) {
+							StringBuilder terminal_template_name_builder;
+							terminal_template_name_builder.append(type_name);
+							for (size_t i = 0; i <= *terminal_template_member_index; ++i) {
+								terminal_template_name_builder.append("::");
+								terminal_template_name_builder.append(
+									dependent_member_components[i]);
+							}
+							type_info.setTemplateInstantiationInfo(
+								QualifiedIdentifier::fromQualifiedName(
+									terminal_template_name_builder.commit(),
+									gSymbolTable.get_current_namespace_handle()),
+								*all_segment_infos[*terminal_template_member_index].template_args);
+						} else if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
 							type_info.setTemplateInstantiationInfo(
 								QualifiedIdentifier::fromQualifiedName(
 									StringTable::getStringView(*dependent_member_template_base),
