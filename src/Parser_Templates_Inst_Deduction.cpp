@@ -325,7 +325,7 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		}
 	}
 
-	if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
+	if (auto direct_alias = gTemplateRegistry.lookup_alias_template(type_name);
 		direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 		const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 		type_node = substituteTemplateParameters(
