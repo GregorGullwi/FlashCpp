@@ -1627,6 +1627,19 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		if (!tryResolveDirectAliasTarget()) {
 			(void)tryMaterializeTemplateAliasTarget();
 		}
+		if (alias_node != nullptr &&
+			result.resolved_type_info == nullptr) {
+			if (const TypeInfo* concrete_member_alias =
+					materializeInstantiatedMemberAliasTarget(
+						alias_node->target_type_node(),
+						effective_template_params,
+						effective_template_args);
+				concrete_member_alias != nullptr) {
+				result.resolved_type_info = concrete_member_alias;
+				result.instantiated_name =
+					StringTable::getStringView(concrete_member_alias->name());
+			}
+		}
 		return result;
 	}
 

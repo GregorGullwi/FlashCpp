@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-28
+**Last updated:** 2026-05-30
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -30,6 +30,9 @@ Move FlashCpp toward a sema-owned template system where:
   information to avoid wrong cached overload reuse
 - dependent alias resolution already prefers semantic owner/member-chain
   re-entry before the remaining textual fallback
+- `materializeAliasTemplateInstance` now falls back to
+  `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
+  where the instantiated name resolves to a member type
 
 ## Highest-value remaining standards gap
 
@@ -43,8 +46,12 @@ Current blockers:
 - `test_alias_template_nested_member_value_ret42.cpp`
 - `test_template_current_instantiation_alias_qualified_deeper_member_ret0.cpp`
 
-If those routes preserve full owner/member-chain identity, the residual
-`base::member` textual path in `resolveDependentMemberAlias(...)` can go away.
+A removal probe in this slice confirmed these are the only three remaining
+dependents. The specific failure cause: each test's `TypeInfo` is missing a
+`DependentQualifiedNameRecord` at deduction time, so the semantic path returns
+`nullopt` and the textual path is entered. The next step is to trace each
+pattern through parsing and materialization to find where the record is dropped
+or never populated.
 
 ## Priority order
 

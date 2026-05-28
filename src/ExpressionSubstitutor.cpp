@@ -1231,6 +1231,9 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 				/*prefer_current_owner_type_name=*/true);
 		std::string_view materialized_owner_name =
 			materialized_owner.canonicalName();
+		FLASH_LOG(Templates, Debug, "lookupMaterializedDependentMember owner ",
+				  StringTable::getStringView(dependent_name->owner_name), " -> ", materialized_owner_name,
+				  " members=", dependent_name->member_chain.size());
 		if (!materialized_owner_name.empty()) {
 			std::vector<QualifiedTypeMemberAccess> member_chain;
 			member_chain.reserve(dependent_name->member_chain.size());
@@ -1254,6 +1257,8 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 				parser_.resolveBaseClassMemberTypeChain(
 					materialized_owner_name,
 					member_chain);
+			FLASH_LOG(Templates, Debug, "lookupMaterializedDependentMember chain result ",
+					  resolved_type != nullptr ? StringTable::getStringView(resolved_type->name()) : std::string_view{"<null>"});
 			if (resolved_type != nullptr) {
 				if (!dependent_name->member_chain.empty()) {
 					StringBuilder full_path_builder;

@@ -283,6 +283,8 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			!current_semantic_type_info->hasDependentQualifiedName()) {
 			return std::nullopt;
 		}
+		FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias semantic path for ",
+				  StringTable::getStringView(current_semantic_type_info->name()));
 		if (const TypeInfo* resolved_dependent_type =
 				resolveDependentMemberTypeSemantic(
 					*current_semantic_type_info,
@@ -300,6 +302,8 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			materialized_member_alias != nullptr) {
 			return emplaceResolvedSpec(materialized_member_alias);
 		}
+		FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias semantic path still dependent for ",
+				  StringTable::getStringView(current_semantic_type_info->name()));
 		return std::nullopt;
 	};
 

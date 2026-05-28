@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-28
+**Last updated:** 2026-05-30
 
 This document is not a release log. It should explain what the current template
 architecture can assume, what is still structurally wrong, and what the next
@@ -32,6 +32,10 @@ owner/member-chain identity and later recover it textually.
   materialization
 - dependent alias resolution now re-enters semantic owner/member-chain
   resolution before touching the legacy textual `base::member` path
+- `materializeAliasTemplateInstance` now has a fallback to
+  `materializeInstantiatedMemberAliasTarget` for direct-parameter alias
+  cases (`template<T> using id = T`) where `instantiated_name` is empty
+  but the alias node is non-null
 
 ## Main remaining architectural gap
 
@@ -50,6 +54,17 @@ recordless cases:
 - `test_template_current_instantiation_alias_qualified_deeper_member_ret0.cpp`
 
 That is the next best cleanup target.
+
+A removal probe was attempted in this refactoring slice. Confirmed: removing
+the textual path causes exactly those three tests to fail. The root cause is
+that their `TypeInfo` nodes do **not** carry a `DependentQualifiedNameRecord`
+by the time `resolveDependentMemberAlias` is called, so
+`tryResolveCurrentTypeNodeFromSemanticRecord()` returns `nullopt` and the code
+falls through to the textual path.
+
+To unblock removal, the parse/materialization pipelines for these three patterns
+must be traced to find where the semantic record is dropped or never set, and
+`DependentQualifiedNameRecord` must be preserved end-to-end.
 
 ## Recommended implementation order
 
