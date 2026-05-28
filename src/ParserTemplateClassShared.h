@@ -5,6 +5,40 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const StructTypeInfo* struct_info,
 	bool set_qualified_name);
 
+// ---------------------------------------------------------------------------
+// Structural-dependency helpers for TemplateTypeArg
+// ---------------------------------------------------------------------------
+
+/// Returns true when \p arg is still structurally dependent on unresolved
+/// template parameters — i.e. it cannot yet be used as a concrete
+/// instantiation key.
+///
+/// Covers:
+///  • is_dependent flag (type arg that was never fully substituted)
+///  • surviving dependent_name (belt-and-suspenders guard)
+///  • Auto / DeclTypeAuto placeholder categories
+///
+/// Does NOT include is_pack — call sites that need pack-deferral must check
+/// arg.is_pack separately (e.g. explicitTemplateArgsRequireDeferredInstantiation).
+inline bool templateArgIsStructurallyDependent(const TemplateTypeArg& arg) {
+	if (arg.is_dependent || arg.dependent_name.isValid())
+		return true;
+	const TypeCategory cat = arg.category();
+	return cat == TypeCategory::Auto || cat == TypeCategory::DeclTypeAuto;
+}
+
+/// Returns true when *any* argument in \p args is structurally dependent.
+/// Accepts InlineVector via its implicit operator std::span<const TemplateTypeArg>.
+inline bool anyTemplateArgIsStructurallyDependent(std::span<const TemplateTypeArg> args) {
+	for (const TemplateTypeArg& arg : args) {
+		if (templateArgIsStructurallyDependent(arg))
+			return true;
+	}
+	return false;
+}
+
+// ---------------------------------------------------------------------------
+
 // Helper to build qualified name strings for template/member lookup
 // Returns a StringHandle that can be passed to findTypeByName
 inline StringHandle buildQualifiedName(std::string_view owner, std::string_view member) {

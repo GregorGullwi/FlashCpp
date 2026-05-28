@@ -3597,18 +3597,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (overload_mismatch)
 			continue;  // SFINAE: try next overload
 
-		const auto has_structurally_dependent_template_args = [](std::span<const TemplateTypeArg> args) {
-			return std::any_of(
-				args.begin(),
-				args.end(),
-				[](const TemplateTypeArg& arg) {
-					return arg.is_dependent ||
-						   arg.dependent_name.isValid() ||
-						   arg.category() == TypeCategory::Auto ||
-						   arg.category() == TypeCategory::DeclTypeAuto;
-				});
-		};
-		if (has_structurally_dependent_template_args(template_args)) {
+		if (anyTemplateArgIsStructurallyDependent(template_args)) {
 			continue;
 		}
 
@@ -4051,16 +4040,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 			}
 
 			InlineVector<TemplateTypeArg, 4> template_args = deduction_candidate->template_args;
-			const bool has_structurally_dependent_template_args = std::any_of(
-				template_args.begin(),
-				template_args.end(),
-				[](const TemplateTypeArg& arg) {
-					return arg.is_dependent ||
-						   arg.dependent_name.isValid() ||
-						   arg.category() == TypeCategory::Auto ||
-						   arg.category() == TypeCategory::DeclTypeAuto;
-				});
-			if (has_structurally_dependent_template_args) {
+			if (anyTemplateArgIsStructurallyDependent(template_args)) {
 				continue;
 			}
 
@@ -4704,18 +4684,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	InlineVector<TemplateTypeArg, 4> template_args = std::move(deduction_candidate->template_args);
 	std::optional<CallArgDeductionInfo> deduction_info = std::move(deduction_candidate->deduction_info);
 	// template_args is already std::vector<TemplateTypeArg> — no conversion needed.
-	const auto has_structurally_dependent_template_args = [](std::span<const TemplateTypeArg> args) {
-		return std::any_of(
-			args.begin(),
-			args.end(),
-			[](const TemplateTypeArg& arg) {
-				return arg.is_dependent ||
-					   arg.dependent_name.isValid() ||
-					   arg.category() == TypeCategory::Auto ||
-					   arg.category() == TypeCategory::DeclTypeAuto;
-			});
-	};
-	if (has_structurally_dependent_template_args(template_args)) {
+	if (anyTemplateArgIsStructurallyDependent(template_args)) {
 		return std::nullopt;
 	}
 

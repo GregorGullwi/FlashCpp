@@ -12331,10 +12331,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Only do this when all outer params are concrete (non-dependent); a
 				// dependent-param instantiation (e.g. Provider<T>) must not overwrite
 				// a concrete binding that was registered earlier.
-				const bool all_concrete_args = std::all_of(
-					outer_binding.param_args.begin(),
-					outer_binding.param_args.end(),
-					[](const TemplateTypeArg& arg) { return !arg.is_dependent; });
+				const bool all_concrete_args = !anyTemplateArgIsStructurallyDependent(
+					std::span<const TemplateTypeArg>(
+						outer_binding.param_args.begin(),
+						outer_binding.param_args.end()));
 				if (all_concrete_args) {
 					StringHandle base_alias_handle =
 						StringTable::getOrInternStringHandle(base_alias_name);

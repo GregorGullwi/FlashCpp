@@ -1698,6 +1698,39 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					break;  // variadic: don't apply the check to pack params
 				}
 				const TypeSpecifierNode& pts = pdecl.type_specifier_node();
+				// Only skip the pointer-depth check when the parameter's BASE TYPE is
+				// itself directly one of this member function template's own type
+				// parameters (e.g. `pick(U value)` where U is in template_params).
+				// In that case the explicit template arg supplies the FULL type
+				// (including pointer depth) for U, so the declared pointer_depth of 0
+				// is meaningless — `pick<int*>(&v)` with U=int* IS valid.
+				//
+				// Do NOT skip for complex dependent types like `Apply<U>` or
+				// `Provider<T>::Node::Apply<U>`: those have a structurally-known
+				// pointer depth in the declaration (e.g. depth 0 for `Apply<U>` vs
+				// depth 1 for `Apply<U>*`) that the pre-filter should honour.
+				if (typeSpecStillUsesDependentPlaceholder(pts)) {
+					// Determine the base type name of the parameter.
+					StringHandle base_name;
+					if (const TypeInfo* ti = tryGetTypeInfo(pts.type_index())) {
+						base_name = ti->name();
+					}
+					if (!base_name.isValid()) {
+						base_name = pts.token().handle();
+					}
+					bool is_direct_tparam = false;
+					if (base_name.isValid()) {
+						for (const auto& tp : template_params) {
+							if (tp.nameHandle() == base_name) {
+								is_direct_tparam = true;
+								break;
+							}
+						}
+					}
+					if (is_direct_tparam) {
+						continue;  // skip: U could be int*, pointer depth unknown before substitution
+					}
+				}
 				const size_t param_ptr = pts.pointer_depth();
 				const size_t arg_ptr   = call_arg_types[pi].pointer_depth();
 				if (arg_ptr > 0 && param_ptr == 0) {
