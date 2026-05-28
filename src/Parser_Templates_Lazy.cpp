@@ -652,7 +652,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters,
 		true,  // Preserve declared parameter cv-qualifier in this path
 		false, // Do not re-apply bound metadata to full substitution
-		true); // Force resolved TypeIndex onto full AST substitutions
+		true,  // Force resolved TypeIndex onto full AST substitutions
+		false); // Plain member lazy replay does not need dependent member-template signature preservation
 
 	// Get the function body - either from definition or by re-parsing from saved position
 	std::optional<ASTNode> body_to_substitute;

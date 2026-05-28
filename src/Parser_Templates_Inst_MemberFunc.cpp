@@ -159,6 +159,50 @@ ASTNode rebuildResolvedSubstitutedTypeSpec(
 		resolved_type_index);
 	return substituted_type;
 }
+
+void appendMemberTemplateResolutionOuterBindings(
+	const OuterTemplateBinding* outer_binding,
+	InlineVector<TemplateParameterNode, 4>& resolution_params,
+	InlineVector<TemplateTypeArg, 4>& resolution_args) {
+	if (outer_binding == nullptr) {
+		return;
+	}
+	if (!outer_binding->params.empty()) {
+		const size_t pair_count =
+			std::min(outer_binding->params.size(), outer_binding->param_args.size());
+		for (size_t i = 0; i < pair_count; ++i) {
+			const TemplateParameterNode* outer_param =
+				tryGetTemplateParameterNode(outer_binding->params[i]);
+			if (outer_param == nullptr) {
+				continue;
+			}
+			resolution_params.push_back(*outer_param);
+			resolution_args.push_back(outer_binding->param_args[i]);
+		}
+		return;
+	}
+	const size_t pair_count =
+		std::min(outer_binding->param_names.size(), outer_binding->param_args.size());
+	for (size_t i = 0; i < pair_count; ++i) {
+		Token param_token(
+			Token::Type::Identifier,
+			StringTable::getStringView(outer_binding->param_names[i]),
+			0,
+			0,
+			0);
+		resolution_params.push_back(
+			TemplateParameterNode(outer_binding->param_names[i], param_token));
+		resolution_args.push_back(outer_binding->param_args[i]);
+	}
+}
+
+bool dependentQualifiedRecordHasMemberTemplateSegment(
+	const TypeInfo::DependentQualifiedNameRecord* dependent_record) {
+	return dependent_record != nullptr &&
+		std::ranges::any_of(
+			dependent_record->member_chain,
+			[](const auto& member) { return member.has_template_arguments; });
+}
 }
 
 bool Parser::tryAppendMemberDefaultTemplateArg(
@@ -790,6 +834,78 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		return std::nullopt;
 	}
 
+	auto concretize_shape_params =
+		[&](
+			FunctionDeclarationNode& function_decl,
+			const ASTNode& template_node_for_candidate,
+			StringHandle lookup_name,
+			std::span<const TemplateTypeArg> candidate_template_args) {
+			if (!template_node_for_candidate.is<TemplateFunctionDeclarationNode>()) {
+				return;
+			}
+			InlineVector<TemplateParameterNode, 4> resolution_params;
+			InlineVector<TemplateTypeArg, 4> resolution_args;
+			appendMemberTemplateResolutionOuterBindings(
+				gTemplateRegistry.getOuterTemplateBinding(lookup_name.view()),
+				resolution_params,
+				resolution_args);
+			const auto& inner_template_params =
+				template_node_for_candidate.as<TemplateFunctionDeclarationNode>().template_parameters();
+			for (const TemplateParameterNode& template_param : inner_template_params) {
+				resolution_params.push_back(template_param);
+			}
+			for (const TemplateTypeArg& template_arg : candidate_template_args) {
+				resolution_args.push_back(template_arg);
+			}
+
+			for (ASTNode& param_node : function_decl.parameter_nodes()) {
+				DeclarationNode* param_decl =
+					Parser::get_decl_from_symbol_mut(param_node);
+				if (param_decl == nullptr) {
+					continue;
+				}
+				const TypeSpecifierNode& param_type = param_decl->type_specifier_node();
+				const TypeInfo* param_type_info =
+					param_type.type_index().is_valid()
+						? tryGetTypeInfo(param_type.type_index())
+						: nullptr;
+				const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+					param_type_info != nullptr && param_type_info->hasDependentQualifiedName()
+						? param_type_info->dependentQualifiedName()
+						: nullptr;
+				if (dependent_record == nullptr && param_type_info != nullptr) {
+					ResolvedAliasTypeInfo resolved_alias =
+						resolveAliasTypeInfo(
+							param_type_info->registeredTypeIndex().withCategory(
+								param_type_info->typeEnum()));
+					if (resolved_alias.terminal_type_info != nullptr &&
+						resolved_alias.terminal_type_info->hasDependentQualifiedName()) {
+						dependent_record =
+							resolved_alias.terminal_type_info->dependentQualifiedName();
+					}
+				}
+				if (dependent_record == nullptr ||
+					dependentQualifiedRecordHasMemberTemplateSegment(dependent_record)) {
+					continue;
+				}
+
+				ASTNode concretized_param_type =
+					ASTNode::emplace_node<TypeSpecifierNode>(param_type);
+				if (resolveDependentMemberAlias(
+						concretized_param_type,
+						std::span<const TemplateParameterNode>(
+							resolution_params.data(),
+							resolution_params.size()),
+						std::span<const TemplateTypeArg>(
+							resolution_args.data(),
+							resolution_args.size())) ==
+					DependentAliasResolutionStatus::Resolved) {
+					normalizeSubstitutedTypeSpec(concretized_param_type.as<TypeSpecifierNode>());
+					param_decl->set_type_node(concretized_param_type.as<TypeSpecifierNode>());
+				}
+			}
+		};
+
 	if (viable.size() > 1) {
 		InlineVector<ASTNode, 4> shape_overloads;
 		InlineVector<size_t, 4> shape_candidate_indices;
@@ -808,6 +924,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			auto shape_key = FlashCpp::makeInstantiationKey(shape_key_qualified_name, candidate.template_args);
 			if (auto existing_inst = gTemplateRegistry.getInstantiation(shape_key);
 				existing_inst.has_value() && existing_inst->is<FunctionDeclarationNode>()) {
+				concretize_shape_params(
+					existing_inst->as<FunctionDeclarationNode>(),
+					*candidate.template_node,
+					candidate.lookup_name,
+					candidate.template_args);
 				shape_overloads.push_back(*existing_inst);
 				shape_candidate_indices.push_back(i);
 				continue;
@@ -826,6 +947,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				arg_types,
 				false);
 			if (shape_node.has_value() && shape_node->is<FunctionDeclarationNode>()) {
+				concretize_shape_params(
+					shape_node->as<FunctionDeclarationNode>(),
+					*candidate.template_node,
+					candidate.lookup_name,
+					candidate.template_args);
 				shape_overloads.push_back(*shape_node);
 				shape_candidate_indices.push_back(i);
 			}
@@ -873,7 +999,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		return *existing_inst;  // Return existing instantiation
 	}
 
-	return instantiate_member_function_template_core(
+	std::optional<ASTNode> instantiated_member = instantiate_member_function_template_core(
 		// Prefer the instantiated struct_name over the pattern-level best_owner_name.
 		// best_owner_name is derived from the template's lookup_name which may be the
 		// uninstantiated pattern (e.g. "Outer::Inner") rather than the concrete
@@ -893,6 +1019,15 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 		best.lookup_name,
 		key_qualified_name,
 		*best.template_node, best.template_args, key, arg_types, true);
+	if (instantiated_member.has_value() &&
+		instantiated_member->is<FunctionDeclarationNode>()) {
+		concretize_shape_params(
+			instantiated_member->as<FunctionDeclarationNode>(),
+			*best.template_node,
+			best.lookup_name,
+			best.template_args);
+	}
+	return instantiated_member;
 }
 
 std::optional<ASTNode> Parser::try_instantiate_constructor_template(
@@ -1886,6 +2021,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				return {type_index, nullptr};
 			}
 			std::string_view tn = StringTable::getStringView(ti->name());
+			const bool is_dependent_member_type = ti->isDependentMemberType();
 
 			// Check inner template params first
 			for (size_t i = 0; i < template_params.size(); ++i) {
@@ -1902,7 +2038,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					}
 				}
 
-				if (ti->isDependentPlaceholder()) {
+				if (ti->isDependentPlaceholder() &&
+					!is_dependent_member_type) {
 					if (const auto* dependent_record = ti->dependentQualifiedName();
 						dependent_record != nullptr && dependent_record->owner_name.isValid()) {
 						for (size_t i = 0;
@@ -2027,6 +2164,59 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		if (const int resolved_size_bits = getTypeSpecSizeBits(target); resolved_size_bits > 0) {
 			target.set_size_in_bits(resolved_size_bits);
 		}
+	};
+	auto materialize_alias_target_from_instantiation_context =
+		[this](const TypeInfo& alias_type_info) -> std::optional<TypeSpecifierNode> {
+		const TypeSpecifierNode* alias_type_spec = alias_type_info.aliasTypeSpecifier();
+		if (alias_type_spec == nullptr) {
+			return std::nullopt;
+		}
+		const TypeInfo::InstantiationContext* inst_ctx =
+			alias_type_info.instantiationContext();
+		if (inst_ctx == nullptr) {
+			return std::nullopt;
+		}
+
+		InlineVector<TemplateParameterNode, 4> ctx_params;
+		InlineVector<TemplateTypeArg, 4> ctx_args;
+		auto append_instantiation_context =
+			[&](const auto& self, const TypeInfo::InstantiationContext* current_ctx) -> void {
+			if (current_ctx == nullptr) {
+				return;
+			}
+			self(self, current_ctx->parent);
+			size_t binding_count = current_ctx->param_names.size();
+			if (current_ctx->param_args.size() < binding_count) {
+				binding_count = current_ctx->param_args.size();
+			}
+			for (size_t binding_index = 0; binding_index < binding_count; ++binding_index) {
+				ctx_params.push_back(
+					rebuildOuterTemplateParameter(
+						current_ctx->param_names[binding_index],
+						current_ctx->param_args[binding_index]));
+				ctx_args.push_back(
+					toTemplateTypeArg(current_ctx->param_args[binding_index]));
+			}
+		};
+		append_instantiation_context(append_instantiation_context, inst_ctx);
+		if (ctx_params.empty() || ctx_args.empty()) {
+			return std::nullopt;
+		}
+
+		TypeIndex concrete_alias_index = substitute_template_parameter(
+			*alias_type_spec,
+			std::span<const TemplateParameterNode>(ctx_params.data(), ctx_params.size()),
+			std::span<const TemplateTypeArg>(ctx_args.data(), ctx_args.size()));
+		if (!concrete_alias_index.is_valid()) {
+			return std::nullopt;
+		}
+
+		TypeSpecifierNode concrete_alias_spec = *alias_type_spec;
+		concrete_alias_spec.set_type_index(
+			concrete_alias_index.withCategory(concrete_alias_index.category()));
+		concrete_alias_spec.set_category(concrete_alias_index.category());
+		normalizeSubstitutedTypeSpec(concrete_alias_spec);
+		return concrete_alias_spec;
 	};
 	// Substitute the return type if it's a template parameter
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_specifier_node();
@@ -2316,9 +2506,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				original_param_type_node,
 				param_type_spec,
 				param_type_index);
-			if (func_decl.has_outer_template_bindings()) {
+			const TypeInfo* original_param_type_info =
+				tryGetTypeInfo(param_type_spec.type_index());
+			if (func_decl.has_outer_template_bindings() &&
+				!(original_param_type_info != nullptr &&
+				  original_param_type_info->isDependentMemberType())) {
 				if (auto resolved_outer = resolveDependentPlaceholderFromOuterBindings(
-						tryGetTypeInfo(param_type_spec.type_index()),
+						original_param_type_info,
 						func_decl.outer_template_param_names(),
 						func_decl.outer_template_args())) {
 					param_type_index = *resolved_outer;
@@ -2345,36 +2539,214 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (const auto& template_arg : template_args) {
 				member_template_resolution_args.push_back(template_arg);
 			}
-			param_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
-				*this,
-				&original_param_type_node,
-				param_type_spec,
-				member_template_resolution_params,
-				member_template_resolution_args,
-				param_type_index,
-				true,
-				true,
-				true);
+			const TypeInfo* semantic_param_type_info = original_param_type_info;
+			if (semantic_param_type_info != nullptr &&
+				(!semantic_param_type_info->isDependentMemberType() ||
+				 !semantic_param_type_info->hasDependentQualifiedName()) &&
+				param_type_spec.type_index().is_valid()) {
+				ResolvedAliasTypeInfo resolved_param_alias =
+					resolveAliasTypeInfo(param_type_spec.type_index());
+				if (resolved_param_alias.terminal_type_info != nullptr) {
+					semantic_param_type_info = resolved_param_alias.terminal_type_info;
+				}
+			}
+			if (semantic_param_type_info != nullptr &&
+				semantic_param_type_info->isDependentMemberType() &&
+				semantic_param_type_info->hasDependentQualifiedName()) {
+				if (const TypeInfo* resolved_dependent_param_type =
+						resolveDependentMemberTypeSemantic(
+							*semantic_param_type_info,
+							member_template_resolution_params,
+							member_template_resolution_args,
+							current_owner_type_name);
+					resolved_dependent_param_type != nullptr) {
+					param_type_index =
+						resolved_dependent_param_type->registeredTypeIndex().withCategory(
+							resolved_dependent_param_type->typeEnum());
+				}
+			}
+			ASTNode resolved_original_dependent_param_type;
+			bool resolved_original_dependent_alias = false;
+			if (semantic_param_type_info != nullptr &&
+				semantic_param_type_info->isDependentMemberType() &&
+				semantic_param_type_info->hasDependentQualifiedName()) {
+				resolved_original_dependent_param_type =
+					emplace_node<TypeSpecifierNode>(param_type_spec);
+				if (resolveDependentMemberAlias(
+						resolved_original_dependent_param_type,
+						member_template_resolution_params,
+						member_template_resolution_args) ==
+					DependentAliasResolutionStatus::Resolved) {
+					param_type_index =
+						resolved_original_dependent_param_type
+							.as<TypeSpecifierNode>()
+							.type_index();
+					resolved_original_dependent_alias = true;
+				}
+			}
+			if (!resolved_original_dependent_alias) {
+				param_type_index = resolveDependentMemberTemplateSubstitutionArtifacts(
+					*this,
+					&original_param_type_node,
+					param_type_spec,
+					member_template_resolution_params,
+					member_template_resolution_args,
+					param_type_index,
+					true,
+					true,
+					true);
+			}
 
 			// Create the substituted parameter type specifier
 			auto substituted_param_type = rebuildResolvedSubstitutedTypeSpec(
 				param_type_spec,
 				param_type_index,
 				resolved_arg);
+			if (resolved_original_dependent_alias) {
+				substituted_param_type = resolved_original_dependent_param_type;
+			}
 
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
+			auto alias_type_spec_still_uses_active_template_param =
+				[&](const TypeSpecifierNode& alias_type_spec) {
+					if (typeSpecStillUsesDependentPlaceholder(alias_type_spec)) {
+						return true;
+					}
+					StringHandle alias_type_name{};
+					if (alias_type_spec.type_index().is_valid()) {
+						if (const TypeInfo* alias_type_info =
+								tryGetTypeInfo(alias_type_spec.type_index())) {
+							alias_type_name = alias_type_info->name();
+						}
+					}
+					if (!alias_type_name.isValid()) {
+						alias_type_name = alias_type_spec.token().handle();
+					}
+					if (!alias_type_name.isValid()) {
+						return false;
+					}
+					for (const TemplateParameterNode& active_template_param :
+						 member_template_resolution_params) {
+						if (active_template_param.nameHandle() == alias_type_name) {
+							return true;
+						}
+					}
+					return false;
+				};
 			if (const TypeInfo* param_type_info = tryGetTypeInfo(param_type_index);
 				param_type_info != nullptr &&
 				param_type_info->isTypeAlias()) {
-				if (const TypeSpecifierNode* alias_type_spec = param_type_info->aliasTypeSpecifier();
+				if (std::optional<TypeSpecifierNode> concrete_alias_type_spec =
+						materialize_alias_target_from_instantiation_context(
+							*param_type_info);
+					concrete_alias_type_spec.has_value()) {
+					merge_alias_target_type_spec(
+						substituted_param_type_spec,
+						*concrete_alias_type_spec);
+				} else if (original_param_type_info != nullptr) {
+					if (std::optional<TypeSpecifierNode> original_concrete_alias_type_spec =
+							materialize_alias_target_from_instantiation_context(
+								*original_param_type_info);
+						original_concrete_alias_type_spec.has_value()) {
+						merge_alias_target_type_spec(
+							substituted_param_type_spec,
+							*original_concrete_alias_type_spec);
+					} else if (const TypeSpecifierNode* alias_type_spec = param_type_info->aliasTypeSpecifier();
+						alias_type_spec != nullptr &&
+						!alias_type_spec_still_uses_active_template_param(*alias_type_spec)) {
+						merge_alias_target_type_spec(
+							substituted_param_type_spec,
+							*alias_type_spec);
+					}
+				} else if (const TypeSpecifierNode* alias_type_spec = param_type_info->aliasTypeSpecifier();
 					alias_type_spec != nullptr &&
-					!typeSpecStillUsesDependentPlaceholder(*alias_type_spec)) {
+					!alias_type_spec_still_uses_active_template_param(*alias_type_spec)) {
 					merge_alias_target_type_spec(
 						substituted_param_type_spec,
 						*alias_type_spec);
 				}
 			}
 			normalizeSubstitutedTypeSpec(substituted_param_type_spec);
+			if (semantic_param_type_info != nullptr &&
+				semantic_param_type_info->isDependentMemberType() &&
+				semantic_param_type_info->hasDependentQualifiedName()) {
+				TypeIndex normalized_param_type_index = substituted_param_type_spec.type_index();
+				const TypeInfo* normalized_param_type_info =
+					normalized_param_type_index.is_valid()
+						? tryGetTypeInfo(normalized_param_type_index)
+						: nullptr;
+				if (normalized_param_type_info != nullptr) {
+					TypeSpecifierNode rebuilt_param_type_spec = buildSubstitutedTypeSpecifier(
+						param_type_spec,
+						param_decl.type_node(),
+						param_decl.identifier_token(),
+						member_template_resolution_params,
+						member_template_resolution_args,
+						[this](const ASTNode& node, const auto& params, const auto& args) {
+							return substituteTemplateParameters(node, params, args);
+						},
+						[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+							return substitute_template_parameter(type_spec, params, args);
+						},
+						nullptr,
+						TypeIndex{},
+						TypeIndex{},
+						false,
+						true);
+					ASTNode rebuilt_param_type = emplace_node<TypeSpecifierNode>(rebuilt_param_type_spec);
+					if (resolveDependentMemberAlias(
+							rebuilt_param_type,
+							member_template_resolution_params,
+							member_template_resolution_args) ==
+						DependentAliasResolutionStatus::Resolved) {
+						normalizeSubstitutedTypeSpec(rebuilt_param_type.as<TypeSpecifierNode>());
+						substituted_param_type = rebuilt_param_type;
+					}
+				}
+			}
+			if (semantic_param_type_info != nullptr &&
+				semantic_param_type_info->isDependentMemberType() &&
+				semantic_param_type_info->hasDependentQualifiedName()) {
+				auto has_member_template_segment =
+					[](const TypeInfo* type_info) {
+						if (type_info == nullptr) {
+							return false;
+						}
+						const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+							type_info->hasDependentQualifiedName()
+								? type_info->dependentQualifiedName()
+								: nullptr;
+						if (dependent_record == nullptr) {
+							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+								type_info->registeredTypeIndex().withCategory(
+									type_info->typeEnum()));
+							if (resolved_alias.terminal_type_info != nullptr &&
+								resolved_alias.terminal_type_info->hasDependentQualifiedName()) {
+								dependent_record =
+									resolved_alias.terminal_type_info->dependentQualifiedName();
+							}
+						}
+						if (dependent_record == nullptr) {
+							return false;
+						}
+						return std::ranges::any_of(
+							dependent_record->member_chain,
+							[](const auto& member) { return member.has_template_arguments; });
+					};
+				if (!has_member_template_segment(semantic_param_type_info)) {
+					ASTNode concretized_param_type =
+						emplace_node<TypeSpecifierNode>(substituted_param_type.as<TypeSpecifierNode>());
+					if (resolveDependentMemberAlias(
+							concretized_param_type,
+							member_template_resolution_params,
+							member_template_resolution_args) ==
+						DependentAliasResolutionStatus::Resolved) {
+						normalizeSubstitutedTypeSpec(
+							concretized_param_type.as<TypeSpecifierNode>());
+						substituted_param_type = concretized_param_type;
+					}
+				}
+			}
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());

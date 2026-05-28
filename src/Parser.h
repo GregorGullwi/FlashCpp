@@ -2129,7 +2129,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		SubstitutedDefaultArgumentPolicy default_argument_policy, // Default-arg substitution strategy
 		bool preserve_parameter_cv_qualifier, // Keep declared cv qualifier; false reproduces decl-only legacy behavior
 		bool apply_bound_metadata_to_full_substitution, // Apply bound arg pointer/ref metadata on substituted node
-		bool apply_resolved_index_to_full_substitution); // Force substituted TypeIndex onto full AST substitutions
+		bool apply_resolved_index_to_full_substitution, // Force substituted TypeIndex onto full AST substitutions
+		bool preserve_dependent_member_template_signature_identity); // Preserve member-template dependent placeholders when replay needs exact identity
 	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
 	StringHandle resolveBaseInitializerNameForTemplateArgs(
 		StringHandle base_name,

@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-27 (OOL member-function-template bodies now preserve type-parameter-qualified member-template alias metadata)
+**Last updated:** 2026-05-28 (OOL member-template alias-target overload replay now preserves dependent owner/member-template identity end-to-end)
 
 This document should stay forward-facing. It is not a historical ledger or
 release log. Keep only the minimum completed-state context needed to explain
@@ -198,9 +198,19 @@ Useful assumptions before changing this area:
   Alias-owner recovery is narrowed to evidence-backed dependent-owner records or
   a unique concrete struct owner, so existing alias-template default NTTP and
   non-template-intermediate member-alias paths remain stable.
+- **OOL member-function-template overloads whose parameters differ only by
+  concrete type-parameter-qualified member-template alias targets now preserve
+  dependent owner/member-template identity across copied instantiated stubs,
+  replay attachment, lazy member-template shape instantiation, and concrete
+  alias materialization**: `typename T::template AddPtr<int>::type` vs
+  `...AddPtr<long>::type` no longer collapses to the same owner artifact or the
+  same `$olN` body. The adjacent plain-member dependent-qualified replay path
+  now concretizes those definition-side alias targets after attachment, and the
+  nested dependent-member swap replay path now concretizes non-template
+  dependent member aliases before overload-shape reuse.
 
 Latest recorded full-suite validation:
-`2595` regular tests compiled/linked/runtime-pass, `0` fail, `182` expected-fail tests.
+`2598` regular tests compiled/linked/runtime-pass, `0` fail, `185` expected-fail tests.
 
 Latest focused replay regressions added on the current branch:
 - `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
@@ -231,6 +241,7 @@ Latest focused replay regressions added on the current branch:
 - `test_template_ool_ctor_dependent_member_swap_body_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_swap_body_ret0.cpp`
 - `test_template_param_qualified_static_member_auto_ret0.cpp`
+- `test_template_ool_member_template_dependent_member_template_alias_overload_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_template_type_param_deref_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_template_type_param_forward_deref_ret0.cpp`
 - `test_template_ool_member_template_dependent_member_template_type_param_ref_forward_ret0.cpp`
@@ -253,14 +264,13 @@ The next highest-value remaining surface:
     substitution outcomes (`nullopt`) because required replay-visible metadata
     is not always captured early enough; these need metadata completion so
     canonical matching succeeds more often without broad fallback machinery.
-  - overloaded OOL member-function-template declarations whose parameter types
-    differ only by concrete member-template alias targets still need stronger
-    source-member identity and alias-target disambiguation; a reduced
-    `AddPtr<int>`/`AddPtr<long>` case can still select the wrong `$olN`
-    materialization and fail to attach the replayed body.
   - dependent-member OOL swap regressions now cover the first constructor
     replay/body-selection gap; continue looking for remaining swap-shaped gaps
     in less-covered member-template and nested replay surfaces.
+  - continue looking for remaining declaration-copy or lazy-shape surfaces
+    where dependent owner/member-template identity is still erased too early or
+    preserved too long, especially in deeper owner/member-template chains
+    beyond the covered `AddPtr<int>`/`AddPtr<long>` overload case.
 ### 2. Dependent-name modeling is still too weak
 
 `DependentQualifiedNameRecord` is useful, but it is still not a complete
@@ -294,10 +304,10 @@ they directly block items 1-2:
    - Continue with any remaining OOL dependent-member swap slices in
      member-template or nested overload sets where replay-selected stubs and
      deferred body parsing can still drift after owner-artifact recovery.
-   - Continue the type-parameter-qualified lookup slice into overloaded
-     member-template type-chain replay surfaces, especially same-name OOL
-     member-function-template overloads whose parameters differ by resolved
-     member-template alias target (`AddPtr<int>` vs `AddPtr<long>`).
+   - Continue the type-parameter-qualified lookup slice into deeper
+     owner/member-template chains and remaining declaration-copy / lazy-shape
+     identity gaps beyond the covered `AddPtr<int>` vs `AddPtr<long>`
+     overload case.
    - Keep function-parameter adjustment rules centralized in shared substitution
      helpers so replay/attachment compares canonical signatures instead of
      path-specific normalized variants.

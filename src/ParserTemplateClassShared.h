@@ -321,8 +321,13 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 	bool appended_member = false;
 	if (dependent_record != nullptr && !dependent_record->member_chain.empty()) {
 		for (const auto& member : dependent_record->member_chain) {
-			if (!member.name.isValid() || member.has_template_arguments) {
+			if (!member.name.isValid()) {
 				return substituted_type_index;
+			}
+			if (member.has_template_arguments) {
+				return original_type_spec.type_index().is_valid()
+					? original_type_spec.type_index()
+					: substituted_type_index;
 			}
 			qualified_member_name_builder.append("::");
 			qualified_member_name_builder.append(StringTable::getStringView(member.name));
@@ -569,9 +574,20 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwner(
 	if (original_type_spec.type_index().is_valid()) {
 		original_type_info = tryGetTypeInfo(original_type_spec.type_index());
 	}
+	const TypeInfo* template_source_type_info = original_type_info;
+	if (template_source_type_info != nullptr &&
+		!template_source_type_info->isTemplateInstantiation()) {
+		const ResolvedAliasTypeInfo resolved_original_alias =
+			resolveAliasTypeInfo(
+				template_source_type_info->registeredTypeIndex().withCategory(
+					template_source_type_info->typeEnum()));
+		if (resolved_original_alias.terminal_type_info != nullptr) {
+			template_source_type_info = resolved_original_alias.terminal_type_info;
+		}
+	}
 	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
-			? original_type_info->dependentQualifiedName()
+		template_source_type_info != nullptr && template_source_type_info->isDependentPlaceholder()
+			? template_source_type_info->dependentQualifiedName()
 			: nullptr;
 	if (dependent_record == nullptr || dependent_record->member_chain.empty()) {
 		return substituted_type_index;
@@ -658,9 +674,20 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 	if (original_type_spec.type_index().is_valid()) {
 		original_type_info = tryGetTypeInfo(original_type_spec.type_index());
 	}
+	const TypeInfo* template_source_type_info = original_type_info;
+	if (template_source_type_info != nullptr &&
+		!template_source_type_info->isTemplateInstantiation()) {
+		const ResolvedAliasTypeInfo resolved_original_alias =
+			resolveAliasTypeInfo(
+				template_source_type_info->registeredTypeIndex().withCategory(
+					template_source_type_info->typeEnum()));
+		if (resolved_original_alias.terminal_type_info != nullptr) {
+			template_source_type_info = resolved_original_alias.terminal_type_info;
+		}
+	}
 	const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-		original_type_info != nullptr && original_type_info->isDependentPlaceholder()
-			? original_type_info->dependentQualifiedName()
+		template_source_type_info != nullptr && template_source_type_info->isDependentPlaceholder()
+			? template_source_type_info->dependentQualifiedName()
 			: nullptr;
 	if (dependent_record == nullptr && original_type_info != nullptr) {
 		const ResolvedAliasTypeInfo resolved_alias =
@@ -687,10 +714,10 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 			}
 		}
 	}
-	if (original_type_info != nullptr) {
+	if (template_source_type_info != nullptr) {
 		std::string_view base_template_name =
-			original_type_info->isTemplateInstantiation()
-				? StringTable::getStringView(original_type_info->baseTemplateName())
+			template_source_type_info->isTemplateInstantiation()
+				? StringTable::getStringView(template_source_type_info->baseTemplateName())
 				: std::string_view{};
 		std::string_view owner_name;
 		std::string_view member_template_name;
@@ -700,7 +727,7 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 			member_template_name = base_template_name.substr(owner_sep + 2);
 		} else {
 			std::string_view original_type_name =
-				StringTable::getStringView(original_type_info->name());
+				StringTable::getStringView(template_source_type_info->name());
 			const size_t hash_pos = original_type_name.find('$');
 			if (hash_pos != std::string_view::npos) {
 				member_template_name = original_type_name.substr(0, hash_pos);
@@ -711,12 +738,34 @@ inline TypeIndex resolveDependentMemberTemplatePlaceholderFromConcreteOwnerArtif
 			dependent_record->owner_name.isValid()) {
 			owner_name = StringTable::getStringView(dependent_record->owner_name);
 		}
+		if (dependent_record != nullptr &&
+			dependent_record->owner_name.isValid()) {
+			std::string_view dependent_owner_name =
+				StringTable::getStringView(dependent_record->owner_name);
+			if (size_t dependent_owner_sep = dependent_owner_name.rfind("::");
+				dependent_owner_sep != std::string_view::npos) {
+				if (member_template_name.empty()) {
+					member_template_name =
+						dependent_owner_name.substr(dependent_owner_sep + 2);
+				}
+				owner_name = dependent_owner_name.substr(0, dependent_owner_sep);
+			}
+		}
 		if (!member_template_name.empty()) {
 			auto try_resolve_for_owner = [&](const TypeInfo* owner_type_info) -> TypeIndex {
 				if (owner_type_info != nullptr && is_struct_type(owner_type_info->typeEnum())) {
 					InlineVector<TemplateTypeArg, 4> concrete_template_args;
-					concrete_template_args.reserve(original_type_info->templateArgs().size());
-					for (const auto& arg_info : original_type_info->templateArgs()) {
+					std::span<const TypeInfo::TemplateArgInfo> owner_template_args =
+						(dependent_record != nullptr &&
+						 !dependent_record->owner_template_arguments.empty())
+							? std::span<const TypeInfo::TemplateArgInfo>(
+								  dependent_record->owner_template_arguments.data(),
+								  dependent_record->owner_template_arguments.size())
+							: std::span<const TypeInfo::TemplateArgInfo>(
+								  template_source_type_info->templateArgs().data(),
+								  template_source_type_info->templateArgs().size());
+					concrete_template_args.reserve(owner_template_args.size());
+					for (const auto& arg_info : owner_template_args) {
 						TemplateTypeArg concrete_arg =
 							materializeTemplateArg(arg_info, template_params, template_args);
 						if (concrete_arg.is_dependent ||

@@ -2267,11 +2267,22 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		return nullptr;
 	}
 
-	if (original_alias_target_info->isDependentMemberType() &&
-		original_alias_target_info->hasDependentQualifiedName()) {
+	const TypeInfo* semantic_alias_target_info = original_alias_target_info;
+	if ((!semantic_alias_target_info->isDependentMemberType() ||
+		 !semantic_alias_target_info->hasDependentQualifiedName()) &&
+		alias_type_spec.type_index().is_valid()) {
+		ResolvedAliasTypeInfo resolved_alias =
+			resolveAliasTypeInfo(alias_type_spec.type_index());
+		if (resolved_alias.terminal_type_info != nullptr) {
+			semantic_alias_target_info = resolved_alias.terminal_type_info;
+		}
+	}
+
+	if (semantic_alias_target_info->isDependentMemberType() &&
+		semantic_alias_target_info->hasDependentQualifiedName()) {
 		if (const TypeInfo* resolved_dependent_type =
 				resolveDependentMemberTypeSemantic(
-					*original_alias_target_info,
+					*semantic_alias_target_info,
 					template_params,
 					template_args,
 					StringHandle{});
@@ -2281,7 +2292,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	}
 
 	const TypeInfo::DependentQualifiedNameRecord* dependent_name =
-		original_alias_target_info->dependentQualifiedName();
+		semantic_alias_target_info->dependentQualifiedName();
 	if (dependent_name == nullptr ||
 		dependent_name->member_chain.empty()) {
 		return nullptr;
@@ -2312,6 +2323,18 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	}
 	if (!dependent_base_info || !is_struct_type(dependent_base_info->typeEnum())) {
 		return nullptr;
+	}
+	if (semantic_alias_target_info->isDependentMemberType() &&
+		semantic_alias_target_info->hasDependentQualifiedName()) {
+		if (const TypeInfo* resolved_with_concrete_owner =
+				resolveDependentMemberTypeSemantic(
+					*semantic_alias_target_info,
+					template_params,
+					template_args,
+					dependent_base_info->name());
+			resolved_with_concrete_owner != nullptr) {
+			return resolved_with_concrete_owner;
+		}
 	}
 	std::string_view dependent_base_name =
 		StringTable::getStringView(dependent_base_info->name());
@@ -2428,8 +2451,43 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		StringHandle base_template_name_handle = gNamespaceRegistry.buildQualifiedIdentifier(
 			dependent_base_info->sourceNamespace(),
 			dependent_base_info->baseTemplateName());
+		auto resolve_composite_owner_template_name =
+			[&](StringHandle candidate_handle) -> StringHandle {
+			if (!candidate_handle.isValid()) {
+				return candidate_handle;
+			}
+			std::string_view candidate_name =
+				StringTable::getStringView(candidate_handle);
+			size_t owner_sep = candidate_name.rfind("::");
+			if (owner_sep == std::string_view::npos) {
+				return candidate_handle;
+			}
+			std::string_view owner_prefix = candidate_name.substr(0, owner_sep);
+			std::string_view member_template_name =
+				candidate_name.substr(owner_sep + 2);
+			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+				const TemplateParameterNode* template_param =
+					tryGetTemplateParameterNode(template_params[i]);
+				if (template_param == nullptr ||
+					template_param->name() != owner_prefix ||
+					template_args[i].is_value) {
+					continue;
+				}
+				const TypeInfo* concrete_owner_type_info =
+					tryGetTypeInfo(template_args[i].type_index);
+				if (concrete_owner_type_info == nullptr) {
+					break;
+				}
+				return buildQualifiedName(
+					StringTable::getStringView(concrete_owner_type_info->name()),
+					member_template_name);
+			}
+			return candidate_handle;
+		};
 		if (dependent_name->owner_name.isValid()) {
-			base_template_name_handle = dependent_name->owner_name;
+			base_template_name_handle =
+				resolve_composite_owner_template_name(
+					dependent_name->owner_name);
 		}
 		InlineVector<TemplateTypeArg, 4> concrete_base_args =
 			!dependent_name->owner_template_arguments.empty()
@@ -2452,6 +2510,48 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		materialized_alias_base_name = materialized_alias_base.canonicalName();
 		if (materialized_alias_base_name.empty()) {
 			return nullptr;
+		}
+	}
+
+	bool has_member_template_segment = false;
+	for (const auto& member_record : dependent_name->member_chain) {
+		if (member_record.has_template_arguments) {
+			has_member_template_segment = true;
+			break;
+		}
+	}
+	if (has_member_template_segment) {
+		std::vector<QualifiedTypeMemberAccess> materialized_member_chain;
+		materialized_member_chain.reserve(dependent_name->member_chain.size());
+		for (const auto& member_record : dependent_name->member_chain) {
+			QualifiedTypeMemberAccess member_access;
+			member_access.member_name = member_record.name;
+			if (member_record.has_template_arguments) {
+				InlineVector<TemplateTypeArg, 4> concrete_member_args =
+					materialize_template_args_with_environment(
+						member_record.template_arguments);
+				if (template_args_still_dependent(concrete_member_args)) {
+					return nullptr;
+				}
+				std::vector<TemplateTypeArg> materialized_args(
+					concrete_member_args.begin(),
+					concrete_member_args.end());
+				member_access.has_template_arguments = true;
+				member_access.template_arguments =
+					&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
+						std::move(materialized_args));
+			}
+			materialized_member_chain.push_back(std::move(member_access));
+		}
+
+		if (const TypeInfo* resolved_member =
+				resolveBaseClassMemberTypeChain(
+					materialized_alias_base_name,
+					std::span<const QualifiedTypeMemberAccess>(
+						materialized_member_chain.data(),
+						materialized_member_chain.size()));
+			resolved_member != nullptr) {
+			return resolved_member;
 		}
 	}
 
@@ -3272,7 +3372,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 		template_opt = gTemplateRegistry.lookupVariableTemplate(simple_template_name);
 	}
 	if (!template_opt.has_value()) {
-		FLASH_LOG(Templates, Error, "Variable template '", template_name, "' not found");
+		FLASH_LOG(Templates, Debug, "Variable template '", template_name, "' not found");
 		return std::nullopt;
 	}
 
