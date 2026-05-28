@@ -1,461 +1,89 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-28 (nested member-template alias materialization now preserves outer owner/member-template metadata through explicit template-argument parsing and alias rebinding)
+**Last updated:** 2026-05-28
 
-This document should stay forward-facing. It is not a historical ledger or
-release log. Keep only the minimum completed-state context needed to explain
-the current architecture and the next highest-impact work.
+This document is not a release log. It should explain what the current template
+architecture can assume, what is still structurally wrong, and what the next
+highest-value cleanup should be.
 
 ## Executive summary
 
-FlashCpp now handles many practical C++20 template cases, but the main
-remaining standards gap is still two-phase lookup across replayed template
-infrastructure.
+The template system has moved away from broad AST-only replay and toward
+owner-aware semantic records plus replay-first attachment. The biggest
+remaining gap is no longer general parser cleanup. It is the small set of
+template replay and dependent-alias routes that still lose semantic
+owner/member-chain identity and later recover it textually.
 
-The highest-impact work is no longer broad parser cleanup. It is removing the
-next replay-metadata gaps that still force template instantiation to recover
-intent from partially substituted AST state.
+## What the current design can assume
 
-## Current state
+- covered non-dependent template-body lookup preserves definition-context
+  binding
+- major out-of-line replay paths now prefer source-member identity plus
+  substituted-signature evidence over name/arity scans
+- constructor and member-template replay are increasingly owner-aware and
+  evidence-driven rather than shape-driven
+- dependent owner/member-template chains already have a shared semantic
+  materialization route in the covered cases
+- explicit member-template calls now carry call-argument information early
+  enough to avoid caching obviously wrong overloads
+- nested member-template alias materialization now preserves substantially more
+  outer owner/member-template metadata through parsing, rebinding, and
+  materialization
+- dependent alias resolution now re-enters semantic owner/member-chain
+  resolution before touching the legacy textual `base::member` path
 
-Useful assumptions before changing this area:
+## Main remaining architectural gap
 
-- the main template lookup paths already prefer semantic lookup records over
-  raw parser heuristics;
-- covered non-dependent template-body lookup already preserves
-  definition-context binding;
-- several replay-heavy paths now preserve enough metadata to reparse from
-  source instead of depending on AST-only substitution;
-- covered dependent owner/member-template chains already reuse a shared
-  owner-aware materialization path;
-- out-of-line constructor-template replay now preserves inner template metadata
-  and matches renamed inner template parameters in the covered paths;
-- nested out-of-line member-function-template replay now preserves
-  instantiated outer parameter bindings while still copying definition-side
-  parameter names;
-- **partial-spec member-function-template instantiation now builds new
-  owner-correct nodes and registers qualified-name + outer binding entries**
-  so the existing replay path can find and replay those bodies with
-  `T→concrete` in scope, matching the primary-template path;
-- **partial-spec out-of-line plain (non-template) member functions now have
-  their bodies parsed and substituted immediately during partial-spec
-  instantiation**, matching the primary-template OOL plain-member path and
-  enabling dependent-base lookup via `this->...` through partial specs.
-- **partial-spec non-ctor out-of-line member attachment now checks both the
-  current template name and the extracted base template name (with dedupe)**,
-  so plain-member replay and member-function-template deferred replay still
-  attach when registrations land under the base template name.
-- **primary-template and partial-spec plain (non-template) out-of-line member
-  attachment are now replay-first and identity-map-backed (including same-name
-  overloads)**: these paths now resolve the source declaration first, then map
-  source-member→instantiated-stub identity before replaying the body, removing
-  the old instantiated-member name/arity scan in this slice.
-- **primary-template plain out-of-line constructor attachment is now replay-first
-  and identity-map-backed (including same-name overloads)**: constructor replay
-  now resolves source constructor declarations through source-member→stub
-  identity, disambiguates overloads via substituted signature matching, and
-  synchronizes `StructTypeInfo` constructor bodies by matched instantiated
-  signature instead of name-only updates.
-- **partial-spec out-of-line constructor-template attachment is now replay-first
-  and identity-map-backed (including same-name overloads)**: constructor-template
-  attachment now resolves source constructor declarations through
-  source-member→stub identity before setting deferred body metadata, and
-  synchronizes `StructTypeInfo` constructor-template metadata by signature rather
-  than scan/name-only matching.
-- **nested-class out-of-line constructor-template attachment now also resolves
-  replay-first through source-member→stub identity (including same-name
-  overloads)**: nested replay now maps source constructor declarations to
-  instantiated stubs first, applies deferred body/initializer metadata on the
-  identity-resolved target, and syncs nested `StructTypeInfo` constructor-template
-  metadata via signature-equivalent matching.
-- **primary-template nested out-of-line constructor-template attachment is now
-  replay-first and identity-map-backed (including same-name overloads)**:
-  constructor-template stub attachment now resolves source constructor declarations
-  through source-member→stub identity, with overload-safe `StructTypeInfo`
-  synchronization by signature-equivalent matching.
-- **out-of-line constructor replay attachment now requires canonical
-  substituted-signature evidence across both plain and constructor-template
-  helper paths**: single-candidate unresolved (`nullopt`) acceptance has been
-  removed; no-match cases now surface explicit replay-attachment diagnostics
-  instead of silent fallback attachment.
-- **constructor-template materialization now builds a per-owner constructor
-  lookup once and reuses source-aware matches**: preferred-constructor
-  resolution, access propagation, duplicate-materialization checks, lazy
-  registry reuse, and template-constructor probing in
-  `materializeMatchingConstructorTemplate` no longer rescan
-  `StructTypeInfo::member_functions` independently.
-- **declaration-only member stub substitution now strips only top-level
-  by-value cv qualifiers**: pointer/reference pointee cv metadata is preserved,
-  keeping replay-first source-member signature matching and mangled identity
-  stable for out-of-line plain members (including classes that also declare
-  constructors).
-- **deferred class-template constructor replay now builds substitutions from a
-  normalized template environment**, so non-type substitutions preserve full
-  typed identity payloads (pointer/reference/function-pointer/member-pointer) in
-  addition to integral values; replay now reuses the shared
-  `trySubstituteValueTemplateParameterExpression` path instead of a
-  constructor-only numeric fallback.
-- **C++20 extended aggregate initialization through base-class-only intermediates
-  now works at codegen level**: when a base initializer resolves to an aggregate
-  struct with no direct members but one or more base classes, codegen emits a
-  default-construct for the aggregate followed by a forwarded ConstructorCallOp
-  to the first inner base whose constructor accepts the given arguments. This is
-  a codegen-level fallback appropriate to the current AST model (a single
-  `resolved_constructor` pointer on `ConstructorCallNode` cannot represent the
-  two-call pattern at sema level without additional node metadata).
-- **`P::method()` qualified calls where P is a template type parameter are now
-  resolved at sema level**: `SemanticAnalysis::tryRecoverCallDeclFromStructMembers`
-  extended `resolveQualifiedOwnerType` to walk the current member context's
-  `InstantiationContext::param_names`/`param_args` when the qualifier is a
-  simple name that matches a template type parameter. Codegen retains a parallel
-  fallback via `InstantiationContext` for cases sema does not yet reach.
-- **deferred dependent-base metadata is now persisted as full specifiers in
-  `StructTypeInfo` (not only base template names)**, and inherited member-template
-  owner traversal now consumes that richer metadata (including member-type chains)
-  before falling back to legacy name-only paths.
-- **in-class and out-of-line template static-member initializers now enforce
-  replay metadata invariants for dependent/complex initializers**: these paths
-  now throw invariant failures when required replay metadata is missing instead
-  of silently relying on broad AST-only substitution fallback.
-- **primary-template nested out-of-line member-template attachment is now
-  replay-first and identity-map-backed (including same-name overloads)**:
-  source-member→stub attachment now registers and resolves both AST-node and
-  declaration-location identities, and overload disambiguation compares
-  substituted signatures against the identity-resolved instantiated stub.
-  Instantiated-candidate scan fallback has been removed from this primary path.
-- **partial-spec nested out-of-line member-template attachment is now
-  replay-first and identity-map-backed (including same-name overloads)**:
-  source-member→stub identity is now registered during partial-spec member
-  instantiation and used for nested OOL attachment/disambiguation, with the
-  old instantiated-member scan-first path removed for this slice.
-- **nested-struct template member OOL scan now uses signature-based
-  disambiguation for overloads**: the name+arity-only scan that previously
-  mis-attached OOL bodies when two template member functions shared a name and
-  inner-template-parameter count but differed in non-template parameter types
-  has been replaced with a `nestedOutOfLineMemberTemplateMatchesCandidate`-gated
-  match (using the `same_name_count > 1` strictness gate). The loop now also
-  breaks after the first successful attachment and logs an error on no-match.
-- **nested constructor-template OOL attachment path that previously used
-  local signature-scan-first matching now routes through the replay-first
-  `findOutOfLineConstructorTemplateStubByIdentity` helper** (constructor-node
-  and function-node definitions), so selection remains source-member-identity
-  centered and canonical-substitution based.
-- **nested constructor source-member preselection in
-  `nested_source_member_identity_maps` no longer uses signature-equivalence
-  scan against `nested_struct_info->member_functions`**: registration now uses
-  direct source-member identity mapping for constructors and non-constructors.
-- **constructor synchronization into `StructTypeInfo` now first checks direct
-  constructor-node identity before signature-equivalence scan**, reducing
-  dependence on scan-only matching when replay attachment already resolved a
-  concrete constructor node.
-- **replay signature placeholder detection now uses
-  `typeSpecStillUsesDependentPlaceholder(...)`** (instead of only direct
-  `TypeInfo::isDependentPlaceholder()`), improving dependent signature
-  classification coverage in canonical replay matching.
-- **non-constructor nested/member-template out-of-line replay disambiguation no
-  longer uses shape fallback when substituted-signature comparison returns
-  `nullopt`**: these paths now require canonical substituted-signature evidence
-  for positive attachment, and strict disambiguation pre-counts are narrowed to
-  relevant candidates (same name + inner template-parameter count + function
-  parameter count).
-- **constructor and constructor-template out-of-line replay signature matching
-  now canonicalizes dependent placeholder/member-type identity** (including
-  dependent qualified-name records and effective alias/indirection metadata),
-  so valid replay-first attachments that previously collapsed to unresolved
-  substituted-signature outcomes now classify as canonical matches without
-  reintroducing single-candidate fallback acceptance.
-- **after substituted-signature mismatch, OOL matching now performs a strict
-  owner-artifact dependent-member recovery step**: when one side collapses to an
-  owner type, matching attempts qualified member-type resolution (`Owner::member`
-  / dependent member-chain) and only accepts if canonical type identity matches
-  the other side.
-- **dependent-member swapped out-of-line constructor replay now preserves the
-  definition-side parameter identifiers on identity-resolved constructor stubs
-  and their `StructTypeInfo` copies**, then re-enqueues the owning instantiated
-  struct for semantic normalization after late body materialization. This keeps
-  constructor-call and initializer annotations aligned with the replay-selected
-  body before IR generation, and closes the first downstream swap regression
-  exposed after owner-artifact recovery.
-- **template-parameter-qualified static-member expression typing now resolves
-  simple type-parameter qualifiers through the current instantiated member
-  context**, so replayed bodies such as `auto x = T::value;` deduce `auto` from
-  the concrete static member instead of leaving a placeholder for codegen.
-  Template-body substitution also re-deduces local placeholder variables after
-  initializer substitution.
-- **OOL member-function-template replay signature matching now resolves concrete
-  type-parameter-qualified member-template type chains**, including
-  `typename T::template AddPtr<int>::type` parameter types. The
-  recovery remains evidence-driven: dependent member-template chain
-  segments are materialized through concrete owner bindings and only
-  accepted when canonical type identity matches, without restoring
-  broad shape fallback attachment.
-- **OOL member-function-template body replay now preserves concrete alias
-  metadata for type-parameter-qualified member-template type parameters**:
-  direct dereference, forwarding, and reference-to-alias-parameter forwarding of
-  `typename T::template AddPtr<int>::type` now materialize body-local parameter
-  metadata as the resolved pointer type instead of a zero-sized alias placeholder.
-  Alias-owner recovery is narrowed to evidence-backed dependent-owner records or
-  a unique concrete struct owner, so existing alias-template default NTTP and
-  non-template-intermediate member-alias paths remain stable.
-- **OOL member-function-template overloads whose parameters differ only by
-  concrete type-parameter-qualified member-template alias targets now preserve
-  dependent owner/member-template identity across copied instantiated stubs,
-  replay attachment, lazy member-template shape instantiation, and concrete
-  alias materialization**: `typename T::template AddPtr<int>::type` vs
-  `...AddPtr<long>::type` no longer collapses to the same owner artifact or the
-  same `$olN` body. The adjacent plain-member dependent-qualified replay path
-  now concretizes those definition-side alias targets after attachment, and the
-  nested dependent-member swap replay path now concretizes non-template
-  dependent member aliases before overload-shape reuse.
-- **nested member-template alias arguments now preserve outer owner/member-template
-  metadata through explicit-template-argument parsing and alias rebinding**:
-  qualified alias-template arguments such as `Use<Fn>::Alias<int>` stay on the
-  type path instead of being misclassified as dependent value expressions, and
-  deferred aliases like `Provider<T>::Node::template Apply<U>` now keep the full
-  owner/member chain plus concrete alias arguments during placeholder rebinding
-  and materialization. Covered nested alias uses therefore resolve through
-  semantic dependent-name records instead of collapsing to terminal-name lookup.
-- **nested dependent member-template records now keep prefix segments aligned
-  with member-template arguments, and alias rebinding can re-enter outer
-  template bindings through the un-hashed base alias name**: paths such as
-  `Provider<T>::Node::template Apply<U>` no longer mis-attach `Apply`'s template
-  arguments to the preceding `Node` segment, and materialization can recover
-  `T -> int` through the stored outer binding when the alias target is an outer
-  class-template parameter.
-- **dependent alias resolution now re-enters semantic owner/member-chain
-  resolution after direct alias substitution before touching the legacy
-  `base::member` textual path**: covered alias-template chains no longer depend
-  on terminal-name reconstruction once the substituted target already carries a
-  semantic dependent-qualified-name record.
-- **explicit member-template calls no longer cache the first overload before
-  call-argument types are known**: parser-side explicit-template instantiation
-  now carries collected call argument types into overload selection and rejects
-  pointer-depth-incompatible candidates before cache hits, so calls such as
-  `holder.pick<char>(&value)` do not materialize the value overload first and
-  then reuse that losing candidate.
+The remaining problem is not that replay exists. The problem is that a few
+paths still fail to preserve enough semantic metadata at parse/materialization
+time, so deduction-time resolution still has to recover intent from partial or
+recordless state.
 
-Latest recorded full-suite validation:
-`2603` regular tests compiled/linked/runtime-pass, `0` fail, `188` expected-fail tests.
+The clearest example is the residual textual `base::member` path in
+`resolveDependentMemberAlias(...)`. A direct removal probe showed that it is no
+longer broad infrastructure; it now only protects a small cluster of legacy
+recordless cases:
 
-Latest focused replay regressions added on the current branch:
-- `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
-- `test_template_nested_ool_member_template_arity_disambiguation_ret0.cpp`
-- `test_template_ool_ctor_template_param_rename_replay_ret0.cpp`
-- `test_template_partial_spec_ool_member_template_two_phase_lookup_ret0.cpp`
-- `test_template_partial_spec_ool_plain_member_ret0.cpp`
-- `test_template_partial_spec_ool_member_template_base_name_lookup_ret0.cpp`
-- `test_template_partial_spec_ool_plain_member_base_name_lookup_ret0.cpp`
-- `test_template_nttp_deferred_ctor_body_ret0.cpp`
-- `test_template_aggregate_base_class_ctor_ret0.cpp`
-- `test_template_type_param_qualified_static_call_ret0.cpp`
-- `test_template_deferred_base_member_chain_template_lookup_ret0.cpp`
-- `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`
-- `test_template_nttp_deferred_ctor_body_pointer_function_ret0.cpp`
-- `test_template_ool_plain_member_same_name_overload_ret0.cpp`
-- `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
-- `test_template_ool_ctor_same_name_overload_ret0.cpp`
-- `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
-- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
-- `test_template_primary_nested_ool_ctor_template_same_name_overload_ret0.cpp`
-- `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
-- `test_template_ool_member_template_nested_alias_overload_ret0.cpp`
-- `test_explicit_member_template_pointer_overload_cache_ret0.cpp`
-- `test_template_ool_plain_ctor_nullopt_single_candidate_no_attach_ret0.cpp`
-- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
-- `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
-- `out_of_line_template_member_with_ctor_ret0.cpp`
-- `test_template_nested_ool_member_template_overload_ret0.cpp`
-- `test_template_ool_ctor_dependent_member_swap_body_ret0.cpp`
-- `test_template_ool_member_template_dependent_member_swap_body_ret0.cpp`
-- `test_template_param_qualified_static_member_auto_ret0.cpp`
-- `test_template_ool_member_template_dependent_member_template_alias_overload_ret0.cpp`
-- `test_template_ool_member_template_dependent_member_template_type_param_deref_ret0.cpp`
-- `test_template_ool_member_template_dependent_member_template_type_param_forward_deref_ret0.cpp`
-- `test_template_ool_member_template_dependent_member_template_type_param_ref_forward_ret0.cpp`
 - `test_member_template_alias_preserves_outer_metadata_ret0.cpp`
+- `test_alias_template_nested_member_value_ret42.cpp`
+- `test_template_current_instantiation_alias_qualified_deeper_member_ret0.cpp`
 
-## What is still wrong
+That is the next best cleanup target.
 
-### 1. Two-phase lookup and replay ownership are still incomplete
+## Recommended implementation order
 
-This is still the main conformance problem.
+1. Remove the last recordless dependent-alias routes.
+   Preserve full semantic owner/member-chain records in the three remaining
+   cases above, then delete the textual `base::member` path entirely.
 
-The remaining issue is not that replay exists. The issue is that some replay
-paths still do not capture enough semantic metadata at parse time, so later
-instantiation has to recover intent from partially substituted AST state.
+2. Keep replay attachment evidence-driven.
+   Continue tightening declaration replay so attachment succeeds because source
+   identity and canonical substituted signatures match, not because a fallback
+   scan guessed correctly.
 
-The next highest-value remaining surface:
+3. Extend dependent-name modeling only where it unlocks step 1 or 2.
+   Richer current-instantiation and unknown-specialization handling still
+   matters, but it should be pulled in to unblock concrete replay/alias gaps,
+   not pursued as a detached refactor.
 
-- delete the now-narrowed terminal-name / `base::member` string-split alias lookup
-  in `resolveDependentMemberAlias(...)` once the remaining recordless legacy
-  callers preserve full semantic owner/member-chain metadata end-to-end;
+4. Leave lower-priority uplift for later unless it blocks the above.
+   This includes broader sema-owned ranking/deduction cleanup and sema-level
+   modeling for aggregate-forwarding constructor cases.
 
-- remaining declaration replay paths outside static-member initializers that
-  still recover intent from partially substituted AST state.
-  - remaining non-constructor replay paths still produce unresolved
-    substitution outcomes (`nullopt`) because required replay-visible metadata
-    is not always captured early enough; these need metadata completion so
-    canonical matching succeeds more often without broad fallback machinery.
-  - dependent-member OOL swap regressions now cover the first constructor
-    replay/body-selection gap; continue looking for remaining swap-shaped gaps
-    in less-covered member-template and nested replay surfaces.
-  - continue looking for remaining declaration-copy or lazy-shape surfaces
-    where dependent owner/member-template identity is still erased too early or
-    preserved too long, especially in deeper owner/member-template chains
-    beyond the covered `AddPtr<int>`/`AddPtr<long>` overload case.
-### 2. Dependent-name modeling is still too weak
+## Architectural rules for follow-up work
 
-`DependentQualifiedNameRecord` is useful, but it is still not a complete
-`[temp.dep]` model. The remaining gaps matter mainly because they block the
-replay/lookup work above.
+- prefer semantic records over textual reconstruction
+- prefer replay-first source identity over instantiated-member scans
+- do not add new broad repair paths for unresolved replay attachment
+- if a path cannot preserve enough metadata, document the gap explicitly and
+  keep the compatibility surface narrow
 
-### 3. Lower-priority work remains open
+## Validation guidance
 
-These are still incomplete, but they are not the next best use of effort unless
-they directly block items 1-2:
+When changing this area, always rerun:
 
-- NTTP completion for the remaining C++20 categories;
-- broader sema-owned deduction/ranking;
-- final removal of repair-oriented fallback paths.
-- **C++20 extended aggregate initialization at sema level**: `ConstructorCallNode`
-  carries a single `resolved_constructor` pointer which cannot represent the
-  two-call pattern (default-init outer aggregate + forwarded-init inner base).
-  Until the AST is extended, this remains a codegen-only fallback
-  (`IrGenerator_Visitors_Decl.cpp`). A proper sema fix would require extending
-  `ConstructorCallNode` to carry aggregate-forwarding metadata (inner base
-  constructor reference + combined offset).
-
-## Highest-impact next steps
-
-1. **Finish the remaining replay-metadata and attachment gaps outside static-member initializers**
-   - Delete the remaining terminal-name / `base::member` string-split fallback in
-     `resolveDependentMemberAlias(...)` once the last recordless
-     parameter-materialization callers preserve semantic owner/member-chain
-     metadata end-to-end.
-   - Continue with non-constructor attachment/synchronization surfaces that
-     still depend on signature-only matching where source-member identity can
-     be preserved end-to-end, especially any declaration-copy or lazy-shape
-     path that still erases dependent owner/member-template identity too early.
-   - Improve replay metadata capture in unresolved substitution (`nullopt`) paths
-     so canonical substituted-signature matching classifies more valid code
-     outside the now-covered nested member-template alias / explicit-call slice.
-   - Continue with any remaining OOL dependent-member swap slices in
-     member-template or nested overload sets where replay-selected stubs and
-     deferred body parsing can still drift after owner-artifact recovery.
-   - Continue the type-parameter-qualified lookup slice into deeper
-     owner/member-template chains and remaining declaration-copy / lazy-shape
-     identity gaps beyond the covered `AddPtr<int>` vs `AddPtr<long>`
-     overload case.
-   - Keep function-parameter adjustment rules centralized in shared substitution
-     helpers so replay/attachment compares canonical signatures instead of
-     path-specific normalized variants.
-   - Extend dependent/current-instantiation lookup only where nested or
-     overloaded type-parameter-qualified member-template references still fail
-     before replay can attach them.
-
-2. **Strengthen dependent-name/current-instantiation modeling only where it unblocks 1**
-   - Expand richer dependent-base and unknown-specialization records only when
-     required by the replay/lookup path above.
-   - Avoid broad redesign work that does not directly reduce fallback behavior.
-
-## Short completed-state summary
-
-The following are complete enough to rely on:
-
-- semantic lookup records back the main template lookup paths;
-- covered non-dependent template-body lookup preserves definition-time binding;
-- covered owner/member-template chains now stay on a shared owner-aware
-  materialization path;
-- out-of-line static-member replay preserves replay-visible template
-  parameters in the covered paths;
-- in-class and out-of-line static-member initializer replay now enforces
-  replay-metadata invariants for dependent/complex initializers, and no longer
-  silently falls back to broad AST-only substitution in those required paths;
-- top-level out-of-line constructor-template replay preserves inner template
-  metadata and reattaches deferred body/initializer-list state correctly in the
-  covered paths;
-- nested out-of-line member-function-template replay preserves instantiated
-  outer parameter types while importing definition-side parameter names, and now
-  attaches definitions through source-member→stub identity (AST-node +
-  declaration-location keyed), including same-name overload disambiguation
-  against identity-resolved stubs, with no instantiated-candidate scan fallback
-  in the primary-template path;
-- plain (non-template) out-of-line member replay for both primary templates and
-  partial specializations now also resolves through source-member→stub identity,
-  including same-name overload cases, with no instantiated-member name/arity
-  attachment scan in that slice;
-- primary-template plain out-of-line constructor replay now also resolves
-  source-member→stub identity first (including overload disambiguation by
-  substituted signature), preserves definition-side parameter identifiers on the
-  identity-resolved constructor and its `StructTypeInfo` copy, re-normalizes the
-  owning instantiated struct after late body materialization, and no longer uses
-  name-only matching for constructor-body synchronization;
-- partial-spec out-of-line constructor-template attachment now mirrors that
-  replay-first source-member→stub identity flow (including overload
-  disambiguation), and `StructTypeInfo` constructor-template metadata sync in
-  this path no longer relies on scan/name-only matching;
-- constructor replay-first attachment no longer admits unresolved
-  single-candidate fallback acceptance in plain or constructor-template helper
-  paths; canonical substituted-signature evidence is now required for positive
-  attachment, and no-match surfaces explicit diagnostics;
-- nested-class out-of-line constructor-template attachment now also resolves
-  source-member→stub identity first (including same-name overload handling), and
-  nested `StructTypeInfo` constructor-template metadata sync in this path no
-  longer relies on scan/name-only matching;
-- primary-template nested out-of-line constructor-template attachment now mirrors
-  that replay-first source-member→stub identity path, with no
-  instantiated-member scan-first target selection in this slice;
-- partial-spec nested out-of-line member-template attachment now mirrors that
-  replay-first source-member→stub identity path (including same-name overload
-  disambiguation), with no scan-first fallback in this slice;
-- partial-spec plain (non-template) out-of-line member functions now parse and
-  substitute their bodies with the correct class-template parameters and
-  definition lookup context in scope;
-- partial-spec member-function-template instantiation now builds owner-correct
-  nodes, registers qualified names, and attaches outer template bindings so the
-  replay path can materialize bodies with the correct class-template parameters
-  in scope.
-- nested dependent member-template alias materialization now preserves prefix
-  owner/member-chain alignment for paths like
-  `Provider<T>::Node::template Apply<U>`, and concrete alias rebinding can
-  recover outer class-template bindings through the stored base alias name.
-- explicit member-template overload selection no longer instantiates and caches
-  the first candidate before parsing call arguments; explicit-call overload
-  resolution now sees collected call argument types before cache hits and can
-  reject pointer-depth-incompatible candidates.
-- deferred class-template constructor bodies now store template-parameter names
-  at parse time, so replay sets `hasActiveTemplateParameters() = true`; replay
-  substitution now preserves full typed NTTP identity metadata and reuses the
-  shared value-parameter substitution path (no constructor-only identifier
-  fallback when typed identity is available).
-- **`P::method()` qualified calls where P is a template type parameter are now
-  resolved at sema level**: `SemanticAnalysis::resolveQualifiedOwnerType` walks
-  the current member context's `InstantiationContext::param_names`/`param_args`
-  when the qualifier is a simple name matching a template type parameter.
-  A parallel codegen fallback is retained as a safety net.
-- deferred dependent-base metadata now persists in `StructTypeInfo` as full
-  `DeferredTemplateBaseClassSpecifier` entries, and inherited member-template
-  owner traversal consumes those specifiers (including member-type chains)
-  before the legacy name-only fallback.
-- **C++20 aggregate initialization through base-class-only intermediate structs
-  is handled at codegen level** (`IrGenerator_Visitors_Decl.cpp`): when
-  `resolveCodegenConstructorFromArgs` returns null for an aggregate struct with
-  no direct members but with base classes, codegen emits a default-construct for
-  the aggregate followed by a forwarded ConstructorCallOp to the first inner base
-  whose constructor accepts the given arguments. Moving this to sema level would
-  require extending `ConstructorCallNode` to carry two-call aggregate-forwarding
-  metadata; tracked as a lower-priority open item.
-
-## Exit criteria
-
-This audit can be retired when:
-
-- the main replay paths no longer require AST-only fallback for valid template
-  code;
-- definition-time vs POI lookup timing is preserved across the main template
-  body, member, static-member, and replay paths;
-- dependent-name/current-instantiation behavior is semantically modeled rather
-  than reconstructed from placeholder spellings;
-- ordinary overload ranking no longer materializes losing candidates by
-  default.
+- the focused regression that motivated the slice
+- the three residual textual-path blockers listed above when touching dependent
+  alias ownership
+- `pwsh tests/run_all_tests.ps1` before closing the slice
