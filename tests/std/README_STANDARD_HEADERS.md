@@ -101,6 +101,26 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
+### 2026-05-28 Linux/libstdc++ `if constexpr` local-scope constexpr context follow-up
+
+Fix landed:
+
+- **`if constexpr` codegen now builds constexpr-evaluation context from the active IR symbol table instead of always forcing the global symbol table.** This keeps local/block constexpr bindings visible during branch selection.
+- **Constexpr context setup was centralized in `AstToIr::makeEvalContext(...)`** so member-struct metadata and instantiation-context template bindings are reused rather than duplicated at call sites.
+
+Regression coverage:
+
+- `tests/test_if_constexpr_local_constexpr_shadow_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_if_constexpr_local_constexpr_shadow_ret0.cpp` | ✅ Pass | focused runner | New regression verifies local constexpr shadowing is honored when selecting `if constexpr` branches. |
+| `test_if_constexpr_ret97.cpp` | ✅ Pass | focused runner | Existing `if constexpr` baseline still passes. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~794ms (`TOTAL`) / ~0.85s wall | Control retest still compiles. |
+| `<latch>` (`test_std_latch.cpp`) | ❌ Codegen Error | ~1.85s wall | No material change yet; still hits `_EntersWait::value` constant-expression failure plus deferred-constructor/member-call normalization gaps. |
+
 ### 2026-05-27 Linux/libstdc++ deferred implicit-member pointer triviality follow-up
 
 Fix landed:

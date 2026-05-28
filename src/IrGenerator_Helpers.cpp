@@ -13,13 +13,24 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 		ctx.global_symbols = global_symbol_table_;
 	}
 	if (current_struct_name_.isValid()) {
-		auto struct_type_it = getTypesByNameMap().find(current_struct_name_);
-		if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second != nullptr) {
+		const auto& types_by_name = getTypesByNameMap();
+		auto struct_type_it = types_by_name.find(current_struct_name_);
+		if (struct_type_it != types_by_name.end() && struct_type_it->second != nullptr) {
 			const TypeInfo* struct_type_info = struct_type_it->second;
 			ctx.struct_info = struct_type_info->getStructInfo();
 			if (ctx.struct_info != nullptr) {
 				ctx.struct_type_index = struct_type_info->registeredTypeIndex().withCategory(struct_type_info->typeEnum());
-				ConstExpr::Evaluator::try_load_current_struct_template_bindings(ctx);
+				if (const auto* inst_ctx = struct_type_info->instantiationContext()) {
+					ctx.template_environment = buildTemplateEnvironment(*inst_ctx);
+					ctx.template_param_names.reserve(inst_ctx->param_names.size());
+					ctx.template_args.reserve(inst_ctx->param_args.size());
+					for (StringHandle param_name : inst_ctx->param_names) {
+						ctx.template_param_names.push_back(StringTable::getStringView(param_name));
+					}
+					for (const auto& arg_info : inst_ctx->param_args) {
+						ctx.template_args.push_back(toTemplateTypeArg(arg_info));
+					}
+				}
 			}
 		}
 	}
