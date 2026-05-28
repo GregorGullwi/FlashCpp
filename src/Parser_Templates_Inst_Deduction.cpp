@@ -239,6 +239,15 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		return DependentAliasResolutionStatus::StillDependent;
 
 	std::string_view type_name = StringTable::getStringView(type_info->name());
+	const TypeInfo* semantic_type_info = type_info;
+	if ((!semantic_type_info->isDependentMemberType() ||
+		 !semantic_type_info->hasDependentQualifiedName()) &&
+		ts.type_index().is_valid()) {
+		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(ts.type_index());
+		if (resolved_alias.terminal_type_info != nullptr) {
+			semantic_type_info = resolved_alias.terminal_type_info;
+		}
+	}
 	auto emplaceResolvedSpec = [&](const TypeInfo* resolved_info) {
 		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
 		TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
@@ -258,11 +267,11 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		return DependentAliasResolutionStatus::Resolved;
 	};
 
-	if (type_info->isDependentMemberType() &&
-		type_info->hasDependentQualifiedName()) {
+	if (semantic_type_info->isDependentMemberType() &&
+		semantic_type_info->hasDependentQualifiedName()) {
 		if (const TypeInfo* resolved_dependent_type =
 				resolveDependentMemberTypeSemantic(
-					*type_info,
+					*semantic_type_info,
 					template_params,
 					template_args,
 					StringHandle{});
@@ -626,6 +635,23 @@ static bool functionDeclarationsHaveMatchingShape(
 		}
 	}
 	return true;
+}
+
+static StringHandle makeOverloadDiscriminatedFunctionTemplateKeyName(
+	std::string_view template_name,
+	const FunctionDeclarationNode& func_decl) {
+	const Token& overload_token = func_decl.decl_node().identifier_token();
+	StringBuilder builder;
+	return StringTable::getOrInternStringHandle(
+		builder
+			.append(template_name)
+			.append("$olsrc")
+			.append(static_cast<uint64_t>(overload_token.file_index()))
+			.append("_")
+			.append(static_cast<uint64_t>(overload_token.line()))
+			.append("_")
+			.append(static_cast<uint64_t>(overload_token.column()))
+			.commit());
 }
 
 static bool hasLaterUsableTemplateDefinitionWithMatchingShape(
@@ -2674,7 +2700,11 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	const bool skip_body_materialization =
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::SkipBodyMaterialization);
 	const DeclarationNode& orig_decl = func_decl.decl_node();
-	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(template_name, template_args);
+	std::string_view mangled_base_name = template_name;
+	if (key.base_template.isValid()) {
+		mangled_base_name = StringTable::getStringView(key.base_template);
+	}
+	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(mangled_base_name, template_args);
 
 	auto apply_resolved_alias_metadata_local = [&](TypeSpecifierNode& type_spec) {
 		if (!type_spec.type_index().is_valid()) {
@@ -4002,10 +4032,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 				continue;
 			}
 
-			auto key = FlashCpp::makeInstantiationKey(
-				template_name_handle,
-				template_args);
 			const uintptr_t overload_id = reinterpret_cast<uintptr_t>(&func_decl);
+			auto key = FlashCpp::makeInstantiationKey(
+				makeOverloadDiscriminatedFunctionTemplateKeyName(
+					template_name,
+					func_decl),
+				template_args);
 			if (gTemplateRegistry.isFailedInstantiation(key, overload_id)) {
 				continue;
 			}
@@ -4656,14 +4688,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	}
 
 	// Step 2: Check if we already have this instantiation
-	auto key = FlashCpp::makeInstantiationKey(
-		StringTable::getOrInternStringHandle(template_name), template_args);
 	// Per-overload discriminator for the SFINAE failure memo.  Using the
 	// address of the overload's FunctionDeclarationNode separates overloads
 	// of the same template name whose deduced arg lists and arities are
 	// identical but whose SFINAE predicates are not (e.g. two `process(T)`
 	// overloads, one enabled for `is_int<T>` and the other for `is_double<T>`).
 	const uintptr_t overload_id = reinterpret_cast<uintptr_t>(&func_decl);
+	auto key = FlashCpp::makeInstantiationKey(
+		makeOverloadDiscriminatedFunctionTemplateKeyName(
+			template_name,
+			func_decl),
+		template_args);
 
 	// SFINAE fast-path: if a previous probe against *this same overload*
 	// already recorded a substitution failure for the same deduced args,
