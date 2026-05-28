@@ -33,22 +33,7 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 
 ---
 
-## 3) Windows/MSVC standard-header link step emits duplicate CRT/runtime symbols (OPEN)
-
-- **Symptom**: after the `<limits>` compile-stage fix, manually linking the object
-  produced from `tests/std/test_std_limits.cpp` can fail with multiple-definition
-  errors such as `__security_cookie`, `__local_stdio_printf_options`,
-  `__local_stdio_scanf_options`, `vsnprintf`, `_vsprintf_s_l`, `sprintf_s`, and
-  `snprintf`.
-- **Root cause**: still under investigation. FlashCpp's generated object appears
-  to emit CRT/runtime definitions that should remain owned by the MSVC CRT when
-  standard headers pull in the corresponding declarations and wrappers.
-- **Impact**: some Windows/MSVC standard-header tests now compile through object
-  generation but still do not link cleanly outside the main regression suite.
-
----
-
-## 4) OOL member-function-template overloads with dependent member-template alias parameters can fail attachment (OPEN)
+## 3) OOL member-function-template overloads with dependent member-template alias parameters can fail attachment (OPEN)
 
 - **Symptom**: Two out-of-line member-function-template overloads whose
   signatures differ only by `typename T::template AddPtr<int>::type` vs
