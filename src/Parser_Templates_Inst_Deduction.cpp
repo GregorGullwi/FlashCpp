@@ -239,15 +239,6 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		return DependentAliasResolutionStatus::StillDependent;
 
 	std::string_view type_name = StringTable::getStringView(type_info->name());
-	const TypeInfo* semantic_type_info = type_info;
-	if ((!semantic_type_info->isDependentMemberType() ||
-		 !semantic_type_info->hasDependentQualifiedName()) &&
-		ts.type_index().is_valid()) {
-		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(ts.type_index());
-		if (resolved_alias.terminal_type_info != nullptr) {
-			semantic_type_info = resolved_alias.terminal_type_info;
-		}
-	}
 	auto emplaceResolvedSpec = [&](const TypeInfo* resolved_info) {
 		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
 		TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
@@ -266,18 +257,57 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 		return DependentAliasResolutionStatus::Resolved;
 	};
+	auto tryResolveCurrentTypeNodeFromSemanticRecord =
+		[&]() -> std::optional<DependentAliasResolutionStatus> {
+		if (!type_node.is<TypeSpecifierNode>()) {
+			return std::nullopt;
+		}
+		const auto& current_type_spec = type_node.as<TypeSpecifierNode>();
+		const TypeInfo* current_type_info =
+			tryGetTypeInfo(current_type_spec.type_index());
+		if (current_type_info == nullptr) {
+			return std::nullopt;
+		}
 
-	if (semantic_type_info->isDependentMemberType() &&
-		semantic_type_info->hasDependentQualifiedName()) {
+		const TypeInfo* current_semantic_type_info = current_type_info;
+		if ((!current_semantic_type_info->isDependentMemberType() ||
+			 !current_semantic_type_info->hasDependentQualifiedName()) &&
+			current_type_spec.type_index().is_valid()) {
+			ResolvedAliasTypeInfo resolved_alias =
+				resolveAliasTypeInfo(current_type_spec.type_index());
+			if (resolved_alias.terminal_type_info != nullptr) {
+				current_semantic_type_info = resolved_alias.terminal_type_info;
+			}
+		}
+
+		if (!current_semantic_type_info->isDependentMemberType() ||
+			!current_semantic_type_info->hasDependentQualifiedName()) {
+			return std::nullopt;
+		}
 		if (const TypeInfo* resolved_dependent_type =
 				resolveDependentMemberTypeSemantic(
-					*semantic_type_info,
+					*current_semantic_type_info,
 					template_params,
 					template_args,
 					StringHandle{});
 			resolved_dependent_type != nullptr) {
 			return emplaceResolvedSpec(resolved_dependent_type);
 		}
+		if (const TypeInfo* materialized_member_alias =
+				materializeInstantiatedMemberAliasTarget(
+					current_type_spec,
+					template_params,
+					template_args);
+			materialized_member_alias != nullptr) {
+			return emplaceResolvedSpec(materialized_member_alias);
+		}
+		return std::nullopt;
+	};
+
+	if (std::optional<DependentAliasResolutionStatus> resolved_status =
+			tryResolveCurrentTypeNodeFromSemanticRecord();
+		resolved_status.has_value()) {
+		return *resolved_status;
 	}
 
 	if (const StructTypeInfo* owner_struct = type_info->getStructInfo();
@@ -311,6 +341,11 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			return DependentAliasResolutionStatus::StillDependent;
 		type_name = StringTable::getStringView(type_info->name());
 		FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
+		if (std::optional<DependentAliasResolutionStatus> resolved_status =
+				tryResolveCurrentTypeNodeFromSemanticRecord();
+			resolved_status.has_value()) {
+			return *resolved_status;
+		}
 	}
 
 	auto sep_pos = type_name.find("::");

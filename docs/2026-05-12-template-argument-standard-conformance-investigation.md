@@ -213,6 +213,11 @@ Future work can rely on these being in place:
   owner/member chain plus concrete alias arguments during placeholder rebinding
   and materialization. Covered nested alias uses therefore resolve through
   semantic dependent-name records instead of collapsing to terminal-name lookup.
+- **dependent alias resolution now re-enters semantic owner/member-chain
+  resolution after direct alias substitution before touching the legacy
+  `base::member` textual path**: covered alias-template chains no longer depend
+  on terminal-name reconstruction once the substituted target already carries a
+  semantic dependent-qualified-name record.
 
 Latest recorded full-suite validation:
 `2598` regular tests compiled/linked/runtime-pass, `0` fail, `185` expected-fail tests.
@@ -265,8 +270,8 @@ Rule for this work:
 - do not add new AST-only repair paths unless they are strictly temporary and
   documented.
 - next slices:
-- remove the remaining terminal-name / `base::member` string-split alias lookup
-  in `resolveDependentMemberAlias(...)` once all surviving dependent member-alias
+- delete the now-narrowed terminal-name / `base::member` string-split alias lookup
+  in `resolveDependentMemberAlias(...)` once the remaining recordless legacy
   callers preserve full semantic owner/member-chain metadata end-to-end;
 - continue improving replay metadata capture for unresolved substitution
   (`nullopt`) outcomes in the remaining non-constructor declaration replay
