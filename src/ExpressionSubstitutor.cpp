@@ -2829,6 +2829,20 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			owner_type_info = findTypeByName(
 				StringTable::getOrInternStringHandle(owner_name));
 		}
+		if (owner_type_info == nullptr) {
+			size_t separator = owner_name.rfind("::");
+			if (separator != std::string_view::npos &&
+				separator + 2 < owner_name.size()) {
+				std::string_view parent_name = owner_name.substr(0, separator);
+				std::string_view nested_member_name = owner_name.substr(separator + 2);
+				if (const TypeInfo* resolved_nested_type =
+						parser_.lookup_inherited_type_alias(parent_name, nested_member_name);
+					resolved_nested_type != nullptr) {
+					owner_name = StringTable::getStringView(resolved_nested_type->name());
+					owner_type_info = resolved_nested_type;
+				}
+			}
+		}
 		if (owner_type_info != nullptr &&
 			owner_type_info->isStruct()) {
 			if (const StructTypeInfo* owner_struct_info =
