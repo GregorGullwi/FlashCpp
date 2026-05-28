@@ -1833,11 +1833,51 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 						const auto& qi = std::get<QualifiedIdentifierNode>(expr);
 						std::string_view qname = buildQualifiedNameFromHandle(qi.namespace_handle(), qi.name());
 						auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qname));
-						if (type_it != getTypesByNameMap().end() && type_it->second->struct_info_ != nullptr) {
+						if (type_it != getTypesByNameMap().end() &&
+							type_it->second != nullptr &&
+							(type_it->second->isTypeAlias() ||
+							 type_it->second->getStructInfo() != nullptr ||
+							 type_it->second->getEnumInfo() != nullptr ||
+							 type_it->second->isTemplateInstantiation() ||
+							 type_it->second->isDependentMemberType())) {
 							FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qname,
 									  "' is a concrete type, falling through to type parsing");
 							is_concrete_qualified_type = true;
 							restore_token_position(arg_saved_pos);
+						}
+						if (!is_concrete_qualified_type && qi.has_template_arguments()) {
+							bool names_alias_template = false;
+							if (gTemplateRegistry.lookup_alias_template(qname).has_value()) {
+								names_alias_template = true;
+							} else if (const size_t scope_pos = qname.rfind("::");
+									   scope_pos != std::string_view::npos) {
+								const std::string_view owner_name = qname.substr(0, scope_pos);
+								const std::string_view member_name = qname.substr(scope_pos + 2);
+								std::string_view inherited_member_template_name;
+								if (!member_name.empty()) {
+									inherited_member_template_name =
+										lookup_inherited_member_template_name(
+											StringTable::getOrInternStringHandle(owner_name),
+											StringTable::getOrInternStringHandle(member_name),
+											0);
+								}
+								if (!inherited_member_template_name.empty() &&
+									gTemplateRegistry.lookup_alias_template(
+										inherited_member_template_name)
+										.has_value()) {
+									names_alias_template = true;
+								}
+							}
+							if (!names_alias_template &&
+								gTemplateRegistry.lookup_alias_template(qi.nameHandle()).has_value()) {
+								names_alias_template = true;
+							}
+							if (names_alias_template) {
+								FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qname,
+										  "' names an alias template, falling through to type parsing");
+								is_concrete_qualified_type = true;
+								restore_token_position(arg_saved_pos);
+							}
 						}
 					}
 

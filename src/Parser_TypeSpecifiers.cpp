@@ -33,6 +33,26 @@ std::string_view dependentQualifiedOwnerKindName(
 	return "dependent owner";
 }
 
+InlineVector<std::string_view, 4> splitDependentMemberPathComponents(
+	std::string_view member_path) {
+	InlineVector<std::string_view, 4> components;
+	size_t start = 0;
+	while (start < member_path.size()) {
+		size_t sep = member_path.find("::", start);
+		std::string_view component = sep == std::string_view::npos
+			? member_path.substr(start)
+			: member_path.substr(start, sep - start);
+		if (!component.empty()) {
+			components.push_back(component);
+		}
+		if (sep == std::string_view::npos) {
+			break;
+		}
+		start = sep + 2;
+	}
+	return components;
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -48,13 +68,8 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
 	record.owner_template_arguments = std::move(owner_template_arguments);
 
-	size_t start = 0;
 	size_t member_index = 0;
-	while (start < member_path.size()) {
-		size_t sep = member_path.find("::", start);
-		std::string_view component = sep == std::string_view::npos
-			? member_path.substr(start)
-			: member_path.substr(start, sep - start);
+	for (std::string_view component : splitDependentMemberPathComponents(member_path)) {
 		if (!component.empty()) {
 			if (size_t template_marker = component.find('<');
 				template_marker != std::string_view::npos) {
@@ -73,10 +88,6 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 			record.member_chain.push_back(std::move(member));
 			++member_index;
 		}
-		if (sep == std::string_view::npos) {
-			break;
-		}
-		start = sep + 2;
 	}
 
 	return record;
@@ -1506,6 +1517,25 @@ ParseResult Parser::parse_type_specifier() {
 								concrete_member_info != nullptr) {
 								return buildTypeFromInfo(*concrete_member_info, type_name_token, true);
 							}
+							if (const TypeInfo* alias_target_info =
+									tryGetTypeInfo(alias_node.target_type_node().type_index());
+								alias_target_info != nullptr &&
+								alias_target_info->isDependentMemberType() &&
+								alias_target_info->hasDependentQualifiedName()) {
+								const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+									alias_target_info->dependentQualifiedName();
+								const bool has_nested_or_templated_member_chain =
+									dependent_record != nullptr &&
+									(dependent_record->member_chain.size() > 1 ||
+									 std::ranges::any_of(
+										 dependent_record->member_chain,
+										 [](const TypeInfo::DependentQualifiedNameRecord::Member& member) {
+											 return member.has_template_arguments;
+										 }));
+								if (has_nested_or_templated_member_chain) {
+									return buildTypeFromInfo(*alias_target_info, type_name_token, false);
+								}
+							}
 							const TypeInfo& member_type_info =
 								findOrCreateQualifiedMemberType(resolved_instantiated_type_name, *targetMemberName);
 							return buildTypeFromInfo(member_type_info, type_name_token, true);
@@ -2310,6 +2340,8 @@ ParseResult Parser::parse_type_specifier() {
 						all_segment_infos.push_back({had_template_keyword, dependent_member_template_args});
 						for (const DependentMemberSegmentInfo& seg : nested_segment_infos)
 							all_segment_infos.push_back(seg);
+						InlineVector<std::string_view, 4> dependent_member_components =
+							splitDependentMemberPathComponents(dependent_member_path);
 						type_info.setDependentQualifiedName(
 							makeDependentQualifiedNameRecord(
 								StringTable::getOrInternStringHandle(type_name),
@@ -2318,7 +2350,27 @@ ParseResult Parser::parse_type_specifier() {
 								convertToTemplateArgInfo(*template_args),
 								dependent_member_path,
 								all_segment_infos));
-						if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
+						std::optional<size_t> terminal_template_member_index;
+						for (size_t i = 0; i < all_segment_infos.size(); ++i) {
+							if (all_segment_infos[i].template_args.has_value()) {
+								terminal_template_member_index = i;
+							}
+						}
+						if (terminal_template_member_index.has_value() &&
+							*terminal_template_member_index < dependent_member_components.size()) {
+							StringBuilder terminal_template_name_builder;
+							terminal_template_name_builder.append(type_name);
+							for (size_t i = 0; i <= *terminal_template_member_index; ++i) {
+								terminal_template_name_builder.append("::");
+								terminal_template_name_builder.append(
+									dependent_member_components[i]);
+							}
+							type_info.setTemplateInstantiationInfo(
+								QualifiedIdentifier::fromQualifiedName(
+									terminal_template_name_builder.commit(),
+									gSymbolTable.get_current_namespace_handle()),
+								*all_segment_infos[*terminal_template_member_index].template_args);
+						} else if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
 							type_info.setTemplateInstantiationInfo(
 								QualifiedIdentifier::fromQualifiedName(
 									StringTable::getStringView(*dependent_member_template_base),
