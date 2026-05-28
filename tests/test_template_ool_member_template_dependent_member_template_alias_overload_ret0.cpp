@@ -42,7 +42,7 @@ int main() {
 	if (value.pick(1, &int_value) != 25) {
 		return 1;
 	}
-	if (value.pick(2, &long_value) != 16) {
+	if (value.pick(2, &long_value) != static_cast<int>(sizeof(long_value)) + 12) {
 		return 2;
 	}
 	return 0;
