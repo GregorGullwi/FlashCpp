@@ -9,6 +9,20 @@ void AstToIr::normalizePendingSemanticRoots() {
 
 ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols) const {
 	ConstExpr::EvaluationContext ctx(symbols, parser_);
+	if (global_symbol_table_) {
+		ctx.global_symbols = global_symbol_table_;
+	}
+	if (current_struct_name_.isValid()) {
+		auto struct_type_it = getTypesByNameMap().find(current_struct_name_);
+		if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second != nullptr) {
+			const TypeInfo* struct_type_info = struct_type_it->second;
+			ctx.struct_info = struct_type_info->getStructInfo();
+			if (ctx.struct_info != nullptr) {
+				ctx.struct_type_index = struct_type_info->registeredTypeIndex().withCategory(struct_type_info->typeEnum());
+				ConstExpr::Evaluator::try_load_current_struct_template_bindings(ctx);
+			}
+		}
+	}
 	return ctx;
 }
 
