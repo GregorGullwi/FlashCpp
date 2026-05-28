@@ -1853,11 +1853,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									   scope_pos != std::string_view::npos) {
 								const std::string_view owner_name = qname.substr(0, scope_pos);
 								const std::string_view member_name = qname.substr(scope_pos + 2);
-								std::string_view inherited_member_template_name =
-									lookup_inherited_member_template_name(
-										StringTable::getOrInternStringHandle(owner_name),
-										StringTable::getOrInternStringHandle(member_name),
-										0);
+								std::string_view inherited_member_template_name;
+								if (!member_name.empty()) {
+									inherited_member_template_name =
+										lookup_inherited_member_template_name(
+											StringTable::getOrInternStringHandle(owner_name),
+											StringTable::getOrInternStringHandle(member_name),
+											0);
+								}
 								if (!inherited_member_template_name.empty() &&
 									gTemplateRegistry.lookup_alias_template(
 										inherited_member_template_name)

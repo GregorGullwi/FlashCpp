@@ -33,6 +33,26 @@ std::string_view dependentQualifiedOwnerKindName(
 	return "dependent owner";
 }
 
+InlineVector<std::string_view, 4> splitDependentMemberPathComponents(
+	std::string_view member_path) {
+	InlineVector<std::string_view, 4> components;
+	size_t start = 0;
+	while (start < member_path.size()) {
+		size_t sep = member_path.find("::", start);
+		std::string_view component = sep == std::string_view::npos
+			? member_path.substr(start)
+			: member_path.substr(start, sep - start);
+		if (!component.empty()) {
+			components.push_back(component);
+		}
+		if (sep == std::string_view::npos) {
+			break;
+		}
+		start = sep + 2;
+	}
+	return components;
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -48,13 +68,8 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
 	record.owner_template_arguments = std::move(owner_template_arguments);
 
-	size_t start = 0;
 	size_t member_index = 0;
-	while (start < member_path.size()) {
-		size_t sep = member_path.find("::", start);
-		std::string_view component = sep == std::string_view::npos
-			? member_path.substr(start)
-			: member_path.substr(start, sep - start);
+	for (std::string_view component : splitDependentMemberPathComponents(member_path)) {
 		if (!component.empty()) {
 			if (size_t template_marker = component.find('<');
 				template_marker != std::string_view::npos) {
@@ -73,10 +88,6 @@ TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 			record.member_chain.push_back(std::move(member));
 			++member_index;
 		}
-		if (sep == std::string_view::npos) {
-			break;
-		}
-		start = sep + 2;
 	}
 
 	return record;
@@ -2329,25 +2340,8 @@ ParseResult Parser::parse_type_specifier() {
 						all_segment_infos.push_back({had_template_keyword, dependent_member_template_args});
 						for (const DependentMemberSegmentInfo& seg : nested_segment_infos)
 							all_segment_infos.push_back(seg);
-						InlineVector<std::string_view, 4> dependent_member_components;
-						size_t member_component_start = 0;
-						while (member_component_start < dependent_member_path.size()) {
-							size_t member_component_sep =
-								dependent_member_path.find("::", member_component_start);
-							std::string_view member_component =
-								member_component_sep == std::string_view::npos
-									? dependent_member_path.substr(member_component_start)
-									: dependent_member_path.substr(
-										  member_component_start,
-										  member_component_sep - member_component_start);
-							if (!member_component.empty()) {
-								dependent_member_components.push_back(member_component);
-							}
-							if (member_component_sep == std::string_view::npos) {
-								break;
-							}
-							member_component_start = member_component_sep + 2;
-						}
+						InlineVector<std::string_view, 4> dependent_member_components =
+							splitDependentMemberPathComponents(dependent_member_path);
 						type_info.setDependentQualifiedName(
 							makeDependentQualifiedNameRecord(
 								StringTable::getOrInternStringHandle(type_name),

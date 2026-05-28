@@ -270,9 +270,8 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 		}
 
 		const TypeInfo* current_semantic_type_info = current_type_info;
-		if ((!current_semantic_type_info->isDependentMemberType() ||
-			 !current_semantic_type_info->hasDependentQualifiedName()) &&
-			current_type_spec.type_index().is_valid()) {
+		if (!current_semantic_type_info->isDependentMemberType() ||
+			!current_semantic_type_info->hasDependentQualifiedName()) {
 			ResolvedAliasTypeInfo resolved_alias =
 				resolveAliasTypeInfo(current_type_spec.type_index());
 			if (resolved_alias.terminal_type_info != nullptr) {
