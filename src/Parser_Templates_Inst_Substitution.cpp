@@ -3369,6 +3369,31 @@ ASTNode Parser::substitute_template_params_in_expression(
 	const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
 	const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map,
 	StringHandle substitution_owner) {
+	auto makeSubstitutedTypeNode =
+		[&](const TemplateTypeArg& arg, const Token& token) {
+		TypeSpecifierNode new_type(
+			arg.typeEnum(),
+			TypeQualifier::None,
+			get_type_size_bits(arg.category()),
+			token,
+			arg.cv_qualifier);
+		new_type.set_type_index(arg.type_index);
+		new_type.set_reference_qualifier(arg.ref_qualifier);
+		for (size_t p = 0; p < arg.pointer_depth; ++p) {
+			CVQualifier pointer_cv = CVQualifier::None;
+			if (p < arg.pointer_cv_qualifiers.size()) {
+				pointer_cv = arg.pointer_cv_qualifiers[p];
+			}
+			new_type.add_pointer_level(pointer_cv);
+		}
+		if (arg.is_array && !arg.array_dimensions.empty()) {
+			new_type.set_array_dimensions(arg.array_dimensions);
+		}
+		if (arg.function_signature.has_value()) {
+			new_type.set_function_signature(*arg.function_signature);
+		}
+		return new_type;
+	};
 
 	// ASTNode is a typed pointer wrapper, check if it contains an ExpressionNode
 	if (!expr.is<ExpressionNode>()) {
@@ -3397,18 +3422,8 @@ ASTNode Parser::substitute_template_params_in_expression(
 
 				// Create a new type node with the substituted type
 				const TemplateTypeArg& arg = it->second;
-				TypeSpecifierNode new_type(
-					arg.typeEnum(),
-					TypeQualifier::None,
-					get_type_size_bits(arg.category()),
-					sizeof_node.sizeof_token(), CVQualifier::None);
-				new_type.set_type_index(arg.type_index);
-
-				// Apply cv-qualifiers, references, and pointers from template argument
-				new_type.set_reference_qualifier(arg.ref_qualifier);
-				for (size_t p = 0; p < arg.pointer_depth; ++p) {
-					new_type.add_pointer_level(CVQualifier::None);
-				}
+				TypeSpecifierNode new_type =
+					makeSubstitutedTypeNode(arg, sizeof_node.sizeof_token());
 
 				// Create new sizeof with substituted type
 				auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
@@ -3437,18 +3452,8 @@ ASTNode Parser::substitute_template_params_in_expression(
 								FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
 
 							// Create a new type node with the substituted type
-								TypeSpecifierNode new_type(
-									arg.typeEnum(),
-									TypeQualifier::None,
-									get_type_size_bits(arg.category()),
-									sizeof_node.sizeof_token(), CVQualifier::None);
-								new_type.set_type_index(arg.type_index);
-
-							// Apply cv-qualifiers, references, and pointers from template argument
-								new_type.set_reference_qualifier(arg.ref_qualifier);
-								for (size_t p = 0; p < arg.pointer_depth; ++p) {
-									new_type.add_pointer_level(CVQualifier::None);
-								}
+								TypeSpecifierNode new_type =
+									makeSubstitutedTypeNode(arg, sizeof_node.sizeof_token());
 
 							// Create new sizeof with substituted type
 								auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
@@ -3466,16 +3471,8 @@ ASTNode Parser::substitute_template_params_in_expression(
 							continue;
 						}
 						const TemplateTypeArg& arg = subst.substituted_type;
-						TypeSpecifierNode new_type(
-							arg.typeEnum(),
-							TypeQualifier::None,
-							get_type_size_bits(arg.category()),
-							sizeof_node.sizeof_token(), CVQualifier::None);
-						new_type.set_type_index(arg.type_index);
-						new_type.set_reference_qualifier(arg.ref_qualifier);
-						for (size_t p = 0; p < arg.pointer_depth; ++p) {
-							new_type.add_pointer_level(CVQualifier::None);
-						}
+						TypeSpecifierNode new_type =
+							makeSubstitutedTypeNode(arg, sizeof_node.sizeof_token());
 						auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
 						SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
 						return emplace_node<ExpressionNode>(new_sizeof);
@@ -3526,35 +3523,54 @@ ASTNode Parser::substitute_template_params_in_expression(
 	if (std::holds_alternative<ConstructorCallNode>(expr_variant)) {
 		const ConstructorCallNode& ctor = std::get<ConstructorCallNode>(expr_variant);
 		const TypeSpecifierNode& ctor_type = ctor.type_node();
-
-		// Check if this constructor type is in our substitution map
-		// For variable templates with cleaned-up template parameters, the constructor
-		// might have type_index=0 or some other invalid value. So we check if there's
-		// exactly one entry in the map and assume any UserDefined constructor is for that type.
-		if (ctor_type.category() == TypeCategory::UserDefined || ctor_type.category() == TypeCategory::TypeAlias || ctor_type.category() == TypeCategory::Template) {
-			// If we have exactly one type substitution and this is a UserDefined constructor,
-			// assume it's for the template parameter
-			if (type_substitution_map.size() == 1) {
-				const TemplateTypeArg& arg = type_substitution_map.begin()->second;
-
-				// Create a new type specifier with the concrete type
-				TypeSpecifierNode new_type(
-					arg.typeEnum(),
-					TypeQualifier::None,
-					get_type_size_bits(arg.category()),
-					ctor.called_from(), CVQualifier::None);
-
-				// Recursively substitute in arguments
-				ChunkedVector<ASTNode> new_args;
-				for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-					new_args.push_back(substitute_template_params_in_expression(ctor.arguments()[i], type_substitution_map, nontype_substitution_map, substitution_owner));
-				}
-
-				// Create new constructor call with substituted type
-				auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
-				ConstructorCallNode new_ctor(new_type_node, std::move(new_args), ctor.called_from());
-				return emplace_node<ExpressionNode>(new_ctor);
+		const auto tryFindTypeSubstitution = [&]() -> const TemplateTypeArg* {
+			if (auto it = type_substitution_map.find(ctor_type.type_index());
+				it != type_substitution_map.end()) {
+				return &it->second;
 			}
+			if (ctor_type.category() == TypeCategory::UserDefined ||
+				ctor_type.category() == TypeCategory::TypeAlias ||
+				ctor_type.category() == TypeCategory::Template) {
+				std::string_view ctor_type_name = ctor_type.token().value();
+				if (ctor_type_name.empty()) {
+					if (const TypeInfo* ctor_type_info = tryGetTypeInfo(ctor_type.type_index())) {
+						ctor_type_name = StringTable::getStringView(ctor_type_info->name());
+					}
+				}
+				if (!ctor_type_name.empty()) {
+					for (const auto& [key_type_index, arg] : type_substitution_map) {
+						if (const TypeInfo* key_type_info = tryGetTypeInfo(key_type_index)) {
+							if (StringTable::getStringView(key_type_info->name()) == ctor_type_name) {
+								return &arg;
+							}
+						}
+					}
+				}
+			}
+			if ((ctor_type.category() == TypeCategory::UserDefined ||
+				 ctor_type.category() == TypeCategory::TypeAlias ||
+				 ctor_type.category() == TypeCategory::Template) &&
+				type_substitution_map.size() == 1) {
+				return &type_substitution_map.begin()->second;
+			}
+			return nullptr;
+		};
+
+		if (const TemplateTypeArg* substituted_ctor_arg = tryFindTypeSubstitution();
+			substituted_ctor_arg != nullptr) {
+			ChunkedVector<ASTNode> new_args;
+			for (size_t i = 0; i < ctor.arguments().size(); ++i) {
+				new_args.push_back(substitute_template_params_in_expression(
+					ctor.arguments()[i],
+					type_substitution_map,
+					nontype_substitution_map,
+					substitution_owner));
+			}
+
+			auto new_type_node = emplace_node<TypeSpecifierNode>(
+				makeSubstitutedTypeNode(*substituted_ctor_arg, ctor.called_from()));
+			ConstructorCallNode new_ctor(new_type_node, std::move(new_args), ctor.called_from());
+			return emplace_node<ExpressionNode>(new_ctor);
 		}
 
 		// Not a template parameter constructor - recursively substitute in arguments
@@ -3600,16 +3616,8 @@ ASTNode Parser::substitute_template_params_in_expression(
 			}
 			if (it != type_substitution_map.end()) {
 				const TemplateTypeArg& arg = it->second;
-				TypeSpecifierNode new_type(
-					arg.typeEnum(),
-					TypeQualifier::None,
-					get_type_size_bits(arg.category()),
-					type_node.token(), CVQualifier::None);
-				new_type.set_type_index(arg.type_index);
-				new_type.set_reference_qualifier(arg.ref_qualifier);
-				for (size_t p = 0; p < arg.pointer_depth; ++p) {
-					new_type.add_pointer_level(CVQualifier::None);
-				}
+				TypeSpecifierNode new_type =
+					makeSubstitutedTypeNode(arg, type_node.token());
 				ASTNode new_type_node = emplace_node<TypeSpecifierNode>(new_type);
 				TypeTraitExprNode new_trait(trait_expr.kind(), new_type_node, trait_expr.trait_token());
 				return emplace_node<ExpressionNode>(new_trait);

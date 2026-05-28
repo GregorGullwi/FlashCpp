@@ -5326,17 +5326,91 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			return *variable_template_value;
 		}
 
+		auto resolveDependentOwnerHandle = [&]() -> StringHandle {
+			const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+				qualified_id.dependentQualifiedName();
+			if (dependent_record == nullptr) {
+				return {};
+			}
+			auto canonicalOwnerHandleForArg = [&](const TemplateTypeArg& owner_arg) -> StringHandle {
+				if (owner_arg.is_value) {
+					return {};
+				}
+				if (context.parser != nullptr) {
+					Parser::AliasTemplateMaterializationResult canonical_owner =
+						context.parser->materializeCanonicalOwnerTypeForLookup(owner_arg);
+					if (canonical_owner.canonicalNameHandle().isValid()) {
+						return canonical_owner.canonicalNameHandle();
+					}
+					if (canonical_owner.resolved_type_info != nullptr &&
+						canonical_owner.resolved_type_info->name().isValid()) {
+						return canonical_owner.resolved_type_info->name();
+					}
+				}
+				if (owner_arg.type_index.is_valid()) {
+					if (const TypeInfo* owner_type_info = tryGetTypeInfo(owner_arg.type_index);
+						owner_type_info != nullptr && owner_type_info->name().isValid()) {
+						return owner_type_info->name();
+					}
+				}
+				return {};
+			};
+
+			switch (dependent_record->owner_kind) {
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+				if (dependent_record->owner_type.is_valid()) {
+					if (const TypeInfo* owner_type_info =
+							tryGetTypeInfo(dependent_record->owner_type);
+						owner_type_info != nullptr && owner_type_info->name().isValid()) {
+						return owner_type_info->name();
+					}
+				}
+				if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
+					return context.struct_info->name;
+				}
+				break;
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization:
+				if (dependent_record->owner_name.isValid()) {
+					if (std::optional<TemplateTypeArg> bound_owner =
+							resolveContextBinding(
+								dependent_record->owner_name,
+								context.template_environment);
+						bound_owner.has_value()) {
+						if (StringHandle owner_handle = canonicalOwnerHandleForArg(*bound_owner);
+							owner_handle.isValid()) {
+							return owner_handle;
+						}
+					}
+				}
+				if (dependent_record->owner_type.is_valid()) {
+					if (const TypeInfo* owner_type_info =
+							tryGetTypeInfo(dependent_record->owner_type);
+						owner_type_info != nullptr && owner_type_info->name().isValid()) {
+						return owner_type_info->name();
+					}
+				}
+				break;
+			}
+			return {};
+		};
+
 		// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
 		// This handles cases like is_pointer_impl<int*>::value where value is a static member
 		// Also handles type aliases like `using my_true = integral_constant<bool, true>; my_true::value`
 		NamespaceHandle ns_handle = qualified_id.namespace_handle();
 		StringHandle struct_handle;
+		if (StringHandle dependent_owner_handle = resolveDependentOwnerHandle();
+			dependent_owner_handle.isValid()) {
+			struct_handle = dependent_owner_handle;
+		}
 		const bool qualifier_is_known_namespace =
 			ns_handle.isValid() &&
 			!ns_handle.isGlobal() &&
 			context.symbols->has_namespace_symbols(ns_handle);
 
-		if (!ns_handle.isGlobal()) {
+		if (!struct_handle.isValid() && !ns_handle.isGlobal()) {
 			struct_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
 			if (!struct_handle.isValid()) {
 				struct_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
