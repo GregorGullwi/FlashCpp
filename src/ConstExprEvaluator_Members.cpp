@@ -5333,7 +5333,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				return {};
 			}
 			auto canonicalOwnerHandleForArg = [&](const TemplateTypeArg& owner_arg) -> StringHandle {
-				if (owner_arg.is_value) {
+				if (owner_arg.is_value || owner_arg.is_dependent) {
 					return {};
 				}
 				if (context.parser != nullptr) {
@@ -5382,13 +5382,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							owner_handle.isValid()) {
 							return owner_handle;
 						}
-					}
-				}
-				if (dependent_record->owner_type.is_valid()) {
-					if (const TypeInfo* owner_type_info =
-							tryGetTypeInfo(dependent_record->owner_type);
-						owner_type_info != nullptr && owner_type_info->name().isValid()) {
-						return owner_type_info->name();
 					}
 				}
 				break;
