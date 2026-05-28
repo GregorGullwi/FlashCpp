@@ -3198,7 +3198,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						if (auto constant_value =
 								parser_.try_evaluate_constant_expression(substituted_arg);
 							constant_value.has_value()) {
-							TemplateTypeArg value_arg(
+							TemplateTypeArg value_arg = TemplateTypeArg::makeValue(
 								constant_value->value,
 								constant_value->type_index.is_valid()
 									? constant_value->type_index
