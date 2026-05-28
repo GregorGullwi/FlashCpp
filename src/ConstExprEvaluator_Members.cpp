@@ -5332,6 +5332,69 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			if (dependent_record == nullptr) {
 				return {};
 			}
+			auto materializeOwnerMemberChainPrefix = [&](StringHandle owner_handle) -> StringHandle {
+				if (!owner_handle.isValid() ||
+					context.parser == nullptr ||
+					dependent_record->member_chain.size() <= 1) {
+					return owner_handle;
+				}
+
+				std::vector<QualifiedTypeMemberAccess> member_type_chain;
+				member_type_chain.reserve(dependent_record->member_chain.size() - 1);
+				for (size_t member_index = 0;
+					 member_index + 1 < dependent_record->member_chain.size();
+					 ++member_index) {
+					const auto& member_record =
+						dependent_record->member_chain[member_index];
+					QualifiedTypeMemberAccess member_access;
+					member_access.member_name = member_record.name;
+					if (member_record.has_template_arguments) {
+						std::vector<TemplateTypeArg> member_args;
+						member_args.reserve(member_record.template_arguments.size());
+						for (const TypeInfo::TemplateArgInfo& stored_arg :
+							 member_record.template_arguments) {
+							TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+							if (std::optional<TemplateTypeArg> rebound_arg =
+									trySubstituteDependentTemplateArgForLookup(
+										arg,
+										context,
+										nullptr,
+										0);
+								rebound_arg.has_value()) {
+								arg = std::move(*rebound_arg);
+							}
+							if (arg.is_value && arg.dependent_expr.has_value()) {
+								EvalResult evaluated_arg = evaluate(
+									*arg.dependent_expr,
+									context);
+								if (!evaluated_arg.success()) {
+									return owner_handle;
+								}
+								arg = templateTypeArgFromEvalResult(evaluated_arg);
+							}
+							if (arg.is_dependent) {
+								return owner_handle;
+							}
+							member_args.push_back(std::move(arg));
+						}
+						member_access.has_template_arguments = true;
+						member_access.template_arguments =
+							&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
+								std::move(member_args));
+					}
+					member_type_chain.push_back(std::move(member_access));
+				}
+
+				const TypeInfo* resolved_owner_type =
+					context.parser->resolveBaseClassMemberTypeChain(
+						StringTable::getStringView(owner_handle),
+						member_type_chain);
+				if (resolved_owner_type != nullptr &&
+					resolved_owner_type->name().isValid()) {
+					return resolved_owner_type->name();
+				}
+				return owner_handle;
+			};
 			auto canonicalOwnerHandleForArg = [&](const TemplateTypeArg& owner_arg) -> StringHandle {
 				if (owner_arg.is_value || owner_arg.is_dependent) {
 					return {};
@@ -5362,11 +5425,11 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					if (const TypeInfo* owner_type_info =
 							tryGetTypeInfo(dependent_record->owner_type);
 						owner_type_info != nullptr && owner_type_info->name().isValid()) {
-						return owner_type_info->name();
+						return materializeOwnerMemberChainPrefix(owner_type_info->name());
 					}
 				}
 				if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
-					return context.struct_info->name;
+					return materializeOwnerMemberChainPrefix(context.struct_info->name);
 				}
 				break;
 			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
@@ -5380,7 +5443,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						bound_owner.has_value()) {
 						if (StringHandle owner_handle = canonicalOwnerHandleForArg(*bound_owner);
 							owner_handle.isValid()) {
-							return owner_handle;
+							return materializeOwnerMemberChainPrefix(owner_handle);
 						}
 					}
 				}
@@ -5429,6 +5492,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 			// Look up the struct in getTypesByNameMap()
 			auto struct_type_it = getTypesByNameMap().find(struct_handle);
+			const TypeInfo* chain_resolved_owner_type = nullptr;
 
 			// If not found with the full qualified name (e.g., "std::is_integral$hash"),
 			// try without the namespace prefix (e.g., "is_integral$hash") since template
@@ -5444,6 +5508,32 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						FLASH_LOG(ConstExpr, Debug, "Found type using short name '", short_name, "'");
 					}
 				}
+				if (struct_type_it == getTypesByNameMap().end() &&
+					context.parser != nullptr) {
+					std::string_view chain_full_name = StringTable::getStringView(struct_handle);
+					size_t first_colon = chain_full_name.find("::");
+					if (first_colon != std::string_view::npos &&
+						first_colon + 2 < chain_full_name.size()) {
+						std::string_view base_name = chain_full_name.substr(0, first_colon);
+						std::string_view member_chain = chain_full_name.substr(first_colon + 2);
+						std::vector<QualifiedTypeMemberAccess> parsed_member_chain =
+							context.parser->buildQualifiedTypeMemberChain(member_chain);
+						if (const TypeInfo* resolved_owner =
+								context.parser->resolveBaseClassMemberTypeChain(
+									base_name,
+									parsed_member_chain);
+							resolved_owner != nullptr) {
+							chain_resolved_owner_type = resolved_owner;
+							if (resolved_owner->name().isValid()) {
+								struct_handle = resolved_owner->name();
+								auto rebound_it = getTypesByNameMap().find(struct_handle);
+								if (rebound_it != getTypesByNameMap().end()) {
+									struct_type_it = rebound_it;
+								}
+							}
+						}
+					}
+				}
 			}
 
 			// If not found directly, this might be a type alias
@@ -5451,8 +5541,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			const StructTypeInfo* struct_info = nullptr;
 			const TypeInfo* resolved_type_info = nullptr;
 
-			if (struct_type_it != getTypesByNameMap().end()) {
-				const TypeInfo* type_info = struct_type_it->second;
+			if (struct_type_it != getTypesByNameMap().end() ||
+				chain_resolved_owner_type != nullptr) {
+				const TypeInfo* type_info =
+					chain_resolved_owner_type != nullptr
+						? chain_resolved_owner_type
+						: struct_type_it->second;
 
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Found type_info, isStruct=", type_info->isStruct(),

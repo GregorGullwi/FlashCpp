@@ -2993,6 +2993,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						std::move(explicit_template_arg_nodes));
 				}
 			}
+			if (!preserved_dependent_member_template_record) {
+				new_qual_id.setDependentQualifiedName(*dependent_name);
+			}
 			FLASH_LOG(Templates, Debug, "  Record-substituted qualified-id: ",
 					  qual_id.full_name(), " -> ", materialized_namespace, "::",
 					  final_member_name,

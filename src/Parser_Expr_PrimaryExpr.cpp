@@ -6502,17 +6502,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								restore_token_position(deferred_member_chain_start);
 							}
 
-							std::vector<StringType<32>> namespaces;
 							Token final_identifier = identifier_token;
+							std::string resolved_namespace_name(instantiated_name);
+							std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
+							std::vector<ASTNode> member_template_arg_nodes;
 
-							// Collect the qualified path after ::
+							// Collect and materialize the qualified path after ::
 							while (peek() == "::"_tok) {
-								// Current identifier becomes a namespace part (but use instantiated name for first part)
-								if (namespaces.empty()) {
-									namespaces.emplace_back(StringType<32>(instantiated_name));
-								} else {
-									namespaces.emplace_back(StringType<32>(final_identifier.value()));
-								}
 								advance(); // consume ::
 
 								// Handle ::template syntax for dependent names (e.g., __xref<T>::template __type)
@@ -6525,30 +6521,61 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									pending_explicit_template_args_.reset(); // Clear pending to avoid leaking to unrelated calls
 									return ParseResult::error("Expected identifier after '::'", peek_info());
 								}
-								final_identifier = peek_info();
+								Token segment_identifier = peek_info();
 								advance(); // consume the identifier
-							}
 
-							std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
-							std::vector<ASTNode> member_template_arg_nodes;
-							if (peek() == "<"_tok &&
-								qualifiedMemberTemplateIdIsKnown(
-									instantiated_name,
-									final_identifier.handle())) {
-								SaveHandle member_template_arg_start =
-									save_token_position();
-								member_template_args =
-									parse_explicit_template_arguments(
-										&member_template_arg_nodes);
-								if (!member_template_args.has_value()) {
-									restore_token_position(
-										member_template_arg_start);
-									member_template_arg_nodes.clear();
-								} else if (peek() == "("_tok) {
-									restore_token_position(
-										member_template_arg_start);
-									member_template_arg_nodes.clear();
-									member_template_args.reset();
+								std::optional<InlineVector<TemplateTypeArg, 4>> segment_template_args;
+								std::vector<ASTNode> segment_template_arg_nodes;
+								if (peek() == "<"_tok &&
+									qualifiedMemberTemplateIdIsKnown(
+										resolved_namespace_name,
+										segment_identifier.handle())) {
+									SaveHandle segment_template_arg_start =
+										save_token_position();
+									segment_template_args =
+										parse_explicit_template_arguments(
+											&segment_template_arg_nodes);
+									if (!segment_template_args.has_value()) {
+										restore_token_position(
+											segment_template_arg_start);
+										segment_template_arg_nodes.clear();
+									}
+								}
+
+								const bool segment_is_last = peek() != "::"_tok;
+								if (segment_is_last) {
+									final_identifier = segment_identifier;
+									member_template_args = std::move(segment_template_args);
+									member_template_arg_nodes = std::move(segment_template_arg_nodes);
+									break;
+								}
+
+								QualifiedTypeMemberAccess segment_access{};
+								segment_access.member_name = segment_identifier.handle();
+								segment_access.has_template_arguments =
+									segment_template_args.has_value();
+								std::vector<TemplateTypeArg> segment_template_args_storage;
+								if (segment_template_args.has_value()) {
+									segment_template_args_storage.assign(
+										segment_template_args->begin(),
+										segment_template_args->end());
+									segment_access.template_arguments =
+										&segment_template_args_storage;
+								}
+								if (const TypeInfo* resolved_segment_type =
+										resolveBaseClassMemberTypeChain(
+											resolved_namespace_name,
+											std::vector<QualifiedTypeMemberAccess>{
+												segment_access});
+									resolved_segment_type != nullptr &&
+									resolved_segment_type->name().isValid()) {
+									resolved_namespace_name = std::string(
+										StringTable::getStringView(
+											resolved_segment_type->name()));
+								} else {
+									resolved_namespace_name.append("::");
+									resolved_namespace_name.append(
+										segment_identifier.value());
 								}
 							}
 
@@ -6565,7 +6592,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 
 							// Create a QualifiedIdentifierNode with the instantiated type name (stack-local; copied into ExpressionNode)
-							NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
+							NamespaceHandle ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+								NamespaceRegistry::GLOBAL_NAMESPACE,
+								StringTable::getOrInternStringHandle(resolved_namespace_name));
 							QualifiedIdentifierNode qual_id(ns_handle, final_identifier);
 							attachQualifiedIdentifierTemplateArguments(
 								qual_id,
