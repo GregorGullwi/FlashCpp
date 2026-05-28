@@ -5,6 +5,41 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const StructTypeInfo* struct_info,
 	bool set_qualified_name);
 
+// ---------------------------------------------------------------------------
+// Structural-dependency helpers for TemplateTypeArg
+// ---------------------------------------------------------------------------
+
+/// Returns true when \p arg is still structurally dependent on unresolved
+/// template parameters — i.e. it cannot yet be used as a concrete
+/// instantiation key.
+///
+/// Covers:
+///  • is_dependent flag (type arg that was never fully substituted)
+///  • surviving dependent_name (belt-and-suspenders guard)
+///  • dependent NTTP expressions that still carry AST-backed unresolved identity
+///  • Auto / DeclTypeAuto placeholder categories
+///
+/// Does NOT include is_pack — call sites that need pack-deferral must check
+/// arg.is_pack separately (e.g. explicitTemplateArgsRequireDeferredInstantiation).
+inline bool templateArgIsStructurallyDependent(const TemplateTypeArg& arg) {
+	if (arg.is_dependent || arg.dependent_name.isValid() || arg.dependent_expr.has_value())
+		return true;
+	const TypeCategory cat = arg.category();
+	return cat == TypeCategory::Auto || cat == TypeCategory::DeclTypeAuto;
+}
+
+/// Returns true when *any* argument in \p args is structurally dependent.
+/// Accepts InlineVector via its implicit operator std::span<const TemplateTypeArg>.
+inline bool anyTemplateArgIsStructurallyDependent(std::span<const TemplateTypeArg> args) {
+	for (const TemplateTypeArg& arg : args) {
+		if (templateArgIsStructurallyDependent(arg))
+			return true;
+	}
+	return false;
+}
+
+// ---------------------------------------------------------------------------
+
 // Helper to build qualified name strings for template/member lookup
 // Returns a StringHandle that can be passed to findTypeByName
 inline StringHandle buildQualifiedName(std::string_view owner, std::string_view member) {
@@ -322,9 +357,15 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 	if (dependent_record != nullptr && !dependent_record->member_chain.empty()) {
 		for (const auto& member : dependent_record->member_chain) {
 			if (!member.name.isValid()) {
+				qualified_member_name_builder.reset();
 				return substituted_type_index;
 			}
 			if (member.has_template_arguments) {
+				// Cannot instantiate a member template alias here (no template params/args
+				// available in the non-template overload). Reset the in-progress builder
+				// and return the best available type — the original dependent placeholder
+				// if one exists, so downstream template-aware callers can finish resolution.
+				qualified_member_name_builder.reset();
 				return original_type_spec.type_index().is_valid()
 					? original_type_spec.type_index()
 					: substituted_type_index;
@@ -348,6 +389,7 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 			member_suffix = token_name;
 		}
 		if (member_suffix.empty()) {
+			qualified_member_name_builder.reset();
 			return substituted_type_index;
 		}
 		if (member_suffix.find("::") == std::string_view::npos) {
@@ -375,6 +417,7 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 	}
 
 	if (!appended_member) {
+		qualified_member_name_builder.reset();
 		return substituted_type_index;
 	}
 

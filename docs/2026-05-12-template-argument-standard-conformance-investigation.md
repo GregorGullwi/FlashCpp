@@ -276,7 +276,8 @@ Rule for this work:
 - continue improving replay metadata capture for unresolved substitution
   (`nullopt`) outcomes in the remaining non-constructor declaration replay
   paths so canonical substituted-signature classification can succeed in more
-  valid cases.
+  valid cases outside the now-covered nested member-template alias /
+  explicit-call overload slice.
 - continue looking for remaining OOL dependent-member swap regressions in
   less-covered member-template and nested replay surfaces now that the first
   constructor replay/body-selection gap has been closed.
@@ -319,6 +320,9 @@ Still open, but not the next best slice:
    template-member attachment paths so unresolved (`nullopt`)
    substituted-signature outcomes classify more often and attachment remains
    evidence-driven without broad compatibility fallback;
+   remove the last recordless dependent-alias callers so
+   `resolveDependentMemberAlias(...)` can drop the terminal-name /
+   `base::member` fallback entirely;
    keep function-parameter adjustment rules centralized so replay/attachment
    compares canonical signatures across eager/lazy/declaration-only paths;
    prioritize remaining OOL dependent-member swap follow-ups in member-template
@@ -337,6 +341,9 @@ Keep adding narrow regressions in these areas:
   or equivalent dependent-base lookup — particularly through partial specs;
 - declaration/definition attachment where inner and outer template parameters
   interact;
+- explicit member-template calls whose overloads differ only in pointer depth or
+  dependent member-template alias shape, so parser-side pre-argument caching
+  cannot reintroduce the losing overload;
 - remaining non-static declaration replay paths that still fall back to
   partially substituted AST state, especially paths that still produce unresolved
   (`nullopt`) substituted-signature outcomes because replay metadata was not
@@ -353,3 +360,13 @@ This plan is complete when:
 - remaining repair paths have been converted into diagnostics or invariants;
 - ordinary overload selection does not materialize losing candidates by
   default.
+
+Latest validation after the current slice:
+
+- `2603` regular tests compiled/linked/runtime-pass, `0` fail;
+- `188` expected-fail tests still fail as expected.
+
+Latest focused regressions added on the current branch:
+
+- `test_template_ool_member_template_nested_alias_overload_ret0.cpp`
+- `test_explicit_member_template_pointer_overload_cache_ret0.cpp`

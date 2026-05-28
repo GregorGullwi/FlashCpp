@@ -1441,6 +1441,25 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		}
 		std::optional<TemplateTypeArg> rebound_arg =
 			tryRebindAliasTargetTemplateArg(*alias_node, template_args);
+		// If rebinding via the alias's own template params failed, the alias target
+		// may be an *outer* template parameter (e.g. `template<typename U> using Apply = T`
+		// where T comes from an enclosing class template's outer binding T=int).
+		// Look it up in the stored outer binding before giving up.
+		if (!rebound_arg.has_value() && outer_binding != nullptr) {
+			StringHandle alias_target_name =
+				getAliasTargetNameHandle(alias_node->target_type_node());
+			if (alias_target_name.isValid()) {
+				for (size_t i = 0;
+					 i < outer_binding->param_names.size() &&
+					 i < outer_binding->param_args.size();
+					 ++i) {
+					if (outer_binding->param_names[i] == alias_target_name) {
+						rebound_arg = outer_binding->param_args[i];
+						break;
+					}
+				}
+			}
+		}
 		if (!rebound_arg.has_value() || rebound_arg->is_value) {
 			return false;
 		}
@@ -2721,9 +2740,29 @@ std::string_view Parser::instantiate_and_register_base_template(
 
 		const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
 		if (!alias_node.is_deferred()) {
-			if (std::optional<TemplateTypeArg> rebound_alias_arg =
-					tryRebindAliasTargetTemplateArg(alias_node, template_args);
-				rebound_alias_arg.has_value() && !rebound_alias_arg->is_value) {
+			std::optional<TemplateTypeArg> rebound_alias_arg =
+				tryRebindAliasTargetTemplateArg(alias_node, template_args);
+			// If the alias's own params don't contain the target (e.g.
+			// `template<typename U> using Apply = T` where T is an outer param),
+			// fall back to the stored outer binding for this alias template name.
+			if (!rebound_alias_arg.has_value()) {
+				const OuterTemplateBinding* outer = gTemplateRegistry.getOuterTemplateBinding(base_class_name);
+				if (outer != nullptr) {
+					StringHandle alias_target_name =
+						getAliasTargetNameHandle(alias_node.target_type_node());
+					if (alias_target_name.isValid()) {
+						for (size_t i = 0;
+							 i < outer->param_names.size() && i < outer->param_args.size();
+							 ++i) {
+							if (outer->param_names[i] == alias_target_name) {
+								rebound_alias_arg = outer->param_args[i];
+								break;
+							}
+						}
+					}
+				}
+			}
+			if (rebound_alias_arg.has_value() && !rebound_alias_arg->is_value) {
 				if (const TypeInfo* rebound_type_info = tryGetTypeInfo(rebound_alias_arg->type_index);
 					rebound_type_info != nullptr) {
 					base_class_name = StringTable::getStringView(rebound_type_info->name());

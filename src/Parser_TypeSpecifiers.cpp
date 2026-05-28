@@ -2336,12 +2336,28 @@ ParseResult Parser::parse_type_specifier() {
 						}
 						std::string_view dependent_member_path =
 							member_path_builder.commit();
+						InlineVector<std::string_view, 4> dependent_member_components =
+							splitDependentMemberPathComponents(dependent_member_path);
 						InlineVector<DependentMemberSegmentInfo, 4> all_segment_infos;
+						// The member path may contain prefix components (e.g. "Node" in
+						// "Node::Apply<1 args>") that appear before the terminal member
+						// whose template args we just parsed.  Without padding, those
+						// prefix components would receive the terminal member's template
+						// args in makeDependentQualifiedNameRecord.  Insert one null entry
+						// per prefix component so the segment info indices stay aligned
+						// with the path component indices.
+						{
+							const size_t total_components = dependent_member_components.size();
+							const size_t suffix_count = 1u + nested_segment_infos.size();
+							const size_t prefix_count =
+								total_components > suffix_count ? total_components - suffix_count : 0u;
+							for (size_t i = 0; i < prefix_count; ++i) {
+								all_segment_infos.push_back({false, std::nullopt});
+							}
+						}
 						all_segment_infos.push_back({had_template_keyword, dependent_member_template_args});
 						for (const DependentMemberSegmentInfo& seg : nested_segment_infos)
 							all_segment_infos.push_back(seg);
-						InlineVector<std::string_view, 4> dependent_member_components =
-							splitDependentMemberPathComponents(dependent_member_path);
 						type_info.setDependentQualifiedName(
 							makeDependentQualifiedNameRecord(
 								StringTable::getOrInternStringHandle(type_name),

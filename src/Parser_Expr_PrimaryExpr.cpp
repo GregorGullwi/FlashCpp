@@ -5,6 +5,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "ParserTemplateClassShared.h"
 #include "StringLiteralTokenUtils.h"
 #include "TypeTraitEvaluator.h"
 
@@ -21,12 +22,9 @@ void applyDeclarationArrayBoundsToTypeSpec(
 
 namespace {
 bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<TemplateTypeArg, 4>& template_args) {
-	return std::any_of(
-		template_args.begin(),
-		template_args.end(),
-		[](const TemplateTypeArg& arg) {
-			return arg.is_dependent || arg.dependent_name.isValid() || arg.is_pack;
-		});
+	return std::any_of(template_args.begin(), template_args.end(), [](const TemplateTypeArg& arg) {
+		return arg.is_pack || templateArgIsStructurallyDependent(arg);
+	});
 }
 
 struct ExpressionDependentMemberSegmentInfo {
