@@ -2167,10 +2167,11 @@ static bool dependentTemplatePlaceholderNamesMatch(
 
 	if (instantiated_type_info != nullptr &&
 		instantiated_type_info->isDependentPlaceholder()) {
-		if (const auto* instantiated_record = instantiated_type_info->dependentQualifiedName();
-			instantiated_record != nullptr &&
+		if (const auto* instantiated_placeholder_record =
+				instantiated_type_info->dependentQualifiedName();
+			instantiated_placeholder_record != nullptr &&
 			owner_matches_named_placeholder(
-				*instantiated_record,
+				*instantiated_placeholder_record,
 				out_of_line_type_info,
 				out_of_line_name)) {
 			return true;
@@ -2178,10 +2179,11 @@ static bool dependentTemplatePlaceholderNamesMatch(
 	}
 	if (out_of_line_type_info != nullptr &&
 		out_of_line_type_info->isDependentPlaceholder()) {
-		if (const auto* out_of_line_record = out_of_line_type_info->dependentQualifiedName();
-			out_of_line_record != nullptr &&
+		if (const auto* out_of_line_placeholder_record =
+				out_of_line_type_info->dependentQualifiedName();
+			out_of_line_placeholder_record != nullptr &&
 			owner_matches_named_placeholder(
-				*out_of_line_record,
+				*out_of_line_placeholder_record,
 				instantiated_type_info,
 				instantiated_name)) {
 			return true;

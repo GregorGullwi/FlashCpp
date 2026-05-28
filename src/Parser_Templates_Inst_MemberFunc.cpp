@@ -2644,13 +2644,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 						substituted_param_type_spec,
 						*concrete_alias_type_spec);
 				} else if (original_param_type_info != nullptr) {
-					if (std::optional<TypeSpecifierNode> concrete_alias_type_spec =
+					if (std::optional<TypeSpecifierNode> original_concrete_alias_type_spec =
 							materialize_alias_target_from_instantiation_context(
 								*original_param_type_info);
-						concrete_alias_type_spec.has_value()) {
+						original_concrete_alias_type_spec.has_value()) {
 						merge_alias_target_type_spec(
 							substituted_param_type_spec,
-							*concrete_alias_type_spec);
+							*original_concrete_alias_type_spec);
 					} else if (const TypeSpecifierNode* alias_type_spec = param_type_info->aliasTypeSpecifier();
 						alias_type_spec != nullptr &&
 						!alias_type_spec_still_uses_active_template_param(*alias_type_spec)) {

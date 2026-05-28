@@ -3995,8 +3995,6 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		std::vector<ASTNode> shape_overloads;
 		shape_candidates.reserve(all_templates.size());
 		shape_overloads.reserve(all_templates.size());
-		StringHandle template_name_handle = StringTable::getOrInternStringHandle(template_name);
-
 		for (size_t sorted_idx = 0; sorted_idx < overload_iteration_order.size(); ++sorted_idx) {
 			size_t overload_idx = overload_iteration_order[sorted_idx];
 			const ASTNode& template_node = all_templates[overload_idx];
