@@ -394,6 +394,9 @@ public:
 	void set_is_constinit(bool is_constinit) { is_constinit_ = is_constinit; }
 	bool is_constinit() const { return is_constinit_; }
 
+	void set_linkage(Linkage linkage) { linkage_ = linkage; }
+	Linkage linkage() const { return linkage_; }
+
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
 		outer_template_param_names_.clear();
@@ -435,6 +438,7 @@ private:
 	ASTNode declaration_node_;
 	std::optional<ASTNode> initializer_;
 	StorageClass storage_class_;
+	Linkage linkage_ = Linkage::None;
 	bool is_thread_local_ = false;
 	bool is_constexpr_;
 	bool is_constinit_;

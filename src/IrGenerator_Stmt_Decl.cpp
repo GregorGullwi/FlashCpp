@@ -1237,9 +1237,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			// and `extern "C" int x __asm__("y");` (Linkage::C with StorageClass::None).
 		bool is_asm_alias_only = decl.has_mangled_name() &&
 								 !node.initializer();
-			// C++20 [basic.link]: An extern declaration without an initializer is a
-			// declaration, not a definition — it must not allocate storage.
-		if (node.storage_class() == StorageClass::Extern && !node.initializer()) {
+		// C++20 [basic.link]: An extern declaration without an initializer is a
+		// declaration, not a definition — it must not allocate storage.
+		// __declspec(dllimport) always refers to an external symbol provided by a
+		// DLL at runtime — it must never allocate local storage, regardless of
+		// initializer presence (initializers on dllimport are semantically invalid).
+		if (node.linkage() == Linkage::DllImport || (node.storage_class() == StorageClass::Extern && !node.initializer())) {
 			op.is_extern_only = true;
 		}
 		if (!is_asm_alias_only) {

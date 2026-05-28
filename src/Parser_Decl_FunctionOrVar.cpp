@@ -945,6 +945,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		global_decl_node.set_is_thread_local(specs.is_thread_local);
 		global_decl_node.set_is_constexpr(is_constexpr);
 		global_decl_node.set_is_constinit(is_constinit);
+		global_decl_node.set_linkage(specs.linkage);
 
 		// Parse the initializer against the registered declaration node so later
 		// unsized-array inference updates the same AST object already stored in the
@@ -1121,6 +1122,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				next_var_decl.set_is_thread_local(specs.is_thread_local);
 				next_var_decl.set_is_constexpr(is_constexpr);
 				next_var_decl.set_is_constinit(is_constinit);
+				next_var_decl.set_linkage(specs.linkage);
 
 				if (!gSymbolTable.insert(next_identifier_token.value(), next_var_node)) {
 					return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, next_identifier_token);

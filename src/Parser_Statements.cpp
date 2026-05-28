@@ -994,7 +994,7 @@ ParseResult Parser::parse_variable_declaration() {
 	bool is_constexpr = specs.is_constexpr();
 	bool is_constinit = specs.is_constinit();
 	StorageClass storage_class = specs.storage_class;
-	[[maybe_unused]] Linkage linkage = specs.linkage;
+	Linkage linkage = specs.linkage;
 
 	// Parse the type specifier and identifier (name)
 	ParseResult type_and_name_result = parse_type_and_name();
@@ -1047,10 +1047,11 @@ ParseResult Parser::parse_variable_declaration() {
 			std::nullopt,
 			storage_class);
 
-		// Set constexpr/constinit flags
+		// Set constexpr/constinit flags and linkage
 		var_decl.set_is_thread_local(specs.is_thread_local);
 		var_decl.set_is_constexpr(is_constexpr);
 		var_decl.set_is_constinit(is_constinit);
+		var_decl.set_linkage(linkage);
 
 		// Add the VariableDeclarationNode to the symbol table
 		// This preserves the is_constexpr flag and initializer for constant expression evaluation
