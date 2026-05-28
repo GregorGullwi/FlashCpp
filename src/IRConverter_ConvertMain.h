@@ -1023,6 +1023,7 @@ private:
 		std::vector<char> init_data;	 // Raw bytes for initialized data
 		StringHandle reloc_target;	   // If valid, data relocation (R_X86_64_64) for this symbol
 		bool is_rodata = false;		// If true, emit init_data to .rodata instead of .data
+		bool is_extern_only = false;	// If true, this is an extern declaration (no local storage)
 		TypeCategory varType() const { return type_index.category(); }
 	};
 	std::vector<GlobalVariableInfo> global_variables_;

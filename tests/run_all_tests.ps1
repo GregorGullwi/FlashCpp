@@ -220,6 +220,7 @@ $extraCHelpers = @{
 	"test_external_abi.cpp" = @("test_external_abi_helper.c")
 	"test_external_abi_simple.cpp" = @("test_external_abi_simple_helper.c")
 	"test_atomic_builtin_pointer_intrinsics_ret0.cpp" = @("test_atomic_builtin_pointer_intrinsics_helper.c")
+	"test_extern_var_ret42.cpp" = @("test_extern_var_ret42_helper.c")
 }
 
 # Pre-cache main() detection to avoid reading files twice

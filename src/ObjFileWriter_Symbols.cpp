@@ -167,12 +167,15 @@ void ObjectFileWriter::add_text_relocation(uint64_t offset, const std::string& s
 	// Look up the symbol (could be a global variable, function, etc.)
 	auto* symbol = coffi_.get_symbol(symbol_name);
 	if (!symbol) {
-		// Symbol not found
-		if (true) {
-			if (g_enable_debug_output)
-				std::cerr << "Warning: Symbol not found for relocation: " << symbol_name << std::endl;
-			return;
-		}
+		// Symbol not found - add it as an external symbol (for globals referenced
+		// from text section but defined in another object file, e.g. extern variables).
+		symbol = coffi_.add_symbol(symbol_name);
+		symbol->set_value(0);
+		symbol->set_section_number(0);  // 0 = undefined/external symbol
+		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);  // unknown type — use null (data safe)
+		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		if (g_enable_debug_output)
+			std::cerr << "Created external symbol for text relocation: " << symbol_name << std::endl;
 	}
 
 	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];

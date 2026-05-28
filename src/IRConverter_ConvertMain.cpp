@@ -932,12 +932,14 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 		FLASH_LOG(Codegen, Debug, "  Disambiguated to shortest match: '", StringTable::getStringView(global_info->name), "'");
 	}
 
+	StringHandle reloc_name;
 	if (!global_info) {
-		FLASH_LOG(Codegen, Error, "Missing variable name: '", var_name, "', not in local or global scope");
-		return X64Register::Count;
+		FLASH_LOG(Codegen, Debug, "Global variable not in local storage, treating as external reference: '", var_name, "'");
+		reloc_name = var_handle;
+	} else {
+		FLASH_LOG(Codegen, Debug, "Found global variable: '", StringTable::getStringView(global_info->name), "'");
+		reloc_name = global_info->name;
 	}
-
-	FLASH_LOG(Codegen, Debug, "Found global variable: '", StringTable::getStringView(global_info->name), "'");
 
 	X64Register result_reg;
 
@@ -949,7 +951,7 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 		uint32_t reloc_offset = emitFloatMovRipRelative(result_reg, is_float);
 
 			// Add pending relocation for this global variable reference
-		pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
+		pending_global_relocations_.push_back({reloc_offset, reloc_name, IMAGE_REL_AMD64_REL32});
 	} else {
 			// For integers/pointers, allocate a general-purpose register
 		if (exclude_reg.has_value()) {
@@ -962,7 +964,7 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 		uint32_t reloc_offset = emitMovRipRelative(result_reg, operand_size_in_bits);
 
 			// Add pending relocation for this global variable reference
-		pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
+		pending_global_relocations_.push_back({reloc_offset, reloc_name, IMAGE_REL_AMD64_REL32});
 
 		regAlloc.flushSingleDirtyRegister(result_reg);
 	}
@@ -6323,6 +6325,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 	global_info.size_in_bytes = (op.size_in_bits.value / 8) * op.element_count;
 	global_info.reloc_target = op.reloc_target;
 	global_info.is_rodata = op.is_rodata;
+	global_info.is_extern_only = op.is_extern_only;
 
 		// Copy raw init data if present
 	if (op.is_initialized) {
@@ -16593,6 +16596,9 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		// Emit global variables to .data/.rodata/.bss sections FIRST
 		// This creates the symbols that relocations will reference
 	for (const auto& global : global_variables_) {
+		if (global.is_extern_only) {
+			continue;
+		}
 		writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes,
 										global.is_initialized, global.init_data, global.is_rodata);
 	}
