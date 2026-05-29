@@ -591,6 +591,70 @@ void AstToIr::generateStaticMemberDeclarations() {
 		if (!eval_result.success()) {
 			if (struct_info && expr_node.is<ExpressionNode>()) {
 				const auto& expr = expr_node.as<ExpressionNode>();
+				if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr);
+					qualified_id != nullptr &&
+					struct_info->name.isValid()) {
+					std::string_view original_ns =
+						gNamespaceRegistry.getQualifiedName(qualified_id->namespace_handle());
+					size_t first_colon = original_ns.find("::");
+					if (first_colon != std::string_view::npos &&
+						first_colon + 2 < original_ns.size()) {
+						std::string_view member_chain = original_ns.substr(first_colon + 2);
+						std::string_view concrete_owner_name = StringTable::getStringView(struct_info->name);
+						std::string_view rebound_ns_name = StringBuilder()
+							.append(concrete_owner_name)
+							.append("::")
+							.append(member_chain)
+							.commit();
+						if (rebound_ns_name != original_ns) {
+							NamespaceHandle rebound_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+								NamespaceRegistry::GLOBAL_NAMESPACE,
+								StringTable::getOrInternStringHandle(rebound_ns_name));
+							QualifiedIdentifierNode& rebound_qid =
+								gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+									rebound_ns_handle,
+									qualified_id->identifier_token());
+							if (qualified_id->has_template_arguments()) {
+								rebound_qid.set_template_arguments(
+									std::vector<ASTNode>(
+										qualified_id->template_arguments().begin(),
+										qualified_id->template_arguments().end()));
+							}
+							if (const auto* dependent_record = qualified_id->dependentQualifiedName();
+								dependent_record != nullptr) {
+								rebound_qid.setDependentQualifiedName(*dependent_record);
+							}
+							ExpressionNode& rebound_expr =
+								gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_qid);
+							ConstExpr::EvaluationContext rebound_ctx = makeStaticMemberEvalContext(struct_info);
+							auto rebound_result = ConstExpr::Evaluator::evaluate(
+								ASTNode(&rebound_expr),
+								rebound_ctx);
+							if (rebound_result.success()) {
+								eval_result = std::move(rebound_result);
+							}
+						}
+					}
+				}
+				if (!eval_result.success() &&
+					std::holds_alternative<QualifiedIdentifierNode>(expr) &&
+					!struct_info->base_classes.empty()) {
+					for (const auto& base_class : struct_info->base_classes) {
+						if (!base_class.type_index.is_valid()) {
+							continue;
+						}
+						const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_class.type_index);
+						if (base_struct_info == nullptr) {
+							continue;
+						}
+						ConstExpr::EvaluationContext base_ctx = makeStaticMemberEvalContext(base_struct_info);
+						auto base_eval_result = ConstExpr::Evaluator::evaluate(expr_node, base_ctx);
+						if (base_eval_result.success()) {
+							eval_result = std::move(base_eval_result);
+							break;
+						}
+					}
+				}
 				if (auto call_info = CallInfo::tryFrom(expr)) {
 					StringHandle func_name_handle = call_info->declaration->identifier_token().handle();
 
@@ -1338,7 +1402,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 						zero_initialize();
 					} else {
 						const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
-
 						// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
 						if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
 							const auto& ctor_call = std::get<ConstructorCallNode>(init_expr);

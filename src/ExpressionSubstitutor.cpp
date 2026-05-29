@@ -1170,28 +1170,6 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 				return result;
 			}
 
-			// Prefer resolving the dependent member-template segment via qualified
-			// owner-chain lookup first. This path preserves current-instantiation
-			// and unknown-specialization outer bindings for nested member templates
-			// such as Traits<T>::template Box<U>::type::value.
-			QualifiedTypeMemberAccess templated_member_access;
-			templated_member_access.member_name = member_record.name;
-			templated_member_access.has_template_arguments = true;
-			std::vector<TemplateTypeArg> member_args_storage(
-				member_args.begin(),
-				member_args.end());
-			templated_member_access.template_arguments = &member_args_storage;
-			if (const TypeInfo* resolved_owner =
-					resolveQualifiedMemberNamespaceChain(
-						chained_owner_name,
-						std::span<QualifiedTypeMemberAccess>(
-							&templated_member_access,
-							1));
-				resolved_owner != nullptr &&
-				resolved_owner->name().isValid()) {
-				(void)resolved_owner;
-			}
-
 			std::string_view member_name =
 				StringTable::getStringView(member_record.name);
 			std::string_view qualified_owner_name;
@@ -1232,6 +1210,30 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 				gTemplateRegistry.registerOuterTemplateBinding(
 					StringTable::getOrInternStringHandle(qualified_owner_name),
 					std::move(outer_binding));
+			}
+
+			// Prefer resolving the dependent member-template segment via qualified
+			// owner-chain lookup first. This path preserves current-instantiation
+			// and unknown-specialization outer bindings for nested member templates
+			// such as Traits<T>::template Box<U>::type::value. The outer binding
+			// must be registered before this lookup because the lookup can lazily
+			// instantiate the member template and cache the first result.
+			QualifiedTypeMemberAccess templated_member_access;
+			templated_member_access.member_name = member_record.name;
+			templated_member_access.has_template_arguments = true;
+			std::vector<TemplateTypeArg> member_args_storage(
+				member_args.begin(),
+				member_args.end());
+			templated_member_access.template_arguments = &member_args_storage;
+			if (const TypeInfo* resolved_owner =
+					resolveQualifiedMemberNamespaceChain(
+						chained_owner_name,
+						std::span<QualifiedTypeMemberAccess>(
+							&templated_member_access,
+							1));
+				resolved_owner != nullptr &&
+				resolved_owner->name().isValid()) {
+				(void)resolved_owner;
 			}
 
 			if (std::optional<ASTNode> instantiated_member_template =
@@ -2900,6 +2902,34 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 
 	// Get the namespace name (e.g., "R1_T")
 	std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qual_id.namespace_handle());
+	if (!ns_name.empty()) {
+		size_t first_scope = ns_name.find("::");
+		if (first_scope != std::string_view::npos &&
+			first_scope + 2 < ns_name.size()) {
+			std::string_view base_name = ns_name.substr(0, first_scope);
+			std::string_view member_chain = ns_name.substr(first_scope + 2);
+			std::vector<QualifiedTypeMemberAccess> parsed_chain =
+				parser_.buildQualifiedTypeMemberChain(member_chain);
+			if (const TypeInfo* resolved_owner =
+					parser_.resolveBaseClassMemberTypeChain(base_name, parsed_chain);
+				resolved_owner != nullptr &&
+				resolved_owner->name().isValid()) {
+				NamespaceHandle rebound_ns = gNamespaceRegistry.getOrCreateNamespace(
+					NamespaceRegistry::GLOBAL_NAMESPACE,
+					resolved_owner->name());
+				QualifiedIdentifierNode& rebound_qual_id =
+					gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+						rebound_ns,
+						qual_id.identifier_token());
+				if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+					rebound_qual_id.setDependentQualifiedName(*dependent_record);
+				}
+				ExpressionNode& rebound_expr =
+					gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_qual_id);
+				return ASTNode(&rebound_expr);
+			}
+		}
+	}
 	constexpr std::string_view kNestedTypeAliasName = "type";
 	auto canonicalizeLookupOwnerForMember =
 		[&](const Parser::AliasTemplateMaterializationResult& materialized_owner,
@@ -3152,6 +3182,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 						QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 							new_ns_handle,
 							qual_id.identifier_token());
+						if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+							new_qual_id.setDependentQualifiedName(*dependent_record);
+						}
 						FLASH_LOG(Templates, Debug, "  Substituted TTP: ", ns_name, "::", qual_id.name(), " -> ",
 								  materialized_type.instantiated_name, "::", qual_id.name());
 						ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
@@ -3197,6 +3230,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 				new_ns_handle,
 				qual_id.identifier_token());
+			if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+				new_qual_id.setDependentQualifiedName(*dependent_record);
+			}
 			FLASH_LOG(Templates, Debug, "  Resolved struct-local alias namespace '", ns_name,
 					  "' -> ", StringTable::getStringView(resolved_name_handle),
 					  " in owner ", StringTable::getStringView(current_owner_type_name_));
@@ -3240,6 +3276,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 					new_ns_handle,
 					qual_id.identifier_token());
+				if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+					new_qual_id.setDependentQualifiedName(*dependent_record);
+				}
 				FLASH_LOG(Templates, Debug, "  Substituted: ", ns_name, "::", qual_id.name(), " -> ",
 						  StringTable::getStringView(type_name_handle), "::", qual_id.name());
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
@@ -3322,6 +3361,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 							gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 								rewritten_namespace,
 								qual_id.identifier_token());
+						if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+							rewritten_qual_id.setDependentQualifiedName(*dependent_record);
+						}
 						ExpressionNode& rewritten_expr =
 							gChunkedAnyStorage.emplace_back<ExpressionNode>(
 								rewritten_qual_id);
@@ -3476,6 +3518,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 			new_ns_handle,
 			qual_id.identifier_token());
+		if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+			new_qual_id.setDependentQualifiedName(*dependent_record);
+		}
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 		return ASTNode(&new_expr);
 	}
@@ -3497,6 +3542,9 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
 				new_ns_handle,
 				qual_id.identifier_token());
+			if (const auto* dependent_record = qual_id.dependentQualifiedName()) {
+				new_qual_id.setDependentQualifiedName(*dependent_record);
+			}
 			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
 			return ASTNode(&new_expr);
 		}
@@ -3810,6 +3858,76 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 				makeTypeSpecifierFromTemplateTypeArg(subst, type.token());
 			applyOuterTypeModifiers(substituted_type, type);
 			return substituted_type;
+		}
+
+		auto try_owner_binding_substitution = [&](std::string_view candidate_owner_name)
+			-> std::optional<TemplateTypeArg> {
+			std::string_view current_name = candidate_owner_name;
+			while (!current_name.empty()) {
+				StringHandle owner_name_handle =
+					StringTable::getOrInternStringHandle(current_name);
+				const TypeInfo* owner_type_info = findTypeByName(owner_name_handle);
+				OuterTemplateBinding owner_binding =
+					parser_.buildAccumulatedOuterTemplateBinding(
+						owner_type_info,
+						nullptr,
+						owner_name_handle);
+				for (size_t i = 0;
+					 i < owner_binding.param_names.size() &&
+					 i < owner_binding.param_args.size();
+					 ++i) {
+					if (StringTable::getStringView(owner_binding.param_names[i]) ==
+						token_type_name) {
+						const TemplateTypeArg& bound_arg =
+							owner_binding.param_args[i];
+						if (!bound_arg.is_value &&
+							bound_arg.type_index.is_valid()) {
+							return bound_arg;
+						}
+					}
+				}
+				size_t owner_sep = current_name.rfind("::");
+				if (owner_sep == std::string_view::npos) {
+					break;
+				}
+				current_name = current_name.substr(0, owner_sep);
+			}
+			return std::nullopt;
+		};
+		if (current_owner_type_name_.isValid()) {
+			std::string_view owner_name =
+				StringTable::getStringView(current_owner_type_name_);
+			if (!owner_name.empty()) {
+				if (std::optional<TemplateTypeArg> owner_bound_arg =
+						try_owner_binding_substitution(owner_name);
+					owner_bound_arg.has_value()) {
+					TypeSpecifierNode substituted_type =
+						makeTypeSpecifierFromTemplateTypeArg(
+							*owner_bound_arg,
+							type.token());
+					applyOuterTypeModifiers(substituted_type, type);
+					return substituted_type;
+				}
+			}
+		}
+		if (const Parser::ParserInstantiationContext* inst_ctx =
+				parser_.currentInstantiationContext();
+			inst_ctx != nullptr &&
+			inst_ctx->origin_name.isValid()) {
+			std::string_view origin_name =
+				StringTable::getStringView(inst_ctx->origin_name);
+			if (!origin_name.empty()) {
+				if (std::optional<TemplateTypeArg> owner_bound_arg =
+						try_owner_binding_substitution(origin_name);
+					owner_bound_arg.has_value()) {
+					TypeSpecifierNode substituted_type =
+						makeTypeSpecifierFromTemplateTypeArg(
+							*owner_bound_arg,
+							type.token());
+					applyOuterTypeModifiers(substituted_type, type);
+					return substituted_type;
+				}
+			}
 		}
 
 		// Resolve a type name that is a member of the current class template instantiation

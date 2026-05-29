@@ -3905,8 +3905,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// consuming parser instantiation depth.  The name is fully resolved above.
 	{
 		std::string_view normalized_template_name = template_name;
+		bool is_nested_member_class_template = false;
 		if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 			normalized_template_name = template_name.substr(last_colon + 2);
+			std::string_view owner_name = template_name.substr(0, last_colon);
+			if (auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
+				owner_template_opt.has_value() &&
+				owner_template_opt->is<TemplateClassDeclarationNode>()) {
+				is_nested_member_class_template = true;
+			}
 		}
 		bool can_use_raw_cache_key = true;
 		if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
@@ -3915,6 +3922,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (template_args.size() < raw_params.size()) {
 				can_use_raw_cache_key = false;
 			}
+		}
+		if (is_nested_member_class_template) {
+			can_use_raw_cache_key = false;
 		}
 		if (can_use_raw_cache_key) {
 			StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
@@ -4174,8 +4184,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Check TypeIndex-based instantiation cache for O(1) lookup
 	// This uses TypeIndex instead of string keys to avoid ambiguity with type names containing underscores
 	std::string_view normalized_template_name = template_name;
+	bool is_nested_member_class_template = false;
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		normalized_template_name = template_name.substr(last_colon + 2);
+		std::string_view owner_name = template_name.substr(0, last_colon);
+		if (auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
+			owner_template_opt.has_value() &&
+			owner_template_opt->is<TemplateClassDeclarationNode>()) {
+			is_nested_member_class_template = true;
+		}
 	}
 	StringHandle template_name_handle = StringTable::getOrInternStringHandle(normalized_template_name);
 	FlashCpp::TemplateInstantiationKey cache_key =
@@ -4188,6 +4205,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (template_args.size() < raw_params.size()) {
 			can_use_raw_cache_key = false;
 		}
+	}
+	if (is_nested_member_class_template) {
+		can_use_raw_cache_key = false;
 	}
 	if (can_use_raw_cache_key) {
 		auto cached = gTemplateRegistry.getInstantiation(cache_key);
@@ -8648,6 +8668,175 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		return gSymbolTable.get_current_namespace_handle();
 	}();
+	const OuterTemplateBinding* outer_binding =
+		gTemplateRegistry.getOuterTemplateBinding(template_name);
+	std::optional<OuterTemplateBinding> synthesized_outer_binding;
+	if (outer_binding == nullptr) {
+		if (const size_t owner_sep = template_name.rfind("::");
+			owner_sep != std::string_view::npos && owner_sep > 0) {
+			StringHandle owner_name_handle = StringTable::getOrInternStringHandle(
+				template_name.substr(0, owner_sep));
+			synthesized_outer_binding = buildOuterBindingForOwner(owner_name_handle);
+		}
+		if ((!synthesized_outer_binding.has_value() ||
+			 synthesized_outer_binding->param_names.empty()) &&
+			current_instantiation_ctx_ != nullptr &&
+			current_instantiation_ctx_->origin_name.isValid()) {
+			synthesized_outer_binding = buildOuterBindingForOwner(
+				current_instantiation_ctx_->origin_name);
+		}
+		if (!synthesized_outer_binding.has_value() ||
+			synthesized_outer_binding->param_names.empty()) {
+			StringHandle contextual_owner{};
+			if (!struct_parsing_context_stack_.empty()) {
+				contextual_owner = StringTable::getOrInternStringHandle(
+					struct_parsing_context_stack_.back().struct_name);
+			} else if (!member_function_context_stack_.empty()) {
+				contextual_owner = member_function_context_stack_.back().struct_name;
+			}
+			if (contextual_owner.isValid()) {
+				synthesized_outer_binding = buildOuterBindingForOwner(contextual_owner);
+			}
+		}
+		if (synthesized_outer_binding.has_value() &&
+			!synthesized_outer_binding->param_names.empty()) {
+			outer_binding = &*synthesized_outer_binding;
+		}
+	}
+	if (outer_binding == nullptr) {
+		if (const size_t owner_sep = template_name.rfind("::");
+			owner_sep != std::string_view::npos && owner_sep > 0) {
+			const std::string_view owner_template_name =
+				template_name.substr(0, owner_sep);
+			if (auto owner_template_node =
+					gTemplateRegistry.lookupTemplate(owner_template_name);
+				owner_template_node.has_value() &&
+				owner_template_node->is<TemplateClassDeclarationNode>()) {
+				const auto& owner_template_params =
+					owner_template_node->as<TemplateClassDeclarationNode>()
+						.template_parameters();
+				OuterTemplateBinding substitution_outer_binding;
+				for (const TemplateParameterNode& owner_param : owner_template_params) {
+					for (const TemplateParamSubstitution& substitution :
+						 template_param_substitutions_) {
+						if (substitution.param_name != owner_param.nameHandle()) {
+							continue;
+						}
+						TemplateTypeArg substitution_arg;
+						if (substitution.is_type_param) {
+							substitution_arg = substitution.substituted_type;
+						} else if (substitution.is_template_template_param &&
+								   substitution.concrete_template_name.isValid()) {
+							substitution_arg = TemplateTypeArg::makeTemplate(
+								substitution.concrete_template_name);
+						} else if (substitution.is_value_param) {
+							if (substitution.typed_value_identity.has_value()) {
+								substitution_arg = TemplateTypeArg::makeValueIdentity(
+									*substitution.typed_value_identity);
+							} else {
+								substitution_arg = TemplateTypeArg(
+									substitution.value,
+									substitution.value_type);
+							}
+						} else {
+							continue;
+						}
+						substitution_outer_binding.params.push_back(
+							ASTNode::emplace_node<TemplateParameterNode>(owner_param));
+						substitution_outer_binding.param_names.push_back(
+							owner_param.nameHandle());
+						substitution_outer_binding.param_args.push_back(
+							substitution_arg);
+						substitution_outer_binding.all_args.push_back(
+							substitution_arg);
+						break;
+					}
+				}
+				if (!substitution_outer_binding.param_names.empty()) {
+					synthesized_outer_binding = std::move(substitution_outer_binding);
+					outer_binding = &*synthesized_outer_binding;
+				}
+			}
+		}
+	}
+	auto buildDefaultEvalSubstitutionInputs =
+		[&](std::span<const TemplateTypeArg> current_args) {
+		InlineVector<TemplateParameterNode, 4> substitution_params;
+		InlineVector<TemplateTypeArg, 4> substitution_args;
+		substitution_params.reserve(template_params.size() + 4);
+		substitution_args.reserve(current_args.size() + 4);
+
+		size_t outer_prefix_count = 0;
+		bool template_params_already_include_outer_prefix = false;
+		if (outer_binding != nullptr) {
+			outer_prefix_count = std::min(
+				outer_binding->param_names.size(),
+				template_params.size());
+			template_params_already_include_outer_prefix = (outer_prefix_count > 0);
+			for (size_t prefix_index = 0; prefix_index < outer_prefix_count; ++prefix_index) {
+				const TemplateParameterNode* template_param_node =
+					tryGetTemplateParameterNode(template_params[prefix_index]);
+				if (template_param_node == nullptr ||
+					template_param_node->nameHandle() != outer_binding->param_names[prefix_index]) {
+					template_params_already_include_outer_prefix = false;
+					break;
+				}
+			}
+		}
+
+		if (outer_binding != nullptr && !template_params_already_include_outer_prefix) {
+			if (!outer_binding->params.empty()) {
+				for (const ASTNode& outer_param_node : outer_binding->params) {
+					if (const TemplateParameterNode* outer_param =
+							tryGetTemplateParameterNode(outer_param_node);
+						outer_param != nullptr) {
+						substitution_params.push_back(*outer_param);
+					}
+				}
+			} else {
+				for (size_t i = 0;
+					 i < outer_binding->param_names.size() &&
+					 i < outer_binding->param_args.size();
+					 ++i) {
+					substitution_params.push_back(
+						rebuildOuterTemplateParameter(
+							outer_binding->param_names[i],
+							outer_binding->param_args[i]));
+				}
+			}
+		}
+		for (const TemplateParameterNode& template_param : template_params) {
+			substitution_params.push_back(template_param);
+		}
+
+		if (outer_binding != nullptr) {
+			if (template_params_already_include_outer_prefix &&
+				current_args.size() + outer_prefix_count == template_params.size()) {
+				for (size_t i = 0;
+					 i < outer_prefix_count &&
+					 i < outer_binding->param_args.size();
+					 ++i) {
+					substitution_args.push_back(outer_binding->param_args[i]);
+				}
+			} else if (!template_params_already_include_outer_prefix) {
+				for (const TemplateTypeArg& outer_arg : outer_binding->all_args) {
+					substitution_args.push_back(outer_arg);
+				}
+				if (outer_binding->all_args.empty()) {
+					for (const TemplateTypeArg& outer_arg : outer_binding->param_args) {
+						substitution_args.push_back(outer_arg);
+					}
+				}
+			}
+		}
+		for (const TemplateTypeArg& current_arg : current_args) {
+			substitution_args.push_back(current_arg);
+		}
+
+		return std::pair<InlineVector<TemplateParameterNode, 4>, InlineVector<TemplateTypeArg, 4>>(
+			std::move(substitution_params),
+			std::move(substitution_args));
+	};
 
 	// Fill in default arguments for missing parameters
 	for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
@@ -8924,13 +9113,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// template-default substitution/evaluation helper so ConstExpr sees the instantiated
 			// template bindings instead of a context-free expression.
 			if (filled_template_args.size() == size_before) {
-				std::vector<std::string_view> template_param_names = collectTemplateParamNames(template_params);
-				if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
-						default_node,
-						template_params,
+				auto [substitution_params, substitution_args] =
+					buildDefaultEvalSubstitutionInputs(
 						std::span<const TemplateTypeArg>(
 							filled_template_args.data(),
-							filled_template_args.size()),
+							filled_template_args.size()));
+				std::vector<std::string_view> template_param_names =
+					collectTemplateParamNames(substitution_params);
+				if (auto evaluated_default = substituteAndEvaluateNonTypeDefault(
+						default_node,
+						substitution_params,
+						std::span<const TemplateTypeArg>(
+							substitution_args.data(),
+							substitution_args.size()),
 						std::span<const std::string_view>(
 							template_param_names.data(),
 							template_param_names.size()));
@@ -8956,11 +9151,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			(param->kind() == TemplateParameterKind::Type ||
 			 param->kind() == TemplateParameterKind::NonType)) {
 			InlineVector<TemplateTypeArg, 4> retry_args = toInlineTemplateArgs(filled_template_args);
-			if (tryAppendDefaultTemplateArg(
-					*param,
-					std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-					retry_args,
-					default_arg_source_namespace)) {
+			const bool appended_default =
+				outer_binding != nullptr
+					? tryAppendMemberDefaultTemplateArg(
+						  *param,
+						  template_params,
+						  outer_binding,
+						  retry_args)
+					: tryAppendDefaultTemplateArg(
+						  *param,
+						  std::span<const TemplateParameterNode>(
+							  template_params.data(),
+							  template_params.size()),
+						  retry_args,
+						  default_arg_source_namespace);
+			if (appended_default) {
 				filled_template_args.assign(retry_args.begin(), retry_args.end());
 			}
 		}
@@ -8997,7 +9202,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	std::span<const TemplateTypeArg> template_args_to_use = filled_template_args;
 	InlineVector<TemplateParameterNode, 4> effective_template_params;
 	InlineVector<TemplateTypeArg, 4> effective_template_args;
-	if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(template_name)) {
+	bool template_params_already_include_outer_prefix = false;
+	size_t outer_prefix_count = 0;
+	if (outer_binding != nullptr) {
+		outer_prefix_count = std::min(
+			outer_binding->param_names.size(),
+			template_params.size());
+		template_params_already_include_outer_prefix = (outer_prefix_count > 0);
+		for (size_t i = 0; i < outer_prefix_count; ++i) {
+			const TemplateParameterNode* param_node =
+				tryGetTemplateParameterNode(template_params[i]);
+			if (param_node == nullptr ||
+				param_node->nameHandle() != outer_binding->param_names[i]) {
+				template_params_already_include_outer_prefix = false;
+				break;
+			}
+		}
+	}
+
+	if (outer_binding != nullptr && !template_params_already_include_outer_prefix) {
 		for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
 			StringHandle outer_name = outer_binding->param_names[i];
 			const TemplateTypeArg& outer_arg = outer_binding->param_args[i];
@@ -9021,13 +9244,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const TemplateParameterNode& template_param : template_params) {
 		effective_template_params.push_back(template_param);
 	}
+	if (outer_binding != nullptr &&
+		template_params_already_include_outer_prefix &&
+		template_args_to_use.size() + outer_prefix_count == template_params.size()) {
+		for (size_t i = 0; i < outer_prefix_count && i < outer_binding->param_args.size(); ++i) {
+			effective_template_args.push_back(outer_binding->param_args[i]);
+		}
+	}
 	for (const TemplateTypeArg& template_arg : template_args_to_use) {
 		effective_template_args.push_back(template_arg);
 	}
 	std::vector<TemplateTypeArg> effective_template_args_vector(
 		effective_template_args.begin(),
 		effective_template_args.end());
-	auto normalized_cache_key = FlashCpp::makeInstantiationKey(template_name_handle, template_args_to_use);
+	auto normalized_cache_key = FlashCpp::makeInstantiationKey(
+		template_name_handle,
+		std::span<const TemplateTypeArg>(
+			effective_template_args_vector.data(),
+			effective_template_args_vector.size()));
 	cache_key = normalized_cache_key;
 	if (!can_use_raw_cache_key) {
 		if (auto normalized_cached = gTemplateRegistry.getInstantiation(normalized_cache_key); normalized_cached.has_value()) {
@@ -9220,11 +9454,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
 		template_args_info);
 
- // Populate type-owned instantiation context so that codegen and constexpr
- // evaluation can resolve template bindings without registry-name lookups.
+	// Populate type-owned instantiation context so that codegen and constexpr
+	// evaluation can resolve template bindings without relying on ambient parser state.
+	// Use effective (outer + local) bindings when available; this avoids partial
+	// substitution in nested member-template contexts.
+	InlineVector<TypeInfo::TemplateArgInfo, 4> instantiation_context_args_info =
+		collectEnrichedTemplateArgInfos(
+			effective_template_params,
+			std::span<const TemplateTypeArg>(
+				effective_template_args.data(),
+				effective_template_args.size()));
 	struct_type_info.setInstantiationContext(
-		collectParamNameHandles(template_params, template_args_to_use.size()),
-		template_args_info, nullptr);
+		collectParamNameHandles(
+			effective_template_params,
+			effective_template_args.size()),
+		instantiation_context_args_info,
+		nullptr);
 
 	// Register class template pack sizes in persistent registry for member function template lookup
 	if (has_parameter_pack) {
@@ -11045,8 +11290,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.array_dimensions = static_member.array_dimensions;
 				lazy_info.pointer_depth = static_member.pointer_depth;
 				lazy_info.is_constexpr = static_member.is_constexpr;
-				lazy_info.template_params = template_params_typed;
-				lazy_info.template_args.assign(template_args_to_use.begin(), template_args_to_use.end());
+				lazy_info.template_params = effective_template_params;
+				lazy_info.template_args.assign(
+					effective_template_args.begin(),
+					effective_template_args.end());
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 					effective_template_params,
 					effective_template_args,
@@ -11193,7 +11440,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct.is_class(),
 				nested_struct.is_union());
 			StructDeclarationNode& instantiated_nested_struct_ref = instantiated_nested_struct.as<StructDeclarationNode>();
-			setOuterTemplateBindingsFromParams(instantiated_nested_struct_ref, template_params, template_args_to_use);
+			setOuterTemplateBindingsFromParams(
+				instantiated_nested_struct_ref,
+				effective_template_params,
+				effective_template_args);
 
 			auto add_nested_base_class = [&](const TypeInfo& base_type_info,
 											 TypeIndex base_type_index,
@@ -11862,15 +12112,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_nested_struct_ref.has_outer_template_bindings()
 					? &instantiated_nested_struct_ref.outer_template_environment_snapshot()
 					: nullptr;
-			registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
-												 instantiated_name, qualified_name, template_params, template_args_to_use,
-												 outer_parent_snapshot,
-												 shouldCommitTemplateInstantiationArtifacts());
+			registerNestedMemberFunctionsForLazy(
+				nested_struct,
+				*nested_struct_info,
+				instantiated_name,
+				qualified_name,
+				effective_template_params,
+				effective_template_args,
+				outer_parent_snapshot,
+				shouldCommitTemplateInstantiationArtifacts());
 			if (shouldCommitTemplateInstantiationArtifacts()) {
 				OuterTemplateBinding nested_member_outer_binding;
 				collectOuterTemplateBinding(
-					template_params,
-					template_args_to_use,
+					effective_template_params,
+					effective_template_args,
 					nested_member_outer_binding);
 				for (const StructMemberFunctionDecl& nested_member_func :
 					 nested_struct.member_functions()) {
@@ -11917,15 +12172,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // The nested type isn't itself a template instantiation, but it lives inside
  // one and needs the enclosing template's bindings for constexpr evaluation.
 			nested_type_info.setInstantiationContext(
-				collectParamNameHandles(template_params, template_args_to_use.size()),
-				collectEnrichedTemplateArgInfos(template_params, template_args_to_use),
+				collectParamNameHandles(
+					effective_template_params,
+					effective_template_args.size()),
+				collectEnrichedTemplateArgInfos(
+					effective_template_params,
+					effective_template_args),
 				struct_type_info.instantiationContext());
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			if (shouldCommitTemplateInstantiationArtifacts()) {
 				OuterTemplateBinding outer_binding;
-				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
+				collectOuterTemplateBinding(
+					effective_template_params,
+					effective_template_args,
+					outer_binding);
 				StringBuilder nested_alias_prefix_builder;
 				nested_alias_prefix_builder.append(original_nested_name);
 				nested_alias_prefix_builder.append("::");
@@ -12209,8 +12471,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		trySubstituteIntrinsicTypeAlias(
 			alias_type_spec,
-			template_params,
-			template_args_to_use,
+			effective_template_params,
+			effective_template_args,
 			substituted_type,
 			substituted_type_index,
 			substituted_size);
@@ -12243,7 +12505,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else {
 					// Use substitute_template_parameter for consistent template parameter matching
 					TypeIndex subst_type_index = substitute_template_parameter(
-						alias_type_spec, template_params, template_args_to_use);
+						alias_type_spec, effective_template_params, effective_template_args);
 
 					// Only apply substitution if the type was actually a template parameter
 					if (subst_type_index.category() != alias_type_spec.type() || subst_type_index != alias_type_spec.type_index()) {
@@ -12263,8 +12525,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				emplace_node<TypeSpecifierNode>(alias_type_spec);
 			if (resolveDependentMemberAlias(
 					resolved_alias_type_node,
-					template_params,
-					template_args_to_use) == DependentAliasResolutionStatus::Resolved) {
+					effective_template_params,
+					effective_template_args) == DependentAliasResolutionStatus::Resolved) {
 				const TypeSpecifierNode& resolved_alias_type_spec =
 					resolved_alias_type_node.as<TypeSpecifierNode>();
 				substituted_type = resolved_alias_type_spec.type();
@@ -12283,8 +12545,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (const TypeInfo* resolved_dependent_type =
 					resolveDependentMemberTypeSemantic(
 						*dependent_alias_target_info,
-						template_params,
-						template_args_to_use,
+						effective_template_params,
+						effective_template_args,
 						instantiated_name);
 				resolved_dependent_type != nullptr) {
 				substituted_type = resolved_dependent_type->typeEnum();
@@ -12299,8 +12561,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (const TypeInfo* concrete_member_info =
 				materializeInstantiatedMemberAliasTarget(
 					alias_type_spec,
-					template_params,
-					template_args_to_use);
+					effective_template_params,
+					effective_template_args);
 			concrete_member_info != nullptr) {
 			substituted_type = concrete_member_info->typeEnum();
 			substituted_type_index =
@@ -12328,7 +12590,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Register the type alias in getTypesByNameMap()
 		std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
-			type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_to_use, instantiated_name);
+			type_alias, TypeIndex{substituted_type_index}, substituted_type, effective_template_params, effective_template_args, instantiated_name);
 		bool use_resolved_alias_override =
 			resolved_alias_type_spec_override.has_value();
 		if (use_resolved_alias_override) {
@@ -12784,8 +13046,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					id.cv_qualifier = mem_func.cv_qualifier;
 					id.kind = DeferredMemberIdentity::Kind::Function;
 				}
-				lazy_info.template_params = template_params;
-				lazy_info.template_args = template_args_to_use;
+				lazy_info.template_params = effective_template_params;
+				lazy_info.template_args.assign(
+					effective_template_args.begin(),
+					effective_template_args.end());
 				const TemplateEnvironmentSnapshot* outer_parent_snapshot =
 					instantiated_struct_ref.has_outer_template_bindings()
 						? &instantiated_struct_ref.outer_template_environment_snapshot()
@@ -12794,6 +13058,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					effective_template_params,
 					effective_template_args,
 					outer_parent_snapshot);
+				mergeMissingLazyOuterBindings(
+					lazy_info.template_params,
+					lazy_info.template_args,
+					lazy_info.outer_template_environment_snapshot);
 				lazy_info.access = mem_func.access;
 				lazy_info.is_virtual = mem_func.is_virtual;
 				lazy_info.is_pure_virtual = mem_func.is_pure_virtual;
@@ -12808,8 +13076,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(),
 					decl.identifier_token(),
 					instantiated_name,
-					template_params,
-					template_args_to_use,
+					effective_template_params,
+					effective_template_args,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -12845,8 +13113,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
 					new_func_ref,
-					template_params,
-					template_args_to_use,
+					effective_template_params,
+					effective_template_args,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -12900,7 +13168,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(shell.effective_name);
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
 				OuterTemplateBinding outer_binding;
-				collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
+				collectOuterTemplateBinding(effective_template_params, effective_template_args, outer_binding);
 				if (shouldCommitTemplateInstantiationArtifacts()) {
 					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
 				}
@@ -12917,8 +13185,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(),
 					decl.identifier_token(),
 					instantiated_name,
-					template_params,
-					template_args_to_use,
+					effective_template_params,
+					effective_template_args,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -12936,8 +13204,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituteAndCopyMemberFunctionParameters(
 					func_decl.parameter_nodes(),
 					new_func_ref,
-					template_params,
-					template_args_to_use,
+					effective_template_params,
+					effective_template_args,
 					&class_decl,
 					instantiated_member_owner_type_index,
 					TypeIndex{},
@@ -12963,15 +13231,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Set up template parameter types in the type system for body parsing
 					FlashCpp::TemplateParameterScope template_scope;
 					InlineVector<StringHandle, 4> param_names;
-					param_names.reserve(template_params.size());
-					for (const auto& tparam_node : template_params) {
+					param_names.reserve(effective_template_params.size());
+					for (const auto& tparam_node : effective_template_params) {
 						if (const TemplateParameterNode* tparam = tryGetTemplateParameterNode(tparam_node);
 							tparam != nullptr) {
 							param_names.push_back(tparam->nameHandle());
 						}
 					}
 
-					registerTypeParamsInScope(param_names, template_args_to_use, template_scope, true);
+					registerTypeParamsInScope(param_names, effective_template_args, template_scope, true);
 
 					// Save current position and parsing context
 					SaveHandle current_pos = save_token_position();
@@ -13023,8 +13291,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					try {
 						ASTNode substituted_body = substituteTemplateParameters(
 							*body_to_substitute,
-							template_params,
-							template_args_to_use);
+							effective_template_params,
+							effective_template_args);
 						if (force_eager) {
 							if (std::optional<StringHandle> unresolved_type =
 									findUnresolvedHardUseTypeSpecifier(substituted_body);
@@ -13607,6 +13875,47 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						collectOuterTemplateBinding(combined_params, combined_args, out_binding);
 						return;
 					}
+					if (outer_binding != nullptr) {
+						InlineVector<TemplateParameterNode, 4> combined_params;
+						InlineVector<TemplateTypeArg, 4> combined_args;
+						combined_params.reserve(
+							outer_binding->param_names.size() + template_params.size());
+						combined_args.reserve(
+							outer_binding->param_args.size() + template_args_to_use.size());
+						if (!outer_binding->params.empty()) {
+							for (const ASTNode& outer_param_node : outer_binding->params) {
+								if (const TemplateParameterNode* outer_param =
+										tryGetTemplateParameterNode(outer_param_node);
+									outer_param != nullptr) {
+									combined_params.push_back(*outer_param);
+								}
+							}
+						} else {
+							for (size_t i = 0;
+								 i < outer_binding->param_names.size() &&
+								 i < outer_binding->param_args.size();
+								 ++i) {
+								combined_params.push_back(
+									rebuildOuterTemplateParameter(
+										outer_binding->param_names[i],
+										outer_binding->param_args[i]));
+							}
+						}
+						for (const TemplateTypeArg& outer_arg :
+							 outer_binding->all_args.empty()
+								? outer_binding->param_args
+								: outer_binding->all_args) {
+							combined_args.push_back(outer_arg);
+						}
+						for (const auto& param : template_params) {
+							combined_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							combined_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(combined_params, combined_args, out_binding);
+						return;
+					}
 					collectOuterTemplateBinding(template_params, template_args_to_use, out_binding);
 				};
 				auto applyMergedOuterTemplateBindings = [&](FunctionDeclarationNode& target_func) {
@@ -13633,7 +13942,87 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
 						return;
 					}
-					setOuterTemplateBindingsFromParams(target_func, template_params, template_args_to_use);
+					OuterTemplateBinding merged_outer_binding;
+					if (func_decl.has_outer_template_bindings()) {
+						InlineVector<TemplateParameterNode, 4> merged_params;
+						InlineVector<TemplateTypeArg, 4> merged_args;
+						merged_params.reserve(
+							func_decl.outer_template_param_names().size() + template_params.size());
+						merged_args.reserve(
+							func_decl.outer_template_args().size() + template_args_to_use.size());
+						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+							merged_params.push_back(
+								rebuildOuterTemplateParameter(
+									func_decl.outer_template_param_names()[i],
+									func_decl.outer_template_args()[i]));
+							merged_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+						}
+						for (const auto& param : template_params) {
+							merged_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							merged_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
+					} else if (outer_binding != nullptr) {
+						InlineVector<TemplateParameterNode, 4> merged_params;
+						InlineVector<TemplateTypeArg, 4> merged_args;
+						if (!outer_binding->params.empty()) {
+							for (const ASTNode& outer_param_node : outer_binding->params) {
+								if (const TemplateParameterNode* outer_param =
+										tryGetTemplateParameterNode(outer_param_node);
+									outer_param != nullptr) {
+									merged_params.push_back(*outer_param);
+								}
+							}
+						} else {
+							for (size_t i = 0;
+								 i < outer_binding->param_names.size() &&
+								 i < outer_binding->param_args.size();
+								 ++i) {
+								merged_params.push_back(
+									rebuildOuterTemplateParameter(
+										outer_binding->param_names[i],
+										outer_binding->param_args[i]));
+							}
+						}
+						for (const TemplateTypeArg& outer_arg :
+							 outer_binding->all_args.empty()
+								? outer_binding->param_args
+								: outer_binding->all_args) {
+							merged_args.push_back(outer_arg);
+						}
+						for (const auto& param : template_params) {
+							merged_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							merged_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
+					} else {
+						collectOuterTemplateBinding(
+							template_params,
+							template_args_to_use,
+							merged_outer_binding);
+					}
+					InlineVector<TemplateParameterNode, 4> combined_params;
+					InlineVector<TemplateTypeArg, 4> combined_args;
+					if (!merged_outer_binding.params.empty()) {
+						for (const ASTNode& param_node : merged_outer_binding.params) {
+							if (const TemplateParameterNode* typed_param =
+									tryGetTemplateParameterNode(param_node);
+								typed_param != nullptr) {
+								combined_params.push_back(*typed_param);
+							}
+						}
+					}
+					for (const TemplateTypeArg& arg :
+						 merged_outer_binding.all_args.empty()
+							? merged_outer_binding.param_args
+							: merged_outer_binding.all_args) {
+						combined_args.push_back(arg);
+					}
+					setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
 				};
 
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
@@ -13762,7 +14151,87 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
 						return;
 					}
-					setOuterTemplateBindingsFromParams(target_func, template_params, template_args_to_use);
+					OuterTemplateBinding merged_outer_binding;
+					if (func_decl.has_outer_template_bindings()) {
+						InlineVector<TemplateParameterNode, 4> merged_params;
+						InlineVector<TemplateTypeArg, 4> merged_args;
+						merged_params.reserve(
+							func_decl.outer_template_param_names().size() + template_params.size());
+						merged_args.reserve(
+							func_decl.outer_template_args().size() + template_args_to_use.size());
+						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+							merged_params.push_back(
+								rebuildOuterTemplateParameter(
+									func_decl.outer_template_param_names()[i],
+									func_decl.outer_template_args()[i]));
+							merged_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+						}
+						for (const auto& param : template_params) {
+							merged_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							merged_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
+					} else if (outer_binding != nullptr) {
+						InlineVector<TemplateParameterNode, 4> merged_params;
+						InlineVector<TemplateTypeArg, 4> merged_args;
+						if (!outer_binding->params.empty()) {
+							for (const ASTNode& outer_param_node : outer_binding->params) {
+								if (const TemplateParameterNode* outer_param =
+										tryGetTemplateParameterNode(outer_param_node);
+									outer_param != nullptr) {
+									merged_params.push_back(*outer_param);
+								}
+							}
+						} else {
+							for (size_t i = 0;
+								 i < outer_binding->param_names.size() &&
+								 i < outer_binding->param_args.size();
+								 ++i) {
+								merged_params.push_back(
+									rebuildOuterTemplateParameter(
+										outer_binding->param_names[i],
+										outer_binding->param_args[i]));
+							}
+						}
+						for (const TemplateTypeArg& outer_arg :
+							 outer_binding->all_args.empty()
+								? outer_binding->param_args
+								: outer_binding->all_args) {
+							merged_args.push_back(outer_arg);
+						}
+						for (const auto& param : template_params) {
+							merged_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							merged_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
+					} else {
+						collectOuterTemplateBinding(
+							template_params,
+							template_args_to_use,
+							merged_outer_binding);
+					}
+					InlineVector<TemplateParameterNode, 4> combined_params;
+					InlineVector<TemplateTypeArg, 4> combined_args;
+					if (!merged_outer_binding.params.empty()) {
+						for (const ASTNode& param_node : merged_outer_binding.params) {
+							if (const TemplateParameterNode* typed_param =
+									tryGetTemplateParameterNode(param_node);
+								typed_param != nullptr) {
+								combined_params.push_back(*typed_param);
+							}
+						}
+					}
+					for (const TemplateTypeArg& arg :
+						 merged_outer_binding.all_args.empty()
+							? merged_outer_binding.param_args
+							: merged_outer_binding.all_args) {
+						combined_args.push_back(arg);
+					}
+					setOuterTemplateBindingsFromParams(target_func, combined_params, combined_args);
 				};
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 					decl_node.type_node(),
@@ -13828,9 +14297,72 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Register outer template parameter bindings
 				{
-					OuterTemplateBinding outer_binding;
-					collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
-					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+					OuterTemplateBinding merged_outer_binding;
+					if (func_decl.has_outer_template_bindings()) {
+						InlineVector<TemplateParameterNode, 4> merged_params;
+						InlineVector<TemplateTypeArg, 4> merged_args;
+						merged_params.reserve(
+							func_decl.outer_template_param_names().size() + template_params.size());
+						merged_args.reserve(
+							func_decl.outer_template_args().size() + template_args_to_use.size());
+						for (size_t i = 0; i < func_decl.outer_template_param_names().size(); ++i) {
+							merged_params.push_back(
+								rebuildOuterTemplateParameter(
+									func_decl.outer_template_param_names()[i],
+									func_decl.outer_template_args()[i]));
+							merged_args.push_back(toTemplateTypeArg(func_decl.outer_template_args()[i]));
+						}
+						for (const auto& param : template_params) {
+							merged_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							merged_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
+					} else if (outer_binding != nullptr) {
+						InlineVector<TemplateParameterNode, 4> merged_params;
+						InlineVector<TemplateTypeArg, 4> merged_args;
+						if (!outer_binding->params.empty()) {
+							for (const ASTNode& outer_param_node : outer_binding->params) {
+								if (const TemplateParameterNode* outer_param =
+										tryGetTemplateParameterNode(outer_param_node);
+									outer_param != nullptr) {
+									merged_params.push_back(*outer_param);
+								}
+							}
+						} else {
+							for (size_t i = 0;
+								 i < outer_binding->param_names.size() &&
+								 i < outer_binding->param_args.size();
+								 ++i) {
+								merged_params.push_back(
+									rebuildOuterTemplateParameter(
+										outer_binding->param_names[i],
+										outer_binding->param_args[i]));
+							}
+						}
+						for (const TemplateTypeArg& outer_arg :
+							 outer_binding->all_args.empty()
+								? outer_binding->param_args
+								: outer_binding->all_args) {
+							merged_args.push_back(outer_arg);
+						}
+						for (const auto& param : template_params) {
+							merged_params.push_back(param);
+						}
+						for (const auto& arg : template_args_to_use) {
+							merged_args.push_back(arg);
+						}
+						collectOuterTemplateBinding(merged_params, merged_args, merged_outer_binding);
+					} else {
+						collectOuterTemplateBinding(
+							template_params,
+							template_args_to_use,
+							merged_outer_binding);
+					}
+					gTemplateRegistry.registerOuterTemplateBinding(
+						qualified_name_handle,
+						std::move(merged_outer_binding));
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
 			}
@@ -15126,8 +15658,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// pointer NTTP payload) instead of only integral values.
 			template_param_substitutions_.clear();
 			TemplateEnvironment deferred_body_environment = buildTemplateEnvironment(
-				template_params,
-				template_args_to_use,
+				effective_template_params,
+				effective_template_args,
 				nullptr);
 			populateTemplateParamSubstitutions(
 				template_param_substitutions_,
@@ -15180,8 +15712,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 		struct_info_ptr,
 		this,
-		template_params,
-		template_args_to_use);
+		effective_template_params,
+		effective_template_args);
 
 	FLASH_LOG(Templates, Debug, "About to return instantiated_struct for ", instantiated_name);
 

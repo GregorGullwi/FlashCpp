@@ -1738,6 +1738,65 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 			}
 		}
 
+		if (candidate_name.find("::") != std::string_view::npos &&
+			gTemplateRegistry.getOuterTemplateBinding(candidate_name) == nullptr) {
+			if (const size_t owner_sep = candidate_name.rfind("::");
+				owner_sep != std::string_view::npos && owner_sep > 0) {
+				const std::string_view owner_template_name =
+					candidate_name.substr(0, owner_sep);
+				if (auto owner_template_node =
+						gTemplateRegistry.lookupTemplate(owner_template_name);
+					owner_template_node.has_value() &&
+					owner_template_node->is<TemplateClassDeclarationNode>()) {
+					const auto& owner_template_params =
+						owner_template_node->as<TemplateClassDeclarationNode>()
+							.template_parameters();
+					OuterTemplateBinding substitution_outer_binding;
+					for (const TemplateParameterNode& owner_param : owner_template_params) {
+						for (const TemplateParamSubstitution& substitution :
+							 template_param_substitutions_) {
+							if (substitution.param_name != owner_param.nameHandle()) {
+								continue;
+							}
+							TemplateTypeArg substitution_arg;
+							if (substitution.is_type_param) {
+								substitution_arg = substitution.substituted_type;
+							} else if (substitution.is_template_template_param &&
+									   substitution.concrete_template_name.isValid()) {
+								substitution_arg = TemplateTypeArg::makeTemplate(
+									substitution.concrete_template_name);
+							} else if (substitution.is_value_param) {
+								if (substitution.typed_value_identity.has_value()) {
+									substitution_arg = TemplateTypeArg::makeValueIdentity(
+										*substitution.typed_value_identity);
+								} else {
+									substitution_arg = TemplateTypeArg(
+										substitution.value,
+										substitution.value_type);
+								}
+							} else {
+								continue;
+							}
+							substitution_outer_binding.params.push_back(
+								ASTNode::emplace_node<TemplateParameterNode>(owner_param));
+							substitution_outer_binding.param_names.push_back(
+								owner_param.nameHandle());
+							substitution_outer_binding.param_args.push_back(
+								substitution_arg);
+							substitution_outer_binding.all_args.push_back(
+								substitution_arg);
+							break;
+						}
+					}
+					if (!substitution_outer_binding.param_names.empty()) {
+						gTemplateRegistry.registerOuterTemplateBinding(
+							StringTable::getOrInternStringHandle(candidate_name),
+							std::move(substitution_outer_binding));
+					}
+				}
+			}
+		}
+
 		auto instantiated = try_instantiate_class_template(candidate_name, completed_args);
 		if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 			result.instantiated_name = StringTable::getStringView(

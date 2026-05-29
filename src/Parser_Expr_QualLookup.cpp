@@ -1571,6 +1571,14 @@ TypeIndex Parser::substitute_template_parameter(
 					placeholder_name.substr(0, owner_sep));
 			}
 		}
+		if (!placeholder_owner_handle.isValid()) {
+			if (!struct_parsing_context_stack_.empty()) {
+				placeholder_owner_handle = StringTable::getOrInternStringHandle(
+					struct_parsing_context_stack_.back().struct_name);
+			} else if (!member_function_context_stack_.empty()) {
+				placeholder_owner_handle = member_function_context_stack_.back().struct_name;
+			}
+		}
 		return materializeTemplateArgs(placeholder_info, template_params, template_args,
 			[this, placeholder_owner_handle](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
 				InlineVector<TemplateParameterNode, 4> typed_params;

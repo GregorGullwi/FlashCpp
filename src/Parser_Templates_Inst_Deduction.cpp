@@ -739,6 +739,33 @@ bool Parser::tryAppendDefaultTemplateArg(
 		nullptr);
 
 	auto appendEvaluatedNonTypeArg = [&](const ASTNode& expr) -> bool {
+		InlineVector<TemplateParameterNode, 4> evaluation_params;
+		evaluation_params.reserve(template_params.size());
+		for (const TemplateParameterNode& template_param : template_params) {
+			evaluation_params.push_back(template_param);
+		}
+		InlineVector<std::string_view, 4> evaluation_param_names;
+		evaluation_param_names.reserve(evaluation_params.size());
+		for (const TemplateParameterNode& template_param : evaluation_params) {
+			evaluation_param_names.push_back(template_param.name());
+		}
+		if (std::optional<TemplateTypeArg> evaluated_default =
+				substituteAndEvaluateNonTypeDefault(
+					expr,
+					evaluation_params,
+					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+					std::span<const std::string_view>(
+						evaluation_param_names.data(),
+						evaluation_param_names.size()));
+			evaluated_default.has_value()) {
+			template_args.push_back(*evaluated_default);
+			default_arg_environment = buildTemplateEnvironment(
+				template_params,
+				std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+				nullptr);
+			return true;
+		}
+
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		eval_ctx.template_environment = default_arg_environment;
 		auto eval_sub_map = buildSubstitutionParamMap(default_arg_environment);
@@ -768,26 +795,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 			}
 			return false;
 		}
-		if (param.has_type()) {
-			ASTNode substituted_type_node = substituteTemplateParameters(
-				ASTNode::emplace_node<TypeSpecifierNode>(param.type_specifier_node()),
-				template_params,
-				std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
-			if (substituted_type_node.is<TypeSpecifierNode>()) {
-				template_args.push_back(templateTypeArgFromEvalResult(
-					eval_result,
-					substituted_type_node.as<TypeSpecifierNode>()));
-			} else {
-				template_args.push_back(templateTypeArgFromEvalResult(eval_result));
-			}
-		} else {
-			template_args.push_back(templateTypeArgFromEvalResult(eval_result));
-		}
-		default_arg_environment = buildTemplateEnvironment(
-			template_params,
-			std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
-			nullptr);
-		return true;
+		return false;
 	};
 
 	// Helper to enter the source namespace for reparsing if provided

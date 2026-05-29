@@ -224,6 +224,72 @@ static void buildEffectiveVariableTemplateSubstitutionInputs(
 		effective_template_args_storage.size());
 }
 
+static TemplateParameterNode rebuildOuterTemplateParameterForSubstitution(
+	StringHandle param_name,
+	const TemplateTypeArg& param_arg) {
+	Token param_token(
+		Token::Type::Identifier,
+		StringTable::getStringView(param_name),
+		0,
+		0,
+		0);
+	if (param_arg.is_value) {
+		TypeSpecifierNode param_type(
+			param_arg.type_index.withCategory(param_arg.typeEnum()),
+			get_type_size_bits(param_arg.typeEnum()),
+			param_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		return TemplateParameterNode(
+			param_name,
+			param_type,
+			param_token);
+	}
+
+	TemplateParameterNode param_node(param_name, param_token);
+	if (param_arg.type_index.is_valid()) {
+		param_node.set_registered_type_index(
+			param_arg.type_index.withCategory(param_arg.typeEnum()));
+	}
+	return param_node;
+}
+
+static void appendMergedOuterTemplateBinding(
+	const OuterTemplateBinding& source_binding,
+	OuterTemplateBinding& merged_binding) {
+	const size_t pair_count = std::min(
+		source_binding.param_names.size(),
+		source_binding.param_args.size());
+	if (pair_count == 0) {
+		return;
+	}
+
+	size_t overlap = 0;
+	const size_t overlap_limit = std::min(merged_binding.param_names.size(), pair_count);
+	for (; overlap < overlap_limit; ++overlap) {
+		if (merged_binding.param_names[overlap] != source_binding.param_names[overlap]) {
+			break;
+		}
+	}
+
+	for (size_t i = overlap; i < pair_count; ++i) {
+		TemplateParameterNode rebuilt_param = rebuildOuterTemplateParameterForSubstitution(
+			source_binding.param_names[i],
+			source_binding.param_args[i]);
+		if (i < source_binding.params.size()) {
+			if (const TemplateParameterNode* source_param =
+					tryGetTemplateParameterNode(source_binding.params[i]);
+				source_param != nullptr) {
+				rebuilt_param = *source_param;
+			}
+		}
+		merged_binding.params.push_back(ASTNode::emplace_node<TemplateParameterNode>(rebuilt_param));
+		merged_binding.param_names.push_back(source_binding.param_names[i]);
+		merged_binding.param_args.push_back(source_binding.param_args[i]);
+		merged_binding.all_args.push_back(source_binding.param_args[i]);
+	}
+}
+
 TemplateTypeArg templateTypeArgFromEvalResult(const ConstExpr::EvalResult& eval_result) {
 	TypeIndex value_type_index = eval_result.exact_type.has_value()
 		? eval_result.exact_type->type_index().withCategory(eval_result.exact_type->category())
@@ -502,13 +568,16 @@ namespace {
 	return substituted_type_node.as<TypeSpecifierNode>();
 }
 
+	template <typename EvaluateDependentExprFn>
 	std::optional<TemplateTypeArg> substituteAndEvaluateNonTypeDefaultImpl(
 		Parser& parser,
 		const ASTNode& default_node,
 		const InlineVector<TemplateParameterNode, 4>& template_params,
 		std::span<const TemplateTypeArg> template_args,
-		std::span<const std::string_view> template_param_names) {
-	ASTNode substituted_default_node = substituteNonTypeDefaultExpressionImpl(
+		std::span<const std::string_view> template_param_names,
+		EvaluateDependentExprFn&& evaluate_dependent_expr) {
+		(void)template_param_names;
+		ASTNode substituted_default_node = substituteNonTypeDefaultExpressionImpl(
 		parser,
 		default_node,
 		template_params,
@@ -517,18 +586,12 @@ namespace {
 		return std::nullopt;
 	}
 
-	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, parser);
-	eval_ctx.template_environment = buildTemplateEnvironment(
-		std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
-		template_args,
-		nullptr);
-	eval_ctx.template_args.assign(template_args.begin(), template_args.end());
-	eval_ctx.template_param_names.assign(
-		template_param_names.begin(),
-		template_param_names.end());
-
-	auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
-	if (!eval_result.success()) {
+	std::optional<TemplateTypeArg> evaluated_default =
+		evaluate_dependent_expr(
+			substituted_default_node,
+			std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+			template_args);
+	if (!evaluated_default.has_value()) {
 		FLASH_LOG(Templates, Debug, "substituteAndEvaluateNonTypeDefaultImpl: evaluation failed");
 		return std::nullopt;
 	}
@@ -543,10 +606,26 @@ namespace {
 					template_params,
 					template_args);
 			target_type.has_value()) {
-			return templateTypeArgFromEvalResult(eval_result, *target_type);
+			TemplateTypeArg coerced_default = *evaluated_default;
+			const TypeCategory target_category = target_type->type();
+			TypeIndex target_type_index =
+				target_type->type_index().withCategory(target_category);
+			if (!target_type_index.is_valid() && is_builtin_type(target_category)) {
+				target_type_index = nativeTypeIndex(target_category);
+			}
+			if (!target_type_index.is_valid()) {
+				target_type_index = TypeIndex{0, target_category};
+			}
+			if (coerced_default.is_value && isIntegralType(target_category)) {
+				coerced_default.value = convertIntegralTemplateValueToType(
+					coerced_default.value,
+					target_category);
+			}
+			coerced_default.type_index = TemplateTypeArg::makeTypeIndex(target_type_index);
+			return coerced_default;
 		}
 	}
-	return templateTypeArgFromEvalResult(eval_result);
+	return evaluated_default;
 }
 
 	bool templateArgsStillNeedAliasLookupMaterialization(std::span<const TemplateTypeArg> template_args) {
@@ -717,7 +796,13 @@ std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 		default_node,
 		template_params,
 		template_args,
-		std::span<const std::string_view>(derived_param_names.data(), derived_param_names.size()));
+		std::span<const std::string_view>(derived_param_names.data(), derived_param_names.size()),
+		[this](
+			const ASTNode& expr,
+			std::span<const TemplateParameterNode> params,
+			std::span<const TemplateTypeArg> args) {
+			return evaluateDependentNTTPExpression(expr, params, args);
+		});
 }
 
 std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
@@ -730,14 +815,103 @@ std::optional<TemplateTypeArg> Parser::substituteAndEvaluateNonTypeDefault(
 		default_node,
 		template_params,
 		template_args,
-		template_param_names);
+		template_param_names,
+		[this](
+			const ASTNode& expr,
+			std::span<const TemplateParameterNode> params,
+			std::span<const TemplateTypeArg> args) {
+			return evaluateDependentNTTPExpression(expr, params, args);
+		});
 }
 
 std::string_view Parser::get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args) {
+	std::span<const TemplateTypeArg> effective_template_args = template_args;
+	std::vector<TemplateTypeArg> effective_template_args_storage;
+	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+		std::string_view owner_name = template_name.substr(0, last_colon);
+		bool is_nested_member_class_template = false;
+		size_t raw_param_count = 0;
+		if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+			template_opt.has_value() &&
+			template_opt->is<TemplateClassDeclarationNode>()) {
+			raw_param_count =
+				template_opt->as<TemplateClassDeclarationNode>()
+					.template_parameters()
+					.size();
+			if (auto owner_template_opt = gTemplateRegistry.lookupTemplate(owner_name);
+				owner_template_opt.has_value() &&
+				owner_template_opt->is<TemplateClassDeclarationNode>()) {
+				is_nested_member_class_template = true;
+			}
+		}
+
+		if (is_nested_member_class_template &&
+			template_args.size() <= raw_param_count) {
+			const OuterTemplateBinding* outer_binding =
+				gTemplateRegistry.getOuterTemplateBinding(template_name);
+			std::optional<OuterTemplateBinding> synthesized_outer_binding;
+			if (outer_binding == nullptr) {
+				synthesized_outer_binding = buildOuterBindingForOwner(
+					StringTable::getOrInternStringHandle(owner_name));
+				if ((!synthesized_outer_binding.has_value() ||
+					 synthesized_outer_binding->param_names.empty()) &&
+					current_instantiation_ctx_ != nullptr &&
+					current_instantiation_ctx_->origin_name.isValid()) {
+					synthesized_outer_binding = buildOuterBindingForOwner(
+						current_instantiation_ctx_->origin_name);
+				}
+				if (!synthesized_outer_binding.has_value() ||
+					synthesized_outer_binding->param_names.empty()) {
+					StringHandle contextual_owner{};
+					if (!struct_parsing_context_stack_.empty()) {
+						contextual_owner = StringTable::getOrInternStringHandle(
+							struct_parsing_context_stack_.back().struct_name);
+					} else if (!member_function_context_stack_.empty()) {
+						contextual_owner = member_function_context_stack_.back().struct_name;
+					}
+					if (contextual_owner.isValid()) {
+						synthesized_outer_binding = buildOuterBindingForOwner(
+							contextual_owner);
+					}
+				}
+				if (synthesized_outer_binding.has_value() &&
+					!synthesized_outer_binding->param_names.empty()) {
+					outer_binding = &*synthesized_outer_binding;
+				}
+			}
+
+			if (outer_binding != nullptr &&
+				(!outer_binding->all_args.empty() ||
+				 !outer_binding->param_args.empty())) {
+				const std::span<const TemplateTypeArg> outer_args =
+					!outer_binding->all_args.empty()
+						? std::span<const TemplateTypeArg>(
+							outer_binding->all_args.data(),
+							outer_binding->all_args.size())
+						: std::span<const TemplateTypeArg>(
+							outer_binding->param_args.data(),
+							outer_binding->param_args.size());
+				effective_template_args_storage.reserve(
+					outer_args.size() + template_args.size());
+				for (const TemplateTypeArg& outer_arg : outer_args) {
+					effective_template_args_storage.push_back(outer_arg);
+				}
+				for (const TemplateTypeArg& template_arg : template_args) {
+					effective_template_args_storage.push_back(template_arg);
+				}
+				effective_template_args = std::span<const TemplateTypeArg>(
+					effective_template_args_storage.data(),
+					effective_template_args_storage.size());
+			}
+		}
+	}
+
 	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
 		template_name = template_name.substr(last_colon + 2);
 	}
-	auto result = FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
+	auto result = FlashCpp::generateInstantiatedNameFromArgs(
+		template_name,
+		effective_template_args);
 	return result;
 }
 
@@ -819,18 +993,25 @@ std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
 						template_parameters.size()),
 					template_args,
 					nullptr);
-				auto eval_nttp = [this](
-					const ASTNode& expr,
-					std::span<const ASTNode> params,
-					std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-					return this->evaluateDependentNTTPExpression(expr, params, args);
-				};
 				auto materialize_args = [&](const TypeInfo& source_type_info) {
 					return materializeTemplateArgs(
 						source_type_info,
 						template_parameters,
 						template_args,
-						eval_nttp);
+						[this, owner_name = source_type_info.name()](
+							const ASTNode& expr,
+							std::span<const ASTNode> params,
+							std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+							InlineVector<TemplateParameterNode, 4> typed_params =
+								collectTemplateParameterNodes(params);
+							return this->evaluateDependentNTTPExpression(
+								expr,
+								std::span<const TemplateParameterNode>(
+									typed_params.data(),
+									typed_params.size()),
+								args,
+								owner_name);
+						});
 				};
 				auto materialize_lookup =
 					[this](const TypeInfo& source_type_info, std::span<const TemplateTypeArg> concrete_instantiation_args) {
@@ -1575,18 +1756,25 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		// Evaluator for dependent NTTP expressions (e.g. __is_final(Head) -> false).
 		// Uses the Parser's active substitution context so outer bindings like Head->Empty
 		// are visible even when the stored dependent_expr references the original param name.
-		auto eval_nttp = [this](
-			const ASTNode& expr,
-			std::span<const ASTNode> params,
-			std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-			return this->evaluateDependentNTTPExpression(expr, params, args);
-		};
 		auto materialize_args = [&](const TypeInfo& nested_source_type_info) {
 			return materializeTemplateArgs(
 				nested_source_type_info,
 				effective_template_params,
 				effective_template_args,
-				eval_nttp);
+				[this, owner_name = nested_source_type_info.name()](
+					const ASTNode& expr,
+					std::span<const ASTNode> params,
+					std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
+					InlineVector<TemplateParameterNode, 4> typed_params =
+						collectTemplateParameterNodes(params);
+					return this->evaluateDependentNTTPExpression(
+						expr,
+						std::span<const TemplateParameterNode>(
+							typed_params.data(),
+							typed_params.size()),
+						args,
+						owner_name);
+				});
 		};
 		std::vector<TemplateTypeArg> concrete_args =
 			materialize_args(source_type_info);
@@ -2559,9 +2747,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TemplateEnvironment* inherited_environment_ptr = nullptr;
 	if (const TypeInfo::InstantiationContext* dependent_base_context =
 			dependent_base_info->instantiationContext();
-		dependent_base_context != nullptr &&
-		!(dependent_base_info->is_incomplete_instantiation_ &&
-		  dependent_base_info->isTemplateInstantiation())) {
+		dependent_base_context != nullptr) {
 		inherited_environment = buildTemplateEnvironment(*dependent_base_context);
 		inherited_environment_ptr = &inherited_environment;
 	}
@@ -2611,13 +2797,21 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 					stored_arg,
 					template_params,
 					template_args,
-					[this, substitution_environment](
+					[this, substitution_environment, owner_name = dependent_base_info->name()](
 						const ASTNode& expr,
 						std::span<const ASTNode> params,
 						std::span<const TemplateTypeArg> args) {
-						FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+						FlashCpp::ScopedStateCopy guard_subs(template_param_substitutions_);
 						populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
-						return this->evaluateDependentNTTPExpression(expr, params, args);
+						InlineVector<TemplateParameterNode, 4> typed_params =
+							collectTemplateParameterNodes(params);
+						return this->evaluateDependentNTTPExpression(
+							expr,
+							std::span<const TemplateParameterNode>(
+								typed_params.data(),
+								typed_params.size()),
+							args,
+							owner_name);
 					});
 			}
 			concrete_args.push_back(std::move(concrete_arg));
@@ -3145,11 +3339,19 @@ std::string_view Parser::instantiate_and_register_base_template(
 						*alias_target_info,
 						alias_node.template_parameters(),
 						template_args,
-						[this](
+						[this, owner_name = alias_target_info->name()](
 							const ASTNode& expr,
 							std::span<const ASTNode> params,
 							std::span<const TemplateTypeArg> args) -> std::optional<TemplateTypeArg> {
-							return this->evaluateDependentNTTPExpression(expr, params, args);
+							InlineVector<TemplateParameterNode, 4> typed_params =
+								collectTemplateParameterNodes(params);
+							return this->evaluateDependentNTTPExpression(
+								expr,
+								std::span<const TemplateParameterNode>(
+									typed_params.data(),
+									typed_params.size()),
+								args,
+								owner_name);
 						});
 				StringHandle qualified_target_template_handle =
 					gNamespaceRegistry.buildQualifiedIdentifier(
@@ -4991,10 +5193,192 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle explicit_substitution_owner) {
-	FlashCpp::ScopedState guard_substitutions(template_param_substitutions_);
-	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-		const TemplateParameterNode& param = template_params[i];
-		const TemplateTypeArg& arg = template_args[i];
+	StringHandle substitution_owner;
+	if (explicit_substitution_owner.isValid()) {
+		substitution_owner = explicit_substitution_owner;
+	} else if (current_instantiation_ctx_ != nullptr &&
+			   current_instantiation_ctx_->origin_name.isValid()) {
+		substitution_owner = current_instantiation_ctx_->origin_name;
+	} else if (!struct_parsing_context_stack_.empty()) {
+		substitution_owner = StringTable::getOrInternStringHandle(
+			struct_parsing_context_stack_.back().struct_name);
+	} else if (!member_function_context_stack_.empty()) {
+		substitution_owner = member_function_context_stack_.back().struct_name;
+	}
+	if (current_instantiation_ctx_ != nullptr &&
+		current_instantiation_ctx_->origin_name.isValid() &&
+		current_instantiation_ctx_->origin_name != substitution_owner) {
+		const TypeInfo* owner_type_info = substitution_owner.isValid()
+			? findTypeByName(substitution_owner)
+			: nullptr;
+		const auto owner_has_usable_inst_context =
+			[&](const TypeInfo* type_info) {
+			if (type_info == nullptr ||
+				!type_info->hasInstantiationContext() ||
+				type_info->instantiationContext() == nullptr) {
+				return false;
+			}
+			const TypeInfo::InstantiationContext* inst_ctx =
+				type_info->instantiationContext();
+			for (const TypeInfo::TemplateArgInfo& arg_info : inst_ctx->param_args) {
+				TemplateTypeArg arg = toTemplateTypeArg(arg_info);
+				if (arg.is_dependent || arg.dependent_name.isValid()) {
+					continue;
+				}
+				if (arg.is_value || arg.type_index.is_valid()) {
+					return true;
+				}
+			}
+			return false;
+		};
+		if (!owner_has_usable_inst_context(owner_type_info)) {
+			substitution_owner = current_instantiation_ctx_->origin_name;
+		}
+	}
+
+	std::span<const TemplateParameterNode> effective_template_params = template_params;
+	std::span<const TemplateTypeArg> effective_template_args = template_args;
+	std::vector<TemplateParameterNode> effective_template_params_storage;
+	std::vector<TemplateTypeArg> effective_template_args_storage;
+	if (substitution_owner.isValid()) {
+		std::string_view owner_name = StringTable::getStringView(substitution_owner);
+		std::vector<std::optional<OuterTemplateBinding>> owner_outer_binding_storage;
+		std::optional<OuterTemplateBinding> merged_owner_outer_binding;
+		auto append_owner_chain_bindings = [&](StringHandle owner_handle) {
+			if (!owner_handle.isValid()) {
+				return;
+			}
+			std::string_view chain_owner_name = StringTable::getStringView(owner_handle);
+			size_t search_pos = 0;
+			while (search_pos <= chain_owner_name.size()) {
+				size_t sep = chain_owner_name.find("::", search_pos);
+				std::string_view owner_prefix = sep == std::string_view::npos
+					? chain_owner_name
+					: chain_owner_name.substr(0, sep);
+				if (!owner_prefix.empty()) {
+					const OuterTemplateBinding* owner_binding =
+						gTemplateRegistry.getOuterTemplateBinding(owner_prefix);
+					if (owner_binding != nullptr) {
+						if (!merged_owner_outer_binding.has_value()) {
+							merged_owner_outer_binding = OuterTemplateBinding();
+						}
+						appendMergedOuterTemplateBinding(
+							*owner_binding,
+							merged_owner_outer_binding.value());
+					} else {
+						owner_outer_binding_storage.push_back(
+							buildOuterBindingForOwner(
+								StringTable::getOrInternStringHandle(owner_prefix)));
+						if (owner_outer_binding_storage.back().has_value()) {
+							if (!merged_owner_outer_binding.has_value()) {
+								merged_owner_outer_binding = OuterTemplateBinding();
+							}
+							appendMergedOuterTemplateBinding(
+								owner_outer_binding_storage.back().value(),
+								merged_owner_outer_binding.value());
+						}
+					}
+				}
+				if (sep == std::string_view::npos) {
+					break;
+				}
+				search_pos = sep + 2;
+			}
+		};
+		append_owner_chain_bindings(substitution_owner);
+		if (current_instantiation_ctx_ != nullptr &&
+			current_instantiation_ctx_->origin_name.isValid() &&
+			current_instantiation_ctx_->origin_name != substitution_owner) {
+			append_owner_chain_bindings(current_instantiation_ctx_->origin_name);
+		}
+		if (merged_owner_outer_binding.has_value() &&
+			!merged_owner_outer_binding->params.empty()) {
+			const OuterTemplateBinding& owner_outer_binding =
+				merged_owner_outer_binding.value();
+			const std::span<const TemplateTypeArg> owner_outer_args =
+				!owner_outer_binding.all_args.empty()
+					? std::span<const TemplateTypeArg>(
+						owner_outer_binding.all_args.data(),
+						owner_outer_binding.all_args.size())
+					: std::span<const TemplateTypeArg>(
+						owner_outer_binding.param_args.data(),
+						owner_outer_binding.param_args.size());
+			bool params_already_include_outer_prefix = false;
+			if (owner_outer_binding.params.size() <= template_params.size()) {
+				params_already_include_outer_prefix = true;
+				for (size_t i = 0; i < owner_outer_binding.params.size(); ++i) {
+					const TemplateParameterNode* owner_param =
+						tryGetTemplateParameterNode(owner_outer_binding.params[i]);
+					if (owner_param == nullptr ||
+						template_params[i].nameHandle() != owner_param->nameHandle()) {
+						params_already_include_outer_prefix = false;
+						break;
+					}
+				}
+			}
+			bool args_already_include_outer_prefix = false;
+			if (owner_outer_args.size() <= template_args.size()) {
+				args_already_include_outer_prefix = true;
+				for (size_t i = 0; i < owner_outer_args.size(); ++i) {
+					if (!(template_args[i] == owner_outer_args[i])) {
+						args_already_include_outer_prefix = false;
+						break;
+					}
+				}
+			}
+			if (params_already_include_outer_prefix && !args_already_include_outer_prefix) {
+				effective_template_args_storage.clear();
+				effective_template_args_storage.reserve(template_params.size());
+				size_t missing_prefix_args = template_params.size() > template_args.size()
+					? template_params.size() - template_args.size()
+					: 0;
+				missing_prefix_args = std::min(missing_prefix_args, owner_outer_args.size());
+				for (size_t i = 0; i < missing_prefix_args; ++i) {
+					effective_template_args_storage.push_back(owner_outer_args[i]);
+				}
+				for (const TemplateTypeArg& arg : template_args) {
+					effective_template_args_storage.push_back(arg);
+				}
+				effective_template_args = std::span<const TemplateTypeArg>(
+					effective_template_args_storage.data(),
+					effective_template_args_storage.size());
+			} else if (!params_already_include_outer_prefix ||
+					   !args_already_include_outer_prefix) {
+				buildEffectiveVariableTemplateSubstitutionInputs(
+					owner_name,
+					&owner_outer_binding,
+					template_params,
+					template_args,
+					effective_template_params_storage,
+					effective_template_args_storage,
+					effective_template_params,
+					effective_template_args);
+			}
+		}
+	}
+
+	FlashCpp::ScopedStateCopy guard_substitutions(template_param_substitutions_);
+	for (const ParserInstantiationContext* inst_ctx = current_instantiation_ctx_;
+		 inst_ctx != nullptr;
+		 inst_ctx = inst_ctx->parent) {
+		if (!inst_ctx->origin_name.isValid()) {
+			continue;
+		}
+		const TypeInfo* origin_type_info = findTypeByName(inst_ctx->origin_name);
+		if (origin_type_info == nullptr ||
+			!origin_type_info->hasInstantiationContext() ||
+			origin_type_info->instantiationContext() == nullptr) {
+			continue;
+		}
+		TemplateEnvironment inherited_env =
+			buildTemplateEnvironment(*origin_type_info->instantiationContext());
+		populateTemplateParamSubstitutions(
+			template_param_substitutions_,
+			inherited_env);
+	}
+	for (size_t i = 0; i < effective_template_params.size() && i < effective_template_args.size(); ++i) {
+		const TemplateParameterNode& param = effective_template_params[i];
+		const TemplateTypeArg& arg = effective_template_args[i];
 		TemplateParamSubstitution direct_substitution;
 		direct_substitution.param_name = param.nameHandle();
 		if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
@@ -5008,28 +5392,52 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 			template_param_substitutions_.push_back(direct_substitution);
 		}
 	}
+	if (substitution_owner.isValid()) {
+		const TypeInfo* owner_type_info = findTypeByName(substitution_owner);
+		OuterTemplateBinding owner_binding = buildAccumulatedOuterTemplateBinding(
+			owner_type_info,
+			nullptr,
+			substitution_owner);
+		for (size_t binding_index = 0;
+			 binding_index < owner_binding.param_names.size() &&
+			 binding_index < owner_binding.param_args.size();
+			 ++binding_index) {
+			TemplateParamSubstitution owner_substitution;
+			owner_substitution.param_name = owner_binding.param_names[binding_index];
+			const TemplateTypeArg& owner_arg = owner_binding.param_args[binding_index];
+			if (owner_arg.is_value) {
+				owner_substitution.is_value_param = true;
+				owner_substitution.value = owner_arg.value;
+				owner_substitution.value_type = owner_arg.category();
+			} else {
+				owner_substitution.is_type_param = true;
+				owner_substitution.substituted_type = owner_arg;
+			}
+			template_param_substitutions_.push_back(owner_substitution);
+		}
+	}
 
 	// Build type substitution map from template params to args
 	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
 	// Build non-type substitution map for value parameters
 	std::unordered_map<std::string_view, int64_t> nontype_substitution_map;
-	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-		const TemplateParameterNode* param = &template_params[i];
+	for (size_t i = 0; i < effective_template_params.size() && i < effective_template_args.size(); ++i) {
+		const TemplateParameterNode* param = &effective_template_params[i];
 		if (param->kind() == TemplateParameterKind::Type) {
 			// For typename/class parameters, registered_type_index() is the TypeIndex assigned
 			// when the template was parsed (via add_user_type in Parser_Templates_Function.cpp).
 			// This is the same TypeIndex that sizeof(T) will carry in its TypeSpecifierNode.
 			if (param->registered_type_index().is_valid()) {
-				type_substitution_map[param->registered_type_index()] = template_args[i];
+				type_substitution_map[param->registered_type_index()] = effective_template_args[i];
 			}
 			// For non-type parameters that have an explicit type node (e.g., template<int N>
 			// where someone uses sizeof(N)), also map by the param's type specifier index.
 			if (param->has_type()) {
 				const TypeSpecifierNode& param_type = param->type_specifier_node();
-				type_substitution_map[param_type.type_index()] = template_args[i];
+				type_substitution_map[param_type.type_index()] = effective_template_args[i];
 			}
-		} else if (param->kind() == TemplateParameterKind::NonType && template_args[i].is_value) {
-			nontype_substitution_map[param->name()] = template_args[i].value;
+		} else if (param->kind() == TemplateParameterKind::NonType && effective_template_args[i].is_value) {
+			nontype_substitution_map[param->name()] = effective_template_args[i].value;
 		}
 	}
 	for (const auto& subst : template_param_substitutions_) {
@@ -5046,15 +5454,6 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		}
 	}
 
-	StringHandle substitution_owner;
-	if (explicit_substitution_owner.isValid()) {
-		substitution_owner = explicit_substitution_owner;
-	} else if (!struct_parsing_context_stack_.empty()) {
-		substitution_owner = StringTable::getOrInternStringHandle(
-			struct_parsing_context_stack_.back().struct_name);
-	} else if (!member_function_context_stack_.empty()) {
-		substitution_owner = member_function_context_stack_.back().struct_name;
-	}
 	if (substitution_owner.isValid()) {
 		if (const TypeInfo* owner_type_info = findTypeByName(substitution_owner);
 			owner_type_info != nullptr &&
@@ -5075,12 +5474,14 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	// Evaluate the substituted expression using the standard constant expression evaluator
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 	eval_ctx.template_environment = buildTemplateEnvironment(
-		template_params,
-		template_args,
+		effective_template_params,
+		effective_template_args,
 		nullptr);
-	eval_ctx.template_args.assign(template_args.begin(), template_args.end());
-	eval_ctx.template_param_names.reserve(template_params.size());
-	for (const TemplateParameterNode& template_param : template_params) {
+	eval_ctx.template_args.assign(
+		effective_template_args.begin(),
+		effective_template_args.end());
+	eval_ctx.template_param_names.reserve(effective_template_params.size());
+	for (const TemplateParameterNode& template_param : effective_template_params) {
 		eval_ctx.template_param_names.push_back(template_param.name());
 	}
 	ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
