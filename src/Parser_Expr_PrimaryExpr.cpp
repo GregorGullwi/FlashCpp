@@ -1721,6 +1721,23 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 			}
 		}
 
+		// If the specialization name is already present in the type map (including
+		// in-progress instantiations), reuse it directly instead of re-entering
+		// class-template instantiation. This prevents spurious cycle hits for
+		// current-instantiation qualified lookups like `Derived<T>::template Inner<U>`.
+		std::string_view predicted_instantiated_name =
+			get_instantiated_class_name(candidate_name, completed_args);
+		if (!predicted_instantiated_name.empty()) {
+			StringHandle predicted_handle =
+				StringTable::getOrInternStringHandle(predicted_instantiated_name);
+			if (const TypeInfo* existing_type = findTypeByName(predicted_handle);
+				existing_type != nullptr) {
+				result.instantiated_name = predicted_instantiated_name;
+				result.resolved_type_info = existing_type;
+				return result;
+			}
+		}
+
 		auto instantiated = try_instantiate_class_template(candidate_name, completed_args);
 		if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 			result.instantiated_name = StringTable::getStringView(
@@ -3467,8 +3484,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Parse the :: and the member name
 						advance(); // consume ::
 						// Handle ::template syntax for dependent names (e.g., Host2::template value<int>(2))
+						bool member_had_template_keyword = false;
 						if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "template") {
 							advance(); // consume optional 'template' keyword
+							member_had_template_keyword = true;
 						}
 						if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 							return ParseResult::error("Expected identifier after '::'", current_token_);
@@ -3484,8 +3503,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							full_ns_handle = gNamespaceRegistry.getOrCreateNamespace(full_ns_handle, member_handle);
 							advance(); // consume ::
 							// Handle ::template syntax for dependent names
+							member_had_template_keyword = false;
 							if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "template") {
 								advance(); // consume optional 'template' keyword
+								member_had_template_keyword = true;
 							}
 							if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Identifier) {
 								return ParseResult::error("Expected identifier after '::'", current_token_);
@@ -3494,19 +3515,43 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							advance(); // consume identifier
 						}
 
+						if (current_token_.value() == "<" || current_token_.value() == "(") {
+							auto member_call_result = try_parse_member_template_function_call(
+								gNamespaceRegistry.getQualifiedName(full_ns_handle),
+								member_token.value(),
+								member_token,
+								std::nullopt);
+							if (member_call_result.has_value()) {
+								if (member_call_result->is_error()) {
+									return *member_call_result;
+								}
+								result = *member_call_result->node();
+								return ParseResult::success(*result);
+							}
+						}
+
 						std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
 						std::vector<ASTNode> member_template_arg_nodes;
-						if (current_token_.value() == "<" &&
-							qualifiedMemberTemplateIdIsKnown(
-								gNamespaceRegistry.getQualifiedName(full_ns_handle),
-								member_token.handle())) {
-							member_template_args =
-								parse_explicit_template_arguments(
-									&member_template_arg_nodes);
+						if (current_token_.value() == "<") {
+							SaveHandle member_template_arg_start = save_token_position();
+							member_template_args = parse_explicit_template_arguments(&member_template_arg_nodes);
 							if (!member_template_args.has_value()) {
-								return ParseResult::error(
-									"Failed to parse explicit template arguments",
-									current_token_);
+								restore_token_position(member_template_arg_start);
+							} else {
+								const bool template_id_disambiguated =
+									current_token_.value() == "::" ||
+									current_token_.value() == "(";
+								const bool known_template =
+									qualifiedMemberTemplateIdIsKnown(
+										gNamespaceRegistry.getQualifiedName(full_ns_handle),
+										member_token.handle());
+								if (!template_id_disambiguated &&
+									!member_had_template_keyword &&
+									!known_template) {
+									restore_token_position(member_template_arg_start);
+									member_template_args.reset();
+									member_template_arg_nodes.clear();
+								}
 							}
 						}
 
@@ -3581,6 +3626,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							// Get the declaration node for the function
 							const DeclarationNode* decl_ptr = nullptr;
+							std::optional<ASTNode> instantiated_member_lookup;
+							if (member_template_args.has_value()) {
+								std::vector<TypeSpecifierNode> deduced_arg_types =
+									apply_lvalue_reference_deduction(args, args_result.arg_types);
+								const bool has_dependent_call_arg =
+									argTypesAreDeferredTemplateDependent(
+										deduced_arg_types,
+										currentTemplateParamNames());
+								instantiated_member_lookup =
+									tryInstantiateMemberFunctionTemplateCall(
+										gNamespaceRegistry.getQualifiedName(full_ns_handle),
+										member_token.value(),
+										member_template_args,
+										deduced_arg_types,
+										!args.empty(),
+										has_dependent_call_arg);
+								if (instantiated_member_lookup.has_value() &&
+									instantiated_member_lookup->is<FunctionDeclarationNode>()) {
+									member_lookup = *instantiated_member_lookup;
+									decl_ptr =
+										&instantiated_member_lookup
+											 ->as<FunctionDeclarationNode>()
+											 .decl_node();
+								}
+							}
 							if (member_lookup.has_value()) {
 								decl_ptr = getDeclarationNode(*member_lookup);
 							}
@@ -4577,7 +4647,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							auto member_call_result = try_parse_member_template_function_call(
 								instantiated_name,
 								qualified_node2.name(),
-								qualified_node2.identifier_token());
+								qualified_node2.identifier_token(),
+								std::nullopt);
 							if (member_call_result.has_value()) {
 								if (member_call_result->is_error()) {
 									return *member_call_result;
@@ -6382,6 +6453,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if ((has_template_keyword ||
 										 materialized_owner_names_current_instantiation) &&
 										peek() == "<"_tok) {
+										last_failed_template_arg_parse_handle_ = SIZE_MAX;
 										auto member_template_args =
 											parse_explicit_template_arguments(&member_template_arg_nodes);
 										if (!member_template_args.has_value()) {
@@ -6512,8 +6584,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								advance(); // consume ::
 
 								// Handle ::template syntax for dependent names (e.g., __xref<T>::template __type)
+								bool segment_had_template_keyword = false;
 								if (peek() == "template"_tok) {
 									advance(); // consume 'template' keyword
+									segment_had_template_keyword = true;
 								}
 
 								// Get next identifier
@@ -6526,10 +6600,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								std::optional<InlineVector<TemplateTypeArg, 4>> segment_template_args;
 								std::vector<ASTNode> segment_template_arg_nodes;
-								if (peek() == "<"_tok &&
-									qualifiedMemberTemplateIdIsKnown(
-										resolved_namespace_name,
-										segment_identifier.handle())) {
+								if (peek() == "<"_tok) {
 									SaveHandle segment_template_arg_start =
 										save_token_position();
 									segment_template_args =
@@ -6539,6 +6610,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										restore_token_position(
 											segment_template_arg_start);
 										segment_template_arg_nodes.clear();
+									} else {
+										const bool template_id_disambiguated =
+											peek() == "::"_tok ||
+											peek() == "("_tok;
+										const bool known_template =
+											qualifiedMemberTemplateIdIsKnown(
+												resolved_namespace_name,
+												segment_identifier.handle());
+										if (!template_id_disambiguated &&
+											!segment_had_template_keyword &&
+											!known_template) {
+											restore_token_position(
+												segment_template_arg_start);
+											segment_template_args.reset();
+											segment_template_arg_nodes.clear();
+										}
 									}
 								}
 
@@ -6574,14 +6661,31 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											resolved_segment_type->name()));
 								} else {
 									resolved_namespace_name.append("::");
-									resolved_namespace_name.append(
-										segment_identifier.value());
+									if (segment_template_args.has_value()) {
+										std::string_view instantiated_segment_name =
+											get_instantiated_class_name(
+												segment_identifier.value(),
+												*segment_template_args);
+										if (!instantiated_segment_name.empty()) {
+											resolved_namespace_name.append(
+												instantiated_segment_name);
+										} else {
+											resolved_namespace_name.append(
+												segment_identifier.value());
+										}
+									} else {
+										resolved_namespace_name.append(
+											segment_identifier.value());
+									}
 								}
 							}
 
 							// Try to parse member template function call: Template<T>::member<U>()
 							auto func_call_result = try_parse_member_template_function_call(
-								instantiated_name, final_identifier.value(), final_identifier);
+								resolved_namespace_name,
+								final_identifier.value(),
+								final_identifier,
+								member_template_args);
 							if (func_call_result.has_value()) {
 								if (func_call_result->is_error()) {
 									return *func_call_result;
@@ -7578,6 +7682,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if ((has_template_keyword ||
 								 materialized_owner_names_current_instantiation) &&
 								peek() == "<"_tok) {
+								last_failed_template_arg_parse_handle_ = SIZE_MAX;
 								auto member_template_args =
 									parse_explicit_template_arguments(&member_template_arg_nodes);
 								if (!member_template_args.has_value()) {
@@ -7707,7 +7812,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 						// Try to parse member template function call: Template<T>::member<U>()
 						auto func_call_result = try_parse_member_template_function_call(
-							instantiated_class_name, qualified_node.name(), qualified_node.identifier_token());
+							instantiated_class_name,
+							qualified_node.name(),
+							qualified_node.identifier_token(),
+							std::nullopt);
 						if (func_call_result.has_value()) {
 							if (func_call_result->is_error()) {
 								return *func_call_result;

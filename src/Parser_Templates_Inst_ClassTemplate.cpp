@@ -6610,7 +6610,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // still need template parameter substitution (e.g., T → int).
 						if (substituted_initializer.has_value()) {
 							substituted_initializer = substituteTemplateParameters(
-								substituted_initializer.value(), template_params, template_args);
+							substituted_initializer.value(), template_params, template_args);
 							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member '",
 									  static_member.getName(), "' initializer");
 						}
@@ -10799,7 +10799,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				throw InternalError(
 					"Dependent template static member initializer requires replay metadata");
 			}
-			substituted_initializer = substituteTemplateParameters(
+				substituted_initializer = substituteTemplateParameters(
 				*static_member.initializer,
 				template_params,
 				fallback_template_args);

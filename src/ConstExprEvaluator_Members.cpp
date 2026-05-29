@@ -5421,15 +5421,18 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 			switch (dependent_record->owner_kind) {
 			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+				// In instantiated contexts, the evaluation owner should prefer the
+				// concrete current struct (e.g. Derived$hash) rather than the pattern
+				// owner captured in dependent metadata (e.g. Derived).
+				if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
+					return materializeOwnerMemberChainPrefix(context.struct_info->name);
+				}
 				if (dependent_record->owner_type.is_valid()) {
 					if (const TypeInfo* owner_type_info =
 							tryGetTypeInfo(dependent_record->owner_type);
 						owner_type_info != nullptr && owner_type_info->name().isValid()) {
 						return materializeOwnerMemberChainPrefix(owner_type_info->name());
 					}
-				}
-				if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
-					return materializeOwnerMemberChainPrefix(context.struct_info->name);
 				}
 				break;
 			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
@@ -5481,6 +5484,99 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				struct_handle = StringTable::getOrInternStringHandle(ns_name);
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Extracted struct_name='", ns_name, "' from qualified namespace");
+				}
+			}
+		}
+
+		if (struct_handle.isValid() && context.parser != nullptr) {
+			std::string_view qualified_owner_name = StringTable::getStringView(struct_handle);
+			size_t last_scope = qualified_owner_name.rfind("::");
+			if (last_scope != std::string_view::npos &&
+				last_scope + 2 < qualified_owner_name.size()) {
+				StringHandle outer_owner_handle = StringTable::getOrInternStringHandle(
+					qualified_owner_name.substr(0, last_scope));
+				StringHandle nested_member_handle = StringTable::getOrInternStringHandle(
+					qualified_owner_name.substr(last_scope + 2));
+				if (const TypeInfo* inherited_alias_owner =
+						context.parser->lookup_inherited_type_alias(
+							outer_owner_handle,
+							nested_member_handle,
+							0);
+					inherited_alias_owner != nullptr &&
+					inherited_alias_owner->name().isValid()) {
+					ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
+						inherited_alias_owner->registeredTypeIndex().withCategory(
+							inherited_alias_owner->typeEnum()));
+					if (resolved_owner_alias.terminal_type_info != nullptr &&
+						resolved_owner_alias.terminal_type_info->name().isValid()) {
+						struct_handle = resolved_owner_alias.terminal_type_info->name();
+					} else {
+						struct_handle = inherited_alias_owner->name();
+					}
+				}
+			}
+
+			std::string_view chain_full_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+			size_t first_colon = chain_full_name.find("::");
+			if (first_colon != std::string_view::npos &&
+				first_colon + 2 < chain_full_name.size()) {
+				std::string_view base_name = chain_full_name.substr(0, first_colon);
+				std::string_view member_chain = chain_full_name.substr(first_colon + 2);
+				std::vector<QualifiedTypeMemberAccess> parsed_member_chain =
+					context.parser->buildQualifiedTypeMemberChain(member_chain);
+				if (!parsed_member_chain.empty()) {
+					std::vector<std::vector<TemplateTypeArg>> member_template_arg_storage(
+						parsed_member_chain.size());
+					if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+							qualified_id.dependentQualifiedName();
+						dependent_record != nullptr &&
+						dependent_record->member_chain.size() >= parsed_member_chain.size()) {
+						for (size_t i = 0; i < parsed_member_chain.size(); ++i) {
+							const auto& dep_member = dependent_record->member_chain[i];
+							if (!dep_member.has_template_arguments) {
+								continue;
+							}
+							auto& args_storage = member_template_arg_storage[i];
+							args_storage.reserve(dep_member.template_arguments.size());
+							for (const TypeInfo::TemplateArgInfo& stored_arg : dep_member.template_arguments) {
+								TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+								if (std::optional<TemplateTypeArg> rebound_arg =
+										trySubstituteDependentTemplateArgForLookup(
+											arg,
+											context,
+											nullptr,
+											0);
+									rebound_arg.has_value()) {
+									arg = std::move(*rebound_arg);
+								}
+								if (arg.is_value && arg.dependent_expr.has_value()) {
+									EvalResult evaluated_arg = evaluate(*arg.dependent_expr, context);
+									if (!evaluated_arg.success()) {
+										args_storage.clear();
+										break;
+									}
+									arg = templateTypeArgFromEvalResult(evaluated_arg);
+								}
+								if (arg.is_dependent) {
+									args_storage.clear();
+									break;
+								}
+								args_storage.push_back(std::move(arg));
+							}
+							if (!args_storage.empty()) {
+								parsed_member_chain[i].has_template_arguments = true;
+								parsed_member_chain[i].template_arguments = &args_storage;
+							}
+						}
+					}
+					if (const TypeInfo* resolved_chain_owner =
+							context.parser->resolveBaseClassMemberTypeChain(
+								base_name,
+								parsed_member_chain);
+						resolved_chain_owner != nullptr &&
+						resolved_chain_owner->name().isValid()) {
+						struct_handle = resolved_chain_owner->name();
+					}
 				}
 			}
 		}
@@ -5677,8 +5773,24 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 						break;
 					}
-					// Follow the type_index_ to find the underlying type
-					const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+					// Follow alias chains first, then fall back to raw type_index_.
+					const TypeInfo* underlying = nullptr;
+					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+						type_info->registeredTypeIndex().withCategory(
+							type_info->typeEnum()));
+					if (resolved_alias.terminal_type_info != nullptr &&
+						resolved_alias.terminal_type_info != type_info) {
+						underlying = resolved_alias.terminal_type_info;
+					} else if (resolved_alias.type_index.is_valid()) {
+						const TypeInfo* alias_type = tryGetTypeInfo(resolved_alias.type_index);
+						if (alias_type != nullptr &&
+							alias_type != type_info) {
+							underlying = alias_type;
+						}
+					}
+					if (underlying == nullptr) {
+						underlying = tryGetTypeInfo(type_info->type_index_);
+					}
 					if (!underlying)
 						break;
 					if (underlying == type_info)

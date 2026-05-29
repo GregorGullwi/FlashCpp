@@ -3478,6 +3478,31 @@ ASTNode Parser::substitute_template_params_in_expression(
 						return emplace_node<ExpressionNode>(new_sizeof);
 					}
 				}
+
+				if (substitution_owner.isValid()) {
+					const TypeInfo* owner_type_info = findTypeByName(substitution_owner);
+					OuterTemplateBinding owner_binding = buildAccumulatedOuterTemplateBinding(
+						owner_type_info,
+						nullptr,
+						substitution_owner);
+					for (size_t binding_index = 0;
+						 binding_index < owner_binding.param_names.size() &&
+						 binding_index < owner_binding.param_args.size();
+						 ++binding_index) {
+						if (StringTable::getStringView(owner_binding.param_names[binding_index]) != type_name) {
+							continue;
+						}
+						const TemplateTypeArg& arg = owner_binding.param_args[binding_index];
+						if (arg.is_value || !arg.type_index.is_valid()) {
+							break;
+						}
+						TypeSpecifierNode new_type =
+							makeSubstitutedTypeNode(arg, sizeof_node.sizeof_token());
+						auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
+						SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
+						return emplace_node<ExpressionNode>(new_sizeof);
+					}
+				}
 			}
 
 			if (auto resolved = tryResolveSizeofMemberAlias(substitution_owner, type_node.token().value(), sizeof_node.sizeof_token())) {
@@ -4954,6 +4979,36 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 	const ASTNode& dependent_expr,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
+	return evaluateDependentNTTPExpression(
+		dependent_expr,
+		template_params,
+		template_args,
+		StringHandle{});
+}
+
+std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
+	const ASTNode& dependent_expr,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	StringHandle explicit_substitution_owner) {
+	FlashCpp::ScopedState guard_substitutions(template_param_substitutions_);
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		const TemplateParameterNode& param = template_params[i];
+		const TemplateTypeArg& arg = template_args[i];
+		TemplateParamSubstitution direct_substitution;
+		direct_substitution.param_name = param.nameHandle();
+		if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
+			direct_substitution.is_type_param = true;
+			direct_substitution.substituted_type = arg;
+			template_param_substitutions_.push_back(direct_substitution);
+		} else if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
+			direct_substitution.is_value_param = true;
+			direct_substitution.value = arg.value;
+			direct_substitution.value_type = arg.category();
+			template_param_substitutions_.push_back(direct_substitution);
+		}
+	}
+
 	// Build type substitution map from template params to args
 	std::unordered_map<TypeIndex, TemplateTypeArg> type_substitution_map;
 	// Build non-type substitution map for value parameters
@@ -4991,9 +5046,31 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 		}
 	}
 
+	StringHandle substitution_owner;
+	if (explicit_substitution_owner.isValid()) {
+		substitution_owner = explicit_substitution_owner;
+	} else if (!struct_parsing_context_stack_.empty()) {
+		substitution_owner = StringTable::getOrInternStringHandle(
+			struct_parsing_context_stack_.back().struct_name);
+	} else if (!member_function_context_stack_.empty()) {
+		substitution_owner = member_function_context_stack_.back().struct_name;
+	}
+	if (substitution_owner.isValid()) {
+		if (const TypeInfo* owner_type_info = findTypeByName(substitution_owner);
+			owner_type_info != nullptr &&
+			owner_type_info->hasInstantiationContext() &&
+			owner_type_info->instantiationContext() != nullptr) {
+			TemplateEnvironment owner_environment = buildTemplateEnvironment(
+				*owner_type_info->instantiationContext());
+			populateTemplateParamSubstitutions(
+				template_param_substitutions_,
+				owner_environment);
+		}
+	}
+
 	// Substitute template parameters in the expression to get a concrete AST
 	ASTNode substituted = substitute_template_params_in_expression(
-		dependent_expr, type_substitution_map, nontype_substitution_map, StringHandle{});
+		dependent_expr, type_substitution_map, nontype_substitution_map, substitution_owner);
 
 	// Evaluate the substituted expression using the standard constant expression evaluator
 	ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
