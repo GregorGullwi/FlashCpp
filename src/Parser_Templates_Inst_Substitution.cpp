@@ -47,20 +47,43 @@ static bool appendOuterAliasTemplateSubstitutionInputs(
 	TemplateParamStorage& effective_template_params_storage,
 	TemplateArgStorage& effective_template_args_storage,
 	OnOuterParam on_outer_param) {
-	const size_t pair_count = std::min(
-		outer_binding.params.size(),
-		outer_binding.param_args.size());
-	for (size_t i = 0; i < pair_count; ++i) {
-		const TemplateParameterNode* outer_param =
-			tryGetTemplateParameterNode(outer_binding.params[i]);
-		if (outer_param == nullptr) {
-			return false;
+	if (!outer_binding.params.empty()) {
+		const size_t pair_count = std::min(
+			outer_binding.params.size(),
+			outer_binding.param_args.size());
+		for (size_t i = 0; i < pair_count; ++i) {
+			const TemplateParameterNode* outer_param =
+				tryGetTemplateParameterNode(outer_binding.params[i]);
+			if (outer_param == nullptr) {
+				continue;
+			}
+			effective_template_params_storage.push_back(*outer_param);
+			effective_template_args_storage.push_back(outer_binding.param_args[i]);
+			on_outer_param(*outer_param);
 		}
-		effective_template_params_storage.push_back(*outer_param);
-		effective_template_args_storage.push_back(outer_binding.param_args[i]);
-		on_outer_param(*outer_param);
+		if (!effective_template_args_storage.empty()) {
+			return true;
+		}
 	}
-	return true;
+
+	const size_t fallback_pair_count = std::min(
+		outer_binding.param_names.size(),
+		outer_binding.param_args.size());
+	for (size_t i = 0; i < fallback_pair_count; ++i) {
+		Token param_token(
+			Token::Type::Identifier,
+			StringTable::getStringView(outer_binding.param_names[i]),
+			0,
+			0,
+			0);
+		TemplateParameterNode outer_param(
+			outer_binding.param_names[i],
+			param_token);
+		effective_template_params_storage.push_back(outer_param);
+		effective_template_args_storage.push_back(outer_binding.param_args[i]);
+		on_outer_param(outer_param);
+	}
+	return !effective_template_args_storage.empty();
 }
 
 static void buildEffectiveAliasTemplateSubstitutionInputs(
@@ -1183,15 +1206,6 @@ std::optional<QualifiedTypeMemberAccess> Parser::materializeDeferredAliasMemberT
 	const DeferredAliasMemberTemplateSegment& segment,
 	std::span<const TemplateTypeArg> template_args,
 	StringHandle owner_qualified_handle) {
-	if (segment.has_template_arguments &&
-		!owner_qualified_handle.isValid()) {
-		FLASH_LOG_FORMAT(
-			Templates,
-			Debug,
-			"Skipping deferred alias member-template segment '{}' because owner-qualified template lookup did not resolve",
-			StringTable::getStringView(segment.name));
-		return std::nullopt;
-	}
 	const auto member_template_params = getTargetTemplateParameters(owner_qualified_handle);
 	InlineVector<TemplateTypeArg, 4> member_args;
 	std::span<const ASTNode> member_template_args(segment.template_args.data(), segment.template_args.size());
@@ -2397,6 +2411,14 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		inherited_environment = buildTemplateEnvironment(*dependent_base_context);
 		inherited_environment_ptr = &inherited_environment;
 	}
+	TemplateEnvironment alias_target_environment;
+	if (const TypeInfo::InstantiationContext* alias_target_context =
+			semantic_alias_target_info->instantiationContext();
+		alias_target_context != nullptr) {
+		alias_target_environment = buildTemplateEnvironment(*alias_target_context);
+		alias_target_environment.parent = inherited_environment_ptr;
+		inherited_environment_ptr = &alias_target_environment;
+	}
 	TemplateEnvironment substitution_environment = buildTemplateEnvironment(
 		template_params,
 		template_args,
@@ -2556,6 +2578,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	if (has_member_template_segment) {
 		std::vector<QualifiedTypeMemberAccess> materialized_member_chain;
 		materialized_member_chain.reserve(dependent_name->member_chain.size());
+		bool defer_to_alias_materialization = false;
 		for (const auto& member_record : dependent_name->member_chain) {
 			QualifiedTypeMemberAccess member_access;
 			member_access.member_name = member_record.name;
@@ -2564,7 +2587,24 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 					materialize_template_args_with_environment(
 						member_record.template_arguments);
 				if (template_args_still_dependent(concrete_member_args)) {
-					return nullptr;
+					const bool is_terminal_member =
+						&member_record == &dependent_name->member_chain.back();
+					if (!is_terminal_member ||
+						original_alias_target_info->templateArgs().empty()) {
+						defer_to_alias_materialization = true;
+						break;
+					}
+					InlineVector<TemplateTypeArg, 4> fallback_member_args =
+						materialize_template_args_from_type_info(
+							*original_alias_target_info);
+					if (template_args_still_dependent(fallback_member_args) ||
+						(!member_record.template_arguments.empty() &&
+						 fallback_member_args.size() !=
+							 member_record.template_arguments.size())) {
+						defer_to_alias_materialization = true;
+						break;
+					}
+					concrete_member_args = std::move(fallback_member_args);
 				}
 				std::vector<TemplateTypeArg> materialized_args(
 					concrete_member_args.begin(),
@@ -2577,14 +2617,16 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 			materialized_member_chain.push_back(std::move(member_access));
 		}
 
-		if (const TypeInfo* resolved_member =
-				resolveBaseClassMemberTypeChain(
-					materialized_alias_base_name,
-					std::span<const QualifiedTypeMemberAccess>(
-						materialized_member_chain.data(),
-						materialized_member_chain.size()));
-			resolved_member != nullptr) {
-			return resolved_member;
+		if (!defer_to_alias_materialization) {
+			if (const TypeInfo* resolved_member =
+					resolveBaseClassMemberTypeChain(
+						materialized_alias_base_name,
+						std::span<const QualifiedTypeMemberAccess>(
+							materialized_member_chain.data(),
+							materialized_member_chain.size()));
+				resolved_member != nullptr) {
+				return resolved_member;
+			}
 		}
 	}
 
@@ -2660,15 +2702,9 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 			concrete_member_template_args =
 				materialize_template_args_with_environment(
 					dependent_member.template_arguments);
-			if (template_args_still_dependent(concrete_member_template_args)) {
-				return nullptr;
-			}
-		} else if (original_alias_target_info->isTemplateInstantiation()) {
+		} else if (!original_alias_target_info->templateArgs().empty()) {
 			concrete_member_template_args =
 				materialize_template_args_from_type_info(*original_alias_target_info);
-			if (template_args_still_dependent(concrete_member_template_args)) {
-				return nullptr;
-			}
 		}
 		AliasTemplateMaterializationResult materialized_member_alias =
 			materializeAliasTemplateInstantiation(
@@ -2676,6 +2712,62 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				concrete_member_template_args);
 		if (materialized_member_alias.resolved_type_info != nullptr) {
 			return materialized_member_alias.resolved_type_info;
+		}
+		auto member_alias_entry =
+			gTemplateRegistry.lookup_alias_template(
+				StringTable::getStringView(materialized_member_alias_handle));
+		if (member_alias_entry.has_value() &&
+			member_alias_entry->is<TemplateAliasNode>()) {
+			const TemplateAliasNode& member_alias_node =
+				member_alias_entry->as<TemplateAliasNode>();
+			std::vector<TemplateParameterNode> combined_template_params;
+			std::vector<TemplateTypeArg> combined_template_args;
+			combined_template_params.reserve(
+				template_params.size() +
+				member_alias_node.template_parameters().size());
+			combined_template_args.reserve(
+				template_args.size() +
+				concrete_member_template_args.size());
+			combined_template_params.insert(
+				combined_template_params.end(),
+				template_params.begin(),
+				template_params.end());
+			combined_template_args.insert(
+				combined_template_args.end(),
+				template_args.begin(),
+				template_args.end());
+			const auto& member_alias_template_params =
+				member_alias_node.template_parameters();
+			const size_t member_alias_arg_count = std::min(
+				member_alias_template_params.size(),
+				concrete_member_template_args.size());
+			for (size_t i = 0; i < member_alias_arg_count; ++i) {
+				combined_template_params.push_back(
+					member_alias_template_params[i]);
+				combined_template_args.push_back(
+					concrete_member_template_args[i]);
+			}
+			ASTNode substituted_alias_target =
+				substituteTemplateParameters(
+					ASTNode(&member_alias_node.target_type_node()),
+					combined_template_params,
+					combined_template_args);
+			if (substituted_alias_target.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& substituted_alias_target_spec =
+					substituted_alias_target.as<TypeSpecifierNode>();
+				if (const TypeInfo* substituted_alias_target_info =
+						tryGetTypeInfo(substituted_alias_target_spec.type_index());
+					substituted_alias_target_info != nullptr) {
+					ResolvedAliasTypeInfo resolved_alias_target =
+						resolveAliasTypeInfo(
+							substituted_alias_target_info->registeredTypeIndex().withCategory(
+								substituted_alias_target_info->typeEnum()));
+					if (resolved_alias_target.terminal_type_info != nullptr) {
+						return resolved_alias_target.terminal_type_info;
+					}
+					return substituted_alias_target_info;
+				}
+			}
 		}
 	}
 
