@@ -981,6 +981,37 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 				findTypeByName(current_owner_type_name_);
 			break;
 		}
+		if (!dependent_name.owner_template_arguments.empty()) {
+			InlineVector<TemplateTypeArg, 4> owner_args =
+				materializeDependentRecordTemplateArgs(
+					dependent_name.owner_template_arguments,
+					depth);
+			if (!templateArgsStillDependent(owner_args)) {
+				materialized_owner =
+					parser_.resolveCanonicalInstantiatedOwnerForLookup(
+						owner_name,
+						std::span<const TemplateTypeArg>(
+							owner_args.data(),
+							owner_args.size()));
+				if (materialized_owner.instantiated_name.empty() &&
+					materialized_owner.resolved_type_info == nullptr &&
+					!owner_args.empty()) {
+					materialized_owner.instantiated_name =
+						parser_.get_instantiated_class_name(owner_name, owner_args);
+					if (!materialized_owner.instantiated_name.empty()) {
+						materialized_owner.resolved_type_info = findTypeByName(
+							StringTable::getOrInternStringHandle(
+								materialized_owner.instantiated_name));
+					}
+				}
+				if (materialized_owner.instantiated_name.empty() &&
+					materialized_owner.resolved_type_info == nullptr &&
+					dependent_name.owner_type.is_valid()) {
+					assign_owner_type(tryGetTypeInfo(dependent_name.owner_type));
+				}
+				break;
+			}
+		}
 		if (dependent_name.owner_type.is_valid()) {
 			assign_owner_type(tryGetTypeInfo(dependent_name.owner_type));
 		}

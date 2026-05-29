@@ -107,9 +107,9 @@ static void appendInstantiationContextBindingsToSubstitutionMap(
 			if (std::ranges::find(sub_map.param_order, binding_name) ==
 				sub_map.param_order.end()) {
 				sub_map.param_order.push_back(binding_name);
+				sub_map.param_map[binding_name] =
+					toTemplateTypeArg(binding.args.front());
 			}
-			sub_map.param_map[binding_name] =
-				toTemplateTypeArg(binding.args.front());
 		}
 		return;
 	}
@@ -128,9 +128,9 @@ static void appendInstantiationContextBindingsToSubstitutionMap(
 		if (std::ranges::find(sub_map.param_order, binding_name) ==
 			sub_map.param_order.end()) {
 			sub_map.param_order.push_back(binding_name);
+			sub_map.param_map[binding_name] =
+				toTemplateTypeArg(context->param_args[i]);
 		}
-		sub_map.param_map[binding_name] =
-			toTemplateTypeArg(context->param_args[i]);
 	}
 }
 
@@ -472,8 +472,8 @@ const TypeInfo* Parser::resolveDependentMemberTypeSemantic(
 		if (std::ranges::find(sub_map.param_order, binding_name) ==
 			sub_map.param_order.end()) {
 			sub_map.param_order.push_back(binding_name);
+			sub_map.param_map[binding_name] = *bound_arg;
 		}
-		sub_map.param_map[binding_name] = *bound_arg;
 	}
 	appendInstantiationContextBindingsToSubstitutionMap(
 		dependent_type_info.instantiationContext(),

@@ -2178,6 +2178,32 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 			base_template_name);
 	};
 
+	auto [qualified_base_template_handle, qualified_base_template_name, base_template_name] =
+		canonical_owner_template_names();
+	if (!owner_template_args.empty() &&
+		(can_materialize_owner_template(qualified_base_template_name) ||
+		 can_materialize_owner_template(base_template_name))) {
+		AliasTemplateMaterializationResult requested_owner;
+		if (!qualified_base_template_name.empty()) {
+			requested_owner =
+				materializeTemplateInstantiationForLookup(
+					qualified_base_template_name,
+					owner_template_args);
+		}
+		if ((requested_owner.instantiated_name.empty() &&
+			 requested_owner.resolved_type_info == nullptr) &&
+			!base_template_name.empty()) {
+			requested_owner =
+				materializeTemplateInstantiationForLookup(
+					base_template_name,
+					owner_template_args);
+		}
+		if (!requested_owner.instantiated_name.empty() ||
+			requested_owner.resolved_type_info != nullptr) {
+			return requested_owner;
+		}
+	}
+
 	auto try_materialize_exact_owner =
 		[&](std::span<const TypeInfo::TemplateArgInfo> stored_args) -> bool {
 		std::vector<TemplateTypeArg> concrete_template_args;
@@ -2194,8 +2220,6 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 			return false;
 		}
 
-		auto [qualified_base_template_handle, qualified_base_template_name, base_template_name] =
-			canonical_owner_template_names();
 		if (qualified_base_template_name.empty() && base_template_name.empty()) {
 			return false;
 		}
@@ -2258,33 +2282,6 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 		try_materialize_exact_owner(
 			canonical_owner_type_info->instantiationContext()->param_args)) {
 		return result;
-	}
-
-	auto [qualified_base_template_handle, qualified_base_template_name, base_template_name] =
-		canonical_owner_template_names();
-	if (!owner_template_args.empty() &&
-		(can_materialize_owner_template(qualified_base_template_name) ||
-		 can_materialize_owner_template(base_template_name))) {
-		AliasTemplateMaterializationResult canonical_owner;
-		if (can_materialize_owner_template(qualified_base_template_name)) {
-			canonical_owner =
-				materializeTemplateInstantiationForLookup(
-					qualified_base_template_name,
-					owner_template_args);
-		}
-		if ((canonical_owner.instantiated_name.empty() &&
-			 canonical_owner.resolved_type_info == nullptr) &&
-			can_materialize_owner_template(base_template_name) &&
-			qualified_base_template_handle != canonical_owner_type_info->baseTemplateName()) {
-			canonical_owner =
-				materializeTemplateInstantiationForLookup(
-					base_template_name,
-					owner_template_args);
-		}
-		if (!canonical_owner.instantiated_name.empty() ||
-			canonical_owner.resolved_type_info != nullptr) {
-			return canonical_owner;
-		}
 	}
 
 	return result;

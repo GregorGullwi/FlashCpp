@@ -6283,8 +6283,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									QualifiedIdentifierNode dependent_qual_id(ns_handle, final_identifier);
 									dependent_qual_id.setDependentQualifiedName(
 										makeExpressionDependentQualifiedNameRecord(
-											StringTable::getOrInternStringHandle(qualified_template_name),
-											lookupRecordedDependentOwnerType(dependent_owner_handle),
+											dependent_owner_handle,
+											materialized_owner_names_current_instantiation
+												? TypeIndex{}
+												: lookupRecordedDependentOwnerType(dependent_owner_handle),
 											materialized_owner_names_current_instantiation
 												? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
 												: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
@@ -6437,9 +6439,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										deferred_final_identifier);
 									dependent_qual_id.setDependentQualifiedName(
 										makeExpressionDependentQualifiedNameRecord(
-											StringTable::getOrInternStringHandle(template_name),
-											lookupRecordedDependentOwnerType(
-												StringTable::getOrInternStringHandle(instantiated_name)),
+											StringTable::getOrInternStringHandle(instantiated_name),
+											materialized_owner_names_current_instantiation
+												? TypeIndex{}
+												: lookupRecordedDependentOwnerType(
+													StringTable::getOrInternStringHandle(instantiated_name)),
 											materialized_owner_names_current_instantiation
 												? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
 												: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
@@ -7448,8 +7452,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							QualifiedIdentifierNode dependent_qual_id(ns_handle, final_identifier);
 							dependent_qual_id.setDependentQualifiedName(
 								makeExpressionDependentQualifiedNameRecord(
-									StringTable::getOrInternStringHandle(qualified_template_name),
-									lookupRecordedDependentOwnerType(dependent_owner_handle),
+									dependent_owner_handle,
+									materialized_owner_names_current_instantiation
+										? TypeIndex{}
+										: lookupRecordedDependentOwnerType(dependent_owner_handle),
 									materialized_owner_names_current_instantiation
 										? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
 										: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
@@ -7600,9 +7606,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								deferred_final_identifier);
 							dependent_qual_id.setDependentQualifiedName(
 								makeExpressionDependentQualifiedNameRecord(
-									StringTable::getOrInternStringHandle(identifier_token.value()),
-									lookupRecordedDependentOwnerType(
-										StringTable::getOrInternStringHandle(instantiated_class_name)),
+									StringTable::getOrInternStringHandle(instantiated_class_name),
+									materialized_owner_names_current_instantiation
+										? TypeIndex{}
+										: lookupRecordedDependentOwnerType(
+											StringTable::getOrInternStringHandle(instantiated_class_name)),
 									materialized_owner_names_current_instantiation
 										? TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation
 										: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
