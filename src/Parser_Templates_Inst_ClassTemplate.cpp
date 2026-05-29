@@ -9490,7 +9490,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeIndex resolved_index = type_spec.type_index();
 						bool resolved = false;
 						auto is_concrete_materialized_arg =
-							[this](const TemplateTypeArg& candidate_arg) {
+							[](const TemplateTypeArg& candidate_arg) {
 							if (candidate_arg.is_dependent ||
 								candidate_arg.dependent_name.isValid() ||
 								candidate_arg.dependent_expr.has_value()) {
