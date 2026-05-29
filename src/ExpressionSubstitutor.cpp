@@ -1224,6 +1224,19 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 
 	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
 			type_info.dependentQualifiedName()) {
+		auto resolveConcreteAliasChain = [&](const TypeInfo* candidate_type_info) -> const TypeInfo* {
+			const TypeInfo* current_type_info = candidate_type_info;
+			for (size_t alias_depth = 0; current_type_info != nullptr && current_type_info->isTypeAlias() && alias_depth < 32; ++alias_depth) {
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					current_type_info->registeredTypeIndex().withCategory(current_type_info->typeEnum()));
+				if (resolved_alias.terminal_type_info == nullptr ||
+					resolved_alias.terminal_type_info == current_type_info) {
+					break;
+				}
+				current_type_info = resolved_alias.terminal_type_info;
+			}
+			return current_type_info;
+		};
 		Parser::AliasTemplateMaterializationResult materialized_owner =
 			materializeDependentQualifiedRecordOwner(
 				*dependent_name,
@@ -1257,6 +1270,7 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 				parser_.resolveBaseClassMemberTypeChain(
 					materialized_owner_name,
 					member_chain);
+			resolved_type = resolveConcreteAliasChain(resolved_type);
 			FLASH_LOG(Templates, Debug, "lookupMaterializedDependentMember chain result ",
 					  resolved_type != nullptr ? StringTable::getStringView(resolved_type->name()) : std::string_view{"<null>"});
 			if (resolved_type != nullptr) {
@@ -2658,7 +2672,10 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		const TemplateTypeArg& arg = it->second;
 		FLASH_LOG(Templates, Debug, "  Found template parameter substitution: ", id.name(),
 				  " -> type=", (int)arg.typeEnum(), ", type_index=", arg.type_index, ", is_value=", arg.is_value,
-				  ", is_template_template_arg=", arg.is_template_template_arg);
+				  ", is_template_template_arg=", arg.is_template_template_arg,
+				  ", is_dependent=", arg.is_dependent,
+				  ", dependent_name='", (arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : std::string_view()), "'",
+				  ", has_typed_identity=", arg.has_typed_value_identity ? 1 : 0);
 
 		// Handle template-template parameters
 		// When W is a TTP bound to "box", we need to return an identifier for "box"

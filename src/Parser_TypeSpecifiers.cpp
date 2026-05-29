@@ -1806,6 +1806,36 @@ ParseResult Parser::parse_type_specifier() {
 						// since we already know this is an alias template.
 						AliasTemplateMaterializationResult materialized_alias =
 							materializeAliasTemplateInstantiation(type_name, *template_args);
+						if (materialized_alias.resolved_type_info != nullptr) {
+							const TypeInfo* materialized_info = materialized_alias.resolved_type_info;
+							FLASH_LOG(
+								Parser,
+								Debug,
+								"Alias materialized: name='",
+								materialized_alias.instantiated_name,
+								"', resolved='",
+								StringTable::getStringView(materialized_info->name()),
+								"', type=",
+								static_cast<int>(materialized_info->typeEnum()),
+								", type_index=",
+								materialized_info->registeredTypeIndex().index());
+							if (const TypeSpecifierNode* alias_spec = materialized_info->aliasTypeSpecifier();
+								alias_spec != nullptr) {
+								FLASH_LOG(
+									Parser,
+									Debug,
+									"Alias materialized spec: type=",
+									static_cast<int>(alias_spec->type()),
+									", type_index=",
+									alias_spec->type_index().index(),
+									", cv=",
+									static_cast<int>(alias_spec->cv_qualifier()),
+									", ref=",
+									static_cast<int>(alias_spec->reference_qualifier()),
+									", ptr=",
+									alias_spec->pointer_depth());
+							}
+						}
 						if (!materialized_alias.instantiated_name.empty()) {
 							normalizePendingSemanticRoots();
 							if (materialized_alias.resolved_type_info == nullptr) {
