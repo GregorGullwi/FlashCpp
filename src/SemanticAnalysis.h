@@ -53,7 +53,6 @@ struct ResolvedFunctionQueryResult {
 enum class DirectCallCompatibilityReason : uint8_t {
 	ReceiverMemberRecovery,
 	DependentUnqualifiedPointOfInstantiation,
-	QualifiedOrOrdinaryNameLookupMiss,
 };
 
 const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason reason);

@@ -42,8 +42,6 @@ const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason 
 			return "receiver-member recovery";
 		case DirectCallCompatibilityReason::DependentUnqualifiedPointOfInstantiation:
 			return "dependent unqualified point-of-instantiation recovery";
-		case DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss:
-			return "qualified or ordinary name lookup miss";
 	}
 	return "unknown direct-call compatibility reason";
 }
@@ -8039,7 +8037,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 	if (overloads.empty()) {
 		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-			recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss);
 			return nullptr;
 		}
 		return func_decl;
@@ -8096,10 +8093,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (!func_decl &&
 		tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
 		return func_decl;
-	}
-
-	if (!func_decl) {
-		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss);
 	}
 
 	return func_decl;
