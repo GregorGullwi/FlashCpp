@@ -50,6 +50,10 @@ attachment evidence-driven rather than shape-driven.
   recoverable: if replay identity plus substituted-signature evidence cannot
   attach the definition, instantiation now fails instead of silently
   continuing into later template instantiation paths
+- plain out-of-line member replay now also requires positive signature
+  evidence even for single-candidate same-name attachment: concrete exact
+  matches produce positive evidence, while unresolved `std::nullopt` outcomes
+  no longer attach by default
 
 ## Main remaining architectural gap
 
@@ -76,9 +80,9 @@ evidence. Tightening those is the next best cleanup target.
 2. Keep replay attachment evidence-driven.
    Continue tightening declaration replay so attachment succeeds because source
    identity and canonical substituted signatures match, not because a fallback
-   scan guessed correctly. The next likely slice is the remaining plain-member
-   and unresolved-signature acceptance paths that still tolerate shape-first
-   replay attachment.
+   scan guessed correctly. The next likely slice is the remaining
+   unresolved-signature acceptance paths that still tolerate shape-first replay
+   attachment outside the now-tightened plain-member/member-template paths.
 
 3. Extend dependent-name modeling only where it unlocks step 2.
    Richer current-instantiation and unknown-specialization handling still

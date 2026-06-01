@@ -60,6 +60,10 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - out-of-line member replay attachment now fails the instantiation when replay
   identity plus substituted-signature evidence cannot attach the definition,
   instead of logging and continuing into later template instantiation paths
+- plain out-of-line member replay no longer accepts a single same-name source
+  member on unresolved substituted-signature evidence alone; concrete
+  same-signature matches now produce positive evidence and mismatches are
+  rejected before replay attachment
 
 ## Main remaining gaps
 
@@ -86,7 +90,7 @@ The next template task is narrower and more architectural:
 
 - keep declaration replay attached by source identity plus canonical
   substituted-signature evidence
-- continue shrinking plain-member and unresolved-signature replay acceptance
+- continue shrinking the remaining unresolved-signature replay acceptance
   where name/shape still wins without enough evidence
 - expand current-instantiation and unknown-specialization handling only where
   it unblocks those replay paths

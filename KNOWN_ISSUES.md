@@ -2,7 +2,8 @@
 
 This file records confirmed bugs and quality-of-implementation (QoI) deficiencies in the
 FlashCpp C++20 compiler. Each entry includes the root cause, the affected code path, and
-(where applicable) a recommended fix.
+(where applicable) a recommended fix. Resolved issues should be removed rather than kept
+as a stale history log.
 
 ---
 
@@ -32,17 +33,3 @@ FlashCpp C++20 compiler. Each entry includes the root cause, the affected code p
 - **Impact**: Diagnostic noise only; not a correctness failure in isolation.
 
 ---
-
-## 3) OOL member-function-template overloads with dependent member-template alias parameters can fail attachment (OPEN)
-
-- **Symptom**: Two out-of-line member-function-template overloads whose
-  signatures differ only by `typename T::template AddPtr<int>::type` vs
-  `typename T::template AddPtr<long>::type` can fail replay identity attachment;
-  later calls may both select the `$ol0` materialization and link against a body
-  that was never emitted.
-- **Root cause**: The new alias-metadata path handles single-declaration body
-  replay, but same-name overload preselection still does not fully distinguish
-  member-template alias targets after owner substitution.
-- **Impact**: Keep the next replay-metadata slice focused on overloaded
-  member-template alias parameters once the non-overloaded forwarding paths stay
-  stable.
