@@ -207,7 +207,8 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 	}
 	if (sema_normalized_current_function_ &&
 		!has_exact_sema_type_slot &&
-		!isCodegenSynthesizedOverloadArg(arg)) {
+		!isCodegenSynthesizedOverloadArg(arg) &&
+		!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
 		throw InternalError(std::string(StringBuilder()
 			.append("Missing sema-owned overload-resolution argument type and exact sema slot in sema-normalized body for ")
 			.append(describeOverloadArgExprShape(arg))

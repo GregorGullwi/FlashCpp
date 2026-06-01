@@ -363,7 +363,7 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 			if (member.has_template_arguments) {
 				// Cannot instantiate a member template alias here (no template params/args
 				// available in the non-template overload). Reset the in-progress builder
-				// and return the best available type — the original dependent placeholder
+				// and return the best available type - the original dependent placeholder
 				// if one exists, so downstream template-aware callers can finish resolution.
 				qualified_member_name_builder.reset();
 				return original_type_spec.type_index().is_valid()
@@ -1110,6 +1110,81 @@ inline void appendLazyTemplateSequence(
 	}
 }
 
+inline void mergeMissingLazyOuterBindings(
+	InlineVector<TemplateParameterNode, 4>& template_params,
+	InlineVector<TemplateTypeArg, 4>& template_args,
+	const TemplateEnvironmentSnapshot& outer_snapshot) {
+	if (!hasTemplateEnvironmentSnapshotBindings(outer_snapshot)) {
+		return;
+	}
+
+	InlineVector<StringHandle, 4> outer_param_names;
+	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
+	populateTemplateEnvironmentLegacyViews(
+		outer_snapshot,
+		outer_param_names,
+		outer_arg_infos);
+
+	InlineVector<TemplateParameterNode, 4> merged_params;
+	InlineVector<TemplateTypeArg, 4> merged_args;
+	merged_params.reserve(outer_param_names.size() + template_params.size());
+	merged_args.reserve(outer_arg_infos.size() + template_args.size());
+
+	for (size_t i = 0; i < outer_param_names.size() && i < outer_arg_infos.size(); ++i) {
+		bool already_present = false;
+		for (const TemplateParameterNode& template_param : template_params) {
+			if (template_param.nameHandle() == outer_param_names[i]) {
+				already_present = true;
+				break;
+			}
+		}
+		if (already_present) {
+			continue;
+		}
+		const TemplateTypeArg outer_arg = toTemplateTypeArg(outer_arg_infos[i]);
+		Token outer_token(
+			Token::Type::Identifier,
+			StringTable::getStringView(outer_param_names[i]),
+			0,
+			0,
+			0);
+		if (outer_arg.is_value) {
+			TypeSpecifierNode nttp_type(
+				outer_arg.type_index.withCategory(outer_arg.typeEnum()),
+				TypeQualifier::None,
+				get_type_size_bits(outer_arg.typeEnum()),
+				outer_token,
+				outer_arg.cv_qualifier);
+			nttp_type.set_reference_qualifier(outer_arg.ref_qualifier);
+			for (size_t ptr_i = 0; ptr_i < outer_arg.pointer_depth; ++ptr_i) {
+				CVQualifier ptr_cv = CVQualifier::None;
+				if (ptr_i < outer_arg.pointer_cv_qualifiers.size()) {
+					ptr_cv = outer_arg.pointer_cv_qualifiers[ptr_i];
+				}
+				nttp_type.add_pointer_level(ptr_cv);
+			}
+			merged_params.push_back(
+				TemplateParameterNode(
+					outer_param_names[i],
+					nttp_type,
+					outer_token));
+		} else {
+			merged_params.push_back(TemplateParameterNode(outer_param_names[i], outer_token));
+		}
+		merged_args.push_back(outer_arg);
+	}
+
+	for (const TemplateParameterNode& template_param : template_params) {
+		merged_params.push_back(template_param);
+	}
+	for (const TemplateTypeArg& template_arg : template_args) {
+		merged_args.push_back(template_arg);
+	}
+
+	template_params = std::move(merged_params);
+	template_args = std::move(merged_args);
+}
+
 template <typename TParams, typename TArgs>
 LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	const StructMemberFunctionDecl& mem_func,
@@ -1152,6 +1227,10 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 		template_params,
 		template_args,
 		outer_parent_snapshot);
+	mergeMissingLazyOuterBindings(
+		lazy_mem_info.template_params,
+		lazy_mem_info.template_args,
+		lazy_mem_info.outer_template_environment_snapshot);
 	lazy_mem_info.access = mem_func.access;
 	lazy_mem_info.is_virtual = mem_func.is_virtual;
 	lazy_mem_info.is_pure_virtual = mem_func.is_pure_virtual;

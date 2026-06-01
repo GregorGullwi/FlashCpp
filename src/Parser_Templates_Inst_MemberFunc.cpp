@@ -2033,6 +2033,15 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const StringHandle current_owner_type_name = StringTable::getOrInternStringHandle(struct_name);
 	const OuterTemplateBinding* outer_binding =
 		gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view());
+	std::optional<OuterTemplateBinding> synthesized_outer_binding;
+	if (outer_binding == nullptr) {
+		synthesized_outer_binding = buildOuterBindingForOwner(current_owner_type_name);
+		if (synthesized_outer_binding.has_value() &&
+			(!synthesized_outer_binding->param_args.empty() ||
+			 !synthesized_outer_binding->all_args.empty())) {
+			outer_binding = &*synthesized_outer_binding;
+		}
+	}
 	InlineVector<TemplateTypeArg, 4> inline_template_args;
 	inline_template_args.reserve(template_args.size());
 	for (const TemplateTypeArg& template_arg : template_args) {
@@ -2877,6 +2886,31 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 					outer_args,
 					current_owner_type_name);
 			}
+			if (outer_binding != nullptr) {
+				InlineVector<TemplateParameterNode, 4> typed_outer_params;
+				typed_outer_params.reserve(outer_binding->param_names.size());
+				InlineVector<TemplateTypeArg, 4> outer_args;
+				outer_args.reserve(outer_binding->param_args.size());
+				for (size_t i = 0;
+					 i < outer_binding->param_names.size() &&
+					 i < outer_binding->param_args.size();
+					 ++i) {
+					Token outer_token(
+						Token::Type::Identifier,
+						StringTable::getStringView(outer_binding->param_names[i]),
+						0,
+						0,
+						0);
+					typed_outer_params.push_back(
+						TemplateParameterNode(outer_binding->param_names[i], outer_token));
+					outer_args.push_back(outer_binding->param_args[i]);
+				}
+				substituted_body = substituteTemplateParameters(
+					substituted_body,
+					typed_outer_params,
+					outer_args,
+					current_owner_type_name);
+			}
 			new_func_ref.set_definition(substituted_body);
 			finalize_function_after_definition(new_func_ref);
 		} else {
@@ -2908,12 +2942,19 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			outer_args.push_back(toTemplateTypeArg(outer_arg));
 		}
 		registerTypeParamsInScope(outer_param_names, outer_args, template_scope, true);
+		for (StringHandle outer_name : outer_param_names) {
+			param_names.push_back(outer_name);
+		}
 		FLASH_LOG(Templates, Debug, "Added ", outer_param_names.size(), " outer template param bindings for body parsing");
-	} else if (outer_binding != nullptr) {
+	}
+	if (outer_binding != nullptr) {
 		// Fallback for partial-specialization OOL member function templates: the
-		// func_decl is the original partial-spec node (no outer bindings stamped
-		// on it), but the registry carries the correct T→concrete mapping.
+		// func_decl can carry dependent outer bindings, but the registry has the
+		// concrete T->argument mapping for the instantiated owner.
 		registerOuterBindingInScope(*outer_binding, template_scope, nullptr);
+		for (StringHandle outer_name : outer_binding->param_names) {
+			param_names.push_back(outer_name);
+		}
 		FLASH_LOG(Templates, Debug, "Added outer template param bindings from registry for body parsing");
 	}
 

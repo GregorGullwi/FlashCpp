@@ -42,6 +42,10 @@ attachment evidence-driven rather than shape-driven.
   function) across alias chains via the shared
   `typeAliasPreservesSurfaceModifiers()` helper, so collapsing an alias to its
   terminal type no longer silently drops indirection
+- dependent member-template static constexpr chains are resolved through typed
+  owner/member-chain records, active template bindings, and inherited
+  member-template lookup; the hard-coded constexpr scan for matching generated
+  member-template names is gone
 
 ## Main remaining architectural gap
 
@@ -84,6 +88,8 @@ evidence. Tightening those is the next best cleanup target.
 - prefer semantic records over textual reconstruction
 - prefer replay-first source identity over instantiated-member scans
 - do not add new broad repair paths for unresolved replay attachment
+- route any remaining late materialization through typed lookup helpers rather
+  than rebuilding `owner::member` strings by hand
 - if a path cannot preserve enough metadata, document the gap explicitly and
   keep the compatibility surface narrow
 
@@ -94,4 +100,7 @@ When changing this area, always rerun:
 - the focused regression that motivated the slice
 - the three former textual-path blockers listed above when touching dependent
   alias ownership (they now exercise the semantic-only route)
+- the dependent member-template static constexpr regressions when touching
+  nested qualified-id replay, inherited member-template lookup, or static member
+  initializer emission
 - `pwsh tests/run_all_tests.ps1` before closing the slice

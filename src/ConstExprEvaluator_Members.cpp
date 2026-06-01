@@ -5326,17 +5326,172 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			return *variable_template_value;
 		}
 
+		auto resolveDependentOwnerHandle = [&]() -> StringHandle {
+			const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+				qualified_id.dependentQualifiedName();
+			if (dependent_record == nullptr) {
+				return {};
+			}
+			auto materializeOwnerMemberChainPrefix = [&](StringHandle owner_handle) -> StringHandle {
+				if (!owner_handle.isValid() ||
+					context.parser == nullptr ||
+					dependent_record->member_chain.size() <= 1) {
+					return owner_handle;
+				}
+
+				std::vector<QualifiedTypeMemberAccess> member_type_chain;
+				member_type_chain.reserve(dependent_record->member_chain.size() - 1);
+				for (size_t member_index = 0;
+					 member_index + 1 < dependent_record->member_chain.size();
+					 ++member_index) {
+					const auto& member_record =
+						dependent_record->member_chain[member_index];
+					QualifiedTypeMemberAccess member_access;
+					member_access.member_name = member_record.name;
+					if (member_record.has_template_arguments) {
+						std::vector<TemplateTypeArg> member_args;
+						member_args.reserve(member_record.template_arguments.size());
+						for (const TypeInfo::TemplateArgInfo& stored_arg :
+							 member_record.template_arguments) {
+							TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+							if (std::optional<TemplateTypeArg> rebound_arg =
+									trySubstituteDependentTemplateArgForLookup(
+										arg,
+										context,
+										nullptr,
+										0);
+								rebound_arg.has_value()) {
+								arg = std::move(*rebound_arg);
+							}
+							if (arg.is_value && arg.dependent_expr.has_value()) {
+								EvalResult evaluated_arg = evaluate(
+									*arg.dependent_expr,
+									context);
+								if (!evaluated_arg.success()) {
+									return owner_handle;
+								}
+								arg = templateTypeArgFromEvalResult(evaluated_arg);
+							}
+							if (arg.is_dependent) {
+								return owner_handle;
+							}
+							member_args.push_back(std::move(arg));
+						}
+						member_access.has_template_arguments = true;
+						member_access.template_arguments =
+							&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
+								std::move(member_args));
+					}
+					member_type_chain.push_back(std::move(member_access));
+				}
+
+				const TypeInfo* resolved_owner_type =
+					context.parser->resolveBaseClassMemberTypeChain(
+						StringTable::getStringView(owner_handle),
+						member_type_chain);
+				if (resolved_owner_type == nullptr &&
+					context.struct_info != nullptr &&
+					!context.struct_info->base_classes.empty()) {
+					for (const auto& base_class : context.struct_info->base_classes) {
+						if (!base_class.type_index.is_valid()) {
+							continue;
+						}
+						const TypeInfo* base_type_info =
+							tryGetTypeInfo(base_class.type_index);
+						if (base_type_info == nullptr ||
+							!base_type_info->name().isValid()) {
+							continue;
+						}
+						resolved_owner_type =
+							context.parser->resolveBaseClassMemberTypeChain(
+								StringTable::getStringView(base_type_info->name()),
+								member_type_chain);
+						if (resolved_owner_type != nullptr) {
+							break;
+						}
+					}
+				}
+				if (resolved_owner_type != nullptr &&
+					resolved_owner_type->name().isValid()) {
+					return resolved_owner_type->name();
+				}
+				return owner_handle;
+			};
+			auto canonicalOwnerHandleForArg = [&](const TemplateTypeArg& owner_arg) -> StringHandle {
+				if (owner_arg.is_value || owner_arg.is_dependent) {
+					return {};
+				}
+				if (context.parser != nullptr) {
+					Parser::AliasTemplateMaterializationResult canonical_owner =
+						context.parser->materializeCanonicalOwnerTypeForLookup(owner_arg);
+					if (canonical_owner.canonicalNameHandle().isValid()) {
+						return canonical_owner.canonicalNameHandle();
+					}
+					if (canonical_owner.resolved_type_info != nullptr &&
+						canonical_owner.resolved_type_info->name().isValid()) {
+						return canonical_owner.resolved_type_info->name();
+					}
+				}
+				if (owner_arg.type_index.is_valid()) {
+					if (const TypeInfo* owner_type_info = tryGetTypeInfo(owner_arg.type_index);
+						owner_type_info != nullptr && owner_type_info->name().isValid()) {
+						return owner_type_info->name();
+					}
+				}
+				return {};
+			};
+
+			switch (dependent_record->owner_kind) {
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
+				if (dependent_record->owner_type.is_valid()) {
+					if (const TypeInfo* owner_type_info =
+							tryGetTypeInfo(dependent_record->owner_type);
+						owner_type_info != nullptr && owner_type_info->name().isValid()) {
+						return materializeOwnerMemberChainPrefix(owner_type_info->name());
+					}
+				}
+				if (dependent_record->owner_name.isValid()) {
+					return materializeOwnerMemberChainPrefix(dependent_record->owner_name);
+				}
+				if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
+					return materializeOwnerMemberChainPrefix(context.struct_info->name);
+				}
+				break;
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter:
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation:
+			case TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization:
+				if (dependent_record->owner_name.isValid()) {
+					if (std::optional<TemplateTypeArg> bound_owner =
+							resolveContextBinding(
+								dependent_record->owner_name,
+								context.template_environment);
+						bound_owner.has_value()) {
+						if (StringHandle owner_handle = canonicalOwnerHandleForArg(*bound_owner);
+							owner_handle.isValid()) {
+							return materializeOwnerMemberChainPrefix(owner_handle);
+						}
+					}
+				}
+				break;
+			}
+			return {};
+		};
+
 		// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
 		// This handles cases like is_pointer_impl<int*>::value where value is a static member
 		// Also handles type aliases like `using my_true = integral_constant<bool, true>; my_true::value`
 		NamespaceHandle ns_handle = qualified_id.namespace_handle();
 		StringHandle struct_handle;
+		if (StringHandle dependent_owner_handle = resolveDependentOwnerHandle();
+			dependent_owner_handle.isValid()) {
+			struct_handle = dependent_owner_handle;
+		}
 		const bool qualifier_is_known_namespace =
 			ns_handle.isValid() &&
 			!ns_handle.isGlobal() &&
 			context.symbols->has_namespace_symbols(ns_handle);
 
-		if (!ns_handle.isGlobal()) {
+		if (!struct_handle.isValid() && !ns_handle.isGlobal()) {
 			struct_handle = gNamespaceRegistry.getQualifiedNameHandle(ns_handle);
 			if (!struct_handle.isValid()) {
 				struct_handle = StringTable::getOrInternStringHandle(gNamespaceRegistry.getName(ns_handle));
@@ -5355,6 +5510,134 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			}
 		}
 
+		if (struct_handle.isValid() && context.parser != nullptr) {
+			std::string_view qualified_owner_name = StringTable::getStringView(struct_handle);
+			size_t last_scope = qualified_owner_name.rfind("::");
+			if (last_scope != std::string_view::npos &&
+				last_scope + 2 < qualified_owner_name.size()) {
+				StringHandle outer_owner_handle = StringTable::getOrInternStringHandle(
+					qualified_owner_name.substr(0, last_scope));
+				StringHandle nested_member_handle = StringTable::getOrInternStringHandle(
+					qualified_owner_name.substr(last_scope + 2));
+				if (const TypeInfo* inherited_alias_owner =
+						context.parser->lookup_inherited_type_alias(
+							outer_owner_handle,
+							nested_member_handle,
+							0);
+					inherited_alias_owner != nullptr &&
+					inherited_alias_owner->name().isValid()) {
+					ResolvedAliasTypeInfo resolved_owner_alias = resolveAliasTypeInfo(
+						inherited_alias_owner->registeredTypeIndex().withCategory(
+							inherited_alias_owner->typeEnum()));
+					if (resolved_owner_alias.terminal_type_info != nullptr &&
+						resolved_owner_alias.terminal_type_info->name().isValid()) {
+						struct_handle = resolved_owner_alias.terminal_type_info->name();
+					} else {
+						struct_handle = inherited_alias_owner->name();
+					}
+				}
+			}
+
+			std::string_view chain_full_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+			size_t first_colon = chain_full_name.find("::");
+			if (first_colon != std::string_view::npos &&
+				first_colon + 2 < chain_full_name.size()) {
+				std::string_view base_name = chain_full_name.substr(0, first_colon);
+				std::string_view member_chain = chain_full_name.substr(first_colon + 2);
+				std::vector<QualifiedTypeMemberAccess> parsed_member_chain =
+					context.parser->buildQualifiedTypeMemberChain(member_chain);
+				if (!parsed_member_chain.empty()) {
+					std::vector<std::vector<TemplateTypeArg>> member_template_arg_storage(
+						parsed_member_chain.size());
+					if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+							qualified_id.dependentQualifiedName();
+						dependent_record != nullptr &&
+						dependent_record->member_chain.size() >= parsed_member_chain.size()) {
+						for (size_t i = 0; i < parsed_member_chain.size(); ++i) {
+							const auto& dep_member = dependent_record->member_chain[i];
+							if (dep_member.name != parsed_member_chain[i].member_name) {
+								break;
+							}
+							if (!dep_member.has_template_arguments) {
+								continue;
+							}
+							auto& args_storage = member_template_arg_storage[i];
+							args_storage.reserve(dep_member.template_arguments.size());
+							for (const TypeInfo::TemplateArgInfo& stored_arg : dep_member.template_arguments) {
+								TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+								if (std::optional<TemplateTypeArg> rebound_arg =
+										trySubstituteDependentTemplateArgForLookup(
+											arg,
+											context,
+											nullptr,
+											0);
+									rebound_arg.has_value()) {
+									arg = std::move(*rebound_arg);
+								}
+								if (arg.is_value && arg.dependent_expr.has_value()) {
+									EvalResult evaluated_arg = evaluate(*arg.dependent_expr, context);
+									if (!evaluated_arg.success()) {
+										args_storage.clear();
+										break;
+									}
+									arg = templateTypeArgFromEvalResult(evaluated_arg);
+								}
+								if (arg.is_dependent) {
+									args_storage.clear();
+									break;
+								}
+								args_storage.push_back(std::move(arg));
+							}
+							if (!args_storage.empty()) {
+								parsed_member_chain[i].has_template_arguments = true;
+								parsed_member_chain[i].template_arguments = &args_storage;
+							}
+						}
+					}
+					if (const TypeInfo* resolved_chain_owner =
+							context.parser->resolveBaseClassMemberTypeChain(
+								base_name,
+								parsed_member_chain);
+						resolved_chain_owner != nullptr &&
+						resolved_chain_owner->name().isValid()) {
+						struct_handle = resolved_chain_owner->name();
+					} else if (context.struct_info != nullptr) {
+						if (context.struct_info->name.isValid()) {
+							if (const TypeInfo* resolved_from_current =
+									context.parser->resolveBaseClassMemberTypeChain(
+										StringTable::getStringView(context.struct_info->name),
+										parsed_member_chain);
+								resolved_from_current != nullptr &&
+								resolved_from_current->name().isValid()) {
+								struct_handle = resolved_from_current->name();
+							}
+						}
+						if (struct_handle == StringTable::getOrInternStringHandle(chain_full_name) &&
+							!context.struct_info->base_classes.empty()) {
+							for (const auto& base_class : context.struct_info->base_classes) {
+								if (!base_class.type_index.is_valid()) {
+									continue;
+								}
+								const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
+								if (base_type_info == nullptr || !base_type_info->name().isValid()) {
+									continue;
+								}
+								if (const TypeInfo* resolved_from_base =
+										context.parser->resolveBaseClassMemberTypeChain(
+											StringTable::getStringView(base_type_info->name()),
+											parsed_member_chain);
+									resolved_from_base != nullptr &&
+									resolved_from_base->name().isValid()) {
+									struct_handle = resolved_from_base->name();
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
 		if (struct_handle.isValid()) {
 			if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 				FLASH_LOG(ConstExpr, Debug, "Looking up struct '", StringTable::getStringView(struct_handle), "' for member '", qualified_id.name(), "'");
@@ -5362,6 +5645,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 			// Look up the struct in getTypesByNameMap()
 			auto struct_type_it = getTypesByNameMap().find(struct_handle);
+			const TypeInfo* chain_resolved_owner_type = nullptr;
 
 			// If not found with the full qualified name (e.g., "std::is_integral$hash"),
 			// try without the namespace prefix (e.g., "is_integral$hash") since template
@@ -5377,6 +5661,47 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						FLASH_LOG(ConstExpr, Debug, "Found type using short name '", short_name, "'");
 					}
 				}
+				if (struct_type_it == getTypesByNameMap().end() &&
+					context.parser != nullptr) {
+					std::string_view chain_full_name = StringTable::getStringView(struct_handle);
+					size_t first_colon = chain_full_name.find("::");
+					if (first_colon != std::string_view::npos &&
+						first_colon + 2 < chain_full_name.size()) {
+						std::string_view base_name = chain_full_name.substr(0, first_colon);
+						std::string_view member_chain = chain_full_name.substr(first_colon + 2);
+						std::vector<QualifiedTypeMemberAccess> parsed_member_chain =
+							context.parser->buildQualifiedTypeMemberChain(member_chain);
+						if (const TypeInfo* resolved_owner =
+								context.parser->resolveBaseClassMemberTypeChain(
+									base_name,
+									parsed_member_chain);
+							resolved_owner != nullptr) {
+							chain_resolved_owner_type = resolved_owner;
+							if (resolved_owner->name().isValid()) {
+								struct_handle = resolved_owner->name();
+								auto rebound_it = getTypesByNameMap().find(struct_handle);
+								if (rebound_it != getTypesByNameMap().end()) {
+									struct_type_it = rebound_it;
+								}
+							}
+						} else if (context.struct_info != nullptr &&
+								   context.struct_info->name.isValid()) {
+							if (const TypeInfo* resolved_from_current =
+									context.parser->resolveBaseClassMemberTypeChain(
+										StringTable::getStringView(context.struct_info->name),
+										parsed_member_chain);
+								resolved_from_current != nullptr &&
+								resolved_from_current->name().isValid()) {
+								chain_resolved_owner_type = resolved_from_current;
+								struct_handle = resolved_from_current->name();
+								auto rebound_it = getTypesByNameMap().find(struct_handle);
+								if (rebound_it != getTypesByNameMap().end()) {
+									struct_type_it = rebound_it;
+								}
+							}
+						}
+					}
+				}
 			}
 
 			// If not found directly, this might be a type alias
@@ -5384,8 +5709,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			const StructTypeInfo* struct_info = nullptr;
 			const TypeInfo* resolved_type_info = nullptr;
 
-			if (struct_type_it != getTypesByNameMap().end()) {
-				const TypeInfo* type_info = struct_type_it->second;
+			if (struct_type_it != getTypesByNameMap().end() ||
+				chain_resolved_owner_type != nullptr) {
+				const TypeInfo* type_info =
+					chain_resolved_owner_type != nullptr
+						? chain_resolved_owner_type
+						: struct_type_it->second;
 
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Found type_info, isStruct=", type_info->isStruct(),
@@ -5436,6 +5765,25 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						if (nested_base_template_name.empty()) {
 							return concrete_arg;
 						}
+						StringHandle nested_qualified_template_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								concrete_type_info->sourceNamespace(),
+								concrete_type_info->baseTemplateName());
+						std::string_view nested_template_name_for_materialization =
+							nested_base_template_name;
+						if (nested_qualified_template_name.isValid()) {
+							TemplateNameLookupResult nested_qualified_lookup =
+								gTemplateRegistry.lookupTemplateName(
+									parser.makeTemplateNameLookupRequest(
+										nested_qualified_template_name,
+										TemplateNameLookupKind::Qualified,
+										false));
+							if (nested_qualified_lookup.hasClassTemplate()) {
+								nested_template_name_for_materialization =
+									StringTable::getStringView(
+										nested_qualified_template_name);
+							}
+						}
 
 						std::vector<TemplateTypeArg> nested_concrete_args;
 						nested_concrete_args.reserve(concrete_type_info->templateArgs().size());
@@ -5450,7 +5798,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 						Parser::AliasTemplateMaterializationResult nested_materialized_type =
 							parser.materializeTemplateInstantiationForLookup(
-								nested_base_template_name,
+								nested_template_name_for_materialization,
 								nested_concrete_args);
 						const TypeInfo* nested_resolved_info =
 							nested_materialized_type.resolved_type_info;
@@ -5476,6 +5824,25 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					std::string_view base_template_name =
 						StringTable::getStringView(type_info->baseTemplateName());
 					if (!base_template_name.empty()) {
+						StringHandle qualified_template_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								type_info->sourceNamespace(),
+								type_info->baseTemplateName());
+						std::string_view template_name_for_materialization =
+							base_template_name;
+						if (qualified_template_name.isValid()) {
+							TemplateNameLookupResult qualified_lookup =
+								gTemplateRegistry.lookupTemplateName(
+									parser.makeTemplateNameLookupRequest(
+										qualified_template_name,
+										TemplateNameLookupKind::Qualified,
+										false));
+							if (qualified_lookup.hasClassTemplate()) {
+								template_name_for_materialization =
+									StringTable::getStringView(
+										qualified_template_name);
+							}
+						}
 						std::vector<TemplateTypeArg> concrete_args;
 						concrete_args.reserve(type_info->templateArgs().size());
 						for (const auto& arg_info : type_info->templateArgs()) {
@@ -5489,7 +5856,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 						Parser::AliasTemplateMaterializationResult materialized_type =
 							parser.materializeTemplateInstantiationForLookup(
-								base_template_name,
+								template_name_for_materialization,
 								concrete_args);
 						if (materialized_type.resolved_type_info != nullptr) {
 							type_info = materialized_type.resolved_type_info;
@@ -5516,8 +5883,24 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 						break;
 					}
-					// Follow the type_index_ to find the underlying type
-					const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+					// Follow alias chains first, then fall back to raw type_index_.
+					const TypeInfo* underlying = nullptr;
+					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+						type_info->registeredTypeIndex().withCategory(
+							type_info->typeEnum()));
+					if (resolved_alias.terminal_type_info != nullptr &&
+						resolved_alias.terminal_type_info != type_info) {
+						underlying = resolved_alias.terminal_type_info;
+					} else if (resolved_alias.type_index.is_valid()) {
+						const TypeInfo* alias_type = tryGetTypeInfo(resolved_alias.type_index);
+						if (alias_type != nullptr &&
+							alias_type != type_info) {
+							underlying = alias_type;
+						}
+					}
+					if (underlying == nullptr) {
+						underlying = tryGetTypeInfo(type_info->type_index_);
+					}
 					if (!underlying)
 						break;
 					if (underlying == type_info)
@@ -5572,6 +5955,129 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 				auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 				TypeIndex pre_materialization_type_index = resolved_type_info != nullptr ? resolved_type_info->type_index_ : TypeIndex{};
+				if (static_member != nullptr &&
+					owner_struct == struct_info &&
+					context.parser != nullptr) {
+					std::vector<QualifiedTypeMemberAccess> parsed_member_chain;
+					std::vector<std::vector<TemplateTypeArg>> member_template_arg_storage;
+					StringHandle dependent_owner_handle;
+					bool has_member_chain = false;
+					if (const auto* dependent_record = qualified_id.dependentQualifiedName();
+						dependent_record != nullptr &&
+						!dependent_record->member_chain.empty()) {
+						dependent_owner_handle = dependent_record->owner_name;
+						if (dependent_record->member_chain.size() > 1) {
+							parsed_member_chain.reserve(dependent_record->member_chain.size() - 1);
+							member_template_arg_storage.resize(dependent_record->member_chain.size() - 1);
+							for (size_t member_index = 0;
+								 member_index + 1 < dependent_record->member_chain.size();
+								 ++member_index) {
+								const auto& member_record = dependent_record->member_chain[member_index];
+								QualifiedTypeMemberAccess member_access;
+								member_access.member_name = member_record.name;
+								member_access.has_template_arguments = false;
+								if (member_record.has_template_arguments) {
+									auto& template_arg_storage = member_template_arg_storage[member_index];
+									template_arg_storage.reserve(member_record.template_arguments.size());
+									for (const TypeInfo::TemplateArgInfo& stored_arg : member_record.template_arguments) {
+										TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+										if (std::optional<TemplateTypeArg> rebound_arg =
+												trySubstituteDependentTemplateArgForLookup(
+													arg,
+													context,
+													nullptr,
+													0);
+											rebound_arg.has_value()) {
+											arg = std::move(*rebound_arg);
+										}
+										if (arg.is_value && arg.dependent_expr.has_value()) {
+											EvalResult evaluated_arg = evaluate(*arg.dependent_expr, context);
+											if (!evaluated_arg.success()) {
+												template_arg_storage.clear();
+												break;
+											}
+											arg = templateTypeArgFromEvalResult(evaluated_arg);
+										}
+										if (arg.is_dependent) {
+											template_arg_storage.clear();
+											break;
+										}
+										template_arg_storage.push_back(std::move(arg));
+									}
+									if (!template_arg_storage.empty()) {
+										member_access.has_template_arguments = true;
+										member_access.template_arguments = &template_arg_storage;
+									}
+								}
+								parsed_member_chain.push_back(member_access);
+							}
+							has_member_chain = !parsed_member_chain.empty();
+						}
+					}
+					if (!has_member_chain) {
+						std::string_view ns_full_name =
+							gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+						size_t first_colon = ns_full_name.find("::");
+						if (first_colon != std::string_view::npos &&
+							first_colon + 2 < ns_full_name.size()) {
+							std::string_view member_chain = ns_full_name.substr(first_colon + 2);
+							parsed_member_chain = context.parser->buildQualifiedTypeMemberChain(member_chain);
+							has_member_chain = !parsed_member_chain.empty();
+						}
+					}
+					if (has_member_chain) {
+						const StructStaticMember* previous_static_member = static_member;
+						auto try_resolve_owner = [&](StringHandle owner_handle) {
+							if (!owner_handle.isValid()) {
+								return;
+							}
+							const TypeInfo* resolved_owner =
+								context.parser->resolveBaseClassMemberTypeChain(
+									StringTable::getStringView(owner_handle),
+									parsed_member_chain);
+							if (resolved_owner == nullptr ||
+								resolved_owner->getStructInfo() == nullptr ||
+								!resolved_owner->name().isValid() ||
+								resolved_owner->name() == struct_handle) {
+								return;
+							}
+							auto [resolved_member, resolved_member_owner] =
+								resolved_owner->getStructInfo()->findStaticMemberRecursive(member_handle);
+							if (resolved_member != nullptr) {
+								static_member = resolved_member;
+								owner_struct = resolved_member_owner;
+								struct_info = resolved_owner->getStructInfo();
+								resolved_type_info = resolved_owner;
+								struct_handle = resolved_owner->name();
+							}
+						};
+						if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
+							try_resolve_owner(context.struct_info->name);
+						}
+						try_resolve_owner(struct_handle);
+						if (dependent_owner_handle.isValid()) {
+							try_resolve_owner(dependent_owner_handle);
+						}
+						if (context.struct_info != nullptr) {
+							for (const auto& base_class : context.struct_info->base_classes) {
+								if (!base_class.type_index.is_valid()) {
+									continue;
+								}
+								if (const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
+									base_type_info != nullptr &&
+									base_type_info->name().isValid()) {
+									try_resolve_owner(base_type_info->name());
+								}
+							}
+							if (struct_info == context.struct_info &&
+								static_member == previous_static_member &&
+								owner_struct == struct_info) {
+								static_member = nullptr;
+								owner_struct = nullptr;
+							}
+						}
+					}
+				}
 
 				// If member not found and there are base classes without struct info (ShapeOnly
 				// instantiations), force-materialize them and retry the lookup.
@@ -5901,6 +6407,123 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						if (auto exact_value = evaluate_specialization_static_member(member_handle)) {
 							FLASH_LOG(ConstExpr, Debug, "Evaluated static member from specialization AST");
 							return *exact_value;
+						}
+					}
+
+					if (gEvaluatingStaticMembers.contains(static_member) &&
+						context.parser != nullptr) {
+						std::vector<QualifiedTypeMemberAccess> owner_chain;
+						std::vector<std::vector<TemplateTypeArg>> owner_chain_template_arg_storage;
+						StringHandle dependent_owner_handle;
+						if (const auto* dependent_record = qualified_id.dependentQualifiedName();
+							dependent_record != nullptr &&
+							dependent_record->member_chain.size() > 1) {
+							dependent_owner_handle = dependent_record->owner_name;
+							owner_chain.reserve(dependent_record->member_chain.size() - 1);
+							owner_chain_template_arg_storage.resize(dependent_record->member_chain.size() - 1);
+							for (size_t member_index = 0;
+								 member_index + 1 < dependent_record->member_chain.size();
+								 ++member_index) {
+								const auto& member_record = dependent_record->member_chain[member_index];
+								QualifiedTypeMemberAccess member_access;
+								member_access.member_name = member_record.name;
+								member_access.has_template_arguments = false;
+								if (member_record.has_template_arguments) {
+									auto& arg_storage = owner_chain_template_arg_storage[member_index];
+									arg_storage.reserve(member_record.template_arguments.size());
+									for (const TypeInfo::TemplateArgInfo& stored_arg : member_record.template_arguments) {
+										TemplateTypeArg arg = toTemplateTypeArg(stored_arg);
+										if (std::optional<TemplateTypeArg> rebound_arg =
+												trySubstituteDependentTemplateArgForLookup(
+													arg,
+													context,
+													nullptr,
+													0);
+											rebound_arg.has_value()) {
+											arg = std::move(*rebound_arg);
+										}
+										if (arg.is_value && arg.dependent_expr.has_value()) {
+											EvalResult evaluated_arg = evaluate(*arg.dependent_expr, context);
+											if (!evaluated_arg.success()) {
+												arg_storage.clear();
+												break;
+											}
+											arg = templateTypeArgFromEvalResult(evaluated_arg);
+										}
+										if (arg.is_dependent) {
+											arg_storage.clear();
+											break;
+										}
+										arg_storage.push_back(std::move(arg));
+									}
+									if (!arg_storage.empty()) {
+										member_access.has_template_arguments = true;
+										member_access.template_arguments = &arg_storage;
+									}
+								}
+								owner_chain.push_back(std::move(member_access));
+							}
+						}
+						if (owner_chain.empty()) {
+							std::string_view ns_full_name =
+								gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
+							size_t first_colon = ns_full_name.find("::");
+							if (first_colon != std::string_view::npos &&
+								first_colon + 2 < ns_full_name.size()) {
+								std::string_view member_chain = ns_full_name.substr(first_colon + 2);
+								owner_chain = context.parser->buildQualifiedTypeMemberChain(member_chain);
+							}
+						}
+						if (!owner_chain.empty()) {
+							auto try_resolve_alternate_owner =
+								[&](StringHandle owner_handle) -> std::optional<EvalResult> {
+								if (!owner_handle.isValid()) {
+									return std::nullopt;
+								}
+								const TypeInfo* resolved_owner =
+									context.parser->resolveBaseClassMemberTypeChain(
+										StringTable::getStringView(owner_handle),
+										owner_chain);
+								if (resolved_owner == nullptr ||
+									resolved_owner->getStructInfo() == nullptr) {
+									return std::nullopt;
+								}
+								auto [alternate_member, alternate_owner] =
+									resolved_owner->getStructInfo()->findStaticMemberRecursive(member_handle);
+								if (alternate_member == nullptr ||
+									alternate_member == static_member ||
+									alternate_owner == nullptr) {
+									return std::nullopt;
+								}
+								return tryReadStaticMemberConstant(*alternate_member, context);
+							};
+							InlineVector<StringHandle, 6> owner_candidates;
+							if (context.struct_info != nullptr && context.struct_info->name.isValid()) {
+								owner_candidates.push_back(context.struct_info->name);
+								for (const auto& base_class : context.struct_info->base_classes) {
+									if (!base_class.type_index.is_valid()) {
+										continue;
+									}
+									if (const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
+										base_type_info != nullptr && base_type_info->name().isValid()) {
+										owner_candidates.push_back(base_type_info->name());
+									}
+								}
+							}
+							owner_candidates.push_back(struct_handle);
+							if (dependent_owner_handle.isValid()) {
+								owner_candidates.push_back(dependent_owner_handle);
+							}
+							for (StringHandle candidate_handle : owner_candidates) {
+								if (!candidate_handle.isValid()) {
+									continue;
+								}
+								if (std::optional<EvalResult> alternate_result =
+										try_resolve_alternate_owner(candidate_handle);
+									alternate_result.has_value()) {
+									return *alternate_result;
+								}
+							}
 						}
 					}
 

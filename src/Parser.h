@@ -2538,6 +2538,11 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::span<const TemplateTypeArg> template_args);
 	std::optional<TemplateTypeArg> evaluateDependentNTTPExpression(
 		const ASTNode& dependent_expr,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		StringHandle substitution_owner);
+	std::optional<TemplateTypeArg> evaluateDependentNTTPExpression(
+		const ASTNode& dependent_expr,
 		std::span<const ASTNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
 	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, std::span<const TypeSpecifierNode> arg_types);  // NEW: Instantiate member function template
@@ -3067,6 +3072,15 @@ public:	// Public methods for template instantiation
 		}
 		return std::nullopt;
 	}
+	std::vector<QualifiedTypeMemberAccess> buildQualifiedTypeMemberChainForLookup(
+		std::string_view member_chain) const {
+		return buildQualifiedTypeMemberChain(member_chain);
+	}
+	const TypeInfo* resolveBaseClassMemberTypeChainForLookup(
+		std::string_view base_class_name,
+		std::span<const QualifiedTypeMemberAccess> member_type_chain) {
+		return resolveBaseClassMemberTypeChain(base_class_name, member_type_chain);
+	}
 	std::optional<ASTNode> instantiateClassTemplateForSignatureReplay(
 		std::string_view template_name,
 		std::span<const TemplateTypeArg> template_args,
@@ -3369,7 +3383,8 @@ private:	 // Resume private methods
 	std::optional<ParseResult> try_parse_member_template_function_call(
 		std::string_view instantiated_class_name,
 		std::string_view member_name,
-		const Token& member_token);
+		const Token& member_token,
+		std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args);
 
 	// Utility functions
 	bool consume_punctuator(const std::string_view& value);

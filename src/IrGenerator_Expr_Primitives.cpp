@@ -1723,6 +1723,12 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						if (constexpr_result.effectiveIrType() != IrType::Void) {
 							return constexpr_result;
 						}
+						ConstExpr::EvalResult qualified_eval =
+							ConstExpr::Evaluator::evaluate(ASTNode(&qualifiedIdNode), eval_ctx);
+						constexpr_result = makeScalarConstexprEvalResult(qualified_eval);
+						if (constexpr_result.effectiveIrType() != IrType::Void) {
+							return constexpr_result;
+						}
 					}
 
 						// Check if the owner struct is an incomplete template instantiation

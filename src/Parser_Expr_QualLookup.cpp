@@ -198,58 +198,36 @@ ParseResult Parser::parse_qualified_identifier_after_template(const Token& templ
 std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::string_view instantiated_class_name,
 	std::string_view member_name,
-	const Token& member_token) {
+	const Token& member_token,
+	std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args) {
 
 	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call called for: ", instantiated_class_name, "::", member_name);
 
 	// Check for member template arguments: Template<T>::member<U>
-	std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
-	if (peek() == "<"_tok) {
-		// Before parsing < as template arguments, check if the member is actually a template
-		// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
-
-		const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-		const StringHandle owner_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
-		TemplateNameLookupResult member_lookup_result = gTemplateRegistry.lookupTemplateName(
-			buildMemberFunctionTemplateLookupRequest(
-				owner_name_handle,
-				member_name_handle,
-				false));
-		TemplateNameLookupResult unqualified_lookup_result = gTemplateRegistry.lookupTemplateName(
-			buildTemplateNameLookupRequest(
-				member_name_handle,
-				TemplateNameLookupKind::Ordinary,
-				false));
-		StringBuilder qualified_member_builder;
-		qualified_member_builder
-			.append(instantiated_class_name)
-			.append("::")
-			.append(member_name);
-		TemplateNameLookupResult qualified_lookup_result = gTemplateRegistry.lookupTemplateName(
-			buildTemplateNameLookupRequest(
-				StringTable::getOrInternStringHandle(qualified_member_builder.commit()),
-				TemplateNameLookupKind::Qualified,
-				false));
-
-		const bool is_known_template =
-			member_lookup_result.hasFunctionTemplate() ||
-			!unqualified_lookup_result.empty() ||
-			!qualified_lookup_result.empty();
-
-		if (is_known_template) {
-			member_template_args = parse_explicit_template_arguments();
-			// If parsing failed, it might be a less-than operator, but that's rare for member access
+	std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args =
+		std::move(pre_parsed_member_template_args);
+	SaveHandle member_template_args_start = 0;
+	bool parsed_member_template_args = member_template_args.has_value();
+	bool tentatively_parsed_member_template_args = false;
+	if (!parsed_member_template_args &&
+		(peek() == "<"_tok || current_token_.value() == "<")) {
+		// Parse tentatively and only keep the parse if this is a call form.
+		member_template_args_start = save_token_position();
+		last_failed_template_arg_parse_handle_ = SIZE_MAX;
+		member_template_args = parse_explicit_template_arguments();
+		if (member_template_args.has_value()) {
+			parsed_member_template_args = true;
+			tentatively_parsed_member_template_args = true;
 		} else {
-			// Member is NOT a known template - don't parse < as template arguments
-			// This handles patterns like integral_constant<bool, R1::num < R2::num>
-			FLASH_LOG_FORMAT(Parser, Debug,
-							 "Member '{}' is not a known template - not parsing '<' as template arguments",
-							 member_name);
+			restore_token_position(member_template_args_start);
 		}
 	}
 
 	// Check for function call: Template<T>::member() or Template<T>::member<U>()
-	if (peek() != "("_tok) {
+	if (peek() != "("_tok && current_token_.value() != "(") {
+		if (tentatively_parsed_member_template_args) {
+			restore_token_position(member_template_args_start);
+		}
 		return std::nullopt;	 // Not a function call
 	}
 
@@ -598,6 +576,26 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 
 	// If this is a type alias (no struct_info_), resolve the underlying type
 	if (!struct_type_info->struct_info_) {
+		if (struct_type_info->isTemplateInstantiation()) {
+			AliasTemplateMaterializationResult canonical_owner =
+				materializeCanonicalOwnerTypeForLookup(*struct_type_info, {});
+			if (canonical_owner.resolved_type_info != nullptr &&
+				canonical_owner.resolved_type_info->name().isValid() &&
+				canonical_owner.resolved_type_info != struct_type_info) {
+				StringHandle canonical_owner_name = canonical_owner.resolved_type_info->name();
+				if (canonical_owner_name != struct_name) {
+					FLASH_LOG_FORMAT(
+						Templates,
+						Debug,
+						"Canonicalized placeholder owner '{}' -> '{}' while resolving '{}'",
+						StringTable::getStringView(struct_name),
+						StringTable::getStringView(canonical_owner_name),
+						StringTable::getStringView(member_name));
+					return lookup_inherited_type_alias(canonical_owner_name, member_name, depth + 1);
+				}
+			}
+		}
+
 		if (struct_type_info->isTemplateInstantiation()) {
 			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				struct_type_info->sourceNamespace(),
@@ -1566,8 +1564,25 @@ TypeIndex Parser::substitute_template_parameter(
 		current_type = resolved_info.typeEnum();
 	};
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
+		StringHandle placeholder_owner_handle;
+		if (placeholder_info.name().isValid()) {
+			std::string_view placeholder_name = StringTable::getStringView(placeholder_info.name());
+			if (const size_t owner_sep = placeholder_name.rfind("::");
+				owner_sep != std::string_view::npos && owner_sep > 0) {
+				placeholder_owner_handle = StringTable::getOrInternStringHandle(
+					placeholder_name.substr(0, owner_sep));
+			}
+		}
+		if (!placeholder_owner_handle.isValid()) {
+			if (!struct_parsing_context_stack_.empty()) {
+				placeholder_owner_handle = StringTable::getOrInternStringHandle(
+					struct_parsing_context_stack_.back().struct_name);
+			} else if (!member_function_context_stack_.empty()) {
+				placeholder_owner_handle = member_function_context_stack_.back().struct_name;
+			}
+		}
 		return materializeTemplateArgs(placeholder_info, template_params, template_args,
-			[this](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
+			[this, placeholder_owner_handle](const ASTNode& expr, std::span<const ASTNode> params, std::span<const TemplateTypeArg> args) {
 				InlineVector<TemplateParameterNode, 4> typed_params;
 				typed_params.reserve(params.size());
 				for (const ASTNode& param_node : params) {
@@ -1579,7 +1594,8 @@ TypeIndex Parser::substitute_template_parameter(
 				return this->evaluateDependentNTTPExpression(
 					expr,
 					std::span<const TemplateParameterNode>(typed_params.data(), typed_params.size()),
-					args);
+					args,
+					placeholder_owner_handle);
 			});
 	};
 	auto rebindConcretePlaceholderArgsByTypeName = [&](std::vector<TemplateTypeArg>& concrete_args) {

@@ -591,6 +591,189 @@ void AstToIr::generateStaticMemberDeclarations() {
 		if (!eval_result.success()) {
 			if (struct_info && expr_node.is<ExpressionNode>()) {
 				const auto& expr = expr_node.as<ExpressionNode>();
+				if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr);
+					qualified_id != nullptr &&
+					struct_info->name.isValid()) {
+					auto build_textual_member_chain = [&](std::string_view original_ns) {
+						std::optional<std::vector<QualifiedTypeMemberAccess>> member_chain;
+						size_t first_colon = original_ns.find("::");
+						if (first_colon == std::string_view::npos ||
+							first_colon + 2 >= original_ns.size()) {
+							return member_chain;
+						}
+						member_chain = parser_.buildQualifiedTypeMemberChainForLookup(
+							original_ns.substr(first_colon + 2));
+						if (member_chain->empty()) {
+							member_chain.reset();
+						}
+						return member_chain;
+					};
+					auto build_record_member_chain = [&](const QualifiedIdentifierNode& source_qid) {
+						std::optional<std::vector<QualifiedTypeMemberAccess>> member_chain;
+						const TypeInfo::DependentQualifiedNameRecord* dependent_record =
+							source_qid.dependentQualifiedName();
+						if (dependent_record == nullptr ||
+							dependent_record->member_chain.empty()) {
+							return member_chain;
+						}
+
+						size_t member_count = dependent_record->member_chain.size();
+						if (dependent_record->member_chain.back().name == source_qid.nameHandle()) {
+							--member_count;
+						}
+						if (member_count == 0) {
+							return member_chain;
+						}
+
+						member_chain.emplace();
+						member_chain->reserve(member_count);
+						for (size_t member_index = 0; member_index < member_count; ++member_index) {
+							const auto& member_record = dependent_record->member_chain[member_index];
+							QualifiedTypeMemberAccess member_access;
+							member_access.member_name = member_record.name;
+							if (member_record.has_template_arguments) {
+								std::vector<TemplateTypeArg> member_args;
+								member_args.reserve(member_record.template_arguments.size());
+								for (const TypeInfo::TemplateArgInfo& stored_arg :
+									 member_record.template_arguments) {
+									TemplateTypeArg member_arg = toTemplateTypeArg(stored_arg);
+									if (member_arg.is_dependent || member_arg.is_pack) {
+										return std::optional<std::vector<QualifiedTypeMemberAccess>>{};
+									}
+									member_args.push_back(std::move(member_arg));
+								}
+								member_access.has_template_arguments = true;
+								member_access.template_arguments =
+									&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
+										std::move(member_args));
+							}
+							member_chain->push_back(std::move(member_access));
+						}
+						return member_chain;
+					};
+					auto member_chains_match = [](
+						const std::vector<QualifiedTypeMemberAccess>& candidate_chain,
+						size_t candidate_start,
+						const std::vector<QualifiedTypeMemberAccess>& textual_chain) {
+						if (candidate_start > candidate_chain.size() ||
+							candidate_chain.size() - candidate_start != textual_chain.size()) {
+							return false;
+						}
+						for (size_t member_index = 0; member_index < textual_chain.size(); ++member_index) {
+							if (candidate_chain[candidate_start + member_index].member_name !=
+								textual_chain[member_index].member_name) {
+								return false;
+							}
+						}
+						return true;
+					};
+					auto build_member_chain = [&]() {
+						std::string_view original_ns =
+							gNamespaceRegistry.getQualifiedName(qualified_id->namespace_handle());
+						std::optional<std::vector<QualifiedTypeMemberAccess>> textual_chain =
+							build_textual_member_chain(original_ns);
+						if (!textual_chain.has_value()) {
+							return textual_chain;
+						}
+						std::optional<std::vector<QualifiedTypeMemberAccess>> record_chain =
+							build_record_member_chain(*qualified_id);
+						if (record_chain.has_value()) {
+							if (member_chains_match(*record_chain, 0, *textual_chain)) {
+								return record_chain;
+							}
+							if (!record_chain->empty() &&
+								member_chains_match(*record_chain, 1, *textual_chain)) {
+								record_chain->erase(record_chain->begin());
+								return record_chain;
+							}
+						}
+						return textual_chain;
+					};
+					auto evaluate_resolved_static_member = [&](
+						const TypeInfo* resolved_owner_type,
+						const StructTypeInfo* fallback_context_struct_info) {
+						if (resolved_owner_type == nullptr ||
+							!resolved_owner_type->name().isValid()) {
+							return false;
+						}
+						NamespaceHandle rebound_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+							NamespaceRegistry::GLOBAL_NAMESPACE,
+							resolved_owner_type->name());
+						QualifiedIdentifierNode& rebound_qid =
+							gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+								rebound_ns_handle,
+								qualified_id->identifier_token());
+						if (qualified_id->has_template_arguments()) {
+							rebound_qid.set_template_arguments(
+								std::vector<ASTNode>(
+									qualified_id->template_arguments().begin(),
+									qualified_id->template_arguments().end()));
+						}
+						ExpressionNode& rebound_expr =
+							gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_qid);
+						const StructTypeInfo* resolved_owner_struct_info =
+							resolved_owner_type->getStructInfo();
+						ConstExpr::EvaluationContext rebound_ctx =
+							makeStaticMemberEvalContext(
+								resolved_owner_struct_info != nullptr
+									? resolved_owner_struct_info
+									: fallback_context_struct_info);
+						auto rebound_result = ConstExpr::Evaluator::evaluate(
+							ASTNode(&rebound_expr),
+							rebound_ctx);
+						if (rebound_result.success()) {
+							eval_result = std::move(rebound_result);
+							return true;
+						}
+						return false;
+					};
+					auto evaluate_from_root = [&](
+						const StructTypeInfo* root_struct_info,
+						const std::vector<QualifiedTypeMemberAccess>& member_chain) {
+						if (root_struct_info == nullptr ||
+							!root_struct_info->name.isValid()) {
+							return false;
+						}
+						const TypeInfo* resolved_owner_type =
+							parser_.resolveBaseClassMemberTypeChainForLookup(
+								StringTable::getStringView(root_struct_info->name),
+								member_chain);
+						return evaluate_resolved_static_member(
+							resolved_owner_type,
+							root_struct_info);
+					};
+
+					std::optional<std::vector<QualifiedTypeMemberAccess>> member_chain =
+						build_member_chain();
+					if (member_chain.has_value()) {
+						evaluate_from_root(struct_info, *member_chain);
+					}
+					if (!eval_result.success() &&
+						!struct_info->base_classes.empty()) {
+						for (const auto& base_class : struct_info->base_classes) {
+							if (!base_class.type_index.is_valid()) {
+								continue;
+							}
+							const StructTypeInfo* base_struct_info =
+								tryGetStructTypeInfo(base_class.type_index);
+							if (base_struct_info == nullptr) {
+								continue;
+							}
+							if (member_chain.has_value() &&
+								evaluate_from_root(base_struct_info, *member_chain)) {
+								break;
+							}
+							ConstExpr::EvaluationContext base_ctx =
+								makeStaticMemberEvalContext(base_struct_info);
+							auto base_eval_result =
+								ConstExpr::Evaluator::evaluate(expr_node, base_ctx);
+							if (base_eval_result.success()) {
+								eval_result = std::move(base_eval_result);
+								break;
+							}
+						}
+					}
+				}
 				if (auto call_info = CallInfo::tryFrom(expr)) {
 					StringHandle func_name_handle = call_info->declaration->identifier_token().handle();
 
@@ -1338,7 +1521,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 						zero_initialize();
 					} else {
 						const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
-
 						// Check for ConstructorCallNode (e.g., T() which becomes int() after substitution)
 						if (std::holds_alternative<ConstructorCallNode>(init_expr)) {
 							const auto& ctor_call = std::get<ConstructorCallNode>(init_expr);

@@ -686,6 +686,17 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		for (const auto& tparam_node : lazy_info.template_params) {
 			param_names.push_back(tparam_node.nameHandle());
 		}
+		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
+			InlineVector<StringHandle, 4> outer_param_names;
+			InlineVector<TypeInfo::TemplateArgInfo, 4> outer_args;
+			populateTemplateEnvironmentLegacyViews(
+				lazy_info.outer_template_environment_snapshot,
+				outer_param_names,
+				outer_args);
+			for (StringHandle outer_name : outer_param_names) {
+				param_names.push_back(outer_name);
+			}
+		}
 		std::optional<TemplateEnvironment> outer_environment;
 		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
 			lazy_info.outer_template_environment_snapshot,
@@ -981,11 +992,6 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				  instantiated_class_name, "::", member_name);
 		return false;
 	}
-	if (FLASH_LOG_ENABLED(Templates, Debug)) {
-		FLASH_LOG(Templates, Debug, "  lazy template params=", lazy_info_ptr->template_params.size(),
-				  ", template args=", lazy_info_ptr->template_args.size());
-	}
-
 	const LazyStaticMemberInfo& lazy_info = *lazy_info_ptr;
 	const InlineVector<TemplateParameterNode, 4>& lazy_template_params_inline =
 		lazy_info.template_params;
@@ -1127,11 +1133,14 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				NumericLiteralNode(num_token, static_cast<unsigned long long>(pack_size), TypeCategory::Int, TypeQualifier::None, 32));
 		};
 
+		bool was_substituted = false;
+
 		// Handle SizeofPackNode
 		if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
 			const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 			if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 				substituted_initializer = make_pack_size_literal(*pack_size);
+				was_substituted = true;
 			}
 		}
 		// Handle FoldExpressionNode
@@ -1184,6 +1193,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 							substituted_initializer = emplace_node<ExpressionNode>(
 								NumericLiteralNode(num_token, static_cast<unsigned long long>(*fold_result), TypeCategory::Int, TypeQualifier::None, 64));
 						}
+						was_substituted = true;
 					}
 				}
 			}
@@ -1194,6 +1204,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (auto subst = substitute_nontype_template_param(
 					tparam_ref.param_name().view(), template_args, lazy_info.template_params)) {
 				substituted_initializer = subst;
+				was_substituted = true;
 			}
 		}
 		// Handle IdentifierNode that might be a template parameter
@@ -1202,21 +1213,13 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (auto subst = substitute_nontype_template_param(
 					id_node.name(), template_args, lazy_info.template_params)) {
 				substituted_initializer = subst;
+				was_substituted = true;
 			}
 		}
 
 		// Saved initializer source is now the primary substitution path. Keep the AST-based
 		// substitutor only for lazy statics that still arrive without replayable source metadata
 		// or that reduce to specialized expression forms first and still need a final rewrite.
-		bool was_substituted = false;
-		if (std::holds_alternative<FoldExpressionNode>(expr))
-			was_substituted = true;
-		if (std::holds_alternative<SizeofPackNode>(expr))
-			was_substituted = true;
-		if (std::holds_alternative<TemplateParameterReferenceNode>(expr))
-			was_substituted = true;
-		// IdentifierNode only gets substituted if it matches a template parameter
-
 		if (!was_substituted) {
 			// Use ExpressionSubstitutor for general template parameter substitution
 			std::optional<TemplateEnvironment> outer_environment;

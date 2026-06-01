@@ -9,14 +9,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5795ms (retested 2026-05-25, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~810ms (`TOTAL`) / ~0.88s wall (retested 2026-05-27, Linux/libstdc++-14). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1124ms (`TOTAL`) / ~1.29s wall (retested 2026-05-28, Linux/libstdc++-14). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
 | `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | ~2.69s wall (retested 2026-05-27, Linux/libstdc++-14). Still crashes with SIGSEGV while instantiating `__static_sign` (`__are_both_ratios` warnings appear first). |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~2.46s wall (retested 2026-05-27, Linux/libstdc++-14). First stop still reaches unresolved placeholder/type conversion in `_Optional_payload_base`: `Type with no runtime size reached codegen ...` then `Unresolved semantic type reached IR type conversion: category 25`. |
+| `<optional>` | `test_std_optional.cpp` | 💥 Crash | ~3.30s wall (retested 2026-05-28, Linux/libstdc++-14). Current run now gets past the older `_Optional_payload_base` category-25/codegen stop and instead crashes after a constexpr/static-assert frontier: `Dependent function/variable template call in constant expression: is_same_v`. |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~1052ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1524ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
@@ -60,7 +60,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~47ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | ~5458ms. Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | ~36ms. Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~2.18s wall (retested 2026-05-28, Linux/libstdc++-14). Variadic fixed-parameter conversion annotation now applies (the prior `int -> long` direct-call Phase 15 miss in `__platform_wait`/`__platform_notify` is gone); current first stops remain deferred constructor materialization/receiver-normalization gaps around `_Spin` and `_EntersWait::value`. |
+| `<latch>` | `test_std_latch.cpp` | ❌ Codegen Error | ~1.90s wall (retested 2026-05-28, Linux/libstdc++-14). Variadic fixed-parameter conversion annotation still applies (the prior `int -> long` direct-call Phase 15 miss in `__platform_wait`/`__platform_notify` remains gone); current first stops are unchanged deferred constructor materialization / receiver-normalization gaps around `_Spin`, `std::__mutex_base`, and `_EntersWait::value`. |
 | `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~2733ms (retested 2026-04-11). "Ambiguous constructor call for 'std::chrono::time_point'". |
 | `<cstdlib>` | N/A | ✅ Compiled | ~120ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~70ms |
@@ -100,6 +100,51 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-05-28 Linux/libstdc++ template-substitution metadata follow-up
+
+Fix landed:
+
+- **Template-expression constructor-call substitution now rebuilds the substituted type with the full `TemplateTypeArg` metadata (cv/ref qualifiers, pointer qualifiers, arrays, and function signatures) instead of only swapping the category token.** This keeps instantiated constructor-call ASTs semantically aligned with the concrete type, which is the higher-layer behavior needed before IR/codegen sees them.
+- **Constexpr qualified-id resolution now consults dependent qualified-owner bindings from the active template environment before treating `Owner::member` as permanently dependent.** When the owner template parameter is already concretized, constexpr evaluation can recover the actual owner type instead of immediately bailing out on the unresolved spelling.
+
+Regression coverage:
+
+- `tests/test_member_template_default_ctor_substitution_ret0.cpp`
+- `tests/test_dependent_qualified_if_constexpr_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| `test_member_template_default_ctor_substitution_ret0.cpp` | ✅ Pass | focused runner | New regression verifies member-template default constructor expressions like `Spin{}` survive substitution with concrete semantic type metadata intact. |
+| `test_dependent_qualified_if_constexpr_ret0.cpp` | ✅ Pass | focused runner | New regression verifies dependent qualified constexpr access through a concretized template owner still folds inside `if constexpr`. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~1124ms (`TOTAL`) / ~1.29s wall | Control retest still compiles. |
+| `<latch>` (`test_std_latch.cpp`) | ❌ Codegen Error | ~1.90s wall | No header flip yet; first hard stops remain deferred constructor materialization / receiver normalization around `std::__mutex_base`, `_Spin`, and `_EntersWait::value`. |
+| `<optional>` (`test_std_optional.cpp`) | 💥 Crash | ~3.30s wall | Progress is now past the earlier `_Optional_payload_base` category-25/codegen frontier; current first fatal frontier is constexpr/static-assert evaluation around `is_same_v`, followed by a crash. |
+
+### 2026-06-01 dependent member-template static constexpr follow-up
+
+Fix landed:
+
+- **Dependent nested member-template chains such as `Derived<T>::Inner<int>::type::value` now preserve typed owner/member-chain metadata through substitution, lazy replay, alias registration, and constexpr evaluation.** This avoids leaving static constexpr members partially unresolved until link time.
+- **The hard-coded constexpr dependent lookup scan was removed.** The covered cases now resolve through active template bindings, inherited member-template lookup, and typed `resolveBaseClassMemberTypeChain` materialization instead of string-prefix recovery.
+- **Static member initializer replay is owner-aware.** Replayed initializers keep the instantiated owner context so alias chains and member-template `::type::value` paths fold before emission.
+
+Regression coverage:
+
+- `tests/test_template_dependent_base_member_template_type_value_ret0.cpp`
+- `tests/test_template_lazy_static_current_instantiation_alias_chain_ret0.cpp`
+- `tests/test_template_lazy_static_unknown_specialization_member_template_type_value_ret0.cpp`
+- `tests/test_template_lazy_static_unknown_specialization_multilevel_member_template_value_ret0.cpp`
+- `tests/test_template_out_of_line_static_member_replay_member_template_chain_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCppMSVC.exe`, Windows/MSVC):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Dependent member-template static constexpr regressions | ✅ Pass | focused runner | The formerly failing link/return-mismatch cases now compile, link, and return the expected value. |
+| Full test suite | ✅ Pass | PowerShell runner | 2608 pass, 0 failures, 0 return mismatches, 188 expected-fail files failed as expected. |
 
 ### 2026-05-28 Linux/libstdc++ `if constexpr` local-scope constexpr context follow-up
 
