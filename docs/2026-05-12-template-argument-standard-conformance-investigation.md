@@ -40,6 +40,9 @@ Move FlashCpp toward a sema-owned template system where:
 - plain out-of-line member replay now also requires positive signature
   evidence for single-candidate same-name attachment; unresolved
   substituted-signature outcomes no longer attach by default
+- nested and partial-specialization constructor-template replay now fails
+  directly when replay identity plus substituted-signature evidence cannot
+  attach the out-of-line definition
 - `materializeAliasTemplateInstance` now falls back to
   `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
   where the instantiated name resolves to a member type

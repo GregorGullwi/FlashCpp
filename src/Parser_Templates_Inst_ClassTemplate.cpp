@@ -8304,26 +8304,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							out_of_line_member.inner_template_params.data(),
 							out_of_line_member.inner_template_params.size()));
 				if (ctor_resolution.ambiguous) {
-					FLASH_LOG(
-						Templates,
-						Error,
-						"Ambiguous replay-first attachment for partial-spec out-of-line constructor template '",
-						ool_func_name,
-						"' in instantiated class '",
-						instantiated_name,
-						"'");
-					continue;
+					std::string error_msg = std::string(StringBuilder()
+						.append("Ambiguous replay-first attachment for partial-spec out-of-line constructor template '")
+						.append(ool_func_name)
+						.append("' in instantiated class '")
+						.append(instantiated_name)
+						.append("'")
+						.commit());
+					if (force_eager) {
+						throw CompileError(error_msg);
+					}
+					return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 				}
 				if (ctor_resolution.ctor == nullptr) {
-					FLASH_LOG(
-						Templates,
-						Error,
-						"Could not attach partial-spec out-of-line constructor template '",
-						ool_func_name,
-						"' for instantiated class '",
-						instantiated_name,
-						"' via replay identity map");
-					continue;
+					std::string error_msg = std::string(StringBuilder()
+						.append("Could not attach partial-spec out-of-line constructor template '")
+						.append(ool_func_name)
+						.append("' for instantiated class '")
+						.append(instantiated_name)
+						.append("' via replay identity map")
+						.commit());
+					if (force_eager) {
+						throw CompileError(error_msg);
+					}
+					return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 				}
 
 				ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
@@ -11901,14 +11905,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								out_of_line_member.inner_template_params.size()));
 
 					if (ctor_resolution.ambiguous) {
-						FLASH_LOG(
-							Templates,
-							Error,
-							"Ambiguous replay-first attachment for nested out-of-line constructor template '",
-							out_of_line_ctor_decl.name(),
-							"' in instantiated class '",
-							StringTable::getStringView(qualified_name),
-							"'");
+						std::string error_msg = std::string(StringBuilder()
+							.append("Ambiguous replay-first attachment for nested out-of-line constructor template '")
+							.append(out_of_line_ctor_decl.name())
+							.append("' in instantiated class '")
+							.append(qualified_name)
+							.append("'")
+							.commit());
+						if (force_eager) {
+							throw CompileError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					} else if (ctor_resolution.ctor != nullptr) {
 						ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;
 						setOutOfLineConstructorTemplateReplayMetadata(
@@ -11918,14 +11925,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ctor_decl.parameter_nodes(),
 							out_of_line_ctor_decl.parameter_nodes());
 					} else {
-						FLASH_LOG(
-							Templates,
-							Error,
-							"Could not attach nested out-of-line constructor template '",
-							out_of_line_ctor_decl.name(),
-							"' for instantiated class '",
-							StringTable::getStringView(qualified_name),
-							"' via replay identity map");
+						std::string error_msg = std::string(StringBuilder()
+							.append("Could not attach nested out-of-line constructor template '")
+							.append(out_of_line_ctor_decl.name())
+							.append("' for instantiated class '")
+							.append(qualified_name)
+							.append("' via replay identity map")
+							.commit());
+						if (force_eager) {
+							throw CompileError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 					continue;
 				}
@@ -11957,26 +11967,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								out_of_line_member.inner_template_params.data(),
 								out_of_line_member.inner_template_params.size()));
 					if (ctor_resolution.ambiguous) {
-						FLASH_LOG(
-							Templates,
-							Error,
-							"Ambiguous replay-first attachment for nested out-of-line constructor template '",
-							out_of_line_ctor_stub_decl.decl_node().identifier_token().value(),
-							"' in instantiated class '",
-							StringTable::getStringView(qualified_name),
-							"'");
-						continue;
+						std::string error_msg = std::string(StringBuilder()
+							.append("Ambiguous replay-first attachment for nested out-of-line constructor template '")
+							.append(out_of_line_ctor_stub_decl.decl_node().identifier_token().value())
+							.append("' in instantiated class '")
+							.append(qualified_name)
+							.append("'")
+							.commit());
+						if (force_eager) {
+							throw CompileError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 					if (ctor_resolution.ctor == nullptr) {
-						FLASH_LOG(
-							Templates,
-							Error,
-							"Could not attach nested out-of-line constructor template '",
-							out_of_line_ctor_stub_decl.decl_node().identifier_token().value(),
-							"' for instantiated class '",
-							StringTable::getStringView(qualified_name),
-							"' via replay identity map");
-						continue;
+						std::string error_msg = std::string(StringBuilder()
+							.append("Could not attach nested out-of-line constructor template '")
+							.append(out_of_line_ctor_stub_decl.decl_node().identifier_token().value())
+							.append("' for instantiated class '")
+							.append(qualified_name)
+							.append("' via replay identity map")
+							.commit());
+						if (force_eager) {
+							throw CompileError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 
 					ConstructorDeclarationNode& ctor_decl = *ctor_resolution.ctor;

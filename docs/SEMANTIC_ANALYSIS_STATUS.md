@@ -64,6 +64,9 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   member on unresolved substituted-signature evidence alone; concrete
   same-signature matches now produce positive evidence and mismatches are
   rejected before replay attachment
+- nested and partial-specialization out-of-line constructor-template replay
+  misses now fail instantiation directly instead of logging and continuing to
+  later lazy-constructor failures
 
 ## Main remaining gaps
 
