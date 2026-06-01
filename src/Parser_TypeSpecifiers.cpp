@@ -1711,6 +1711,41 @@ ParseResult Parser::parse_type_specifier() {
 						// member against the concrete instantiated base before falling back to the
 						// placeholder type carried by the alias target.
 						if (peek() != "::"_tok && targetMemberName.has_value()) {
+							// A chained alias may already be fully materialized to its resolved
+							// member type (e.g. require_integral<int> -> enable_if_t<...>::type ->
+							// int).  In that case `instantiated_type_name` denotes the terminal type
+							// rather than the base struct that exposes the member, so re-deriving
+							// "name::member" would fabricate a bogus dependent placeholder (size 0).
+							// Only append the member when the base type actually declares it.
+							StringHandle resolved_member_handle = buildQualifiedMemberNameHandle(
+								StringTable::getOrInternStringHandle(resolved_instantiated_type_name),
+								StringTable::getOrInternStringHandle(*targetMemberName));
+							const bool base_declares_member =
+								getTypesByNameMap().find(resolved_member_handle) != getTypesByNameMap().end();
+							if (!base_declares_member) {
+								// Map the terminal back to a concrete type.  The materialized name
+								// may be a builtin spelling ("int") or a canonical native name
+								// ("longlong"); both are already terminal and lack the member.
+								TypeCategory terminal_category = TypeCategory::Invalid;
+								if (auto builtin_type = get_builtin_type_info(resolved_instantiated_type_name)) {
+									terminal_category = builtin_type->first;
+								} else {
+									terminal_category = TemplateRegistry::stringToType(resolved_instantiated_type_name);
+								}
+								if (terminal_category != TypeCategory::Invalid) {
+									if (const TypeInfo* native_type_info =
+											tryGetTypeInfo(nativeTypeIndex(terminal_category));
+										native_type_info != nullptr) {
+										return buildTypeFromInfo(*native_type_info, type_name_token, true);
+									}
+								}
+								if (const TypeInfo* terminal_type_info = findTypeByName(
+										StringTable::getOrInternStringHandle(resolved_instantiated_type_name));
+									terminal_type_info != nullptr &&
+									!terminal_type_info->is_incomplete_instantiation_) {
+									return buildTypeFromInfo(*terminal_type_info, type_name_token, true);
+								}
+							}
 							if (const TypeInfo* concrete_member_info =
 									materializeInstantiatedMemberAliasTarget(
 										alias_node.target_type_node(),

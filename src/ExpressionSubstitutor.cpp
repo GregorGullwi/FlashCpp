@@ -1258,6 +1258,13 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 		auto resolveConcreteAliasChain = [&](const TypeInfo* candidate_type_info) -> const TypeInfo* {
 			const TypeInfo* current_type_info = candidate_type_info;
 			for (size_t alias_depth = 0; current_type_info != nullptr && current_type_info->isTypeAlias() && alias_depth < 32; ++alias_depth) {
+				// A member alias like `using type = T;` resolved with `T = int*`
+				// keeps its pointer/reference/array/cv indirection in the alias
+				// specifier while its TypeIndex points at the terminal type. Stop
+				// before collapsing such an alias so those surface modifiers survive.
+				if (typeAliasPreservesSurfaceModifiers(*current_type_info)) {
+					break;
+				}
 				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 					current_type_info->registeredTypeIndex().withCategory(current_type_info->typeEnum()));
 				if (resolved_alias.terminal_type_info == nullptr ||

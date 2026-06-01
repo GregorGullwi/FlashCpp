@@ -2645,10 +2645,6 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		}
 		return concrete_args;
 	};
-	auto materialize_template_args_from_type_info =
-		[&](const TypeInfo& source_type_info) -> InlineVector<TemplateTypeArg, 4> {
-		return materialize_template_args_with_environment(source_type_info.templateArgs());
-	};
 	auto template_args_still_dependent =
 		[](std::span<const TemplateTypeArg> args) -> bool {
 		for (const TemplateTypeArg& arg : args) {
@@ -2659,21 +2655,6 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 			}
 		}
 		return false;
-	};
-	auto aliasPreservesSurfaceModifiers =
-		[](const TypeInfo& candidate_type_info) -> bool {
-		if (!candidate_type_info.isTypeAlias()) {
-			return false;
-		}
-		const TypeSpecifierNode* alias_spec = candidate_type_info.aliasTypeSpecifier();
-		if (alias_spec == nullptr) {
-			return false;
-		}
-		return alias_spec->pointer_depth() != 0 ||
-			   alias_spec->reference_qualifier() != ReferenceQualifier::None ||
-			   alias_spec->cv_qualifier() != CVQualifier::None ||
-			   alias_spec->is_array() ||
-			   alias_spec->has_function_signature();
 	};
 	StringHandle direct_concrete_member_handle =
 		StringTable::getOrInternStringHandle(
@@ -2692,7 +2673,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				direct_concrete_member_it->second->typeEnum()));
 		if (resolved_direct_concrete_member.terminal_type_info != nullptr &&
 			isConcreteAliasSemanticSource(resolved_direct_concrete_member.terminal_type_info)) {
-			if (aliasPreservesSurfaceModifiers(*direct_concrete_member_it->second)) {
+			if (typeAliasPreservesSurfaceModifiers(*direct_concrete_member_it->second)) {
 				return direct_concrete_member_it->second;
 			}
 			return resolved_direct_concrete_member.terminal_type_info;
@@ -2763,7 +2744,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 			!dependent_name->owner_template_arguments.empty()
 				? materialize_template_args_with_environment(
 					  dependent_name->owner_template_arguments)
-				: materialize_template_args_from_type_info(*dependent_base_info);
+				: materialize_template_args_with_environment(dependent_base_info->templateArgs());
 		if (template_args_still_dependent(concrete_base_args)) {
 			return nullptr;
 		}
@@ -2821,8 +2802,8 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 						break;
 					}
 					InlineVector<TemplateTypeArg, 4> fallback_member_args =
-						materialize_template_args_from_type_info(
-							*original_alias_target_info);
+						materialize_template_args_with_environment(
+							original_alias_target_info->templateArgs());
 					if (template_args_still_dependent(fallback_member_args) ||
 						(!member_record.template_arguments.empty() &&
 						 fallback_member_args.size() !=
@@ -2857,7 +2838,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 							resolved_member->typeEnum()));
 				if (resolved_member_alias.terminal_type_info != nullptr &&
 					!resolved_member_alias.terminal_type_info->isDependentMemberType()) {
-					if (aliasPreservesSurfaceModifiers(*resolved_member)) {
+					if (typeAliasPreservesSurfaceModifiers(*resolved_member)) {
 						return resolved_member;
 					}
 					return resolved_member_alias.terminal_type_info;
@@ -2952,7 +2933,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 		} else if (member_alias_param_count != 0 &&
 				   !original_alias_target_info->templateArgs().empty()) {
 			concrete_member_template_args =
-				materialize_template_args_from_type_info(*original_alias_target_info);
+				materialize_template_args_with_environment(original_alias_target_info->templateArgs());
 			if (concrete_member_template_args.size() > member_alias_param_count) {
 				concrete_member_template_args.resize(member_alias_param_count);
 			}
@@ -3036,7 +3017,7 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 				concrete_member_it->second->typeEnum()));
 		if (resolved_concrete_member.terminal_type_info != nullptr &&
 			isConcreteAliasSemanticSource(resolved_concrete_member.terminal_type_info)) {
-			if (aliasPreservesSurfaceModifiers(*concrete_member_it->second)) {
+			if (typeAliasPreservesSurfaceModifiers(*concrete_member_it->second)) {
 				return concrete_member_it->second;
 			}
 			return resolved_concrete_member.terminal_type_info;
