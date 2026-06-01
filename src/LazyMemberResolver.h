@@ -168,23 +168,8 @@ public:
 					current_offset);
 			}
 
-			for (const auto& base : current_struct->virtual_bases) {
-				if (const StructTypeInfo* base_info = resolveStructInfo(
-						base.type_index,
-						base.name,
-						current_struct->getNamespaceHandle())) {
-					to_visit.push({base_info, current_offset + base.offset});
-				}
-			}
-
-			for (const auto& base : current_struct->base_classes) {
-				if (const StructTypeInfo* base_info = resolveStructInfo(
-						base.type_index,
-						base.name,
-						current_struct->getNamespaceHandle())) {
-					to_visit.push({base_info, current_offset + base.offset});
-				}
-			}
+			enqueueBases(current_struct->virtual_bases, current_struct, current_offset, to_visit);
+			enqueueBases(current_struct->base_classes, current_struct, current_offset, to_visit);
 		}
 
 		return MemberResolutionResult();
@@ -259,23 +244,8 @@ private:
 				}
 			}
 
-			for (const auto& base : current_struct->virtual_bases) {
-				if (const StructTypeInfo* base_info = resolveStructInfo(
-						base.type_index,
-						base.name,
-						current_struct->getNamespaceHandle())) {
-					to_visit.push({base_info, current_offset + base.offset});
-				}
-			}
-
-			for (const auto& base : current_struct->base_classes) {
-				if (const StructTypeInfo* base_info = resolveStructInfo(
-						base.type_index,
-						base.name,
-						current_struct->getNamespaceHandle())) {
-					to_visit.push({base_info, current_offset + base.offset});
-				}
-			}
+			enqueueBases(current_struct->virtual_bases, current_struct, current_offset, to_visit);
+			enqueueBases(current_struct->base_classes, current_struct, current_offset, to_visit);
 		}
 
 		return MemberResolutionResult();
@@ -339,6 +309,22 @@ private:
 		}
 
 		return nullptr;
+	}
+
+	// Helper: push all bases from a base-class list onto the BFS queue.
+	void enqueueBases(
+		std::span<const BaseClassSpecifier> bases,
+		const StructTypeInfo* current_struct,
+		size_t current_offset,
+		std::queue<std::pair<const StructTypeInfo*, size_t>>& to_visit) const {
+		for (const auto& base : bases) {
+			if (const StructTypeInfo* base_info = resolveStructInfo(
+					base.type_index,
+					base.name,
+					current_struct->getNamespaceHandle())) {
+				to_visit.push({base_info, current_offset + base.offset});
+			}
+		}
 	}
 
 	// Internal resolution logic
