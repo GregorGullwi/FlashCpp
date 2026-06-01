@@ -7153,6 +7153,35 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 	stats_.slots_filled++;
 }
 
+// Helper: collect operator candidates of op_kind from current_struct and all reachable
+// base classes, using visited to avoid revisiting in diamond inheritance hierarchies.
+static void collectOperatorCandidatesRecursive(
+	const StructTypeInfo* current_struct,
+	OverloadableOperator op_kind,
+	std::vector<ASTNode>& candidates,
+	std::unordered_set<const StructTypeInfo*>& visited) {
+	if (!visited.insert(current_struct).second)
+		return;
+	for (const auto& member_func : current_struct->member_functions) {
+		if (member_func.operator_kind != op_kind)
+			continue;
+		if (!member_func.function_decl.is<FunctionDeclarationNode>())
+			continue;
+		candidates.push_back(member_func.function_decl);
+	}
+	for (const auto& base_spec : current_struct->base_classes) {
+		if (!base_spec.type_index.is_valid())
+			continue;
+		const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
+		if (!base_info)
+			continue;
+		const StructTypeInfo* base_struct = base_info->getStructInfo();
+		if (!base_struct)
+			continue;
+		collectOperatorCandidatesRecursive(base_struct, op_kind, candidates, visited);
+	}
+}
+
 // --- Callable operator() resolution ---
 
 void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key) {
@@ -7185,29 +7214,7 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	const size_t arg_count = arguments.size();
 	std::vector<ASTNode> candidates;
 	std::unordered_set<const StructTypeInfo*> visited;
-	auto collectCandidates = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
-		if (!visited.insert(current_struct).second)
-			return;
-		for (const auto& member_func : current_struct->member_functions) {
-			if (member_func.operator_kind != OverloadableOperator::Call)
-				continue;
-			if (!member_func.function_decl.is<FunctionDeclarationNode>())
-				continue;
-			candidates.push_back(member_func.function_decl);
-		}
-		for (const auto& base_spec : current_struct->base_classes) {
-			if (!base_spec.type_index.is_valid())
-				continue;
-			const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
-			if (!base_info)
-				continue;
-			const StructTypeInfo* base_struct = base_info->getStructInfo();
-			if (!base_struct)
-				continue;
-			self(self, base_struct);
-		}
-	};
-	collectCandidates(collectCandidates, struct_info);
+	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Call, candidates, visited);
 	if (candidates.empty())
 		return;
 
@@ -7341,29 +7348,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	// Use a visited set to avoid collecting duplicate candidates in diamond inheritance.
 	std::vector<ASTNode> candidates;
 	std::unordered_set<const StructTypeInfo*> visited;
-	auto collectCandidates = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
-		if (!visited.insert(current_struct).second)
-			return;
-		for (const auto& member_func : current_struct->member_functions) {
-			if (member_func.operator_kind != OverloadableOperator::Subscript)
-				continue;
-			if (!member_func.function_decl.is<FunctionDeclarationNode>())
-				continue;
-			candidates.push_back(member_func.function_decl);
-		}
-		for (const auto& base_spec : current_struct->base_classes) {
-			if (!base_spec.type_index.is_valid())
-				continue;
-			const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
-			if (!base_info)
-				continue;
-			const StructTypeInfo* base_struct = base_info->getStructInfo();
-			if (!base_struct)
-				continue;
-			self(self, base_struct);
-		}
-	};
-	collectCandidates(collectCandidates, struct_info);
+	collectOperatorCandidatesRecursive(struct_info, OverloadableOperator::Subscript, candidates, visited);
 
 	if (candidates.empty())
 		return;

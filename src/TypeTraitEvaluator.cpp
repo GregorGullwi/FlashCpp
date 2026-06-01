@@ -274,6 +274,20 @@ const StructTypeInfo* resolvePseudoDestructorObjectStruct(const ASTNode& object,
 	return nullptr;
 }
 
+// Helper: iterate non-deferred base classes and return false if any fails the predicate.
+template<typename Pred>
+static bool allNonDeferredBasesSatisfy(const StructTypeInfo* struct_info, Pred pred) {
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_deferred)
+			continue;
+		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+		const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
+		if (!pred(base_struct))
+			return false;
+	}
+	return true;
+}
+
 // Recursive C++20 class-property predicate for trivially-copyable class types.
 // Pointer/reference members are treated as scalar indirections, so their
 // pointee class metadata is intentionally not recursed into.
@@ -306,14 +320,8 @@ bool isStructTriviallyCopyableImpl(const StructTypeInfo* struct_info) {
 			return false;
 	}
 
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred)
-			continue;
-		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-		const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
-		if (!isStructTriviallyCopyableImpl(base_struct))
-			return false;
-	}
+	if (!allNonDeferredBasesSatisfy(struct_info, isStructTriviallyCopyableImpl))
+		return false;
 
 	return true;
 }
@@ -342,14 +350,8 @@ bool isStructTrivialImpl(const StructTypeInfo* struct_info) {
 			return false;
 	}
 
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred)
-			continue;
-		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-		const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
-		if (!isStructTrivialImpl(base_struct))
-			return false;
-	}
+	if (!allNonDeferredBasesSatisfy(struct_info, isStructTrivialImpl))
+		return false;
 
 	return true;
 }
@@ -385,14 +387,8 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 
 	// No explicit destructor, or destructor without a noexcept specifier:
 	// the effective noexcept status depends on base classes and members.
-	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred)
-			continue;
-		const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-		const StructTypeInfo* base_struct = base_type_info ? base_type_info->getStructInfo() : nullptr;
-		if (!isStructNothrowDestructible(base_struct))
-			return false;
-	}
+	if (!allNonDeferredBasesSatisfy(struct_info, isStructNothrowDestructible))
+		return false;
 	for (const auto& member : struct_info->members) {
 		// Only struct/class-typed members (not pointers or references) have destructors
 		if ((!is_struct_type(member.type_index.category())) ||

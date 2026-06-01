@@ -400,10 +400,9 @@ inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory targ
 	return false;
 }
 
-// Check if source_idx is transitively derived from base_idx through public bases only.
-// Per C++20 [conv.ptr]/3, implicit derived-to-base conversions require the base to be
-// accessible, so private/protected inheritance paths are excluded.
-inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) {
+// Shared implementation: walks base_classes recursively and tests for derivation.
+// When public_only is true, only Public inheritance paths are considered.
+inline bool isTransitivelyDerivedFromImpl(TypeIndex source_idx, TypeIndex base_idx, bool public_only) {
 	if (!source_idx.is_valid() || !base_idx.is_valid())
 		return false;
 	const TypeInfo* source_type = tryGetTypeInfo(source_idx);
@@ -413,35 +412,28 @@ inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) 
 	if (!source)
 		return false;
 	for (const auto& b : source->base_classes) {
-		if (b.access != AccessSpecifier::Public)
+		if (public_only && b.access != AccessSpecifier::Public)
 			continue;
 		if (b.type_index == base_idx)
 			return true;
-		if (isTransitivelyDerivedFrom(b.type_index, base_idx))
+		if (isTransitivelyDerivedFromImpl(b.type_index, base_idx, public_only))
 			return true;
 	}
 	return false;
+}
+
+// Check if source_idx is transitively derived from base_idx through public bases only.
+// Per C++20 [conv.ptr]/3, implicit derived-to-base conversions require the base to be
+// accessible, so private/protected inheritance paths are excluded.
+inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) {
+	return isTransitivelyDerivedFromImpl(source_idx, base_idx, /*public_only=*/true);
 }
 
 // Like isTransitivelyDerivedFrom, but ignores access specifiers. Useful to
 // distinguish "unrelated types" from "related but inaccessible base" so the
 // caller can emit an access-specific diagnostic per C++20 [conv.ptr]/3.
 inline bool isTransitivelyDerivedFromAnyAccess(TypeIndex source_idx, TypeIndex base_idx) {
-	if (!source_idx.is_valid() || !base_idx.is_valid())
-		return false;
-	const TypeInfo* source_type = tryGetTypeInfo(source_idx);
-	if (!source_type)
-		return false;
-	const StructTypeInfo* source = source_type->getStructInfo();
-	if (!source)
-		return false;
-	for (const auto& b : source->base_classes) {
-		if (b.type_index == base_idx)
-			return true;
-		if (isTransitivelyDerivedFromAnyAccess(b.type_index, base_idx))
-			return true;
-	}
-	return false;
+	return isTransitivelyDerivedFromImpl(source_idx, base_idx, /*public_only=*/false);
 }
 
 inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
