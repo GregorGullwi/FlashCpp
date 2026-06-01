@@ -67,6 +67,9 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - nested and partial-specialization out-of-line constructor-template replay
   misses now fail instantiation directly instead of logging and continuing to
   later lazy-constructor failures
+- StructTypeInfo constructor-template sync now requires positive
+  `typeSpecifiersMatchForSignatureValidation(...)` evidence and no longer
+  accepts token/name shape-only fallback equivalence
 
 ## Main remaining gaps
 

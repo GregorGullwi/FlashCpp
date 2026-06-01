@@ -57,6 +57,9 @@ attachment evidence-driven rather than shape-driven.
 - nested and partial-specialization out-of-line constructor-template replay
   now treats attachment misses as instantiation failures, matching the ordinary
   constructor and member-function replay paths
+- constructor replay sync into StructTypeInfo now requires signature-validation
+  evidence and no longer falls back to token/name shape equivalence for
+  mismatched parameter types
 
 ## Main remaining architectural gap
 
