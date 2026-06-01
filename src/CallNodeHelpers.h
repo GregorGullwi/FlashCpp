@@ -32,7 +32,6 @@ struct CallInfo {
 
 	// Full function declaration (null when only a DeclarationNode is available).
 	const FunctionDeclarationNode* function_declaration;
-	const FunctionDeclarationNode* raw_function_declaration;
 
 	// Arguments (always present).
 	const ChunkedVector<ASTNode>* arguments;
@@ -59,7 +58,6 @@ struct CallInfo {
 		CallInfo info;
 		info.declaration           = &node.callee().declaration();
 		info.function_declaration  = getParserStoredDirectCallTarget(node);
-		info.raw_function_declaration = node.callee().function_declaration_or_null();
 		info.arguments             = &node.arguments();
 		info.called_from           = node.called_from();
 		info.receiver              = node.has_receiver() ? node.receiver() : ASTNode();

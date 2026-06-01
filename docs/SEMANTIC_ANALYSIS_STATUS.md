@@ -105,6 +105,14 @@ The direct-call reason table is gone. The remaining work is to remove the
 last non-normalized member-recovery paths so direct calls are sema-owned across
 the whole pipeline and unresolved calls fail with clear diagnostics/invariants.
 
+Near-term blocker in this area:
+
+- dependent-unqualified calls still keep a provisional parser-callee fallback
+  after POI lookup misses; removing it currently regresses
+  `test_dependent_identifier_template_call_ret0.cpp`,
+  `test_pack_expansion_in_template_body_ret0.cpp`, and
+  `test_template_builtin_addressof_substitution_ret0.cpp`
+
 Recommended next step:
 
 - continue the Phase 1 burn-down in
