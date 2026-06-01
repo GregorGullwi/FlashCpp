@@ -43,6 +43,9 @@ Move FlashCpp toward a sema-owned template system where:
 - nested and partial-specialization constructor-template replay now fails
   directly when replay identity plus substituted-signature evidence cannot
   attach the out-of-line definition
+- replay signature matching now reports explicit
+  `Match`/`Mismatch`/`InsufficientEvidence` outcomes; attachment paths treat
+  only `Match` as valid evidence
 - constructor replay sync into StructTypeInfo now requires
   `typeSpecifiersMatchForSignatureValidation(...)` evidence and no longer
   treats token/name shape fallback as a valid equivalence

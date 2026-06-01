@@ -162,8 +162,14 @@ struct SourceMemberIdentityMaps {
 	std::unordered_map<uint64_t, ASTNode> by_location;
 };
 
+enum class ReplaySignatureMatchResult {
+	Match,
+	Mismatch,
+	InsufficientEvidence
+};
+
 template <typename InstantiatedDeclNode, typename OutOfLineDeclNode>
-static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
+static ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
 	Parser& parser,
 	const InstantiatedDeclNode& instantiated_decl,
 	const OutOfLineDeclNode& out_of_line_decl,
@@ -176,7 +182,7 @@ static const TypeSpecifierNode* getDeclarationParamTypeNode(const ASTNode& param
 static bool typeSpecifiersMatchForSignatureValidation(
 	const TypeSpecifierNode& lhs,
 	const TypeSpecifierNode& rhs);
-static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
+static ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const FunctionDeclarationNode& out_of_line_decl,
@@ -185,7 +191,7 @@ static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 	StringHandle owner_type_name,
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params);
-static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
+static ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const ConstructorDeclarationNode& out_of_line_decl,
@@ -331,7 +337,7 @@ static FunctionDeclarationNode* findPlainOutOfLineMemberStubByIdentity(
 			continue;
 		}
 
-		std::optional<bool> signature_match =
+		ReplaySignatureMatchResult signature_match =
 			declarationsMatchAfterTemplateSubstitution(
 				parser,
 				*inst_func_decl,
@@ -341,7 +347,7 @@ static FunctionDeclarationNode* findPlainOutOfLineMemberStubByIdentity(
 				owner_type_name,
 				std::span<const TemplateParameterNode>{},
 				std::span<const TemplateParameterNode>{});
-		if (!signature_match.has_value() || !*signature_match) {
+		if (signature_match != ReplaySignatureMatchResult::Match) {
 			continue;
 		}
 
@@ -379,7 +385,7 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 
 		ConstructorDeclarationNode* inst_ctor_decl =
 			&matched_stub->as<ConstructorDeclarationNode>();
-		std::optional<bool> signature_match =
+		ReplaySignatureMatchResult signature_match =
 			declarationsMatchAfterTemplateSubstitution(
 				parser,
 				*inst_ctor_decl,
@@ -389,9 +395,8 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 				owner_type_name,
 				std::span<const TemplateParameterNode>{},
 				std::span<const TemplateParameterNode>{});
-
 		const bool matches_candidate =
-			signature_match.has_value() && *signature_match;
+			signature_match == ReplaySignatureMatchResult::Match;
 
 		if (matches_candidate) {
 			resolved_matches.push_back(inst_ctor_decl);
@@ -444,7 +449,7 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 			continue;
 		}
 
-		std::optional<bool> substituted_signature_match =
+		ReplaySignatureMatchResult substituted_signature_match =
 			outOfLineConstructorTemplateMatchesCandidate(
 			parser,
 			*inst_ctor_decl,
@@ -457,7 +462,7 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 				inst_ctor_decl->template_parameters().size()),
 			out_of_line_inner_template_params);
 		bool matches_candidate =
-			substituted_signature_match.has_value() && *substituted_signature_match;
+			substituted_signature_match == ReplaySignatureMatchResult::Match;
 
 		if (!matches_candidate) {
 			continue;
@@ -2356,7 +2361,7 @@ static void preserveDependentMemberTemplateParameterPlaceholdersFromPattern(
 }
 
 template <typename InstantiatedDeclNode, typename OutOfLineDeclNode>
-static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
+static ReplaySignatureMatchResult declarationsMatchAfterTemplateSubstitution(
 	Parser& parser,
 	const InstantiatedDeclNode& instantiated_decl,
 	const OutOfLineDeclNode& out_of_line_decl,
@@ -2366,7 +2371,7 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params) {
 	if (instantiated_decl.parameter_nodes().size() != out_of_line_decl.parameter_nodes().size()) {
-		return false;
+		return ReplaySignatureMatchResult::Mismatch;
 	}
 
 	for (size_t i = 0; i < instantiated_decl.parameter_nodes().size(); ++i) {
@@ -2375,7 +2380,7 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 		const TypeSpecifierNode* out_of_line_param =
 			getDeclarationParamTypeNode(out_of_line_decl.parameter_nodes()[i]);
 		if (instantiated_param == nullptr || out_of_line_param == nullptr) {
-			return std::nullopt;
+			return ReplaySignatureMatchResult::InsufficientEvidence;
 		}
 
 		const bool instantiated_is_template_param_placeholder =
@@ -2444,7 +2449,7 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 			// instead of rejecting immediately.
 			if (!typeSpecifierLooksLikeDependentSignaturePlaceholder(*instantiated_param) &&
 				!typeSpecifierLooksLikeDependentSignaturePlaceholder(*out_of_line_param)) {
-				return false;
+				return ReplaySignatureMatchResult::Mismatch;
 			}
 		}
 
@@ -2455,7 +2460,7 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 			if (!typeSpecifiersMatchForSignatureValidation(
 					*instantiated_param,
 					*out_of_line_param)) {
-				return false;
+				return ReplaySignatureMatchResult::Mismatch;
 			}
 			continue;
 		}
@@ -2469,11 +2474,11 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 				out_of_line_effective_indirection.reference_qualifier ||
 			instantiated_effective_indirection.cv_qualifier !=
 				out_of_line_effective_indirection.cv_qualifier) {
-			return false;
+			return ReplaySignatureMatchResult::Mismatch;
 		}
 		if (instantiated_effective_indirection.pointer_level_cv_qualifiers.size() !=
 			out_of_line_effective_indirection.pointer_level_cv_qualifiers.size()) {
-			return false;
+			return ReplaySignatureMatchResult::Mismatch;
 		}
 		for (size_t pointer_level_index = 0;
 			 pointer_level_index <
@@ -2481,7 +2486,7 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 			 ++pointer_level_index) {
 			if (instantiated_effective_indirection.pointer_level_cv_qualifiers[pointer_level_index] !=
 				out_of_line_effective_indirection.pointer_level_cv_qualifiers[pointer_level_index]) {
-				return false;
+				return ReplaySignatureMatchResult::Mismatch;
 			}
 		}
 		const bool dependent_placeholder_name_match = dependentTemplatePlaceholderNamesMatch(
@@ -2490,11 +2495,11 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 			instantiated_template_params,
 			out_of_line_template_params);
 		if (!dependent_placeholder_name_match) {
-			return false;
+			return ReplaySignatureMatchResult::Mismatch;
 		}
 	}
 
-	return true;
+	return ReplaySignatureMatchResult::Match;
 }
 
 static bool isMatchingMemberTemplate(
@@ -2539,7 +2544,7 @@ static bool nestedOutOfLineMemberTemplateMatchesCandidate(
 		return false;
 	}
 
-	std::optional<bool> signature_match = declarationsMatchAfterTemplateSubstitution(
+	ReplaySignatureMatchResult signature_match = declarationsMatchAfterTemplateSubstitution(
 		parser,
 		candidate_template.function_decl_node(),
 		out_of_line_decl,
@@ -2548,10 +2553,10 @@ static bool nestedOutOfLineMemberTemplateMatchesCandidate(
 		owner_type_name,
 		candidate_inner_template_params,
 		out_of_line_inner_template_params);
-	return signature_match.has_value() && *signature_match;
+	return signature_match == ReplaySignatureMatchResult::Match;
 }
 
-static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
+static ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const FunctionDeclarationNode& out_of_line_decl,
@@ -2561,7 +2566,7 @@ static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
 	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
-		return false;
+		return ReplaySignatureMatchResult::Mismatch;
 	}
 
 	return declarationsMatchAfterTemplateSubstitution(
@@ -2575,7 +2580,7 @@ static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 		out_of_line_inner_template_params);
 }
 
-static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
+static ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
 	Parser& parser,
 	const ConstructorDeclarationNode& candidate,
 	const ConstructorDeclarationNode& out_of_line_decl,
@@ -2585,7 +2590,7 @@ static std::optional<bool> outOfLineConstructorTemplateMatchesCandidate(
 	std::span<const TemplateParameterNode> candidate_inner_template_params,
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
 	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
-		return false;
+		return ReplaySignatureMatchResult::Mismatch;
 	}
 
 	return declarationsMatchAfterTemplateSubstitution(
