@@ -1,10 +1,10 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`.
-Generated binaries belong in `x64/` or `Sharded/` and stay untracked.
-Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workflows.
-- Use `pwsh tests/run_all_tests.ps1` to verify that your changes didn't break any existing functionality
+- FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`.
+- Generated binaries belong in `x64/` or `Sharded/` and stay untracked.
+- Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workflows.
+- Use `pwsh tests/run_all_tests.ps1` to verify that your changes didn't break any existing functionality, but never run it in parallell with build_flashcpp.bat!
 
 ## Build, Test, and Development Commands
 - You are most likely running in a powershell (pwsh), plan your calls accordingly.
