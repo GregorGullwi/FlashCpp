@@ -1246,6 +1246,53 @@ inline TemplateTypeArg resolveTypeInfoToTemplateArg(
 		TemplateTypeArg(outer_spec));
 }
 
+// A member type alias such as `using type = T;` instantiated with `T = int*`
+// stores the terminal type (`int`) in its TypeIndex while keeping the pointer,
+// reference, cv, array, or function-signature indirection in its aliasTypeSpecifier.
+// Collapsing such an alias to its terminal type would silently drop those surface
+// modifiers, so callers that resolve dependent member aliases must keep the alias
+// itself whenever this returns true.
+inline bool typeAliasPreservesSurfaceModifiers(const TypeInfo& type_info) {
+	if (!type_info.isTypeAlias()) {
+		return false;
+	}
+	const TypeSpecifierNode* alias_spec = type_info.aliasTypeSpecifier();
+	if (alias_spec == nullptr) {
+		return false;
+	}
+	return alias_spec->pointer_depth() != 0 ||
+		   alias_spec->reference_qualifier() != ReferenceQualifier::None ||
+		   alias_spec->cv_qualifier() != CVQualifier::None ||
+		   alias_spec->is_array() ||
+		   alias_spec->has_function_signature();
+}
+
+// A TypeInfo is a concrete alias semantic source when it resolves to a fully
+// materialized, non-dependent type that can stand in as the terminal type of an
+// alias chain. Placeholders, dependent members, and types still carrying
+// dependent placeholders are rejected so callers don't latch onto an unresolved
+// stand-in.
+inline bool isConcreteAliasSemanticSource(const TypeInfo* type_info) {
+	if (type_info == nullptr) {
+		return false;
+	}
+	if (type_info->isTemplatePlaceholder() ||
+		type_info->isDependentPlaceholder() ||
+		(type_info->is_incomplete_instantiation_ &&
+		 type_info->isDependentMemberType())) {
+		return false;
+	}
+	const TypeIndex registered_index =
+		type_info->registeredTypeIndex().withCategory(type_info->typeEnum());
+	if (!registered_index.is_valid()) {
+		return false;
+	}
+	if (typeIndexContainsDependentPlaceholder(registered_index)) {
+		return false;
+	}
+	return true;
+}
+
 // Convenience wrapper: resolve a TypeInfo through its alias chain, compose outer
 // modifiers from `outer_spec`, and convert the result to a TypeSpecifierNode.
 // This is the most common pattern in alias-template substitution paths.

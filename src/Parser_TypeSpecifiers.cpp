@@ -53,6 +53,27 @@ InlineVector<std::string_view, 4> splitDependentMemberPathComponents(
 	return components;
 }
 
+// Split a dependent member path (e.g. "Inner::type") into components, strip any
+// trailing template-argument list from each, and append them to the record's
+// member chain. Centralizes logic shared by the dependent-record builders and
+// keeps the path splitting bounds-safe.
+void appendDependentMemberPathComponents(
+	TypeInfo::DependentQualifiedNameRecord& record,
+	std::string_view member_path) {
+	for (std::string_view component : splitDependentMemberPathComponents(member_path)) {
+		if (component.empty()) {
+			continue;
+		}
+		if (size_t template_marker = component.find('<');
+			template_marker != std::string_view::npos) {
+			component = component.substr(0, template_marker);
+		}
+		TypeInfo::DependentQualifiedNameRecord::Member member;
+		member.name = StringTable::getOrInternStringHandle(component);
+		record.member_chain.push_back(std::move(member));
+	}
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -1197,6 +1218,107 @@ ParseResult Parser::parse_type_specifier() {
 					 alias_target_info->isDependentPlaceholder() ||
 					 alias_target_info->isTemplateInstantiation());
 				if (target_is_dependent) {
+					auto make_alias_target_dependent_record =
+						[&]() -> std::optional<TypeInfo::DependentQualifiedNameRecord> {
+						if (alias_target_info == nullptr) {
+							return std::nullopt;
+						}
+						std::string_view suffix_path = member_suffix;
+						if (suffix_path.starts_with("::")) {
+							suffix_path.remove_prefix(2);
+						}
+						if (suffix_path.empty()) {
+							return std::nullopt;
+						}
+
+						auto append_suffix_chain =
+							[&](TypeInfo::DependentQualifiedNameRecord& record) {
+							appendDependentMemberPathComponents(record, suffix_path);
+						};
+
+						if (alias_target_info->hasDependentQualifiedName()) {
+							TypeInfo::DependentQualifiedNameRecord record =
+								*alias_target_info->dependentQualifiedName();
+							append_suffix_chain(record);
+							return record;
+						}
+
+						if (!alias_target_info->isTemplateInstantiation()) {
+							return std::nullopt;
+						}
+
+						TypeInfo::DependentQualifiedNameRecord record;
+						record.owner_kind =
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
+						record.owner_name = alias_target_info->baseTemplateName();
+						StringHandle qualified_owner_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								alias_target_info->sourceNamespace(),
+								alias_target_info->baseTemplateName());
+						if (qualified_owner_name.isValid() &&
+							!StringTable::getStringView(qualified_owner_name).empty()) {
+							record.owner_name = qualified_owner_name;
+						}
+						record.owner_template_arguments =
+							alias_target_info->templateArgs();
+
+						auto classify_current_instantiation_owner =
+							[&](TypeIndex current_owner_type_index) {
+							if (!current_owner_type_index.is_valid()) {
+								return false;
+							}
+							const TypeInfo* current_owner_type_info =
+								tryGetTypeInfo(current_owner_type_index);
+							if (current_owner_type_info == nullptr ||
+								!current_owner_type_info->isTemplateInstantiation()) {
+								return false;
+							}
+							if (current_owner_type_info->baseTemplateName() !=
+								alias_target_info->baseTemplateName()) {
+								return false;
+							}
+							if (current_owner_type_info->sourceNamespace() !=
+								alias_target_info->sourceNamespace()) {
+								return false;
+							}
+							record.owner_kind =
+								TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+							record.owner_type =
+								current_owner_type_info->registeredTypeIndex();
+							record.names_current_instantiation = true;
+							return true;
+						};
+						bool is_current_instantiation_owner = false;
+						if (!member_function_context_stack_.empty()) {
+							is_current_instantiation_owner =
+								classify_current_instantiation_owner(
+									member_function_context_stack_.back().struct_type_index);
+						}
+						if (!is_current_instantiation_owner &&
+							!struct_parsing_context_stack_.empty()) {
+							StringHandle active_struct_handle =
+								StringTable::getOrInternStringHandle(
+									struct_parsing_context_stack_.back().struct_name);
+							if (auto active_struct_it = getTypesByNameMap().find(active_struct_handle);
+								active_struct_it != getTypesByNameMap().end() &&
+								active_struct_it->second != nullptr) {
+								is_current_instantiation_owner =
+									classify_current_instantiation_owner(
+										active_struct_it->second->registeredTypeIndex());
+							}
+						}
+						if (!is_current_instantiation_owner &&
+							(!struct_parsing_context_stack_.empty() ||
+							 !member_function_context_stack_.empty())) {
+							record.owner_kind =
+								TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization;
+						}
+
+						append_suffix_chain(record);
+						return record;
+					};
+					std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_record =
+						make_alias_target_dependent_record();
 					StringHandle target_member_handle = StringTable::getOrInternStringHandle(
 						StringBuilder()
 							.append(StringTable::getStringView(alias_target_info->name()))
@@ -1205,6 +1327,12 @@ ParseResult Parser::parse_type_specifier() {
 					auto existing_target_member = getTypesByNameMap().find(target_member_handle);
 					TypeIndex target_member_index;
 					if (existing_target_member != getTypesByNameMap().end()) {
+						if (dependent_record.has_value() &&
+							existing_target_member->second != nullptr &&
+							existing_target_member->second->isDependentMemberType() &&
+							!existing_target_member->second->hasDependentQualifiedName()) {
+							existing_target_member->second->setDependentQualifiedName(*dependent_record);
+						}
 						target_member_index = existing_target_member->second->registeredTypeIndex();
 					} else {
 						TypeInfo& placeholder_type = add_empty_type_entry();
@@ -1212,6 +1340,9 @@ ParseResult Parser::parse_type_specifier() {
 						placeholder_type.name_ = target_member_handle;
 						placeholder_type.is_incomplete_instantiation_ = true;
 						placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+						if (dependent_record.has_value()) {
+							placeholder_type.setDependentQualifiedName(*dependent_record);
+						}
 						if (alias_target_info->isTemplateInstantiation()) {
 							placeholder_type.setTemplateInstantiationInfo(
 								alias_target_info->base_template_,
@@ -1261,22 +1392,63 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (is_dependent_qualified_type) {
+				const TypeInfo* owner_type_info = nullptr;
+				TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
+					TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter;
+				InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments;
+				StringHandle owner_name_handle =
+					StringTable::getOrInternStringHandle(base_part);
+				TypeIndex owner_type_index{};
+				if (auto owner_it = getTypesByNameMap().find(owner_name_handle);
+					owner_it != getTypesByNameMap().end() &&
+					owner_it->second != nullptr) {
+					owner_type_info = owner_it->second;
+					owner_type_index = owner_type_info->registeredTypeIndex();
+					if (owner_type_info->isTemplateInstantiation()) {
+						owner_kind =
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
+						owner_name_handle = owner_type_info->baseTemplateName();
+						StringHandle qualified_owner_name =
+							gNamespaceRegistry.buildQualifiedIdentifier(
+								owner_type_info->sourceNamespace(),
+								owner_type_info->baseTemplateName());
+						if (qualified_owner_name.isValid() &&
+							!StringTable::getStringView(qualified_owner_name).empty()) {
+							owner_name_handle = qualified_owner_name;
+						}
+						owner_template_arguments = owner_type_info->templateArgs();
+					}
+				}
 				if (auto typename_error = diagnoseMissingTypenameForDependentOwner(
-						TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
+						owner_kind,
 						last_qualified_token,
 						false);
 					typename_error.has_value()) {
 					return *typename_error;
 				}
 				StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-				StringHandle owner_handle =
-					StringTable::getOrInternStringHandle(base_part);
-				TypeIndex owner_type_index{};
-				if (auto owner_it = getTypesByNameMap().find(owner_handle);
-					owner_it != getTypesByNameMap().end() &&
-					owner_it->second != nullptr) {
-					owner_type_index = owner_it->second->registeredTypeIndex();
-				}
+				auto make_simple_dependent_record =
+					[&]() -> TypeInfo::DependentQualifiedNameRecord {
+					if (owner_type_info != nullptr &&
+						owner_type_info->hasDependentQualifiedName()) {
+						TypeInfo::DependentQualifiedNameRecord record =
+							*owner_type_info->dependentQualifiedName();
+						std::string_view member_path;
+						if (size_t owner_sep = type_name.find("::");
+							owner_sep != std::string_view::npos) {
+							member_path = type_name.substr(owner_sep + 2);
+						}
+						appendDependentMemberPathComponents(record, member_path);
+						return record;
+					}
+					return makeDependentQualifiedNameRecord(
+						owner_name_handle,
+						owner_type_index,
+						owner_kind,
+						owner_template_arguments,
+						type_name.substr(type_name.find("::") + 2),
+						{});
+				};
 				auto type_it = getTypesByNameMap().find(type_handle);
 				TypeIndex type_idx;
 				if (type_it == getTypesByNameMap().end()) {
@@ -1286,13 +1458,16 @@ ParseResult Parser::parse_type_specifier() {
 					placeholder_type.is_incomplete_instantiation_ = true;
 					placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
 					placeholder_type.setDependentQualifiedName(
-						makeDependentQualifiedNameRecord(
-							owner_handle,
-							owner_type_index,
-							TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
-							InlineVector<TypeInfo::TemplateArgInfo, 4>{},
-							type_name.substr(type_name.find("::") + 2),
-							{}));
+						make_simple_dependent_record());
+					if (owner_type_info != nullptr &&
+						owner_type_info->hasInstantiationContext()) {
+						const TypeInfo::InstantiationContext* owner_context =
+							owner_type_info->instantiationContext();
+						placeholder_type.setInstantiationContext(
+							owner_context->param_names,
+							owner_context->param_args,
+							owner_context->parent);
+					}
 					getTypesByNameMap()[type_handle] = &placeholder_type;
 					type_idx = placeholder_type.type_index_;
 				} else {
@@ -1300,13 +1475,18 @@ ParseResult Parser::parse_type_specifier() {
 						type_it->second->isDependentMemberType() &&
 						!type_it->second->hasDependentQualifiedName()) {
 						type_it->second->setDependentQualifiedName(
-							makeDependentQualifiedNameRecord(
-								owner_handle,
-								owner_type_index,
-								TypeInfo::DependentQualifiedNameRecord::OwnerKind::TemplateParameter,
-								InlineVector<TypeInfo::TemplateArgInfo, 4>{},
-								type_name.substr(type_name.find("::") + 2),
-								{}));
+							make_simple_dependent_record());
+					}
+					if (type_it->second != nullptr &&
+						owner_type_info != nullptr &&
+						!type_it->second->hasInstantiationContext() &&
+						owner_type_info->hasInstantiationContext()) {
+						const TypeInfo::InstantiationContext* owner_context =
+							owner_type_info->instantiationContext();
+						type_it->second->setInstantiationContext(
+							owner_context->param_names,
+							owner_context->param_args,
+							owner_context->parent);
 					}
 					type_idx = type_it->second->type_index_;
 				}
@@ -1448,6 +1628,30 @@ ParseResult Parser::parse_type_specifier() {
 							placeholder_type.name_ = qualified_member_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
 							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							if (auto base_type_it = getTypesByNameMap().find(
+									StringTable::getOrInternStringHandle(base_type_name));
+								base_type_it != getTypesByNameMap().end() &&
+								base_type_it->second != nullptr &&
+								base_type_it->second->isTemplateInstantiation()) {
+								const TypeInfo& base_type_info = *base_type_it->second;
+								StringHandle owner_name = base_type_info.baseTemplateName();
+								if (!owner_name.isValid()) {
+									owner_name = base_type_info.name();
+								}
+								InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments =
+									base_type_info.templateArgs();
+								DependentMemberSegmentInfo terminal_segment_info;
+								placeholder_type.setDependentQualifiedName(
+									makeDependentQualifiedNameRecord(
+										owner_name,
+										base_type_info.registeredTypeIndex(),
+										TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation,
+										std::move(owner_template_arguments),
+										member_name,
+										std::span<const DependentMemberSegmentInfo>(
+											&terminal_segment_info,
+											1)));
+							}
 							getTypesByNameMap()[qualified_member_handle] = &placeholder_type;
 							return placeholder_type;
 						}
@@ -1509,6 +1713,41 @@ ParseResult Parser::parse_type_specifier() {
 						// member against the concrete instantiated base before falling back to the
 						// placeholder type carried by the alias target.
 						if (peek() != "::"_tok && targetMemberName.has_value()) {
+							// A chained alias may already be fully materialized to its resolved
+							// member type (e.g. require_integral<int> -> enable_if_t<...>::type ->
+							// int).  In that case `instantiated_type_name` denotes the terminal type
+							// rather than the base struct that exposes the member, so re-deriving
+							// "name::member" would fabricate a bogus dependent placeholder (size 0).
+							// Only append the member when the base type actually declares it.
+							StringHandle resolved_member_handle = buildQualifiedMemberNameHandle(
+								StringTable::getOrInternStringHandle(resolved_instantiated_type_name),
+								StringTable::getOrInternStringHandle(*targetMemberName));
+							const bool base_declares_member =
+								getTypesByNameMap().find(resolved_member_handle) != getTypesByNameMap().end();
+							if (!base_declares_member) {
+								// Map the terminal back to a concrete type.  The materialized name
+								// may be a builtin spelling ("int") or a canonical native name
+								// ("longlong"); both are already terminal and lack the member.
+								TypeCategory terminal_category = TypeCategory::Invalid;
+								if (auto builtin_type = get_builtin_type_info(resolved_instantiated_type_name)) {
+									terminal_category = builtin_type->first;
+								} else {
+									terminal_category = TemplateRegistry::stringToType(resolved_instantiated_type_name);
+								}
+								if (terminal_category != TypeCategory::Invalid) {
+									if (const TypeInfo* native_type_info =
+											tryGetTypeInfo(nativeTypeIndex(terminal_category));
+										native_type_info != nullptr) {
+										return buildTypeFromInfo(*native_type_info, type_name_token, true);
+									}
+								}
+								if (const TypeInfo* terminal_type_info = findTypeByName(
+										StringTable::getOrInternStringHandle(resolved_instantiated_type_name));
+									terminal_type_info != nullptr &&
+									!terminal_type_info->is_incomplete_instantiation_) {
+									return buildTypeFromInfo(*terminal_type_info, type_name_token, true);
+								}
+							}
 							if (const TypeInfo* concrete_member_info =
 									materializeInstantiatedMemberAliasTarget(
 										alias_node.target_type_node(),
@@ -1604,6 +1843,36 @@ ParseResult Parser::parse_type_specifier() {
 						// since we already know this is an alias template.
 						AliasTemplateMaterializationResult materialized_alias =
 							materializeAliasTemplateInstantiation(type_name, *template_args);
+						if (materialized_alias.resolved_type_info != nullptr) {
+							const TypeInfo* materialized_info = materialized_alias.resolved_type_info;
+							FLASH_LOG(
+								Parser,
+								Debug,
+								"Alias materialized: name='",
+								materialized_alias.instantiated_name,
+								"', resolved='",
+								StringTable::getStringView(materialized_info->name()),
+								"', type=",
+								static_cast<int>(materialized_info->typeEnum()),
+								", type_index=",
+								materialized_info->registeredTypeIndex().index());
+							if (const TypeSpecifierNode* alias_spec = materialized_info->aliasTypeSpecifier();
+								alias_spec != nullptr) {
+								FLASH_LOG(
+									Parser,
+									Debug,
+									"Alias materialized spec: type=",
+									static_cast<int>(alias_spec->type()),
+									", type_index=",
+									alias_spec->type_index().index(),
+									", cv=",
+									static_cast<int>(alias_spec->cv_qualifier()),
+									", ref=",
+									static_cast<int>(alias_spec->reference_qualifier()),
+									", ptr=",
+									alias_spec->pointer_depth());
+							}
+						}
 						if (!materialized_alias.instantiated_name.empty()) {
 							normalizePendingSemanticRoots();
 							if (materialized_alias.resolved_type_info == nullptr) {
@@ -1688,6 +1957,15 @@ ParseResult Parser::parse_type_specifier() {
 									instantiated_type = resolveTypeInfoToTypeSpec(
 										*materialized_target.resolved_type_info, instantiated_type);
 								}
+							}
+						} else {
+							ASTNode substituted_alias_target = substituteTemplateParameters(
+								ASTNode::emplace_node<TypeSpecifierNode>(alias_node.target_type_node()),
+								alias_node.template_parameters(),
+								*template_args);
+							if (substituted_alias_target.is<TypeSpecifierNode>()) {
+								instantiated_type =
+									substituted_alias_target.as<TypeSpecifierNode>();
 							}
 						}
 					}
@@ -2833,6 +3111,60 @@ ParseResult Parser::parse_type_specifier() {
 								instantiated_type = resolveTypeInfoToTypeSpec(
 									*materialized_member_alias_target,
 									instantiated_type);
+							} else {
+								ASTNode substituted_member_alias_target = substituteTemplateParameters(
+									ASTNode::emplace_node<TypeSpecifierNode>(alias_node.target_type_node()),
+									alias_node.template_parameters(),
+									*member_template_args);
+								if (substituted_member_alias_target.is<TypeSpecifierNode>()) {
+									instantiated_type =
+										substituted_member_alias_target.as<TypeSpecifierNode>();
+								}
+							}
+							if (instantiated_type.type_index().is_valid()) {
+								if (TypeInfo* instantiated_type_info =
+										tryGetTypeInfoMut(instantiated_type.type_index());
+									instantiated_type_info != nullptr &&
+									instantiated_type_info->isDependentMemberType() &&
+									instantiated_type_info->hasDependentQualifiedName()) {
+									InlineVector<StringHandle, 4> merged_param_names;
+									InlineVector<TypeInfo::TemplateArgInfo, 4> merged_param_args;
+									if (instantiated_type_info->hasInstantiationContext()) {
+										const TypeInfo::InstantiationContext* existing_context =
+											instantiated_type_info->instantiationContext();
+										merged_param_names = existing_context->param_names;
+										merged_param_args = existing_context->param_args;
+									}
+									const auto alias_arg_infos =
+										convertToTemplateArgInfo(*member_template_args);
+									const size_t alias_pair_count = std::min(
+										alias_node.template_parameters().size(),
+										alias_arg_infos.size());
+									for (size_t i = 0; i < alias_pair_count; ++i) {
+										const StringHandle alias_param_name =
+											alias_node.template_parameters()[i].nameHandle();
+										auto existing_name_it = std::find(
+											merged_param_names.begin(),
+											merged_param_names.end(),
+											alias_param_name);
+										if (existing_name_it == merged_param_names.end()) {
+											merged_param_names.push_back(alias_param_name);
+											merged_param_args.push_back(alias_arg_infos[i]);
+										} else {
+											const size_t existing_index =
+												static_cast<size_t>(std::distance(
+													merged_param_names.begin(),
+													existing_name_it));
+											merged_param_args[existing_index] = alias_arg_infos[i];
+										}
+									}
+									if (!merged_param_names.empty() && !merged_param_args.empty()) {
+										instantiated_type_info->setInstantiationContext(
+											std::move(merged_param_names),
+											std::move(merged_param_args),
+											nullptr);
+									}
+								}
 							}
 
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));

@@ -87,6 +87,53 @@ static ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
 	return ReferenceQualifier::RValueReference;
 }
 
+static void appendInstantiationContextBindingsToSubstitutionMap(
+	const TypeInfo::InstantiationContext* context,
+	SubstitutionParamMap& sub_map) {
+	if (context == nullptr) {
+		return;
+	}
+	appendInstantiationContextBindingsToSubstitutionMap(context->parent, sub_map);
+	if (context->hasInstantiationContextBindings()) {
+		for (const auto& binding : context->bindings) {
+			if (!binding.name.isValid() || binding.args.empty()) {
+				continue;
+			}
+			std::string_view binding_name =
+				StringTable::getStringView(binding.name);
+			if (binding_name.empty()) {
+				continue;
+			}
+			if (std::ranges::find(sub_map.param_order, binding_name) ==
+				sub_map.param_order.end()) {
+				sub_map.param_order.push_back(binding_name);
+				sub_map.param_map[binding_name] =
+					toTemplateTypeArg(binding.args.front());
+			}
+		}
+		return;
+	}
+	for (size_t i = 0;
+		 i < context->param_names.size() &&
+		 i < context->param_args.size();
+		 ++i) {
+		if (!context->param_names[i].isValid()) {
+			continue;
+		}
+		std::string_view binding_name =
+			StringTable::getStringView(context->param_names[i]);
+		if (binding_name.empty()) {
+			continue;
+		}
+		if (std::ranges::find(sub_map.param_order, binding_name) ==
+			sub_map.param_order.end()) {
+			sub_map.param_order.push_back(binding_name);
+			sub_map.param_map[binding_name] =
+				toTemplateTypeArg(context->param_args[i]);
+		}
+	}
+}
+
 bool Parser::isTemplateFunctionParameterPack(
 	std::span<const TemplateParameterNode> template_params,
 	const DeclarationNode& func_param_decl) {
@@ -283,6 +330,8 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			!current_semantic_type_info->hasDependentQualifiedName()) {
 			return std::nullopt;
 		}
+		FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias semantic path for ",
+				  StringTable::getStringView(current_semantic_type_info->name()));
 		if (const TypeInfo* resolved_dependent_type =
 				resolveDependentMemberTypeSemantic(
 					*current_semantic_type_info,
@@ -292,6 +341,27 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			resolved_dependent_type != nullptr) {
 			return emplaceResolvedSpec(resolved_dependent_type);
 		}
+		if (current_type_info != current_semantic_type_info &&
+			current_type_info->hasInstantiationContext()) {
+			SubstitutionParamMap sub_map =
+				buildSubstitutionParamMap(template_params, template_args);
+			appendInstantiationContextBindingsToSubstitutionMap(
+				current_type_info->instantiationContext(),
+				sub_map);
+			appendInstantiationContextBindingsToSubstitutionMap(
+				current_semantic_type_info->instantiationContext(),
+				sub_map);
+			ExpressionSubstitutor contextual_substitutor(
+				sub_map.param_map,
+				*this,
+				sub_map.param_order);
+			if (const TypeInfo* resolved_with_alias_context =
+					contextual_substitutor.resolveDependentMemberTypeForSubstitution(
+						*current_semantic_type_info);
+				resolved_with_alias_context != nullptr) {
+				return emplaceResolvedSpec(resolved_with_alias_context);
+			}
+		}
 		if (const TypeInfo* materialized_member_alias =
 				materializeInstantiatedMemberAliasTarget(
 					current_type_spec,
@@ -300,6 +370,8 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 			materialized_member_alias != nullptr) {
 			return emplaceResolvedSpec(materialized_member_alias);
 		}
+		FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias semantic path still dependent for ",
+				  StringTable::getStringView(current_semantic_type_info->name()));
 		return std::nullopt;
 	};
 
@@ -351,170 +423,7 @@ Parser::DependentAliasResolutionStatus Parser::resolveDependentMemberAlias(
 	if (sep_pos == std::string_view::npos)
 		return DependentAliasResolutionStatus::NotApplicable;
 
-	std::string base_part(type_name.substr(0, sep_pos));
-	std::string_view member_part = type_name.substr(sep_pos + 2);
-	auto build_resolved_handle = [](std::string_view base, std::string_view member) {
-		StringBuilder sb;
-		return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
-	};
-	auto instantiate_base_and_get_name = [&](std::string_view base_template_name,
-										   std::span<const TemplateTypeArg> args_to_use) -> std::string_view {
-		auto instantiation = try_instantiate_class_template(base_template_name, args_to_use);
-		if (instantiation.has_value() && instantiation->is<StructDeclarationNode>()) {
-			return StringTable::getStringView(instantiation->as<StructDeclarationNode>().name());
-		}
-		auto registry_hit = gTemplateRegistry.getInstantiation(
-			StringTable::getOrInternStringHandle(base_template_name), args_to_use);
-		if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
-			return StringTable::getStringView(registry_hit->as<StructDeclarationNode>().name());
-		}
-		return get_instantiated_class_name(base_template_name, args_to_use);
-	};
-
-	FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias: type_name=", type_name,
-			  " base_part=", base_part, " member_part=", member_part,
-			  " template_args=", template_args.size());
-
-	forEachNonPackTemplateParamArgBinding(
-		template_params,
-		template_args,
-		[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
-			std::string_view tname = tparam.name();
-			auto pos = base_part.find(tname);
-			if (pos != std::string::npos) {
-				base_part.replace(pos, tname.size(), arg.toString());
-			}
-		});
-
-	StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
-	FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias: resolved_name=",
-			  StringTable::getStringView(resolved_handle));
-	auto type_it = getTypesByNameMap().find(resolved_handle);
-	if (type_it != getTypesByNameMap().end() &&
-		type_it->second != nullptr &&
-		type_it->second->is_incomplete_instantiation_) {
-		type_it = getTypesByNameMap().end();
-	}
-
-	std::vector<TemplateTypeArg> concrete_instantiation_args;
-	if (type_info->isTemplateInstantiation()) {
-		concrete_instantiation_args =
-			materializePlaceholderTemplateArgs(*type_info, template_params, template_args);
-	}
-	if (concrete_instantiation_args.empty()) {
-		auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_part));
-		if (base_type_it != getTypesByNameMap().end() &&
-			base_type_it->second != nullptr &&
-			base_type_it->second->isTemplateInstantiation()) {
-			concrete_instantiation_args =
-				materializePlaceholderTemplateArgs(*base_type_it->second, template_params, template_args);
-		}
-	}
-	if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
-		std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
-		if (!base_template_name.empty()) {
-			std::string_view instantiated_base =
-				instantiate_base_and_get_name(base_template_name, concrete_instantiation_args);
-			resolved_handle = build_resolved_handle(instantiated_base, member_part);
-			type_it = getTypesByNameMap().find(resolved_handle);
-			if (type_it != getTypesByNameMap().end() &&
-				type_it->second != nullptr &&
-				type_it->second->is_incomplete_instantiation_) {
-				type_it = getTypesByNameMap().end();
-			}
-		}
-	}
-
-	auto resolve_base_template_name = [&](std::string_view candidate) {
-		std::string_view base_template_name = extractBaseTemplateName(candidate);
-		if (base_template_name.empty()) {
-			base_template_name = extract_base_template_name(candidate);
-		}
-		return base_template_name;
-	};
-	if (type_it == getTypesByNameMap().end()) {
-		std::string_view base_template_name = resolve_base_template_name(base_part);
-		if (!base_template_name.empty()) {
-			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
-			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-				std::vector<TemplateTypeArg> args_to_use = concrete_instantiation_args.empty()
-					? std::vector<TemplateTypeArg>(template_args.begin(), template_args.end())
-					: concrete_instantiation_args;
-				std::string_view instantiated_base =
-					instantiate_base_and_get_name(base_template_name, args_to_use);
-				resolved_handle = build_resolved_handle(instantiated_base, member_part);
-				type_it = getTypesByNameMap().find(resolved_handle);
-				if (type_it != getTypesByNameMap().end() &&
-					type_it->second != nullptr &&
-					type_it->second->is_incomplete_instantiation_) {
-					type_it = getTypesByNameMap().end();
-				}
-				if (type_it == getTypesByNameMap().end()) {
-					StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
-					type_it = getTypesByNameMap().find(primary_handle);
-					if (type_it != getTypesByNameMap().end() &&
-						type_it->second != nullptr &&
-						type_it->second->is_incomplete_instantiation_) {
-						type_it = getTypesByNameMap().end();
-					}
-				}
-				FLASH_LOG(Templates, Debug, "resolveDependentMemberAlias: after instantiation lookup '",
-						  StringTable::getStringView(resolved_handle), "' found=", (type_it != getTypesByNameMap().end()));
-			}
-		}
-	}
-
-	if (type_it == getTypesByNameMap().end()) {
-		if (type_info->isTemplateInstantiation()) {
-			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
-			if (!base_template_name.empty()) {
-				std::vector<TemplateTypeArg> args_to_use = concrete_instantiation_args.empty()
-					? std::vector<TemplateTypeArg>(template_args.begin(), template_args.end())
-					: concrete_instantiation_args;
-				auto instantiation_opt = gTemplateRegistry.getInstantiation(
-					StringTable::getOrInternStringHandle(base_template_name),
-					args_to_use);
-				if (instantiation_opt.has_value() && instantiation_opt->is<StructDeclarationNode>()) {
-					const auto& instantiated_struct = instantiation_opt->as<StructDeclarationNode>();
-					for (const auto& type_alias : instantiated_struct.type_aliases()) {
-						if (StringTable::getStringView(type_alias.alias_name) != member_part) {
-							continue;
-						}
-						StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
-							StringBuilder()
-								.append(StringTable::getStringView(instantiated_struct.name()))
-								.append("::")
-								.append(member_part)
-								.commit());
-						auto qualified_alias_it = getTypesByNameMap().find(qualified_alias_handle);
-						if (qualified_alias_it != getTypesByNameMap().end() && qualified_alias_it->second != nullptr) {
-							FLASH_LOG(Templates, Debug, "Resolved dependent alias from registered qualified alias '",
-									  StringTable::getStringView(qualified_alias_handle), "'");
-							return emplaceResolvedSpec(qualified_alias_it->second);
-						}
-						if (type_alias.type_node.is<TypeSpecifierNode>()) {
-							type_node = emplace_node<TypeSpecifierNode>(type_alias.type_node.as<TypeSpecifierNode>());
-							FLASH_LOG(Templates, Debug, "Resolved dependent alias from instantiated struct '",
-									  type_name, "' -> ", member_part);
-							return DependentAliasResolutionStatus::Resolved;
-						}
-					}
-				}
-			}
-		}
-		auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
-		if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
-			const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-			type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type());
-			FLASH_LOG(Templates, Debug, "Resolved dependent alias via registry '", type_name, "' -> ", alias_node.alias_name());
-			return DependentAliasResolutionStatus::Resolved;
-		}
-		return DependentAliasResolutionStatus::StillDependent;
-	}
-	auto status = emplaceResolvedSpec(type_it->second);
-	FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(type_it->second->typeEnum()),
-			  ", index=", type_it->second->type_index_);
-	return status;
+	return DependentAliasResolutionStatus::StillDependent;
 }
 
 const TypeInfo* Parser::resolveDependentMemberTypeSemantic(
@@ -529,6 +438,46 @@ const TypeInfo* Parser::resolveDependentMemberTypeSemantic(
 
 	SubstitutionParamMap sub_map =
 		buildSubstitutionParamMap(template_params, template_args);
+	for (const TemplateParamSubstitution& substitution :
+		 template_param_substitutions_) {
+		if (!substitution.param_name.isValid()) {
+			continue;
+		}
+		std::string_view binding_name =
+			StringTable::getStringView(substitution.param_name);
+		if (binding_name.empty()) {
+			continue;
+		}
+
+		std::optional<TemplateTypeArg> bound_arg;
+		if (substitution.is_type_param) {
+			bound_arg = substitution.substituted_type;
+		} else if (substitution.is_template_template_param &&
+				   substitution.concrete_template_name.isValid()) {
+			bound_arg =
+				TemplateTypeArg::makeTemplate(substitution.concrete_template_name);
+		} else if (substitution.is_value_param) {
+			if (substitution.typed_value_identity.has_value()) {
+				bound_arg = TemplateTypeArg::makeValueIdentity(
+					*substitution.typed_value_identity);
+			} else {
+				bound_arg = TemplateTypeArg(
+					substitution.value,
+					substitution.value_type);
+			}
+		}
+		if (!bound_arg.has_value()) {
+			continue;
+		}
+		if (std::ranges::find(sub_map.param_order, binding_name) ==
+			sub_map.param_order.end()) {
+			sub_map.param_order.push_back(binding_name);
+			sub_map.param_map[binding_name] = *bound_arg;
+		}
+	}
+	appendInstantiationContextBindingsToSubstitutionMap(
+		dependent_type_info.instantiationContext(),
+		sub_map);
 	ExpressionSubstitutor substitutor(sub_map.param_map, *this, sub_map.param_order);
 	if (current_owner_type_name.isValid()) {
 		substitutor.setCurrentOwnerTypeName(current_owner_type_name);

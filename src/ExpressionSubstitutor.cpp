@@ -981,6 +981,37 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 				findTypeByName(current_owner_type_name_);
 			break;
 		}
+		if (!dependent_name.owner_template_arguments.empty()) {
+			InlineVector<TemplateTypeArg, 4> owner_args =
+				materializeDependentRecordTemplateArgs(
+					dependent_name.owner_template_arguments,
+					depth);
+			if (!templateArgsStillDependent(owner_args)) {
+				materialized_owner =
+					parser_.resolveCanonicalInstantiatedOwnerForLookup(
+						owner_name,
+						std::span<const TemplateTypeArg>(
+							owner_args.data(),
+							owner_args.size()));
+				if (materialized_owner.instantiated_name.empty() &&
+					materialized_owner.resolved_type_info == nullptr &&
+					!owner_args.empty()) {
+					materialized_owner.instantiated_name =
+						parser_.get_instantiated_class_name(owner_name, owner_args);
+					if (!materialized_owner.instantiated_name.empty()) {
+						materialized_owner.resolved_type_info = findTypeByName(
+							StringTable::getOrInternStringHandle(
+								materialized_owner.instantiated_name));
+					}
+				}
+				if (materialized_owner.instantiated_name.empty() &&
+					materialized_owner.resolved_type_info == nullptr &&
+					dependent_name.owner_type.is_valid()) {
+					assign_owner_type(tryGetTypeInfo(dependent_name.owner_type));
+				}
+				break;
+			}
+		}
 		if (dependent_name.owner_type.is_valid()) {
 			assign_owner_type(tryGetTypeInfo(dependent_name.owner_type));
 		}
@@ -1224,6 +1255,26 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 
 	if (const TypeInfo::DependentQualifiedNameRecord* dependent_name =
 			type_info.dependentQualifiedName()) {
+		auto resolveConcreteAliasChain = [&](const TypeInfo* candidate_type_info) -> const TypeInfo* {
+			const TypeInfo* current_type_info = candidate_type_info;
+			for (size_t alias_depth = 0; current_type_info != nullptr && current_type_info->isTypeAlias() && alias_depth < 32; ++alias_depth) {
+				// A member alias like `using type = T;` resolved with `T = int*`
+				// keeps its pointer/reference/array/cv indirection in the alias
+				// specifier while its TypeIndex points at the terminal type. Stop
+				// before collapsing such an alias so those surface modifiers survive.
+				if (typeAliasPreservesSurfaceModifiers(*current_type_info)) {
+					break;
+				}
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					current_type_info->registeredTypeIndex().withCategory(current_type_info->typeEnum()));
+				if (resolved_alias.terminal_type_info == nullptr ||
+					resolved_alias.terminal_type_info == current_type_info) {
+					break;
+				}
+				current_type_info = resolved_alias.terminal_type_info;
+			}
+			return current_type_info;
+		};
 		Parser::AliasTemplateMaterializationResult materialized_owner =
 			materializeDependentQualifiedRecordOwner(
 				*dependent_name,
@@ -1231,6 +1282,9 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 				/*prefer_current_owner_type_name=*/true);
 		std::string_view materialized_owner_name =
 			materialized_owner.canonicalName();
+		FLASH_LOG(Templates, Debug, "lookupMaterializedDependentMember owner ",
+				  StringTable::getStringView(dependent_name->owner_name), " -> ", materialized_owner_name,
+				  " members=", dependent_name->member_chain.size());
 		if (!materialized_owner_name.empty()) {
 			std::vector<QualifiedTypeMemberAccess> member_chain;
 			member_chain.reserve(dependent_name->member_chain.size());
@@ -1254,6 +1308,9 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 				parser_.resolveBaseClassMemberTypeChain(
 					materialized_owner_name,
 					member_chain);
+			resolved_type = resolveConcreteAliasChain(resolved_type);
+			FLASH_LOG(Templates, Debug, "lookupMaterializedDependentMember chain result ",
+					  resolved_type != nullptr ? StringTable::getStringView(resolved_type->name()) : std::string_view{"<null>"});
 			if (resolved_type != nullptr) {
 				if (!dependent_name->member_chain.empty()) {
 					StringBuilder full_path_builder;
@@ -2653,7 +2710,10 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		const TemplateTypeArg& arg = it->second;
 		FLASH_LOG(Templates, Debug, "  Found template parameter substitution: ", id.name(),
 				  " -> type=", (int)arg.typeEnum(), ", type_index=", arg.type_index, ", is_value=", arg.is_value,
-				  ", is_template_template_arg=", arg.is_template_template_arg);
+				  ", is_template_template_arg=", arg.is_template_template_arg,
+				  ", is_dependent=", arg.is_dependent,
+				  ", dependent_name='", (arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : std::string_view()), "'",
+				  ", has_typed_identity=", arg.has_typed_value_identity ? 1 : 0);
 
 		// Handle template-template parameters
 		// When W is a TTP bound to "box", we need to return an identifier for "box"

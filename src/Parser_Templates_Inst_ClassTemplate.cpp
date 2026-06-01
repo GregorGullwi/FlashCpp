@@ -4052,6 +4052,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					TypeInfo* alias_info = nullptr;
+					const TypeInfo* alias_semantic_source =
+						isConcreteAliasSemanticSource(resolved_info)
+							? resolved_info
+							: nullptr;
 					auto existing_it = getTypesByNameMap().find(alias_instantiated_handle);
 					if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
 						alias_info = existing_it->second;
@@ -4060,14 +4064,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							resolved_registered_index,
 							resolved_info->sizeInBits().value,
 							&alias_type_spec,
-							resolved_info);
+							alias_semantic_source);
 					} else {
-						alias_info = &add_type_alias_copy(
-							alias_instantiated_handle,
-							resolved_registered_index,
-							resolved_info->sizeInBits().value,
-							alias_type_spec,
-							*resolved_info);
+						if (alias_semantic_source != nullptr) {
+							alias_info = &add_type_alias_copy(
+								alias_instantiated_handle,
+								resolved_registered_index,
+								resolved_info->sizeInBits().value,
+								alias_type_spec,
+								*alias_semantic_source);
+						} else {
+							alias_info = &add_type_alias_copy(
+								alias_instantiated_handle,
+								resolved_registered_index,
+								resolved_info->sizeInBits().value,
+								alias_type_spec);
+						}
 					}
 
 					if (alias_info != nullptr) {
@@ -4862,7 +4874,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				});
 		}
 
-		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+		const TypeSpecifierNode alias_decl_pattern_spec =
+			type_alias.type_node.as<TypeSpecifierNode>();
+		TypeSpecifierNode substituted_type_spec = alias_decl_pattern_spec;
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
 		std::optional<TemplateTypeArg> rebound_arg;
@@ -4870,9 +4884,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// signature; the existing alias-resolution path below preserves that full
 		// signature, while direct rebinding here is only for aliases shaped like T,
 		// T*, T&, and cv-qualified variants.
-		StringHandle alias_target_name = substituted_type_spec.has_function_signature()
+		StringHandle alias_target_name = alias_decl_pattern_spec.has_function_signature()
 											 ? StringHandle{}
-											 : getAliasTargetNameHandle(substituted_type_spec);
+											 : getAliasTargetNameHandle(alias_decl_pattern_spec);
 		if (alias_target_name.isValid()) {
 			forEachNonPackTemplateParamArgBinding(
 				params,
@@ -4883,7 +4897,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						param.nameHandle() == alias_target_name) {
 						rebound_arg = rebindDependentTemplateTypeArg(
 							concrete_arg,
-							TemplateTypeArg(substituted_type_spec));
+							TemplateTypeArg(alias_decl_pattern_spec));
 					}
 				});
 		}
@@ -7210,6 +7224,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_size = concrete_member_info->sizeInBits().value;
 					alias_semantic_source = concrete_member_info;
 				}
+				if (!isConcreteAliasSemanticSource(alias_semantic_source)) {
+					alias_semantic_source = nullptr;
+				}
 
 				if (const TypeInfo* alias_target_info = tryGetTypeInfo(TypeIndex{substituted_type_index});
 					alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
@@ -7266,12 +7283,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Register the type alias globally with its qualified name
 				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
 					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_for_pattern, instantiated_name);
+				bool use_resolved_alias_override =
+					resolved_alias_type_spec_override.has_value();
+				if (use_resolved_alias_override) {
+					const TypeSpecifierNode& override_spec =
+						resolved_alias_type_spec_override.value();
+					if (override_spec.type_index().is_valid() &&
+						typeIndexContainsDependentPlaceholder(
+							override_spec.type_index())) {
+						use_resolved_alias_override = false;
+					} else if (const TypeInfo* override_info =
+								   tryGetTypeInfo(override_spec.type_index());
+							   override_info != nullptr &&
+							   (override_info->isTemplatePlaceholder() ||
+								override_info->isDependentPlaceholder())) {
+						use_resolved_alias_override = false;
+					}
+				}
 				const TypeSpecifierNode& alias_registration_type_spec =
-					resolved_alias_type_spec_override.has_value()
+					use_resolved_alias_override
 						? resolved_alias_type_spec_override.value()
 						: (substituted_alias_type_spec.has_value()
 							   ? substituted_alias_type_spec.value()
 							   : alias_type_spec);
+				FLASH_LOG(
+					Parser,
+					Debug,
+					"Class alias register(pattern): name='",
+					StringTable::getStringView(qualified_alias_name),
+					"', substituted_type=",
+					static_cast<int>(substituted_type),
+					", substituted_index=",
+					TypeIndex{substituted_type_index}.index(),
+					", reg_spec_type=",
+					static_cast<int>(alias_registration_type_spec.type()),
+					", reg_spec_index=",
+					alias_registration_type_spec.type_index().index());
 				auto& alias_type_info =
 					alias_semantic_source != nullptr
 						? add_type_alias_copy(
@@ -9421,6 +9468,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeCategory resolved_type = type_spec.type();
 						TypeIndex resolved_index = type_spec.type_index();
 						bool resolved = false;
+						auto is_concrete_materialized_arg =
+							[](const TemplateTypeArg& candidate_arg) {
+							if (candidate_arg.is_dependent ||
+								candidate_arg.dependent_name.isValid() ||
+								candidate_arg.dependent_expr.has_value()) {
+								return false;
+							}
+							if (candidate_arg.is_value || !candidate_arg.type_index.is_valid()) {
+								return true;
+							}
+							const TypeInfo* candidate_type_info =
+								tryGetTypeInfo(candidate_arg.type_index);
+							if (candidate_type_info == nullptr) {
+								return false;
+							}
+							if (candidate_type_info->isTemplatePlaceholder() ||
+								candidate_type_info->isDependentPlaceholder() ||
+								(candidate_type_info->isDependentMemberType() &&
+								 candidate_type_info->hasDependentQualifiedName())) {
+								return false;
+							}
+							return true;
+						};
 
 						if ((is_struct_type(resolved_type)) && resolved_index.is_valid()) {
 							if (const TypeInfo* resolved_ti = tryGetTypeInfo(resolved_index)) {
@@ -9448,12 +9518,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												template_params,
 												template_args_to_use)) {
 										TemplateTypeArg member_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
-										member_arg.is_pack = arg_info.is_pack;
-										resolved_args.push_back(member_arg);
-										resolved = true;
-										FLASH_LOG_FORMAT(Templates, Debug,
-											"Resolved deferred base member alias '{}' to terminal type_index={}",
-											type_name, member_arg.type_index);
+										if (is_concrete_materialized_arg(member_arg)) {
+											member_arg.is_pack = arg_info.is_pack;
+											resolved_args.push_back(member_arg);
+											resolved = true;
+											FLASH_LOG_FORMAT(Templates, Debug,
+												"Resolved deferred base member alias '{}' to terminal type_index={}",
+												type_name, member_arg.type_index);
+										}
 									}
 								}
 								if (!resolved) {
@@ -9480,12 +9552,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														alias_node.template_parameters(),
 														instantiated_args)) {
 												TemplateTypeArg inst_arg = resolveTypeInfoToTemplateArg(*concrete_member_alias, type_spec);
-												inst_arg.is_pack = arg_info.is_pack;
-												resolved_args.push_back(inst_arg);
-												resolved = true;
-												FLASH_LOG_FORMAT(Templates, Debug,
-													"Resolved deferred base alias-template member argument '{}' via alias target",
-													type_name);
+												if (is_concrete_materialized_arg(inst_arg)) {
+													inst_arg.is_pack = arg_info.is_pack;
+													resolved_args.push_back(inst_arg);
+													resolved = true;
+													FLASH_LOG_FORMAT(Templates, Debug,
+														"Resolved deferred base alias-template member argument '{}' via alias target",
+														type_name);
+												}
 											}
 											if (resolved) {
 												continue;
@@ -11992,7 +12066,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Copy type aliases from the template with template parameter substitution
+	const bool has_unresolved_primary_template_args =
+		std::ranges::any_of(
+			template_args_to_use,
+			[](const TemplateTypeArg& template_arg) {
+				auto lacksConcreteTypeIdentity = [](TypeIndex type_index) {
+					if (!type_index.is_valid()) {
+						if (TypeIndex native_index = nativeTypeIndex(type_index.category()); native_index.is_valid()) {
+							return false;
+						}
+						return true;
+					}
+					if (typeIndexContainsDependentPlaceholder(type_index)) {
+						return true;
+					}
+					return false;
+				};
+				if (template_arg.is_template_template_arg) {
+					return !template_arg.template_name_handle.isValid();
+				}
+				const bool is_dependent = template_arg.is_dependent ||
+					template_arg.dependent_name.isValid() ||
+					template_arg.dependent_expr.has_value();
+				if (is_dependent) {
+					return true;
+				}
+				if (template_arg.is_value) {
+					return false;
+				}
+				TypeIndex arg_type_index =
+					template_arg.type_index.withCategory(template_arg.typeEnum());
+				return lacksConcreteTypeIdentity(arg_type_index);
+			});
 	for (const auto& type_alias : class_decl.type_aliases()) {
+		if (has_unresolved_primary_template_args) {
+			continue;
+		}
 		auto qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(type_alias.alias_name));
 
 		// Get the aliased type and substitute template parameters
@@ -12105,6 +12214,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_size = concrete_member_info->sizeInBits().value;
 			alias_semantic_source = concrete_member_info;
 		}
+		if (!isConcreteAliasSemanticSource(alias_semantic_source)) {
+			alias_semantic_source = nullptr;
+		}
 
 		// Ensure size is computed for primitive type aliases that were substituted from template parameters.
 		// When 'typedef T value_type' in a template is instantiated with T=long, the alias type category
@@ -12122,12 +12234,70 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Register the type alias in getTypesByNameMap()
 		std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
 			type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_to_use, instantiated_name);
+		bool use_resolved_alias_override =
+			resolved_alias_type_spec_override.has_value();
+		if (use_resolved_alias_override) {
+			const TypeSpecifierNode& override_spec =
+				resolved_alias_type_spec_override.value();
+			if (override_spec.type_index().is_valid() &&
+				typeIndexContainsDependentPlaceholder(
+					override_spec.type_index())) {
+				use_resolved_alias_override = false;
+			} else if (const TypeInfo* override_info =
+						   tryGetTypeInfo(override_spec.type_index());
+					   override_info != nullptr &&
+					   (override_info->isTemplatePlaceholder() ||
+						override_info->isDependentPlaceholder())) {
+				use_resolved_alias_override = false;
+			}
+		}
 		const TypeSpecifierNode& alias_registration_type_spec =
-			resolved_alias_type_spec_override.has_value()
+			use_resolved_alias_override
 				? resolved_alias_type_spec_override.value()
 				: (substituted_alias_type_spec.has_value()
 					   ? substituted_alias_type_spec.value()
 					   : alias_type_spec);
+		FLASH_LOG(
+			Parser,
+			Debug,
+			"Class alias register(primary): name='",
+			StringTable::getStringView(qualified_alias_name),
+			"', tmpl_args=",
+			template_args_to_use.size(),
+			"', substituted_type=",
+			static_cast<int>(substituted_type),
+			", substituted_index=",
+			TypeIndex{substituted_type_index}.index(),
+			", reg_spec_type=",
+			static_cast<int>(alias_registration_type_spec.type()),
+			", reg_spec_index=",
+			alias_registration_type_spec.type_index().index());
+		for (size_t alias_arg_index = 0; alias_arg_index < template_args_to_use.size(); ++alias_arg_index) {
+			const TemplateTypeArg& alias_arg = template_args_to_use[alias_arg_index];
+			const TypeInfo* alias_arg_info =
+				(!alias_arg.is_value && alias_arg.type_index.is_valid())
+					? tryGetTypeInfo(alias_arg.type_index)
+					: nullptr;
+			FLASH_LOG(
+				Parser,
+				Debug,
+				"  primary_arg[",
+				alias_arg_index,
+				"]: is_value=",
+				alias_arg.is_value ? 1 : 0,
+				", is_dep=",
+				alias_arg.is_dependent ? 1 : 0,
+				", type=",
+				static_cast<int>(alias_arg.typeEnum()),
+				", type_name='",
+				(alias_arg_info != nullptr
+					 ? StringTable::getStringView(alias_arg_info->name())
+					 : std::string_view()),
+				"', ref=",
+				static_cast<int>(alias_arg.ref_qualifier),
+				", ptr=",
+				static_cast<int>(alias_arg.pointer_depth));
+		}
 		auto& alias_type_info =
 			alias_semantic_source != nullptr
 				? add_type_alias_copy(

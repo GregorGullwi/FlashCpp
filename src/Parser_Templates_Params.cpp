@@ -2757,7 +2757,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				: nullptr;
 			const bool parsed_type_is_template_id =
 				parsed_type_info != nullptr && parsed_type_info->isTemplateInstantiation();
+			const bool token_names_entire_type =
+				parsed_type_info == nullptr ||
+				parsed_type_info->name() == template_name_handle;
 			if (template_name_handle.isValid() &&
+				token_names_entire_type &&
 				!parsed_type_is_template_id &&
 				(gTemplateRegistry.lookup_alias_template(template_name_handle).has_value() ||
 				 gTemplateRegistry.lookupTemplate(template_name_handle).has_value() ||

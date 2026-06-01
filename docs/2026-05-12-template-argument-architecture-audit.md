@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-28
+**Last updated:** 2026-06-01
 
 This document is not a release log. It should explain what the current template
 architecture can assume, what is still structurally wrong, and what the next
@@ -10,10 +10,10 @@ highest-value cleanup should be.
 ## Executive summary
 
 The template system has moved away from broad AST-only replay and toward
-owner-aware semantic records plus replay-first attachment. The biggest
-remaining gap is no longer general parser cleanup. It is the small set of
-template replay and dependent-alias routes that still lose semantic
-owner/member-chain identity and later recover it textually.
+owner-aware semantic records plus replay-first attachment. The legacy textual
+`base::member` dependent-alias path has now been removed; dependent member
+alias resolution is semantic-only. The biggest remaining gap is keeping replay
+attachment evidence-driven rather than shape-driven.
 
 ## What the current design can assume
 
@@ -30,39 +30,47 @@ owner/member-chain identity and later recover it textually.
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
-- dependent alias resolution now re-enters semantic owner/member-chain
-  resolution before touching the legacy textual `base::member` path
+- dependent alias resolution is now semantic-only: the legacy textual
+  `base::member` path in `resolveDependentMemberAlias(...)` has been removed,
+  and resolution flows through the preserved `DependentQualifiedNameRecord`,
+  instantiation-context bindings, and `materializeInstantiatedMemberAliasTarget`
+- `materializeAliasTemplateInstance` now has a fallback to
+  `materializeInstantiatedMemberAliasTarget` for direct-parameter alias
+  cases (`template<T> using id = T`) where `instantiated_name` is empty
+  but the alias node is non-null
+- member type aliases preserve surface modifiers (pointer/reference/cv/array/
+  function) across alias chains via the shared
+  `typeAliasPreservesSurfaceModifiers()` helper, so collapsing an alias to its
+  terminal type no longer silently drops indirection
 
 ## Main remaining architectural gap
 
-The remaining problem is not that replay exists. The problem is that a few
-paths still fail to preserve enough semantic metadata at parse/materialization
-time, so deduction-time resolution still has to recover intent from partial or
-recordless state.
-
-The clearest example is the residual textual `base::member` path in
-`resolveDependentMemberAlias(...)`. A direct removal probe showed that it is no
-longer broad infrastructure; it now only protects a small cluster of legacy
-recordless cases:
+The residual textual `base::member` path in `resolveDependentMemberAlias(...)`
+has been removed. The previously-blocking recordless cases now resolve through
+semantic owner/member-chain records that are preserved end-to-end at
+parse/materialization time:
 
 - `test_member_template_alias_preserves_outer_metadata_ret0.cpp`
 - `test_alias_template_nested_member_value_ret42.cpp`
 - `test_template_current_instantiation_alias_qualified_deeper_member_ret0.cpp`
 
-That is the next best cleanup target.
+The remaining problem is no longer textual recovery. It is keeping replay
+attachment evidence-driven: a few declaration-replay paths still lean on
+name/arity shape rather than source identity plus canonical substituted-signature
+evidence. Tightening those is the next best cleanup target.
 
 ## Recommended implementation order
 
-1. Remove the last recordless dependent-alias routes.
-   Preserve full semantic owner/member-chain records in the three remaining
-   cases above, then delete the textual `base::member` path entirely.
+1. ~~Remove the last recordless dependent-alias routes.~~ **Done.**
+   Semantic owner/member-chain records are now preserved in the three former
+   blocker cases and the textual `base::member` path has been deleted.
 
 2. Keep replay attachment evidence-driven.
    Continue tightening declaration replay so attachment succeeds because source
    identity and canonical substituted signatures match, not because a fallback
    scan guessed correctly.
 
-3. Extend dependent-name modeling only where it unlocks step 1 or 2.
+3. Extend dependent-name modeling only where it unlocks step 2.
    Richer current-instantiation and unknown-specialization handling still
    matters, but it should be pulled in to unblock concrete replay/alias gaps,
    not pursued as a detached refactor.
@@ -84,6 +92,6 @@ That is the next best cleanup target.
 When changing this area, always rerun:
 
 - the focused regression that motivated the slice
-- the three residual textual-path blockers listed above when touching dependent
-  alias ownership
+- the three former textual-path blockers listed above when touching dependent
+  alias ownership (they now exercise the semantic-only route)
 - `pwsh tests/run_all_tests.ps1` before closing the slice

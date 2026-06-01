@@ -1286,6 +1286,8 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 					member_access.member_name,
 					0);
 			if (qualified_member_template_name.empty()) {
+				FLASH_LOG(Templates, Debug, "resolveBaseClassMemberTypeChain failed member-template lookup ",
+						  current_base_name, "::", member_name);
 				return nullptr;
 			}
 
@@ -1304,6 +1306,8 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 					StringTable::getOrInternStringHandle(materialized_member.instantiated_name));
 			}
 			if (resolved_type == nullptr) {
+				FLASH_LOG(Templates, Debug, "resolveBaseClassMemberTypeChain failed materialized member-template ",
+						  qualified_member_template_name);
 				return nullptr;
 			}
 			normalizeResolvedMemberOwner(resolved_type, current_base_name);
@@ -1322,6 +1326,8 @@ const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
 			resolved_type = lookup_inherited_type_alias(current_base_name, member_name);
 		}
 		if (resolved_type == nullptr) {
+			FLASH_LOG(Templates, Debug, "resolveBaseClassMemberTypeChain failed member lookup ",
+					  current_base_name, "::", member_name);
 			return nullptr;
 		}
 
