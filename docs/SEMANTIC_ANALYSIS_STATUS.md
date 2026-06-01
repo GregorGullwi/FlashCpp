@@ -51,17 +51,17 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - unresolved ordinary direct-call terminals are still tracked explicitly in
   sema stats (`direct_call_unresolved_after_lookup`,
   `direct_call_unresolved_after_overload`) to preserve burn-down visibility
-- remaining member-resolution recovery sites are tracked per call path with
-  attempt/success counters in sema stats:
-  `direct_call_member_recovery_receiver_*`,
-  `direct_call_member_recovery_lookup_empty_*`,
-  `direct_call_member_recovery_post_overload_*`
-- post-overload member recovery is now skipped for sema-normalized direct
-  calls and remains active only for non-normalized compatibility flows
-- lookup-empty member recovery is now also skipped for sema-normalized direct
-  calls and remains active only for non-normalized compatibility flows
-- receiver-member recovery is now also skipped for sema-normalized direct
-  calls and remains active only for non-normalized compatibility flows
+- post-overload member recovery has been removed from direct-call target
+  resolution; unresolved post-overload terminals are now tracked directly via
+  `direct_call_unresolved_after_overload`
+- qualified direct calls now build member-function overload candidates from the
+  resolved owner type (including current-instantiation/template-argument owner
+  bindings) before lookup-empty recovery is considered
+- lookup-empty member recovery has been removed from direct-call target
+  resolution; empty lookup terminals are now tracked directly via
+  `direct_call_unresolved_after_lookup`
+- receiver-member recovery has been removed from direct-call target resolution;
+  receiver calls now require a concrete parser/sema-resolved member target
 - parser/template work now preserves substantially more owner/member-template
   identity for dependent aliases and replay-heavy paths before deduction-time
   resolution

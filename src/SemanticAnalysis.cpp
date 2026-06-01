@@ -1408,22 +1408,7 @@ public:
 				  owner_.stats_.statements_visited, " statements, ",
 				  owner_.stats_.canonical_types_interned, " canonical types, ",
 				  owner_.stats_.direct_call_unresolved_after_lookup, " direct-call lookup terminals, ",
-				  owner_.stats_.direct_call_unresolved_after_overload, " direct-call overload terminals, ",
-				  owner_.stats_.direct_call_member_recovery_receiver_successes, "/",
-				  owner_.stats_.direct_call_member_recovery_receiver_attempts,
-				  " receiver member recoveries, ",
-				  owner_.stats_.direct_call_member_recovery_receiver_skipped_normalized,
-				  " receiver recoveries skipped in normalized calls, ",
-				  owner_.stats_.direct_call_member_recovery_lookup_empty_successes, "/",
-				  owner_.stats_.direct_call_member_recovery_lookup_empty_attempts,
-				  " lookup-empty member recoveries, ",
-				  owner_.stats_.direct_call_member_recovery_lookup_empty_skipped_normalized,
-				  " lookup-empty recoveries skipped in normalized calls, ",
-				  owner_.stats_.direct_call_member_recovery_post_overload_successes, "/",
-				  owner_.stats_.direct_call_member_recovery_post_overload_attempts,
-				  " post-overload member recoveries, ",
-				  owner_.stats_.direct_call_member_recovery_post_overload_skipped_normalized,
-				  " post-overload recoveries skipped in normalized calls");
+				  owner_.stats_.direct_call_unresolved_after_overload, " direct-call overload terminals");
 		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
 	}
 
@@ -7573,317 +7558,20 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 	}
 }
 
-bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_info,
-														   const DeclarationNode& decl,
-														   const ChunkedVector<ASTNode>& arguments,
-														   const FunctionDeclarationNode*& func_decl) {
-	const StringHandle func_name_handle = decl.identifier_token().handle();
-	// Peel alias layers until we either reach a concrete struct owner or give up.
-	auto resolveStructOwnerType = [&](const TypeInfo* type_info) -> const TypeInfo* {
-		constexpr size_t kMaxAliasDepth = 100;
-		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
-			if (type_info->getStructInfo()) {
-				return type_info;
-			}
-			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
-			if (!underlying || underlying == type_info) {
-				break;
-			}
-			type_info = underlying;
-		}
-		return nullptr;
-	};
-
-	auto searchStructMembers = [&](const StructTypeInfo* root_struct_info) -> bool {
-		std::unordered_set<const StructTypeInfo*> visited;
-		auto searchImpl = [&](const StructTypeInfo* struct_info, const auto& self) -> bool {
-			if (!struct_info || !visited.insert(struct_info).second) {
-				return false;
-			}
-
-			bool has_local_overload_name = false;
-			for (const auto& mf : struct_info->member_functions) {
-				if (mf.name == func_name_handle) {
-					has_local_overload_name = true;
-				}
-				const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(mf.function_decl);
-				if (!candidate) {
-					continue;
-				}
-				if (&candidate->decl_node() == &decl) {
-					func_decl = candidate;
-					return true;
-				}
-			}
-			if (call_info.mangled_name.isValid()) {
-				const std::string_view call_mangled = call_info.mangled_name.view();
-				for (const auto& mf : struct_info->member_functions) {
-					const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(mf.function_decl);
-					if (!candidate) {
-						continue;
-					}
-					if (candidate->has_mangled_name() &&
-						candidate->mangled_name() == call_mangled) {
-						func_decl = candidate;
-						return true;
-					}
-				}
-			}
-			const FunctionDeclarationNode* name_match = nullptr;
-			bool ambiguous = false;
-			for (const auto& mf : struct_info->member_functions) {
-				if (mf.name != func_name_handle) {
-					continue;
-				}
-				const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(mf.function_decl);
-				if (!candidate) {
-					continue;
-				}
-				if (isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
-					if (name_match) {
-						ambiguous = true;
-						break;
-					}
-					name_match = candidate;
-				}
-			}
-			if (name_match && !ambiguous) {
-				func_decl = name_match;
-				return true;
-			}
-			if (has_local_overload_name) {
-				return false;
-			}
-
-			for (const auto& base_spec : struct_info->base_classes) {
-				if (const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_spec.type_index)) {
-					if (self(base_struct_info, self)) {
-						return true;
-					}
-				}
-			}
-			return false;
-		};
-
-		return searchImpl(root_struct_info, searchImpl);
-	};
-
-	auto searchTypeMembers = [&](const TypeInfo* type_info) -> bool {
-		if (!type_info) {
-			return false;
-		}
-		if (searchStructMembers(type_info->getStructInfo())) {
-			return true;
-		}
-		if (type_info->isTemplateInstantiation()) {
-			auto pattern_it = getTypesByNameMap().find(type_info->baseTemplateName());
-			if (pattern_it != getTypesByNameMap().end() &&
-				searchStructMembers(pattern_it->second->getStructInfo())) {
-				return true;
-			}
-		}
-		return false;
-	};
-
-	auto searchMemberContextHierarchy = [&]() -> bool {
-		const MemberContext* member_context = getCurrentMemberContext();
-		if (!member_context) {
-			return false;
-		}
-
-		const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index);
-		if (!current_type_info) {
-			return false;
-		}
-
-		if (!current_type_info->getStructInfo()) {
-			return false;
-		}
-
-		std::unordered_set<const StructTypeInfo*> visited;
-		auto searchHierarchy = [&](auto&& recurse, const TypeInfo* type_info) -> bool {
-			const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
-			if (!struct_info || !visited.insert(struct_info).second) {
-				return false;
-			}
-			if (searchTypeMembers(type_info)) {
-				return true;
-			}
-			for (const auto& base_spec : struct_info->base_classes) {
-				if (!base_spec.type_index.is_valid()) {
-					continue;
-				}
-				const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index);
-				if (!base_type_info) {
-					continue;
-				}
-				if (recurse(recurse, base_type_info)) {
-					return true;
-				}
-			}
-			return false;
-		};
-
-		return searchHierarchy(searchHierarchy, current_type_info);
-	};
-
-	auto searchReceiverHierarchy = [&]() -> bool {
-		if (!call_info.has_receiver || !call_info.receiver.has_value()) {
-			return false;
-		}
-
-		const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
-		if (!receiver_type_id) {
-			return false;
-		}
-
-		const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-		if (receiver_desc.category() != TypeCategory::Struct &&
-			receiver_desc.category() != TypeCategory::UserDefined) {
-			return false;
-		}
-
-		const TypeInfo* receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
-		if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
-			const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
-			receiver_type_info = resolved_alias.terminal_type_info;
-		}
-
-		return searchTypeMembers(receiver_type_info);
-	};
-
-	if (searchReceiverHierarchy()) {
-		return true;
-	}
-
-	if (!call_info.qualified_name.isValid()) {
-		return searchMemberContextHierarchy();
-	}
-
-	const std::string_view qname = call_info.qualified_name.view();
-	const size_t scope_sep = qname.rfind("::");
-	if (scope_sep == std::string_view::npos)
-		return false;
-
-	const std::string_view struct_name_sv = qname.substr(0, scope_sep);
-	// Collect fuzzy owner matches so sema can refuse ambiguous recovery instead
-	// of picking an arbitrary same-suffix struct from the type registry.
-	std::vector<const TypeInfo*> fuzzy_owner_candidates;
-	std::unordered_set<const TypeInfo*> fuzzy_owner_candidate_set;
-	auto addUniqueOwnerCandidate = [&](const TypeInfo* type_info) {
-		type_info = resolveStructOwnerType(type_info);
-		if (!type_info) {
-			return;
-		}
-		if (fuzzy_owner_candidate_set.insert(type_info).second) {
-			fuzzy_owner_candidates.push_back(type_info);
-		}
-	};
-	auto resolveQualifiedOwnerType = [&](std::string_view owner_name) -> const TypeInfo* {
-		auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
-			auto it = getTypesByNameMap().find(handle);
-			return it != getTypesByNameMap().end() ? it->second : nullptr;
-		};
-
-		const TypeInfo* type_info = nullptr;
-		if (const MemberContext* member_context = getCurrentMemberContext();
-			member_context &&
-			owner_name.find("::") == std::string_view::npos) {
-			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
-				const std::string_view current_type_name = StringTable::getStringView(current_type_info->name());
-				const StringHandle qualified_alias_name =
-					StringTable::getOrInternStringHandle(StringBuilder()
-														 .append(current_type_name)
-														 .append("::")
-														 .append(owner_name)
-														 .commit());
-				type_info = resolve_type_info(qualified_alias_name);
-
-				// C++20: if the qualifier is a template type parameter name (e.g. P in
-				// P::scale()), resolve it via the current instantiation's bindings.
-				// This handles the policy-pattern: template<typename P> struct UsePolicy
-				// { void f() { P::scale(x); } }; when instantiated with P=ScaleByTwo.
-				if (!type_info) {
-					if (const TypeInfo::TemplateArgInfo* bound_arg = current_type_info->findLegacyInstantiationArgByName(owner_name)) {
-						type_info = tryGetTypeInfo(bound_arg->type_index);
-					}
-				}
-			}
-		}
-
-		if (!type_info) {
-			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
-		}
-
-		return resolveStructOwnerType(type_info);
-	};
-
-	if (const MemberContext* member_context = getCurrentMemberContext()) {
-		if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
-			if ((current_type_info->isTemplateInstantiation() &&
-				 StringTable::getStringView(current_type_info->baseTemplateName()) == struct_name_sv) ||
-				StringTable::getStringView(current_type_info->name()) == struct_name_sv) {
-				if (searchTypeMembers(current_type_info)) {
-					return true;
-				}
-			}
-		}
-	}
-	if (const TypeInfo* resolved_owner_type = resolveQualifiedOwnerType(struct_name_sv);
-		resolved_owner_type &&
-		searchTypeMembers(resolved_owner_type)) {
-		return true;
-	}
-
-	for (const auto& [handle, ti] : getTypesByNameMap()) {
-		if (!ti)
-			continue;
-		const std::string_view registered_name = handle.view();
-		if (registered_name == struct_name_sv ||
-			(ti->isTemplateInstantiation() &&
-			 StringTable::getStringView(ti->baseTemplateName()) == struct_name_sv)) {
-			addUniqueOwnerCandidate(ti);
-		} else if (registered_name.size() > struct_name_sv.size() + 1) {
-			const size_t prefix_end = registered_name.size() - struct_name_sv.size();
-			if (registered_name.substr(prefix_end) == struct_name_sv &&
-				(registered_name[prefix_end - 1] == ':' ||
-				 registered_name[prefix_end - 1] == '<')) {
-				addUniqueOwnerCandidate(ti);
-			}
-		}
-		if (registered_name.size() > struct_name_sv.size() &&
-			registered_name[struct_name_sv.size()] == '<' &&
-			registered_name.starts_with(struct_name_sv)) {
-			addUniqueOwnerCandidate(ti);
-		}
-	}
-
-	if (fuzzy_owner_candidates.size() == 1) {
-		return searchTypeMembers(fuzzy_owner_candidates.front());
-	}
-	if (fuzzy_owner_candidates.size() > 1) {
-		FLASH_LOG(Templates, Debug,
-				  "SemanticAnalysis: ambiguous qualified call owner '",
-				  struct_name_sv,
-				  "' matched ",
-				  fuzzy_owner_candidates.size(),
-				  " struct candidates during sema call recovery");
-	}
-
-	return false;
-}
-
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																				const void* call_key) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
-	auto appendUniqueOverloads = [](std::vector<ASTNode>& target, std::span<const ASTNode> source) {
+	auto appendUniqueOverload = [](std::vector<ASTNode>& target, const ASTNode& candidate) {
+		auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
+			return existing.raw_pointer() == candidate.raw_pointer();
+		});
+		if (it == target.end()) {
+			target.push_back(candidate);
+		}
+	};
+	auto appendUniqueOverloads = [&](std::vector<ASTNode>& target, std::span<const ASTNode> source) {
 		for (const ASTNode& candidate : source) {
-			auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
-				return existing.raw_pointer() == candidate.raw_pointer();
-			});
-			if (it == target.end()) {
-				target.push_back(candidate);
-			}
+			appendUniqueOverload(target, candidate);
 		}
 	};
 	auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
@@ -7915,46 +7603,113 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			qualified_name.substr(scope_sep + 2)
 		};
 	};
+	auto resolveStructOwnerType = [&](const TypeInfo* type_info) -> const TypeInfo* {
+		constexpr size_t kMaxAliasDepth = 100;
+		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
+			if (type_info->getStructInfo()) {
+				return type_info;
+			}
+			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+			if (!underlying || underlying == type_info) {
+				break;
+			}
+			type_info = underlying;
+		}
+		return nullptr;
+	};
+	auto appendOwnerMemberOverloads = [&](const TypeInfo* owner_type,
+										  std::string_view member_name,
+										  std::vector<ASTNode>& target) {
+		const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		auto appendFromStruct = [&](const StructTypeInfo* root_struct_info) -> void {
+			if (!root_struct_info) {
+				return;
+			}
+			std::unordered_set<const StructTypeInfo*> visited;
+			auto recurse = [&](const StructTypeInfo* struct_info, const auto& recurse_ref) -> void {
+				if (!struct_info || !visited.insert(struct_info).second) {
+					return;
+				}
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.name != member_name_handle) {
+						continue;
+					}
+					appendUniqueOverload(target, member_func.function_decl);
+				}
+				for (const auto& base_spec : struct_info->base_classes) {
+					if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_spec.type_index)) {
+						recurse_ref(base_struct, recurse_ref);
+					}
+				}
+			};
+			recurse(root_struct_info, recurse);
+		};
+
+		if (!owner_type) {
+			return;
+		}
+		if (const TypeInfo* resolved_owner = resolveStructOwnerType(owner_type)) {
+			appendFromStruct(resolved_owner->getStructInfo());
+			if (resolved_owner->isTemplateInstantiation()) {
+				auto pattern_it = getTypesByNameMap().find(resolved_owner->baseTemplateName());
+				if (pattern_it != getTypesByNameMap().end()) {
+					appendFromStruct(pattern_it->second->getStructInfo());
+				}
+			}
+		}
+	};
+	auto resolveQualifiedOwnerTypeForCall = [&](std::string_view owner_name) -> const TypeInfo* {
+		if (call_info.dependent_qualified_lookup_record != nullptr &&
+			call_info.dependent_qualified_lookup_record->has_value()) {
+			const TypeInfo::DependentQualifiedNameRecord& dependent_record =
+				**call_info.dependent_qualified_lookup_record;
+			if (dependent_record.owner_type.is_valid()) {
+				if (const TypeInfo* owner_from_record = tryGetTypeInfo(dependent_record.owner_type)) {
+					return resolveStructOwnerType(owner_from_record);
+				}
+			}
+		}
+
+		auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
+			auto it = getTypesByNameMap().find(handle);
+			return it != getTypesByNameMap().end() ? it->second : nullptr;
+		};
+
+		const TypeInfo* type_info = nullptr;
+		if (const MemberContext* member_context = getCurrentMemberContext();
+			member_context &&
+			owner_name.find("::") == std::string_view::npos) {
+			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
+				const std::string_view current_type_name =
+					StringTable::getStringView(current_type_info->name());
+				type_info = resolve_type_info(
+					StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(current_type_name)
+							.append("::")
+							.append(owner_name)
+							.commit()));
+				if (!type_info) {
+					if (const TypeInfo::TemplateArgInfo* bound_arg =
+							current_type_info->findLegacyInstantiationArgByName(owner_name)) {
+						type_info = tryGetTypeInfo(bound_arg->type_index);
+					}
+				}
+			}
+		}
+		if (!type_info) {
+			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
+		}
+		return resolveStructOwnerType(type_info);
+	};
 	if (call_info.is_indirect) {
 		return nullptr;
 	}
-	const bool normalized_call_expr = normalized_ast_nodes_.count(call_key) > 0;
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
-			const FunctionDeclarationNode* recovered_func_decl = nullptr;
-			const std::string_view declared_name = call_info.function_declaration->decl_node().identifier_token().value();
-			// Explicit member operator syntax initially carries a parser-created
-			// non-member placeholder; recover the actual receiver member here.
-			if (!call_info.function_declaration->is_member_function() &&
-				declared_name.starts_with("operator")) {
-				if (normalized_call_expr) {
-					++stats_.direct_call_member_recovery_receiver_skipped_normalized;
-					return nullptr;
-				}
-				++stats_.direct_call_member_recovery_receiver_attempts;
-				if (tryRecoverCallDeclFromStructMembers(
-						call_info,
-						call_info.function_declaration->decl_node(),
-						arguments,
-						recovered_func_decl)) {
-					++stats_.direct_call_member_recovery_receiver_successes;
-					return recovered_func_decl;
-				}
-			}
 			return call_info.function_declaration;
 		}
 
-		const DeclarationNode& decl = *call_info.declaration;
-		const FunctionDeclarationNode* recovered_func_decl = nullptr;
-		if (normalized_call_expr) {
-			++stats_.direct_call_member_recovery_receiver_skipped_normalized;
-			return nullptr;
-		}
-		++stats_.direct_call_member_recovery_receiver_attempts;
-		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, recovered_func_decl)) {
-			++stats_.direct_call_member_recovery_receiver_successes;
-			return recovered_func_decl;
-		}
 		return nullptr;
 	}
 
@@ -8038,6 +7793,16 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			overloads = symbols_.lookup_all(unqualified_name);
 		}
 	}
+	if (overloads.empty() && call_info.qualified_name.isValid()) {
+		const std::string_view qualified_name = call_info.qualified_name.view();
+		const size_t scope_sep = qualified_name.rfind("::");
+		if (scope_sep != std::string_view::npos) {
+			const std::string_view owner_name = qualified_name.substr(0, scope_sep);
+			if (const TypeInfo* owner_type = resolveQualifiedOwnerTypeForCall(owner_name)) {
+				appendOwnerMemberOverloads(owner_type, decl.identifier_token().value(), overloads);
+			}
+		}
+	}
 	std::vector<TypeSpecifierNode> arg_types;
 	const bool arg_types_collected = parser().tryCollectFunctionCallArgTypes(arguments, arg_types);
 	if (arg_types_collected &&
@@ -8048,22 +7813,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
-		if (!call_info.is_indirect && normalized_call_expr) {
-			++stats_.direct_call_member_recovery_lookup_empty_skipped_normalized;
-			if (!call_info.is_indirect) {
-				++stats_.direct_call_unresolved_after_lookup;
-			}
-			return nullptr;
+		if (!call_info.is_indirect) {
+			++stats_.direct_call_unresolved_after_lookup;
 		}
-		++stats_.direct_call_member_recovery_lookup_empty_attempts;
-		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-			if (!call_info.is_indirect) {
-				++stats_.direct_call_unresolved_after_lookup;
-			}
-			return nullptr;
-		}
-		++stats_.direct_call_member_recovery_lookup_empty_successes;
-		return func_decl;
+		return nullptr;
 	}
 
 	if (arg_types_collected) {
@@ -8111,18 +7864,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			func_decl = getCallTargetFunctionCandidate(overloads[0]);
 		} else {
 			func_decl = find_by_arg_count();
-		}
-	}
-
-	if (!func_decl) {
-		if (!call_info.is_indirect && normalized_call_expr) {
-			++stats_.direct_call_member_recovery_post_overload_skipped_normalized;
-		} else {
-			++stats_.direct_call_member_recovery_post_overload_attempts;
-			if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-				++stats_.direct_call_member_recovery_post_overload_successes;
-				return func_decl;
-			}
 		}
 	}
 
