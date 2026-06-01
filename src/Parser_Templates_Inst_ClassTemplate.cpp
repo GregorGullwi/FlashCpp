@@ -8126,16 +8126,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG(Templates, Debug,
 								"Parsed and substituted OOL plain member body "
 								"for partial-spec: ", plain_ool_name);
+						} else {
+							std::string error_msg = std::string(StringBuilder()
+								.append("Failed to replay partial-spec plain out-of-line member '")
+								.append(plain_ool_name)
+								.append("' for instantiated class '")
+								.append(instantiated_name)
+								.append("'")
+								.commit());
+							if (force_eager) {
+								throw InternalError(error_msg);
+							}
+							return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 						}
 					} else {
-						FLASH_LOG(
-							Templates,
-							Error,
-							"Could not attach partial-spec plain out-of-line member '",
-							plain_ool_name,
-							"' for instantiated class '",
-							instantiated_name,
-							"' via replay identity map");
+						std::string error_msg = std::string(StringBuilder()
+							.append("Could not attach partial-spec plain out-of-line member '")
+							.append(plain_ool_name)
+							.append("' for instantiated class '")
+							.append(instantiated_name)
+							.append("' via replay identity map")
+							.commit());
+						if (force_eager) {
+							throw InternalError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 					continue;
 				}
