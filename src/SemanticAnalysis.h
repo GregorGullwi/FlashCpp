@@ -543,10 +543,6 @@ private:
 										   const char* context_description);
 	const FunctionDeclarationNode* resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																 const void* call_key);
-	bool tryRecoverCallDeclFromStructMembers(const CallInfo& call_info,
-											 const DeclarationNode& decl,
-											 const ChunkedVector<ASTNode>& arguments,
-											 const FunctionDeclarationNode*& func_decl);
 	struct ResolvedMemberAccessInfo {
 		TypeIndex owner_type_index{};
 		size_t member_index = 0;

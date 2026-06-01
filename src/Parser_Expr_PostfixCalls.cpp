@@ -6,6 +6,23 @@
 #include "TypeTraitEvaluator.h"
 #include <limits>
 
+namespace {
+void setResolvedMemberCallMetadata(ExpressionNode& call_expr, const FunctionDeclarationNode& func_decl) {
+	if (func_decl.has_mangled_name()) {
+		setCallMangledName(call_expr, func_decl.mangled_name());
+	}
+	if (func_decl.is_member_function() &&
+		!func_decl.parent_struct_name().empty()) {
+		StringBuilder qualified_name_builder;
+		qualified_name_builder
+			.append(func_decl.parent_struct_name())
+			.append("::")
+			.append(func_decl.decl_node().identifier_token().value());
+		setCallQualifiedName(call_expr, qualified_name_builder.commit());
+	}
+}
+} // namespace
+
 // Helper: resolve object type from expression and try to instantiate member function template.
 // Uses get_expression_type() to handle any expression (identifiers, function calls, member access, etc.).
 // Returns the instantiated function node if successful, nullopt otherwise.
@@ -503,18 +520,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_operator_name_token));
-		if (func_ref_ptr->has_mangled_name()) {
-			setCallMangledName(result->as<ExpressionNode>(), func_ref_ptr->mangled_name());
-		}
-		if (func_ref_ptr->is_member_function() &&
-			!func_ref_ptr->parent_struct_name().empty()) {
-			StringBuilder qualified_name_builder;
-			qualified_name_builder
-				.append(func_ref_ptr->parent_struct_name())
-				.append("::")
-				.append(func_ref_ptr->decl_node().identifier_token().value());
-			setCallQualifiedName(result->as<ExpressionNode>(), qualified_name_builder.commit());
-		}
+		setResolvedMemberCallMetadata(result->as<ExpressionNode>(), *func_ref_ptr);
 		return ParseResult::success(*result);
 	}
 
@@ -773,20 +779,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_name_token));
-		if (func_ref_ptr->has_mangled_name()) {
-			setCallMangledName(result->as<ExpressionNode>(), func_ref_ptr->mangled_name());
-		}
-		if (func_ref_ptr->is_member_function() &&
-			!func_ref_ptr->parent_struct_name().empty()) {
-			StringBuilder qualified_name_builder;
-			qualified_name_builder
-				.append(func_ref_ptr->parent_struct_name())
-				.append("::")
-				.append(func_ref_ptr->decl_node().identifier_token().value());
-			setCallQualifiedName(
-				result->as<ExpressionNode>(),
-				qualified_name_builder.commit());
-		}
+		setResolvedMemberCallMetadata(result->as<ExpressionNode>(), *func_ref_ptr);
 		return ParseResult::success(*result);
 	}
 
