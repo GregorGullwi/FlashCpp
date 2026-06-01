@@ -106,7 +106,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 Fix landed:
 
 - **Template-expression constructor-call substitution now rebuilds the substituted type with the full `TemplateTypeArg` metadata (cv/ref qualifiers, pointer qualifiers, arrays, and function signatures) instead of only swapping the category token.** This keeps instantiated constructor-call ASTs semantically aligned with the concrete type, which is the higher-layer behavior needed before IR/codegen sees them.
-- **Constexpr qualified-id fallback now consults dependent qualified-owner bindings from the active template environment before treating `Owner::member` as permanently dependent.** When the owner template parameter is already concretized, constexpr evaluation can now recover the actual owner type instead of immediately bailing out on the unresolved spelling.
+- **Constexpr qualified-id resolution now consults dependent qualified-owner bindings from the active template environment before treating `Owner::member` as permanently dependent.** When the owner template parameter is already concretized, constexpr evaluation can recover the actual owner type instead of immediately bailing out on the unresolved spelling.
 
 Regression coverage:
 
@@ -122,6 +122,29 @@ Validation snapshot (`x64/Sharded/FlashCpp`, Linux/libstdc++-14):
 | `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~1124ms (`TOTAL`) / ~1.29s wall | Control retest still compiles. |
 | `<latch>` (`test_std_latch.cpp`) | ❌ Codegen Error | ~1.90s wall | No header flip yet; first hard stops remain deferred constructor materialization / receiver normalization around `std::__mutex_base`, `_Spin`, and `_EntersWait::value`. |
 | `<optional>` (`test_std_optional.cpp`) | 💥 Crash | ~3.30s wall | Progress is now past the earlier `_Optional_payload_base` category-25/codegen frontier; current first fatal frontier is constexpr/static-assert evaluation around `is_same_v`, followed by a crash. |
+
+### 2026-06-01 dependent member-template static constexpr follow-up
+
+Fix landed:
+
+- **Dependent nested member-template chains such as `Derived<T>::Inner<int>::type::value` now preserve typed owner/member-chain metadata through substitution, lazy replay, alias registration, and constexpr evaluation.** This avoids leaving static constexpr members partially unresolved until link time.
+- **The hard-coded constexpr dependent lookup scan was removed.** The covered cases now resolve through active template bindings, inherited member-template lookup, and typed `resolveBaseClassMemberTypeChain` materialization instead of string-prefix recovery.
+- **Static member initializer replay is owner-aware.** Replayed initializers keep the instantiated owner context so alias chains and member-template `::type::value` paths fold before emission.
+
+Regression coverage:
+
+- `tests/test_template_dependent_base_member_template_type_value_ret0.cpp`
+- `tests/test_template_lazy_static_current_instantiation_alias_chain_ret0.cpp`
+- `tests/test_template_lazy_static_unknown_specialization_member_template_type_value_ret0.cpp`
+- `tests/test_template_lazy_static_unknown_specialization_multilevel_member_template_value_ret0.cpp`
+- `tests/test_template_out_of_line_static_member_replay_member_template_chain_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCppMSVC.exe`, Windows/MSVC):
+
+| Header/Test | Status | Time | First-order stop / note |
+|-------------|--------|------|-------------------------|
+| Dependent member-template static constexpr regressions | ✅ Pass | focused runner | The formerly failing link/return-mismatch cases now compile, link, and return the expected value. |
+| Full test suite | ✅ Pass | PowerShell runner | 2608 pass, 0 failures, 0 return mismatches, 188 expected-fail files failed as expected. |
 
 ### 2026-05-28 Linux/libstdc++ `if constexpr` local-scope constexpr context follow-up
 

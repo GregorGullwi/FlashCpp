@@ -31,6 +31,9 @@ Move FlashCpp toward a sema-owned template system where:
 - dependent alias resolution is semantic-only: the textual fallback in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
+- dependent nested member-template static constexpr chains now reuse typed
+  owner/member-chain records, active template bindings, and inherited
+  member-template lookup instead of hard-coded constexpr name scans
 - `materializeAliasTemplateInstance` now falls back to
   `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
   where the instantiated name resolves to a member type
@@ -73,7 +76,9 @@ unknown-specialization modeling only where it unblocks those paths.
 - prefer invariant failures or proper diagnostics over silent repair in
   normalized flows
 - keep compatibility behavior explicit, narrow, and temporary
-- treat codegen-side recovery as debt to remove, not a design tool
+- treat codegen-side recovery as debt to remove, not a design tool; when a
+  late retry is still needed, it should delegate to typed lookup such as
+  `resolveBaseClassMemberTypeChain`
 
 ## Validation guidance
 
@@ -83,4 +88,6 @@ For work in this area:
 - rerun the three former dependent-alias blocker tests when touching alias
   ownership or current-instantiation handling (they now exercise the
   semantic-only route)
+- rerun the dependent member-template static constexpr regressions when touching
+  nested owner/member-chain replay or static member initializer materialization
 - run `pwsh tests/run_all_tests.ps1` before considering the slice complete
