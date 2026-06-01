@@ -38,8 +38,6 @@ bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candida
 
 const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason reason) {
 	switch (reason) {
-		case DirectCallCompatibilityReason::ReceiverMemberRecovery:
-			return "receiver-member recovery";
 		case DirectCallCompatibilityReason::DependentUnqualifiedPointOfInstantiation:
 			return "dependent unqualified point-of-instantiation recovery";
 	}
@@ -7965,7 +7963,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			++stats_.direct_call_member_recovery_receiver_successes;
 			return recovered_func_decl;
 		}
-		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::ReceiverMemberRecovery);
 		return nullptr;
 	}
 

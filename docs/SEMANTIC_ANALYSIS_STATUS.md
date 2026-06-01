@@ -51,6 +51,9 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   removing `StructMemberLookupMiss` and `QualifiedOrOrdinaryNameLookupMiss`;
   unresolved ordinary direct-call terminals no longer require dedicated
   compatibility-reason codes
+- `ReceiverMemberRecovery` has also been removed from compatibility reasons;
+  receiver/member recovery remains tracked via sema counters rather than a
+  codegen-facing reason code
 - unresolved ordinary direct-call terminals are still tracked explicitly in
   sema stats (`direct_call_unresolved_after_lookup`,
   `direct_call_unresolved_after_overload`) to preserve burn-down visibility
