@@ -191,6 +191,31 @@ bool isEligibleDefinitionLookupCall(
 	return true;
 }
 
+template <typename LookupRecordT>
+void initializeCallLookupRecordCommon(
+	LookupRecordT& record,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token) {
+	if (definition_context != nullptr && definition_context->is_valid()) {
+		record.definition_context = *definition_context;
+	}
+	record.callee_name = callee_token.handle();
+}
+
+void setDefinitionBoundFunction(
+	DependentUnqualifiedCallLookupRecord& record,
+	const FunctionDeclarationNode* definition_bound_function) {
+	if (definition_bound_function == nullptr) {
+		return;
+	}
+	record.definition_bound_function = definition_bound_function;
+	if (definition_bound_function->has_mangled_name()) {
+		record.definition_bound_mangled_name =
+			StringTable::getOrInternStringHandle(
+				definition_bound_function->mangled_name());
+	}
+}
+
 std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLookupRecord(
 	const TemplateDefinitionLookupContext* definition_context,
 	const Token& callee_token,
@@ -210,8 +235,7 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 
 	const FunctionDeclarationNode& func_decl = resolved_decl.as<FunctionDeclarationNode>();
 	FunctionCallDefinitionLookupRecord record;
-	record.definition_context = *definition_context;
-	record.callee_name = callee_token.handle();
+	initializeCallLookupRecordCommon(record, definition_context, callee_token);
 	record.resolved_function = &func_decl;
 	if (func_decl.has_mangled_name()) {
 		record.resolved_mangled_name =
@@ -225,18 +249,38 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 std::optional<DependentUnqualifiedCallLookupRecord> makeDependentUnqualifiedCallLookupRecord(
 	const TemplateDefinitionLookupContext* definition_context,
 	const Token& callee_token,
-	bool argument_dependent_lookup_included) {
+	bool argument_dependent_lookup_included,
+	const FunctionDeclarationNode* definition_bound_function) {
 	if (callee_token.type() != Token::Type::Identifier) {
 		return std::nullopt;
 	}
 
 	DependentUnqualifiedCallLookupRecord record;
-	if (definition_context != nullptr && definition_context->is_valid()) {
-		record.definition_context = *definition_context;
-	}
-	record.callee_name = callee_token.handle();
+	initializeCallLookupRecordCommon(record, definition_context, callee_token);
 	record.argument_dependent_lookup_included = argument_dependent_lookup_included;
+	setDefinitionBoundFunction(record, definition_bound_function);
 	return record;
+}
+
+std::optional<DependentUnqualifiedCallLookupRecord> makeDependentUnqualifiedCallLookupRecordFromResolvedDecl(
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	bool argument_dependent_lookup_included,
+	const ASTNode& resolved_decl) {
+	if (const FunctionDeclarationNode* definition_bound_function =
+			get_function_decl_node(resolved_decl);
+		definition_bound_function != nullptr) {
+		return makeDependentUnqualifiedCallLookupRecord(
+			definition_context,
+			callee_token,
+			argument_dependent_lookup_included,
+			definition_bound_function);
+	}
+	return makeDependentUnqualifiedCallLookupRecord(
+		definition_context,
+		callee_token,
+		argument_dependent_lookup_included,
+		nullptr);
 }
 
 void appendUniqueOverloads(std::vector<ASTNode>& target, std::span<const ASTNode> source) {
@@ -1204,7 +1248,8 @@ void maybeAttachDependentUnqualifiedLookupRecord(
 	const Token& callee_token,
 	bool has_deferred_template_call_args,
 	const TemplateDefinitionLookupContext* definition_context,
-	bool argument_dependent_lookup_included) {
+	bool argument_dependent_lookup_included,
+	const FunctionDeclarationNode* definition_bound_function) {
 	if (!has_deferred_template_call_args) {
 		return;
 	}
@@ -1212,10 +1257,39 @@ void maybeAttachDependentUnqualifiedLookupRecord(
 			makeDependentUnqualifiedCallLookupRecord(
 				definition_context,
 				callee_token,
-				argument_dependent_lookup_included);
+				argument_dependent_lookup_included,
+				definition_bound_function);
 		record.has_value()) {
 		setCallDependentUnqualifiedLookupRecord(call_expr, *record);
 	}
+}
+
+void maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
+	ExpressionNode& call_expr,
+	const Token& callee_token,
+	bool has_deferred_template_call_args,
+	const TemplateDefinitionLookupContext* definition_context,
+	bool argument_dependent_lookup_included,
+	const ASTNode& resolved_decl) {
+	if (const FunctionDeclarationNode* definition_bound_function =
+			get_function_decl_node(resolved_decl);
+		definition_bound_function != nullptr) {
+		maybeAttachDependentUnqualifiedLookupRecord(
+			call_expr,
+			callee_token,
+			has_deferred_template_call_args,
+			definition_context,
+			argument_dependent_lookup_included,
+			definition_bound_function);
+		return;
+	}
+	maybeAttachDependentUnqualifiedLookupRecord(
+		call_expr,
+		callee_token,
+		has_deferred_template_call_args,
+		definition_context,
+		argument_dependent_lookup_included,
+		nullptr);
 }
 
 void syncTemplateArgumentNodeMetadata(
@@ -5272,7 +5346,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						identifier_token,
 						has_dependent_call_args,
 						current_template_definition_lookup_context_,
-						true);
+						true,
+						nullptr);
 					return ParseResult::success(*result);
 				}
 
@@ -5296,12 +5371,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 						}
 					}
-					maybeAttachDependentUnqualifiedLookupRecord(
+					maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 						result->as<ExpressionNode>(),
 						identifier_token,
 						has_dependent_call_args,
 						current_template_definition_lookup_context_,
-						true);
+						true,
+						*resolution.selected_overload);
 					return ParseResult::success(*result);
 				}
 				// Template instantiation failure is an expected substitution failure in
@@ -5713,15 +5789,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 					}
 					if (has_deferred_template_call_args) {
-						if (std::optional<DependentUnqualifiedCallLookupRecord> record =
-								makeDependentUnqualifiedCallLookupRecord(
-									current_template_definition_lookup_context_,
-									identifier_token,
-									argumentDependentLookupIncluded);
-							record.has_value()) {
-							setCallDependentUnqualifiedLookupRecord(
-								result->as<ExpressionNode>(),
-								*record);
+						std::optional<DependentUnqualifiedCallLookupRecord> record =
+							makeDependentUnqualifiedCallLookupRecordFromResolvedDecl(
+								current_template_definition_lookup_context_,
+								identifier_token,
+								argumentDependentLookupIncluded,
+								*identifierType);
+						if (record.has_value()) {
+							setCallDependentUnqualifiedLookupRecord(result->as<ExpressionNode>(), *record);
 						}
 					}
 					return ParseResult::success(*result);
@@ -5766,12 +5841,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
 						}
 					}
-					maybeAttachDependentUnqualifiedLookupRecord(
+					maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 						result->as<ExpressionNode>(),
 						identifier_token,
 						has_deferred_template_call_args,
 						current_template_definition_lookup_context_,
-						argumentDependentLookupIncluded);
+						argumentDependentLookupIncluded,
+						resolved_decl);
 					return ParseResult::success(*result);
 				};
 
@@ -5785,7 +5861,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							makeDependentUnqualifiedCallLookupRecord(
 								current_template_definition_lookup_context_,
 								identifier_token,
-								argumentDependentLookupIncluded);
+								argumentDependentLookupIncluded,
+								nullptr);
 						record.has_value()) {
 						setCallDependentUnqualifiedLookupRecord(
 							result->as<ExpressionNode>(),
@@ -8495,13 +8572,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 										}
 									}
-									maybeAttachDependentUnqualifiedLookupRecord(
+									maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 										result->as<ExpressionNode>(),
 										identifier_token,
 										argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 											argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
 										current_template_definition_lookup_context_,
-										true);
+										true,
+										*identifierType);
 									// Return early - we've created the call expression with the args
 									if (result.has_value())
 										return ParseResult::success(*result);
@@ -8720,13 +8798,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 											}
 										}
-										maybeAttachDependentUnqualifiedLookupRecord(
+										maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 											result->as<ExpressionNode>(),
 											identifier_token,
 											argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
 											current_template_definition_lookup_context_,
-											true);
+											true,
+											*instantiated_func);
 									} else if (has_dependent_template_args || defer_struct_member_template_instantiation) {
 										// Template arguments are dependent - this is a template-dependent expression
 										// Create a CallExprNode with a placeholder declaration that will be resolved during template instantiation
@@ -8852,13 +8931,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 												}
 											}
-											maybeAttachDependentUnqualifiedLookupRecord(
+											maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 												result->as<ExpressionNode>(),
 												identifier_token,
 												argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 													argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
 												current_template_definition_lookup_context_,
-												true);
+												true,
+												*instantiated_func);
 									} else {
 										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
 										if (has_dependent_call_args ||
@@ -8932,13 +9012,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 														setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 													}
 												}
-												maybeAttachDependentUnqualifiedLookupRecord(
+												maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 													result->as<ExpressionNode>(),
 													identifier_token,
 													argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 														argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
 													current_template_definition_lookup_context_,
-													true);
+													true,
+													*instantiated_func);
 										} else {
 											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
 											if (has_dependent_call_args ||
@@ -8987,13 +9068,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													setCallQualifiedName(result->as<ExpressionNode>(), StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
 												}
 											}
-											maybeAttachDependentUnqualifiedLookupRecord(
+											maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 												result->as<ExpressionNode>(),
 												identifier_token,
 												argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 													argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
 												current_template_definition_lookup_context_,
-												true);
+												true,
+												*resolution_result.selected_overload);
 										}
 									}
 								}

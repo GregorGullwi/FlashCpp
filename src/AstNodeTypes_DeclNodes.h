@@ -2966,15 +2966,19 @@ private:
 // Unified call-expression node (consolidation plan step 1)
 // ============================================================================
 
+// Shared payload for call-lookup records captured during parsing.
+struct CallLookupRecordShared {
+	TemplateDefinitionLookupContext definition_context;
+	StringHandle callee_name{};
+};
+
 // Per-call semantic record for non-dependent function calls whose lookup was
 // completed in the template definition context.  The callee pointer follows the
 // same stable FunctionDeclarationNode identity already stored by
 // CalleeDescriptor; the definition context documents the lookup boundary used
 // to exclude later point-of-instantiation declarations.  For qualified calls,
 // the CallExprNode qualified_name records the qualifier and ADL is disabled.
-struct FunctionCallDefinitionLookupRecord {
-	TemplateDefinitionLookupContext definition_context;
-	StringHandle callee_name{};
+struct FunctionCallDefinitionLookupRecord : CallLookupRecordShared {
 	const FunctionDeclarationNode* resolved_function = nullptr;
 	StringHandle resolved_mangled_name{};
 	bool ordinary_lookup_included = true;
@@ -2984,10 +2988,10 @@ struct FunctionCallDefinitionLookupRecord {
 // Per-call semantic record for unresolved dependent unqualified calls whose
 // ordinary lookup must remain definition-bound while ADL completes at the point
 // of instantiation.
-struct DependentUnqualifiedCallLookupRecord {
-	TemplateDefinitionLookupContext definition_context;
-	StringHandle callee_name{};
+struct DependentUnqualifiedCallLookupRecord : CallLookupRecordShared {
 	bool argument_dependent_lookup_included = true;
+	const FunctionDeclarationNode* definition_bound_function = nullptr;
+	StringHandle definition_bound_mangled_name{};
 };
 
 // Describes what kind of call site this is.

@@ -1623,6 +1623,40 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			: makeDirectCallExpr(target_decl, std::move(args), called_from);
 		return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 	};
+	auto materializeResolvedCallExpr = [&](
+		const FunctionDeclarationNode& target_func,
+		ChunkedVector<ASTNode>&& args,
+		const Token& called_from_token,
+		std::optional<std::string_view> qualified_call_name,
+		bool copy_template_arguments,
+		bool infer_qualified_name_from_parent) -> ASTNode {
+		ExpressionNode& new_expr = emplaceDirectCallExpr(
+			target_func.decl_node(),
+			&target_func,
+			std::move(args),
+			called_from_token);
+		CallMetadataCopyOptions copy_options;
+		copy_options.copy_template_arguments = copy_template_arguments;
+		copy_options.copy_dependent_unqualified_lookup_record = false;
+		copy_options.copy_dependent_qualified_lookup_record = false;
+		copyMetadataToExpr(new_expr, copy_options);
+		if (qualified_call_name.has_value() && !qualified_call_name->empty()) {
+			setCallQualifiedName(new_expr, *qualified_call_name);
+		} else if (infer_qualified_name_from_parent &&
+			!target_func.parent_struct_name().empty()) {
+			setCallQualifiedName(
+				new_expr,
+				StringBuilder()
+					.append(target_func.parent_struct_name())
+					.append("::")
+					.append(target_func.decl_node().identifier_token().value())
+					.commit());
+		}
+		if (target_func.has_mangled_name()) {
+			setCallMangledName(new_expr, target_func.mangled_name());
+		}
+		return ASTNode(&new_expr);
+	};
 	auto normalizePendingSemanticRoots = [&]() {
 		parser_.normalizePendingSemanticRoots();
 	};
@@ -2032,25 +2066,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					for (size_t i = 0; i < call.arguments().size(); ++i) {
 						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
 					}
-
-					ExpressionNode& new_expr = emplaceDirectCallExpr(
-						func_decl.decl_node(),
-						&func_decl,
+					ASTNode resolved_call = materializeResolvedCallExpr(
+						func_decl,
 						std::move(substituted_args_nodes),
-						call.called_from());
-					CallMetadataCopyOptions copy_options;
-					copy_options.copy_template_arguments = false;
-					copyMetadataToExpr(new_expr, copy_options);
-					if (func_decl.has_mangled_name()) {
-						setCallMangledName(new_expr, func_decl.mangled_name());
-					}
+						call.called_from(),
+						std::nullopt,
+						false, // copy_template_arguments
+						false  // infer_qualified_name_from_parent
+					);
 					std::vector<ASTNode> substituted_template_arg_nodes;
 					substituted_template_arg_nodes.reserve(explicit_template_arg_nodes.size());
 					for (const auto& arg_node : explicit_template_arg_nodes) {
 						substituted_template_arg_nodes.push_back(substitute(arg_node));
 					}
-					setCallTemplateArguments(new_expr, std::move(substituted_template_arg_nodes));
-					return ASTNode(&new_expr);
+					setCallTemplateArguments(
+						resolved_call.as<ExpressionNode>(),
+						std::move(substituted_template_arg_nodes));
+					return resolved_call;
 				}
 			}
 
@@ -2226,16 +2258,14 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			FLASH_LOG(Templates, Debug, "  Successfully instantiated template function");
 
 			// Create a new direct CallExprNode with the instantiated function
-			ExpressionNode& new_expr = emplaceDirectCallExpr(
-				instantiated_func.decl_node(),
-				&instantiated_func,
+			return materializeResolvedCallExpr(
+				instantiated_func,
 				std::move(substituted_args),
-				call.called_from());
-			copyMetadataToExpr(new_expr);
-			if (instantiated_func.has_mangled_name()) {
-				setCallMangledName(new_expr, instantiated_func.mangled_name());
-			}
-			return ASTNode(&new_expr);
+				call.called_from(),
+				std::nullopt,
+				true,  // copy_template_arguments
+				false  // infer_qualified_name_from_parent
+			);
 		} else {
 			FLASH_LOG(Templates, Warning, "  Failed to instantiate template function: ", template_func_name);
 		}
@@ -2258,27 +2288,14 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				if (const FunctionDeclarationNode* target_func =
 						get_function_decl_node(*resolved_target);
 					target_func != nullptr) {
-					ExpressionNode& new_expr = emplaceDirectCallExpr(
-						target_func->decl_node(),
-						target_func,
+					return materializeResolvedCallExpr(
+						*target_func,
 						std::move(substituted_args),
-						call.called_from());
-					CallMetadataCopyOptions copy_options;
-					copy_options.copy_dependent_unqualified_lookup_record = false;
-					copyMetadataToExpr(new_expr, copy_options);
-					if (target_func->has_mangled_name()) {
-						setCallMangledName(new_expr, target_func->mangled_name());
-					}
-					if (!target_func->parent_struct_name().empty()) {
-						setCallQualifiedName(
-							new_expr,
-							StringBuilder()
-								.append(target_func->parent_struct_name())
-								.append("::")
-								.append(target_func->decl_node().identifier_token().value())
-								.commit());
-					}
-					return ASTNode(&new_expr);
+						call.called_from(),
+						std::nullopt,
+						true, // copy_template_arguments
+						true  // infer_qualified_name_from_parent
+					);
 				}
 			}
 		}
@@ -2352,23 +2369,20 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								call.called_from().line(),
 								call.called_from().column(),
 								call.called_from().file_index());
-							ExpressionNode& new_expr = emplaceDirectCallExpr(
-								target_func->decl_node(),
-								target_func,
-								std::move(substituted_args),
-								called_from_token);
-							copyMetadataToExpr(new_expr);
-							setCallQualifiedName(
-								new_expr,
+							const std::string_view resolved_qualified_name =
 								StringBuilder()
 									.append(resolved_owner_name)
 									.append("::")
 									.append(resolved_member_name)
-									.commit());
-							if (target_func->has_mangled_name()) {
-								setCallMangledName(new_expr, target_func->mangled_name());
-							}
-							return ASTNode(&new_expr);
+									.commit();
+							return materializeResolvedCallExpr(
+								*target_func,
+								std::move(substituted_args),
+								called_from_token,
+								resolved_qualified_name,
+								true,  // copy_template_arguments
+								false  // infer_qualified_name_from_parent
+							);
 						}
 					}
 				}
@@ -2503,23 +2517,20 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							call.called_from().line(),
 							call.called_from().column(),
 							call.called_from().file_index());
-						ExpressionNode& new_expr = emplaceDirectCallExpr(
-							target_func->decl_node(),
-							target_func,
-							std::move(substituted_args),
-							called_from_token);
-						copyMetadataToExpr(new_expr);
-						setCallQualifiedName(
-							new_expr,
+						const std::string_view materialized_qualified_name =
 							StringBuilder()
 								.append(materialized_owner_name)
 								.append("::")
 								.append(member_name)
-								.commit());
-						if (target_func->has_mangled_name()) {
-							setCallMangledName(new_expr, target_func->mangled_name());
-						}
-						return ASTNode(&new_expr);
+								.commit();
+						return materializeResolvedCallExpr(
+							*target_func,
+							std::move(substituted_args),
+							called_from_token,
+							materialized_qualified_name,
+							true,  // copy_template_arguments
+							false  // infer_qualified_name_from_parent
+						);
 					}
 				}
 			}
@@ -2595,17 +2606,14 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					return wrapOriginalCall();
 				}
 
-				ExpressionNode& new_expr = emplaceDirectCallExpr(
-					target_func->decl_node(),
-					target_func,
+				return materializeResolvedCallExpr(
+					*target_func,
 					std::move(substituted_args),
-					new_func_token);
-				copyMetadataToExpr(new_expr);
-				setCallQualifiedName(new_expr, new_func_name);
-				if (target_func && target_func->has_mangled_name()) {
-					setCallMangledName(new_expr, target_func->mangled_name());
-				}
-				return ASTNode(&new_expr);
+					new_func_token,
+					new_func_name,
+					true,  // copy_template_arguments
+					false  // infer_qualified_name_from_parent
+				);
 			}
 		}
 	}
