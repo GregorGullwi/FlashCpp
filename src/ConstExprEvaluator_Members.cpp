@@ -5555,6 +5555,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						dependent_record->member_chain.size() >= parsed_member_chain.size()) {
 						for (size_t i = 0; i < parsed_member_chain.size(); ++i) {
 							const auto& dep_member = dependent_record->member_chain[i];
+							if (dep_member.name != parsed_member_chain[i].member_name) {
+								break;
+							}
 							if (!dep_member.has_template_arguments) {
 								continue;
 							}

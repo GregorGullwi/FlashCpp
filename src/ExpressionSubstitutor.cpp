@@ -1098,57 +1098,14 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 		result.owner_type,
 		nullptr,
 		recorded_owner_name_handle);
-	auto canonicalize_owner_type = [&](const TypeInfo* owner_type, int owner_depth) -> const TypeInfo* {
-		if (owner_type == nullptr) {
+	std::string_view root_owner_name = StringTable::getStringView(owner_name_handle);
+	std::vector<QualifiedTypeMemberAccess> materialized_prefix_chain;
+	materialized_prefix_chain.reserve(prefix_chain.size());
+	auto resolve_materialized_prefix_chain = [&]() -> const TypeInfo* {
+		if (root_owner_name.empty() || materialized_prefix_chain.empty()) {
 			return nullptr;
 		}
-
-		const TypeInfo* resolved_type = owner_type;
-		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-			resolved_type->registeredTypeIndex().withCategory(
-				resolved_type->typeEnum()));
-		if (resolved_alias.terminal_type_info != nullptr) {
-			resolved_type = resolved_alias.terminal_type_info;
-		} else if (resolved_alias.type_index.is_valid()) {
-			if (const TypeInfo* alias_index_type = tryGetTypeInfo(resolved_alias.type_index);
-				alias_index_type != nullptr) {
-				resolved_type = alias_index_type;
-			}
-		}
-
-		if (resolved_type != nullptr &&
-			resolved_type->isDependentMemberType()) {
-			if (const TypeInfo* materialized_member_type =
-					resolveDependentMemberType(*resolved_type, owner_depth + 1);
-				materialized_member_type != nullptr) {
-				resolved_type = materialized_member_type;
-				ResolvedAliasTypeInfo materialized_alias = resolveAliasTypeInfo(
-					resolved_type->registeredTypeIndex().withCategory(
-						resolved_type->typeEnum()));
-				if (materialized_alias.terminal_type_info != nullptr) {
-					resolved_type = materialized_alias.terminal_type_info;
-				} else if (materialized_alias.type_index.is_valid()) {
-					if (const TypeInfo* materialized_alias_index =
-							tryGetTypeInfo(materialized_alias.type_index);
-						materialized_alias_index != nullptr) {
-						resolved_type = materialized_alias_index;
-					}
-				}
-			}
-		}
-		if (resolved_type != nullptr &&
-			(!resolved_type->isStruct() || resolved_type->getStructInfo() == nullptr)) {
-			MaterializedDependentMemberLookup materialized_lookup =
-				lookupMaterializedDependentMember(*resolved_type, owner_depth + 1);
-			if (const TypeInfo* alias_lookup_type =
-					resolveMaterializedMemberAliasLookup(materialized_lookup);
-				alias_lookup_type != nullptr &&
-				alias_lookup_type->name().isValid()) {
-				resolved_type = alias_lookup_type;
-			}
-		}
-
-		return resolved_type;
+		return resolveQualifiedMemberNamespaceChain(root_owner_name, materialized_prefix_chain);
 	};
 
 	for (size_t i = 0; i < prefix_chain.size(); ++i) {
@@ -1221,10 +1178,9 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 			QualifiedTypeMemberAccess templated_member_access;
 			templated_member_access.member_name = member_record.name;
 			templated_member_access.has_template_arguments = true;
-			std::vector<TemplateTypeArg> member_args_storage(
-				member_args.begin(),
-				member_args.end());
-			templated_member_access.template_arguments = &member_args_storage;
+			templated_member_access.template_arguments =
+				&gChunkedAnyStorage.emplace_back<std::vector<TemplateTypeArg>>(
+					member_args.toVector());
 			if (const TypeInfo* resolved_owner =
 					resolveQualifiedMemberNamespaceChain(
 						chained_owner_name,
@@ -1235,6 +1191,7 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 				resolved_owner->name().isValid()) {
 				(void)resolved_owner;
 			}
+			materialized_prefix_chain.push_back(templated_member_access);
 
 			if (std::optional<ASTNode> instantiated_member_template =
 					parser_.try_instantiate_class_template(
@@ -1275,12 +1232,11 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 			if (result.owner_type == nullptr) {
 				result.owner_type = findTypeByName(next_owner_handle);
 			}
-			if (const TypeInfo* canonical_owner =
-					canonicalize_owner_type(result.owner_type, depth);
-				canonical_owner != nullptr &&
-				canonical_owner->name().isValid()) {
-				result.owner_type = canonical_owner;
-				result.owner_name = canonical_owner->name();
+			if (const TypeInfo* chain_owner = resolve_materialized_prefix_chain();
+				chain_owner != nullptr &&
+				chain_owner->name().isValid()) {
+				result.owner_type = chain_owner;
+				result.owner_name = chain_owner->name();
 			}
 			result.outer_binding =
 				parser_.buildAccumulatedOuterTemplateBinding(
@@ -1292,21 +1248,21 @@ ExpressionSubstitutor::materializeDependentQualifiedMemberPrefixOwner(
 
 		QualifiedTypeMemberAccess member_access;
 		member_access.member_name = member_record.name;
-		const TypeInfo* resolved_owner =
-			resolveQualifiedMemberNamespaceChain(
-				chained_owner_name,
-				std::span<QualifiedTypeMemberAccess>(&member_access, 1));
+		materialized_prefix_chain.push_back(member_access);
+		const TypeInfo* resolved_owner = resolve_materialized_prefix_chain();
+		if (resolved_owner == nullptr) {
+			resolved_owner =
+				resolveQualifiedMemberNamespaceChain(
+					chained_owner_name,
+					std::span<QualifiedTypeMemberAccess>(&member_access, 1));
+		}
 		if (resolved_owner == nullptr ||
 			!resolved_owner->name().isValid()) {
 			result = {};
 			return result;
 		}
 
-		const TypeInfo* canonical_owner =
-			canonicalize_owner_type(resolved_owner, depth);
-		result.owner_type = canonical_owner != nullptr
-							 ? canonical_owner
-							 : resolved_owner;
+		result.owner_type = resolved_owner;
 		result.owner_name = result.owner_type->name();
 	}
 
