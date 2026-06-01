@@ -1427,7 +1427,9 @@ public:
 				  " lookup-empty member recoveries, ",
 				  owner_.stats_.direct_call_member_recovery_post_overload_successes, "/",
 				  owner_.stats_.direct_call_member_recovery_post_overload_attempts,
-				  " post-overload member recoveries");
+				  " post-overload member recoveries, ",
+				  owner_.stats_.direct_call_member_recovery_post_overload_skipped_normalized,
+				  " post-overload recoveries skipped in normalized calls");
 		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
 	}
 
@@ -8116,10 +8118,15 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (!func_decl) {
-		++stats_.direct_call_member_recovery_post_overload_attempts;
-		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-			++stats_.direct_call_member_recovery_post_overload_successes;
-			return func_decl;
+		const bool normalized_call_expr = normalized_ast_nodes_.count(call_key) > 0;
+		if (!call_info.is_indirect && normalized_call_expr) {
+			++stats_.direct_call_member_recovery_post_overload_skipped_normalized;
+		} else {
+			++stats_.direct_call_member_recovery_post_overload_attempts;
+			if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
+				++stats_.direct_call_member_recovery_post_overload_successes;
+				return func_decl;
+			}
 		}
 	}
 
