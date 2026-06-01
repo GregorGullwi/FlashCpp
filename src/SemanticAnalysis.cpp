@@ -36,20 +36,6 @@ bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candida
 
 } // namespace
 
-const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason reason) {
-	switch (reason) {
-		case DirectCallCompatibilityReason::ReceiverMemberRecovery:
-			return "receiver-member recovery";
-		case DirectCallCompatibilityReason::DependentUnqualifiedPointOfInstantiation:
-			return "dependent unqualified point-of-instantiation recovery";
-		case DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss:
-			return "qualified or ordinary name lookup miss";
-		case DirectCallCompatibilityReason::StructMemberLookupMiss:
-			return "struct-member lookup miss";
-	}
-	return "unknown direct-call compatibility reason";
-}
-
 void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
@@ -1420,7 +1406,24 @@ public:
 				  owner_.stats_.roots_visited, " roots visited, ",
 				  owner_.stats_.expressions_visited, " expressions, ",
 				  owner_.stats_.statements_visited, " statements, ",
-				  owner_.stats_.canonical_types_interned, " canonical types");
+				  owner_.stats_.canonical_types_interned, " canonical types, ",
+				  owner_.stats_.direct_call_unresolved_after_lookup, " direct-call lookup terminals, ",
+				  owner_.stats_.direct_call_unresolved_after_overload, " direct-call overload terminals, ",
+				  owner_.stats_.direct_call_member_recovery_receiver_successes, "/",
+				  owner_.stats_.direct_call_member_recovery_receiver_attempts,
+				  " receiver member recoveries, ",
+				  owner_.stats_.direct_call_member_recovery_receiver_skipped_normalized,
+				  " receiver recoveries skipped in normalized calls, ",
+				  owner_.stats_.direct_call_member_recovery_lookup_empty_successes, "/",
+				  owner_.stats_.direct_call_member_recovery_lookup_empty_attempts,
+				  " lookup-empty member recoveries, ",
+				  owner_.stats_.direct_call_member_recovery_lookup_empty_skipped_normalized,
+				  " lookup-empty recoveries skipped in normalized calls, ",
+				  owner_.stats_.direct_call_member_recovery_post_overload_successes, "/",
+				  owner_.stats_.direct_call_member_recovery_post_overload_attempts,
+				  " post-overload member recoveries, ",
+				  owner_.stats_.direct_call_member_recovery_post_overload_skipped_normalized,
+				  " post-overload recoveries skipped in normalized calls");
 		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
 	}
 
@@ -1521,14 +1524,6 @@ const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(con
 
 const FunctionDeclarationNode* ParserSemanticServices::getResolvedDirectCall(const CallExprNode* key) const {
 	return owner_->getResolvedDirectCall(key);
-}
-
-std::optional<DirectCallCompatibilityReason> ParserSemanticServices::getDirectCallCompatibilityReason(const void* key) const {
-	return owner_->getDirectCallCompatibilityReason(key);
-}
-
-std::optional<DirectCallCompatibilityReason> ParserSemanticServices::getDirectCallCompatibilityReason(const CallExprNode* key) const {
-	return owner_->getDirectCallCompatibilityReason(key);
 }
 
 std::optional<ASTNode> ParserSemanticServices::ensureMemberFunctionMaterialized(
@@ -7891,9 +7886,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			}
 		}
 	};
-	auto recordDirectCallCompatibilityReason = [&](DirectCallCompatibilityReason reason) {
-		direct_call_compatibility_reasons_[call_key] = reason;
-	};
 	auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
 		if (!mangled_name.isValid()) {
 			return nullptr;
@@ -7926,6 +7918,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (call_info.is_indirect) {
 		return nullptr;
 	}
+	const bool normalized_call_expr = normalized_ast_nodes_.count(call_key) > 0;
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
 			const FunctionDeclarationNode* recovered_func_decl = nullptr;
@@ -7933,19 +7926,35 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			// Explicit member operator syntax initially carries a parser-created
 			// non-member placeholder; recover the actual receiver member here.
 			if (!call_info.function_declaration->is_member_function() &&
-				declared_name.starts_with("operator") &&
-				tryRecoverCallDeclFromStructMembers(call_info, call_info.function_declaration->decl_node(), arguments, recovered_func_decl)) {
-				return recovered_func_decl;
+				declared_name.starts_with("operator")) {
+				if (normalized_call_expr) {
+					++stats_.direct_call_member_recovery_receiver_skipped_normalized;
+					return nullptr;
+				}
+				++stats_.direct_call_member_recovery_receiver_attempts;
+				if (tryRecoverCallDeclFromStructMembers(
+						call_info,
+						call_info.function_declaration->decl_node(),
+						arguments,
+						recovered_func_decl)) {
+					++stats_.direct_call_member_recovery_receiver_successes;
+					return recovered_func_decl;
+				}
 			}
 			return call_info.function_declaration;
 		}
 
 		const DeclarationNode& decl = *call_info.declaration;
 		const FunctionDeclarationNode* recovered_func_decl = nullptr;
+		if (normalized_call_expr) {
+			++stats_.direct_call_member_recovery_receiver_skipped_normalized;
+			return nullptr;
+		}
+		++stats_.direct_call_member_recovery_receiver_attempts;
 		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, recovered_func_decl)) {
+			++stats_.direct_call_member_recovery_receiver_successes;
 			return recovered_func_decl;
 		}
-		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::ReceiverMemberRecovery);
 		return nullptr;
 	}
 
@@ -7985,7 +7994,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (call_info.raw_function_declaration != nullptr) {
 			return call_info.raw_function_declaration;
 		}
-		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::DependentUnqualifiedPointOfInstantiation);
 		return nullptr;
 	}
 
@@ -8040,10 +8048,21 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
-		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-			recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss);
+		if (!call_info.is_indirect && normalized_call_expr) {
+			++stats_.direct_call_member_recovery_lookup_empty_skipped_normalized;
+			if (!call_info.is_indirect) {
+				++stats_.direct_call_unresolved_after_lookup;
+			}
 			return nullptr;
 		}
+		++stats_.direct_call_member_recovery_lookup_empty_attempts;
+		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
+			if (!call_info.is_indirect) {
+				++stats_.direct_call_unresolved_after_lookup;
+			}
+			return nullptr;
+		}
+		++stats_.direct_call_member_recovery_lookup_empty_successes;
 		return func_decl;
 	}
 
@@ -8095,15 +8114,21 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 
-	if (!func_decl &&
-		tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-		return func_decl;
-	}
-
 	if (!func_decl) {
-		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::StructMemberLookupMiss);
+		if (!call_info.is_indirect && normalized_call_expr) {
+			++stats_.direct_call_member_recovery_post_overload_skipped_normalized;
+		} else {
+			++stats_.direct_call_member_recovery_post_overload_attempts;
+			if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
+				++stats_.direct_call_member_recovery_post_overload_successes;
+				return func_decl;
+			}
+		}
 	}
 
+	if (!func_decl && !call_info.is_indirect) {
+		++stats_.direct_call_unresolved_after_overload;
+	}
 	return func_decl;
 }
 
@@ -8253,19 +8278,9 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
-		const std::optional<DirectCallCompatibilityReason> compatibility_reason = getDirectCallCompatibilityReason(call_key);
 		const std::string_view call_name = call_info.qualified_name.isValid()
 											   ? call_info.qualified_name.view()
 											   : call_info.declaration->identifier_token().value();
-		if (!call_info.is_indirect && normalized_call_expr && compatibility_reason.has_value()) {
-			throw InternalError(std::string(
-				StringBuilder()
-					.append("Phase 1: sema-normalized direct call recorded compatibility reason for '")
-					.append(call_name)
-					.append("': ")
-					.append(describeDirectCallCompatibilityReason(*compatibility_reason))
-					.commit()));
-		}
 		if (!call_info.is_indirect && normalized_call_expr) {
 			throw InternalError(std::string(
 				StringBuilder()
@@ -8298,7 +8313,6 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	} else {
 		resolved_direct_call_table_.erase(call_key);
 	}
-	direct_call_compatibility_reasons_.erase(call_key);
 
 	annotateResolvedCallResultType(call_expr_node, *func_decl);
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);
