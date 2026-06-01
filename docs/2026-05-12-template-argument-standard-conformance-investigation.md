@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-05-30
+**Last updated:** 2026-06-01
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -28,41 +28,40 @@ Move FlashCpp toward a sema-owned template system where:
   and replay cases
 - explicit member-template call handling now carries enough early argument
   information to avoid wrong cached overload reuse
-- dependent alias resolution already prefers semantic owner/member-chain
-  re-entry before the remaining textual fallback
+- dependent alias resolution is semantic-only: the textual fallback in
+  `resolveDependentMemberAlias(...)` has been removed in favor of preserved
+  owner/member-chain records and instantiation-context bindings
 - `materializeAliasTemplateInstance` now falls back to
   `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
   where the instantiated name resolves to a member type
+- member type aliases preserve surface modifiers (pointer/reference/cv/array/
+  function) across alias chains rather than collapsing to the terminal type
 
 ## Highest-value remaining standards gap
 
-The next conformance step is not a broad rewrite. It is deleting the last
-textual dependent-alias recovery path by preserving semantic records in the
-remaining recordless callers.
-
-Current blockers:
+The textual dependent-alias recovery path has been deleted; the former blockers
+now resolve through preserved semantic records:
 
 - `test_member_template_alias_preserves_outer_metadata_ret0.cpp`
 - `test_alias_template_nested_member_value_ret42.cpp`
 - `test_template_current_instantiation_alias_qualified_deeper_member_ret0.cpp`
 
-A removal probe in this slice confirmed these are the only three remaining
-dependents. The specific failure cause: each test's `TypeInfo` is missing a
-`DependentQualifiedNameRecord` at deduction time, so the semantic path returns
-`nullopt` and the textual path is entered. The next step is to trace each
-pattern through parsing and materialization to find where the record is dropped
-or never populated.
+With textual recovery gone, the next conformance step is keeping replay
+attachment invariant-driven: tighten the remaining replay paths so valid cases
+succeed via source identity plus canonical substituted-signature evidence rather
+than name/arity fallback scans, and expand current-instantiation /
+unknown-specialization modeling only where it unblocks those paths.
 
 ## Priority order
 
-1. Preserve semantic owner/member-chain records in the remaining dependent
-   alias callers.
+1. ~~Preserve semantic owner/member-chain records in the remaining dependent
+   alias callers.~~ **Done** — the textual recovery path is removed.
 
 2. Continue tightening replay attachment so valid cases succeed via source
    identity plus canonical substituted-signature evidence, not fallback scans.
 
 3. Expand current-instantiation, dependent-base, and unknown-specialization
-   handling only where that unblocks steps 1 or 2.
+   handling only where that unblocks step 2.
 
 4. Leave broader cleanup for later unless it becomes a blocker:
    sema-owned ranking/deduction expansion, remaining repair-path removal, and
@@ -81,6 +80,7 @@ or never populated.
 For work in this area:
 
 - add a focused regression first when a new gap is identified
-- rerun the three residual dependent-alias blocker tests when touching alias
-  ownership or current-instantiation handling
+- rerun the three former dependent-alias blocker tests when touching alias
+  ownership or current-instantiation handling (they now exercise the
+  semantic-only route)
 - run `pwsh tests/run_all_tests.ps1` before considering the slice complete
