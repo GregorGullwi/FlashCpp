@@ -12107,7 +12107,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (force_eager) {
 							throw InternalError(error_msg);
 						}
-						return std::nullopt;
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 				}
 			}
