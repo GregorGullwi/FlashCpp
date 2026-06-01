@@ -45,15 +45,9 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   are required, including constructor annotation, call-result typing,
   `typeid(expr)` classification, range-expression typing, and several
   direct/member-call lowering paths
-- direct-call compatibility bookkeeping is now explicit in sema rather than
-  hidden inside codegen retries
-- direct-call compatibility reason tracking has been narrowed further by
-  removing `StructMemberLookupMiss` and `QualifiedOrOrdinaryNameLookupMiss`;
-  unresolved ordinary direct-call terminals no longer require dedicated
-  compatibility-reason codes
-- `ReceiverMemberRecovery` has also been removed from compatibility reasons;
-  receiver/member recovery remains tracked via sema counters rather than a
-  codegen-facing reason code
+- direct-call compatibility-reason bookkeeping has been removed; sema now
+  either provides a direct-call target or leaves the call unresolved for the
+  existing non-normalized compatibility boundary
 - unresolved ordinary direct-call terminals are still tracked explicitly in
   sema stats (`direct_call_unresolved_after_lookup`,
   `direct_call_unresolved_after_overload`) to preserve burn-down visibility
@@ -65,6 +59,8 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - post-overload member recovery is now skipped for sema-normalized direct
   calls and remains active only for non-normalized compatibility flows
 - lookup-empty member recovery is now also skipped for sema-normalized direct
+  calls and remains active only for non-normalized compatibility flows
+- receiver-member recovery is now also skipped for sema-normalized direct
   calls and remains active only for non-normalized compatibility flows
 - parser/template work now preserves substantially more owner/member-template
   identity for dependent aliases and replay-heavy paths before deduction-time
@@ -103,12 +99,11 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 
 ## Main remaining gaps
 
-### 1. Remove the last direct-call compatibility reasons
+### 1. Remove remaining non-normalized direct-call recovery paths
 
-The direct-call area is much narrower now, but sema still carries explicit
-compatibility reasons for a small set of legacy or non-normalized flows. The
-goal is to remove those one by one until normalized direct calls either resolve
-semantically or fail with a proper diagnostic/invariant.
+The direct-call reason table is gone. The remaining work is to remove the
+last non-normalized member-recovery paths so direct calls are sema-owned across
+the whole pipeline and unresolved calls fail with clear diagnostics/invariants.
 
 Recommended next step:
 

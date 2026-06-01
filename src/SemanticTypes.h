@@ -304,6 +304,7 @@ struct SemanticPassStats {
 	size_t direct_call_unresolved_after_overload = 0; // lookup set non-empty but no viable/identity candidate resolved
 	size_t direct_call_member_recovery_receiver_attempts = 0;
 	size_t direct_call_member_recovery_receiver_successes = 0;
+	size_t direct_call_member_recovery_receiver_skipped_normalized = 0;
 	size_t direct_call_member_recovery_lookup_empty_attempts = 0;
 	size_t direct_call_member_recovery_lookup_empty_successes = 0;
 	size_t direct_call_member_recovery_lookup_empty_skipped_normalized = 0;
