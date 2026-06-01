@@ -1408,12 +1408,7 @@ public:
 				  owner_.stats_.statements_visited, " statements, ",
 				  owner_.stats_.canonical_types_interned, " canonical types, ",
 				  owner_.stats_.direct_call_unresolved_after_lookup, " direct-call lookup terminals, ",
-				  owner_.stats_.direct_call_unresolved_after_overload, " direct-call overload terminals, ",
-				  owner_.stats_.direct_call_member_recovery_receiver_successes, "/",
-				  owner_.stats_.direct_call_member_recovery_receiver_attempts,
-				  " receiver member recoveries, ",
-				  owner_.stats_.direct_call_member_recovery_receiver_skipped_normalized,
-				  " receiver recoveries skipped in normalized calls");
+				  owner_.stats_.direct_call_unresolved_after_overload, " direct-call overload terminals");
 		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
 	}
 
@@ -8015,43 +8010,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (call_info.is_indirect) {
 		return nullptr;
 	}
-	const bool normalized_call_expr = normalized_ast_nodes_.count(call_key) > 0;
 	if (call_info.has_receiver) {
 		if (call_info.function_declaration) {
-			const FunctionDeclarationNode* recovered_func_decl = nullptr;
-			const std::string_view declared_name = call_info.function_declaration->decl_node().identifier_token().value();
-			// Explicit member operator syntax initially carries a parser-created
-			// non-member placeholder; recover the actual receiver member here.
-			if (!call_info.function_declaration->is_member_function() &&
-				declared_name.starts_with("operator")) {
-				if (normalized_call_expr) {
-					++stats_.direct_call_member_recovery_receiver_skipped_normalized;
-					return nullptr;
-				}
-				++stats_.direct_call_member_recovery_receiver_attempts;
-				if (tryRecoverCallDeclFromStructMembers(
-						call_info,
-						call_info.function_declaration->decl_node(),
-						arguments,
-						recovered_func_decl)) {
-					++stats_.direct_call_member_recovery_receiver_successes;
-					return recovered_func_decl;
-				}
-			}
 			return call_info.function_declaration;
 		}
 
-		const DeclarationNode& decl = *call_info.declaration;
-		const FunctionDeclarationNode* recovered_func_decl = nullptr;
-		if (normalized_call_expr) {
-			++stats_.direct_call_member_recovery_receiver_skipped_normalized;
-			return nullptr;
-		}
-		++stats_.direct_call_member_recovery_receiver_attempts;
-		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, recovered_func_decl)) {
-			++stats_.direct_call_member_recovery_receiver_successes;
-			return recovered_func_decl;
-		}
 		return nullptr;
 	}
 

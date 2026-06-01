@@ -447,12 +447,74 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
 		}
 
-		auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_operator_name_token, CVQualifier::None, ReferenceQualifier::None);
-		auto& operator_decl = emplace_node<DeclarationNode>(type_spec, member_operator_name_token).as<DeclarationNode>();
-		auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
+		const FunctionDeclarationNode* known_member_func =
+			tryResolveConcreteMemberFunction(result, operator_name);
+		FunctionDeclarationNode* func_ref_ptr = nullptr;
+		if (known_member_func) {
+			const size_t min_required = countMinRequiredArgs(*known_member_func);
+			const size_t max_accepted = known_member_func->is_variadic()
+				? std::numeric_limits<size_t>::max()
+				: known_member_func->parameter_nodes().size();
+			if (args.size() < min_required || args.size() > max_accepted) {
+				return ParseResult::error(
+					"No matching member function for call to '" + std::string(operator_name) + "'",
+					member_operator_name_token);
+			}
+			func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
+		} else {
+			if (isHardUseLikeInstantiationMode()) {
+				// Reuse existing concrete-member resolution signal: in hard-use contexts,
+				// when parser knows the concrete receiver type but cannot resolve a
+				// matching member operator call here, report a user-facing error instead
+				// of creating a placeholder callee node.
+				if (auto object_type_opt = get_expression_type(*result);
+					object_type_opt.has_value() &&
+					is_struct_type(object_type_opt->category())) {
+					const TypeInfo* object_type_info = tryGetTypeInfo(object_type_opt->type_index());
+					if (object_type_info &&
+						!object_type_info->is_incomplete_instantiation_ &&
+						!object_type_info->isDependentPlaceholder()) {
+						if (const StructTypeInfo* object_struct_info = object_type_info->getStructInfo()) {
+							const StringHandle operator_name_handle =
+								StringTable::getOrInternStringHandle(operator_name);
+							auto [known_operator, owner_struct] =
+								object_struct_info->findMemberFunctionRecursive(operator_name_handle);
+							if (!known_operator || !owner_struct) {
+								return ParseResult::error(
+									"No matching member function for call to '" + std::string(operator_name) + "'",
+									member_operator_name_token);
+							}
+						}
+					}
+				}
+			}
+			auto type_spec = emplace_node<TypeSpecifierNode>(
+				TypeIndex{}.withCategory(TypeCategory::Auto),
+				0,
+				member_operator_name_token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			auto& operator_decl =
+				emplace_node<DeclarationNode>(type_spec, member_operator_name_token)
+					.as<DeclarationNode>();
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(operator_decl);
+			func_ref_ptr = &func_ref;
+		}
 
 		result = emplace_node<ExpressionNode>(
-			makeResolvedMemberCallExpr(*result, func_decl_node, std::move(args), member_operator_name_token));
+			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_operator_name_token));
+		if (func_ref_ptr->has_mangled_name()) {
+			setCallMangledName(result->as<ExpressionNode>(), func_ref_ptr->mangled_name());
+		}
+		if (func_ref_ptr->is_member_function() &&
+			!func_ref_ptr->parent_struct_name().empty()) {
+			StringBuilder qualified_name_builder;
+			qualified_name_builder
+				.append(func_ref_ptr->parent_struct_name())
+				.append("::")
+				.append(func_ref_ptr->decl_node().identifier_token().value());
+			setCallQualifiedName(result->as<ExpressionNode>(), qualified_name_builder.commit());
+		}
 		return ParseResult::success(*result);
 	}
 
