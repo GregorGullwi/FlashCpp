@@ -2481,9 +2481,12 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 			!out_of_line_is_template_param_placeholder &&
 			!typeSpecifierLooksLikeDependentSignaturePlaceholder(*instantiated_param) &&
 			!typeSpecifierLooksLikeDependentSignaturePlaceholder(*out_of_line_param)) {
-			return typeSpecifiersMatchForSignatureValidation(
-				*instantiated_param,
-				*out_of_line_param);
+			if (!typeSpecifiersMatchForSignatureValidation(
+					*instantiated_param,
+					*out_of_line_param)) {
+				return false;
+			}
+			continue;
 		}
 		const SignatureValidationIndirection instantiated_effective_indirection =
 			computeSignatureValidationIndirection(*instantiated_param);
