@@ -307,21 +307,6 @@ static FunctionDeclarationNode* findPlainOutOfLineMemberStubByIdentity(
 	const std::string_view out_of_line_name =
 		out_of_line_decl.decl_node().identifier_token().value();
 
-	size_t same_name_source_member_count = 0;
-	for (const StructMemberFunctionDecl& source_member : source_members) {
-		if (!source_member.function_declaration.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-		const FunctionDeclarationNode* source_func_decl =
-			get_function_decl_node(source_member.function_declaration);
-		if (source_func_decl == nullptr) {
-			continue;
-		}
-		if (source_func_decl->decl_node().identifier_token().value() == out_of_line_name) {
-			++same_name_source_member_count;
-		}
-	}
-
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<FunctionDeclarationNode>()) {
 			continue;
@@ -356,11 +341,7 @@ static FunctionDeclarationNode* findPlainOutOfLineMemberStubByIdentity(
 				owner_type_name,
 				std::span<const TemplateParameterNode>{},
 				std::span<const TemplateParameterNode>{});
-		if (same_name_source_member_count > 1) {
-			if (!signature_match.has_value() || !*signature_match) {
-				continue;
-			}
-		} else if (signature_match.has_value() && !*signature_match) {
+		if (!signature_match.has_value() || !*signature_match) {
 			continue;
 		}
 
@@ -2500,7 +2481,9 @@ static std::optional<bool> declarationsMatchAfterTemplateSubstitution(
 			!out_of_line_is_template_param_placeholder &&
 			!typeSpecifierLooksLikeDependentSignaturePlaceholder(*instantiated_param) &&
 			!typeSpecifierLooksLikeDependentSignaturePlaceholder(*out_of_line_param)) {
-			return std::nullopt;
+			return typeSpecifiersMatchForSignatureValidation(
+				*instantiated_param,
+				*out_of_line_param);
 		}
 		const SignatureValidationIndirection instantiated_effective_indirection =
 			computeSignatureValidationIndirection(*instantiated_param);
