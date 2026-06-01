@@ -1425,6 +1425,8 @@ public:
 				  owner_.stats_.direct_call_member_recovery_lookup_empty_successes, "/",
 				  owner_.stats_.direct_call_member_recovery_lookup_empty_attempts,
 				  " lookup-empty member recoveries, ",
+				  owner_.stats_.direct_call_member_recovery_lookup_empty_skipped_normalized,
+				  " lookup-empty recoveries skipped in normalized calls, ",
 				  owner_.stats_.direct_call_member_recovery_post_overload_successes, "/",
 				  owner_.stats_.direct_call_member_recovery_post_overload_attempts,
 				  " post-overload member recoveries, ",
@@ -8058,6 +8060,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
+		const bool normalized_call_expr = normalized_ast_nodes_.count(call_key) > 0;
+		if (!call_info.is_indirect && normalized_call_expr) {
+			++stats_.direct_call_member_recovery_lookup_empty_skipped_normalized;
+			if (!call_info.is_indirect) {
+				++stats_.direct_call_unresolved_after_lookup;
+			}
+			return nullptr;
+		}
 		++stats_.direct_call_member_recovery_lookup_empty_attempts;
 		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
 			if (!call_info.is_indirect) {

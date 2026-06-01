@@ -61,6 +61,8 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   `direct_call_member_recovery_post_overload_*`
 - post-overload member recovery is now skipped for sema-normalized direct
   calls and remains active only for non-normalized compatibility flows
+- lookup-empty member recovery is now also skipped for sema-normalized direct
+  calls and remains active only for non-normalized compatibility flows
 - parser/template work now preserves substantially more owner/member-template
   identity for dependent aliases and replay-heavy paths before deduction-time
   resolution
