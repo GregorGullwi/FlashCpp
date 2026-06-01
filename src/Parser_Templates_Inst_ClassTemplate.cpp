@@ -8312,7 +8312,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						.append("'")
 						.commit());
 					if (force_eager) {
-						throw InternalError(error_msg);
+						throw CompileError(error_msg);
 					}
 					return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 				}
@@ -8325,7 +8325,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						.append("' via replay identity map")
 						.commit());
 					if (force_eager) {
-						throw InternalError(error_msg);
+						throw CompileError(error_msg);
 					}
 					return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 				}
@@ -11909,11 +11909,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("Ambiguous replay-first attachment for nested out-of-line constructor template '")
 							.append(out_of_line_ctor_decl.name())
 							.append("' in instantiated class '")
-							.append(StringTable::getStringView(qualified_name))
+							.append(qualified_name)
 							.append("'")
 							.commit());
 						if (force_eager) {
-							throw InternalError(error_msg);
+							throw CompileError(error_msg);
 						}
 						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					} else if (ctor_resolution.ctor != nullptr) {
@@ -11929,11 +11929,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("Could not attach nested out-of-line constructor template '")
 							.append(out_of_line_ctor_decl.name())
 							.append("' for instantiated class '")
-							.append(StringTable::getStringView(qualified_name))
+							.append(qualified_name)
 							.append("' via replay identity map")
 							.commit());
 						if (force_eager) {
-							throw InternalError(error_msg);
+							throw CompileError(error_msg);
 						}
 						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
@@ -11971,11 +11971,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("Ambiguous replay-first attachment for nested out-of-line constructor template '")
 							.append(out_of_line_ctor_stub_decl.decl_node().identifier_token().value())
 							.append("' in instantiated class '")
-							.append(StringTable::getStringView(qualified_name))
+							.append(qualified_name)
 							.append("'")
 							.commit());
 						if (force_eager) {
-							throw InternalError(error_msg);
+							throw CompileError(error_msg);
 						}
 						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
@@ -11984,11 +11984,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("Could not attach nested out-of-line constructor template '")
 							.append(out_of_line_ctor_stub_decl.decl_node().identifier_token().value())
 							.append("' for instantiated class '")
-							.append(StringTable::getStringView(qualified_name))
+							.append(qualified_name)
 							.append("' via replay identity map")
 							.commit());
 						if (force_eager) {
-							throw InternalError(error_msg);
+							throw CompileError(error_msg);
 						}
 						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
