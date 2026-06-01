@@ -63,6 +63,9 @@ attachment evidence-driven rather than shape-driven.
 - replay attachment loops that previously reduced matching to boolean now
   preserve `InsufficientEvidence` and fail instantiation directly for
   nested/partial member-template and constructor-stub paths
+- plain out-of-line member replay now also preserves `InsufficientEvidence`
+  and fails instantiation directly instead of degrading to generic
+  replay-attachment misses
 - constructor replay sync into StructTypeInfo now requires signature-validation
   evidence and no longer falls back to token/name shape equivalence for
   mismatched parameter types
