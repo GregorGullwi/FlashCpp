@@ -54,6 +54,9 @@ attachment evidence-driven rather than shape-driven.
   evidence even for single-candidate same-name attachment: concrete exact
   matches produce positive evidence, while unresolved `std::nullopt` outcomes
   no longer attach by default
+- nested and partial-specialization out-of-line constructor-template replay
+  now treats attachment misses as instantiation failures, matching the ordinary
+  constructor and member-function replay paths
 
 ## Main remaining architectural gap
 
