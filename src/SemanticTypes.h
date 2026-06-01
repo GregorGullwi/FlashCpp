@@ -305,10 +305,4 @@ struct SemanticPassStats {
 	size_t direct_call_member_recovery_receiver_attempts = 0;
 	size_t direct_call_member_recovery_receiver_successes = 0;
 	size_t direct_call_member_recovery_receiver_skipped_normalized = 0;
-	size_t direct_call_member_recovery_lookup_empty_attempts = 0;
-	size_t direct_call_member_recovery_lookup_empty_successes = 0;
-	size_t direct_call_member_recovery_lookup_empty_skipped_normalized = 0;
-	size_t direct_call_member_recovery_post_overload_attempts = 0;
-	size_t direct_call_member_recovery_post_overload_successes = 0;
-	size_t direct_call_member_recovery_post_overload_skipped_normalized = 0;
 };

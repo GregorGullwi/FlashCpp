@@ -1413,17 +1413,7 @@ public:
 				  owner_.stats_.direct_call_member_recovery_receiver_attempts,
 				  " receiver member recoveries, ",
 				  owner_.stats_.direct_call_member_recovery_receiver_skipped_normalized,
-				  " receiver recoveries skipped in normalized calls, ",
-				  owner_.stats_.direct_call_member_recovery_lookup_empty_successes, "/",
-				  owner_.stats_.direct_call_member_recovery_lookup_empty_attempts,
-				  " lookup-empty member recoveries, ",
-				  owner_.stats_.direct_call_member_recovery_lookup_empty_skipped_normalized,
-				  " lookup-empty recoveries skipped in normalized calls, ",
-				  owner_.stats_.direct_call_member_recovery_post_overload_successes, "/",
-				  owner_.stats_.direct_call_member_recovery_post_overload_attempts,
-				  " post-overload member recoveries, ",
-				  owner_.stats_.direct_call_member_recovery_post_overload_skipped_normalized,
-				  " post-overload recoveries skipped in normalized calls");
+				  " receiver recoveries skipped in normalized calls");
 		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
 	}
 
@@ -7886,6 +7876,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			}
 		}
 	};
+	auto appendUniqueOverload = [](std::vector<ASTNode>& target, const ASTNode& candidate) {
+		auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
+			return existing.raw_pointer() == candidate.raw_pointer();
+		});
+		if (it == target.end()) {
+			target.push_back(candidate);
+		}
+	};
 	auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
 		if (!mangled_name.isValid()) {
 			return nullptr;
@@ -7914,6 +7912,105 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			ns_handle,
 			qualified_name.substr(scope_sep + 2)
 		};
+	};
+	auto resolveStructOwnerType = [&](const TypeInfo* type_info) -> const TypeInfo* {
+		constexpr size_t kMaxAliasDepth = 100;
+		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
+			if (type_info->getStructInfo()) {
+				return type_info;
+			}
+			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+			if (!underlying || underlying == type_info) {
+				break;
+			}
+			type_info = underlying;
+		}
+		return nullptr;
+	};
+	auto appendOwnerMemberOverloads = [&](const TypeInfo* owner_type,
+										  std::string_view member_name,
+										  std::vector<ASTNode>& target) {
+		const StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+		auto appendFromStruct = [&](const StructTypeInfo* root_struct_info) -> void {
+			if (!root_struct_info) {
+				return;
+			}
+			std::unordered_set<const StructTypeInfo*> visited;
+			auto recurse = [&](const StructTypeInfo* struct_info, const auto& recurse_ref) -> void {
+				if (!struct_info || !visited.insert(struct_info).second) {
+					return;
+				}
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.name != member_name_handle) {
+						continue;
+					}
+					appendUniqueOverload(target, member_func.function_decl);
+				}
+				for (const auto& base_spec : struct_info->base_classes) {
+					if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_spec.type_index)) {
+						recurse_ref(base_struct, recurse_ref);
+					}
+				}
+			};
+			recurse(root_struct_info, recurse);
+		};
+
+		if (!owner_type) {
+			return;
+		}
+		if (const TypeInfo* resolved_owner = resolveStructOwnerType(owner_type)) {
+			appendFromStruct(resolved_owner->getStructInfo());
+			if (resolved_owner->isTemplateInstantiation()) {
+				auto pattern_it = getTypesByNameMap().find(resolved_owner->baseTemplateName());
+				if (pattern_it != getTypesByNameMap().end()) {
+					appendFromStruct(pattern_it->second->getStructInfo());
+				}
+			}
+		}
+	};
+	auto resolveQualifiedOwnerTypeForCall = [&](std::string_view owner_name) -> const TypeInfo* {
+		if (call_info.dependent_qualified_lookup_record != nullptr &&
+			call_info.dependent_qualified_lookup_record->has_value()) {
+			const TypeInfo::DependentQualifiedNameRecord& dependent_record =
+				**call_info.dependent_qualified_lookup_record;
+			if (dependent_record.owner_type.is_valid()) {
+				if (const TypeInfo* owner_from_record = tryGetTypeInfo(dependent_record.owner_type)) {
+					return resolveStructOwnerType(owner_from_record);
+				}
+			}
+		}
+
+		auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
+			auto it = getTypesByNameMap().find(handle);
+			return it != getTypesByNameMap().end() ? it->second : nullptr;
+		};
+
+		const TypeInfo* type_info = nullptr;
+		if (const MemberContext* member_context = getCurrentMemberContext();
+			member_context &&
+			owner_name.find("::") == std::string_view::npos) {
+			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
+				const std::string_view current_type_name =
+					StringTable::getStringView(current_type_info->name());
+				type_info = resolve_type_info(
+					StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(current_type_name)
+							.append("::")
+							.append(owner_name)
+							.commit()));
+				if (!type_info) {
+					if (const TypeInfo::TemplateArgInfo* bound_arg =
+							current_type_info->findLegacyInstantiationArgByName(owner_name)) {
+						type_info = tryGetTypeInfo(bound_arg->type_index);
+					}
+				}
+			}
+		}
+		if (!type_info) {
+			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
+		}
+		return resolveStructOwnerType(type_info);
 	};
 	if (call_info.is_indirect) {
 		return nullptr;
@@ -8038,6 +8135,16 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			overloads = symbols_.lookup_all(unqualified_name);
 		}
 	}
+	if (overloads.empty() && call_info.qualified_name.isValid()) {
+		const std::string_view qualified_name = call_info.qualified_name.view();
+		const size_t scope_sep = qualified_name.rfind("::");
+		if (scope_sep != std::string_view::npos) {
+			const std::string_view owner_name = qualified_name.substr(0, scope_sep);
+			if (const TypeInfo* owner_type = resolveQualifiedOwnerTypeForCall(owner_name)) {
+				appendOwnerMemberOverloads(owner_type, decl.identifier_token().value(), overloads);
+			}
+		}
+	}
 	std::vector<TypeSpecifierNode> arg_types;
 	const bool arg_types_collected = parser().tryCollectFunctionCallArgTypes(arguments, arg_types);
 	if (arg_types_collected &&
@@ -8048,22 +8155,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
-		if (!call_info.is_indirect && normalized_call_expr) {
-			++stats_.direct_call_member_recovery_lookup_empty_skipped_normalized;
-			if (!call_info.is_indirect) {
-				++stats_.direct_call_unresolved_after_lookup;
-			}
-			return nullptr;
+		if (!call_info.is_indirect) {
+			++stats_.direct_call_unresolved_after_lookup;
 		}
-		++stats_.direct_call_member_recovery_lookup_empty_attempts;
-		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-			if (!call_info.is_indirect) {
-				++stats_.direct_call_unresolved_after_lookup;
-			}
-			return nullptr;
-		}
-		++stats_.direct_call_member_recovery_lookup_empty_successes;
-		return func_decl;
+		return nullptr;
 	}
 
 	if (arg_types_collected) {
@@ -8111,18 +8206,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			func_decl = getCallTargetFunctionCandidate(overloads[0]);
 		} else {
 			func_decl = find_by_arg_count();
-		}
-	}
-
-	if (!func_decl) {
-		if (!call_info.is_indirect && normalized_call_expr) {
-			++stats_.direct_call_member_recovery_post_overload_skipped_normalized;
-		} else {
-			++stats_.direct_call_member_recovery_post_overload_attempts;
-			if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-				++stats_.direct_call_member_recovery_post_overload_successes;
-				return func_decl;
-			}
 		}
 	}
 
