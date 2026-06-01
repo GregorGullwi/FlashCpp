@@ -47,6 +47,9 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   direct/member-call lowering paths
 - direct-call compatibility bookkeeping is now explicit in sema rather than
   hidden inside codegen retries
+- direct-call compatibility reason tracking has been narrowed further by
+  removing `StructMemberLookupMiss`; unresolved ordinary direct-call terminals
+  now fold into `QualifiedOrOrdinaryNameLookupMiss`
 - parser/template work now preserves substantially more owner/member-template
   identity for dependent aliases and replay-heavy paths before deduction-time
   resolution

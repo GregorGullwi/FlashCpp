@@ -44,8 +44,6 @@ const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason 
 			return "dependent unqualified point-of-instantiation recovery";
 		case DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss:
 			return "qualified or ordinary name lookup miss";
-		case DirectCallCompatibilityReason::StructMemberLookupMiss:
-			return "struct-member lookup miss";
 	}
 	return "unknown direct-call compatibility reason";
 }
@@ -8101,7 +8099,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (!func_decl) {
-		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::StructMemberLookupMiss);
+		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::QualifiedOrOrdinaryNameLookupMiss);
 	}
 
 	return func_decl;

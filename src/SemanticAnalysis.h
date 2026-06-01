@@ -54,7 +54,6 @@ enum class DirectCallCompatibilityReason : uint8_t {
 	ReceiverMemberRecovery,
 	DependentUnqualifiedPointOfInstantiation,
 	QualifiedOrOrdinaryNameLookupMiss,
-	StructMemberLookupMiss,
 };
 
 const char* describeDirectCallCompatibilityReason(DirectCallCompatibilityReason reason);
