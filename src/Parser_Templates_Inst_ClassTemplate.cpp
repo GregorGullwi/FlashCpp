@@ -8205,6 +8205,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					FunctionDeclarationNode* inst_func_decl = nullptr;
 					bool saw_insufficient_replay_evidence = false;
+					bool saw_ambiguous_replay_match = false;
 					for (const StructMemberFunctionDecl* source_member :
 						 relevant_source_member_templates) {
 						const FunctionDeclarationNode* source_func_decl =
@@ -8240,11 +8241,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (signature_match != ReplaySignatureMatchResult::Match) {
 							continue;
 						}
-						inst_func_decl = get_function_decl_node_mut(*matched_stub);
-						if (inst_func_decl == nullptr) {
+						FunctionDeclarationNode* matched_template_func_decl =
+							get_function_decl_node_mut(*matched_stub);
+						if (matched_template_func_decl == nullptr) {
 							continue;
 						}
-						break;
+						if (inst_func_decl != nullptr &&
+							inst_func_decl != matched_template_func_decl) {
+							saw_ambiguous_replay_match = true;
+							break;
+						}
+						inst_func_decl = matched_template_func_decl;
+					}
+					if (saw_ambiguous_replay_match) {
+						std::string error_msg = std::string(StringBuilder()
+							.append("Ambiguous replay-first attachment for partial-spec nested out-of-line member template '")
+							.append(ool_func_name)
+							.append("' in instantiated class '")
+							.append(instantiated_name)
+							.append("'")
+							.commit());
+						if (force_eager) {
+							throw InternalError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 					if (inst_func_decl != nullptr) {
 						inst_func_decl->set_template_body_position(out_of_line_member.body_start);
@@ -12135,6 +12155,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					FunctionDeclarationNode* matched_nested_func_decl = nullptr;
 					bool saw_insufficient_replay_evidence = false;
+					bool saw_ambiguous_replay_match = false;
 					for (const StructMemberFunctionDecl* source_member : same_name_candidates) {
 						ASTNode* matched_stub = findSourceMemberStubByIdentity(
 							nested_source_member_identity_maps,
@@ -12165,13 +12186,34 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (signature_match != ReplaySignatureMatchResult::Match) {
 							continue;
 						}
-						matched_nested_func_decl = get_function_decl_node_mut(*matched_stub);
-						if (matched_nested_func_decl == nullptr) {
+						FunctionDeclarationNode* matched_template_func_decl =
+							get_function_decl_node_mut(*matched_stub);
+						if (matched_template_func_decl == nullptr) {
 							continue;
 						}
-						break;
+						if (matched_nested_func_decl != nullptr &&
+							matched_nested_func_decl != matched_template_func_decl) {
+							saw_ambiguous_replay_match = true;
+							break;
+						}
+						matched_nested_func_decl = matched_template_func_decl;
 					}
 
+					if (saw_ambiguous_replay_match) {
+						std::string error_msg = std::string(StringBuilder()
+							.append("Ambiguous replay-first attachment for nested out-of-line member template '")
+							.append(ool_func_name)
+							.append("' for nested struct '")
+							.append(nested_struct.name().view())
+							.append("' in instantiated class '")
+							.append(StringTable::getStringView(qualified_name))
+							.append("'")
+							.commit());
+						if (force_eager) {
+							throw InternalError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
+					}
 					if (matched_nested_func_decl != nullptr) {
 						matched_nested_func_decl->set_template_body_position(out_of_line_member.body_start);
 						copyDefinitionParameterIdentifiers(
@@ -14707,6 +14749,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// resolve to instantiated stubs via source_member_to_stub identity mapping.
 			FunctionDeclarationNode* inst_func_decl = nullptr;
 			bool saw_insufficient_replay_evidence = false;
+			bool saw_ambiguous_replay_match = false;
 			for (const auto& source_member : effective_member_functions) {
 				if (!isMatchingMemberTemplate(
 						source_member,
@@ -14754,11 +14797,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (signature_match != ReplaySignatureMatchResult::Match) {
 					continue;
 				}
-				inst_func_decl = matched_template_func_decl;
-				if (inst_func_decl == nullptr) {
-					continue;
+				if (inst_func_decl != nullptr &&
+					inst_func_decl != matched_template_func_decl) {
+					saw_ambiguous_replay_match = true;
+					break;
 				}
-				break;
+				inst_func_decl = matched_template_func_decl;
+			}
+
+			if (saw_ambiguous_replay_match) {
+				std::string error_msg = std::string(StringBuilder()
+					.append("Ambiguous replay-first attachment for nested out-of-line member template '")
+					.append(ool_func_name)
+					.append("' in instantiated class '")
+					.append(instantiated_name)
+					.append("'")
+					.commit());
+				if (force_eager) {
+					throw InternalError(error_msg);
+				}
+				return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 			}
 
 			if (inst_func_decl != nullptr) {

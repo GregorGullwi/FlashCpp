@@ -73,6 +73,8 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - replay attachment sites that previously collapsed to boolean mismatch now
   preserve `InsufficientEvidence` and fail instantiation directly for
   nested/partial member-template and constructor-stub replay paths
+- nested member-template replay attachment now also fails explicitly on
+  ambiguous positive-evidence matches instead of accepting the first candidate
 - plain out-of-line member replay attachment now also preserves
   `InsufficientEvidence` and fails instantiation directly instead of falling
   through to generic attachment misses
