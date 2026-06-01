@@ -7561,22 +7561,17 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																				const void* call_key) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
-	auto appendUniqueOverloads = [](std::vector<ASTNode>& target, std::span<const ASTNode> source) {
-		for (const ASTNode& candidate : source) {
-			auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
-				return existing.raw_pointer() == candidate.raw_pointer();
-			});
-			if (it == target.end()) {
-				target.push_back(candidate);
-			}
-		}
-	};
 	auto appendUniqueOverload = [](std::vector<ASTNode>& target, const ASTNode& candidate) {
 		auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
 			return existing.raw_pointer() == candidate.raw_pointer();
 		});
 		if (it == target.end()) {
 			target.push_back(candidate);
+		}
+	};
+	auto appendUniqueOverloads = [&](std::vector<ASTNode>& target, std::span<const ASTNode> source) {
+		for (const ASTNode& candidate : source) {
+			appendUniqueOverload(target, candidate);
 		}
 	};
 	auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
