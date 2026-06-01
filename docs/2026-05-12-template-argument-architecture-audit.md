@@ -46,6 +46,10 @@ attachment evidence-driven rather than shape-driven.
   owner/member-chain records, active template bindings, and inherited
   member-template lookup; the hard-coded constexpr scan for matching generated
   member-template names is gone
+- out-of-line member-template replay no longer treats failed replay attachment
+  as recoverable: if replay identity plus substituted-signature evidence cannot
+  attach the definition, instantiation now fails instead of silently
+  continuing into later template instantiation paths
 
 ## Main remaining architectural gap
 
@@ -72,7 +76,9 @@ evidence. Tightening those is the next best cleanup target.
 2. Keep replay attachment evidence-driven.
    Continue tightening declaration replay so attachment succeeds because source
    identity and canonical substituted signatures match, not because a fallback
-   scan guessed correctly.
+   scan guessed correctly. The next likely slice is the remaining plain-member
+   and unresolved-signature acceptance paths that still tolerate shape-first
+   replay attachment.
 
 3. Extend dependent-name modeling only where it unlocks step 2.
    Richer current-instantiation and unknown-specialization handling still
