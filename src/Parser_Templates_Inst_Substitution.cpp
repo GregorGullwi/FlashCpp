@@ -41,27 +41,6 @@ static bool hasComplexDeferredMemberChain(const TemplateAliasNode& node) {
 		});
 }
 
-static bool isConcreteAliasSemanticSource(const TypeInfo* type_info) {
-	if (type_info == nullptr) {
-		return false;
-	}
-	if (type_info->isTemplatePlaceholder() ||
-		type_info->isDependentPlaceholder() ||
-		(type_info->is_incomplete_instantiation_ &&
-		 type_info->isDependentMemberType())) {
-		return false;
-	}
-	const TypeIndex registered_index =
-		type_info->registeredTypeIndex().withCategory(type_info->typeEnum());
-	if (!registered_index.is_valid()) {
-		return false;
-	}
-	if (typeIndexContainsDependentPlaceholder(registered_index)) {
-		return false;
-	}
-	return true;
-}
-
 static const TypeInfo* resolveConcreteAliasSemanticType(const TypeInfo* type_info) {
 	const TypeInfo* current_type_info = type_info;
 	for (size_t depth = 0; current_type_info != nullptr && depth < 32; ++depth) {

@@ -94,27 +94,6 @@ static void buildTemplateParameterReplayState(
 	}
 }
 
-static bool isConcreteAliasSemanticSourceForClassTemplate(const TypeInfo* type_info) {
-	if (type_info == nullptr) {
-		return false;
-	}
-	if (type_info->isTemplatePlaceholder() ||
-		type_info->isDependentPlaceholder() ||
-		(type_info->is_incomplete_instantiation_ &&
-		 type_info->isDependentMemberType())) {
-		return false;
-	}
-	const TypeIndex registered_index =
-		type_info->registeredTypeIndex().withCategory(type_info->typeEnum());
-	if (!registered_index.is_valid()) {
-		return false;
-	}
-	if (typeIndexContainsDependentPlaceholder(registered_index)) {
-		return false;
-	}
-	return true;
-}
-
 template <typename ParamContainer, typename ArgContainer>
 static TypeIndex resolveDependentMemberTemplateArtifactsForParam(
 	Parser& parser,
@@ -4074,7 +4053,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					TypeInfo* alias_info = nullptr;
 					const TypeInfo* alias_semantic_source =
-						isConcreteAliasSemanticSourceForClassTemplate(resolved_info)
+						isConcreteAliasSemanticSource(resolved_info)
 							? resolved_info
 							: nullptr;
 					auto existing_it = getTypesByNameMap().find(alias_instantiated_handle);
@@ -7245,7 +7224,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_size = concrete_member_info->sizeInBits().value;
 					alias_semantic_source = concrete_member_info;
 				}
-				if (!isConcreteAliasSemanticSourceForClassTemplate(alias_semantic_source)) {
+				if (!isConcreteAliasSemanticSource(alias_semantic_source)) {
 					alias_semantic_source = nullptr;
 				}
 
@@ -12106,18 +12085,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (template_arg.is_template_template_arg) {
 					return !template_arg.template_name_handle.isValid();
 				}
-				if (template_arg.is_value) {
-					if (template_arg.is_dependent ||
-						template_arg.dependent_name.isValid() ||
-						template_arg.dependent_expr.has_value()) {
-						return true;
-					}
-					return false;
-				}
-				if (template_arg.is_dependent ||
+				const bool is_dependent = template_arg.is_dependent ||
 					template_arg.dependent_name.isValid() ||
-					template_arg.dependent_expr.has_value()) {
+					template_arg.dependent_expr.has_value();
+				if (is_dependent) {
 					return true;
+				}
+				if (template_arg.is_value) {
+					return false;
 				}
 				TypeIndex arg_type_index =
 					template_arg.type_index.withCategory(template_arg.typeEnum());
@@ -12239,7 +12214,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_size = concrete_member_info->sizeInBits().value;
 			alias_semantic_source = concrete_member_info;
 		}
-		if (!isConcreteAliasSemanticSourceForClassTemplate(alias_semantic_source)) {
+		if (!isConcreteAliasSemanticSource(alias_semantic_source)) {
 			alias_semantic_source = nullptr;
 		}
 

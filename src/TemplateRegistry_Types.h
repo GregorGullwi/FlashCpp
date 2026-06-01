@@ -1267,6 +1267,32 @@ inline bool typeAliasPreservesSurfaceModifiers(const TypeInfo& type_info) {
 		   alias_spec->has_function_signature();
 }
 
+// A TypeInfo is a concrete alias semantic source when it resolves to a fully
+// materialized, non-dependent type that can stand in as the terminal type of an
+// alias chain. Placeholders, dependent members, and types still carrying
+// dependent placeholders are rejected so callers don't latch onto an unresolved
+// stand-in.
+inline bool isConcreteAliasSemanticSource(const TypeInfo* type_info) {
+	if (type_info == nullptr) {
+		return false;
+	}
+	if (type_info->isTemplatePlaceholder() ||
+		type_info->isDependentPlaceholder() ||
+		(type_info->is_incomplete_instantiation_ &&
+		 type_info->isDependentMemberType())) {
+		return false;
+	}
+	const TypeIndex registered_index =
+		type_info->registeredTypeIndex().withCategory(type_info->typeEnum());
+	if (!registered_index.is_valid()) {
+		return false;
+	}
+	if (typeIndexContainsDependentPlaceholder(registered_index)) {
+		return false;
+	}
+	return true;
+}
+
 // Convenience wrapper: resolve a TypeInfo through its alias chain, compose outer
 // modifiers from `outer_spec`, and convert the result to a TypeSpecifierNode.
 // This is the most common pattern in alias-template substitution paths.
