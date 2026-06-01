@@ -8135,7 +8135,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								"for partial-spec: ", plain_ool_name);
 						} else {
 							std::string error_msg = std::string(StringBuilder()
-								.append("Failed to replay partial-spec plain out-of-line member '")
+								.append("Failed to attach body for partial-spec plain out-of-line member '")
 								.append(plain_ool_name)
 								.append("' for instantiated class '")
 								.append(instantiated_name)
@@ -8164,7 +8164,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(instantiated_name);
 						if (!member_resolution.insufficient_evidence &&
 							!member_resolution.ambiguous) {
-							error_builder.append("' via replay identity map");
+							error_builder.append("' via source-member identity mapping");
 						} else {
 							error_builder.append("'");
 						}
@@ -8302,7 +8302,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("' for instantiated class '")
 							.append(instantiated_name)
 							.append("' to exactly one declaration after template substitution")
-							.append("'")
 							.commit());
 						if (force_eager) {
 							throw CompileError(error_msg);
@@ -8314,7 +8313,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(ool_func_name)
 							.append("' for instantiated class '")
 							.append(instantiated_name)
-							.append("' via replay identity map")
+							.append("' via source-member identity mapping")
 							.commit());
 						if (force_eager) {
 							throw CompileError(error_msg);
@@ -8389,7 +8388,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						.append("' for instantiated class '")
 						.append(instantiated_name);
 					if (!ctor_resolution.insufficient_evidence) {
-						error_builder.append("' via replay identity map");
+						error_builder.append("' via source-member identity mapping");
 					} else {
 						error_builder.append("'");
 					}
@@ -12008,7 +12007,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("' for instantiated class '")
 							.append(qualified_name);
 						if (!ctor_resolution.insufficient_evidence) {
-							error_builder.append("' via replay identity map");
+							error_builder.append("' via source-member identity mapping");
 						} else {
 							error_builder.append("'");
 						}
@@ -12074,7 +12073,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("' for instantiated class '")
 							.append(qualified_name);
 						if (!ctor_resolution.insufficient_evidence) {
-							error_builder.append("' via replay identity map");
+							error_builder.append("' via source-member identity mapping");
 						} else {
 							error_builder.append("'");
 						}
@@ -12239,7 +12238,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append("' in instantiated class '")
 							.append(StringTable::getStringView(qualified_name))
 							.append("' to exactly one declaration after template substitution")
-							.append("'")
 							.commit());
 						if (force_eager) {
 							throw CompileError(error_msg);
@@ -14689,7 +14687,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						.append("' for instantiated class '")
 						.append(instantiated_name);
 					if (!ctor_resolution.insufficient_evidence) {
-						error_builder.append("' via replay identity map");
+						error_builder.append("' via source-member identity mapping");
 					} else {
 						error_builder.append("'");
 					}
@@ -14901,7 +14899,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append("' for instantiated class '")
 					.append(instantiated_name)
 					.append("' to exactly one declaration after template substitution")
-					.append("'")
 					.commit());
 				if (force_eager) {
 					throw CompileError(error_msg);
@@ -14915,7 +14912,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append(ool_func_name)
 					.append("' for instantiated class '")
 					.append(instantiated_name)
-					.append("' via replay identity map")
+					.append("' via source-member identity mapping")
 					.commit());
 				if (force_eager) {
 					throw CompileError(error_msg);
@@ -15075,7 +15072,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				.append("' for instantiated class '")
 				.append(instantiated_name)
 				.append("' to exactly one declaration after template substitution")
-				.append("'")
 				.commit());
 			if (force_eager) {
 				throw CompileError(error_msg);
@@ -15125,7 +15121,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append("' for instantiated class '")
 					.append(instantiated_name);
 				if (!ctor_resolution.insufficient_evidence) {
-					error_builder.append("' via replay identity map");
+					error_builder.append("' via source-member identity mapping");
 				} else {
 					error_builder.append("'");
 				}
