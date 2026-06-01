@@ -12188,11 +12188,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			if (shouldCommitTemplateInstantiationArtifacts()) {
-				OuterTemplateBinding outer_binding;
+				OuterTemplateBinding nested_alias_outer_binding;
 				collectOuterTemplateBinding(
 					effective_template_params,
 					effective_template_args,
-					outer_binding);
+					nested_alias_outer_binding);
 				StringBuilder nested_alias_prefix_builder;
 				nested_alias_prefix_builder.append(original_nested_name);
 				nested_alias_prefix_builder.append("::");
@@ -12210,7 +12210,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						registerAliasTemplateWithOuterBinding(
 							inst_alias_name,
 							*alias_opt,
-							&outer_binding);
+							&nested_alias_outer_binding);
 					}
 				}
 			}
@@ -12910,8 +12910,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		prefix_builder.reset();
 
 		// Now register each one with the instantiated name
-		OuterTemplateBinding outer_binding;
-		collectOuterTemplateBinding(template_params, template_args_to_use, outer_binding);
+		OuterTemplateBinding alias_outer_binding;
+		collectOuterTemplateBinding(template_params, template_args_to_use, alias_outer_binding);
 		for (const auto& base_alias_name : base_aliases_to_copy) {
 			// Extract the member name (everything after "template_name::")
 			std::string_view member_name = std::string_view(base_alias_name).substr(template_prefix.size());
@@ -12931,7 +12931,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				registerAliasTemplateWithOuterBinding(
 					inst_alias_name,
 					*alias_opt,
-					&outer_binding);
+					&alias_outer_binding);
 				// Also register the outer binding for the un-hashed base alias name
 				// so that lookups by base template name (e.g. "Provider::Node::Apply"
 				// as stored in TypeInfo::baseTemplateName()) can find the outer binding
@@ -12941,8 +12941,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// a concrete binding that was registered earlier.
 				const bool all_concrete_args = !anyTemplateArgIsStructurallyDependent(
 					std::span<const TemplateTypeArg>(
-						outer_binding.param_args.begin(),
-						outer_binding.param_args.end()));
+						alias_outer_binding.param_args.begin(),
+						alias_outer_binding.param_args.end()));
 				if (all_concrete_args) {
 					StringHandle base_alias_handle =
 						StringTable::getOrInternStringHandle(base_alias_name);
@@ -12952,7 +12952,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (gTemplateRegistry.getOuterTemplateBinding(base_alias_handle) == nullptr) {
 						gTemplateRegistry.registerOuterTemplateBinding(
 							base_alias_handle,
-							outer_binding);
+							alias_outer_binding);
 					}
 				}
 			}
@@ -13248,10 +13248,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					.append("::")
 					.append(shell.effective_name);
 				StringHandle qualified_name_handle = StringTable::getOrInternStringHandle(qualified_name_builder.commit());
-				OuterTemplateBinding outer_binding;
-				collectOuterTemplateBinding(effective_template_params, effective_template_args, outer_binding);
+				OuterTemplateBinding lazy_member_outer_binding;
+				collectOuterTemplateBinding(effective_template_params, effective_template_args, lazy_member_outer_binding);
 				if (shouldCommitTemplateInstantiationArtifacts()) {
-					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(lazy_member_outer_binding));
 				}
 
 				// Skip to next function - body will be instantiated on-demand
@@ -14200,9 +14200,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Register outer template parameter bindings
 				{
-					OuterTemplateBinding outer_binding;
-					buildMergedOuterTemplateBinding(outer_binding);
-					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(outer_binding));
+					OuterTemplateBinding template_func_outer_binding;
+					buildMergedOuterTemplateBinding(template_func_outer_binding);
+					gTemplateRegistry.registerOuterTemplateBinding(qualified_name_handle, std::move(template_func_outer_binding));
 					FLASH_LOG(Templates, Debug, "Registered outer template bindings for ", StringTable::getStringView(qualified_name_handle));
 				}
 			} else {

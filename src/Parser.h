@@ -3072,6 +3072,15 @@ public:	// Public methods for template instantiation
 		}
 		return std::nullopt;
 	}
+	std::vector<QualifiedTypeMemberAccess> buildQualifiedTypeMemberChainForLookup(
+		std::string_view member_chain) const {
+		return buildQualifiedTypeMemberChain(member_chain);
+	}
+	const TypeInfo* resolveBaseClassMemberTypeChainForLookup(
+		std::string_view base_class_name,
+		std::span<const QualifiedTypeMemberAccess> member_type_chain) {
+		return resolveBaseClassMemberTypeChain(base_class_name, member_type_chain);
+	}
 	std::optional<ASTNode> instantiateClassTemplateForSignatureReplay(
 		std::string_view template_name,
 		std::span<const TemplateTypeArg> template_args,

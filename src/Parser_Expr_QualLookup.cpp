@@ -208,6 +208,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		std::move(pre_parsed_member_template_args);
 	SaveHandle member_template_args_start = 0;
 	bool parsed_member_template_args = member_template_args.has_value();
+	bool tentatively_parsed_member_template_args = false;
 	if (!parsed_member_template_args &&
 		(peek() == "<"_tok || current_token_.value() == "<")) {
 		// Parse tentatively and only keep the parse if this is a call form.
@@ -216,6 +217,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		member_template_args = parse_explicit_template_arguments();
 		if (member_template_args.has_value()) {
 			parsed_member_template_args = true;
+			tentatively_parsed_member_template_args = true;
 		} else {
 			restore_token_position(member_template_args_start);
 		}
@@ -223,7 +225,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 
 	// Check for function call: Template<T>::member() or Template<T>::member<U>()
 	if (peek() != "("_tok && current_token_.value() != "(") {
-		if (parsed_member_template_args) {
+		if (tentatively_parsed_member_template_args) {
 			restore_token_position(member_template_args_start);
 		}
 		return std::nullopt;	 // Not a function call

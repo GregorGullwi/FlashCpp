@@ -350,8 +350,8 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 			? original_type_info->dependentQualifiedName()
 			: nullptr;
 
-	std::string qualified_member_name;
-	qualified_member_name.append(
+	StringBuilder qualified_member_name_builder;
+	qualified_member_name_builder.append(
 		StringTable::getStringView(owner_type_info->name()));
 	bool appended_member = false;
 	if (dependent_record != nullptr && !dependent_record->member_chain.empty()) {
@@ -363,15 +363,15 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 			if (member.has_template_arguments) {
 				// Cannot instantiate a member template alias here (no template params/args
 				// available in the non-template overload). Reset the in-progress builder
-				// and return the best available type — the original dependent placeholder
+				// and return the best available type - the original dependent placeholder
 				// if one exists, so downstream template-aware callers can finish resolution.
 				qualified_member_name_builder.reset();
 				return original_type_spec.type_index().is_valid()
 					? original_type_spec.type_index()
 					: substituted_type_index;
 			}
-			qualified_member_name.append("::");
-			qualified_member_name.append(StringTable::getStringView(member.name));
+			qualified_member_name_builder.append("::");
+			qualified_member_name_builder.append(StringTable::getStringView(member.name));
 			appended_member = true;
 		}
 	} else {
@@ -393,8 +393,8 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 			return substituted_type_index;
 		}
 		if (member_suffix.find("::") == std::string_view::npos) {
-			qualified_member_name.append("::");
-			qualified_member_name.append(member_suffix);
+			qualified_member_name_builder.append("::");
+			qualified_member_name_builder.append(member_suffix);
 			appended_member = true;
 		} else {
 			size_t start = 0;
@@ -404,8 +404,8 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 					? member_suffix.substr(start)
 					: member_suffix.substr(start, sep - start);
 				if (!component.empty()) {
-					qualified_member_name.append("::");
-					qualified_member_name.append(component);
+					qualified_member_name_builder.append("::");
+					qualified_member_name_builder.append(component);
 					appended_member = true;
 				}
 				if (sep == std::string_view::npos) {
@@ -421,6 +421,7 @@ inline TypeIndex resolveDependentMemberPlaceholderFromOwnerArtifact(
 		return substituted_type_index;
 	}
 
+	const std::string_view qualified_member_name = qualified_member_name_builder.commit();
 	if (qualified_member_name.empty()) {
 		return substituted_type_index;
 	}
