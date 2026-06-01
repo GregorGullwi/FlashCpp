@@ -493,36 +493,7 @@ static bool constructorDeclarationsHaveEquivalentInstantiatedSignature(
 		if (lhs_param == nullptr || rhs_param == nullptr) {
 			return false;
 		}
-		if (typeSpecifiersMatchForSignatureValidation(*lhs_param, *rhs_param)) {
-			continue;
-		}
-
-		auto identity_name = [](const TypeSpecifierNode& type_spec) {
-			if (type_spec.type_index().is_valid()) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-					std::string_view type_name = StringTable::getStringView(type_info->name());
-					if (!type_name.empty()) {
-						return type_name;
-					}
-				}
-			}
-			return type_spec.token().value();
-		};
-		if (lhs_param->pointer_depth() != rhs_param->pointer_depth() ||
-			lhs_param->reference_qualifier() != rhs_param->reference_qualifier() ||
-			lhs_param->cv_qualifier() != rhs_param->cv_qualifier() ||
-			lhs_param->pointer_levels().size() != rhs_param->pointer_levels().size()) {
-			return false;
-		}
-		for (size_t pointer_level_index = 0;
-			 pointer_level_index < lhs_param->pointer_levels().size();
-			 ++pointer_level_index) {
-			if (lhs_param->pointer_levels()[pointer_level_index].cv_qualifier !=
-				rhs_param->pointer_levels()[pointer_level_index].cv_qualifier) {
-				return false;
-			}
-		}
-		if (identity_name(*lhs_param) != identity_name(*rhs_param)) {
+		if (!typeSpecifiersMatchForSignatureValidation(*lhs_param, *rhs_param)) {
 			return false;
 		}
 	}

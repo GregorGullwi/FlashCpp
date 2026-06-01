@@ -43,6 +43,9 @@ Move FlashCpp toward a sema-owned template system where:
 - nested and partial-specialization constructor-template replay now fails
   directly when replay identity plus substituted-signature evidence cannot
   attach the out-of-line definition
+- constructor replay sync into StructTypeInfo now requires
+  `typeSpecifiersMatchForSignatureValidation(...)` evidence and no longer
+  treats token/name shape fallback as a valid equivalence
 - `materializeAliasTemplateInstance` now falls back to
   `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
   where the instantiated name resolves to a member type
