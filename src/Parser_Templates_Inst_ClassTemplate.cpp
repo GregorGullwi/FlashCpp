@@ -304,6 +304,7 @@ static ASTNode* findSourceMemberStubByIdentity(
 
 struct OutOfLineMemberStubResolution {
 	FunctionDeclarationNode* func = nullptr;
+	bool ambiguous = false;
 	bool insufficient_evidence = false;
 };
 
@@ -367,6 +368,8 @@ static OutOfLineMemberStubResolution findPlainOutOfLineMemberStubByIdentity(
 
 	if (resolved_matches.size() == 1) {
 		resolution.func = resolved_matches.front();
+	} else if (resolved_matches.size() > 1) {
+		resolution.ambiguous = true;
 	}
 	return resolution;
 }
@@ -8145,7 +8148,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					} else {
 						StringBuilder error_builder;
-						if (member_resolution.insufficient_evidence) {
+						if (member_resolution.ambiguous) {
+							error_builder
+								.append("Ambiguous replay-first attachment for partial-spec plain out-of-line member '");
+						} else if (member_resolution.insufficient_evidence) {
 							error_builder
 								.append("Insufficient replay evidence to attach partial-spec plain out-of-line member '");
 						} else {
@@ -8156,7 +8162,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							.append(plain_ool_name)
 							.append("' for instantiated class '")
 							.append(instantiated_name);
-						if (!member_resolution.insufficient_evidence) {
+						if (!member_resolution.insufficient_evidence &&
+							!member_resolution.ambiguous) {
 							error_builder.append("' via replay identity map");
 						} else {
 							error_builder.append("'");
@@ -14985,6 +14992,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			decl.identifier_token().value(),
 			template_name,
 			template_base_name);
+		if (!out_of_line_ctor_stub &&
+			plain_member_resolution.ambiguous) {
+			std::string error_msg = std::string(StringBuilder()
+				.append("Ambiguous replay-first attachment for out-of-line member '")
+				.append(decl.identifier_token().value())
+				.append("' in instantiated class '")
+				.append(instantiated_name)
+				.append("'")
+				.commit());
+			if (force_eager) {
+				throw InternalError(error_msg);
+			}
+			return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
+		}
 		if (!out_of_line_ctor_stub &&
 			plain_member_resolution.insufficient_evidence) {
 			std::string error_msg = std::string(StringBuilder()
