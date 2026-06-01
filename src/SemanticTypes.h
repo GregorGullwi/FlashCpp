@@ -300,4 +300,12 @@ struct SemanticPassStats {
 	size_t cast_infos_allocated = 0;
 	size_t canonical_types_interned = 0;
 	size_t op_calls_resolved = 0;  // callable-object operator() calls pre-resolved by sema
+	size_t direct_call_unresolved_after_lookup = 0;  // lookup set empty and member-context recovery failed
+	size_t direct_call_unresolved_after_overload = 0; // lookup set non-empty but no viable/identity candidate resolved
+	size_t direct_call_member_recovery_receiver_attempts = 0;
+	size_t direct_call_member_recovery_receiver_successes = 0;
+	size_t direct_call_member_recovery_lookup_empty_attempts = 0;
+	size_t direct_call_member_recovery_lookup_empty_successes = 0;
+	size_t direct_call_member_recovery_post_overload_attempts = 0;
+	size_t direct_call_member_recovery_post_overload_successes = 0;
 };

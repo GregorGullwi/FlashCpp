@@ -1416,7 +1416,18 @@ public:
 				  owner_.stats_.roots_visited, " roots visited, ",
 				  owner_.stats_.expressions_visited, " expressions, ",
 				  owner_.stats_.statements_visited, " statements, ",
-				  owner_.stats_.canonical_types_interned, " canonical types");
+				  owner_.stats_.canonical_types_interned, " canonical types, ",
+				  owner_.stats_.direct_call_unresolved_after_lookup, " direct-call lookup terminals, ",
+				  owner_.stats_.direct_call_unresolved_after_overload, " direct-call overload terminals, ",
+				  owner_.stats_.direct_call_member_recovery_receiver_successes, "/",
+				  owner_.stats_.direct_call_member_recovery_receiver_attempts,
+				  " receiver member recoveries, ",
+				  owner_.stats_.direct_call_member_recovery_lookup_empty_successes, "/",
+				  owner_.stats_.direct_call_member_recovery_lookup_empty_attempts,
+				  " lookup-empty member recoveries, ",
+				  owner_.stats_.direct_call_member_recovery_post_overload_successes, "/",
+				  owner_.stats_.direct_call_member_recovery_post_overload_attempts,
+				  " post-overload member recoveries");
 		owner_.lifecycle_state_ = SemanticAnalysis::LifecycleState::PostParseNormalizationCompleted;
 	}
 
@@ -7929,16 +7940,25 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			// Explicit member operator syntax initially carries a parser-created
 			// non-member placeholder; recover the actual receiver member here.
 			if (!call_info.function_declaration->is_member_function() &&
-				declared_name.starts_with("operator") &&
-				tryRecoverCallDeclFromStructMembers(call_info, call_info.function_declaration->decl_node(), arguments, recovered_func_decl)) {
-				return recovered_func_decl;
+				declared_name.starts_with("operator")) {
+				++stats_.direct_call_member_recovery_receiver_attempts;
+				if (tryRecoverCallDeclFromStructMembers(
+						call_info,
+						call_info.function_declaration->decl_node(),
+						arguments,
+						recovered_func_decl)) {
+					++stats_.direct_call_member_recovery_receiver_successes;
+					return recovered_func_decl;
+				}
 			}
 			return call_info.function_declaration;
 		}
 
 		const DeclarationNode& decl = *call_info.declaration;
 		const FunctionDeclarationNode* recovered_func_decl = nullptr;
+		++stats_.direct_call_member_recovery_receiver_attempts;
 		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, recovered_func_decl)) {
+			++stats_.direct_call_member_recovery_receiver_successes;
 			return recovered_func_decl;
 		}
 		recordDirectCallCompatibilityReason(DirectCallCompatibilityReason::ReceiverMemberRecovery);
@@ -8036,9 +8056,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
+		++stats_.direct_call_member_recovery_lookup_empty_attempts;
 		if (!tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
+			if (!call_info.is_indirect) {
+				++stats_.direct_call_unresolved_after_lookup;
+			}
 			return nullptr;
 		}
+		++stats_.direct_call_member_recovery_lookup_empty_successes;
 		return func_decl;
 	}
 
@@ -8090,11 +8115,17 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	}
 
-	if (!func_decl &&
-		tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
-		return func_decl;
+	if (!func_decl) {
+		++stats_.direct_call_member_recovery_post_overload_attempts;
+		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
+			++stats_.direct_call_member_recovery_post_overload_successes;
+			return func_decl;
+		}
 	}
 
+	if (!func_decl && !call_info.is_indirect) {
+		++stats_.direct_call_unresolved_after_overload;
+	}
 	return func_decl;
 }
 
