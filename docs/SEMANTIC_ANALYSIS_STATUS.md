@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-05-28
+**Last Updated:** 2026-06-01
 
 This document is intentionally forward-looking. It should capture the current
 ownership model, the invariants future work can rely on, and the next cleanup
@@ -50,6 +50,13 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - parser/template work now preserves substantially more owner/member-template
   identity for dependent aliases and replay-heavy paths before deduction-time
   resolution
+- dependent alias resolution is now semantic-only: the textual `base::member`
+  path in `resolveDependentMemberAlias(...)` has been removed in favor of
+  preserved owner/member-chain records and instantiation-context bindings
+- dependent member-template static constexpr chains now resolve through typed
+  owner/member-chain records, active template bindings, inherited
+  member-template lookup, and replayed static-initializer substitution instead
+  of hard-coded constexpr name scans
 
 ## Main remaining gaps
 
@@ -65,20 +72,21 @@ Recommended next step:
 - continue the Phase 1 burn-down in
   `docs/2026-04-04-codegen-name-lookup-investigation.md`
 
-### 2. Finish dependent alias ownership preservation
+### 2. Keep template replay attachment evidence-driven
 
-Dependent alias resolution now re-enters semantic owner/member-chain resolution
-before touching the old textual `base::member` path. A direct removal probe
-showed that the remaining dependence on that textual path is small and focused.
+The dependent-alias cleanup is complete: semantic owner/member-chain records
+now carry the former blocker cases, the textual `base::member` path is gone,
+and dependent member-template static constexpr lookup now uses typed owner and
+inherited-member lookup instead of hard-coded scans.
 
-Current blockers:
+The next template task is narrower and more architectural:
 
-- `test_member_template_alias_preserves_outer_metadata_ret0.cpp`
-- `test_alias_template_nested_member_value_ret42.cpp`
-- `test_template_current_instantiation_alias_qualified_deeper_member_ret0.cpp`
-
-The next task is to preserve full semantic owner/member-chain records in those
-remaining recordless routes so the textual path can be deleted entirely.
+- keep declaration replay attached by source identity plus canonical
+  substituted-signature evidence
+- continue shrinking name/arity or shape-driven replay attachment where it
+  still exists
+- expand current-instantiation and unknown-specialization handling only where
+  it unblocks those replay paths
 
 ### 3. Keep normalized-body invariants getting stricter
 
