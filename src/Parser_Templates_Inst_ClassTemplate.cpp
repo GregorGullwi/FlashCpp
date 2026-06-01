@@ -15154,8 +15154,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		if (!found_match) {
-			FLASH_LOG(Templates, Warning, "Out-of-line member function ", decl.identifier_token().value(),
-					  " not found in instantiated struct");
+			std::string error_msg = std::string(StringBuilder()
+				.append("Out-of-line member function '")
+				.append(decl.identifier_token().value())
+				.append("' could not be attached in instantiated struct '")
+				.append(instantiated_name)
+				.append("'")
+				.commit());
+			if (force_eager) {
+				throw InternalError(error_msg);
+			}
+			return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 		}
 	}
 

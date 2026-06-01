@@ -57,10 +57,9 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   owner/member-chain records, active template bindings, inherited
   member-template lookup, and replayed static-initializer substitution instead
   of hard-coded constexpr name scans
-- out-of-line member-template replay attachment now fails the instantiation
-  when replay identity plus substituted-signature evidence cannot attach the
-  definition, instead of logging and continuing into later template
-  instantiation paths
+- out-of-line member replay attachment now fails the instantiation when replay
+  identity plus substituted-signature evidence cannot attach the definition,
+  instead of logging and continuing into later template instantiation paths
 
 ## Main remaining gaps
 

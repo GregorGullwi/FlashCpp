@@ -34,9 +34,9 @@ Move FlashCpp toward a sema-owned template system where:
 - dependent nested member-template static constexpr chains now reuse typed
   owner/member-chain records, active template bindings, and inherited
   member-template lookup instead of hard-coded constexpr name scans
-- out-of-line member-template replay attachment now fails instantiation when
-  replay identity plus substituted-signature evidence cannot attach the
-  definition, instead of silently continuing into later template instantiation
+- out-of-line member replay attachment now fails instantiation when replay
+  identity plus substituted-signature evidence cannot attach the definition,
+  instead of silently continuing into later template instantiation
 - `materializeAliasTemplateInstance` now falls back to
   `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
   where the instantiated name resolves to a member type

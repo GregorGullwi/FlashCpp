@@ -46,8 +46,8 @@ attachment evidence-driven rather than shape-driven.
   owner/member-chain records, active template bindings, and inherited
   member-template lookup; the hard-coded constexpr scan for matching generated
   member-template names is gone
-- out-of-line member-template replay no longer treats failed replay attachment
-  as recoverable: if replay identity plus substituted-signature evidence cannot
+- out-of-line member replay no longer treats failed replay attachment as
+  recoverable: if replay identity plus substituted-signature evidence cannot
   attach the definition, instantiation now fails instead of silently
   continuing into later template instantiation paths
 
