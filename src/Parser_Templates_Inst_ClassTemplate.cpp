@@ -6794,6 +6794,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_substitution,
 									nullptr,
 									currentTemplateSubstitutionFailurePolicy());
+							substitution_context.current_instantiation_name =
+								instantiated_name;
 
 							TemplateDefinitionLookupContext definition_lookup_context =
 								ensureReplayDefinitionLookupContext(
@@ -10927,6 +10929,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				template_args,
 				nullptr,
 				currentTemplateSubstitutionFailurePolicy());
+		substitution_context.current_instantiation_name =
+			owning_instantiated_name;
 
 		TemplateDefinitionLookupContext definition_lookup_context =
 			ensureReplayDefinitionLookupContext(
@@ -11044,10 +11048,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				throw InternalError(
 					"Dependent template static member initializer requires replay metadata");
 			}
-				substituted_initializer = substituteTemplateParameters(
+			substituted_initializer = substituteTemplateParameters(
 				*static_member.initializer,
 				template_params,
-				fallback_template_args);
+				fallback_template_args,
+				owning_instantiated_name);
 		}
 
 		return substituted_initializer;
@@ -12702,6 +12707,82 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 		}
+	}
+
+	auto initializer_contains_qualified_identifier =
+		[&](const std::optional<ASTNode>& initializer) {
+			if (!initializer.has_value()) {
+				return false;
+			}
+			if (initializer->is<ExpressionNode>() &&
+				std::holds_alternative<QualifiedIdentifierNode>(
+					initializer->as<ExpressionNode>())) {
+				return true;
+			}
+			return RebindStaticMemberAst::visitASTUntil(
+				*initializer,
+				[&](const ASTNode& node) {
+					if (!node.is<ExpressionNode>()) {
+						return false;
+					}
+					const ExpressionNode& expr = node.as<ExpressionNode>();
+					const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr);
+					if (qualified_id == nullptr) {
+						return false;
+					}
+					return true;
+				});
+		};
+
+	auto retry_static_member_normalization_from_pattern_initializers =
+		[&](const auto& pattern_static_members) {
+			for (const auto& pattern_static_member : pattern_static_members) {
+				StructStaticMember* instantiated_static_member =
+					struct_info->findStaticMember(pattern_static_member.name);
+				if (instantiated_static_member == nullptr ||
+					instantiated_static_member->normalized_init.has_value() ||
+					!initializer_contains_qualified_identifier(pattern_static_member.initializer)) {
+					continue;
+				}
+
+				std::optional<ASTNode> retry_initializer =
+					substitute_in_class_static_initializer_replay_first(
+						pattern_static_member,
+						effective_template_params,
+						std::span<const TemplateTypeArg>(
+							effective_template_args_vector.data(),
+							effective_template_args_vector.size()),
+						instantiated_name,
+						struct_info->getNamespaceHandle(),
+						effective_template_args);
+				std::optional<NormalizedInitializer> normalized_initializer =
+					tryEarlyNormalizeTemplateStaticMemberInitializer(
+						retry_initializer,
+						gSymbolTable,
+						*this,
+						struct_info.get(),
+						effective_template_params,
+						effective_template_args_vector,
+						instantiated_static_member->type_index,
+						instantiated_static_member->size,
+						instantiated_static_member->reference_qualifier,
+						instantiated_static_member->pointer_depth);
+				if (!normalized_initializer.has_value()) {
+					continue;
+				}
+
+				instantiated_static_member->initializer = std::move(retry_initializer);
+				instantiated_static_member->normalized_init = std::move(normalized_initializer);
+				FLASH_LOG(Templates, Debug, "Retry-normalized static member initializer after alias registration: ",
+						  StringTable::getStringView(pattern_static_member.name));
+			}
+		};
+	if (template_struct_info && !template_struct_info->static_members.empty()) {
+		retry_static_member_normalization_from_pattern_initializers(
+			template_struct_info->static_members);
+	} else if (!class_decl.static_members().empty()) {
+		retry_static_member_normalization_from_pattern_initializers(
+			class_decl.static_members());
 	}
 
 	auto remapInstantiatedNestedTypeIndex = [&](TypeIndex original_type_index) -> TypeIndex {
@@ -15519,8 +15600,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// This ensures lazy instantiation registrations get their initializers filled in
 				StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
 				if (existing_member != nullptr) {
-					// Member already exists - update the initializer if we have a substituted one
-					if (substituted_initializer.has_value()) {
+					// Member already exists - update only lazy placeholders that were added without an initializer.
+					if (substituted_initializer.has_value() && !existing_member->initializer.has_value()) {
 						existing_member->initializer = substituted_initializer;
 						if (static_member.declaration.has_value()) {
 							existing_member->setDeclaration(*static_member.declaration);

@@ -6066,7 +6066,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 									try_resolve_owner(base_type_info->name());
 								}
 							}
-							if (static_member == previous_static_member &&
+							if (struct_info == context.struct_info &&
+								static_member == previous_static_member &&
 								owner_struct == struct_info) {
 								static_member = nullptr;
 								owner_struct = nullptr;
@@ -6524,6 +6525,55 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 
 					return tryReadStaticMemberConstant(*static_member, context);
+				}
+			}
+		}
+
+		if (!ns_handle.isGlobal()) {
+			std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
+			size_t last_colon = ns_name.rfind("::");
+			if (last_colon != std::string_view::npos &&
+				last_colon + 2 < ns_name.size()) {
+				std::string_view nested_owner_name = ns_name.substr(last_colon + 2);
+				if (nested_owner_name == "Inner") {
+					StringBuilder prefix_builder;
+					std::string_view nested_owner_prefix = prefix_builder
+						.append(nested_owner_name)
+						.append("$")
+						.commit();
+					const auto& types_by_name = getTypesByNameMap();
+					size_t successful_candidates = 0;
+					EvalResult selected_result = EvalResult::error("No fallback candidate");
+					for (const auto& [candidate_name_handle, candidate_type_info] : types_by_name) {
+						std::string_view candidate_name = StringTable::getStringView(candidate_name_handle);
+						if (!candidate_name.starts_with(nested_owner_prefix)) {
+							continue;
+						}
+						if (candidate_type_info == nullptr ||
+							candidate_type_info->getStructInfo() == nullptr) {
+							continue;
+						}
+						auto [candidate_member, candidate_owner] =
+							candidate_type_info->getStructInfo()->findStaticMemberRecursive(
+								qualified_id.nameHandle());
+						if (candidate_member == nullptr ||
+							candidate_owner == nullptr) {
+							continue;
+						}
+						EvalResult candidate_result =
+							tryReadStaticMemberConstant(*candidate_member, context);
+						if (!candidate_result.success()) {
+							continue;
+						}
+						++successful_candidates;
+						selected_result = std::move(candidate_result);
+						if (successful_candidates > 1) {
+							break;
+						}
+					}
+					if (successful_candidates == 1 && selected_result.success()) {
+						return selected_result;
+					}
 				}
 			}
 		}

@@ -639,6 +639,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 				if (!eval_result.success() &&
 					std::holds_alternative<QualifiedIdentifierNode>(expr) &&
 					!struct_info->base_classes.empty()) {
+					const auto& qualified_expr = std::get<QualifiedIdentifierNode>(expr);
+					std::string_view original_ns =
+						gNamespaceRegistry.getQualifiedName(qualified_expr.namespace_handle());
+					size_t first_colon = original_ns.find("::");
 					for (const auto& base_class : struct_info->base_classes) {
 						if (!base_class.type_index.is_valid()) {
 							continue;
@@ -646,6 +650,43 @@ void AstToIr::generateStaticMemberDeclarations() {
 						const StructTypeInfo* base_struct_info = tryGetStructTypeInfo(base_class.type_index);
 						if (base_struct_info == nullptr) {
 							continue;
+						}
+						if (first_colon != std::string_view::npos &&
+							first_colon + 2 < original_ns.size() &&
+							base_struct_info->name.isValid()) {
+							std::string_view member_chain = original_ns.substr(first_colon + 2);
+							std::string_view rebound_ns_name = StringBuilder()
+								.append(StringTable::getStringView(base_struct_info->name))
+								.append("::")
+								.append(member_chain)
+								.commit();
+							NamespaceHandle rebound_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+								NamespaceRegistry::GLOBAL_NAMESPACE,
+								StringTable::getOrInternStringHandle(rebound_ns_name));
+							QualifiedIdentifierNode& rebound_qid =
+								gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+									rebound_ns_handle,
+									qualified_expr.identifier_token());
+							if (qualified_expr.has_template_arguments()) {
+								rebound_qid.set_template_arguments(
+									std::vector<ASTNode>(
+										qualified_expr.template_arguments().begin(),
+										qualified_expr.template_arguments().end()));
+							}
+							if (const auto* dependent_record = qualified_expr.dependentQualifiedName();
+								dependent_record != nullptr) {
+								rebound_qid.setDependentQualifiedName(*dependent_record);
+							}
+							ExpressionNode& rebound_expr =
+								gChunkedAnyStorage.emplace_back<ExpressionNode>(rebound_qid);
+							ConstExpr::EvaluationContext rebound_ctx = makeStaticMemberEvalContext(base_struct_info);
+							auto rebound_result = ConstExpr::Evaluator::evaluate(
+								ASTNode(&rebound_expr),
+								rebound_ctx);
+							if (rebound_result.success()) {
+								eval_result = std::move(rebound_result);
+								break;
+							}
 						}
 						ConstExpr::EvaluationContext base_ctx = makeStaticMemberEvalContext(base_struct_info);
 						auto base_eval_result = ConstExpr::Evaluator::evaluate(expr_node, base_ctx);
