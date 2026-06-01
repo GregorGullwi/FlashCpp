@@ -53,6 +53,27 @@ InlineVector<std::string_view, 4> splitDependentMemberPathComponents(
 	return components;
 }
 
+// Split a dependent member path (e.g. "Inner::type") into components, strip any
+// trailing template-argument list from each, and append them to the record's
+// member chain. Centralizes logic shared by the dependent-record builders and
+// keeps the path splitting bounds-safe.
+void appendDependentMemberPathComponents(
+	TypeInfo::DependentQualifiedNameRecord& record,
+	std::string_view member_path) {
+	for (std::string_view component : splitDependentMemberPathComponents(member_path)) {
+		if (component.empty()) {
+			continue;
+		}
+		if (size_t template_marker = component.find('<');
+			template_marker != std::string_view::npos) {
+			component = component.substr(0, template_marker);
+		}
+		TypeInfo::DependentQualifiedNameRecord::Member member;
+		member.name = StringTable::getOrInternStringHandle(component);
+		record.member_chain.push_back(std::move(member));
+	}
+}
+
 TypeInfo::DependentQualifiedNameRecord makeDependentQualifiedNameRecord(
 	StringHandle owner_name,
 	TypeIndex owner_type,
@@ -1212,18 +1233,7 @@ ParseResult Parser::parse_type_specifier() {
 
 						auto append_suffix_chain =
 							[&](TypeInfo::DependentQualifiedNameRecord& record) {
-							for (std::string_view component : splitDependentMemberPathComponents(suffix_path)) {
-								if (component.empty()) {
-									continue;
-								}
-								if (size_t template_marker = component.find('<');
-									template_marker != std::string_view::npos) {
-									component = component.substr(0, template_marker);
-								}
-								TypeInfo::DependentQualifiedNameRecord::Member member;
-								member.name = StringTable::getOrInternStringHandle(component);
-								record.member_chain.push_back(std::move(member));
-							}
+							appendDependentMemberPathComponents(record, suffix_path);
 						};
 
 						if (alias_target_info->hasDependentQualifiedName()) {
@@ -1423,20 +1433,12 @@ ParseResult Parser::parse_type_specifier() {
 						owner_type_info->hasDependentQualifiedName()) {
 						TypeInfo::DependentQualifiedNameRecord record =
 							*owner_type_info->dependentQualifiedName();
-						for (std::string_view component :
-							 splitDependentMemberPathComponents(
-								 type_name.substr(type_name.find("::") + 2))) {
-							if (component.empty()) {
-								continue;
-							}
-							if (size_t template_marker = component.find('<');
-								template_marker != std::string_view::npos) {
-								component = component.substr(0, template_marker);
-							}
-							TypeInfo::DependentQualifiedNameRecord::Member member;
-							member.name = StringTable::getOrInternStringHandle(component);
-							record.member_chain.push_back(std::move(member));
+						std::string_view member_path;
+						if (size_t owner_sep = type_name.find("::");
+							owner_sep != std::string_view::npos) {
+							member_path = type_name.substr(owner_sep + 2);
 						}
+						appendDependentMemberPathComponents(record, member_path);
 						return record;
 					}
 					return makeDependentQualifiedNameRecord(

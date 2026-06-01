@@ -2759,8 +2759,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				parsed_type_info != nullptr && parsed_type_info->isTemplateInstantiation();
 			const bool token_names_entire_type =
 				parsed_type_info == nullptr ||
-				StringTable::getStringView(parsed_type_info->name()) ==
-					StringTable::getStringView(template_name_handle);
+				parsed_type_info->name() == template_name_handle;
 			if (template_name_handle.isValid() &&
 				token_names_entire_type &&
 				!parsed_type_is_template_id &&
