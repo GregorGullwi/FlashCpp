@@ -360,6 +360,7 @@ static FunctionDeclarationNode* findPlainOutOfLineMemberStubByIdentity(
 struct OutOfLineConstructorStubResolution {
 	ConstructorDeclarationNode* ctor = nullptr;
 	bool ambiguous = false;
+	bool insufficient_evidence = false;
 };
 
 static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIdentity(
@@ -370,6 +371,7 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 	std::span<const TemplateParameterNode> outer_template_params,
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name) {
+	OutOfLineConstructorStubResolution resolution;
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -395,6 +397,10 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 				owner_type_name,
 				std::span<const TemplateParameterNode>{},
 				std::span<const TemplateParameterNode>{});
+		if (signature_match == ReplaySignatureMatchResult::InsufficientEvidence) {
+			resolution.insufficient_evidence = true;
+			continue;
+		}
 		const bool matches_candidate =
 			signature_match == ReplaySignatureMatchResult::Match;
 
@@ -403,7 +409,6 @@ static OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 		}
 	}
 
-	OutOfLineConstructorStubResolution resolution;
 	if (resolved_matches.size() == 1) {
 		resolution.ctor = resolved_matches.front();
 		return resolution;
@@ -424,6 +429,7 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	std::span<const TemplateTypeArg> outer_template_args,
 	StringHandle owner_type_name,
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
+	OutOfLineConstructorStubResolution resolution;
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
@@ -461,6 +467,10 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 				inst_ctor_decl->template_parameters().data(),
 				inst_ctor_decl->template_parameters().size()),
 			out_of_line_inner_template_params);
+		if (substituted_signature_match == ReplaySignatureMatchResult::InsufficientEvidence) {
+			resolution.insufficient_evidence = true;
+			continue;
+		}
 		bool matches_candidate =
 			substituted_signature_match == ReplaySignatureMatchResult::Match;
 
@@ -471,7 +481,6 @@ static OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 		resolved_matches.push_back(inst_ctor_decl);
 	}
 
-	OutOfLineConstructorStubResolution resolution;
 	if (resolved_matches.size() == 1) {
 		resolution.ctor = resolved_matches.front();
 		return resolution;
@@ -2522,7 +2531,7 @@ static bool isMatchingMemberTemplate(
 		func_decl->parameter_nodes().size() == ool_function_param_count;
 }
 
-static bool nestedOutOfLineMemberTemplateMatchesCandidate(
+static ReplaySignatureMatchResult nestedOutOfLineMemberTemplateMatchesCandidate(
 	Parser& parser,
 	const ASTNode& candidate_member,
 	const FunctionDeclarationNode& out_of_line_decl,
@@ -2531,7 +2540,7 @@ static bool nestedOutOfLineMemberTemplateMatchesCandidate(
 	StringHandle owner_type_name,
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
 	if (!candidate_member.is<TemplateFunctionDeclarationNode>()) {
-		return false;
+		return ReplaySignatureMatchResult::Mismatch;
 	}
 
 	const TemplateFunctionDeclarationNode& candidate_template =
@@ -2541,7 +2550,7 @@ static bool nestedOutOfLineMemberTemplateMatchesCandidate(
 		candidate_template.template_parameters().size());
 
 	if (candidate_inner_template_params.size() != out_of_line_inner_template_params.size()) {
-		return false;
+		return ReplaySignatureMatchResult::Mismatch;
 	}
 
 	ReplaySignatureMatchResult signature_match = declarationsMatchAfterTemplateSubstitution(
@@ -2553,7 +2562,7 @@ static bool nestedOutOfLineMemberTemplateMatchesCandidate(
 		owner_type_name,
 		candidate_inner_template_params,
 		out_of_line_inner_template_params);
-	return signature_match == ReplaySignatureMatchResult::Match;
+	return signature_match;
 }
 
 static ReplaySignatureMatchResult outOfLineConstructorTemplateMatchesCandidate(
@@ -8161,6 +8170,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					FunctionDeclarationNode* inst_func_decl = nullptr;
+					bool saw_insufficient_replay_evidence = false;
 					for (const StructMemberFunctionDecl* source_member :
 						 relevant_source_member_templates) {
 						const FunctionDeclarationNode* source_func_decl =
@@ -8174,7 +8184,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (matched_stub == nullptr || !matched_stub->is<TemplateFunctionDeclarationNode>()) {
 							continue;
 						}
-						if (!nestedOutOfLineMemberTemplateMatchesCandidate(
+						ReplaySignatureMatchResult signature_match =
+							nestedOutOfLineMemberTemplateMatchesCandidate(
 								*this,
 								source_member->function_declaration,
 								ool_func,
@@ -8187,7 +8198,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								instantiated_name,
 								std::span<const TemplateParameterNode>(
 									out_of_line_member.inner_template_params.data(),
-									out_of_line_member.inner_template_params.size()))) {
+									out_of_line_member.inner_template_params.size()));
+						if (signature_match == ReplaySignatureMatchResult::InsufficientEvidence) {
+							saw_insufficient_replay_evidence = true;
+							continue;
+						}
+						if (signature_match != ReplaySignatureMatchResult::Match) {
 							continue;
 						}
 						inst_func_decl = get_function_decl_node_mut(*matched_stub);
@@ -8225,6 +8241,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							Debug,
 							"Set body position on partial-spec nested template member: ",
 							ool_func_name);
+					} else if (saw_insufficient_replay_evidence) {
+						std::string error_msg = std::string(StringBuilder()
+							.append("Insufficient replay evidence to attach partial-spec nested out-of-line member template '")
+							.append(ool_func_name)
+							.append("' for instantiated class '")
+							.append(instantiated_name)
+							.append("'")
+							.commit());
+						if (force_eager) {
+							throw InternalError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					} else {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Could not attach partial-spec nested out-of-line member template '")
@@ -8293,13 +8321,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 				}
 				if (ctor_resolution.ctor == nullptr) {
-					std::string error_msg = std::string(StringBuilder()
-						.append("Could not attach partial-spec out-of-line constructor template '")
+					StringBuilder error_builder;
+					if (ctor_resolution.insufficient_evidence) {
+						error_builder
+							.append("Insufficient replay evidence to attach partial-spec out-of-line constructor template '");
+					} else {
+						error_builder
+							.append("Could not attach partial-spec out-of-line constructor template '");
+					}
+					error_builder
 						.append(ool_func_name)
 						.append("' for instantiated class '")
-						.append(instantiated_name)
-						.append("' via replay identity map")
-						.commit());
+						.append(instantiated_name);
+					if (!ctor_resolution.insufficient_evidence) {
+						error_builder.append("' via replay identity map");
+					} else {
+						error_builder.append("'");
+					}
+					std::string error_msg = std::string(error_builder.commit());
 					if (force_eager) {
 						throw CompileError(error_msg);
 					}
@@ -11901,13 +11940,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							ctor_decl.parameter_nodes(),
 							out_of_line_ctor_decl.parameter_nodes());
 					} else {
-						std::string error_msg = std::string(StringBuilder()
-							.append("Could not attach nested out-of-line constructor template '")
+						StringBuilder error_builder;
+						if (ctor_resolution.insufficient_evidence) {
+							error_builder
+								.append("Insufficient replay evidence to attach nested out-of-line constructor template '");
+						} else {
+							error_builder
+								.append("Could not attach nested out-of-line constructor template '");
+						}
+						error_builder
 							.append(out_of_line_ctor_decl.name())
 							.append("' for instantiated class '")
-							.append(qualified_name)
-							.append("' via replay identity map")
-							.commit());
+							.append(qualified_name);
+						if (!ctor_resolution.insufficient_evidence) {
+							error_builder.append("' via replay identity map");
+						} else {
+							error_builder.append("'");
+						}
+						std::string error_msg = std::string(error_builder.commit());
 						if (force_eager) {
 							throw CompileError(error_msg);
 						}
@@ -11956,13 +12006,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 					if (ctor_resolution.ctor == nullptr) {
-						std::string error_msg = std::string(StringBuilder()
-							.append("Could not attach nested out-of-line constructor template '")
+						StringBuilder error_builder;
+						if (ctor_resolution.insufficient_evidence) {
+							error_builder
+								.append("Insufficient replay evidence to attach nested out-of-line constructor template '");
+						} else {
+							error_builder
+								.append("Could not attach nested out-of-line constructor template '");
+						}
+						error_builder
 							.append(out_of_line_ctor_stub_decl.decl_node().identifier_token().value())
 							.append("' for instantiated class '")
-							.append(qualified_name)
-							.append("' via replay identity map")
-							.commit());
+							.append(qualified_name);
+						if (!ctor_resolution.insufficient_evidence) {
+							error_builder.append("' via replay identity map");
+						} else {
+							error_builder.append("'");
+						}
+						std::string error_msg = std::string(error_builder.commit());
 						if (force_eager) {
 							throw CompileError(error_msg);
 						}
@@ -12039,6 +12100,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					FunctionDeclarationNode* matched_nested_func_decl = nullptr;
+					bool saw_insufficient_replay_evidence = false;
 					for (const StructMemberFunctionDecl* source_member : same_name_candidates) {
 						ASTNode* matched_stub = findSourceMemberStubByIdentity(
 							nested_source_member_identity_maps,
@@ -12047,7 +12109,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							!matched_stub->is<TemplateFunctionDeclarationNode>()) {
 							continue;
 						}
-						if (!nestedOutOfLineMemberTemplateMatchesCandidate(
+						ReplaySignatureMatchResult signature_match =
+							nestedOutOfLineMemberTemplateMatchesCandidate(
 								*this,
 								source_member->function_declaration,
 								ool_func,
@@ -12060,7 +12123,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								qualified_name,
 								std::span<const TemplateParameterNode>(
 									out_of_line_member.inner_template_params.data(),
-									out_of_line_member.inner_template_params.size()))) {
+									out_of_line_member.inner_template_params.size()));
+						if (signature_match == ReplaySignatureMatchResult::InsufficientEvidence) {
+							saw_insufficient_replay_evidence = true;
+							continue;
+						}
+						if (signature_match != ReplaySignatureMatchResult::Match) {
 							continue;
 						}
 						matched_nested_func_decl = get_function_decl_node_mut(*matched_stub);
@@ -12085,6 +12153,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							Debug,
 							"Set body position on nested struct template member: ",
 							ool_func_name);
+					} else if (saw_insufficient_replay_evidence) {
+						std::string error_msg = std::string(StringBuilder()
+							.append("Insufficient replay evidence to attach nested out-of-line member template '")
+							.append(ool_func_name)
+							.append("' for nested struct '")
+							.append(nested_struct.name().view())
+							.append("' in instantiated class '")
+							.append(StringTable::getStringView(qualified_name))
+							.append("'")
+							.commit());
+						if (force_eager) {
+							throw InternalError(error_msg);
+						}
+						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					} else {
 						std::string error_msg = std::string(StringBuilder()
 							.append("Could not attach nested out-of-line member template '")
@@ -14516,13 +14598,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				if (ctor_resolution.ctor == nullptr) {
-					std::string error_msg = std::string(StringBuilder()
-						.append("Could not attach out-of-line constructor template stub '")
+					StringBuilder error_builder;
+					if (ctor_resolution.insufficient_evidence) {
+						error_builder
+							.append("Insufficient replay evidence to attach out-of-line constructor template stub '");
+					} else {
+						error_builder
+							.append("Could not attach out-of-line constructor template stub '");
+					}
+					error_builder
 						.append(ool_func_name)
 						.append("' for instantiated class '")
-						.append(instantiated_name)
-						.append("' via replay identity map")
-						.commit());
+						.append(instantiated_name);
+					if (!ctor_resolution.insufficient_evidence) {
+						error_builder.append("' via replay identity map");
+					} else {
+						error_builder.append("'");
+					}
+					std::string error_msg = std::string(error_builder.commit());
 					if (force_eager) {
 						throw InternalError(error_msg);
 					}
@@ -14579,6 +14672,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Replay-first attachment path: match against source template members and
 			// resolve to instantiated stubs via source_member_to_stub identity mapping.
 			FunctionDeclarationNode* inst_func_decl = nullptr;
+			bool saw_insufficient_replay_evidence = false;
 			for (const auto& source_member : effective_member_functions) {
 				if (!isMatchingMemberTemplate(
 						source_member,
@@ -14604,7 +14698,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (matched_template_func_decl->has_template_body_position()) {
 					continue;
 				}
-				if (!nestedOutOfLineMemberTemplateMatchesCandidate(
+				ReplaySignatureMatchResult signature_match =
+					nestedOutOfLineMemberTemplateMatchesCandidate(
 						*this,
 						source_member.function_declaration,
 						ool_func,
@@ -14617,7 +14712,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_name,
 						std::span<const TemplateParameterNode>(
 							out_of_line_member.inner_template_params.data(),
-							out_of_line_member.inner_template_params.size()))) {
+							out_of_line_member.inner_template_params.size()));
+				if (signature_match == ReplaySignatureMatchResult::InsufficientEvidence) {
+					saw_insufficient_replay_evidence = true;
+					continue;
+				}
+				if (signature_match != ReplaySignatureMatchResult::Match) {
 					continue;
 				}
 				inst_func_decl = matched_template_func_decl;
@@ -14698,6 +14798,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					", body_pos=",
 					static_cast<size_t>(out_of_line_member.body_start));
 				found = true;
+			}
+
+			if (!found && saw_insufficient_replay_evidence) {
+				std::string error_msg = std::string(StringBuilder()
+					.append("Insufficient replay evidence to attach nested out-of-line member template '")
+					.append(ool_func_name)
+					.append("' for instantiated class '")
+					.append(instantiated_name)
+					.append("'")
+					.commit());
+				if (force_eager) {
+					throw InternalError(error_msg);
+				}
+				return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 			}
 
 			if (!found) {
@@ -14872,13 +14986,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return failTemplateInstantiation(ambiguity_msg, nullptr, std::nullopt);
 			}
 			if (ctor_resolution.ctor == nullptr) {
-				std::string error_msg = std::string(StringBuilder()
-					.append("Could not attach out-of-line constructor stub '")
+				StringBuilder error_builder;
+				if (ctor_resolution.insufficient_evidence) {
+					error_builder
+						.append("Insufficient replay evidence to attach out-of-line constructor stub '");
+				} else {
+					error_builder
+						.append("Could not attach out-of-line constructor stub '");
+				}
+				error_builder
 					.append(decl.identifier_token().value())
 					.append("' for instantiated class '")
-					.append(instantiated_name)
-					.append("' via replay identity map")
-					.commit());
+					.append(instantiated_name);
+				if (!ctor_resolution.insufficient_evidence) {
+					error_builder.append("' via replay identity map");
+				} else {
+					error_builder.append("'");
+				}
+				std::string error_msg = std::string(error_builder.commit());
 				if (force_eager) {
 					throw InternalError(error_msg);
 				}

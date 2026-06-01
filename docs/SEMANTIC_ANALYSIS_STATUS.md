@@ -70,6 +70,9 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - replay signature matching now returns explicit
   `Match`/`Mismatch`/`InsufficientEvidence` results, and replay attachment
   accepts only explicit `Match` evidence
+- replay attachment sites that previously collapsed to boolean mismatch now
+  preserve `InsufficientEvidence` and fail instantiation directly for
+  nested/partial member-template and constructor-stub replay paths
 - StructTypeInfo constructor-template sync now requires positive
   `typeSpecifiersMatchForSignatureValidation(...)` evidence and no longer
   accepts token/name shape-only fallback equivalence
