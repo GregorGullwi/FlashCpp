@@ -1,4 +1,6 @@
-#include <type_traits>
+struct true_type {
+	static constexpr bool value = true;
+};
 
 template<typename EnterPolicy>
 struct Waiter {
@@ -13,5 +15,5 @@ struct Waiter {
 
 int main() {
 	int value = 0;
-	return Waiter<std::true_type>::run(&value);
+	return Waiter<true_type>::run(&value);
 }
