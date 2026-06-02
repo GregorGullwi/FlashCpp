@@ -37,6 +37,9 @@ make main CXX=clang++         # Build compiler
 # Run all tests
 ./tests/run_all_tests.sh
 
+# Run the same suite with clang++ instead of FlashCpp
+./tests/run_all_tests.sh --clang
+
 # Build and run specific test
 make test && ./x64/test
 ```

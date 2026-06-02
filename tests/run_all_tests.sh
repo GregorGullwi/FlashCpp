@@ -17,12 +17,16 @@ NC='\033[0m'
 VERBOSE=0
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 REQUESTED_TEST_NAMES=()
+USE_CLANG=0
 [ "${GITHUB_ACTIONS:-}" = "true" ] && VERBOSE=1
 
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--verbose|-v)
 			VERBOSE=1
+			;;
+		--clang)
+			USE_CLANG=1
 			;;
 		-j[0-9]*)
 			JOBS="${1#-j}"
@@ -58,7 +62,10 @@ echo "FlashCpp ELF Test Runner"
 echo "========================"
 
 FLASHCPP_BIN=""
-if [ -x "x64/Sharded/FlashCpp" ]; then
+# Clang mode bypasses FlashCpp discovery/build because it compiles tests directly.
+if [ "$USE_CLANG" -eq 1 ]; then
+	FLASHCPP_BIN="clang++"
+elif [ -x "x64/Sharded/FlashCpp" ]; then
 	FLASHCPP_BIN="./x64/Sharded/FlashCpp"
 elif [ -x "x64/Debug/FlashCpp" ]; then
 	FLASHCPP_BIN="./x64/Debug/FlashCpp"
@@ -68,9 +75,15 @@ else
 	FLASHCPP_BIN="./x64/Debug/FlashCpp"
 fi
 export FLASHCPP_BIN
+export USE_CLANG
 
 print_flashcpp_build_info() {
 	local version_probe_src version_probe_obj version_banner git_head binary_mtime
+	if [ "$USE_CLANG" -eq 1 ]; then
+		echo "Compiler: clang++"
+		echo "Compiler version: $(clang++ --version | head -1)"
+		return
+	fi
 	version_probe_src=$(mktemp /tmp/flashcpp_version_probe_XXXXXX.cpp)
 	version_probe_obj=$(mktemp /tmp/flashcpp_version_probe_XXXXXX.o)
 	printf 'int main() { return 0; }\n' > "$version_probe_src"
@@ -206,7 +219,11 @@ test_one_file() {
         extra_flags+=("-fno-access-control")
     fi
     local compile_output
-    compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "${extra_flags[@]}" -o "$obj" "$f" 2>&1)
+    if [ "$USE_CLANG" -eq 1 ]; then
+        compile_output=$(timeout 30 "$FLASHCPP_BIN" -std=c++20 -c "${extra_flags[@]}" "$f" -o "$obj" 2>&1)
+    else
+        compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "${extra_flags[@]}" "$f" -o "$obj" 2>&1)
+    fi
     local compile_exit=$?
 
     # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
@@ -236,7 +253,11 @@ test_one_file() {
 
         # Link
         local link_output
-        link_output=$(clang++ -no-pie -o "$exe" "$obj" "${extra_objs[@]}" -lstdc++ -lc 2>&1)
+        if [ "$USE_CLANG" -eq 1 ]; then
+            link_output=$(clang++ -no-pie -o "$exe" "$obj" "${extra_objs[@]}" 2>&1)
+        else
+            link_output=$(clang++ -no-pie -o "$exe" "$obj" "${extra_objs[@]}" -lstdc++ -lc 2>&1)
+        fi
         local link_exit_code=$?
 
         if [ $link_exit_code -eq 0 ]; then
@@ -303,7 +324,11 @@ test_one_fail_file() {
     rm -f "$obj"
 
     local compile_output
-    compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 -o "$obj" "$f" 2>&1)
+    if [ "$USE_CLANG" -eq 1 ]; then
+        compile_output=$(timeout 30 "$FLASHCPP_BIN" -std=c++20 -c "$f" -o "$obj" 2>&1)
+    else
+        compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "$f" -o "$obj" 2>&1)
+    fi
     local compile_exit=$?
 
     # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
@@ -465,7 +490,8 @@ printf "Runtime: ${GREEN}%d pass${NC} / ${RED}%d crash${NC} / ${RED}%d mismatch$
 # Show failures with details
 if [ ${#COMPILE_FAIL[@]} -gt 0 ]; then
     echo -e "\n${RED}Compile failures (${#COMPILE_FAIL[@]}):${NC}"
-    local_limit=20
+    local_limit=${#COMPILE_FAIL[@]}
+    [ "$USE_CLANG" -eq 0 ] && local_limit=20
     for i in "${!COMPILE_FAIL[@]}"; do
         [ "$i" -ge "$local_limit" ] && break
         if [ -n "${COMPILE_FAIL_DETAILS[$i]}" ]; then
@@ -480,7 +506,8 @@ fi
 if [ ${#LINK_FAIL[@]} -gt 0 ]; then
     echo -e "\n${YELLOW}Link failures (${#LINK_FAIL[@]}) - likely need C++ features:${NC}"
     echo "  (vtables, constructors, exceptions, etc.)"
-    local_limit=20
+    local_limit=${#LINK_FAIL[@]}
+    [ "$USE_CLANG" -eq 0 ] && local_limit=20
     for i in "${!LINK_FAIL[@]}"; do
         [ "$i" -ge "$local_limit" ] && break
         if [ -n "${LINK_FAIL_DETAILS[$i]}" ]; then
@@ -534,7 +561,9 @@ else
     if [ "${FLASHCPP_RERUN_PHASE:-0}" != "1" ] && [ ${#FAILED_TEST_NAMES[@]} -gt 0 ]; then
         echo "Re-running failing tests sequentially for diagnostics..."
         echo ""
-        FLASHCPP_RERUN_PHASE=1 bash "$0" -j1 -v "${FAILED_TEST_NAMES[@]}"
+        rerun_args=(-j1 -v)
+        [ "$USE_CLANG" -eq 1 ] && rerun_args+=(--clang)
+        FLASHCPP_RERUN_PHASE=1 bash "$0" "${rerun_args[@]}" "${FAILED_TEST_NAMES[@]}"
         echo ""
     fi
     echo -e "${RED}RESULT: FAILED${NC}"
