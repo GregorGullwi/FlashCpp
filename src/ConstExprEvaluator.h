@@ -457,6 +457,7 @@ struct EvaluationContext {
 	const StructTypeInfo* struct_info = nullptr;
 	// Cached type index for the current struct (parallel to struct_info; avoids O(n) search in gTypeInfo).
 	TypeIndex struct_type_index{};
+	bool current_member_function_is_const = false;
 	std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
 
 	// Pointer to the innermost active block scope tracker (null at top level).

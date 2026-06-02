@@ -139,6 +139,9 @@ closure model for captured `this` and nested captures:
   including when the enclosing lambda captured `*this`
 - nested reference captures of enclosing closure members take the member's
   address directly and preserve the referenced object's real size
+- constexpr member evaluation now preserves receiver cv-qualification through
+  synthetic `this` bindings and rejects stale lowered non-const targets when
+  evaluating calls from a const member body
 
 Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
 

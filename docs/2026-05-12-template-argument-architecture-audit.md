@@ -164,6 +164,13 @@ keeps lambda member-call receivers standards-aligned by:
   captures instead of assuming a local variable exists
 - preserving the referenced object's real size when loading through a
   by-reference capture
+- preserving receiver cv-qualification through constexpr synthetic `this`
+  bindings, including unqualified member calls from const member bodies
+
+Follow-up: the constexpr evaluator now applies the same const-aware selection
+rule in the receiver-based and current-struct paths, but the implementations are
+still structurally separate. The next cleanup should extract one shared
+member-candidate collector so future overload fixes cannot drift between paths.
 
 Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
 

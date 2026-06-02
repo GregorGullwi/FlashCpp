@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-06-01
+**Last Updated:** 2026-06-02
 
 This document is intentionally forward-looking. It should capture the current
 ownership model, the invariants future work can rely on, and the next cleanup
@@ -62,6 +62,10 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   `direct_call_unresolved_after_lookup`
 - receiver-member recovery has been removed from direct-call target resolution;
   receiver calls now require a concrete parser/sema-resolved member target
+- normalized template/member direct-call resolution now collects overload
+  argument types from sema-owned expression typing via
+  `tryCollectOverloadResolutionArgTypes(...)`, instead of reusing parser-owned
+  argument typing that can retain stale dependent-template targets
 - parser/template work now preserves substantially more owner/member-template
   identity for dependent aliases and replay-heavy paths before deduction-time
   resolution
@@ -96,6 +100,13 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - StructTypeInfo constructor-template sync now requires positive
   `typeSpecifiersMatchForSignatureValidation(...)` evidence and no longer
   accepts token/name shape-only fallback equivalence
+- constexpr member evaluation now preserves receiver cv-qualification through
+  synthetic `this` bindings and rejects stale lowered non-const targets when
+  evaluating calls from const member bodies
+- runtime lambda lowering now treats captured `this` according to the C++20
+  closure model: `[this]` calls use the captured object pointer, `[*this]`
+  calls use the copied closure member, and nested captures propagate the
+  effective enclosing object instead of the closure object
 
 ## Main remaining gaps
 
@@ -118,7 +129,24 @@ Recommended next step:
 - continue the Phase 1 burn-down in
   `docs/2026-04-04-codegen-name-lookup-investigation.md`
 
-### 2. Keep template replay attachment evidence-driven
+### 2. Unify remaining member/call lookup helpers
+
+Several paths now apply the same standards rule independently: const receivers
+only see const-qualified non-static members, while non-const receivers prefer
+non-const overloads and then const overloads when no non-const match exists.
+This is true for receiver-based constexpr member calls, current-struct
+constexpr calls, and normalized template/member direct-call resolution, but the
+candidate collectors are still structurally separate.
+
+Recommended next step:
+
+- extract a shared const-aware member-candidate collector for constexpr
+  receiver-based lookup and current-struct lookup
+- apply the sema-owned overload-resolution argument collector to the remaining
+  semantic call-resolution entry points that still rely on parser-owned
+  expression typing or reduced argument modeling
+
+### 3. Keep template replay attachment evidence-driven
 
 The dependent-alias cleanup is complete: semantic owner/member-chain records
 now carry the former blocker cases, the textual `base::member` path is gone,
@@ -134,7 +162,7 @@ The next template task is narrower and more architectural:
 - expand current-instantiation and unknown-specialization handling only where
   it unblocks those replay paths
 
-### 3. Keep normalized-body invariants getting stricter
+### 4. Keep normalized-body invariants getting stricter
 
 Any normalized-body path that still succeeds via compatibility behavior should
 be converted to one of:

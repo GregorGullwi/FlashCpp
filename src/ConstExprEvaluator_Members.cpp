@@ -1726,10 +1726,10 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			call_expr.arguments().size(),
 			context,
 			MemberFunctionLookupMode::ConstexprEvaluable,
-			true,
+			false,
 			true);
 		if (current_struct_match.ambiguous) {
-			return EvalResult::error("Ambiguous static member function overload in constant expression");
+			return EvalResult::error("Ambiguous member function overload in constant expression");
 		}
 		if (current_struct_match.function) {
 			if (!current_struct_match.function->is_static()) {
@@ -2432,6 +2432,14 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}();
 	const StructMemberFunction* actual_member =
 		actual_func ? findMemberFunctionMetadataRecursive(bound_struct_info, *actual_func) : nullptr;
+	if (actual_func &&
+		receiver_is_this &&
+		context.current_member_function_is_const &&
+		!actual_func->is_static() &&
+		!actual_func->is_const_member_function()) {
+		actual_func = nullptr;
+		actual_member = nullptr;
+	}
 	if (!actual_func) {
 		auto member_function_match = receiver_is_this
 										 ? find_current_struct_member_function_candidate(
@@ -2502,6 +2510,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	EvalResult this_binding = EvalResult::from_int(0LL);
 	this_binding.object_type_index = bound_type_index;
 	this_binding.object_member_bindings = member_bindings;
+	if (const TypeInfo* bound_type = tryGetTypeInfo(bound_type_index)) {
+		TypeSpecifierNode this_type(
+			bound_type->type_index_.withCategory(TypeCategory::Struct),
+			bound_type->sizeInBits(),
+			Token{},
+			context.current_member_function_is_const ? CVQualifier::Const : CVQualifier::None,
+			ReferenceQualifier::None);
+		this_binding.set_exact_type(this_type);
+	}
 	member_bindings["this"] = std::move(this_binding);
 
 	auto saved_template_param_names = context.template_param_names;
@@ -2540,8 +2557,10 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 
 	auto saved_struct_info = context.struct_info;
 	auto saved_struct_type_index = context.struct_type_index;
+	bool saved_current_member_function_is_const = context.current_member_function_is_const;
 	context.struct_info = bound_struct_info;
 	context.struct_type_index = bound_type_index;
+	context.current_member_function_is_const = actual_func->is_const_member_function();
 	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
@@ -2565,6 +2584,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	context.struct_type_index = saved_struct_type_index;
+	context.current_member_function_is_const = saved_current_member_function_is_const;
 	if (!result.success() && (result.error_message == "Constexpr member function did not return a value" ||
 							  result.error_message == "Constexpr function return statement has no expression")) {
 		{
@@ -2744,6 +2764,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	EvalResult this_binding = EvalResult::from_int(0LL);
 	this_binding.object_type_index = object.object_type_index;
 	this_binding.object_member_bindings = object.object_member_bindings;
+	this_binding.exact_type = object.exact_type;
 	member_bindings["this"] = std::move(this_binding);
 
 	// Load template type bindings, preferring function-level outer bindings when present.
@@ -2770,10 +2791,12 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	auto saved_struct_type_index = context.struct_type_index;
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	auto* saved_local_bindings = context.local_bindings;
+	bool saved_current_member_function_is_const = context.current_member_function_is_const;
 	context.struct_info = struct_info;
 	context.struct_type_index = object.object_type_index;
 	context.return_type_info = nullptr;
 	context.local_bindings = &member_bindings;
+	context.current_member_function_is_const = match.function->is_const_member_function();
 	{
 		const TypeSpecifierNode& ret_spec = match.function->decl_node().type_specifier_node();
 		TypeIndex ret_idx = ret_spec.type_index();
@@ -2794,6 +2817,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	context.struct_type_index = saved_struct_type_index;
+	context.current_member_function_is_const = saved_current_member_function_is_const;
 	context.template_param_names = std::move(saved_template_param_names);
 	context.template_args = std::move(saved_template_args);
 	context.template_environment = std::move(saved_template_environment);
@@ -3118,13 +3142,78 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		.ensureMemberFunctionMaterialized(
 			context.struct_info->name, function_name_handle, std::nullopt);
 
-	result = find_member_function_candidate(
+	auto findConstAwareCurrentStructCandidate =
+		[&](const StructTypeInfo* target_struct, bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
+			if (require_static) {
+				return find_member_function_candidate(
+					target_struct,
+					function_name_handle,
+					argument_count,
+					context,
+					lookup_mode,
+					require_static,
+					detect_ambiguity);
+			}
+
+			auto collectCandidates =
+				[&](bool require_const_member) -> ResolvedMemberFunctionCandidate {
+					ResolvedMemberFunctionCandidate collected;
+					if (!target_struct) {
+						return collected;
+					}
+					for (const auto& member_func : target_struct->member_functions) {
+						if (member_func.is_constructor || member_func.is_destructor ||
+							member_func.getName() != function_name_handle ||
+							!member_func.function_decl.is<FunctionDeclarationNode>()) {
+							continue;
+						}
+
+						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						if (!isConstexprMemberLookupCandidate(
+								func_decl,
+								argument_count,
+								context,
+								lookup_mode,
+								require_static)) {
+							continue;
+						}
+						if (!func_decl.is_static()) {
+							if (require_const_member) {
+								if (!func_decl.is_const_member_function()) {
+									continue;
+								}
+							} else if (func_decl.is_const_member_function()) {
+								continue;
+							}
+						}
+
+						if (collected.function && detect_ambiguity) {
+							collected.ambiguous = true;
+							return collected;
+						}
+
+						collected.function = &func_decl;
+						collected.member = &member_func;
+						if (!detect_ambiguity) {
+							break;
+						}
+					}
+					return collected;
+				};
+
+			if (context.current_member_function_is_const) {
+				return collectCandidates(true);
+			}
+
+			ResolvedMemberFunctionCandidate non_const_match = collectCandidates(false);
+			if (non_const_match.function || non_const_match.ambiguous) {
+				return non_const_match;
+			}
+			return collectCandidates(true);
+		};
+
+	result = findConstAwareCurrentStructCandidate(
 		context.struct_info,
-		function_name_handle,
-		argument_count,
-		context,
-		lookup_mode,
-		require_static,
 		detect_ambiguity_in_current_struct);
 	if (result.function && !result.function->is_materialized()) {
 		StringHandle owner_name = context.struct_info->name;
@@ -3135,13 +3224,8 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 			.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
 			.parserSemanticServices()
 			.ensureMemberFunctionMaterialized(owner_name, *result.function);
-		result = find_member_function_candidate(
+		result = findConstAwareCurrentStructCandidate(
 			context.struct_info,
-			function_name_handle,
-			argument_count,
-			context,
-			lookup_mode,
-			require_static,
 			detect_ambiguity_in_current_struct);
 	}
 	if (result.function || result.ambiguous) {
@@ -3153,13 +3237,8 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 		const TypeInfo* struct_type = struct_type_it->second;
 		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
 		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
-			return find_member_function_candidate(
+			return findConstAwareCurrentStructCandidate(
 				template_type_it->second->getStructInfo(),
-				function_name_handle,
-				argument_count,
-				context,
-				lookup_mode,
-				require_static,
 				false);
 		}
 	}
@@ -8735,8 +8814,10 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	}
 	auto saved_struct_info = context.struct_info;
 	auto saved_struct_type_index = context.struct_type_index;
+	bool saved_current_member_function_is_const = context.current_member_function_is_const;
 	context.struct_info = struct_info;
 	context.struct_type_index = type_index;
+	context.current_member_function_is_const = actual_func->is_const_member_function();
 	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
@@ -8764,6 +8845,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
 	context.struct_type_index = saved_struct_type_index;
+	context.current_member_function_is_const = saved_current_member_function_is_const;
 	restore_template_bindings();
 	return result;
 }
