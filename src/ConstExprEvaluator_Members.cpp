@@ -2646,17 +2646,70 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 		return EvalResult::error("Object is not a struct type for member function '" + std::string(func_name) + "'");
 
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+	const bool object_is_const =
+		object.exact_type.has_value() && object.exact_type->is_const();
+	auto findConstAwareMemberCandidate =
+		[&](const StructTypeInfo* target_struct, bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
+			auto collectCandidates =
+				[&](bool require_const_member) -> ResolvedMemberFunctionCandidate {
+					ResolvedMemberFunctionCandidate result;
+					if (!target_struct) {
+						return result;
+					}
+					for (const auto& member_func : target_struct->member_functions) {
+						if (member_func.is_constructor || member_func.is_destructor ||
+							member_func.getName() != func_name_handle ||
+							!member_func.function_decl.is<FunctionDeclarationNode>()) {
+							continue;
+						}
+
+						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						if (!isConstexprMemberLookupCandidate(
+								func_decl,
+								0,
+								context,
+								MemberFunctionLookupMode::LookupOnly,
+								false)) {
+							continue;
+						}
+						if (!func_decl.is_static()) {
+							if (require_const_member) {
+								if (!func_decl.is_const_member_function()) {
+									continue;
+								}
+							} else if (func_decl.is_const_member_function()) {
+								continue;
+							}
+						}
+
+						if (result.function && detect_ambiguity) {
+							result.ambiguous = true;
+							return result;
+						}
+
+						result.function = &func_decl;
+						result.member = &member_func;
+						if (!detect_ambiguity) {
+							break;
+						}
+					}
+					return result;
+				};
+
+			if (object_is_const) {
+				return collectCandidates(true);
+			}
+
+			ResolvedMemberFunctionCandidate non_const_match = collectCandidates(false);
+			if (non_const_match.function || non_const_match.ambiguous) {
+				return non_const_match;
+			}
+			return collectCandidates(true);
+		};
 
 	// Try instantiation's own member functions first, then fall back to the
 	// base template (same logic as find_current_struct_member_function_candidate).
-	auto match = find_member_function_candidate(
-		struct_info,
-		func_name_handle,
-		0,
-		context,
-		MemberFunctionLookupMode::LookupOnly,
-		false,
-		true);
+	auto match = findConstAwareMemberCandidate(struct_info, true);
 
 	if ((!match.function && !match.ambiguous) ||
 		(match.function && !match.function->is_materialized())) {
@@ -2666,13 +2719,8 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 			const TypeInfo* struct_type = struct_type_it->second;
 			auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
 			if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
-				match = find_member_function_candidate(
+				match = findConstAwareMemberCandidate(
 					template_type_it->second->getStructInfo(),
-					func_name_handle,
-					0,
-					context,
-					MemberFunctionLookupMode::LookupOnly,
-					false,
 					false);
 			}
 		}
@@ -8511,32 +8559,95 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		return EvalResult::error("Type is not a struct in member function call");
 	}
 
+	bool receiver_is_const = false;
+	if (has_complex_object_result && complex_object_result.exact_type.has_value()) {
+		receiver_is_const = complex_object_result.exact_type->is_const();
+	} else if (var_decl) {
+		receiver_is_const = var_decl->declaration().type_specifier_node().is_const() ||
+			var_decl->is_constexpr();
+	}
+
 	// Look up the actual member function in the struct's type info
 	const auto& arguments = call_expr.arguments();
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	const FunctionDeclarationNode* actual_func = try_get_lowered_constexpr_member_call_target(
-		call_expr,
-		struct_info,
-		arguments.size(),
-		context,
-		MemberFunctionLookupMode::LookupOnly,
-		false);
-	const StructMemberFunction* actual_member =
-		actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : nullptr;
+	auto findConstAwareMemberFunctionMatch =
+		[&](bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
+			auto collectCandidates =
+				[&](bool require_const_member) -> ResolvedMemberFunctionCandidate {
+					ResolvedMemberFunctionCandidate result;
+					for (const auto& member_func : struct_info->member_functions) {
+						if (member_func.is_constructor || member_func.is_destructor ||
+							member_func.getName() != func_name_handle ||
+							!member_func.function_decl.is<FunctionDeclarationNode>()) {
+							continue;
+						}
+
+						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						if (!isConstexprMemberLookupCandidate(
+								func_decl,
+								arguments.size(),
+								context,
+								MemberFunctionLookupMode::LookupOnly,
+								false)) {
+							continue;
+						}
+						if (!func_decl.is_static()) {
+							if (require_const_member) {
+								if (!func_decl.is_const_member_function()) {
+									continue;
+								}
+							} else if (func_decl.is_const_member_function()) {
+								continue;
+							}
+						}
+
+						if (result.function && detect_ambiguity) {
+							result.ambiguous = true;
+							return result;
+						}
+
+						result.function = &func_decl;
+						result.member = &member_func;
+						if (!detect_ambiguity) {
+							break;
+						}
+					}
+					return result;
+				};
+
+			if (receiver_is_const) {
+				return collectCandidates(true);
+			}
+
+			ResolvedMemberFunctionCandidate non_const_match = collectCandidates(false);
+			if (non_const_match.function || non_const_match.ambiguous) {
+				return non_const_match;
+			}
+			return collectCandidates(true);
+		};
+	ResolvedMemberFunctionCandidate member_function_match =
+		findConstAwareMemberFunctionMatch(true);
+	if (member_function_match.ambiguous) {
+		return EvalResult::error("Ambiguous member function overload in constant expression");
+	}
+	const FunctionDeclarationNode* actual_func = member_function_match.function;
+	const StructMemberFunction* actual_member = member_function_match.member;
 	if (!actual_func) {
-		auto member_function_match = find_member_function_candidate(
+		actual_func = try_get_lowered_constexpr_member_call_target(
+			call_expr,
 			struct_info,
-			func_name_handle,
 			arguments.size(),
 			context,
 			MemberFunctionLookupMode::LookupOnly,
-			false,
-			true);
-		if (member_function_match.ambiguous) {
-			return EvalResult::error("Ambiguous member function overload in constant expression");
+			false);
+		if (actual_func != nullptr &&
+			receiver_is_const &&
+			!actual_func->is_static() &&
+			!actual_func->is_const_member_function()) {
+			actual_func = nullptr;
 		}
-		actual_func = member_function_match.function;
-		actual_member = member_function_match.member;
+		actual_member =
+			actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : nullptr;
 	}
 	// Virtual dispatch: resolve to the final overrider in the dynamic type using
 	// is_virtual/is_override flags so that same-name non-overriding derived

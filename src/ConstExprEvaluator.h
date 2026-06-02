@@ -1022,9 +1022,8 @@ private:
 		std::string_view body_error,
 		std::string_view return_error);
 	// Select the best constexpr-evaluable overload of operator_name from struct_info.
-	// When both const and non-const overloads exist, the const overload is preferred
-	// (constexpr evaluation is read-only so both produce identical results).
-	// Returns ambiguity when multiple viable const overloads exist.
+	// Constexpr evaluation still follows the receiver's cv-qualified overload set;
+	// it must not assume const/non-const bodies are interchangeable.
 	static ResolvedMemberFunctionCandidate findConstexprOperatorOverload(
 		const StructTypeInfo* struct_info,
 		StringHandle operator_name,

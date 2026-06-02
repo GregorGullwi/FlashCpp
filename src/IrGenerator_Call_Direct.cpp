@@ -378,7 +378,7 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 			copyCallMetadata(direct_static_call, callExprNode, copy_options);
 			return generateFunctionCallIr(direct_static_call, context, &callExprNode);
 		}
-		return generateMemberFunctionCallIr(callExprNode, context);
+		return generateMemberFunctionCallIr(callExprNode, context, &callExprNode);
 	}
 	return generateFunctionCallIr(callExprNode, context);
 }
@@ -588,7 +588,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				*resolved_operator_call,
 				std::move(member_args),
 				callExprNode.called_from());
-			return generateMemberFunctionCallIr(member_call, context, sema_call_key);
+			return generateMemberFunctionCallIr(member_call, context);
 		}
 		if (sema_normalized_current_function_ &&
 			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {

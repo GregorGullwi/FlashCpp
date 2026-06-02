@@ -446,6 +446,9 @@ private:
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(
 		const ASTNode& arg,
 		CanonicalTypeId* inferred_type_id = nullptr);
+	bool tryCollectOverloadResolutionArgTypes(
+		const ChunkedVector<ASTNode>& arguments,
+		InlineVector<TypeSpecifierNode, 6>& arg_types_out);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);

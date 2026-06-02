@@ -18,12 +18,7 @@
 - `problem_statement_example.cpp`
 - `spaceship_default.cpp`
 - `test_complex_keywords.cpp`
-- `test_constexpr_lambda_copy_this_mutation_ret0.cpp`
 - `test_constexpr_lambda_immediate_ret0.cpp`
-- `test_constexpr_lambda_member_repeated_state_ret0.cpp`
-- `test_constexpr_lambda_nested_member_copy_this_ret0.cpp`
-- `test_constexpr_lambda_nested_state_ret0.cpp`
-- `test_constexpr_lambda_this_shared_mutation_ret0.cpp`
 - `test_constexpr_offsetof_nested_ret0.cpp`
 - `test_constexpr_offsetof_ret0.cpp`
 - `test_copy_assign_default_arg_ret42.cpp`
@@ -100,7 +95,7 @@
 
 ## Notes
 
-- Compile failures: 78 unique tests
+- Compile failures: 72 unique tests
 - Link failures: 0
 - Runtime crashes: 0
 - Return mismatches: 4 unique tests

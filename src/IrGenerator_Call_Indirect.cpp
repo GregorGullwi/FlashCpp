@@ -5,15 +5,40 @@
 
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
-	return generateMemberFunctionCallIr(callExprNode, context, &callExprNode);
+	return generateMemberFunctionCallIr(callExprNode, context, nullptr);
 }
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key) {
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(5 + callExprNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
-	const FunctionDeclarationNode& member_func_decl = *callExprNode.callee().function_declaration_or_null();
 	auto sema_services = sema_.parserSemanticServices();
+	const FunctionDeclarationNode* parser_member_func_decl =
+		callExprNode.callee().function_declaration_or_null();
+	ResolvedFunctionQueryResult sema_resolved_direct_query;
+	if (sema_call_key != nullptr) {
+		sema_resolved_direct_query =
+			sema_services.getResolvedDirectCallQuery(sema_call_key);
+	}
+	const FunctionDeclarationNode* sema_resolved_member_func =
+		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
+			? sema_resolved_direct_query.function
+			: nullptr;
+	const bool has_sema_resolved_member_target =
+		sema_resolved_member_func != nullptr;
+	if (sema_call_key != nullptr &&
+		sema_normalized_current_function_ &&
+		parser_member_func_decl == nullptr &&
+		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+		throw InternalError("Normalized member-call direct query remained NotYetAnalyzed");
+	}
+	if (parser_member_func_decl == nullptr && sema_resolved_member_func == nullptr) {
+		throw InternalError("CallExprNode with receiver is missing FunctionDeclarationNode");
+	}
+	const FunctionDeclarationNode& member_func_decl =
+		sema_resolved_member_func != nullptr
+			? *sema_resolved_member_func
+			: *parser_member_func_decl;
 
 	FLASH_LOG(Codegen, Debug, "=== generateMemberFunctionCallIr START ===");
 
@@ -558,32 +583,48 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const IdentifierNode& object_ident = std::get<IdentifierNode>(*object_expr);
 		object_name = object_ident.name();
 
-		// Look up the object in both local and global symbol tables
-		std::optional<ASTNode> symbol = lookupSymbol(object_name);
-		if (symbol.has_value()) {
-			// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
-			object_decl = get_decl_from_symbol(*symbol);
-			if (object_decl) {
-				object_type = object_decl->type_specifier_node();
-				if (!object_type.type_index().is_valid()) {
-					StringHandle object_type_name = object_type.token().handle();
-					if (object_type_name.isValid()) {
-						auto object_type_it = getTypesByNameMap().find(object_type_name);
-						if (object_type_it != getTypesByNameMap().end() &&
-							object_type_it->second != nullptr) {
-							object_type.set_type_index(
-								object_type_it->second->type_index_.withCategory(
-									object_type_it->second->typeEnum()));
-							object_type.set_size_in_bits(
-								object_type_it->second->sizeInBits());
+		if (object_name == "this" &&
+			current_lambda_context_.isActive() &&
+			current_lambda_context_.enclosing_struct_type_index.is_valid() &&
+			(current_lambda_context_.has_this_pointer || current_lambda_context_.has_copy_this)) {
+			const TypeInfo* captured_this_type = tryGetTypeInfo(current_lambda_context_.enclosing_struct_type_index);
+			if (!captured_this_type || !captured_this_type->isStruct()) {
+				throw InternalError("Lambda captured-this receiver type was not registered");
+			}
+			object_type = TypeSpecifierNode(
+				captured_this_type->type_index_.withCategory(TypeCategory::Struct),
+				captured_this_type->sizeInBits(),
+				Token{},
+				CVQualifier::None,
+				ReferenceQualifier::None);
+		} else {
+			// Look up the object in both local and global symbol tables
+			std::optional<ASTNode> symbol = lookupSymbol(object_name);
+			if (symbol.has_value()) {
+				// Use helper to get DeclarationNode from either DeclarationNode or VariableDeclarationNode
+				object_decl = get_decl_from_symbol(*symbol);
+				if (object_decl) {
+					object_type = object_decl->type_specifier_node();
+					if (!object_type.type_index().is_valid()) {
+						StringHandle object_type_name = object_type.token().handle();
+						if (object_type_name.isValid()) {
+							auto object_type_it = getTypesByNameMap().find(object_type_name);
+							if (object_type_it != getTypesByNameMap().end() &&
+								object_type_it->second != nullptr) {
+								object_type.set_type_index(
+									object_type_it->second->type_index_.withCategory(
+										object_type_it->second->typeEnum()));
+								object_type.set_size_in_bits(
+									object_type_it->second->sizeInBits());
+							}
 						}
 					}
-				}
 
-				// If the type is 'auto', deduce the actual closure type from lambda initializer
-				if (isPlaceholderAutoType(object_type.type())) {
-					if (auto deduced = deduceLambdaClosureType(*symbol, object_decl->identifier_token())) {
-						object_type = *deduced;
+					// If the type is 'auto', deduce the actual closure type from lambda initializer
+					if (isPlaceholderAutoType(object_type.type())) {
+						if (auto deduced = deduceLambdaClosureType(*symbol, object_decl->identifier_token())) {
+							object_type = *deduced;
+						}
 					}
 				}
 			}
@@ -1075,7 +1116,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					break;
 				}
 			}
-			if (!called_member_func) {
+			if (!called_member_func &&
+				!has_sema_resolved_member_target) {
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.getName() == func_name_handle &&
 						member_func.function_decl.is<FunctionDeclarationNode>() &&
@@ -1113,17 +1155,19 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 											return; // Stop searching once found
 										}
 									}
-									for (const auto& member_func : base_struct_info->member_functions) {
-										if (member_func.getName() == func_name_handle &&
-											member_func.function_decl.is<FunctionDeclarationNode>() &&
-											isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
-											called_member_func = &member_func;
-											declaring_struct = base_struct_info;
-											if (member_func.is_virtual) {
-												is_virtual_call = true;
-												vtable_index = member_func.vtable_index;
+									if (!has_sema_resolved_member_target) {
+										for (const auto& member_func : base_struct_info->member_functions) {
+											if (member_func.getName() == func_name_handle &&
+												member_func.function_decl.is<FunctionDeclarationNode>() &&
+												isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
+												called_member_func = &member_func;
+												declaring_struct = base_struct_info;
+												if (member_func.is_virtual) {
+													is_virtual_call = true;
+													vtable_index = member_func.vtable_index;
+												}
+												return;
 											}
-											return;
 										}
 									}
 									// Recursively search base classes of this base class
@@ -1914,7 +1958,43 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		bool this_arg_is_pointer_value = false;
 		ValueStorage this_arg_storage = ValueStorage::ContainsData;
 		bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
-		if (object_name.empty()) {
+		bool object_is_lambda_captured_this = false;
+		if (object_expr && std::holds_alternative<IdentifierNode>(*object_expr)) {
+			const IdentifierNode& object_ident = std::get<IdentifierNode>(*object_expr);
+			object_is_lambda_captured_this =
+				object_ident.name() == "this" &&
+				current_lambda_context_.isActive() &&
+				current_lambda_context_.enclosing_struct_type_index.is_valid() &&
+				(current_lambda_context_.has_this_pointer || current_lambda_context_.has_copy_this);
+		}
+		if (object_is_lambda_captured_this) {
+			if (current_lambda_context_.has_copy_this) {
+				const StructTypeInfo* closure_struct = getCurrentClosureStruct();
+				const StructMember* copy_this_member = closure_struct ? closure_struct->findMember("__copy_this") : nullptr;
+				if (!copy_this_member) {
+					throw InternalError("Lambda [*this] member-call receiver missing __copy_this member");
+				}
+				TempVar this_addr = var_counter.next();
+				AddressOfMemberOp addr_op;
+				addr_op.result = this_addr;
+				addr_op.base_object = StringTable::getOrInternStringHandle("this"sv);
+				addr_op.member_offset = static_cast<int>(copy_this_member->offset);
+				addr_op.member_type_index = current_lambda_context_.enclosing_struct_type_index.withCategory(TypeCategory::Struct);
+				addr_op.member_size_in_bits = static_cast<int>(copy_this_member->size * 8);
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), callExprNode.called_from()));
+				this_arg_value = IrValue(this_addr);
+				this_arg_is_pointer_value = true;
+				this_arg_storage = ValueStorage::ContainsAddress;
+			} else {
+				std::optional<TempVar> this_ptr = emitLoadThisPointer(callExprNode.called_from());
+				if (!this_ptr.has_value()) {
+					throw InternalError("Lambda [this] member-call receiver could not load captured object pointer");
+				}
+				this_arg_value = IrValue(*this_ptr);
+				this_arg_is_pointer_value = true;
+				this_arg_storage = ValueStorage::ContainsAddress;
+			}
+		} else if (object_name.empty()) {
 			// Object is a temporary expression result (e.g., getContainer().method())
 			// Evaluate the expression to get a TempVar, then take its address for the this pointer
 			ExprResult obj_result = visitExpressionNode(*object_expr);

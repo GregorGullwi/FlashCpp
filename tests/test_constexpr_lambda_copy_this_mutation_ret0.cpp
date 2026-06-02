@@ -14,9 +14,14 @@ struct CopyThisMutationExample {
 	}
 };
 
-constexpr CopyThisMutationExample example{40};
-static_assert(example.testCopyThisMutation() == 124);
+constexpr int testCopyThisMutation() {
+	CopyThisMutationExample example{40};
+	return example.testCopyThisMutation();
+}
+static_assert(testCopyThisMutation() == 124);
 
 int main() {
+	CopyThisMutationExample example{40};
+	if (example.testCopyThisMutation() != 124) return 1;
 	return 0;
 }

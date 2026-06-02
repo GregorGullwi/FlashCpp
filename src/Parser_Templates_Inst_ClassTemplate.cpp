@@ -162,6 +162,11 @@ struct SourceMemberIdentityMaps {
 	std::unordered_map<uint64_t, ASTNode> by_location;
 };
 
+struct SourceMemberStructInfoIndexMaps {
+	std::unordered_map<const void*, size_t> by_node;
+	std::unordered_map<uint64_t, size_t> by_location;
+};
+
 enum class ReplaySignatureMatchResult {
 	Match,
 	Mismatch,
@@ -213,6 +218,72 @@ static const void* sourceMemberAstNodeKey(const ASTNode& node) {
 	if (node.is<DestructorDeclarationNode>())
 		return &node.as<DestructorDeclarationNode>();
 	return nullptr;
+}
+
+static void mixReplaySourceTokenKey(uint64_t& key, const Token& token) {
+	auto mix = [&](uint64_t value) {
+		key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
+	};
+	mix(static_cast<uint64_t>(token.file_index()));
+	mix(static_cast<uint64_t>(token.line()));
+	mix(static_cast<uint64_t>(token.column()));
+	mix(static_cast<uint64_t>(token.handle().handle));
+}
+
+static void mixReplaySourceParamKey(uint64_t& key, const ASTNode& param) {
+	if (!param.is<DeclarationNode>()) {
+		Token fallback_token(
+			Token::Type::Identifier,
+			std::string_view(param.type_name()),
+			0,
+			0,
+			0);
+		mixReplaySourceTokenKey(key, fallback_token);
+		return;
+	}
+
+	const DeclarationNode& decl = param.as<DeclarationNode>();
+	mixReplaySourceTokenKey(key, decl.type_specifier_node().token());
+	if (decl.type_specifier_node().type_index().is_valid()) {
+		auto mix = [&](uint64_t value) {
+			key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
+		};
+		mix(static_cast<uint64_t>(decl.type_specifier_node().type_index().index()));
+		mix(static_cast<uint64_t>(decl.type_specifier_node().pointer_depth()));
+		mix(static_cast<uint64_t>(decl.type_specifier_node().reference_qualifier()));
+	}
+}
+
+static std::optional<uint64_t> declarationReplaySourceKey(
+	const FunctionDeclarationNode& decl,
+	size_t template_param_count) {
+	uint64_t key = 0xCBF29CE484222325ull;
+	mixReplaySourceTokenKey(key, decl.decl_node().identifier_token());
+	auto mix = [&](uint64_t value) {
+		key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
+	};
+	mix(static_cast<uint64_t>(decl.parameter_nodes().size()));
+	mix(static_cast<uint64_t>(template_param_count));
+	for (const ASTNode& param : decl.parameter_nodes()) {
+		mixReplaySourceParamKey(key, param);
+	}
+	return key;
+}
+
+static std::optional<uint64_t> declarationReplaySourceKey(
+	const ConstructorDeclarationNode& decl,
+	size_t template_param_count) {
+	uint64_t key = 0xCBF29CE484222325ull;
+	mixReplaySourceTokenKey(key, decl.name_token());
+	auto mix = [&](uint64_t value) {
+		key ^= value + 0x9E3779B97F4A7C15ull + (key << 6) + (key >> 2);
+	};
+	mix(static_cast<uint64_t>(decl.parameter_nodes().size()));
+	mix(static_cast<uint64_t>(template_param_count));
+	for (const ASTNode& param : decl.parameter_nodes()) {
+		mixReplaySourceParamKey(key, param);
+	}
+	return key;
 }
 
 static std::optional<uint64_t> sourceMemberLocationKey(const ASTNode& member) {
@@ -302,8 +373,72 @@ static ASTNode* findSourceMemberStubByIdentity(
 	return nullptr;
 }
 
+static void registerSourceMemberStructInfoIndex(
+	SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode& source_member,
+	size_t struct_info_index) {
+	auto register_key = [&](const void* key) {
+		if (key != nullptr) {
+			index_maps.by_node[key] = struct_info_index;
+		}
+	};
+	register_key(sourceMemberAstNodeKey(source_member));
+	if (source_member.is<TemplateFunctionDeclarationNode>()) {
+		register_key(sourceMemberAstNodeKey(
+			source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
+	}
+	if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
+		location_key.has_value()) {
+		index_maps.by_location[*location_key] = struct_info_index;
+	}
+}
+
+static FunctionDeclarationNode* findStructInfoFunctionBySourceMemberIdentity(
+	StructTypeInfo* struct_info,
+	const SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode& source_member) {
+	if (struct_info == nullptr) {
+		return nullptr;
+	}
+
+	auto find_index = [&](const void* key) -> std::optional<size_t> {
+		if (key == nullptr) {
+			return std::nullopt;
+		}
+		auto it = index_maps.by_node.find(key);
+		if (it == index_maps.by_node.end()) {
+			return std::nullopt;
+		}
+		return it->second;
+	};
+
+	std::optional<size_t> index = find_index(sourceMemberAstNodeKey(source_member));
+	if (!index.has_value() &&
+		source_member.is<TemplateFunctionDeclarationNode>()) {
+		index = find_index(sourceMemberAstNodeKey(
+			source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
+	}
+	if (!index.has_value()) {
+		if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
+			location_key.has_value()) {
+			auto it = index_maps.by_location.find(*location_key);
+			if (it != index_maps.by_location.end()) {
+				index = it->second;
+			}
+		}
+	}
+	if (!index.has_value() ||
+		*index >= struct_info->member_functions.size()) {
+		return nullptr;
+	}
+
+	ASTNode& function_decl = struct_info->member_functions[*index].function_decl;
+	return get_function_decl_node_mut(function_decl);
+}
+
 struct OutOfLineMemberStubResolution {
 	FunctionDeclarationNode* func = nullptr;
+	const ASTNode* source_member = nullptr;
 	bool ambiguous = false;
 	bool insufficient_evidence = false;
 };
@@ -320,8 +455,12 @@ static OutOfLineMemberStubResolution findPlainOutOfLineMemberStubByIdentity(
 		out_of_line_decl.decl_node().identifier_token().value();
 	OutOfLineMemberStubResolution resolution;
 	InlineVector<FunctionDeclarationNode*, 4> resolved_matches;
+	const ASTNode* matched_source_member = nullptr;
 
-	for (const StructMemberFunctionDecl& source_member : source_members) {
+	for (size_t source_member_index = 0;
+		 source_member_index < source_members.size();
+		 ++source_member_index) {
+		const StructMemberFunctionDecl& source_member = source_members[source_member_index];
 		if (!source_member.function_declaration.is<FunctionDeclarationNode>()) {
 			continue;
 		}
@@ -364,10 +503,12 @@ static OutOfLineMemberStubResolution findPlainOutOfLineMemberStubByIdentity(
 		}
 
 		resolved_matches.push_back(inst_func_decl);
+		matched_source_member = &source_member.function_declaration;
 	}
 
 	if (resolved_matches.size() == 1) {
 		resolution.func = resolved_matches.front();
+		resolution.source_member = matched_source_member;
 	} else if (resolved_matches.size() > 1) {
 		resolution.ambiguous = true;
 	}
@@ -566,6 +707,10 @@ static OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
 	const ConstructorDeclarationNode& ctor_decl,
 	EligibleFn&& is_candidate_eligible) {
 	OutOfLineConstructorStubResolution resolution;
+	const std::optional<uint64_t> target_source_key =
+		declarationReplaySourceKey(
+			ctor_decl,
+			ctor_decl.template_parameters().size());
 
 	// Prefer direct node identity when the StructTypeInfo stores the same
 	// constructor node instance as the replay-attached declaration.
@@ -579,6 +724,37 @@ static OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
 			if (is_candidate_eligible(info_ctor)) {
 				resolution.ctor = &info_ctor;
 			}
+			return resolution;
+		}
+	}
+
+	if (target_source_key.has_value()) {
+		for (auto& info_func : struct_info.member_functions) {
+			if (!info_func.is_constructor ||
+				!info_func.function_decl.is<ConstructorDeclarationNode>()) {
+				continue;
+			}
+
+			auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
+			if (!is_candidate_eligible(info_ctor)) {
+				continue;
+			}
+			const std::optional<uint64_t> info_source_key =
+				declarationReplaySourceKey(
+					info_ctor,
+					info_ctor.template_parameters().size());
+			if (!info_source_key.has_value() ||
+				*info_source_key != *target_source_key) {
+				continue;
+			}
+			if (resolution.ctor != nullptr) {
+				resolution.ambiguous = true;
+				resolution.ctor = nullptr;
+				return resolution;
+			}
+			resolution.ctor = &info_ctor;
+		}
+		if (resolution.ctor != nullptr || resolution.ambiguous) {
 			return resolution;
 		}
 	}
@@ -617,31 +793,69 @@ static OutOfLineFunctionStubResolution findMatchingFunctionInStructInfo(
 	const FunctionDeclarationNode& func_decl,
 	EligibleFn&& is_candidate_eligible) {
 	OutOfLineFunctionStubResolution resolution;
+	const std::optional<uint64_t> target_source_key =
+		declarationReplaySourceKey(func_decl, 0);
 
 	for (auto& info_func : struct_info.member_functions) {
-		if (info_func.is_constructor ||
-			!info_func.function_decl.is<FunctionDeclarationNode>()) {
+		if (info_func.is_constructor) {
 			continue;
 		}
-		auto& info_decl = info_func.function_decl.as<FunctionDeclarationNode>();
-		if (&info_decl == &func_decl) {
-			if (is_candidate_eligible(info_decl)) {
-				resolution.func = &info_decl;
+		FunctionDeclarationNode* info_decl =
+			get_function_decl_node_mut(info_func.function_decl);
+		if (info_decl == nullptr) {
+			continue;
+		}
+		if (info_decl == &func_decl) {
+			if (is_candidate_eligible(*info_decl)) {
+				resolution.func = info_decl;
 			}
 			return resolution;
 		}
 	}
 
+	if (target_source_key.has_value()) {
+		for (auto& info_func : struct_info.member_functions) {
+			if (info_func.is_constructor) {
+				continue;
+			}
+
+			FunctionDeclarationNode* info_decl =
+				get_function_decl_node_mut(info_func.function_decl);
+			if (info_decl == nullptr) {
+				continue;
+			}
+			if (!is_candidate_eligible(*info_decl)) {
+				continue;
+			}
+			const std::optional<uint64_t> info_source_key =
+				declarationReplaySourceKey(*info_decl, 0);
+			if (!info_source_key.has_value() ||
+				*info_source_key != *target_source_key) {
+				continue;
+			}
+			if (resolution.func != nullptr) {
+				resolution.ambiguous = true;
+				resolution.func = nullptr;
+				return resolution;
+			}
+			resolution.func = info_decl;
+		}
+		if (resolution.func != nullptr || resolution.ambiguous) {
+			return resolution;
+		}
+	}
+
 	for (auto& info_func : struct_info.member_functions) {
-		if (info_func.is_constructor ||
-			!info_func.function_decl.is<FunctionDeclarationNode>()) {
+		if (info_func.is_constructor) {
 			continue;
 		}
 
-		auto& info_decl = info_func.function_decl.as<FunctionDeclarationNode>();
-		if (!is_candidate_eligible(info_decl) ||
+		FunctionDeclarationNode* info_decl =
+			get_function_decl_node_mut(info_func.function_decl);
+		if (info_decl == nullptr ||
+			!is_candidate_eligible(*info_decl) ||
 			!functionDeclarationsHaveEquivalentInstantiatedSignature(
-				info_decl,
+				*info_decl,
 				func_decl)) {
 			continue;
 		}
@@ -650,7 +864,7 @@ static OutOfLineFunctionStubResolution findMatchingFunctionInStructInfo(
 			resolution.ambiguous = true;
 			return resolution;
 		}
-		resolution.func = &info_decl;
+		resolution.func = info_decl;
 	}
 
 	return resolution;
@@ -2666,6 +2880,42 @@ void Parser::copyDefinitionParameterTypes(
 	}
 }
 
+static void materializeReplayAttachedFunctionParameterTypesFromDefinition(
+	Parser& parser,
+	std::span<ASTNode> instantiated_params,
+	std::span<const ASTNode> definition_params,
+	std::span<const TemplateParameterNode> outer_template_params,
+	std::span<const TemplateTypeArg> outer_template_args,
+	StringHandle owner_type_name) {
+	if (instantiated_params.size() != definition_params.size()) {
+		return;
+	}
+
+	for (size_t param_index = 0; param_index < instantiated_params.size(); ++param_index) {
+		DeclarationNode* instantiated_decl =
+			const_cast<DeclarationNode*>(
+				get_decl_from_symbol(instantiated_params[param_index]));
+		const DeclarationNode* definition_decl =
+			get_decl_from_symbol(definition_params[param_index]);
+		if (instantiated_decl == nullptr || definition_decl == nullptr) {
+			continue;
+		}
+
+		std::optional<TypeSpecifierNode> substituted_definition_type =
+			substituteOutOfLineSignatureType(
+				parser,
+				definition_decl->type_specifier_node(),
+				outer_template_params,
+				outer_template_args,
+				owner_type_name);
+		if (!substituted_definition_type.has_value()) {
+			continue;
+		}
+
+		instantiated_decl->set_type_node(*substituted_definition_type);
+	}
+}
+
 void Parser::syncOutOfLineConstructorTemplateParameters(
 	std::span<ASTNode> instantiated_params,
 	std::span<const ASTNode> definition_params) {
@@ -2757,57 +3007,16 @@ bool Parser::replayOutOfLineMemberBody(
 static OutOfLineFunctionStubResolution findReplayedOutOfLineMemberInStructInfo(
 	StructTypeInfo* struct_info,
 	FunctionDeclarationNode& replayed_func) {
-	OutOfLineFunctionStubResolution resolution;
 	if (struct_info == nullptr) {
-		return resolution;
+		return {};
 	}
 
-	OutOfLineFunctionStubResolution info_func_resolution =
-		findMatchingFunctionInStructInfo(
-			*struct_info,
-			replayed_func,
-			[](const FunctionDeclarationNode& info_func) {
-				return !info_func.is_materialized();
-			});
-	if (info_func_resolution.func != nullptr || info_func_resolution.ambiguous) {
-		return info_func_resolution;
-	}
-
-	for (auto& info_func : struct_info->member_functions) {
-		if (info_func.is_constructor ||
-			!info_func.function_decl.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-		auto& info_decl = info_func.function_decl.as<FunctionDeclarationNode>();
-		FLASH_LOG(
-			Templates,
-			Debug,
-			"StructTypeInfo replay sync candidate: name=",
-			info_decl.decl_node().identifier_token().value(),
-			", params=",
-			static_cast<size_t>(info_decl.parameter_nodes().size()),
-			", materialized=",
-			info_decl.is_materialized());
-		if (info_decl.is_materialized() ||
-			info_decl.decl_node().identifier_token().value() !=
-				replayed_func.decl_node().identifier_token().value() ||
-			info_decl.parameter_nodes().size() != replayed_func.parameter_nodes().size() ||
-			info_decl.is_static() != replayed_func.is_static() ||
-			info_decl.is_const_member_function() != replayed_func.is_const_member_function() ||
-			info_decl.is_volatile_member_function() != replayed_func.is_volatile_member_function()) {
-			continue;
-		}
-		if (resolution.func != nullptr) {
-			resolution.ambiguous = true;
-			resolution.func = nullptr;
-			return resolution;
-		}
-		resolution.func = &info_decl;
-	}
-	if (resolution.func != nullptr || resolution.ambiguous) {
-		return resolution;
-	}
-	return info_func_resolution;
+	return findMatchingFunctionInStructInfo(
+		*struct_info,
+		replayed_func,
+		[](const FunctionDeclarationNode& info_func) {
+			return !info_func.is_materialized();
+		});
 }
 
 // Resolve any stored template arguments on a deferred base member-type chain after a class
@@ -6251,7 +6460,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						true,  // Preserve declared parameter cv-qualifier in this path
 						false, // Do not re-apply bound metadata to full substitution
 						false, // Do not force resolved TypeIndex onto full AST substitutions
-						false);// Plain member path does not need dependent member-template signature preservation
+						true); // Preserve dependent member-template signature identity for replay
 
 					copy_function_properties(new_func_ref, orig_func);
 					// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
@@ -7889,7 +8098,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						true,  // Preserve declared parameter cv-qualifier in this path
 						false, // Do not re-apply bound metadata to full substitution
 						true,  // Force resolved TypeIndex onto full AST substitutions
-						false); // Plain member path does not need dependent member-template signature preservation
+						true); // Preserve dependent member-template signature identity for replay
 					std::unordered_map<std::string_view, TemplateTypeArg> deduced_args;
 					for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
 						std::string_view pname = template_params[i].name();
@@ -8087,6 +8296,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						copyDefinitionParameterIdentifiers(
 							inst_func->parameter_nodes(),
 							plain_ool_func.parameter_nodes());
+						materializeReplayAttachedFunctionParameterTypesFromDefinition(
+							*this,
+							std::span<ASTNode>(
+								inst_func->parameter_nodes().data(),
+								inst_func->parameter_nodes().size()),
+							std::span<const ASTNode>(
+								plain_ool_func.parameter_nodes().data(),
+								plain_ool_func.parameter_nodes().size()),
+							std::span<const TemplateParameterNode>(
+								template_params.data(),
+								template_params.size()),
+							std::span<const TemplateTypeArg>(
+								template_args_for_pattern.data(),
+								template_args_for_pattern.size()),
+							instantiated_name);
 
 						const std::span<const ASTNode> inst_func_params =
 							inst_func->parameter_nodes();
@@ -8125,6 +8349,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								copyDefinitionParameterIdentifiers(
 									info_func_resolution.func->parameter_nodes(),
 									plain_ool_func.parameter_nodes());
+								materializeReplayAttachedFunctionParameterTypesFromDefinition(
+									*this,
+									std::span<ASTNode>(
+										info_func_resolution.func->parameter_nodes().data(),
+										info_func_resolution.func->parameter_nodes().size()),
+									std::span<const ASTNode>(
+										plain_ool_func.parameter_nodes().data(),
+										plain_ool_func.parameter_nodes().size()),
+									std::span<const TemplateParameterNode>(
+										template_params.data(),
+										template_params.size()),
+									std::span<const TemplateTypeArg>(
+										template_args_for_pattern.data(),
+										template_args_for_pattern.size()),
+									instantiated_name);
 								info_func_resolution.func->set_definition(*inst_func->get_definition());
 								finalize_function_after_definition(*info_func_resolution.func, true);
 							}
@@ -13217,6 +13456,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Slice 3: map from original template member node (by raw pointer) to the instantiated stub node.
 	// Used by deferred-body replay and nested out-of-line attachment to avoid name-based scanning.
 	SourceMemberIdentityMaps source_member_identity_maps;
+	SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
 	TypeIndex instantiated_member_owner_type_index{};
 	if (auto instantiated_owner_it = getTypesByNameMap().find(instantiated_name);
 		instantiated_owner_it != getTypesByNameMap().end()) {
@@ -13367,7 +13607,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					true,  // Preserve declared parameter cv-qualifier in this path
 					false, // Do not re-apply bound metadata to full substitution
 					true,  // Force resolved TypeIndex onto full AST substitutions
-					false); // Plain member path does not need dependent member-template signature preservation
+					true); // Preserve dependent member-template signature identity for replay
 				pack_param_info_.resize(saved_pack_info);
 
 				// Copy function properties but DO NOT set definition. Delay mangling until
@@ -13397,6 +13637,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_pure_virtual,
 						mem_func.is_override,
 						mem_func.is_final);
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
+						mem_func.function_declaration,
+						struct_info_ptr->member_functions.size() - 1);
 				}
 				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
@@ -13458,7 +13702,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					true,  // Preserve declared parameter cv-qualifier in this path
 					false, // Do not re-apply bound metadata to full substitution
 					true,  // Force resolved TypeIndex onto full AST substitutions
-					false); // Plain member path does not need dependent member-template signature preservation
+					true); // Preserve dependent member-template signature identity for replay
 
 				// Get the function body - either from definition or by re-parsing from saved position
 				std::optional<ASTNode> body_to_substitute;
@@ -13603,6 +13847,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_pure_virtual,
 						mem_func.is_override,
 						mem_func.is_final);
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
+						mem_func.function_declaration,
+						struct_info_ptr->member_functions.size() - 1);
 				}
 				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
@@ -13648,7 +13896,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					false, // Declaration-only path: strip only top-level by-value cv-qualifiers
 					false, // Do not re-apply bound metadata to full substitution
 					true,  // Force resolved TypeIndex onto full AST substitutions
-					false); // Plain member path does not need dependent member-template signature preservation
+					true); // Preserve dependent member-template signature identity for replay
 				pack_param_info_.resize(saved_pack_info);
 
 				// Copy other function properties
@@ -13728,6 +13976,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_pure_virtual,
 						mem_func.is_override,
 						mem_func.is_final);
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
+						mem_func.function_declaration,
+						struct_info_ptr->member_functions.size() - 1);
 				}
 				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
@@ -14956,6 +15208,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_name);
 		if (FunctionDeclarationNode* inst_func = plain_member_resolution.func;
 			inst_func != nullptr) {
+			materializeReplayAttachedFunctionParameterTypesFromDefinition(
+				*this,
+				std::span<ASTNode>(
+					inst_func->parameter_nodes().data(),
+					inst_func->parameter_nodes().size()),
+				std::span<const ASTNode>(
+					func_decl.parameter_nodes().data(),
+					func_decl.parameter_nodes().size()),
+				std::span<const TemplateParameterNode>(
+					out_of_line_member.template_params.data(),
+					out_of_line_member.template_params.size()),
+				std::span<const TemplateTypeArg>(
+					template_args_to_use.data(),
+					template_args_to_use.size()),
+				instantiated_name);
 			const std::span<const ASTNode> inst_func_params = inst_func->parameter_nodes();
 			std::vector<ASTNode> definition_scope_params(
 				inst_func_params.begin(),
@@ -14995,10 +15262,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				"primary-template",
 				decl.identifier_token().value());
 			if (found_match) {
-				OutOfLineFunctionStubResolution info_func_resolution =
-					findReplayedOutOfLineMemberInStructInfo(
-						struct_info_ptr,
-						*inst_func);
+				FunctionDeclarationNode* struct_info_func =
+					plain_member_resolution.source_member != nullptr
+						? findStructInfoFunctionBySourceMemberIdentity(
+							  struct_info_ptr,
+							  struct_info_member_identity_maps,
+							  *plain_member_resolution.source_member)
+						: nullptr;
+				OutOfLineFunctionStubResolution info_func_resolution;
+				if (struct_info_func != nullptr) {
+					info_func_resolution.func = struct_info_func;
+				} else {
+					info_func_resolution =
+						findReplayedOutOfLineMemberInStructInfo(
+							struct_info_ptr,
+							*inst_func);
+				}
 				if (info_func_resolution.ambiguous) {
 					std::string error_msg = std::string(StringBuilder()
 						.append("Ambiguous StructTypeInfo sync for out-of-line member '")
@@ -15013,30 +15292,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Error, error_msg);
 				} else if (info_func_resolution.func != nullptr &&
 					inst_func->is_materialized()) {
-					FLASH_LOG(
-						Templates,
-						Debug,
-						"Syncing replayed out-of-line member into StructTypeInfo: ",
-						decl.identifier_token().value());
 					copyDefinitionParameterIdentifiers(
 						info_func_resolution.func->parameter_nodes(),
 						func_decl.parameter_nodes());
-					copyDefinitionParameterTypes(
-						info_func_resolution.func->parameter_nodes(),
-						inst_func->parameter_nodes());
+					materializeReplayAttachedFunctionParameterTypesFromDefinition(
+						*this,
+						std::span<ASTNode>(
+							info_func_resolution.func->parameter_nodes().data(),
+							info_func_resolution.func->parameter_nodes().size()),
+						std::span<const ASTNode>(
+							func_decl.parameter_nodes().data(),
+							func_decl.parameter_nodes().size()),
+						std::span<const TemplateParameterNode>(
+							out_of_line_member.template_params.data(),
+							out_of_line_member.template_params.size()),
+						std::span<const TemplateTypeArg>(
+							template_args_to_use.data(),
+							template_args_to_use.size()),
+						instantiated_name);
 					info_func_resolution.func->set_definition(*inst_func->get_definition());
 					finalize_function_after_definition(*info_func_resolution.func, true);
-				} else {
-					FLASH_LOG(
-						Templates,
-						Debug,
-						"Skipped StructTypeInfo sync for replayed out-of-line member '",
-						decl.identifier_token().value(),
-						"' (matched=",
-						info_func_resolution.func != nullptr,
-						", materialized=",
-						inst_func->is_materialized(),
-						")");
 				}
 				registerLateMaterializedOwningStructRoot(instantiated_name);
 				normalizePendingSemanticRoots();

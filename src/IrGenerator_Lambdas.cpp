@@ -161,14 +161,14 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 }
 
 ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
-		// Collect lambda information for deferred generation
-		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
-		// If target_var_name is provided, use it as the closure variable name (for variable declarations)
-		// Otherwise, create a temporary __closure_N variable
+	// Collect lambda information for deferred generation
+	// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
+	// If target_var_name is provided, use it as the closure variable name (for variable declarations)
+	// Otherwise, create a temporary __closure_N variable
 
 	LambdaInfo lambda_info = collectLambdaForDeferredGeneration(lambda);
 
-		// Look up the closure type (registered during parsing)
+	// Look up the closure type (registered during parsing)
 	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
 	if (type_it == getTypesByNameMap().end()) {
 			// Error: closure type not found
@@ -178,14 +178,14 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 
 	const TypeInfo* closure_type = type_it->second;
 
-		// Use target variable name if provided, otherwise create a temporary closure variable
+	// Use target variable name if provided, otherwise create a temporary closure variable
 	std::string_view closure_var_name;
 	if (!target_var_name.empty()) {
-			// Use the target variable name directly
-			// We MUST emit VariableDecl here before any MemberStore operations
+		// Use the target variable name directly
+		// We MUST emit VariableDecl here before any MemberStore operations
 		closure_var_name = target_var_name;
 
-			// Declare the closure variable with the target name
+		// Declare the closure variable with the target name
 		VariableDeclOp lambda_decl_op;
 		lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
 		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->sizeInBits().value)};
@@ -195,13 +195,13 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 		lambda_decl_op.is_array = false;
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
 	} else {
-			// Create a temporary closure variable name
+		// Create a temporary closure variable name
 		closure_var_name = StringBuilder()
 							   .append("__closure_")
 							   .append(static_cast<int64_t>(lambda_info.lambda_id))
 							   .commit();
 
-			// Declare the closure variable
+		// Declare the closure variable
 		VariableDeclOp lambda_decl_op;
 		lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
 		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->sizeInBits().value)};
@@ -212,9 +212,9 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
 	}
 
-		// Now initialize captured members
-		// The key insight: we need to generate the initialization code that will be
-		// executed during IR conversion, after the variable has been added to scope
+	// Now initialize captured members
+	// The key insight: we need to generate the initialization code that will be
+	// executed during IR conversion, after the variable has been added to scope
 	if (!lambda_info.captures.empty()) {
 		const StructTypeInfo* struct_info = closure_type->getStructInfo();
 		if (struct_info) {
@@ -224,17 +224,39 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 					continue;
 				}
 
-					// Handle [this] capture - stores pointer to enclosing object
+				// Handle [this] capture - stores pointer to enclosing object
 				if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
 					const StructMember* member = struct_info->findMember("__this");
 					if (member) {
+						IrValue this_capture_value = StringTable::getOrInternStringHandle("this"sv);
+						if (current_lambda_context_.isActive()) {
+							if (auto this_ptr = emitLoadThisPointer(lambda.lambda_token())) {
+								this_capture_value = *this_ptr;
+							} else if (current_lambda_context_.has_copy_this) {
+								const StructTypeInfo* enclosing_closure = getCurrentClosureStruct();
+								const StructMember* copy_this_member = enclosing_closure ? enclosing_closure->findMember("__copy_this") : nullptr;
+								if (!copy_this_member) {
+									throw InternalError("Nested lambda [this] capture missing enclosing __copy_this member");
+								}
+								TempVar copy_this_addr = var_counter.next();
+								AddressOfMemberOp addr_op;
+								addr_op.result = copy_this_addr;
+								addr_op.base_object = StringTable::getOrInternStringHandle("this"sv);
+								addr_op.member_offset = static_cast<int>(copy_this_member->offset);
+								addr_op.member_type_index = current_lambda_context_.enclosing_struct_type_index.withCategory(TypeCategory::Struct);
+								addr_op.member_size_in_bits = static_cast<int>(copy_this_member->size * 8);
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), lambda.lambda_token()));
+								this_capture_value = copy_this_addr;
+							} else {
+								throw InternalError("Nested lambda [this] capture could not resolve enclosing object");
+							}
+						}
 							// Store the enclosing 'this' pointer in the closure
-							// Use the 'this' variable name to properly resolve to the member function's this parameter
 						MemberStoreOp store_this;
 						store_this.value.setType(TypeCategory::Void);
 						store_this.value.ir_type = IrType::Void;
 						store_this.value.size_in_bits = SizeInBits{64};
-						store_this.value.value = StringTable::getOrInternStringHandle("this");
+						store_this.value.value = this_capture_value;
 						store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
 						store_this.member_name = StringTable::getOrInternStringHandle("__this");
 						store_this.offset = static_cast<int>(member->offset);
@@ -245,20 +267,20 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 					continue;
 				}
 
-					// Handle [*this] capture - stores copy of entire enclosing object
+				// Handle [*this] capture - stores copy of entire enclosing object
 				if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
-						// For [*this], we need to copy the entire object into the closure
-						// The closure should have a member named "__copy_this" of the enclosing struct type
+					// For [*this], we need to copy the entire object into the closure
+					// The closure should have a member named "__copy_this" of the enclosing struct type
 					const StructMember* member = struct_info->findMember("__copy_this");
 					if (member && lambda_info.enclosing_struct_type_index.is_valid()) {
-							// Copy each member of the enclosing struct into __copy_this
+						// Copy each member of the enclosing struct into __copy_this
 						const TypeInfo* enclosing_type = tryGetTypeInfo(lambda_info.enclosing_struct_type_index);
 						if (enclosing_type && enclosing_type->getStructInfo()) {
 							const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
 							int copy_base_offset = static_cast<int>(member->offset);
 
 							for (const auto& enclosing_member : enclosing_struct->members) {
-									// Load from original 'this'
+								// Load from original 'this'
 								TempVar loaded_value = var_counter.next();
 								MemberLoadOp load_op;
 								load_op.result.value = loaded_value;
@@ -272,7 +294,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								load_op.struct_type_info = nullptr;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), lambda.lambda_token()));
 
-									// Store into closure->__copy_this at the appropriate offset
+								// Store into closure->__copy_this at the appropriate offset
 								MemberStoreOp store_copy_this;
 								store_copy_this.value.setType(enclosing_member.type_index.category());
 								store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
@@ -294,17 +316,17 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 				const StructMember* member = struct_info->findMember(var_name);
 
 				if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
-						// Check if this variable is a captured variable from an enclosing lambda
+					// Check if this variable is a captured variable from an enclosing lambda
 					bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
 													  current_lambda_context_.captures.count(var_name_str) > 0;
 
-						// Handle init-captures
+					// Handle init-captures
 					if (capture.has_initializer()) {
-							// Init-capture: evaluate the initializer expression and store it
+						// Init-capture: evaluate the initializer expression and store it
 						const ASTNode& init_node = *capture.initializer();
 						const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 
-							// For init-capture by reference [&y = x], we need to store the address of x
+						// For init-capture by reference [&y = x], we need to store the address of x
 						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 							ExprResult address_result = materializeAddressResult(
 								init_expr,
@@ -315,7 +337,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								continue;
 							}
 
-								// Store the address in the closure member
+							// Store the address in the closure member
 							MemberStoreOp member_store;
 							member_store.value.setType(member->memberType());
 							member_store.value.size_in_bits = SizeInBits{64}; // pointer size
@@ -329,12 +351,12 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 						} else {
 							ExprResult init_result = visitExpressionNode(init_expr);
 							IrOperand init_value = init_result.value;
-								// Init-capture by value [x = expr] - store the value directly
+							// Init-capture by value [x = expr] - store the value directly
 							MemberStoreOp member_store;
 							member_store.value.setType(member->type_index.category());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
-								// Convert IrOperand to IrValue
+							// Convert IrOperand to IrValue
 							if (const auto* temp_var_ptr = std::get_if<TempVar>(&init_value)) {
 								member_store.value.value = *temp_var_ptr;
 							} else if (const auto* int_val = std::get_if<int>(&init_value)) {
@@ -346,7 +368,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							} else if (const auto* string = std::get_if<StringHandle>(&init_value)) {
 								member_store.value.value = *string;
 							} else {
-									// For other types, skip this capture
+								// For other types, skip this capture
 								continue;
 							}
 
@@ -358,11 +380,11 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						}
 
-							// Init-captures do not consume an entry from captured_var_decls.
+						// Init-captures do not consume an entry from captured_var_decls.
 						continue;
 					} else if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
-							// By-reference: store the address of the variable
-							// Get the original variable type from captured_var_decls
+						// By-reference: store the address of the variable
+						// Get the original variable type from captured_var_decls
 						const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
 						const DeclarationNode* decl = get_decl_from_symbol(var_decl);
 						if (!decl) {
@@ -374,13 +396,13 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 						TempVar addr_temp = var_counter.next();
 
 						if (is_captured_from_enclosing) {
-								// Variable is captured from enclosing lambda - need to get address from this->x
+							// Variable is captured from enclosing lambda - need to get address from this->x
 							auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
 							bool enclosing_is_ref = (enclosing_kind_it != current_lambda_context_.capture_kinds.end() &&
 													 enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 
 							if (enclosing_is_ref) {
-									// Enclosing captured by reference - it already holds a pointer, just copy it
+								// Enclosing captured by reference - it already holds a pointer, just copy it
 								MemberLoadOp member_load;
 								member_load.result.value = addr_temp;
 								member_load.result.setType(orig_type.category());
@@ -404,15 +426,30 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								member_load.ref_qualifier = CVReferenceQualifier::LValueReference;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
 							} else {
-									// Enclosing captured by value - need to get address of this->x
-								AddressOfOp addr_op;
+								// Enclosing captured by value - need to get address of this->x
+								int enclosing_offset = -1;
+								auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+								if (enclosing_type_it != getTypesByNameMap().end()) {
+									const TypeInfo* enclosing_type = enclosing_type_it->second;
+									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
+										const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
+										if (enclosing_member) {
+											enclosing_offset = static_cast<int>(enclosing_member->offset);
+										}
+									}
+								}
+								if (enclosing_offset < 0) {
+									throw InternalError("Nested lambda reference capture could not resolve enclosing closure member");
+								}
+								AddressOfMemberOp addr_op;
 								addr_op.result = addr_temp;
-								addr_op.operand.setType(orig_type.category());
-								addr_op.operand.ir_type = toIrType(orig_type.type());
-								addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
-								addr_op.operand.pointer_depth = PointerDepth{};
-								addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
+								addr_op.base_object = StringTable::getOrInternStringHandle("this"sv);
+								addr_op.member_offset = enclosing_offset;
+								addr_op.member_type_index = orig_type.type_index().is_valid()
+																? orig_type.type_index().withCategory(orig_type.category())
+																: nativeTypeIndex(orig_type.category());
+								addr_op.member_size_in_bits = orig_type.size_in_bits();
+								ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), lambda.lambda_token()));
 							}
 						} else {
 								// Regular variable - generate AddressOf directly
@@ -426,7 +463,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 						}
 
-							// Store the address in the closure member
+						// Store the address in the closure member
 						MemberStoreOp member_store;
 						member_store.value.setType(member->type_index.category());
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
@@ -438,13 +475,13 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 						member_store.struct_type_info = nullptr;
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 					} else {
-							// By-value: copy the value
+						// By-value: copy the value
 						MemberStoreOp member_store;
 						member_store.value.setType(member->type_index.category());
 						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 						if (is_captured_from_enclosing) {
-								// Variable is captured from enclosing lambda - load it via member access first
+							// Variable is captured from enclosing lambda - load it via member access first
 							TempVar loaded_value = var_counter.next();
 							MemberLoadOp member_load;
 							member_load.result.value = loaded_value;
@@ -489,12 +526,12 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 		}
 	}
 
-		// Return the closure variable representing the lambda
-		// Format: {type, size, value, type_index}
-		// - type: Type::Struct (the closure is a struct)
-		// - size: size of the closure in bits
-		// - value: closure_var_name (the allocated closure variable)
-		// - type_index: the type index for the closure struct
+	// Return the closure variable representing the lambda
+	// Format: {type, size, value, type_index}
+	// - type: Type::Struct (the closure is a struct)
+	// - size: size of the closure in bits
+	// - value: closure_var_name (the allocated closure variable)
+	// - type_index: the type index for the closure struct
 	int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->sizeInBits().value);
 	TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
 	return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
