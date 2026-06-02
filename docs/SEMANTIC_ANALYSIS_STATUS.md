@@ -103,10 +103,18 @@ FlashCpp follows a parse -> sema -> IR pipeline:
 - constexpr member evaluation now preserves receiver cv-qualification through
   synthetic `this` bindings and rejects stale lowered non-const targets when
   evaluating calls from const member bodies
+- constexpr member evaluation now accepts semantically attached lowered
+  member-template targets directly and normalizes internal materialized member
+  names before any remaining symbolic fallback lookup
 - runtime lambda lowering now treats captured `this` according to the C++20
   closure model: `[this]` calls use the captured object pointer, `[*this]`
   calls use the copied closure member, and nested captures propagate the
   effective enclosing object instead of the closure object
+- deferred generic-lambda `operator()` lowering no longer depends on a stale
+  parser/sema query key surviving AST cloning during normalization; codegen
+  now prefers the exact normalized call node and can derive the callable owner
+  type from the resolved `operator()` member when the auxiliary receiver-type
+  query was not materialized
 
 ## Main remaining gaps
 
@@ -146,7 +154,26 @@ Recommended next step:
   semantic call-resolution entry points that still rely on parser-owned
   expression typing or reduced argument modeling
 
-### 3. Keep template replay attachment evidence-driven
+### 3. Replace pointer-keyed semantic call identity with stable call identity
+
+Some sema facts are still keyed by `CallExprNode*`. That remains fragile across
+template substitution and generic-lambda normalization because cloned call
+nodes are semantically the same call but not the same address. The recent
+generic-lambda regression was fixed by preferring the exact normalized call
+node and by deriving callable-owner information from the selected member when
+possible, but that is still a recovery around the real architectural gap.
+
+Recommended next step:
+
+- introduce a stable semantic call identity that survives substitution,
+  normalization, and replay
+- key resolved-call, callable-operator, and call-result-type facts by that
+  stable identity instead of raw node address where normalized bodies rely on
+  sema-owned results
+- remove the remaining exact-node recovery logic once the stable identity is
+  propagated end-to-end
+
+### 4. Keep template replay attachment evidence-driven
 
 The dependent-alias cleanup is complete: semantic owner/member-chain records
 now carry the former blocker cases, the textual `base::member` path is gone,
@@ -162,7 +189,24 @@ The next template task is narrower and more architectural:
 - expand current-instantiation and unknown-specialization handling only where
   it unblocks those replay paths
 
-### 4. Keep normalized-body invariants getting stricter
+### 5. Prefer semantic call targets over reconstructed constexpr lookup
+
+Constexpr member-call evaluation is improved, but it still has mixed lookup
+modes: some paths execute directly from the semantically attached declaration,
+others reconstruct the target from member-name lookup on the receiver type.
+For member templates and lowered/materialized declarations, the standards-
+aligned endpoint is to use the semantic target first and perform member lookup
+only when no semantic target exists.
+
+Recommended next step:
+
+- make constexpr member-call evaluation consistently consume the attached
+  semantic declaration target first
+- reduce name-based re-lookup to a true missing-metadata recovery path
+- then tighten invariants so normalized constexpr calls fail only on missing
+  compiler-owned semantic facts, not on rediscovery mismatches
+
+### 6. Keep normalized-body invariants getting stricter
 
 Any normalized-body path that still succeeds via compatibility behavior should
 be converted to one of:
