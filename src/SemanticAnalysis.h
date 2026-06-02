@@ -99,6 +99,7 @@ public:
 	ResolvedFunctionQueryResult getResolvedOpCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	void ensureCallableOperatorResolved(const CallExprNode& call_node);
 	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpSubscript(const ArraySubscriptNode* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
@@ -243,6 +244,7 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	void ensureCallableOperatorResolved(const CallExprNode& call_node);
 	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
 	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;

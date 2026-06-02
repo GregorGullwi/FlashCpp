@@ -918,11 +918,6 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 	if (!lowered_func) {
 		return nullptr;
 	}
-	if (!lowered_func->has_outer_template_bindings() &&
-		!lowered_func->has_non_type_template_args() &&
-		!lowered_func->has_mangled_name()) {
-		return nullptr;
-	}
 	if (struct_info) {
 		for (const auto& member_func : struct_info->member_functions) {
 			if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -954,10 +949,25 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 			require_static)) {
 		return nullptr;
 	}
+	if (struct_info && !lowered_func->parent_struct_name().empty()) {
+		const StringHandle lowered_owner =
+			StringTable::getOrInternStringHandle(lowered_func->parent_struct_name());
+		if (normalizeClassName(lowered_owner) != normalizeClassName(struct_info->name)) {
+			return nullptr;
+		}
+	}
 	return lowered_func;
 }
 
 namespace {
+
+std::string_view normalizeConstexprLookupName(std::string_view name) {
+	if (const size_t materialized_suffix = name.find('$');
+		materialized_suffix != std::string_view::npos) {
+		return name.substr(0, materialized_suffix);
+	}
+	return name;
+}
 
 std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 	std::string_view var_name,
@@ -1914,7 +1924,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 		return std::nullopt;
 	}
 
-	std::string_view func_name = call_info->function_declaration->decl_node().identifier_token().value();
+	std::string_view func_name = normalizeConstexprLookupName(
+		call_info->function_declaration->decl_node().identifier_token().value());
 	if (overloadableOperatorFromFunctionName(func_name) != OverloadableOperator::Call) {
 		return std::nullopt;
 	}
@@ -2439,6 +2450,18 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		!actual_func->is_const_member_function()) {
 		actual_func = nullptr;
 		actual_member = nullptr;
+	}
+	if (!actual_func &&
+		call_info->function_declaration &&
+		isConstexprMemberLookupCandidate(
+			*call_info->function_declaration,
+			call_info->arguments->size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false)) {
+		actual_func = call_info->function_declaration;
+		actual_member =
+			findMemberFunctionMetadataRecursive(bound_struct_info, *actual_func);
 	}
 	if (!actual_func) {
 		auto member_function_match = receiver_is_this
@@ -8391,7 +8414,8 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	if (!placeholder_func) {
 		return EvalResult::error("Constexpr member function call is missing a function declaration");
 	}
-	std::string_view func_name = placeholder_func->decl_node().identifier_token().value();
+	std::string_view func_name = normalizeConstexprLookupName(
+		placeholder_func->decl_node().identifier_token().value());
 
 	// For lambda calls (operator()), we need special handling
 	const bool is_operator_call = overloadableOperatorFromFunctionName(func_name) == OverloadableOperator::Call;
@@ -8727,6 +8751,17 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		}
 		actual_member =
 			actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : nullptr;
+	}
+	if (!actual_func &&
+		isConstexprMemberLookupCandidate(
+			*placeholder_func,
+			arguments.size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false)) {
+		actual_func = placeholder_func;
+		actual_member =
+			findMemberFunctionMetadataRecursive(struct_info, *actual_func);
 	}
 	// Virtual dispatch: resolve to the final overrider in the dynamic type using
 	// is_virtual/is_override flags so that same-name non-overriding derived

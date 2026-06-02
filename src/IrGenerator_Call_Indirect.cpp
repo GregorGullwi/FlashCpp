@@ -291,7 +291,18 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		object_node.is<ExpressionNode>()) {
 		std::optional<TypeSpecifierNode> callee_type;
 		ResolvedFunctionQueryResult resolved_op_call_query =
-			sema_services.getResolvedOpCallQuery(sema_call_key);
+			sema_call_key != nullptr
+				? sema_services.getResolvedOpCallQuery(sema_call_key)
+				: sema_services.getResolvedOpCallQuery(&callExprNode);
+		ResolvedFunctionQueryResult exact_call_query =
+			sema_services.getResolvedOpCallQuery(&callExprNode);
+		if (exact_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+			sema_services.ensureCallableOperatorResolved(callExprNode);
+			exact_call_query = sema_services.getResolvedOpCallQuery(&callExprNode);
+		}
+		if (!resolved_op_call_query.hasValue() && exact_call_query.hasValue()) {
+			resolved_op_call_query = exact_call_query;
+		}
 		const FunctionDeclarationNode* resolved_op_call =
 			resolved_op_call_query.state == ResolvedFunctionQueryResult::State::Available
 				? resolved_op_call_query.function
@@ -317,14 +328,43 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				callee_type = *static_member_function_type;
 			}
 		}
+		if (isInconclusiveCallableType(callee_type)) {
+			const FunctionDeclarationNode* callable_target =
+				resolved_op_call != nullptr ? resolved_op_call : &member_func_decl;
+			if (callable_target != nullptr && !callable_target->parent_struct_name().empty()) {
+				const StringHandle owner_name =
+					StringTable::getOrInternStringHandle(callable_target->parent_struct_name());
+				if (auto owner_type_it = getTypesByNameMap().find(owner_name);
+					owner_type_it != getTypesByNameMap().end() &&
+					owner_type_it->second != nullptr) {
+					const TypeInfo* owner_type_info = owner_type_it->second;
+					TypeIndex owner_type_index =
+						owner_type_info->registeredTypeIndex().withCategory(owner_type_info->typeEnum());
+					if (!owner_type_index.is_valid()) {
+						owner_type_index =
+							owner_type_info->type_index_.withCategory(owner_type_info->typeEnum());
+					}
+					if (owner_type_index.is_valid()) {
+						callee_type.emplace(
+							owner_type_index.withCategory(TypeCategory::Struct),
+							owner_type_info->sizeInBits(),
+							callExprNode.called_from(),
+							CVQualifier::None,
+							ReferenceQualifier::None);
+					}
+				}
+			}
+		}
 		const bool callee_type_unusable_for_callable =
 			isInconclusiveCallableType(callee_type) ||
 			(callee_type.has_value() &&
 			 (callee_type->type() == TypeCategory::Invalid ||
 			  isPlaceholderAutoType(callee_type->type())));
+		const bool has_concrete_callable_member =
+			resolved_op_call != nullptr || !member_func_decl.parent_struct_name().empty();
 		// operator() callable type parser fallback. Probed 2026-05-20 across the full
 		// test corpus — never hit for any body. Sema now always resolves the callable type.
-		if (callee_type_unusable_for_callable && !resolved_op_call) {
+		if (callee_type_unusable_for_callable && !has_concrete_callable_member) {
 			const bool sema_query_not_yet_analyzed =
 				resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed ||
 				callee_type_query.state == TypeSpecifierQueryResult::State::NotYetAnalyzed;

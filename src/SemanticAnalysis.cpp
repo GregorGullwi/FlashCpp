@@ -1487,6 +1487,10 @@ const FunctionDeclarationNode* ParserSemanticServices::getResolvedOpCall(const C
 	return owner_->getResolvedOpCall(key);
 }
 
+void ParserSemanticServices::ensureCallableOperatorResolved(const CallExprNode& call_node) {
+	owner_->ensureCallableOperatorResolved(call_node);
+}
+
 ResolvedFunctionQueryResult ParserSemanticServices::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
 	return owner_->getResolvedOpSubscriptQuery(key);
 }
@@ -4488,6 +4492,12 @@ ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpCallQuery(const CallE
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExprNode* key) const {
 	return getResolvedOpCall(static_cast<const void*>(key));
+}
+
+void SemanticAnalysis::ensureCallableOperatorResolved(const CallExprNode& call_node) {
+	if (getResolvedOpCallQuery(&call_node).state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+		tryResolveCallableOperator(call_node);
+	}
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const {
