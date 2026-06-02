@@ -7831,17 +7831,16 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 						appendUniqueOverload(preferred_member_overloads, candidate_node);
 					}
 				}
+				InlineVector<TypeSpecifierNode, 6> member_arg_types;
+				const bool has_member_arg_types =
+					tryCollectOverloadResolutionArgTypes(arguments, member_arg_types);
 				auto tryResolveMemberOverloadSet =
 					[&](std::span<const ASTNode> overload_set) -> const FunctionDeclarationNode* {
-						if (overload_set.empty()) {
-							return nullptr;
-						}
-						InlineVector<TypeSpecifierNode, 6> arg_types;
-						if (!tryCollectOverloadResolutionArgTypes(arguments, arg_types)) {
+						if (overload_set.empty() || !has_member_arg_types) {
 							return nullptr;
 						}
 						const OverloadResolutionResult result =
-							resolve_overload(overload_set, arg_types);
+							resolve_overload(overload_set, member_arg_types);
 						if (!result.has_match ||
 							result.is_ambiguous ||
 							result.selected_overload == nullptr) {
