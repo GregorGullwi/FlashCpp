@@ -2819,6 +2819,27 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	if (!bind_result.success()) {
 		return bind_result;
 	}
+	std::vector<std::string_view> pointer_target_writebacks;
+	std::vector<std::pair<std::string_view, EvalResult>> pointer_target_imports;
+	for (const auto& [param_name, param_value] : member_bindings) {
+		(void)param_name;
+		if (!param_value.pointer_to_var.isValid()) {
+			continue;
+		}
+		std::string_view target_name = StringTable::getStringView(param_value.pointer_to_var);
+		if (member_bindings.find(target_name) != member_bindings.end()) {
+			continue;
+		}
+		const EvalResult* outer_target = findBindingValue(target_name, bindings, context);
+		if (!outer_target) {
+			continue;
+		}
+		pointer_target_imports.push_back({target_name, *outer_target});
+		pointer_target_writebacks.push_back(target_name);
+	}
+	for (const auto& [target_name, target_value] : pointer_target_imports) {
+		member_bindings[target_name] = target_value;
+	}
 
 	// Inject a synthetic "this" binding so that member function bodies can access
 	// members by unqualified name (e.g. `return a + b;`).  EvalResult requires a
@@ -2921,6 +2942,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		// Remove the synthetic "this" injected above before writing member state
 		// back to the outer map, so "this" is not accidentally stored as a member.
 		member_bindings.erase("this");
+		for (std::string_view target_name : pointer_target_writebacks) {
+			auto local_it = member_bindings.find(target_name);
+			if (local_it == member_bindings.end()) {
+				continue;
+			}
+			if (EvalResult* outer_target = findMutableBindingValue(target_name, *mutable_bindings, context)) {
+				*outer_target = local_it->second;
+			}
+		}
 		if (write_back_to_object_binding) {
 			if (write_back_via_receiver_lvalue) {
 				EvalResult updated_object = pointed_object_result;
@@ -8980,9 +9010,34 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	bool receiver_is_const = false;
 	if (has_complex_object_result && complex_object_result.exact_type.has_value()) {
 		receiver_is_const = complex_object_result.exact_type->is_const();
-	} else if (var_decl) {
+	}
+	if (!receiver_is_const && var_decl) {
 		receiver_is_const = var_decl->declaration().type_specifier_node().is_const() ||
 			var_decl->is_constexpr();
+	}
+	if (!receiver_is_const) {
+		if (std::optional<TypeSpecifierNode> receiver_expr_type =
+				tryQueryExpressionType(object_expr, context);
+			receiver_expr_type.has_value()) {
+			receiver_is_const = receiver_expr_type->is_const();
+		}
+	}
+	if (!receiver_is_const && object_identifier && context.symbols) {
+		std::optional<ASTNode> object_symbol = lookup_identifier_symbol(
+			object_identifier,
+			object_identifier->name(),
+			*context.symbols);
+		if (!object_symbol.has_value() && context.global_symbols) {
+			object_symbol = lookup_identifier_symbol(
+				object_identifier,
+				object_identifier->name(),
+				*context.global_symbols);
+		}
+		if (object_symbol.has_value() && object_symbol->is<VariableDeclarationNode>()) {
+			const auto& object_var_decl = object_symbol->as<VariableDeclarationNode>();
+			receiver_is_const = object_var_decl.is_constexpr() ||
+				object_var_decl.declaration().type_specifier_node().is_const();
+		}
 	}
 
 	// Look up the actual member function in the struct's type info
@@ -9100,6 +9155,22 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 			: member_function_match.function;
 	const StructMemberFunction* actual_member =
 		actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : member_function_match.member;
+	if (actual_func &&
+		receiver_is_const &&
+		!actual_func->is_static() &&
+		!actual_func->is_const_member_function()) {
+		const bool fallback_is_const_compatible =
+			member_function_match.function != nullptr &&
+			(member_function_match.function->is_static() ||
+				member_function_match.function->is_const_member_function());
+		if (fallback_is_const_compatible) {
+			actual_func = member_function_match.function;
+			actual_member = member_function_match.member;
+		} else {
+			actual_func = nullptr;
+			actual_member = nullptr;
+		}
+	}
 	if (!actual_func) {
 		actual_func = try_get_lowered_constexpr_member_call_target(
 			call_expr,
@@ -9197,7 +9268,6 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 				" actual_member=", actual_member != nullptr);
 		}
 	}
-
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));
 	}
