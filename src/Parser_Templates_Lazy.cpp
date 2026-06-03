@@ -114,7 +114,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			lazy_info.identity.instantiated_owner_name, ctor_name_handle);
 		new_ctor_ref.set_lazy_member_registry_key(lazy_info.registry_key);
 		if (hasTemplateEnvironmentSnapshotBindings(lazy_info.outer_template_environment_snapshot)) {
-			new_ctor_ref.set_outer_template_bindings(lazy_info.outer_template_environment_snapshot);
+			new_ctor_ref.set_outer_template_bindings(lazy_info.outer_template_environment_snapshot.node);
 		} else {
 			setOuterTemplateBindingsFromParams(new_ctor_ref, lazy_info.template_params, lazy_info.template_args);
 		}

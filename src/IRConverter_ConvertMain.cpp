@@ -1,5 +1,6 @@
 #include "Log.h"
 #include "IRConverter.h"
+#include "IrGenerator.h"
 #include "OverloadResolution.h"
 
 namespace {

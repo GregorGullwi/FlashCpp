@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "BuiltinListInitNarrowing.h"
+#include "SemanticAnalysis.h"
 
 namespace {
 

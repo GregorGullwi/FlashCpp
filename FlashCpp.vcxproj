@@ -423,6 +423,9 @@
     <ClCompile Include="src\SemanticAnalysis.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\StringLiteralTokenUtils.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\TypeTraitEvaluator.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
@@ -497,6 +500,7 @@
     <ClInclude Include="src\ProfilingTimer.h" />
     <ClInclude Include="src\StackString.h" />
     <ClInclude Include="src\StringBuilder.h" />
+    <ClInclude Include="src\StringLiteralTokenUtils.h" />
     <ClInclude Include="src\StringTable.h" />
     <ClInclude Include="src\SemanticAnalysis.h" />
     <ClInclude Include="src\SymbolTable.h" />

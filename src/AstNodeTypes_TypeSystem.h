@@ -6,7 +6,7 @@
 #include <span>
 
 enum class TypeCategory : uint8_t;
-enum class TemplateParameterKind;
+enum class TemplateParameterKind : int;
 
 enum class TypeQualifier {
 	None,

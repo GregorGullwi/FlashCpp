@@ -23,55 +23,6 @@ static thread_local int g_template_inst_iteration_count = 0;
 static thread_local bool g_template_inst_iteration_limit_tripped = false;
 static constexpr int g_template_inst_max_iterations = 10000;
 
-static TemplateParameterNode rebuildOuterTemplateParameter(
-	StringHandle param_name,
-	const TypeInfo::TemplateArgInfo& arg_info) {
-	Token outer_token(
-		Token::Type::Identifier,
-		StringTable::getStringView(param_name),
-		0,
-		0,
-		0);
-	if (arg_info.is_template_template_arg) {
-		return TemplateParameterNode(
-			param_name,
-			std::vector<TemplateParameterNode>{},
-			outer_token);
-	}
-	if (auto outer_type_spec = makeTypeSpecifierFromTemplateArgInfo(arg_info, outer_token);
-		outer_type_spec.has_value()) {
-		return TemplateParameterNode(param_name, *outer_type_spec, outer_token);
-	}
-	return TemplateParameterNode(param_name, outer_token);
-}
-
-static TemplateParameterNode rebuildOuterTemplateParameter(
-	StringHandle param_name,
-	const TemplateTypeArg& arg) {
-	Token outer_token(
-		Token::Type::Identifier,
-		StringTable::getStringView(param_name),
-		0,
-		0,
-		0);
-	if (arg.is_template_template_arg) {
-		return TemplateParameterNode(
-			param_name,
-			std::vector<TemplateParameterNode>{},
-			outer_token);
-	}
-	if (arg.is_value) {
-		return TemplateParameterNode(
-			param_name,
-			makeTypeSpecifierFromTemplateTypeArg(arg, outer_token),
-			outer_token);
-	}
-	TemplateParameterNode outer_param(param_name, outer_token);
-	outer_param.set_registered_type_index(
-		arg.type_index.withCategory(arg.typeEnum()));
-	return outer_param;
-}
-
 static void buildTemplateParameterReplayState(
 	std::span<const TemplateParameterNode> template_params,
 	InlineVector<StringHandle, 4>& template_param_names,
@@ -7734,11 +7685,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_node);
 					if (!orig_ctor.is_materialized() &&
 						shouldCommitTemplateInstantiationArtifacts()) {
-						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
-							instantiated_struct_ref.has_outer_template_bindings()
-								? &instantiated_struct_ref.outer_template_environment_snapshot()
-								: nullptr;
-						StringHandle lazy_registry_key = registerLazyConstructorStub(
+				TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
+					StringHandle lazy_registry_key = registerLazyConstructorStub(
 							new_ctor_ref,
 							new_ctor_node,
 							StringTable::getOrInternStringHandle(template_name),
@@ -7746,7 +7694,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							mem_func.access,
 							effective_pattern_template_params,
 							effective_pattern_template_args,
-							outer_parent_snapshot);
+							&outer_parent_snapshot);
 						if (lazy_registry_key.isValid() &&
 							instantiated_struct_info_mut != nullptr) {
 							OutOfLineConstructorStubResolution info_ctor_resolution =
@@ -12515,10 +12463,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// These are the methods inside Inner (e.g., Inner::get()) — they are not
 			// top-level member functions of the parent template and would otherwise
 			// never be registered, causing link errors when called.
-			const TemplateEnvironmentSnapshot* outer_parent_snapshot =
-				instantiated_nested_struct_ref.has_outer_template_bindings()
-					? &instantiated_nested_struct_ref.outer_template_environment_snapshot()
-					: nullptr;
+			TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_nested_struct_ref.outer_template_environment_snapshot()};
 			registerNestedMemberFunctionsForLazy(
 				nested_struct,
 				*nested_struct_info,
@@ -12526,7 +12471,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				qualified_name,
 				effective_template_params,
 				effective_template_args,
-				outer_parent_snapshot,
+				&outer_parent_snapshot,
 				shouldCommitTemplateInstantiationArtifacts());
 			if (shouldCommitTemplateInstantiationArtifacts()) {
 				OuterTemplateBinding nested_member_outer_binding;
@@ -13534,14 +13479,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.template_args.assign(
 					effective_template_args.begin(),
 					effective_template_args.end());
-				const TemplateEnvironmentSnapshot* outer_parent_snapshot =
-					instantiated_struct_ref.has_outer_template_bindings()
-						? &instantiated_struct_ref.outer_template_environment_snapshot()
-						: nullptr;
+			TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 					effective_template_params,
 					effective_template_args,
-					outer_parent_snapshot);
+					&outer_parent_snapshot);
 				mergeMissingLazyOuterBindings(
 					lazy_info.template_params,
 					lazy_info.template_args,
@@ -14063,10 +14005,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (is_implicit_instantiation &&
 						!ctor_decl.is_materialized() &&
 						shouldCommitTemplateInstantiationArtifacts()) {
-						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
-							instantiated_struct_ref.has_outer_template_bindings()
-								? &instantiated_struct_ref.outer_template_environment_snapshot()
-								: nullptr;
+						TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
 						registerLazyConstructorStub(
 							new_ctor_ref,
 							new_ctor_node,
@@ -14075,7 +14014,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							mem_func.access,
 							effective_template_params,
 							effective_template_args,
-							outer_parent_snapshot);
+							&outer_parent_snapshot);
 					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ",
@@ -14143,10 +14082,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (is_implicit_instantiation &&
 						!ctor_decl.is_materialized() &&
 						shouldCommitTemplateInstantiationArtifacts()) {
-						const TemplateEnvironmentSnapshot* outer_parent_snapshot =
-							instantiated_struct_ref.has_outer_template_bindings()
-								? &instantiated_struct_ref.outer_template_environment_snapshot()
-								: nullptr;
+						TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
 						registerLazyConstructorStub(
 							new_ctor_ref,
 							new_ctor_node,
@@ -14155,7 +14091,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							mem_func.access,
 							effective_template_params,
 							effective_template_args,
-							outer_parent_snapshot);
+							&outer_parent_snapshot);
 					}
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception creating no-body constructor stub for ",

@@ -73,12 +73,6 @@ constexpr std::string_view kFunctionDidNotReturnValue = "Constexpr function did 
 constexpr std::string_view kReturnStatementNoExpression = "Constexpr function return statement has no expression";
 constexpr std::string_view kLambdaDidNotReturnValue = "Constexpr lambda did not return a value";
 
-struct MemberPointerTarget {
-	StringHandle member_name;
-	int64_t offset = 0;
-};
-
-std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id);
 std::optional<TypeSpecifierNode> tryGetConstexprBoundExpressionType(const ASTNode& expr_node, EvaluationContext& context);
 
 bool isStatementExecutedWithoutReturn(const EvalResult& result) {
@@ -188,14 +182,6 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 	return EvalResult::from_bool(trait.value);
 }
 
-EvalResult validateConstexprRead(const EvalResult& heap_val) {
-	if (heap_val.is_indeterminate) {
-		return EvalResult::error(
-			"Read of indeterminate value in constant expression "
-			"(object was default-initialized without an initializer)");
-	}
-	return heap_val;
-}
 
 std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type_spec) {
 	if (type_spec.is_array()) {
@@ -856,16 +842,6 @@ std::optional<MemberPointerTarget> tryResolveMemberPointerTargetRecursive(
 
 	return std::nullopt;
 }
-
-std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
-	const StructTypeInfo* struct_info = tryResolveStructInfoFromQualifiedScope(qualified_id.namespace_handle());
-	if (!struct_info) {
-		return std::nullopt;
-	}
-
-	return tryResolveMemberPointerTargetRecursive(struct_info, qualified_id.nameHandle(), /*base_offset=*/0);
-}
-
 EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const EvalResult& expr_result) {
 	const TypeCategory category = target_type.category();
 	if (category == TypeCategory::Bool) {
@@ -922,6 +898,24 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 }
 
 } // namespace
+
+EvalResult validateConstexprRead(const EvalResult& heap_val) {
+	if (heap_val.is_indeterminate) {
+		return EvalResult::error(
+			"Read of indeterminate value in constant expression "
+			"(object was default-initialized without an initializer)");
+	}
+	return heap_val;
+}
+
+std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
+	const StructTypeInfo* struct_info = tryResolveStructInfoFromQualifiedScope(qualified_id.namespace_handle());
+	if (!struct_info) {
+		return std::nullopt;
+	}
+
+	return tryResolveMemberPointerTargetRecursive(struct_info, qualified_id.nameHandle(), /*base_offset=*/0);
+}
 
 EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
 	const TypeCategory category = target_type.category();

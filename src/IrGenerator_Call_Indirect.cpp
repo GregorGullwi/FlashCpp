@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
+#include "SemanticAnalysis.h"
 #include "TypeSizeQuery.h"
 
 

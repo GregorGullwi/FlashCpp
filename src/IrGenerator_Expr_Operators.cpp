@@ -3,6 +3,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
+#include "TypeSizeQuery.h"
 
 namespace {
 [[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {

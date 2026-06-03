@@ -6545,10 +6545,10 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					std::vector<BaseToMaterialize> bases_to_materialize;
 					bases_to_materialize.reserve(struct_info->base_classes.size());
 					for (const auto& base : struct_info->base_classes) {
-						if (!base.type_index.is_valid() || base.type_index.index() >= gTypeInfo.size()) {
+						if (!base.type_index.is_valid() || base.type_index.index() >= getTypeInfoCount()) {
 							continue;
 						}
-						const TypeInfo& base_type_info = gTypeInfo[base.type_index.index()];
+						const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 						if (base_type_info.getStructInfo() != nullptr) {
 							continue;
 						}

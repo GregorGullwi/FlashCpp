@@ -68,9 +68,9 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 		info.is_generic = true;
 	}
 	if (lambda.has_outer_template_bindings()) {
-		info.outer_template_environment_snapshot = lambda.outer_template_environment_snapshot();
+		info.outer_template_environment_snapshot = TemplateEnvironmentSnapshot{lambda.outer_template_environment_snapshot()};
 		populateTemplateEnvironmentLegacyViews(
-			lambda.outer_template_environment_snapshot(),
+			TemplateEnvironmentSnapshot{lambda.outer_template_environment_snapshot()},
 			info.outer_template_param_names,
 			info.outer_template_args);
 	}
