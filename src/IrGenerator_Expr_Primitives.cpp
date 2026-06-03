@@ -395,10 +395,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	};
 	auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 												bool preserve_pointer_depth = false) -> ExprResult {
-			// Preserve the original direct-identifier encoding rule from these sites:
-			// semantic identity types carry type_index in ExprResult, while legacy slot-4 metadata
-			// keeps enum values identifiable after integral lowering and keeps enum pointers usable
-			// for still-unmigrated pointer-depth consumers.
+		// Preserve the original direct-identifier encoding rule from these sites:
+		// semantic identity types carry type_index in ExprResult, while legacy slot-4 metadata
+		// keeps enum values identifiable after integral lowering and keeps enum pointers usable
+		// for still-unmigrated pointer-depth consumers.
 		TypeCategory result_type = type_node.type();
 		if (isPlaceholderAutoType(result_type)) {
 			result_type = resolveCodegenTypeCategory(type_node, "identifier lowering");
@@ -421,10 +421,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			carries_type_index ? type_node.type_index() : TypeIndex{},
 			pointer_depth);
 	};
-		// Check if this is a captured variable in a lambda.
-		// Explicit captures ([x], [&x]) have binding set at parse time.
-		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
-		// but keep Local binding, so we fall back to the runtime captures map for those.
+	// Check if this is a captured variable in a lambda.
+	// Explicit captures ([x], [&x]) have binding set at parse time.
+	// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
+	// but keep Local binding, so we fall back to the runtime captures map for those.
 	StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 	auto preserveSemanticTypeIndex = [](TypeCategory type, TypeIndex type_index) {
 		return carriesSemanticTypeIndex(type) ? type_index : TypeIndex{};
@@ -455,8 +455,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	bool is_implicit_capture = !is_explicit_capture && current_lambda_context_.isActive() &&
 							   current_lambda_context_.captures.find(var_name_str) != current_lambda_context_.captures.end();
 	if (is_explicit_capture || is_implicit_capture) {
-			// This is a captured variable - generate member access (this->x)
-			// Look up the closure struct type
+		// This is a captured variable - generate member access (this->x)
+		// Look up the closure struct type
 		auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 		if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 			TypeIndex closure_type_index = type_it->second->type_index_;
@@ -473,8 +473,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				}
 
 				if (is_reference) {
-						// By-reference capture: member is a pointer, need to dereference
-						// First, load the pointer from the closure
+					// By-reference capture: member is a pointer, need to dereference
+					// First, load the pointer from the closure
 					TempVar ptr_temp = var_counter.next();
 					MemberLoadOp member_load;
 					member_load.result.value = ptr_temp;
@@ -488,30 +488,29 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
-						// The ptr_temp now contains the address of the captured variable
-						// We need to dereference it using PointerDereference
+					// The ptr_temp now contains the address of the captured variable
+					// We need to dereference it using PointerDereference
 					auto capture_type_it = current_lambda_context_.capture_types.find(var_name_str);
-					if (capture_type_it != current_lambda_context_.capture_types.end()) {
-						const TypeSpecifierNode& orig_type = capture_type_it->second;
-
-							// Generate Dereference to load the value
-						TempVar result_temp = emitDereference(orig_type.category(), 64, 0, ptr_temp);
-
-							// Mark as lvalue with Indirect metadata for unified assignment handler
-							// This represents dereferencing a pointer: *ptr
-						LValueInfo lvalue_info(
-							LValueInfo::Kind::Indirect,
-							ptr_temp,  // The pointer temp var
-							0  // offset is 0 for dereference
-						);
-						setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
-
-						TypeIndex type_index = (orig_type.category() == TypeCategory::Struct) ? orig_type.type_index() : nativeTypeIndex(orig_type.type());
-						return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
+					if (capture_type_it == current_lambda_context_.capture_types.end()) {
+						throw InternalError("Lambda by-reference capture missing captured object type");
 					}
+					const TypeSpecifierNode& orig_type = capture_type_it->second;
 
-						// Fallback: return the pointer temp
-					return makeExprResult(nativeTypeIndex(member->memberType()), SizeInBits{64}, IrOperand{ptr_temp}, PointerDepth{}, ValueStorage::ContainsData);
+					// Generate Dereference to load the referenced object, using the
+					// captured variable's object size rather than the pointer slot size.
+					TempVar result_temp = emitDereference(orig_type.category(), orig_type.size_in_bits(), 0, ptr_temp);
+
+					// Mark as lvalue with Indirect metadata for unified assignment handler
+					// This represents dereferencing a pointer: *ptr
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Indirect,
+						ptr_temp,  // The pointer temp var
+						0  // offset is 0 for dereference
+					);
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+
+					TypeIndex type_index = (orig_type.category() == TypeCategory::Struct) ? orig_type.type_index() : nativeTypeIndex(orig_type.type());
+					return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
 				} else {
 						// By-value capture: direct member access
 					TempVar result_temp = var_counter.next();
@@ -547,7 +546,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		}
 	}
 
-		// If we're inside a [*this] lambda, prefer resolving to members of the copied object
+	// If we're inside a [*this] lambda, prefer resolving to members of the copied object
 	if (isInCopyThisLambda() && current_lambda_context_.enclosing_struct_type_index.is_valid()) {
 		auto result = FlashCpp::gLazyMemberResolver.resolve(current_lambda_context_.enclosing_struct_type_index, var_name_str);
 		if (result) {
@@ -578,8 +577,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		}
 	}
 
-		// Check if this is a static local variable FIRST (before any other lookups)
-		// Phase 4: Using StringHandle for lookup
+	// Check if this is a static local variable FIRST (before any other lookups)
+	// Phase 4: Using StringHandle for lookup
 	StringHandle identifier_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 	auto static_local_it = static_local_names_.find(identifier_handle);
 	if (static_local_it != static_local_names_.end()) {
@@ -682,11 +681,11 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					}
 					return makeIdentifierResultFromTypeNode(type_n, size_bits, result_temp, true);
 				}
-					// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
+				// Other symbol types (FunctionDeclarationNode, etc.): fall through to cascade
 			}
-				// Not found by direct lookup: fall through to cascade (handles namespace-scoped globals)
+			// Not found by direct lookup: fall through to cascade (handles namespace-scoped globals)
 		}
-			// Has using override: fall through to cascade for correct qualified name resolution
+		// Has using override: fall through to cascade for correct qualified name resolution
 	}
 
 	auto resolveImplicitMember = [&](TypeIndex owner_type_index, StringHandle member_name)
@@ -777,10 +776,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		}
 	}
 
-		// Check using declarations from local scope FIRST, before local symbol table lookup
-		// This handles cases like: using ::globalValue; return globalValue;
-		// where globalValue should resolve to the global namespace version even if there's
-		// a namespace-scoped version with the same name
+	// Check using declarations from local scope FIRST, before local symbol table lookup
+	// This handles cases like: using ::globalValue; return globalValue;
+	// where globalValue should resolve to the global namespace version even if there's
+	// a namespace-scoped version with the same name
 	std::optional<ASTNode> symbol;
 	bool is_global = false;
 	std::optional<StringHandle> resolved_qualified_name;	 // Track the qualified name from using declaration

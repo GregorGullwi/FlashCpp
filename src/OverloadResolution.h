@@ -6,6 +6,7 @@
 #include "CompileContext.h"
 #include "ChunkedString.h"
 #include "TemplateTypes.h" // For FunctionSignatureKey
+#include "InlineVector.h"
 #include <vector>
 #include <optional>
 #include <unordered_map>
@@ -1376,9 +1377,9 @@ inline OverloadResolutionResult resolve_overload(
 
 	// Track the best match found so far
 	const ASTNode* best_match = nullptr;
-	std::vector<ArgumentConversionInfo> best_infos;
+	InlineVector<ArgumentConversionInfo, 4> best_infos;
 	int num_best_matches = 0;
-	std::vector<const ASTNode*> tied_candidates; // All candidates with best rank
+	InlineVector<const ASTNode*, 4> tied_candidates; // All candidates with best rank
 
 	// Evaluate each overload
 	for (const auto& overload : overloads) {
@@ -1411,7 +1412,7 @@ inline OverloadResolutionResult resolve_overload(
 		// Check if all provided arguments can be converted to parameters
 		// For variadic functions, only check the named parameters
 		// The variadic arguments (...) accept any type
-		std::vector<ArgumentConversionInfo> conversion_infos;
+		InlineVector<ArgumentConversionInfo, 4> conversion_infos;
 		bool all_convertible = true;
 
 		size_t params_to_check = std::min(parameters.size(), argument_types.size());
@@ -1461,7 +1462,7 @@ inline OverloadResolutionResult resolve_overload(
 				// Re-evaluate all previously accumulated tied/incomparable
 				// candidates against the new best ranks — any that are not
 				// strictly worse must be kept so that ambiguity is detected.
-				std::vector<const ASTNode*> old_tied = std::move(tied_candidates);
+				InlineVector<const ASTNode*, 4> old_tied = std::move(tied_candidates);
 				best_match = &overload;
 				best_infos = conversion_infos;
 				num_best_matches = 1;
@@ -1474,7 +1475,7 @@ inline OverloadResolutionResult resolve_overload(
 					const FunctionDeclarationNode* prev_func = &prev->as<FunctionDeclarationNode>();
 					const auto& prev_params = prev_func->parameter_nodes();
 					size_t prev_params_to_check = std::min(prev_params.size(), argument_types.size());
-					std::vector<ArgumentConversionInfo> prev_infos;
+					InlineVector<ArgumentConversionInfo, 4> prev_infos;
 					bool prev_valid = true;
 					for (size_t k = 0; k < prev_params_to_check; ++k) {
 						const auto& pt = prev_params[k].as<DeclarationNode>().type_specifier_node();

@@ -99,6 +99,7 @@ public:
 	ResolvedFunctionQueryResult getResolvedOpCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	void ensureCallableOperatorResolved(const CallExprNode& call_node);
 	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpSubscript(const ArraySubscriptNode* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
@@ -243,6 +244,7 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	void ensureCallableOperatorResolved(const CallExprNode& call_node);
 	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
 	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
@@ -446,6 +448,9 @@ private:
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(
 		const ASTNode& arg,
 		CanonicalTypeId* inferred_type_id = nullptr);
+	bool tryCollectOverloadResolutionArgTypes(
+		const ChunkedVector<ASTNode>& arguments,
+		InlineVector<TypeSpecifierNode, 6>& arg_types_out);
 
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);

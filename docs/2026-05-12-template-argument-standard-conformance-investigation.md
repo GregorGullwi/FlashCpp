@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-01
+**Last updated:** 2026-06-02
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -28,7 +28,11 @@ Move FlashCpp toward a sema-owned template system where:
   and replay cases
 - explicit member-template call handling now carries enough early argument
   information to avoid wrong cached overload reuse
-- dependent alias resolution is semantic-only: the textual fallback in
+- semantic direct-call resolution for normalized template/member calls now uses
+  sema-owned overload-resolution argument typing instead of parser-owned
+  argument collection, so dependent out-of-line member overloads are selected
+  from the concrete substituted call signature seen during semantic analysis
+- dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
 - dependent nested member-template static constexpr chains now reuse typed
@@ -54,8 +58,8 @@ Move FlashCpp toward a sema-owned template system where:
   replay-attachment misses
 - constructor replay sync into StructTypeInfo now requires
   `typeSpecifiersMatchForSignatureValidation(...)` evidence and no longer
-  treats token/name shape fallback as a valid equivalence
-- `materializeAliasTemplateInstance` now falls back to
+  treats token/name shape equivalence as valid evidence
+- `materializeAliasTemplateInstance` now delegates to
   `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
   where the instantiated name resolves to a member type
 - member type aliases preserve surface modifiers (pointer/reference/cv/array/
@@ -73,7 +77,7 @@ now resolve through preserved semantic records:
 With textual recovery gone, the next conformance step is keeping replay
 attachment invariant-driven: tighten the remaining replay paths so valid cases
 succeed via source identity plus canonical substituted-signature evidence rather
-than name/arity fallback scans, and expand current-instantiation /
+than name/arity repair scans, and expand current-instantiation /
 unknown-specialization modeling only where it unblocks those paths.
 
 ## Priority order
@@ -82,15 +86,21 @@ unknown-specialization modeling only where it unblocks those paths.
    alias callers.~~ **Done** — the textual recovery path is removed.
 
 2. Continue tightening replay attachment so valid cases succeed via source
-   identity plus canonical substituted-signature evidence, not fallback scans.
+   identity plus canonical substituted-signature evidence, not shape-based
+   repair scans.
    The next slice is likely the remaining unresolved-signature acceptance paths
    where replay can still succeed without enough evidence outside the now-
    tightened plain-member and member-template paths.
 
-3. Expand current-instantiation, dependent-base, and unknown-specialization
-   handling only where that unblocks step 2.
+3. Unify the remaining semantic call-resolution entry points around the same
+   sema-owned overload-resolution argument collector now used for normalized
+   template/member direct calls. This is the shortest path to preventing stale
+   parser-selected targets from surviving semantic normalization.
 
-4. Leave broader cleanup for later unless it becomes a blocker:
+4. Expand current-instantiation, dependent-base, and unknown-specialization
+   handling only where that unblocks steps 2 and 3.
+
+5. Leave broader cleanup for later unless it becomes a blocker:
    sema-owned ranking/deduction expansion, remaining repair-path removal, and
    sema-level modeling for aggregate-forwarding constructor sequences.
 
@@ -103,6 +113,37 @@ unknown-specialization modeling only where it unblocks those paths.
 - treat codegen-side recovery as debt to remove, not a design tool; when a
   late retry is still needed, it should delegate to typed lookup such as
   `resolveBaseClassMemberTypeChain`
+
+## Next steps
+
+1. Apply the sema-owned overload-resolution argument collector to the remaining
+   semantic call-resolution sites that still rely on parser-owned expression
+   typing or reduced argument modeling.
+
+2. Continue deleting replay-attachment acceptance paths that still allow
+   insufficient substituted-signature evidence outside the now-hardened member
+   and constructor routes.
+
+3. Only after those are stable, extend current-instantiation and
+   unknown-specialization modeling for the specific unresolved cases that remain.
+
+## 2026-06-02 constexpr lambda conformance note
+
+The updated constexpr-lambda tests exposed runtime capture-lowering bugs rather
+than compile-time evaluation failures. Generated code now follows the C++20
+closure model for captured `this` and nested captures:
+
+- `[this]` member calls use the captured enclosing object pointer
+- `[*this]` member calls use the copied object stored in the closure
+- nested `[this]` captures propagate the effective enclosing object pointer,
+  including when the enclosing lambda captured `*this`
+- nested reference captures of enclosing closure members take the member's
+  address directly and preserve the referenced object's real size
+- constexpr member evaluation now preserves receiver cv-qualification through
+  synthetic `this` bindings and rejects stale lowered non-const targets when
+  evaluating calls from a const member body
+
+Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
 
 ## Validation guidance
 

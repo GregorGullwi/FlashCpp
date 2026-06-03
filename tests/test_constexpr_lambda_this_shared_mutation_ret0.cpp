@@ -14,9 +14,14 @@ struct ThisSharedMutationExample {
 	}
 };
 
-constexpr ThisSharedMutationExample example{40};
-static_assert(example.testThisMutation() == 123);
+constexpr int testThisMutation() {
+	ThisSharedMutationExample example{40};
+	return example.testThisMutation();
+}
+static_assert(testThisMutation() == 123);
 
 int main() {
+	ThisSharedMutationExample example{40};
+	if (example.testThisMutation() != 123) return 1;
 	return 0;
 }

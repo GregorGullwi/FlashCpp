@@ -457,6 +457,7 @@ struct EvaluationContext {
 	const StructTypeInfo* struct_info = nullptr;
 	// Cached type index for the current struct (parallel to struct_info; avoids O(n) search in gTypeInfo).
 	TypeIndex struct_type_index{};
+	bool current_member_function_is_const = false;
 	std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
 
 	// Pointer to the innermost active block scope tracker (null at top level).
@@ -1007,6 +1008,15 @@ private:
 		MemberFunctionLookupMode lookup_mode,
 		bool require_static,
 		bool detect_ambiguity);
+	static ResolvedMemberFunctionCandidate findConstAwareMemberFunctionCandidate(
+		const StructTypeInfo* struct_info,
+		StringHandle function_name_handle,
+		size_t argument_count,
+		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
+		bool require_static,
+		bool receiver_is_const,
+		bool detect_ambiguity);
 	// Invoke a constexpr member function with pre-evaluated arguments.
 	// Handles: this injection, argument binding, template context save/restore,
 	// recursion depth guard, struct context setup, evaluate_block_with_bindings.
@@ -1022,9 +1032,8 @@ private:
 		std::string_view body_error,
 		std::string_view return_error);
 	// Select the best constexpr-evaluable overload of operator_name from struct_info.
-	// When both const and non-const overloads exist, the const overload is preferred
-	// (constexpr evaluation is read-only so both produce identical results).
-	// Returns ambiguity when multiple viable const overloads exist.
+	// Constexpr evaluation still follows the receiver's cv-qualified overload set;
+	// it must not assume const/non-const bodies are interchangeable.
 	static ResolvedMemberFunctionCandidate findConstexprOperatorOverload(
 		const StructTypeInfo* struct_info,
 		StringHandle operator_name,

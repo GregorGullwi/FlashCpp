@@ -24,10 +24,15 @@ struct NestedMemberLambdaStateExample {
 	}
 };
 
-constexpr NestedMemberLambdaStateExample example{40};
+constexpr int run() {
+	NestedMemberLambdaStateExample example{40};
+	return example.run();
+}
 static_assert(nested_outer_closure_state() == 172);
-static_assert(example.run() == 172);
+static_assert(run() == 172);
 
 int main() {
+	NestedMemberLambdaStateExample example{40};
+	if (example.run() != 172) return 1;
 	return 0;
 }

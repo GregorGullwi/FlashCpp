@@ -97,6 +97,21 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
+std::string_view getConstexprReferenceBindingTargetName(const ASTNode& expr) {
+	if (const IdentifierNode* identifier = tryGetIdentifier(expr)) {
+		return identifier->name();
+	}
+
+	if (expr.is<ExpressionNode>()) {
+		const ExpressionNode& expression = expr.as<ExpressionNode>();
+		if (const auto* member_access = std::get_if<MemberAccessNode>(&expression)) {
+			return member_access->member_name();
+		}
+	}
+
+	return {};
+}
+
 struct SimpleConstexprTypeHelperPattern {
 	std::string_view helper_name;
 	std::string_view wrapper_template_name;
@@ -5468,6 +5483,16 @@ EvalResult Evaluator::bind_evaluated_arguments(
 		}
 
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		const TypeSpecifierNode& param_type = param_decl.type_specifier_node();
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			std::string_view alias_target_name =
+				getConstexprReferenceBindingTargetName(arguments[i]);
+			if (!alias_target_name.empty()) {
+				EvalResult reference_alias = EvalResult::from_pointer(alias_target_name);
+				reference_alias.pointer_value_snapshot = {arg_result};
+				arg_result = std::move(reference_alias);
+			}
+		}
 		maybe_set_exact_type_from_declaration(arg_result, param_decl);
 		apply_uint_init_narrowing(arg_result);
 		bindings[param_decl.identifier_token().value()] = arg_result;
