@@ -1203,7 +1203,7 @@ std::optional<ASTNode> Parser::try_instantiate_constructor_template(
 	lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 		template_params,
 		ctor_template_args,
-		&outer_parent_snapshot);
+		materialization_source_ctor->has_outer_template_bindings() ? &outer_parent_snapshot : nullptr);
 	for (StringHandle outer_name : outer_param_names) {
 		Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_name), 0, 0, 0);
 		lazy_info.template_params.push_back(TemplateParameterNode(outer_name, outer_token));

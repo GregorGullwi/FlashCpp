@@ -7684,29 +7684,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.function_declaration,
 						new_ctor_node);
 					if (!orig_ctor.is_materialized() &&
-						shouldCommitTemplateInstantiationArtifacts()) {
-				TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
+					shouldCommitTemplateInstantiationArtifacts()) {
+					TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
 					StringHandle lazy_registry_key = registerLazyConstructorStub(
-							new_ctor_ref,
-							new_ctor_node,
-							StringTable::getOrInternStringHandle(template_name),
-							instantiated_name,
-							mem_func.access,
-							effective_pattern_template_params,
-							effective_pattern_template_args,
-							&outer_parent_snapshot);
-						if (lazy_registry_key.isValid() &&
-							instantiated_struct_info_mut != nullptr) {
-							OutOfLineConstructorStubResolution info_ctor_resolution =
-								findMatchingConstructorInStructInfo(
-									*instantiated_struct_info_mut,
-									new_ctor_ref,
-									[](const ConstructorDeclarationNode&) {
-										return true;
-									});
-							if (info_ctor_resolution.ctor != nullptr) {
-								info_ctor_resolution.ctor->set_lazy_member_registry_key(
-									lazy_registry_key);
+						new_ctor_ref,
+						new_ctor_node,
+						StringTable::getOrInternStringHandle(template_name),
+						instantiated_name,
+						mem_func.access,
+						effective_pattern_template_params,
+						effective_pattern_template_args,
+						instantiated_struct_ref.has_outer_template_bindings() ? &outer_parent_snapshot : nullptr);
+					if (lazy_registry_key.isValid() &&
+						instantiated_struct_info_mut != nullptr) {
+						OutOfLineConstructorStubResolution info_ctor_resolution =
+							findMatchingConstructorInStructInfo(
+								*instantiated_struct_info_mut,
+								new_ctor_ref,
+								[](const ConstructorDeclarationNode&) {
+									return true;
+								});
+						if (info_ctor_resolution.ctor != nullptr) {
+								info_ctor_resolution.ctor->set_lazy_member_registry_key(lazy_registry_key);
 							}
 						}
 					}
@@ -12471,7 +12470,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				qualified_name,
 				effective_template_params,
 				effective_template_args,
-				&outer_parent_snapshot,
+				instantiated_nested_struct_ref.has_outer_template_bindings() ? &outer_parent_snapshot : nullptr,
 				shouldCommitTemplateInstantiationArtifacts());
 			if (shouldCommitTemplateInstantiationArtifacts()) {
 				OuterTemplateBinding nested_member_outer_binding;
@@ -13479,11 +13478,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.template_args.assign(
 					effective_template_args.begin(),
 					effective_template_args.end());
-			TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
+				TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_struct_ref.outer_template_environment_snapshot()};
 				lazy_info.outer_template_environment_snapshot = buildTemplateEnvironmentSnapshotFromBindings(
 					effective_template_params,
 					effective_template_args,
-					&outer_parent_snapshot);
+					instantiated_struct_ref.has_outer_template_bindings() ? &outer_parent_snapshot : nullptr);
 				mergeMissingLazyOuterBindings(
 					lazy_info.template_params,
 					lazy_info.template_args,

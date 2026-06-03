@@ -179,7 +179,11 @@ std::string decodeStringLiteralBytes(std::string_view token_raw) {
 		case '0':
 		case '1':
 		case '2':
-		case '3': {
+		case '3':
+		case '4':
+		case '5':
+		case '6':
+		case '7': {
 			unsigned value = static_cast<unsigned>(esc - '0');
 			for (int d = 0; d < 2 && i + 1 < content.size() &&
 				 content[i + 1] >= '0' && content[i + 1] <= '7'; ++d) {
