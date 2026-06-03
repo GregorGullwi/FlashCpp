@@ -21,7 +21,7 @@ class SymbolTable;
 struct TypeInfo;
 class Parser;  // For template instantiation
 class SemanticAnalysis;
-struct QualifiedIdentifierNode;
+class QualifiedIdentifierNode;
 
 /// @file ConstExprEvaluator.h
 /// @brief Constant expression evaluation for static_assert, constexpr variables, etc.
