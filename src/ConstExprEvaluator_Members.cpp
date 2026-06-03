@@ -26,11 +26,161 @@ const std::unordered_map<std::string_view, EvalResult>& emptyEvalBindings() {
 	return kEmpty;
 }
 
+std::string_view normalizeConstexprLookupName(std::string_view name) {
+	if (const size_t materialized_suffix = name.find('$');
+		materialized_suffix != std::string_view::npos) {
+		return name.substr(0, materialized_suffix);
+	}
+	return name;
+}
+
 bool isRecoverablePointerDerefFailure(const EvalResult& result) {
 	if (result.success()) {
 		return false;
 	}
 	return result.error_message.rfind("Cannot dereference constexpr pointer:", 0) == 0;
+}
+
+bool sameConstexprMemberParameterTypes(
+	const FunctionDeclarationNode& lhs,
+	const FunctionDeclarationNode& rhs) {
+	const auto& lhs_params = lhs.parameter_nodes();
+	const auto& rhs_params = rhs.parameter_nodes();
+	if (lhs_params.size() != rhs_params.size()) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs_params.size(); ++i) {
+		if (!lhs_params[i].is<DeclarationNode>() || !rhs_params[i].is<DeclarationNode>()) {
+			return false;
+		}
+		const TypeSpecifierNode& lhs_type = lhs_params[i].as<DeclarationNode>().type_specifier_node();
+		const TypeSpecifierNode& rhs_type = rhs_params[i].as<DeclarationNode>().type_specifier_node();
+		if (lhs_type.category() != rhs_type.category() ||
+			lhs_type.cv_qualifier() != rhs_type.cv_qualifier() ||
+			lhs_type.reference_qualifier() != rhs_type.reference_qualifier() ||
+			lhs_type.pointer_levels().size() != rhs_type.pointer_levels().size() ||
+			!std::ranges::equal(lhs_type.array_dimensions(), rhs_type.array_dimensions())) {
+			return false;
+		}
+		for (size_t level = 0; level < lhs_type.pointer_levels().size(); ++level) {
+			if (lhs_type.pointer_levels()[level].cv_qualifier !=
+				rhs_type.pointer_levels()[level].cv_qualifier) {
+				return false;
+			}
+		}
+		TypeIndex lhs_index = lhs_type.type_index();
+		TypeIndex rhs_index = rhs_type.type_index();
+		if (lhs_index.needsTypeIndex() != rhs_index.needsTypeIndex()) {
+			return false;
+		}
+		if (lhs_index.needsTypeIndex() && rhs_index.needsTypeIndex() &&
+			lhs_index != rhs_index &&
+			lhs_type.token().value() != rhs_type.token().value()) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool matchesConstexprFunctionName(
+	const StructMemberFunction& member_func,
+	StringHandle function_name_handle) {
+	if (member_func.getName() == function_name_handle) {
+		return true;
+	}
+	return normalizeConstexprLookupName(StringTable::getStringView(member_func.getName())) ==
+		normalizeConstexprLookupName(StringTable::getStringView(function_name_handle));
+}
+
+bool sameConstexprFunctionIdentity(
+	const FunctionDeclarationNode& lhs,
+	const FunctionDeclarationNode& rhs) {
+	if (normalizeConstexprLookupName(lhs.parent_struct_name()) !=
+		normalizeConstexprLookupName(rhs.parent_struct_name())) {
+		return false;
+	}
+	if (normalizeConstexprLookupName(lhs.decl_node().identifier_token().value()) !=
+		normalizeConstexprLookupName(rhs.decl_node().identifier_token().value())) {
+		return false;
+	}
+	if (lhs.parameter_nodes().size() != rhs.parameter_nodes().size()) {
+		return false;
+	}
+	if (lhs.is_const_member_function() != rhs.is_const_member_function() ||
+		lhs.is_static() != rhs.is_static()) {
+		return false;
+	}
+	if (!sameConstexprMemberParameterTypes(lhs, rhs)) {
+		return false;
+	}
+	if (lhs.has_mangled_name() && rhs.has_mangled_name() &&
+		lhs.mangled_name() != rhs.mangled_name()) {
+		return false;
+	}
+	return true;
+}
+
+const FunctionDeclarationNode* findMatchingSymbolTableMemberDefinition(
+	const FunctionDeclarationNode& target_function,
+	EvaluationContext& context) {
+	if (!context.symbols) {
+		return nullptr;
+	}
+	const auto matches_candidate = [&](const FunctionDeclarationNode& candidate) {
+		return candidate.parent_struct_name() == target_function.parent_struct_name() &&
+			normalizeConstexprLookupName(candidate.decl_node().identifier_token().value()) ==
+				normalizeConstexprLookupName(target_function.decl_node().identifier_token().value()) &&
+			candidate.parameter_nodes().size() == target_function.parameter_nodes().size() &&
+			candidate.is_const_member_function() == target_function.is_const_member_function() &&
+			sameConstexprMemberParameterTypes(candidate, target_function);
+	};
+	const auto scan_owner_struct = [&](const SymbolTable& symbols) -> const FunctionDeclarationNode* {
+		StringHandle owner_handle = StringTable::getOrInternStringHandle(target_function.parent_struct_name());
+		std::optional<ASTNode> owner_symbol = symbols.lookup(owner_handle);
+		if (!owner_symbol.has_value() || !owner_symbol->is<StructDeclarationNode>()) {
+			return nullptr;
+		}
+		const auto& struct_node = owner_symbol->as<StructDeclarationNode>();
+		for (const auto& member_func_decl : struct_node.member_functions()) {
+			if (!member_func_decl.function_declaration.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const auto& candidate = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
+			if (matches_candidate(candidate)) {
+				return &candidate;
+			}
+		}
+		return nullptr;
+	};
+	if (const FunctionDeclarationNode* owner_candidate = scan_owner_struct(*context.symbols)) {
+		return owner_candidate;
+	}
+	if (context.global_symbols && context.global_symbols != context.symbols) {
+		if (const FunctionDeclarationNode* owner_candidate = scan_owner_struct(*context.global_symbols)) {
+			return owner_candidate;
+		}
+	}
+	auto overloads = context.symbols->lookup_all(target_function.decl_node().identifier_token().value());
+	for (const ASTNode& overload : overloads) {
+		if (overload.is<FunctionDeclarationNode>()) {
+			const auto& candidate = overload.as<FunctionDeclarationNode>();
+			if (matches_candidate(candidate)) {
+				return &candidate;
+			}
+		}
+	}
+	if (context.global_symbols && context.global_symbols != context.symbols) {
+		overloads = context.global_symbols->lookup_all(target_function.decl_node().identifier_token().value());
+		for (const ASTNode& overload : overloads) {
+			if (overload.is<FunctionDeclarationNode>()) {
+				const auto& candidate = overload.as<FunctionDeclarationNode>();
+				if (matches_candidate(candidate)) {
+					return &candidate;
+				}
+			}
+		}
+	}
+	return nullptr;
 }
 TypeSpecifierNode makeArrayTypeSpec(TypeIndex type_index, std::span<const size_t> array_dimensions);
 EvalResult materializeArrayInitializer(
@@ -116,6 +266,18 @@ const StructMemberFunction* findMemberFunctionMetadataRecursive(
 		if (&candidate == &target_function || &candidate.decl_node() == &target_function.decl_node()) {
 			return &member_func;
 		}
+		if (candidate.has_mangled_name() &&
+			target_function.has_mangled_name() &&
+			candidate.mangled_name() == target_function.mangled_name()) {
+			return &member_func;
+		}
+		if (normalizeConstexprLookupName(candidate.decl_node().identifier_token().value()) ==
+				normalizeConstexprLookupName(target_function.decl_node().identifier_token().value()) &&
+			candidate.parameter_nodes().size() == target_function.parameter_nodes().size() &&
+			candidate.is_const_member_function() == target_function.is_const_member_function() &&
+			candidate.parent_struct_name() == target_function.parent_struct_name()) {
+			return &member_func;
+		}
 	}
 
 	for (const auto& base_class : struct_info->base_classes) {
@@ -138,7 +300,7 @@ const StructMemberFunction* findMemberFunctionMetadataRecursive(
 
 // Find the final overrider of `base_virtual` in `dynamic_struct_info` and its
 // base classes.  Returns the most-derived StructMemberFunction that overrides
-// `base_virtual` (same name, same arity, and is_virtual/is_override), or
+// `base_virtual` (same name and signature), or
 // nullptr when no override exists (caller should keep the base declaration).
 const StructMemberFunction* findFinalOverrider(
 	const StructTypeInfo* dynamic_struct_info,
@@ -148,13 +310,18 @@ const StructMemberFunction* findFinalOverrider(
 		return nullptr;
 	}
 
+	const FunctionDeclarationNode* base_virtual_decl =
+		base_virtual.function_decl.is<FunctionDeclarationNode>()
+			? &base_virtual.function_decl.as<FunctionDeclarationNode>()
+			: nullptr;
+	if (base_virtual_decl &&
+		normalizeConstexprLookupName(base_virtual_decl->parent_struct_name()) ==
+			normalizeConstexprLookupName(StringTable::getStringView(dynamic_struct_info->name))) {
+		return nullptr;
+	}
+
 	for (const auto& mf : dynamic_struct_info->member_functions) {
 		if (mf.name != base_virtual.name) {
-			continue;
-		}
-		// Only consider functions that are virtual or explicitly override
-		// something - this avoids selecting a same-name non-overriding overload.
-		if (!mf.is_virtual && !mf.is_override) {
 			continue;
 		}
 		// Don't return the base virtual itself as its own "override".
@@ -165,7 +332,31 @@ const StructMemberFunction* findFinalOverrider(
 			continue;
 		}
 		const auto& fd = mf.function_decl.as<FunctionDeclarationNode>();
+		if (base_virtual_decl &&
+			sameConstexprFunctionIdentity(fd, *base_virtual_decl)) {
+			continue;
+		}
+		const std::string_view dynamic_owner_name =
+			normalizeConstexprLookupName(StringTable::getStringView(dynamic_struct_info->name));
+		const std::string_view candidate_owner_name =
+			normalizeConstexprLookupName(fd.parent_struct_name());
+		// Skip inherited/base declarations that are mirrored into the derived
+		// member list. Final overrider selection must only consider functions
+		// declared by the currently inspected dynamic class at this recursion step.
+		if (candidate_owner_name != dynamic_owner_name) {
+			continue;
+		}
 		if (fd.parameter_nodes().size() != param_count) {
+			continue;
+		}
+		if (!base_virtual.function_decl.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& base_fd = base_virtual.function_decl.as<FunctionDeclarationNode>();
+		if (fd.is_const_member_function() != base_fd.is_const_member_function()) {
+			continue;
+		}
+		if (!sameConstexprMemberParameterTypes(fd, base_fd)) {
 			continue;
 		}
 		return &mf;
@@ -939,6 +1130,12 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 				candidate.mangled_name() == lowered_func->mangled_name()) {
 				return &candidate;
 			}
+			if (normalizeConstexprLookupName(candidate.decl_node().identifier_token().value()) ==
+					normalizeConstexprLookupName(lowered_func->decl_node().identifier_token().value()) &&
+				candidate.parameter_nodes().size() == lowered_func->parameter_nodes().size() &&
+				candidate.is_const_member_function() == lowered_func->is_const_member_function()) {
+				return &candidate;
+			}
 		}
 	}
 	if (!isConstexprMemberLookupCandidate(
@@ -947,6 +1144,16 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 			context,
 			lookup_mode,
 			require_static)) {
+		return nullptr;
+	}
+	const bool lowered_func_has_replay_identity =
+		lowered_func->has_outer_template_bindings() ||
+		lowered_func->has_non_type_template_args() ||
+		lowered_func->has_mangled_name() ||
+		call_expr.has_template_arguments();
+	if (struct_info &&
+		findMemberFunctionMetadataRecursive(struct_info, *lowered_func) == nullptr &&
+		!lowered_func_has_replay_identity) {
 		return nullptr;
 	}
 	if (struct_info && !lowered_func->parent_struct_name().empty()) {
@@ -960,14 +1167,6 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 }
 
 namespace {
-
-std::string_view normalizeConstexprLookupName(std::string_view name) {
-	if (const size_t materialized_suffix = name.find('$');
-		materialized_suffix != std::string_view::npos) {
-		return name.substr(0, materialized_suffix);
-	}
-	return name;
-}
 
 std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 	std::string_view var_name,
@@ -2300,7 +2499,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return std::nullopt;
 	}
 
-	std::string_view func_name = call_info->function_declaration->decl_node().identifier_token().value();
+	std::string_view func_name = normalizeConstexprLookupName(
+		call_info->function_declaration->decl_node().identifier_token().value());
 	// operator() on a bound local struct object falls through to this function
 	// when try_evaluate_bound_member_operator_call could not resolve it via a
 	// stored lambda or callable_var_decl.  The caller returns early on the first
@@ -2429,20 +2629,60 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}
 
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	const FunctionDeclarationNode* actual_func = [&]() -> const FunctionDeclarationNode* {
-		if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
-			return try_get_lowered_constexpr_member_call_target(
-				*call_expr,
-				bound_struct_info,
-				call_info->arguments->size(),
-				context,
-				MemberFunctionLookupMode::LookupOnly,
-				false);
-		}
-		return nullptr;
-	}();
+	auto lookup_sema_services =
+		context
+			.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
+			.parserSemanticServices();
+	lookup_sema_services.ensureMemberFunctionMaterialized(
+		bound_struct_info->name,
+		func_name_handle,
+		std::nullopt);
+	if (call_info->function_declaration) {
+		lookup_sema_services.ensureMemberFunctionMaterialized(
+			bound_struct_info->name,
+			*call_info->function_declaration);
+	}
+	const CallExprNode* call_expr = std::get_if<CallExprNode>(&expr);
+	ResolvedFunctionQueryResult sema_resolved_direct_query =
+		lookup_sema_services.getResolvedDirectCallQuery(call_expr);
+	const FunctionDeclarationNode* actual_func =
+		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
+			? sema_resolved_direct_query.function
+			: [&]() -> const FunctionDeclarationNode* {
+				if (call_expr) {
+					return try_get_lowered_constexpr_member_call_target(
+						*call_expr,
+						bound_struct_info,
+						call_info->arguments->size(),
+						context,
+						MemberFunctionLookupMode::LookupOnly,
+						false);
+				}
+				return nullptr;
+			}();
 	const StructMemberFunction* actual_member =
 		actual_func ? findMemberFunctionMetadataRecursive(bound_struct_info, *actual_func) : nullptr;
+	if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+		FLASH_LOG(ConstExpr, Debug,
+			"try_evaluate_bound_member_function_call: func='", func_name,
+			"' struct='", StringTable::getStringView(bound_struct_info->name),
+			"' type_index=", bound_type_index,
+			" sema_state=", static_cast<int>(sema_resolved_direct_query.state),
+			" actual_func=", actual_func != nullptr,
+			" actual_member=", actual_member != nullptr);
+		if (actual_func) {
+			FLASH_LOG(ConstExpr, Debug,
+				"  selected owner='", actual_func->parent_struct_name(),
+				"' name='", actual_func->decl_node().identifier_token().value(),
+				"' const=", actual_func->is_const_member_function());
+		}
+		for (const auto& [member_name, member_value] : member_bindings) {
+			FLASH_LOG(ConstExpr, Debug,
+				"  member binding '", member_name,
+				"' int=", member_value.success() ? member_value.as_int() : 0,
+				" object_type=", member_value.object_type_index);
+		}
+	}
 	if (actual_func &&
 		receiver_is_this &&
 		context.current_member_function_is_const &&
@@ -2450,18 +2690,6 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		!actual_func->is_const_member_function()) {
 		actual_func = nullptr;
 		actual_member = nullptr;
-	}
-	if (!actual_func &&
-		call_info->function_declaration &&
-		isConstexprMemberLookupCandidate(
-			*call_info->function_declaration,
-			call_info->arguments->size(),
-			context,
-			MemberFunctionLookupMode::LookupOnly,
-			false)) {
-		actual_func = call_info->function_declaration;
-		actual_member =
-			findMemberFunctionMetadataRecursive(bound_struct_info, *actual_func);
 	}
 	if (!actual_func) {
 		auto member_function_match = receiver_is_this
@@ -2487,6 +2715,33 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		actual_func = member_function_match.function;
 		actual_member = member_function_match.member;
 	}
+	if (!actual_func &&
+		call_info->function_declaration &&
+		isConstexprMemberLookupCandidate(
+			*call_info->function_declaration,
+			call_info->arguments->size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false)) {
+		const FunctionDeclarationNode* fallback_func = call_info->function_declaration;
+		const StructMemberFunction* fallback_member =
+			findMemberFunctionMetadataRecursive(bound_struct_info, *fallback_func);
+		const bool fallback_rejected_for_const_receiver =
+			receiver_is_this &&
+			context.current_member_function_is_const &&
+			!fallback_func->is_static() &&
+			!fallback_func->is_const_member_function();
+		if (!fallback_rejected_for_const_receiver) {
+			actual_func = fallback_func;
+			actual_member = fallback_member;
+		}
+	}
+	if (actual_member && actual_member->function_decl.is<FunctionDeclarationNode>() && actual_func) {
+		const auto& member_function_decl = actual_member->function_decl.as<FunctionDeclarationNode>();
+		if (!sameConstexprFunctionIdentity(member_function_decl, *actual_func)) {
+			actual_member = nullptr;
+		}
+	}
 	// Virtual dispatch: when the resolved function is virtual, find the final
 	// overrider in the dynamic type (bound_struct_info) rather than staying pinned
 	// to the sema-resolved static target.  This applies to all receiver kinds,
@@ -2501,6 +2756,35 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			actual_member = override_member;
 		}
 	}
+	if (actual_func && !actual_func->get_definition().has_value()) {
+		if (const FunctionDeclarationNode* symbol_table_func =
+				findMatchingSymbolTableMemberDefinition(*actual_func, context);
+			symbol_table_func &&
+			sameConstexprFunctionIdentity(*symbol_table_func, *actual_func)) {
+			actual_func = symbol_table_func;
+		}
+	}
+	if (actual_func) {
+		if (!actual_func->get_definition().has_value()) {
+			const FunctionDeclarationNode* requested_func = actual_func;
+			StringHandle owner_name = bound_struct_info->name;
+			if (!actual_func->parent_struct_name().empty()) {
+				owner_name = StringTable::getOrInternStringHandle(actual_func->parent_struct_name());
+			}
+			auto replay_sema_services =
+				context
+					.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
+					.parserSemanticServices();
+			if (std::optional<ASTNode> refreshed =
+					replay_sema_services.ensureMemberFunctionMaterialized(owner_name, *actual_func);
+				refreshed.has_value() && refreshed->is<FunctionDeclarationNode>()) {
+				const auto& refreshed_func = refreshed->as<FunctionDeclarationNode>();
+				if (sameConstexprFunctionIdentity(refreshed_func, *requested_func)) {
+					actual_func = &refreshed_func;
+				}
+			}
+		}
+	}
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));
 	}
@@ -2513,6 +2797,16 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	const auto& definition = actual_func->get_definition();
 	if (!definition.has_value()) {
 		return EvalResult::error("Constexpr member function has no body: " + std::string(func_name));
+	}
+	if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug) && definition->is<BlockNode>()) {
+		const auto& stmts = definition->as<BlockNode>().get_statements();
+		if (!stmts.empty() && stmts[0].is<ReturnStatementNode>()) {
+			const auto& ret = stmts[0].as<ReturnStatementNode>();
+			if (ret.expression().has_value() && ret.expression()->is<ExpressionNode>()) {
+				FLASH_LOG(ConstExpr, Debug,
+					"  first return expr index=", ret.expression()->as<ExpressionNode>().index());
+			}
+		}
 	}
 
 	auto bind_result = bind_evaluated_arguments(
@@ -2602,6 +2896,12 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		context,
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
+	if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+		FLASH_LOG(ConstExpr, Debug,
+			"  bound member body result success=", result.success(),
+			" int=", result.success() ? result.as_int() : 0,
+			" members=", member_bindings.size());
+	}
 	context.local_bindings = saved_local_bindings;
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
@@ -2701,7 +3001,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 					}
 					for (const auto& member_func : target_struct->member_functions) {
 						if (member_func.is_constructor || member_func.is_destructor ||
-							member_func.getName() != func_name_handle ||
+							!matchesConstexprFunctionName(member_func, func_name_handle) ||
 							!member_func.function_decl.is<FunctionDeclarationNode>()) {
 							continue;
 						}
@@ -2904,7 +3204,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.is_constructor || member_func.is_destructor ||
-			member_func.getName() != function_name_handle ||
+			!matchesConstexprFunctionName(member_func, function_name_handle) ||
 			!member_func.function_decl.is<FunctionDeclarationNode>()) {
 			continue;
 		}
@@ -3186,7 +3486,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 					}
 					for (const auto& member_func : target_struct->member_functions) {
 						if (member_func.is_constructor || member_func.is_destructor ||
-							member_func.getName() != function_name_handle ||
+							!matchesConstexprFunctionName(member_func, function_name_handle) ||
 							!member_func.function_decl.is<FunctionDeclarationNode>()) {
 							continue;
 						}
@@ -7408,10 +7708,25 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 
 	bool resolved_from_local_object = false;
 	if (const EvalResult* local_object = findLocalBinding(object_name, context);
-		local_object && local_object->object_type_index.is_valid()) {
-		resolved_object.declared_type_index = local_object->object_type_index;
-		resolved_object.materialized_value = *local_object;
-		resolved_from_local_object = true;
+		local_object) {
+		if (local_object->object_type_index.is_valid()) {
+			resolved_object.declared_type_index = local_object->object_type_index;
+			resolved_object.materialized_value = *local_object;
+			resolved_from_local_object = true;
+		} else if (local_object->pointer_to_var.isValid() && context.local_bindings) {
+			EvalResult deref_result = deref_pointer_with_bindings(
+				*local_object,
+				*context.local_bindings,
+				context);
+			if (!deref_result.success()) {
+				return deref_result;
+			}
+			if (deref_result.object_type_index.is_valid()) {
+				resolved_object.declared_type_index = deref_result.object_type_index;
+				resolved_object.materialized_value = std::move(deref_result);
+				resolved_from_local_object = true;
+			}
+		}
 	}
 
 	// For local bound objects, still try to recover the original declaration
@@ -8673,6 +8988,21 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	// Look up the actual member function in the struct's type info
 	const auto& arguments = call_expr.arguments();
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+	auto lookup_sema_services =
+		context
+			.requireParserAttachedSema(kMemberFunctionMaterializationLookupOp)
+			.parserSemanticServices();
+	ResolvedFunctionQueryResult sema_resolved_direct_query =
+		lookup_sema_services.getResolvedDirectCallQuery(&call_expr);
+	if (placeholder_func) {
+		lookup_sema_services.ensureMemberFunctionMaterialized(
+			struct_info->name,
+			*placeholder_func);
+	}
+	lookup_sema_services.ensureMemberFunctionMaterialized(
+		struct_info->name,
+		func_name_handle,
+		std::nullopt);
 	auto findConstAwareMemberFunctionMatch =
 		[&](bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
 			auto collectCandidates =
@@ -8680,7 +9010,7 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 					ResolvedMemberFunctionCandidate result;
 					for (const auto& member_func : struct_info->member_functions) {
 						if (member_func.is_constructor || member_func.is_destructor ||
-							member_func.getName() != func_name_handle ||
+							!matchesConstexprFunctionName(member_func, func_name_handle) ||
 							!member_func.function_decl.is<FunctionDeclarationNode>()) {
 							continue;
 						}
@@ -8733,8 +9063,43 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 	if (member_function_match.ambiguous) {
 		return EvalResult::error("Ambiguous member function overload in constant expression");
 	}
-	const FunctionDeclarationNode* actual_func = member_function_match.function;
-	const StructMemberFunction* actual_member = member_function_match.member;
+	if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+		FLASH_LOG(ConstExpr, Debug,
+			"evaluate_member_function_call: func='", func_name,
+			"' struct='", StringTable::getStringView(struct_info->name),
+			"' type_index=", type_index,
+			" sema_state=", static_cast<int>(sema_resolved_direct_query.state),
+			" placeholder=", placeholder_func != nullptr,
+			" matched=", member_function_match.function != nullptr);
+		if (placeholder_func) {
+			FLASH_LOG(ConstExpr, Debug,
+				"  placeholder name='", placeholder_func->decl_node().identifier_token().value(),
+				"' constexpr=", placeholder_func->is_constexpr(),
+				" materialized=", placeholder_func->is_materialized(),
+				" outer_template_bindings=", placeholder_func->has_outer_template_bindings(),
+				" non_type_template_args=", placeholder_func->has_non_type_template_args(),
+				" const_member=", placeholder_func->is_const_member_function(),
+				" params=", placeholder_func->parameter_nodes().size(),
+				" has_definition=", placeholder_func->get_definition().has_value());
+		}
+		for (const auto& member_func : struct_info->member_functions) {
+			if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			FLASH_LOG(ConstExpr, Debug,
+				"  candidate name='", func_decl.decl_node().identifier_token().value(),
+				"' const=", func_decl.is_const_member_function(),
+				" constexpr=", func_decl.is_constexpr(),
+				" materialized=", func_decl.is_materialized());
+		}
+	}
+	const FunctionDeclarationNode* actual_func =
+		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available
+			? sema_resolved_direct_query.function
+			: member_function_match.function;
+	const StructMemberFunction* actual_member =
+		actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : member_function_match.member;
 	if (!actual_func) {
 		actual_func = try_get_lowered_constexpr_member_call_target(
 			call_expr,
@@ -8743,25 +9108,31 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 			context,
 			MemberFunctionLookupMode::LookupOnly,
 			false);
+		actual_member =
+			actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : nullptr;
+		const bool should_enforce_const_receiver_on_lowered =
+			actual_func != nullptr &&
+			actual_member != nullptr;
 		if (actual_func != nullptr &&
 			receiver_is_const &&
+			should_enforce_const_receiver_on_lowered &&
 			!actual_func->is_static() &&
 			!actual_func->is_const_member_function()) {
 			actual_func = nullptr;
 		}
 		actual_member =
-			actual_func ? findMemberFunctionMetadataRecursive(struct_info, *actual_func) : nullptr;
+			actual_func ? actual_member : nullptr;
+		if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+			FLASH_LOG(ConstExpr, Debug,
+				"  after try_get_lowered: actual_func=", actual_func != nullptr,
+				" actual_member=", actual_member != nullptr);
+		}
 	}
-	if (!actual_func &&
-		isConstexprMemberLookupCandidate(
-			*placeholder_func,
-			arguments.size(),
-			context,
-			MemberFunctionLookupMode::LookupOnly,
-			false)) {
-		actual_func = placeholder_func;
-		actual_member =
-			findMemberFunctionMetadataRecursive(struct_info, *actual_func);
+	if (actual_member && actual_member->function_decl.is<FunctionDeclarationNode>() && actual_func) {
+		const auto& member_function_decl = actual_member->function_decl.as<FunctionDeclarationNode>();
+		if (!sameConstexprFunctionIdentity(member_function_decl, *actual_func)) {
+			actual_member = nullptr;
+		}
 	}
 	// Virtual dispatch: resolve to the final overrider in the dynamic type using
 	// is_virtual/is_override flags so that same-name non-overriding derived
@@ -8773,6 +9144,57 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 				actual_func->parameter_nodes().size())) {
 			actual_func = &override_member->function_decl.as<FunctionDeclarationNode>();
 			actual_member = override_member;
+		}
+	}
+	if (actual_func) {
+		if (const FunctionDeclarationNode* symbol_table_func =
+				findMatchingSymbolTableMemberDefinition(*actual_func, context);
+			symbol_table_func &&
+			sameConstexprFunctionIdentity(*symbol_table_func, *actual_func)) {
+			actual_func = symbol_table_func;
+		}
+	}
+	if (actual_func &&
+		!actual_func->get_definition().has_value()) {
+		const FunctionDeclarationNode* requested_func = actual_func;
+		StringHandle owner_name = struct_info->name;
+		if (!actual_func->parent_struct_name().empty()) {
+			owner_name = StringTable::getOrInternStringHandle(actual_func->parent_struct_name());
+		}
+		auto replay_sema_services =
+			context
+				.requireParserAttachedSema(kMemberFunctionMaterializationReplayOp)
+				.parserSemanticServices();
+		if (std::optional<ASTNode> refreshed =
+				replay_sema_services.ensureMemberFunctionMaterialized(owner_name, *actual_func);
+			refreshed.has_value() && refreshed->is<FunctionDeclarationNode>()) {
+			const auto& refreshed_func = refreshed->as<FunctionDeclarationNode>();
+			if (sameConstexprFunctionIdentity(refreshed_func, *requested_func)) {
+				actual_func = &refreshed_func;
+			}
+		}
+	}
+
+	if (!actual_func) {
+		if (placeholder_func &&
+			placeholder_func->get_definition().has_value()) {
+			const FunctionDeclarationNode* fallback_func = placeholder_func;
+			const StructMemberFunction* fallback_member =
+				findMemberFunctionMetadataRecursive(struct_info, *fallback_func);
+			const bool fallback_rejected_for_const_receiver =
+				receiver_is_const &&
+				fallback_member != nullptr &&
+				!fallback_func->is_static() &&
+				!fallback_func->is_const_member_function();
+			if (!fallback_rejected_for_const_receiver) {
+				actual_func = fallback_func;
+				actual_member = fallback_member;
+			}
+		}
+		if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
+			FLASH_LOG(ConstExpr, Debug,
+				"  after placeholder fallback: actual_func=", actual_func != nullptr,
+				" actual_member=", actual_member != nullptr);
 		}
 	}
 
@@ -8925,7 +9347,20 @@ EvalResult Evaluator::materialize_constructor_object_value(
 	TypeIndex type_index = type_spec.type_index();
 	const TypeInfo* type_info = tryGetTypeInfo(type_index);
 	if (!type_info) {
-		return EvalResult::error("Constructor call has invalid struct/class type");
+		StringHandle type_name_handle = type_spec.token().handle();
+		if (!type_name_handle.isValid() && !type_spec.token().value().empty()) {
+			type_name_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+		}
+		auto type_it = getTypesByNameMap().find(type_name_handle);
+		if (type_it != getTypesByNameMap().end()) {
+			type_info = type_it->second;
+			if (type_info && !type_index.is_valid()) {
+				type_index = type_info->type_index_.withCategory(type_info->typeEnum());
+			}
+		}
+		if (!type_info) {
+			return EvalResult::error("Constructor call has invalid struct/class type");
+		}
 	}
 
 	const StructTypeInfo* struct_info = type_info->getStructInfo();

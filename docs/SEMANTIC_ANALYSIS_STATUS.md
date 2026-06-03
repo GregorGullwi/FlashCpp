@@ -150,6 +150,10 @@ Recommended next step:
 
 - extract a shared const-aware member-candidate collector for constexpr
   receiver-based lookup and current-struct lookup
+- extend that shared member-lookup helper to cover sema member-call target
+  selection and constexpr member-call target selection, so const/static/member-
+  template filtering rules live in one standards-owned path instead of being
+  reimplemented across sema, constexpr evaluation, and IR-adjacent recovery
 - apply the sema-owned overload-resolution argument collector to the remaining
   semantic call-resolution entry points that still rely on parser-owned
   expression typing or reduced argument modeling
