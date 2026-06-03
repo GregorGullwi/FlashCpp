@@ -34,6 +34,13 @@ bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candida
 	return argument_count >= min_required && argument_count <= max_accepted;
 }
 
+const DeclarationNode& requireCallDeclaration(const CallInfo& call_info, const char* operation) {
+	if (call_info.declaration == nullptr) {
+		throw InternalError(std::string(operation) + " received null callee declaration");
+	}
+	return *call_info.declaration;
+}
+
 } // namespace
 
 void applyDeclarationArrayBoundsToTypeSpec(
@@ -7195,11 +7202,8 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 
 	if (call_info.has_receiver)
 		return;
-	if (call_info.declaration == nullptr) {
-		throw InternalError("tryResolveCallableOperatorImpl received null callee declaration");
-	}
 
-	const DeclarationNode& callee_decl = *call_info.declaration;
+	const DeclarationNode& callee_decl = requireCallDeclaration(call_info, "tryResolveCallableOperatorImpl");
 	const StringHandle callee_name = callee_decl.identifier_token().handle();
 	if (!callee_name.isValid())
 		return;
@@ -7590,10 +7594,7 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																				const void* call_key) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
-	if (call_info.declaration == nullptr) {
-		throw InternalError("resolveCallArgAnnotationTarget received null callee declaration");
-	}
-	const DeclarationNode& callee_decl = *call_info.declaration;
+	const DeclarationNode& callee_decl = requireCallDeclaration(call_info, "resolveCallArgAnnotationTarget");
 	auto appendUniqueOverload = [](std::vector<ASTNode>& target, const ASTNode& candidate) {
 		auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
 			return existing.raw_pointer() == candidate.raw_pointer();
@@ -8233,10 +8234,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 														 const void* call_key,
 														 const char* context_description) {
 	analyzed_direct_call_queries_.insert(call_key);
-	if (call_info.declaration == nullptr) {
-		throw InternalError("tryAnnotateCallArgConversionsImpl received null callee declaration");
-	}
-	const DeclarationNode& callee_decl = *call_info.declaration;
+	const DeclarationNode& callee_decl = requireCallDeclaration(call_info, "tryAnnotateCallArgConversionsImpl");
 
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {

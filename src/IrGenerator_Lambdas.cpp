@@ -314,6 +314,23 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 				std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
 				StringHandle var_name_str = StringTable::getOrInternStringHandle(var_name);	// Single conversion for both uses below
 				const StructMember* member = struct_info->findMember(var_name);
+				auto findEnclosingCaptureOffset = [&](StringHandle capture_name) -> int {
+					auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+					if (enclosing_type_it == getTypesByNameMap().end() ||
+						enclosing_type_it->second == nullptr) {
+						return -1;
+					}
+					const TypeInfo* enclosing_type = enclosing_type_it->second;
+					const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
+					if (!enclosing_struct) {
+						return -1;
+					}
+					const StructMember* enclosing_member = enclosing_struct->findMember(capture_name);
+					if (!enclosing_member) {
+						return -1;
+					}
+					return static_cast<int>(enclosing_member->offset);
+				};
 
 				if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
 					// Check if this variable is a captured variable from an enclosing lambda
@@ -410,36 +427,14 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 								member_load.object = StringTable::getOrInternStringHandle("this");
 								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
 
-								int enclosing_offset = -1;
-								auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-								if (enclosing_type_it != getTypesByNameMap().end() &&
-									enclosing_type_it->second != nullptr) {
-									const TypeInfo* enclosing_type = enclosing_type_it->second;
-									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
-										const StructMember* enclosing_member = enclosing_struct->findMember(var_name);
-										if (enclosing_member) {
-											enclosing_offset = static_cast<int>(enclosing_member->offset);
-										}
-									}
-								}
+								int enclosing_offset = findEnclosingCaptureOffset(var_name_str);
 								member_load.offset = enclosing_offset;
 								member_load.struct_type_info = nullptr;
 								member_load.ref_qualifier = CVReferenceQualifier::LValueReference;
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
 							} else {
 								// Enclosing captured by value - need to get address of this->x
-								int enclosing_offset = -1;
-								auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-								if (enclosing_type_it != getTypesByNameMap().end() &&
-									enclosing_type_it->second != nullptr) {
-									const TypeInfo* enclosing_type = enclosing_type_it->second;
-									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
-										const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
-										if (enclosing_member) {
-											enclosing_offset = static_cast<int>(enclosing_member->offset);
-										}
-									}
-								}
+								int enclosing_offset = findEnclosingCaptureOffset(var_name_str);
 								if (enclosing_offset < 0) {
 									throw InternalError("Nested lambda reference capture could not resolve enclosing closure member");
 								}
@@ -492,18 +487,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 							member_load.object = StringTable::getOrInternStringHandle("this");
 							member_load.member_name = StringTable::getOrInternStringHandle(var_name);
 
-							int enclosing_offset = -1;
-							auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-							if (enclosing_type_it != getTypesByNameMap().end() &&
-								enclosing_type_it->second != nullptr) {
-								const TypeInfo* enclosing_type = enclosing_type_it->second;
-								if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
-									const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
-									if (enclosing_member) {
-										enclosing_offset = static_cast<int>(enclosing_member->offset);
-									}
-								}
-							}
+							int enclosing_offset = findEnclosingCaptureOffset(var_name_str);
 							member_load.offset = enclosing_offset;
 							member_load.struct_type_info = nullptr;
 							member_load.ref_qualifier = CVReferenceQualifier::None;

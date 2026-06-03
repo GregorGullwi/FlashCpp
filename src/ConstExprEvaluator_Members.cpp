@@ -3021,68 +3021,22 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 	const bool object_is_const =
 		object.exact_type.has_value() && object.exact_type->is_const();
-	auto findConstAwareMemberCandidate =
+	auto findConstAwareMemberCandidateForStruct =
 		[&](const StructTypeInfo* target_struct, bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
-			auto collectCandidates =
-				[&](bool require_const_member) -> ResolvedMemberFunctionCandidate {
-					ResolvedMemberFunctionCandidate result;
-					if (!target_struct) {
-						return result;
-					}
-					for (const auto& member_func : target_struct->member_functions) {
-						if (member_func.is_constructor || member_func.is_destructor ||
-							!matchesConstexprFunctionName(member_func, func_name_handle) ||
-							!member_func.function_decl.is<FunctionDeclarationNode>()) {
-							continue;
-						}
-
-						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!isConstexprMemberLookupCandidate(
-								func_decl,
-								0,
-								context,
-								MemberFunctionLookupMode::LookupOnly,
-								false)) {
-							continue;
-						}
-						if (!func_decl.is_static()) {
-							if (require_const_member) {
-								if (!func_decl.is_const_member_function()) {
-									continue;
-								}
-							} else if (func_decl.is_const_member_function()) {
-								continue;
-							}
-						}
-
-						if (result.function && detect_ambiguity) {
-							result.ambiguous = true;
-							return result;
-						}
-
-						result.function = &func_decl;
-						result.member = &member_func;
-						if (!detect_ambiguity) {
-							break;
-						}
-					}
-					return result;
-				};
-
-			if (object_is_const) {
-				return collectCandidates(true);
-			}
-
-			ResolvedMemberFunctionCandidate non_const_match = collectCandidates(false);
-			if (non_const_match.function || non_const_match.ambiguous) {
-				return non_const_match;
-			}
-			return collectCandidates(true);
+			return findConstAwareMemberFunctionCandidate(
+				target_struct,
+				func_name_handle,
+				0,
+				context,
+				MemberFunctionLookupMode::LookupOnly,
+				false,
+				object_is_const,
+				detect_ambiguity);
 		};
 
 	// Try instantiation's own member functions first, then fall back to the
 	// base template (same logic as find_current_struct_member_function_candidate).
-	auto match = findConstAwareMemberCandidate(struct_info, true);
+	auto match = findConstAwareMemberCandidateForStruct(struct_info, true);
 
 	if ((!match.function && !match.ambiguous) ||
 		(match.function && !match.function->is_materialized())) {
@@ -3092,7 +3046,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 			const TypeInfo* struct_type = struct_type_it->second;
 			auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
 			if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
-				match = findConstAwareMemberCandidate(
+				match = findConstAwareMemberCandidateForStruct(
 					template_type_it->second->getStructInfo(),
 					false);
 			}
@@ -3265,6 +3219,83 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 	}
 
 	return result;
+}
+
+Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstAwareMemberFunctionCandidate(
+	const StructTypeInfo* struct_info,
+	StringHandle function_name_handle,
+	size_t argument_count,
+	EvaluationContext& context,
+	MemberFunctionLookupMode lookup_mode,
+	bool require_static,
+	bool receiver_is_const,
+	bool detect_ambiguity) {
+	if (require_static) {
+		return find_member_function_candidate(
+			struct_info,
+			function_name_handle,
+			argument_count,
+			context,
+			lookup_mode,
+			true,
+			detect_ambiguity);
+	}
+
+	auto collectCandidates =
+		[&](bool require_const_member) -> ResolvedMemberFunctionCandidate {
+			ResolvedMemberFunctionCandidate result;
+			if (!struct_info) {
+				return result;
+			}
+			for (const auto& member_func : struct_info->member_functions) {
+				if (member_func.is_constructor || member_func.is_destructor ||
+					!matchesConstexprFunctionName(member_func, function_name_handle) ||
+					!member_func.function_decl.is<FunctionDeclarationNode>()) {
+					continue;
+				}
+
+				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (!isConstexprMemberLookupCandidate(
+						func_decl,
+						argument_count,
+						context,
+						lookup_mode,
+						false)) {
+					continue;
+				}
+				if (!func_decl.is_static()) {
+					if (require_const_member) {
+						if (!func_decl.is_const_member_function()) {
+							continue;
+						}
+					} else if (func_decl.is_const_member_function()) {
+						continue;
+					}
+				}
+
+				if (result.function && detect_ambiguity) {
+					result.ambiguous = true;
+					return result;
+				}
+
+				result.function = &func_decl;
+				result.member = &member_func;
+				if (!detect_ambiguity) {
+					break;
+				}
+			}
+			return result;
+		};
+
+	if (receiver_is_const) {
+		return collectCandidates(true);
+	}
+
+	ResolvedMemberFunctionCandidate non_const_match = collectCandidates(false);
+	if (non_const_match.function || non_const_match.ambiguous) {
+		return non_const_match;
+	}
+	return collectCandidates(true);
 }
 
 Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverload(
@@ -3497,72 +3528,15 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 
 	auto findConstAwareCurrentStructCandidate =
 		[&](const StructTypeInfo* target_struct, bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
-			if (require_static) {
-				return find_member_function_candidate(
-					target_struct,
-					function_name_handle,
-					argument_count,
-					context,
-					lookup_mode,
-					require_static,
-					detect_ambiguity);
-			}
-
-			auto collectCandidates =
-				[&](bool require_const_member) -> ResolvedMemberFunctionCandidate {
-					ResolvedMemberFunctionCandidate collected;
-					if (!target_struct) {
-						return collected;
-					}
-					for (const auto& member_func : target_struct->member_functions) {
-						if (member_func.is_constructor || member_func.is_destructor ||
-							!matchesConstexprFunctionName(member_func, function_name_handle) ||
-							!member_func.function_decl.is<FunctionDeclarationNode>()) {
-							continue;
-						}
-
-						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!isConstexprMemberLookupCandidate(
-								func_decl,
-								argument_count,
-								context,
-								lookup_mode,
-								require_static)) {
-							continue;
-						}
-						if (!func_decl.is_static()) {
-							if (require_const_member) {
-								if (!func_decl.is_const_member_function()) {
-									continue;
-								}
-							} else if (func_decl.is_const_member_function()) {
-								continue;
-							}
-						}
-
-						if (collected.function && detect_ambiguity) {
-							collected.ambiguous = true;
-							return collected;
-						}
-
-						collected.function = &func_decl;
-						collected.member = &member_func;
-						if (!detect_ambiguity) {
-							break;
-						}
-					}
-					return collected;
-				};
-
-			if (context.current_member_function_is_const) {
-				return collectCandidates(true);
-			}
-
-			ResolvedMemberFunctionCandidate non_const_match = collectCandidates(false);
-			if (non_const_match.function || non_const_match.ambiguous) {
-				return non_const_match;
-			}
-			return collectCandidates(true);
+			return findConstAwareMemberFunctionCandidate(
+				target_struct,
+				function_name_handle,
+				argument_count,
+				context,
+				lookup_mode,
+				require_static,
+				context.current_member_function_is_const,
+				detect_ambiguity);
 		};
 
 	result = findConstAwareCurrentStructCandidate(
@@ -9058,63 +9032,16 @@ EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_exp
 		struct_info->name,
 		func_name_handle,
 		std::nullopt);
-	auto findConstAwareMemberFunctionMatch =
-		[&](bool detect_ambiguity) -> ResolvedMemberFunctionCandidate {
-			auto collectCandidates =
-				[&](bool require_const_member) -> ResolvedMemberFunctionCandidate {
-					ResolvedMemberFunctionCandidate result;
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.is_constructor || member_func.is_destructor ||
-							!matchesConstexprFunctionName(member_func, func_name_handle) ||
-							!member_func.function_decl.is<FunctionDeclarationNode>()) {
-							continue;
-						}
-
-						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!isConstexprMemberLookupCandidate(
-								func_decl,
-								arguments.size(),
-								context,
-								MemberFunctionLookupMode::LookupOnly,
-								false)) {
-							continue;
-						}
-						if (!func_decl.is_static()) {
-							if (require_const_member) {
-								if (!func_decl.is_const_member_function()) {
-									continue;
-								}
-							} else if (func_decl.is_const_member_function()) {
-								continue;
-							}
-						}
-
-						if (result.function && detect_ambiguity) {
-							result.ambiguous = true;
-							return result;
-						}
-
-						result.function = &func_decl;
-						result.member = &member_func;
-						if (!detect_ambiguity) {
-							break;
-						}
-					}
-					return result;
-				};
-
-			if (receiver_is_const) {
-				return collectCandidates(true);
-			}
-
-			ResolvedMemberFunctionCandidate non_const_match = collectCandidates(false);
-			if (non_const_match.function || non_const_match.ambiguous) {
-				return non_const_match;
-			}
-			return collectCandidates(true);
-		};
 	ResolvedMemberFunctionCandidate member_function_match =
-		findConstAwareMemberFunctionMatch(true);
+		findConstAwareMemberFunctionCandidate(
+			struct_info,
+			func_name_handle,
+			arguments.size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			receiver_is_const,
+			true);
 	if (member_function_match.ambiguous) {
 		return EvalResult::error("Ambiguous member function overload in constant expression");
 	}

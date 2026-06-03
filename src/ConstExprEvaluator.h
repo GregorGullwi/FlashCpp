@@ -1008,6 +1008,15 @@ private:
 		MemberFunctionLookupMode lookup_mode,
 		bool require_static,
 		bool detect_ambiguity);
+	static ResolvedMemberFunctionCandidate findConstAwareMemberFunctionCandidate(
+		const StructTypeInfo* struct_info,
+		StringHandle function_name_handle,
+		size_t argument_count,
+		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
+		bool require_static,
+		bool receiver_is_const,
+		bool detect_ambiguity);
 	// Invoke a constexpr member function with pre-evaluated arguments.
 	// Handles: this injection, argument binding, template context save/restore,
 	// recursion depth guard, struct context setup, evaluate_block_with_bindings.
