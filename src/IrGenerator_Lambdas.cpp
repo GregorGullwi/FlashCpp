@@ -412,7 +412,8 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 
 								int enclosing_offset = -1;
 								auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-								if (enclosing_type_it != getTypesByNameMap().end()) {
+								if (enclosing_type_it != getTypesByNameMap().end() &&
+									enclosing_type_it->second != nullptr) {
 									const TypeInfo* enclosing_type = enclosing_type_it->second;
 									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
 										const StructMember* enclosing_member = enclosing_struct->findMember(var_name);
@@ -493,7 +494,8 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 
 							int enclosing_offset = -1;
 							auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-							if (enclosing_type_it != getTypesByNameMap().end()) {
+							if (enclosing_type_it != getTypesByNameMap().end() &&
+								enclosing_type_it->second != nullptr) {
 								const TypeInfo* enclosing_type = enclosing_type_it->second;
 								if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
 									const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);

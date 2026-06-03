@@ -7195,6 +7195,9 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 
 	if (call_info.has_receiver)
 		return;
+	if (call_info.declaration == nullptr) {
+		throw InternalError("tryResolveCallableOperatorImpl received null callee declaration");
+	}
 
 	const DeclarationNode& callee_decl = *call_info.declaration;
 	const StringHandle callee_name = callee_decl.identifier_token().handle();
@@ -7587,6 +7590,10 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																				const void* call_key) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
+	if (call_info.declaration == nullptr) {
+		throw InternalError("resolveCallArgAnnotationTarget received null callee declaration");
+	}
+	const DeclarationNode& callee_decl = *call_info.declaration;
 	auto appendUniqueOverload = [](std::vector<ASTNode>& target, const ASTNode& candidate) {
 		auto it = std::find_if(target.begin(), target.end(), [&](const ASTNode& existing) {
 			return existing.raw_pointer() == candidate.raw_pointer();
@@ -7780,7 +7787,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		};
 		if (const StructTypeInfo* receiver_struct_info = resolveReceiverStructInfo()) {
 			const StringHandle member_name_handle =
-				call_info.declaration->identifier_token().handle();
+				callee_decl.identifier_token().handle();
 			std::vector<ASTNode> member_overloads;
 			auto collectVisibleMemberOverloads =
 				[&](const StructTypeInfo* current_struct_info, const auto& self) -> void {
@@ -7980,7 +7987,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (call_info.function_declaration)
 		return call_info.function_declaration;
 
-	const DeclarationNode& decl = *call_info.declaration;
+	const DeclarationNode& decl = callee_decl;
 
 	const std::string_view name = call_info.qualified_name.isValid()
 									  ? call_info.qualified_name.view()
@@ -8226,13 +8233,17 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 														 const void* call_key,
 														 const char* context_description) {
 	analyzed_direct_call_queries_.insert(call_key);
+	if (call_info.declaration == nullptr) {
+		throw InternalError("tryAnnotateCallArgConversionsImpl received null callee declaration");
+	}
+	const DeclarationNode& callee_decl = *call_info.declaration;
 
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
 		const std::string_view call_name = call_info.qualified_name.isValid()
 											   ? call_info.qualified_name.view()
-											   : call_info.declaration->identifier_token().value();
+											   : callee_decl.identifier_token().value();
 		if (!call_info.is_indirect && normalized_call_expr) {
 			throw InternalError(std::string(
 				StringBuilder()
