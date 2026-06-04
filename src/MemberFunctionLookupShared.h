@@ -4,7 +4,6 @@
 #include "InlineVector.h"
 #include <ranges>
 #include <span>
-#include <unordered_set>
 
 struct ConstAwareMemberCandidateSet {
 	InlineVector<const StructMemberFunction*, 8> preferred;
@@ -58,12 +57,17 @@ ConstAwareMemberCandidateSet collectConstAwareVisibleMemberFunctionCandidates(
 		return result;
 	}
 
-	std::unordered_set<const StructTypeInfo*> visited;
+	InlineVector<const StructTypeInfo*, 8> visited;
 	auto recurse = [&](const StructTypeInfo* current_struct_info, const auto& self) -> void {
-		if (current_struct_info == nullptr ||
-			!visited.insert(current_struct_info).second) {
+		if (current_struct_info == nullptr) {
 			return;
 		}
+		if (std::ranges::any_of(visited, [current_struct_info](const StructTypeInfo* existing) {
+				return existing == current_struct_info;
+			})) {
+			return;
+		}
+		visited.push_back(current_struct_info);
 
 		bool found_local_overload = false;
 		for (const auto& member_func : current_struct_info->member_functions) {

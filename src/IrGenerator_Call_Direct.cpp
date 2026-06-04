@@ -740,7 +740,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						// Don't call visitExpressionNode which would dereference it
 						call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
 
-							// Type for mangling is rvalue reference to closure type
+						// Type for mangling is lvalue reference to closure type
 						TypeSpecifierNode self_type(closure_type_index.withCategory(TypeCategory::Struct), 8, Token(), CVQualifier::None, ReferenceQualifier::None);
 						self_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 						arg_types.push_back(self_type);
