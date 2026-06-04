@@ -15,6 +15,16 @@ struct ArrowInvoker {
 	static auto call(M C::* member, C* ptr) -> decltype(ptr->*member);
 };
 
+template <class T>
+struct is_lvalue_ref {
+	static constexpr bool value = false;
+};
+
+template <class T>
+struct is_lvalue_ref<T&> {
+	static constexpr bool value = true;
+};
+
 struct Node {
 	int data;
 };
@@ -25,6 +35,5 @@ struct Node {
 using NodeIntResult = decltype(ArrowInvoker<Node, int>::call(nullptr, nullptr));
 
 int main() {
-	NodeIntResult* unused = nullptr;
-	return unused == nullptr ? 0 : 1;
+	return is_lvalue_ref<NodeIntResult>::value ? 0 : 1;
 }

@@ -18,8 +18,13 @@ replayed dependent member overloads no longer inherit stale parser-selected
 targets. A concrete follow-up now brings semantic `operator[]` resolution onto
 that same receiver-aware, sema-owned argument-typing path, so const receivers
 and lvalue/rvalue index overloads no longer depend on reduced parser-shaped
-typing. The biggest remaining gap is keeping every replay/materialization path
-equally evidence-driven rather than shape-driven.
+typing. The latest template-`decltype` fix now also reparses function-template
+trailing return clauses against materialized parameter declarations and keeps
+bound member-pointer metadata intact in the non-explicit parameter
+materialization path, so dependent trailing-return `decltype` no longer drops
+reference qualification or pointer-to-member owner identity. The biggest
+remaining gap is keeping every replay/materialization path equally
+evidence-driven rather than shape-driven.
 
 ## What the current design can assume
 
@@ -83,6 +88,13 @@ equally evidence-driven rather than shape-driven.
 - constructor replay sync into StructTypeInfo now requires signature-validation
   evidence and no longer accepts token/name shape equivalence for
   mismatched parameter types
+- function-template trailing-return reparse now happens after parameter
+  materialization when a saved `->` position exists, so dependent
+  `decltype(param_expr)` sees the same concrete parameter declarations used by
+  the instantiated function body
+- non-explicit function-template parameter materialization now preserves full
+  bound type metadata for pointer-to-member arguments instead of collapsing
+  them to the pointee/base type
 
 ## Main remaining architectural gap
 
@@ -155,6 +167,41 @@ Tightening those is the next best cleanup target.
 3. Expand current-instantiation / unknown-specialization modeling only for the
    concrete cases that still block standards-conforming typed lookup after steps
    1 and 2.
+
+## 2026-06-04 dependent decltype trailing-return note
+
+Auditing the template-argument conformance backlog found a standards-visible gap
+in function-template trailing return materialization: dependent
+`decltype(...)` clauses could be reparsed before the instantiated parameter list
+existed, and the non-explicit parameter-materialization path could flatten a
+bound pointer-to-member template argument to its pointee type. Together those
+bugs lost lvalue-reference qualification in cases like
+`decltype(wrapped.get())`, lost member-pointer owner metadata in
+`decltype(wrapped.get().*pmd)`, and allowed invalid pointer-to-reference forms
+to compile.
+
+The fix now:
+
+- reparses saved trailing return clauses after free-function template parameter
+  materialization and against the instantiated parameter declarations
+- copies the saved trailing-return/template positions onto the instantiated
+  function before that reparse
+- rebuilds non-explicit bound parameter types through the full substituted
+  type-specifier path instead of a TypeIndex-only substitution
+- preserves pointer-to-member owner metadata when reconstructing a
+  `TypeSpecifierNode` from bound template-argument records
+
+Validated with:
+
+- `test_dependent_decltype_member_call_ref_ret0.cpp`
+- `test_dependent_decltype_member_pointer_local_ret0.cpp`
+- `test_dependent_decltype_member_pointer_local_fail.cpp`
+- `test_dependent_decltype_arrow_member_pointer_ret0.cpp`
+- `test_dependent_decltype_arrow_member_pointer_fail.cpp`
+- `test_template_trailing_return_decltype_nttp_ret0.cpp`
+- `test_template_trailing_return_namespace_lookup_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04, with only the pre-existing
+  lambda-linking failures remaining outside this area
 
 ## 2026-06-04 semantic operator[] note
 

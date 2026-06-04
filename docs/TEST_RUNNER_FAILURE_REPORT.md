@@ -20,8 +20,6 @@
 - `test_constexpr_offsetof_ret0.cpp`
 - `test_declspec_class_ret0.cpp`
 - `test_declspec_dllimport_var_ret42.cpp`
-- `test_dependent_decltype_arrow_member_pointer_ret0.cpp`
-- `test_dependent_decltype_member_pointer_local_ret0.cpp`
 - `test_friend_default_spaceship_ret0.cpp`
 - `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`
 - `test_infer_expr_type_expansion_ret0.cpp`
@@ -147,8 +145,6 @@ These still reject after setting aside header omissions and extension-only cases
 
 - `test_constexpr_offsetof_nested_ret0.cpp`: uses `offsetof(PackedOuter, inner.value)`; nested member designators are rejected by this standard-library `offsetof` form.
 - `test_constexpr_offsetof_ret0.cpp`: uses `offsetof` without first making the macro available, so the token sequence is parsed as ordinary code and becomes invalid.
-- `test_dependent_decltype_arrow_member_pointer_ret0.cpp`: forms a pointer to a reference type.
-- `test_dependent_decltype_member_pointer_local_ret0.cpp`: forms a pointer to a reference type.
 - `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`: initializes a `constexpr` data member from a function call that is not accepted as a constant expression in this form.
 - `test_infer_expr_type_expansion_ret0.cpp`: uses `offsetof` without first making the macro available, so the expression is not parsed as an `offsetof` invocation.
 - `test_no_unique_address_empty_member_same_type_overlap_ret0.cpp`: uses `offsetof` without first making the macro available, so the expression is invalid as written.

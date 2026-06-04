@@ -3,16 +3,6 @@ struct Box {
 };
 
 template <class T>
-struct is_lvalue_ref {
-	static constexpr bool value = false;
-};
-
-template <class T>
-struct is_lvalue_ref<T&> {
-	static constexpr bool value = true;
-};
-
-template <class T>
 struct RefWrap {
 	T* ptr;
 
@@ -31,5 +21,6 @@ int main() {
 	RefWrap<Box> wrapped{&box};
 	int Box::*member = &Box::value;
 	using Result = decltype(call(member, wrapped));
-	return is_lvalue_ref<Result>::value ? 0 : 1;
+	Result* result = nullptr;
+	return result == nullptr ? 0 : 1;
 }

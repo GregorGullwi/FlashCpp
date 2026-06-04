@@ -117,6 +117,7 @@ struct LambdaInfo {
 	TypeIndex return_type_index{};	   // TypeCategory embedded; replaces Type return_type
 	int return_size;
 	ReturnValueMode return_value_mode = ReturnValueMode::None;
+	ReferenceQualifier return_ref_qualifier = ReferenceQualifier::None;  // LValueReference/RValueReference when returnsReference()
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returnsPointer() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::Pointer); }

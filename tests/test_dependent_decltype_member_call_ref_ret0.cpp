@@ -21,15 +21,14 @@ struct RefWrap {
 	}
 };
 
-template <class Decayed, class Wrapped>
-auto call(Decayed pmd, Wrapped wrapped) -> decltype(wrapped.get().*pmd) {
-	return wrapped.get().*pmd;
+template <class Wrapped>
+auto callWrapped(Wrapped wrapped) -> decltype(wrapped.get()) {
+	return wrapped.get();
 }
 
 int main() {
 	Box box{42};
 	RefWrap<Box> wrapped{&box};
-	int Box::*member = &Box::value;
-	using Result = decltype(call(member, wrapped));
+	using Result = decltype(callWrapped(wrapped));
 	return is_lvalue_ref<Result>::value ? 0 : 1;
 }

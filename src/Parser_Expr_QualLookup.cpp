@@ -2372,6 +2372,21 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	}
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+	auto apply_member_access_value_category =
+		[](TypeSpecifierNode& member_type,
+		   const TypeSpecifierNode& object_type,
+		   bool is_arrow) {
+			if (member_type.reference_qualifier() != ReferenceQualifier::None) {
+				return;
+			}
+			if (is_arrow || object_type.is_lvalue_reference()) {
+				member_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				return;
+			}
+			if (object_type.is_rvalue_reference()) {
+				member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+			}
+		};
 
 	// Handle different expression types
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
@@ -2714,6 +2729,28 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				type.set_size_in_bits(resolved_size_bits);
 			}
 		};
+		auto should_prefer_struct_member_return_type =
+			[](const TypeSpecifierNode& current,
+			   const TypeSpecifierNode& candidate) {
+				if (!current.type_index().is_valid() && candidate.type_index().is_valid()) {
+					return true;
+				}
+				if (current.reference_qualifier() == ReferenceQualifier::None &&
+					candidate.reference_qualifier() != ReferenceQualifier::None) {
+					return true;
+				}
+				if (current.pointer_depth() == 0 && candidate.pointer_depth() > 0) {
+					return true;
+				}
+				if (!current.has_function_signature() && candidate.has_function_signature()) {
+					return true;
+				}
+				if (current.array_dimensions().empty() &&
+					!candidate.array_dimensions().empty()) {
+					return true;
+				}
+				return false;
+			};
 
 		auto update_return_type_from_struct = [&](const StructTypeInfo* struct_info) {
 			if (!struct_info || !call_info.function_declaration) {
@@ -2725,7 +2762,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					member_func.function_decl.is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& real_func =
 						member_func.function_decl.as<FunctionDeclarationNode>();
-					return_type = real_func.decl_node().type_specifier_node();
+					const TypeSpecifierNode& candidate_return_type =
+						real_func.decl_node().type_specifier_node();
+					if (should_prefer_struct_member_return_type(
+							return_type,
+							candidate_return_type)) {
+						return_type = candidate_return_type;
+					}
 					return;
 				}
 			}
@@ -2841,6 +2884,18 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					}
 					if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 						member_type.set_reference_qualifier(member_result.member->reference_qualifier);
+					} else {
+						apply_member_access_value_category(
+							member_type,
+							object_type,
+							member_access.is_arrow());
+						// C++20 [expr.ref]/4: non-arrow member access on a prvalue yields an xvalue
+						if (!member_access.is_arrow() &&
+							!object_type.is_lvalue_reference() &&
+							!object_type.is_rvalue_reference() &&
+							member_type.reference_qualifier() == ReferenceQualifier::None) {
+							member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+						}
 					}
 					return member_type;
 				}
@@ -2848,6 +2903,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 	} else if (std::holds_alternative<PointerToMemberAccessNode>(expr)) {
 		const auto& pointer_to_member_access = std::get<PointerToMemberAccessNode>(expr);
+		auto object_type_opt = get_expression_type(pointer_to_member_access.object());
+		if (!object_type_opt.has_value()) {
+			return std::nullopt;
+		}
 		auto member_pointer_type_opt = get_expression_type(pointer_to_member_access.member_pointer());
 		if (!member_pointer_type_opt.has_value()) {
 			return std::nullopt;
@@ -2871,6 +2930,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (member_pointer_type.is_array()) {
 			result.set_array_dimensions(member_pointer_type.array_dimensions());
 		}
+		apply_member_access_value_category(
+			result,
+			*object_type_opt,
+			pointer_to_member_access.is_arrow());
 		return result;
 	} else if (std::holds_alternative<NoexceptExprNode>(expr)) {
 		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
