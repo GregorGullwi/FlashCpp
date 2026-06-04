@@ -1690,7 +1690,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaExpressi
 
 	InlineVector<StringHandle, 4> param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
-	populateTemplateEnvironmentLegacyViews(lambda.outer_template_environment_snapshot(), param_names, param_args);
+	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{lambda.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
 		const StringHandle param_name = param_names[i];
@@ -1770,7 +1770,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const StructDeclarat
 
 	InlineVector<StringHandle, 4> param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
-	populateTemplateEnvironmentLegacyViews(decl.outer_template_environment_snapshot(), param_names, param_args);
+	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{decl.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
 		const StringHandle param_name = param_names[i];
@@ -1794,7 +1794,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const VariableDeclar
 
 	InlineVector<StringHandle, 4> param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
-	populateTemplateEnvironmentLegacyViews(var.outer_template_environment_snapshot(), param_names, param_args);
+	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{var.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
 		const StringHandle param_name = param_names[i];
@@ -1818,7 +1818,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const ConstructorDec
 
 	InlineVector<StringHandle, 4> param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
-	populateTemplateEnvironmentLegacyViews(ctor.outer_template_environment_snapshot(), param_names, param_args);
+	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{ctor.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
 		const StringHandle param_name = param_names[i];
@@ -1842,7 +1842,7 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const DestructorDecl
 
 	InlineVector<StringHandle, 4> param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> param_args;
-	populateTemplateEnvironmentLegacyViews(dtor.outer_template_environment_snapshot(), param_names, param_args);
+	populateTemplateEnvironmentLegacyViews(TemplateEnvironmentSnapshot{dtor.outer_template_environment_snapshot()}, param_names, param_args);
 	const size_t binding_count = std::min(param_names.size(), param_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
 		const StringHandle param_name = param_names[i];

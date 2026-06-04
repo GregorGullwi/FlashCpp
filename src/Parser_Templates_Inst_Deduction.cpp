@@ -51,42 +51,6 @@ static bool defaultExpressionReferencesTemplateParams(
 	});
 }
 
-template <typename ParamContainer, typename ArgContainer>
-static void propagateFunctionSignatureFromTemplateArg(
-	TypeSpecifierNode& substituted_type,
-	const TypeSpecifierNode& orig_type,
-	TypeIndex substituted_type_index,
-	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
-	if (orig_type.has_function_signature()) {
-		substituted_type.set_function_signature(orig_type.function_signature());
-	} else if (substituted_type_index.category() == TypeCategory::FunctionPointer ||
-			   substituted_type_index.category() == TypeCategory::MemberFunctionPointer) {
-		if (const auto* arg = findTemplateArgByName(
-				orig_type.token().value(), template_params, template_args)) {
-			if (arg->function_signature.has_value()) {
-				substituted_type.set_function_signature(*arg->function_signature);
-			}
-		}
-	}
-}
-
-static ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
-	ReferenceQualifier original_ref_qualifier,
-	ReferenceQualifier template_arg_ref_qualifier) {
-	if (template_arg_ref_qualifier == ReferenceQualifier::None) {
-		return original_ref_qualifier;
-	}
-	if (original_ref_qualifier == ReferenceQualifier::None) {
-		return template_arg_ref_qualifier;
-	}
-	if (original_ref_qualifier == ReferenceQualifier::LValueReference ||
-		template_arg_ref_qualifier == ReferenceQualifier::LValueReference) {
-		return ReferenceQualifier::LValueReference;
-	}
-	return ReferenceQualifier::RValueReference;
-}
-
 static void appendInstantiationContextBindingsToSubstitutionMap(
 	const TypeInfo::InstantiationContext* context,
 	SubstitutionParamMap& sub_map) {
@@ -966,44 +930,6 @@ bool Parser::tryAppendDefaultTemplateArg(
 	}
 
 	return false;
-}
-
-template <typename ParamContainer, typename ArgContainer>
-static void applyTemplateArgIndirection(
-	TypeSpecifierNode& substituted_type,
-	const TypeSpecifierNode& orig_type,
-	const ParamContainer& template_params,
-	const ArgContainer& template_args,
-	bool propagate_reference_qualifier) {
-	std::string_view type_name = orig_type.token().value();
-	if (type_name.empty()) {
-		if (const TypeInfo* type_info = tryGetTypeInfo(orig_type.type_index())) {
-			type_name = StringTable::getStringView(type_info->name());
-		}
-	}
-	if (const auto* arg = findTemplateArgByName(type_name, template_params, template_args)) {
-		for (size_t pd = 0; pd < arg->pointer_depth; ++pd) {
-			CVQualifier cv = pd < arg->pointer_cv_qualifiers.size() ? arg->pointer_cv_qualifiers[pd] : CVQualifier::None;
-			substituted_type.add_pointer_level(cv);
-		}
-		if (propagate_reference_qualifier && arg->ref_qualifier != ReferenceQualifier::None) {
-			substituted_type.set_reference_qualifier(
-				collapseTemplateArgumentReferenceQualifier(
-					substituted_type.reference_qualifier(),
-					arg->ref_qualifier));
-		}
-		if (!substituted_type.is_array() && arg->is_array) {
-			// ArgContainer can be either std::vector<TemplateTypeArg> (which stores full
-			// array_dimensions) or InlineVector<TypeInfo::TemplateArgInfo> (single optional
-			// array_size field).  Both remain live in the codebase so both branches are
-			// permanent, not transitional.
-			if constexpr (requires(decltype(*arg) a) { a.array_size(); }) {
-				substituted_type.set_array_dimensions(arg->array_dimensions);
-			} else {
-				substituted_type.set_array(true, arg->array_size);
-			}
-		}
-	}
 }
 
 // Helper: register type-kind template parameters as TypeInfo / getTypesByNameMap() entries so

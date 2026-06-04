@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <span>
 #include <unordered_map>
 #include <filesystem>
 

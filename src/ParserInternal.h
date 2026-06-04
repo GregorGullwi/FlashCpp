@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ParserScopeGuards.h"
+
 #include <string_view>
 #include <optional>
 #include <span>

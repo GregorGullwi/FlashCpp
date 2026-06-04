@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "Parser.h"
 #include "TemplateEnvironment.h"
 #include "TemplateRegistry.h"
 #include <unordered_map>

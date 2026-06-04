@@ -1,5 +1,7 @@
 #pragma once
 
+#include "IRTypes.h"
+
 #include <vector>
 #include <span>
 #include <array>

@@ -6,6 +6,7 @@
 #include <deque>
 #include <optional>
 #include <stack>
+#include <span>
 #include <unordered_map>
 #include "ChunkedAnyVector.h"
 #include "Log.h"

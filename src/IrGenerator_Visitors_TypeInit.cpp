@@ -3,6 +3,7 @@
 #include "CallNodeHelpers.h"
 #include "ReachableStructWalker.h"
 #include "RebindStaticMemberAst.h"
+#include "SemanticAnalysis.h"
 
 // ============================================================================
 // Shared helpers: array-to-pointer decay

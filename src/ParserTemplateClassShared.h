@@ -1328,3 +1328,126 @@ void registerNestedMemberFunctionsForLazy(
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Shared template instantiation helpers
+// ---------------------------------------------------------------------------
+
+inline ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
+	ReferenceQualifier original_ref_qualifier,
+	ReferenceQualifier template_arg_ref_qualifier) {
+	if (template_arg_ref_qualifier == ReferenceQualifier::None) {
+		return original_ref_qualifier;
+	}
+	if (original_ref_qualifier == ReferenceQualifier::None) {
+		return template_arg_ref_qualifier;
+	}
+	if (original_ref_qualifier == ReferenceQualifier::LValueReference ||
+		template_arg_ref_qualifier == ReferenceQualifier::LValueReference) {
+		return ReferenceQualifier::LValueReference;
+	}
+	return ReferenceQualifier::RValueReference;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline void propagateFunctionSignatureFromTemplateArg(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& orig_type,
+	TypeIndex substituted_type_index,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	if (orig_type.has_function_signature()) {
+		substituted_type.set_function_signature(orig_type.function_signature());
+	} else if (substituted_type_index.category() == TypeCategory::FunctionPointer ||
+			   substituted_type_index.category() == TypeCategory::MemberFunctionPointer) {
+		if (const auto* arg = findTemplateArgByName(
+				orig_type.token().value(), template_params, template_args)) {
+			if (arg->function_signature.has_value()) {
+				substituted_type.set_function_signature(*arg->function_signature);
+			}
+		}
+	}
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline void applyTemplateArgIndirection(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& orig_type,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	bool propagate_reference_qualifier) {
+	std::string_view type_name = orig_type.token().value();
+	if (type_name.empty()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(orig_type.type_index())) {
+			type_name = StringTable::getStringView(type_info->name());
+		}
+	}
+	if (const auto* arg = findTemplateArgByName(type_name, template_params, template_args)) {
+		for (size_t pd = 0; pd < arg->pointer_depth; ++pd) {
+			CVQualifier cv = pd < arg->pointer_cv_qualifiers.size() ? arg->pointer_cv_qualifiers[pd] : CVQualifier::None;
+			substituted_type.add_pointer_level(cv);
+		}
+		if (propagate_reference_qualifier && arg->ref_qualifier != ReferenceQualifier::None) {
+			substituted_type.set_reference_qualifier(
+				collapseTemplateArgumentReferenceQualifier(
+					substituted_type.reference_qualifier(),
+					arg->ref_qualifier));
+		}
+		if (!substituted_type.is_array() && arg->is_array) {
+			if constexpr (requires(decltype(*arg) a) { a.array_size(); }) {
+				substituted_type.set_array_dimensions(arg->array_dimensions);
+			} else {
+				substituted_type.set_array(true, arg->array_size);
+			}
+		}
+	}
+}
+
+inline TemplateParameterNode rebuildOuterTemplateParameter(
+	StringHandle param_name,
+	const TypeInfo::TemplateArgInfo& arg_info) {
+	Token outer_token(
+		Token::Type::Identifier,
+		StringTable::getStringView(param_name),
+		0,
+		0,
+		0);
+	if (arg_info.is_template_template_arg) {
+		return TemplateParameterNode(
+			param_name,
+			std::vector<TemplateParameterNode>{},
+			outer_token);
+	}
+	if (auto outer_type_spec = makeTypeSpecifierFromTemplateArgInfo(arg_info, outer_token);
+		outer_type_spec.has_value()) {
+		return TemplateParameterNode(param_name, *outer_type_spec, outer_token);
+	}
+	return TemplateParameterNode(param_name, outer_token);
+}
+
+inline TemplateParameterNode rebuildOuterTemplateParameter(
+	StringHandle param_name,
+	const TemplateTypeArg& arg) {
+	Token outer_token(
+		Token::Type::Identifier,
+		StringTable::getStringView(param_name),
+		0,
+		0,
+		0);
+	if (arg.is_template_template_arg) {
+		return TemplateParameterNode(
+			param_name,
+			std::vector<TemplateParameterNode>{},
+			outer_token);
+	}
+	if (arg.is_value) {
+		return TemplateParameterNode(
+			param_name,
+			makeTypeSpecifierFromTemplateTypeArg(arg, outer_token),
+			outer_token);
+	}
+	TemplateParameterNode outer_param(param_name, outer_token);
+	outer_param.set_registered_type_index(
+		arg.type_index.withCategory(arg.typeEnum()));
+	return outer_param;
+}

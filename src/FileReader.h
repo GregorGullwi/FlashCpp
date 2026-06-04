@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <functional>
 #include <variant>
+#include <span>
 #include <chrono>
 #include <cstddef> // for std::max_align_t and std::size_t
 #include <cstdio> // for std::snprintf

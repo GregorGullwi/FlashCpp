@@ -79,6 +79,7 @@
 #include "ExpressionSubstitutor.cpp"
 #include "ConstExprEvaluator_Core.cpp"
 #include "ConstExprEvaluator_Members.cpp"
+#include "StringLiteralTokenUtils.cpp"
 #include "SemanticAnalysis.cpp"
 #endif
 

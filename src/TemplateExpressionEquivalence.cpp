@@ -961,4 +961,130 @@ size_t hashDependentExpressionIdentity(const ASTNode& node) {
 	return hashDependentExpressionIdentityImpl(node);
 }
 
+bool NonTypeValueIdentity::operator==(const NonTypeValueIdentity& other) const {
+	if (is_dependent != other.is_dependent)
+		return false;
+	if (is_dependent) {
+		if (dependent_expression.has_value() || other.dependent_expression.has_value()) {
+			return dependent_expression.has_value() == other.dependent_expression.has_value() &&
+				   equalValueTypeIdentity(value_type_index, other.value_type_index) &&
+				   (!dependent_expression.has_value() ||
+					equalDependentExpressionIdentity(*dependent_expression, *other.dependent_expression));
+		}
+		return dependent_name == other.dependent_name;
+	}
+	if (kind != other.kind ||
+		!equalValueTypeIdentity(value_type_index, other.value_type_index)) {
+		return false;
+	}
+	switch (kind) {
+	case NonTypeValueIdentityKind::Integral:
+	case NonTypeValueIdentityKind::Floating:
+	case NonTypeValueIdentityKind::StructuralClass:
+	case NonTypeValueIdentityKind::Unsupported:
+		return value == other.value;
+	case NonTypeValueIdentityKind::Nullptr:
+		return true;
+	case NonTypeValueIdentityKind::ObjectPointer:
+		return entity_name == other.entity_name &&
+			   pointer_offset == other.pointer_offset;
+	case NonTypeValueIdentityKind::Reference:
+	case NonTypeValueIdentityKind::FunctionPointer:
+		return entity_name == other.entity_name;
+	case NonTypeValueIdentityKind::MemberPointer:
+		if (isNullMemberPointer() && other.isNullMemberPointer()) {
+			return true;
+		}
+		return member_name == other.member_name &&
+			   member_class_name == other.member_class_name &&
+			   function_signature.has_value() == other.function_signature.has_value() &&
+			   (!function_signature.has_value() ||
+				equalFunctionSignatureIdentity(*function_signature, *other.function_signature)) &&
+			   value == other.value;
+	}
+	return false;
+}
+
+size_t NonTypeValueIdentity::hash() const {
+	size_t h = std::hash<bool>{}(is_dependent);
+	if (is_dependent) {
+		if (dependent_expression.has_value()) {
+			h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= hashDependentExpressionIdentity(*dependent_expression) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		} else if (dependent_name.isValid()) {
+			h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
+	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	if (!(kind == NonTypeValueIdentityKind::MemberPointer && !member_name.isValid())) {
+		h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	if (entity_name.isValid()) {
+		h ^= std::hash<StringHandle>{}(entity_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	if (member_name.isValid()) {
+		h ^= std::hash<StringHandle>{}(member_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	} else if (kind == NonTypeValueIdentityKind::MemberPointer) {
+		h ^= std::hash<uint8_t>{}(0x5a) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	if (member_class_name.isValid()) {
+		h ^= std::hash<StringHandle>{}(member_class_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	if (kind == NonTypeValueIdentityKind::ObjectPointer) {
+		h ^= std::hash<int64_t>{}(pointer_offset) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	if (function_signature.has_value()) {
+		h ^= hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	h ^= hashValueTypeIdentity(value_type_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	return h;
+}
+
+std::string NonTypeValueIdentity::toString() const {
+	if (is_dependent && dependent_expression.has_value()) {
+		char buf[17];
+		snprintf(buf, sizeof(buf), "%016zx", hashDependentExpressionIdentity(*dependent_expression));
+		StringBuilder builder;
+		builder.append("dep_expr$");
+		builder.append(std::string_view(buf));
+		return std::string(builder.commit());
+	}
+	if (is_dependent && dependent_name.isValid()) {
+		return std::string(StringTable::getStringView(dependent_name));
+	}
+	if (valueTypeCategory() == TypeCategory::Bool) {
+		return value != 0 ? "true" : "false";
+	}
+	if (kind == NonTypeValueIdentityKind::Nullptr) {
+		return "nullptr";
+	}
+	if (entity_name.isValid()) {
+		std::string result;
+		if (kind == NonTypeValueIdentityKind::ObjectPointer ||
+			kind == NonTypeValueIdentityKind::FunctionPointer) {
+			result += "&";
+		}
+		result += StringTable::getStringView(entity_name);
+		if (pointer_offset != 0) {
+			result += "+";
+			result += std::to_string(pointer_offset);
+		}
+		return result;
+	}
+	if (member_name.isValid()) {
+		std::string result = "&";
+		if (member_class_name.isValid()) {
+			result += StringTable::getStringView(member_class_name);
+			result += "::";
+		}
+		result += StringTable::getStringView(member_name);
+		return result;
+	}
+	if (isNullMemberPointer()) {
+		return "nullptr";
+	}
+	return std::to_string(value);
+}
+
 } // namespace FlashCpp

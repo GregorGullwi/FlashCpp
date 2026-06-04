@@ -4,14 +4,12 @@
 #include "TemplateRegistry.h"
 #include "StringTable.h"
 #include "Log.h"
+#include "Parser.h"
 #include <vector>
 #include <optional>
 #include <string_view>
 #include <string>
 #include <unordered_map>
-
-// Forward declarations
-class Parser;
 
 /// @file TemplateInstantiationHelper.h
 /// @brief Shared utilities for template function instantiation used by both

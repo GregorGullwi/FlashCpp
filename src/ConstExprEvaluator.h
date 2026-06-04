@@ -21,6 +21,7 @@ class SymbolTable;
 struct TypeInfo;
 class Parser;  // For template instantiation
 class SemanticAnalysis;
+class QualifiedIdentifierNode;
 
 /// @file ConstExprEvaluator.h
 /// @brief Constant expression evaluation for static_assert, constexpr variables, etc.
@@ -548,6 +549,14 @@ struct EvaluationContext {
 	EvaluationContext(const SymbolTable& symbol_table, Parser& parser_owner);
 	EvaluationContext(const SymbolTable& symbol_table, SemanticAnalysis& sema_owner);
 };
+
+struct MemberPointerTarget {
+	StringHandle member_name;
+	int64_t offset = 0;
+};
+
+std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id);
+EvalResult validateConstexprRead(const EvalResult& heap_val);
 
 // Main constant expression evaluator class
 class Evaluator {
