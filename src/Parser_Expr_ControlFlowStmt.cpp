@@ -896,6 +896,13 @@ ParseResult Parser::parse_lambda_expression() {
 	// AND validation that all return paths return the same type
 	if (!return_type.has_value() ||
 		(return_type->is<TypeSpecifierNode>() && isPlaceholderAutoType(return_type->as<TypeSpecifierNode>().type()))) {
+		// Determine the placeholder type: no explicit return → auto, otherwise
+		// use the actual type (auto, decltype(auto), etc.) from the trailing-return.
+		TypeCategory placeholder_type = TypeCategory::Auto;
+		if (return_type.has_value() && return_type->is<TypeSpecifierNode>()) {
+			placeholder_type = return_type->as<TypeSpecifierNode>().type();
+		}
+
 		const bool lambda_has_template_or_auto_params =
 			!template_param_names.empty() ||
 			std::any_of(parameters.begin(), parameters.end(), [](const ASTNode& param_node) {
@@ -916,11 +923,10 @@ ParseResult Parser::parse_lambda_expression() {
 					// The guard in get_expression_type will prevent infinite recursion
 					auto expr_type_opt = get_expression_type(*ret.expression());
 					if (expr_type_opt.has_value()) {
-						// For plain auto (the common case), strip top-level references and
-						// cv-qualifiers per C++ [dcl.spec.auto]/6 (template argument deduction).
-						// If the lambda later switches to decltype(auto), the qualifiers come
-						// back through the sema re-deduction path in normalizeLambda.
-						TypeSpecifierNode finalized_type = finalizePlaceholderTypeDeduction(TypeCategory::Auto, *expr_type_opt);
+						// Apply placeholder type deduction rules:
+						// - For auto: strip top-level references and cv-qualifiers per [dcl.spec.auto]/6.
+						// - For decltype(auto): preserve the exact type including references.
+						TypeSpecifierNode finalized_type = finalizePlaceholderTypeDeduction(placeholder_type, *expr_type_opt);
 
 						// Store this return type for validation
 						all_return_types.emplace_back(finalized_type, lambda_token);
@@ -941,12 +947,12 @@ ParseResult Parser::parse_lambda_expression() {
 						// re-deduce after call-site substitution.
 						if (!deduced_type.has_value()) {
 							deduced_type = lambda_has_template_or_auto_params
-								? TypeSpecifierNode(TypeCategory::Auto, TypeQualifier::None, 0, Token{}, CVQualifier::None)
+								? TypeSpecifierNode(placeholder_type, TypeQualifier::None, 0, Token{}, CVQualifier::None)
 								: TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 							all_return_types.emplace_back(*deduced_type, lambda_token);
 							FLASH_LOG(Parser, Debug,
 									  lambda_has_template_or_auto_params
-										  ? "Lambda return type kept as auto (type resolution failed)"
+										  ? "Lambda return type kept as placeholder (type resolution failed)"
 										  : "Lambda return type defaulted to int (type resolution failed)");
 						}
 					}

@@ -703,6 +703,8 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	func_decl_op.return_pointer_depth = PointerDepth{};	// pointer depth
 	func_decl_op.linkage = Linkage::None;  // C++ linkage
 	func_decl_op.is_variadic = false;
+	func_decl_op.returns_reference = lambda_info.return_ref_qualifier != ReferenceQualifier::None;
+	func_decl_op.returns_rvalue_reference = lambda_info.return_ref_qualifier == ReferenceQualifier::RValueReference;
 
 	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 	// Only non-pointer, non-reference struct returns need this
@@ -865,6 +867,8 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	func_decl_op.return_pointer_depth = PointerDepth{};	// pointer depth
 	func_decl_op.linkage = Linkage::None;  // C++ linkage
 	func_decl_op.is_variadic = false;
+	func_decl_op.returns_reference = lambda_info.return_ref_qualifier != ReferenceQualifier::None;
+	func_decl_op.returns_rvalue_reference = lambda_info.return_ref_qualifier == ReferenceQualifier::RValueReference;
 
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
