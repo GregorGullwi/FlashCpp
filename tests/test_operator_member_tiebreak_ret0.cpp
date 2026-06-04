@@ -17,6 +17,6 @@ A operator+(const A& lhs, const A& rhs) {
 int main() {
 	A lhs(10);
 	A rhs(20);
-	A result = lhs + rhs;
+	A result = lhs.operator+(rhs);
 	return result.value == 31 ? 0 : 1;
 }

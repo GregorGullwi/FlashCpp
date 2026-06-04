@@ -21,5 +21,5 @@ int Sum<T>::add(U left, U right) {
 
 int main() {
 	Sum<int> sum;
-	return sum.add(40, 2) == 42 ? 0 : 1;
+	return sum.add(40, 2.0) == 42 ? 0 : 1;
 }

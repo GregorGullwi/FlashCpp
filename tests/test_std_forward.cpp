@@ -1,4 +1,26 @@
 // Test std::forward intrinsic for perfect forwarding
+namespace std {
+	template <typename T>
+	struct remove_reference {
+		using type = T;
+	};
+	template <typename T>
+	struct remove_reference<T&> {
+		using type = T;
+	};
+	template <typename T>
+	struct remove_reference<T&&> {
+		using type = T;
+	};
+	template <typename T>
+	constexpr T&& forward(typename remove_reference<T>::type& value) noexcept {
+		return static_cast<T&&>(value);
+	}
+	template <typename T>
+	constexpr T&& forward(typename remove_reference<T>::type&& value) noexcept {
+		return static_cast<T&&>(value);
+	}
+}
 
 // Utility function that uses std::forward
 template <typename T>
@@ -27,7 +49,7 @@ void make_and_consume_simple(T&& a, U&& b, V&& c) {
 int main() {
 	// Test 1: Simple forward
 	int x = 42;
-	int&& result = my_forward(x);
+	auto&& result = my_forward(x);
 
 	// Test 2: Forward in variadic context
 	forward_all(1, 2.5, 'a');

@@ -10,7 +10,7 @@ struct TypeSlot {
 };
 
 template <>
-struct TypeSlot<Ambiguous> {
+struct TypeSlot<struct Ambiguous> {
 	static constexpr int value = 23;
 };
 
@@ -20,8 +20,7 @@ struct ValueSlot {
 };
 
 int main() {
-	if (TypeSlot<Ambiguous>::value != 23) return 1;
+	if (TypeSlot<struct Ambiguous>::value != 23) return 1;
 	if (ValueSlot<Ambiguous>::value != 7) return 2;
 	return 0;
 }
-

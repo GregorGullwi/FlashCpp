@@ -2,7 +2,7 @@
 // This pattern is used in <type_traits> at line 1841
 
 class TestClass {
-protected:
+public:
 	// Primary template
 	template <typename...>
 	struct List {
@@ -19,5 +19,5 @@ protected:
 int main() {
 	// Instantiate template - the static constexpr members now parse correctly
 	TestClass::List<int, char, float> list;
-	return 1;  // Return 1 for the size value
+	return decltype(list)::size;
 }

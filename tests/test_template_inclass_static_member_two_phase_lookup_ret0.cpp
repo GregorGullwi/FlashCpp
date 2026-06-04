@@ -1,7 +1,7 @@
 // In-class template static member initializer should keep definition-time lookup.
 // Post-definition overloads must not replace the already-recorded non-dependent call.
 
-int select_overload(long) {
+constexpr int select_overload(long) {
 	return 1;
 }
 
@@ -10,15 +10,15 @@ struct Holder {
 	static constexpr int value = select_overload(0);
 };
 
-int select_overload(int) {
+constexpr int select_overload(int) {
 	return 2;
 }
 
-int select_overload(short) {
+constexpr int select_overload(short) {
 	return 3;
 }
 
-int select_overload(unsigned) {
+constexpr int select_overload(unsigned) {
 	return 4;
 }
 

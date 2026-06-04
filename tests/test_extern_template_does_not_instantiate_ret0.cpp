@@ -4,7 +4,9 @@
 
 template <typename T>
 struct ShouldNotInstantiate {
-	static_assert(sizeof(T) == 0, "extern template declaration instantiated template");
+	void member() {
+		static_assert(sizeof(T) == 0, "extern template member was instantiated");
+	}
 };
 
 extern template class ShouldNotInstantiate<int>;

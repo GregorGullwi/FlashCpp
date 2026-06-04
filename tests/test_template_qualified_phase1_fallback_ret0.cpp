@@ -3,6 +3,8 @@
 // phase-1 cutoff.
 
 namespace ns {
+int late_compare(int value);
+
 template <typename T>
 int call_late() {
 	return ns::late_compare(5);

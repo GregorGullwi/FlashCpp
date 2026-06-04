@@ -1,9 +1,12 @@
 // Comprehensive C++20 Concepts Test
 // Demonstrates basic concept features currently supported
 
-// Simple boolean concept
+// Simple template concepts
+template <typename T>
 concept AlwaysTrue = true;
+template <typename T>
 concept SimpleIntegral = true;
+template <typename T>
 concept SimpleFloating = false;
 
 // Template-based concepts

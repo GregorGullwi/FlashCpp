@@ -22,11 +22,7 @@ struct enable_if<true, T> {
 // The parser needs to understand that "false_type" here refers to a type whose ::value should be accessed
 template <typename T>
 struct test {
-	// This line tries to use false_type in an expression context (as part of !false_type::value)
-	// But in simplified form, if we just pass "false_type" as a template argument expression...
-	// Actually, let's try something similar to what might be in the template arguments
-
-	using type = typename enable_if<false_type::value, int>::type;
+	using type = typename enable_if<false_type::value && (sizeof(T) == 0), int>::type;
 };
 
 int main() {

@@ -10,11 +10,11 @@ int main() {
 
 	int score = 0;
 	// Direct <=> call
-	int cmp1 = a <=> b;	// 5 <=> 10 = -1
+	auto cmp1 = a <=> b;	// 5 <=> 10 = -1
 	if (cmp1 < 0)
 		score += 1;
 
-	int cmp2 = b <=> a;	// 10 <=> 5 = 1
+	auto cmp2 = b <=> a;	// 10 <=> 5 = 1
 	if (cmp2 > 0)
 		score += 2;
 

@@ -1,6 +1,6 @@
 // Test static constexpr members in member struct template partial specialization
 class TestClass {
-protected:
+public:
 	// Primary template
 	template <typename...>
 	struct List {
@@ -19,6 +19,5 @@ int main() {
 	TestClass::List<int> list1;
 	TestClass::List<int, char> list2;
 
-	// Return 4 for sizeof(int)
-	return 4;
+	return decltype(list1)::size + (decltype(list2)::size - decltype(list1)::size);
 }
