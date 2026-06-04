@@ -23,8 +23,10 @@ trailing return clauses against materialized parameter declarations and keeps
 bound member-pointer metadata intact in the non-explicit parameter
 materialization path, so dependent trailing-return `decltype` no longer drops
 reference qualification or pointer-to-member owner identity. The biggest
-remaining gap is keeping every replay/materialization path equally
-evidence-driven rather than shape-driven.
+remaining gaps are (1) keeping every replay/materialization path equally
+evidence-driven rather than shape-driven and (2) finishing the last hard
+diagnostic cleanup around no-viable dependent callable-object `operator()`
+cases.
 
 ## What the current design can assume
 
@@ -46,6 +48,11 @@ evidence-driven rather than shape-driven.
   argument typing and the same receiver-const candidate partitioning used by
   direct member-call lookup, so normalized subscripts no longer bind non-const
   members through const receivers or lose lvalue/rvalue index evidence
+- semantic receiverless callable `operator()` resolution for dependent/local
+  callable objects now also shares sema-owned overload-resolution argument
+  typing plus receiver-const candidate partitioning, so template-instantiated
+  functors no longer depend on reduced expression typing for lvalue/rvalue or
+  const overload selection
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
@@ -129,9 +136,11 @@ Tightening those is the next best cleanup target.
 3. Extend sema-owned lookup unification where it unlocks step 2.
    The recent member-call fix closed one concrete gap by replacing parser-owned
    call-argument typing inside sema with normalized semantic argument typing,
-   and the 2026-06-04 follow-up applied the same model to semantic
-   `operator[]` resolution. The next useful expansion is to audit the remaining
-   semantic call-resolution sites that still do not share that collector or the
+   and the 2026-06-04 follow-ups applied the same model to semantic
+   `operator[]` and dependent/local callable `operator()` resolution. The next
+   useful expansion is to finish the remaining hard diagnostic cleanup around
+   no-viable dependent callable objects, then audit any other semantic
+   call-resolution sites that still do not share that collector or the
    receiver-aware candidate partitioning around it.
 
 4. Extend dependent-name modeling only where it unlocks steps 2 and 3.
@@ -157,16 +166,22 @@ Tightening those is the next best cleanup target.
 
 1. Audit the remaining semantic call-resolution entry points that do not yet
    share `tryCollectOverloadResolutionArgTypes(...)` or the shared
-   receiver-aware candidate partitioning, especially callable-operator and
-   other normalized-call paths beyond the now-fixed `operator[]` route.
+   receiver-aware candidate partitioning beyond the now-fixed `operator[]` and
+   dependent/local callable `operator()` routes.
 
-2. Tighten the remaining replay-attachment sites that can still succeed without
+2. Finish the hard diagnostic follow-up for dependent callable objects: a local
+   scratch `const Callable& c; c(...)` negative case still found an older path
+   that compiled after sema declined to resolve a viable `operator()`, so the
+   next callable slice should make that failure sema-owned and add a stable
+   `_fail` regression.
+
+3. Tighten the remaining replay-attachment sites that can still succeed without
    positive substituted-signature evidence outside the now-hardened plain-member,
    member-template, and constructor-template routes.
 
-3. Expand current-instantiation / unknown-specialization modeling only for the
+4. Expand current-instantiation / unknown-specialization modeling only for the
    concrete cases that still block standards-conforming typed lookup after steps
-   1 and 2.
+   1-3.
 
 ## 2026-06-04 dependent decltype trailing-return note
 
@@ -265,6 +280,42 @@ Validated with:
 - `test_generic_lambda_recursive_self_ret0.cpp`
 - `test_lambda_cpp20_comprehensive_ret135.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-04
+
+## 2026-06-04 dependent callable operator() sema note
+
+Continuing the same call-resolution audit found that receiverless dependent
+callable-object resolution still lagged behind direct member calls and
+`operator[]`: `SemanticAnalysis::tryResolveCallableOperatorImpl` still used
+reduced expression typing and did not partition candidates by receiver
+constness before fallback selection. That left template-instantiated functor
+calls vulnerable to stale lvalue/rvalue collapse and const/non-const drift even
+though the concrete callable type was already known in sema.
+
+This slice now:
+
+- routes dependent/local callable `operator()` overload selection through
+  sema-owned overload-resolution argument typing
+- partitions callable candidates with the same receiver-const rule already used
+  by direct member calls and semantic `operator[]`
+- keeps the codegen-side callable hard-stop narrow enough to preserve recursive
+  lambda self forwarding while still treating sema-analyzed absent struct
+  callable targets as invalid in the covered path
+
+Validated with:
+
+- `test_template_callable_operator_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_operator_call_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_callable_sema_resolved_ret0.cpp`
+- `test_template_out_of_line_operator_call_ret0.cpp`
+- `test_generic_lambda_recursive_self_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
+
+Remaining debt:
+
+- a local scratch negative case (`const Callable& c; c(...)` with only a
+  non-const call operator) still found an older compile-through path, so the
+  next callable follow-up should add a sema-owned hard diagnostic and land a
+  stable `_fail` regression for that case
 
 ## 2026-06-02 constexpr lambda capture-lowering note
 
