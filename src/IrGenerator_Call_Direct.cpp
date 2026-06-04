@@ -568,12 +568,39 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	if (func_ptr_decl) {
 		const auto& func_type = func_ptr_decl->type_specifier_node();
-		const ResolvedFunctionQueryResult resolved_operator_call_query =
+		const TypeInfo* callable_owner_type_info =
+			(func_type.type_index().is_valid() &&
+			 !func_type.is_function_pointer() &&
+			 !func_type.has_function_signature())
+				? resolveToConcreteStructTypeInfo(func_type.type_index())
+				: nullptr;
+		const bool callee_is_struct_callable =
+			callable_owner_type_info != nullptr &&
+			callable_owner_type_info->getStructInfo() != nullptr;
+		ResolvedFunctionQueryResult resolved_operator_call_query =
 			sema_services.getResolvedOpCallQuery(sema_call_key);
+		if (callee_is_struct_callable &&
+			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+			sema_services.ensureCallableOperatorResolved(callExprNode);
+			resolved_operator_call_query = sema_services.getResolvedOpCallQuery(sema_call_key);
+		}
 		const FunctionDeclarationNode* resolved_operator_call =
 			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::Available
 				? resolved_operator_call_query.function
 				: nullptr;
+		const bool recursive_self_forward_pattern = [&]() {
+			if (!current_lambda_context_.isActive()) {
+				return false;
+			}
+			const auto call_args = callExprNode.arguments();
+			if (call_args.size() == 0 || !call_args[0].is<ExpressionNode>()) {
+				return false;
+			}
+			const ExpressionNode& first_arg_expr = call_args[0].as<ExpressionNode>();
+			const auto* first_arg_id = std::get_if<IdentifierNode>(&first_arg_expr);
+			return first_arg_id != nullptr &&
+				first_arg_id->name() == func_name_view;
+		}();
 
 		if (resolved_operator_call) {
 			ChunkedVector<ASTNode> member_args;
@@ -593,6 +620,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (sema_normalized_current_function_ &&
 			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 			throw InternalError("Normalized direct operator() query remained NotYetAnalyzed");
+		}
+		if (!resolved_operator_call &&
+			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent &&
+			callee_is_struct_callable &&
+			!recursive_self_forward_pattern) {
+			throw CompileError(
+				std::string("callable object '") +
+				std::string(func_name_view) +
+				"' has no matching operator()");
 		}
 
 		// Check if this is a function pointer or a substituted function type carrying

@@ -36,6 +36,11 @@ Move FlashCpp toward a sema-owned template system where:
   overload-resolution argument typing plus receiver-const candidate filtering,
   so normalized subscripts preserve lvalue/rvalue index evidence and do not
   bind non-const members through const receivers
+- semantic receiverless callable `operator()` resolution for dependent/local
+  callable objects now also uses sema-owned overload-resolution argument typing
+  plus receiver-const candidate filtering, so template-instantiated functors no
+  longer rely on reduced expression typing for const or lvalue/rvalue overload
+  selection
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -103,11 +108,12 @@ unknown-specialization modeling only where it unblocks those paths.
 
 3. Unify the remaining semantic call-resolution entry points around the same
    sema-owned overload-resolution argument collector now used for normalized
-   template/member direct calls. A 2026-06-04 follow-up closed the concrete
-   `operator[]` gap by sharing receiver-aware candidate filtering plus sema-
-   owned index typing with direct member-call resolution. This is still the
-   shortest path to preventing stale parser-selected targets from surviving
-   semantic normalization.
+   template/member direct calls. The 2026-06-04 follow-ups closed the concrete
+   `operator[]` and dependent/local callable `operator()` gaps by sharing
+   receiver-aware candidate filtering plus sema-owned argument typing with
+   direct member-call resolution. The next step here is the remaining hard
+   diagnostic cleanup for no-viable dependent callable objects, then any other
+   residual semantic call sites still outside that model.
 
 4. Expand current-instantiation, dependent-base, and unknown-specialization
    handling only where that unblocks steps 2 and 3.
@@ -131,13 +137,19 @@ unknown-specialization modeling only where it unblocks those paths.
 1. Apply the sema-owned overload-resolution argument collector and the shared
    receiver-aware candidate partitioning to the remaining semantic
    call-resolution sites that still rely on parser-owned expression typing or
-   reduced argument modeling beyond the now-fixed `operator[]` route.
+   reduced argument modeling beyond the now-fixed `operator[]` and
+   dependent/local callable `operator()` routes.
 
-2. Continue deleting replay-attachment acceptance paths that still allow
+2. Add a sema-owned hard diagnostic and `_fail` regression for the remaining
+   dependent callable-object no-viable case discovered in this slice:
+   `const Callable& c; c(...)` can still compile through an older path after
+   sema declines to resolve a viable `operator()`.
+
+3. Continue deleting replay-attachment acceptance paths that still allow
    insufficient substituted-signature evidence outside the now-hardened member
    and constructor routes.
 
-3. Only after those are stable, extend current-instantiation and
+4. Only after those are stable, extend current-instantiation and
    unknown-specialization modeling for the specific unresolved cases that remain.
 
 ## 2026-06-04 dependent decltype conformance note
@@ -241,6 +253,41 @@ Validated with:
 - `test_generic_lambda_recursive_self_ret0.cpp`
 - `test_lambda_cpp20_comprehensive_ret135.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-04
+
+## 2026-06-04 dependent callable operator() conformance note
+
+The next live callable conformance gap was not another parser issue. It was the
+late semantic resolution path for receiverless dependent/local callable objects:
+`SemanticAnalysis::tryResolveCallableOperatorImpl` still classified overloads
+from reduced expression typing and did not partition candidates by receiver
+constness before fallback selection. That meant a template-instantiated functor
+call could preserve the wrong overload category even after the concrete
+callable type was known.
+
+The fix now:
+
+- reuses sema-owned overload-resolution argument typing for dependent/local
+  callable `operator()` calls
+- applies the same receiver-const candidate filtering used by ordinary member
+  calls and semantic `operator[]`
+- preserves recursive lambda self forwarding while treating sema-analyzed
+  absent struct-callable targets as invalid in the covered codegen path
+
+Validated with:
+
+- `test_template_callable_operator_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_operator_call_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_callable_sema_resolved_ret0.cpp`
+- `test_template_out_of_line_operator_call_ret0.cpp`
+- `test_generic_lambda_recursive_self_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
+
+Remaining conformance debt:
+
+- a local scratch negative case (`const Callable& c; c(...)` with only a
+  non-const call operator) still compiles through an older path, so this slice
+  deliberately stops short of adding the `_fail` regression until that
+  diagnostic is made fully sema-owned
 
 ## 2026-06-04 non-standard template test cleanup
 

@@ -548,6 +548,8 @@ private:
 										   const char* context_description);
 	const FunctionDeclarationNode* resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																 const void* call_key);
+	const TypeInfo* tryResolveStructOwnerTypeInfo(const TypeInfo* type_info) const;
+	const StructTypeInfo* tryResolveLocalCallableStructInfo(StringHandle callee_name) const;
 	struct ResolvedMemberAccessInfo {
 		TypeIndex owner_type_index{};
 		size_t member_index = 0;

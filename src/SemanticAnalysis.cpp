@@ -7344,13 +7344,10 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 		return;
 
 	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-	if (callee_desc.category() != TypeCategory::Struct)
+	if (callee_desc.category() != TypeCategory::Struct &&
+		callee_desc.category() != TypeCategory::UserDefined)
 		return;
-	const TypeInfo* callee_type_info = tryGetTypeInfo(callee_desc.type_index);
-	if (!callee_type_info)
-		return;
-
-	const StructTypeInfo* struct_info = callee_type_info->getStructInfo();
+	const StructTypeInfo* struct_info = tryResolveLocalCallableStructInfo(callee_name);
 	if (!struct_info)
 		return;
 
@@ -7362,28 +7359,40 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	if (candidates.empty())
 		return;
 
-	std::vector<TypeSpecifierNode> arg_types;
-	arg_types.reserve(arg_count);
-	bool all_types_known = true;
-	for (const ASTNode& arg : arguments) {
-		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-		if (arg_type_id) {
-			arg_types.push_back(materializeTypeSpecifier(type_context_.get(arg_type_id)));
-		} else {
-			all_types_known = false;
-			break;
-		}
-	}
+	const bool receiver_is_const =
+		(static_cast<uint8_t>(callee_desc.base_cv) &
+		 static_cast<uint8_t>(CVQualifier::Const)) != 0;
+	InlineVector<ASTNode, 8> preferred_candidates;
+	InlineVector<ASTNode, 8> compatible_candidates;
+	partitionMemberOverloadsByReceiverConstness(
+		candidates,
+		receiver_is_const,
+		preferred_candidates,
+		compatible_candidates);
 
 	const FunctionDeclarationNode* best_match = nullptr;
 	bool explicitly_ambiguous = false;
-	if (all_types_known) {
-		const OverloadResolutionResult result = resolve_overload(candidates, arg_types);
-		if (result.has_match && !result.is_ambiguous) {
-			best_match = &result.selected_overload->as<FunctionDeclarationNode>();
-		}
-		if (result.is_ambiguous) {
-			explicitly_ambiguous = true;
+
+	InlineVector<TypeSpecifierNode, 6> arg_types;
+	const bool arg_types_collected =
+		tryCollectOverloadResolutionArgTypes(arguments, arg_types);
+	if (arg_types_collected) {
+		bool preferred_ambiguous = false;
+		best_match = tryResolveUniqueOverloadByArgTypes(
+			preferred_candidates,
+			arg_types,
+			&preferred_ambiguous);
+		explicitly_ambiguous = preferred_ambiguous;
+
+		if (!best_match &&
+			!explicitly_ambiguous &&
+			!sameOverloadSet(preferred_candidates, compatible_candidates)) {
+			bool compatible_ambiguous = false;
+			best_match = tryResolveUniqueOverloadByArgTypes(
+				compatible_candidates,
+				arg_types,
+				&compatible_ambiguous);
+			explicitly_ambiguous = compatible_ambiguous;
 		}
 	}
 	if (normalized_call || explicitly_ambiguous) {
@@ -7393,9 +7402,11 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 	}
 
 	if (!best_match && !explicitly_ambiguous) {
+		InlineVector<ASTNode, 8> ordered_candidates = preferred_candidates;
+		appendUniqueOverloads(ordered_candidates, compatible_candidates);
 		const FunctionDeclarationNode* default_argument_match = nullptr;
 		bool default_argument_match_ambiguous = false;
-		for (const auto& candidate_node : candidates) {
+		for (const auto& candidate_node : ordered_candidates) {
 			const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
 			if (!candidate.is_variadic() && candidate.parameter_nodes().size() == arg_count) {
 				best_match = &candidate;
@@ -7813,20 +7824,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			qualified_name.substr(scope_sep + 2)
 		};
 	};
-	auto resolveStructOwnerType = [&](const TypeInfo* type_info) -> const TypeInfo* {
-		constexpr size_t kMaxAliasDepth = 100;
-		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
-			if (type_info->getStructInfo()) {
-				return type_info;
-			}
-			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
-			if (!underlying || underlying == type_info) {
-				break;
-			}
-			type_info = underlying;
-		}
-		return nullptr;
-	};
 	auto appendOwnerMemberOverloads = [&](const TypeInfo* owner_type,
 										  std::string_view member_name,
 										  std::vector<ASTNode>& target) {
@@ -7858,7 +7855,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (!owner_type) {
 			return;
 		}
-		if (const TypeInfo* resolved_owner = resolveStructOwnerType(owner_type)) {
+		if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(owner_type)) {
 			appendFromStruct(resolved_owner->getStructInfo());
 			if (resolved_owner->isTemplateInstantiation()) {
 				auto pattern_it = getTypesByNameMap().find(resolved_owner->baseTemplateName());
@@ -7875,7 +7872,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				**call_info.dependent_qualified_lookup_record;
 			if (dependent_record.owner_type.is_valid()) {
 				if (const TypeInfo* owner_from_record = tryGetTypeInfo(dependent_record.owner_type)) {
-					return resolveStructOwnerType(owner_from_record);
+					return tryResolveStructOwnerTypeInfo(owner_from_record);
 				}
 			}
 		}
@@ -7910,7 +7907,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (!type_info) {
 			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
 		}
-		return resolveStructOwnerType(type_info);
+		return tryResolveStructOwnerTypeInfo(type_info);
+	};
+	auto resolveLocalCallableStructInfo = [&]() -> const StructTypeInfo* {
+		if (call_info.has_receiver) {
+			return nullptr;
+		}
+		return tryResolveLocalCallableStructInfo(callee_decl.identifier_token().handle());
 	};
 	if (call_info.is_indirect) {
 		return nullptr;
@@ -7937,7 +7940,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			if (receiver_type_info == nullptr) {
 				return nullptr;
 			}
-			if (const TypeInfo* resolved_owner = resolveStructOwnerType(receiver_type_info)) {
+			if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(receiver_type_info)) {
 				return resolved_owner->getStructInfo();
 			}
 			return nullptr;
@@ -8043,6 +8046,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 	if (func_decl)
 		return func_decl;
+	if (resolveLocalCallableStructInfo() != nullptr &&
+		op_call_query.state != ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+		return nullptr;
+	}
 
 	if (!normalized_call) {
 		if (const FunctionDeclarationNode* mangled_candidate =
@@ -8343,6 +8350,51 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	return result;
 }
 
+const TypeInfo* SemanticAnalysis::tryResolveStructOwnerTypeInfo(const TypeInfo* type_info) const {
+	constexpr size_t kMaxAliasDepth = 100;
+	for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
+		if (type_info->getStructInfo()) {
+			return type_info;
+		}
+		const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+		if (!underlying || underlying == type_info) {
+			break;
+		}
+		type_info = underlying;
+	}
+	return nullptr;
+}
+
+const StructTypeInfo* SemanticAnalysis::tryResolveLocalCallableStructInfo(StringHandle callee_name) const {
+	if (!callee_name.isValid()) {
+		return nullptr;
+	}
+	const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
+	if (!callee_type_id) {
+		return nullptr;
+	}
+	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
+	const TypeInfo* callee_type_info = nullptr;
+	if (callee_desc.category() == TypeCategory::Struct ||
+		callee_desc.category() == TypeCategory::UserDefined) {
+		callee_type_info = tryGetTypeInfo(callee_desc.type_index);
+		if (!callee_type_info &&
+			callee_desc.category() == TypeCategory::UserDefined &&
+			callee_desc.type_index.is_valid()) {
+			const ResolvedAliasTypeInfo resolved_alias =
+				resolveAliasTypeInfo(callee_desc.type_index);
+			callee_type_info = resolved_alias.terminal_type_info;
+		}
+	}
+	if (callee_type_info == nullptr) {
+		return nullptr;
+	}
+	if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(callee_type_info)) {
+		return resolved_owner->getStructInfo();
+	}
+	return nullptr;
+}
+
 void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_expr_node,
 														 const CallInfo& call_info,
 														 const void* call_key,
@@ -8352,6 +8404,29 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
+		auto hasDiagnosableLocalCallableMiss = [&]() -> bool {
+			if (call_info.has_receiver || call_info.is_indirect) {
+				return false;
+			}
+			const ResolvedFunctionQueryResult op_call_query =
+				getResolvedOpCallQuery(call_key);
+			if (op_call_query.state != ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
+				return false;
+			}
+			const StringHandle callee_name = callee_decl.identifier_token().handle();
+			if (tryResolveLocalCallableStructInfo(callee_name) == nullptr) {
+				return false;
+			}
+			InlineVector<TypeSpecifierNode, 6> arg_types;
+			return tryCollectOverloadResolutionArgTypes(*call_info.arguments, arg_types);
+		};
+		if (hasDiagnosableLocalCallableMiss()) {
+			throw CompileError(
+				std::string("callable object '") +
+				std::string(callee_decl.identifier_token().value()) +
+				"' has no matching operator()");
+		}
+
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
 		const std::string_view call_name = call_info.qualified_name.isValid()
 											   ? call_info.qualified_name.view()
@@ -8368,6 +8443,33 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 		}
 		resolved_direct_call_table_.erase(call_key);
 		return;
+	}
+	auto localCallableReceiverIsConst = [&]() -> bool {
+		if (call_info.has_receiver || call_info.is_indirect) {
+			return false;
+		}
+		const StringHandle callee_name = callee_decl.identifier_token().handle();
+		if (!callee_name.isValid()) {
+			return false;
+		}
+		const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
+		if (!callee_type_id) {
+			return false;
+		}
+		const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
+		return (static_cast<uint8_t>(callee_desc.base_cv) &
+				static_cast<uint8_t>(CVQualifier::Const)) != 0;
+	};
+	if (!call_info.has_receiver &&
+		!call_info.is_indirect &&
+		!func_decl->parent_struct_name().empty() &&
+		!func_decl->is_static() &&
+		!func_decl->is_const_member_function() &&
+		localCallableReceiverIsConst()) {
+		throw CompileError(
+			std::string("callable object '") +
+			std::string(callee_decl.identifier_token().value()) +
+			"' cannot call non-const operator() through a const receiver");
 	}
 
 	// Phase 5 Slices B & C: if the selected call target is a lazily-registered
