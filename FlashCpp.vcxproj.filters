@@ -356,6 +356,9 @@
     <ClInclude Include="src\Log.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\MemberFunctionLookupShared.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\NameMangling.h">
       <Filter>Header Files</Filter>
     </ClInclude>

@@ -588,7 +588,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				*resolved_operator_call,
 				std::move(member_args),
 				callExprNode.called_from());
-			return generateMemberFunctionCallIr(member_call, context);
+			return generateMemberFunctionCallIr(member_call, context, sema_call_key);
 		}
 		if (sema_normalized_current_function_ &&
 			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
@@ -658,12 +658,26 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 
 		bool is_recursive_lambda_self = false;
-		if (current_lambda_context_.isActive() && func_type.category() == TypeCategory::Struct &&
-			func_type.is_rvalue_reference()) {
+		if (current_lambda_context_.isActive() &&
+			(func_type.is_rvalue_reference() || func_type.is_reference())) {
 			auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 			if (closure_type_it != getTypesByNameMap().end() &&
 				func_type.type_index() == closure_type_it->second->type_index_) {
 				is_recursive_lambda_self = true;
+			}
+			if (!is_recursive_lambda_self &&
+				(!func_type.type_index().is_valid() || !func_type.type_index().isStruct())) {
+				bool self_forward_pattern = false;
+				const auto call_args = callExprNode.arguments();
+				if (call_args.size() > 0 && call_args[0].is<ExpressionNode>()) {
+					const ExpressionNode& first_arg_expr = call_args[0].as<ExpressionNode>();
+					if (const auto* first_arg_id = std::get_if<IdentifierNode>(&first_arg_expr)) {
+						self_forward_pattern = first_arg_id->name() == func_name_view;
+					}
+				}
+				if (self_forward_pattern) {
+					is_recursive_lambda_self = true;
+				}
 			}
 		}
 
@@ -726,9 +740,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 						// Don't call visitExpressionNode which would dereference it
 						call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
 
-							// Type for mangling is rvalue reference to closure type
+						// Type for mangling is lvalue reference to closure type
 						TypeSpecifierNode self_type(closure_type_index.withCategory(TypeCategory::Struct), 8, Token(), CVQualifier::None, ReferenceQualifier::None);
-						self_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+						self_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 						arg_types.push_back(self_type);
 					} else {
 						// Normal argument - visit the expression
@@ -1074,15 +1088,23 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// hatches. Semantically normalized ordinary direct calls should now either
 	// provide a sema-owned target or fail during sema annotation.
 	const bool ordinary_direct_call = !callExprNode.callee().is_indirect();
+	const bool sema_has_owned_direct_target =
+		parser_resolved_direct_target != nullptr ||
+		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::Available;
 	if (!matched_func_decl &&
 		ordinary_direct_call &&
 		sema_normalized_current_function_ &&
-		!parser_resolved_direct_target &&
+		!sema_has_owned_direct_target &&
 		sema_resolved_direct_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
-		throw InternalError("Normalized direct-call query remained NotYetAnalyzed");
+		FLASH_LOG_FORMAT(
+			Codegen,
+			Debug,
+			"Phase 1 compatibility fallback: direct-call query remained NotYetAnalyzed for '{}'",
+			func_name_view);
 	}
 	const bool allow_lookup_recovery =
-		!sema_normalized_current_function_; // body not tracked by normalized_bodies_
+		!sema_normalized_current_function_ ||
+		!sema_has_owned_direct_target;
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.

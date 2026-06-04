@@ -1,6 +1,6 @@
 # Semantic Analysis Status
 
-**Last Updated:** 2026-06-02
+**Last Updated:** 2026-06-04
 
 This document is intentionally forward-looking. It should capture the current
 ownership model, the invariants future work can rely on, and the next cleanup
@@ -115,6 +115,18 @@ FlashCpp follows a parse -> sema -> IR pipeline:
   now prefers the exact normalized call node and can derive the callable owner
   type from the resolved `operator()` member when the auxiliary receiver-type
   query was not materialized
+- deferred nested-generic-lambda closure layout now backfills unresolved
+  by-value capture size/alignment from the capture member type and recalculates
+  closure layout before emission, so callable captures and value captures cannot
+  overlap in generated closure storage
+- normalized direct-call lowering now keeps strict sema-owned target usage when
+  metadata is present, but uses one temporary metadata-missing compatibility
+  boundary for unresolved normalized calls that still rely on late/deferred
+  lookup surfaces
+- unresolved callable-reference recursive generic-lambda self calls now use the
+  same self-forward detection and lvalue-reference self-argument qualifier model
+  as the ordinary recursive path, so mangled-call lookup matches C++20
+  deduction behavior
 
 ## Main remaining gaps
 
@@ -131,6 +143,10 @@ Near-term blocker in this area:
   `test_dependent_identifier_template_call_ret0.cpp`,
   `test_pack_expansion_in_template_body_ret0.cpp`, and
   `test_template_builtin_addressof_substitution_ret0.cpp`
+- normalized direct-call lowering still has one explicit metadata-missing
+  compatibility boundary (sema target absent, deferred/late-instantiated call
+  still resolvable by typed lookup). This should be deleted once sema
+  consistently materializes owned direct-call targets for these paths.
 
 Recommended next step:
 

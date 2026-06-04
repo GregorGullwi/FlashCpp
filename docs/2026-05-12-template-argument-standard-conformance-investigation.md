@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-04
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -32,6 +32,10 @@ Move FlashCpp toward a sema-owned template system where:
   sema-owned overload-resolution argument typing instead of parser-owned
   argument collection, so dependent out-of-line member overloads are selected
   from the concrete substituted call signature seen during semantic analysis
+- semantic `operator[]` resolution now also uses sema-owned
+  overload-resolution argument typing plus receiver-const candidate filtering,
+  so normalized subscripts preserve lvalue/rvalue index evidence and do not
+  bind non-const members through const receivers
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -94,8 +98,11 @@ unknown-specialization modeling only where it unblocks those paths.
 
 3. Unify the remaining semantic call-resolution entry points around the same
    sema-owned overload-resolution argument collector now used for normalized
-   template/member direct calls. This is the shortest path to preventing stale
-   parser-selected targets from surviving semantic normalization.
+   template/member direct calls. A 2026-06-04 follow-up closed the concrete
+   `operator[]` gap by sharing receiver-aware candidate filtering plus sema-
+   owned index typing with direct member-call resolution. This is still the
+   shortest path to preventing stale parser-selected targets from surviving
+   semantic normalization.
 
 4. Expand current-instantiation, dependent-base, and unknown-specialization
    handling only where that unblocks steps 2 and 3.
@@ -116,9 +123,10 @@ unknown-specialization modeling only where it unblocks those paths.
 
 ## Next steps
 
-1. Apply the sema-owned overload-resolution argument collector to the remaining
-   semantic call-resolution sites that still rely on parser-owned expression
-   typing or reduced argument modeling.
+1. Apply the sema-owned overload-resolution argument collector and the shared
+   receiver-aware candidate partitioning to the remaining semantic
+   call-resolution sites that still rely on parser-owned expression typing or
+   reduced argument modeling beyond the now-fixed `operator[]` route.
 
 2. Continue deleting replay-attachment acceptance paths that still allow
    insufficient substituted-signature evidence outside the now-hardened member
@@ -126,6 +134,68 @@ unknown-specialization modeling only where it unblocks those paths.
 
 3. Only after those are stable, extend current-instantiation and
    unknown-specialization modeling for the specific unresolved cases that remain.
+
+## 2026-06-04 semantic operator[] conformance note
+
+Auditing the remaining sema call-resolution entry points found a live C++20
+conformance bug in semantic `operator[]` resolution: the overload set was
+still classified from reduced expression typing and fallback selection ignored
+receiver constness. That made two ordinary language rules unstable in normalized
+subscript calls:
+
+- a const receiver must not bind a non-const `operator[]`
+- lvalue and prvalue index expressions must preserve the overload-resolution
+  categories seen by ordinary member-call lookup
+
+`SemanticAnalysis::tryResolveSubscriptOperator` now reuses the same
+receiver-aware candidate partitioning and sema-owned overload-resolution
+argument typing already used by normalized member-call resolution. This keeps
+the semantic subscript path aligned with the broader sema-owned call model
+instead of depending on reduced parser-shaped typing.
+
+Validated with:
+
+- `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_operator_subscript_const_ambiguity_fail.cpp`
+- `test_operator_subscript_const_ret42.cpp`
+- `test_operator_subscript_overloads_ret42.cpp`
+- `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
+
+## 2026-06-04 callable/operator() conformance note
+
+The remaining standards-callable regressions in normalized/deferred paths were:
+
+- nested generic-lambda callable captures could remain zero-sized in closure
+  layout, causing overlap with subsequent captures
+- normalized direct-call lowering could hard-fail when sema-owned target
+  metadata was missing, even for late/deferred call paths that still had typed
+  lookup evidence
+- unresolved callable-reference recursive self calls could miss the correct
+  mangled target because self-argument qualifier handling diverged from ordinary
+  recursive self lowering
+
+The fix now:
+
+- backfills unresolved by-value capture size/alignment from capture member type
+  info and recalculates closure layout before emission
+- preserves strict sema-owned direct-call target use when available, and limits
+  compatibility behavior to an explicit metadata-missing boundary
+- unifies unresolved callable-reference recursive self-call lowering with the
+  ordinary recursive self path, including lvalue-reference self-argument
+  qualifier treatment
+
+Conformance debt to remove next:
+
+- delete the metadata-missing direct-call compatibility boundary once sema
+  always provides owned direct-call targets for these normalized/deferred calls
+
+Validated with:
+
+- `test_generic_lambda_callable_nested_clone_ret0.cpp`
+- `test_generic_lambda_recursive_self_ret0.cpp`
+- `test_lambda_cpp20_comprehensive_ret135.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
 
 ## 2026-06-02 constexpr lambda conformance note
 
@@ -150,6 +220,10 @@ Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
 For work in this area:
 
 - add a focused regression first when a new gap is identified
+- rerun `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp` and
+  `test_operator_subscript_const_ambiguity_fail.cpp` and
+  `test_constexpr_operator_bracket_const_nonconst_ret0.cpp` when touching
+  semantic subscript resolution or receiver-sensitive normalized-call lookup
 - rerun the three former dependent-alias blocker tests when touching alias
   ownership or current-instantiation handling (they now exercise the
   semantic-only route)
