@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes_DeclNodes.h"
 #include "InlineVector.h"
+#include <algorithm>
 #include <ranges>
 #include <span>
 
@@ -62,9 +63,7 @@ ConstAwareMemberCandidateSet collectConstAwareVisibleMemberFunctionCandidates(
 		if (current_struct_info == nullptr) {
 			return;
 		}
-		if (std::ranges::any_of(visited, [current_struct_info](const StructTypeInfo* existing) {
-				return existing == current_struct_info;
-			})) {
+		if (std::ranges::find(visited, current_struct_info) != visited.end()) {
 			return;
 		}
 		visited.push_back(current_struct_info);
