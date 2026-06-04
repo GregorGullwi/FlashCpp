@@ -14,7 +14,6 @@
 
 - `concept_comprehensive_ret15.cpp`
 - `countof_test.cpp`
-- `partial_spec_pattern_collision_ret0.cpp`
 - `problem_statement_example.cpp`
 - `spaceship_default.cpp`
 - `test_complex_keywords.cpp`
@@ -27,19 +26,15 @@
 - `test_declspec_dllimport_var_ret42.cpp`
 - `test_dependent_decltype_arrow_member_pointer_ret0.cpp`
 - `test_dependent_decltype_member_pointer_local_ret0.cpp`
-- `test_extern_template_does_not_instantiate_ret0.cpp`
 - `test_friend_default_spaceship_ret0.cpp`
 - `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`
 - `test_infer_expr_type_expansion_ret0.cpp`
 - `test_local_declspec_attribute_prefix_ret42.cpp`
-- `test_member_struct_partial_spec_ret1.cpp`
-- `test_member_template_nested_static_member_two_phase_definition_lookup_ret0.cpp`
 - `test_no_unique_address_empty_member_same_type_overlap_ret0.cpp`
 - `test_operator_addressof_overload_baseline_ret99.cpp`
 - `test_operator_member_tiebreak_ret0.cpp`
 - `test_outofline_nested_pack_ret0.cpp`
 - `test_outofline_nested_union_ret0.cpp`
-- `test_pack_expansion_comprehensive.cpp`
 - `test_rtti_basic_ret1.cpp`
 - `test_separator_chars.cpp`
 - `test_sizeof_offsetof.cpp`
@@ -57,20 +52,12 @@
 - `test_spaceship_synthesized_ret8.cpp`
 - `test_spaceship_template_ret127.cpp`
 - `test_spaceship_user_synth_ret255.cpp`
-- `test_static_constexpr_member_partial_spec_ret4.cpp`
 - `test_std_forward.cpp`
 - `test_std_forward_observable.cpp`
 - `test_stdlib_features_ret0.cpp`
 - `test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`
-- `test_template_arg_context_ambiguous_type_vs_value_ret0.cpp`
-- `test_template_inclass_static_member_two_phase_lookup_ret0.cpp`
-- `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`
-- `test_template_qualified_phase1_fallback_ret0.cpp`
-- `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`
-- `test_template_static_member_lazy_forward_reference_ret42.cpp`
 - `test_toplevel_const_ptr_arg_ret0.cpp`
 - `test_type_alias_callconv_function_pointer_noexcept_ret0.cpp`
-- `test_type_alias_in_sfinae_ret42.cpp`
 - `test_type_traits_intrinsics_ret147.cpp`
 - `test_typeid_builtin_matches_type_ret0.cpp`
 - `test_typeid_expr_matches_type_ret0.cpp`
@@ -95,7 +82,7 @@
 
 ## Notes
 
-- Compile failures: 72 unique tests
+- Compile failures: 59 unique tests
 - Link failures: 0
 - Runtime crashes: 0
 - Return mismatches: 4 unique tests
@@ -170,36 +157,23 @@ These are outside portable standard C++20 and should be tracked separately from 
 These still reject after setting aside header omissions and extension-only cases.
 
 - `concept_comprehensive_ret15.cpp`: declares non-template concepts like `concept AlwaysTrue = true;`; a concept definition must be a template declaration.
-- `partial_spec_pattern_collision_ret0.cpp`: uses `friend class Accessor;` even though `Accessor` is a class template; that declaration is ill-formed and the expected friend access does not exist.
 - `test_constexpr_offsetof_nested_ret0.cpp`: uses `offsetof(PackedOuter, inner.value)`; nested member designators are rejected by this standard-library `offsetof` form.
 - `test_constexpr_offsetof_ret0.cpp`: uses `offsetof` without first making the macro available, so the token sequence is parsed as ordinary code and becomes invalid.
 - `test_copy_assign_default_arg_ret42.cpp`: adds a default argument to `operator=`, which is not allowed.
 - `test_ctor_string_literal_lvalue_ret0.cpp`: overload set makes the string-literal call bind to a deleted constructor.
 - `test_dependent_decltype_arrow_member_pointer_ret0.cpp`: forms a pointer to a reference type.
 - `test_dependent_decltype_member_pointer_local_ret0.cpp`: forms a pointer to a reference type.
-- `test_extern_template_does_not_instantiate_ret0.cpp`: assumes an `extern template` declaration can appear for a class template whose definition immediately hard-errors on instantiation; `clang` instantiates enough to trip the `static_assert`.
 - `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`: initializes a `constexpr` data member from a function call that is not accepted as a constant expression in this form.
 - `test_infer_expr_type_expansion_ret0.cpp`: uses `offsetof` without first making the macro available, so the expression is not parsed as an `offsetof` invocation.
-- `test_member_struct_partial_spec_ret1.cpp`: names a protected nested template from non-friend, non-derived code.
-- `test_member_template_nested_static_member_two_phase_definition_lookup_ret0.cpp`: requires a `constexpr` static member initializer that is not a core constant expression under `clang`.
 - `test_no_unique_address_empty_member_same_type_overlap_ret0.cpp`: uses `offsetof` without first making the macro available, so the expression is invalid as written.
 - `test_operator_addressof_overload_baseline_ret99.cpp`: expects built-in address-of behavior even though the overloaded `operator&` changes the expression type.
 - `test_operator_member_tiebreak_ret0.cpp`: both member and non-member `operator+` are viable and the call is ambiguous.
 - `test_outofline_nested_pack_ret0.cpp`: uses `offsetof(Wrapper<int>::Nested, x)` without making `offsetof` available.
 - `test_outofline_nested_union_ret0.cpp`: uses `offsetof(Wrapper<int>::Nested, a)` without making `offsetof` available.
-- `test_pack_expansion_comprehensive.cpp`: uses `decltype((declval<Args>()...))`, which is not a valid pack-expansion form.
 - `test_separator_chars.cpp`: contains `#if ABC, XYZ`; the comma operator is not valid in a preprocessor conditional expression.
 - `test_sizeof_offsetof.cpp`: uses `offsetof` without first making the macro available.
 - `test_spaceship_user_synth_ret255.cpp`: expects the relational operators to synthesize from a user-defined `operator<=>` returning `int`; that is not how C++20 synthesis works.
-- `test_static_constexpr_member_partial_spec_ret4.cpp`: names a protected nested template from non-friend, non-derived code.
 - `test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`: provides an invalid `get` customization / specialization shape, so the intended structured-binding lookup does not match.
-- `test_template_arg_context_ambiguous_type_vs_value_ret0.cpp`: passes a non-type where a template type parameter is required.
-- `test_template_inclass_static_member_two_phase_lookup_ret0.cpp`: requires a `constexpr` static member initializer that is not a core constant expression under `clang`.
-- `test_template_nested_ool_member_template_outer_param_binding_ret0.cpp`: overload resolution finds multiple matching `add` candidates, so the call is ambiguous.
-- `test_template_qualified_phase1_fallback_ret0.cpp`: refers to `ns::late_compare` before any such member exists in that namespace.
-- `test_template_static_member_initializer_replay_metadata_invariant_ret0.cpp`: requires a `constexpr` static member initializer that is not a core constant expression under `clang`.
-- `test_template_static_member_lazy_forward_reference_ret42.cpp`: uses `later` before it has been declared.
-- `test_type_alias_in_sfinae_ret42.cpp`: uses `enable_if` in a way that is a hard constraint failure instead of a SFINAE-friendly substitution failure.
 - `test_variadic_overload.cpp`: overload resolution between the `print` candidates is ambiguous.
 
 ### Not Reproduced As C++20 Rejects In This Pass

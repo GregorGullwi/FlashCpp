@@ -106,7 +106,8 @@ class Vault {
 	int code;
 	// Grant friend access to the *base template name* "Accessor".
 	// Partial specialisations must recover this name via the registry.
-	friend class Accessor;
+	template <typename>
+	friend struct Accessor;
 
 public:
 	Vault(int c) : code(c) {}
@@ -146,7 +147,8 @@ struct Host {
 
 	class Safe {
 		int pin;
-		friend class Probe;
+		template <typename>
+		friend struct Probe;
 
 	public:
 		Safe(int p) : pin(p) {}

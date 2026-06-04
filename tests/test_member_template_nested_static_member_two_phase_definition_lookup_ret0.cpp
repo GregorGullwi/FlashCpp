@@ -1,7 +1,7 @@
 // Regression: nested member-template static member definitions must preserve
 // definition-time ordinary lookup while replay still carries outer + inner bindings.
 
-int choose_nested(long) {
+constexpr int choose_nested(long) {
 	return 1;
 }
 
@@ -14,7 +14,7 @@ struct Outer {
 	};
 };
 
-int choose_nested(int) {
+constexpr int choose_nested(int) {
 	return 100;
 }
 

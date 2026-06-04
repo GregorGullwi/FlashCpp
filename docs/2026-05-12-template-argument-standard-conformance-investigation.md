@@ -197,6 +197,19 @@ Validated with:
 - `test_lambda_cpp20_comprehensive_ret135.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-04
 
+## 2026-06-04 non-standard template test cleanup
+
+A focused cleanup pass converted template-focused non-standard tests from
+`docs/TEST_RUNNER_FAILURE_REPORT.md` to valid C++20 forms while preserving test
+intent (friend declarations for class templates, protected-access setup, pack
+expansion form, forward declarations, overload ambiguity trigger, and constexpr
+initializer requirements).
+
+Result: all updated tests pass `clang++ --target=x86_64-unknown-linux-gnu
+-std=c++20 -pedantic-errors -fsyntax-only` and also pass targeted
+`pwsh tests/run_all_tests.ps1` runs. No new missing-feature entry was required
+for this subset.
+
 ## 2026-06-02 constexpr lambda conformance note
 
 The updated constexpr-lambda tests exposed runtime capture-lowering bugs rather

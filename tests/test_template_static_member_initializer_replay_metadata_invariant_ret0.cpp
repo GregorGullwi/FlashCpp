@@ -1,4 +1,4 @@
-int pick_inclass(long) {
+constexpr int pick_inclass(long) {
 	return 17;
 }
 
@@ -7,7 +7,7 @@ struct InClassCarrier {
 	static constexpr int value = pick_inclass(sizeof(T) + 1);
 };
 
-int pick_inclass(int) {
+constexpr int pick_inclass(int) {
 	return 91;
 }
 

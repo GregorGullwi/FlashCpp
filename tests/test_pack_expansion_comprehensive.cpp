@@ -8,7 +8,7 @@ T declval();
 template <typename... Args>
 struct test_paren {
 	// Parenthesized pack expansion in decltype
-	using type1 = decltype((declval<Args>()...));
+	using type1 = decltype((declval<Args>(), ...));
 };
 
 // ===== Part 2: Pack Expansion with Pointer-to-Member (type_traits pattern) =====
