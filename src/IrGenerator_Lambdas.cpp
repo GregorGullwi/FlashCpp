@@ -135,6 +135,7 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 		}
 		if (ret_type_node.is_reference()) {
 			info.return_value_mode |= ReturnValueMode::Reference;
+			info.return_ref_qualifier = ret_type_node.reference_qualifier();
 		}
 		if (ret_type_node.is_function_pointer() || ret_type_node.has_function_signature()) {
 			info.return_value_mode |= ReturnValueMode::FunctionPointer;
@@ -618,23 +619,23 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 }
 
 void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
-		// Following Clang's approach, we generate:
-		// 1. operator() - member function with lambda body
-		// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
-		// 3. conversion operator - returns pointer to __invoke (only for non-capturing lambdas)
+	// Following Clang's approach, we generate:
+	// 1. operator() - member function with lambda body
+	// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
+	// 3. conversion operator - returns pointer to __invoke (only for non-capturing lambdas)
 
-		// Generate operator() member function
+	// Generate operator() member function
 	generateLambdaOperatorCallFunction(lambda_info);
 
-		// Generate __invoke static function only for non-capturing lambdas
-		// Capturing lambdas can't be converted to function pointers
+	// Generate __invoke static function only for non-capturing lambdas
+	// Capturing lambdas can't be converted to function pointers
 	if (lambda_info.captures.empty()) {
 		generateLambdaInvokeFunction(lambda_info);
 	}
 
-		// CRITICAL FIX: Add operator() to the closure struct's member_functions list
-		// This allows member function calls to find the correct declaration for mangling
-		// Without this, lambda calls generate incorrect mangled names
+	// CRITICAL FIX: Add operator() to the closure struct's member_functions list
+	// This allows member function calls to find the correct declaration for mangling
+	// Without this, lambda calls generate incorrect mangled names
 	if (lambda_info.closure_type_name.empty()) {
 		return;	// No closure type, can't add member functions
 	}
@@ -643,10 +644,10 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 		TypeInfo* closure_type = type_it->second;
 		StructTypeInfo* struct_info = closure_type->getStructInfo();
 		if (struct_info) {
-				// Create a FunctionDeclarationNode for operator()
-				// We need this so member function calls can generate the correct mangled name
+			// Create a FunctionDeclarationNode for operator()
+			// We need this so member function calls can generate the correct mangled name
 			TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()),
-											   lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+										   lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
 			ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
 
 			Token operator_token = lambda_info.lambda_token;	 // Use lambda token as placeholder
@@ -654,11 +655,11 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 
 			FunctionDeclarationNode& func_decl = gChunkedAnyStorage.emplace_back<FunctionDeclarationNode>(decl_node);
 
-				// C++20: Lambda operator() is implicitly constexpr if it satisfies constexpr requirements
-				// Mark it as constexpr so the ConstExprEvaluator can evaluate lambda calls at compile time
+			// C++20: Lambda operator() is implicitly constexpr if it satisfies constexpr requirements
+			// Mark it as constexpr so the ConstExprEvaluator can evaluate lambda calls at compile time
 			func_decl.set_is_constexpr(true);
 
-				// Add parameters to the function declaration
+			// Add parameters to the function declaration
 			const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
 										  ? lambda_info.parameter_nodes
 										  : lambda_info.resolved_param_nodes;
@@ -668,7 +669,7 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 
 			ASTNode func_decl_ast(&func_decl);
 
-				// Create StructMemberFunction and add to struct
+			// Create StructMemberFunction and add to struct
 			StructMemberFunction member_func(
 				StringTable::getOrInternStringHandle("operator()"),
 				func_decl_ast,
@@ -693,7 +694,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		sema_normalized_current_function_,
 		sema_.hasNormalizedAstNode(lambda_info.lambda_body));
 
-		// Generate function declaration for operator()
+	// Generate function declaration for operator()
 	FunctionDeclOp func_decl_op;
 	func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
 	func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);	// Phase 4: Variant needs explicit type
@@ -703,13 +704,13 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	func_decl_op.linkage = Linkage::None;  // C++ linkage
 	func_decl_op.is_variadic = false;
 
-		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Only non-pointer, non-reference struct returns need this
+	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+	// Only non-pointer, non-reference struct returns need this
 	bool returns_struct_by_value = returnsStructByValue(lambda_info.returnType(), 0, lambda_info.returnsReference());
 	bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returnsReference(), lambda_info.return_size, context_->isLLP64());
 	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
-		// Track hidden return parameter flag for current function context
+	// Track hidden return parameter flag for current function context
 	current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 	if (returns_struct_by_value) {
@@ -724,10 +725,10 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		}
 	}
 
-		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+	// Build TypeSpecifierNode for return type (with proper type_index if struct)
+	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
 
-		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
+	// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 	std::vector<TypeSpecifierNode> param_types;
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
 								  ? lambda_info.parameter_nodes
@@ -746,7 +747,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		}
 	}
 
-		// Generate mangled name using the same function as regular member functions
+	// Generate mangled name using the same function as regular member functions
 	std::string_view mangled = generateMangledNameForCall(
 		"operator()",
 		return_type_node,
@@ -758,7 +759,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	);
 	func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 
-		// Add parameters - use parameter_nodes to get complete type information
+	// Add parameters - use parameter_nodes to get complete type information
 	size_t lambda_unnamed_param_counter = 0;
 	for (const auto& param_node : param_nodes) {
 		if (param_node.is<DeclarationNode>()) {
@@ -767,7 +768,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 
 			FunctionParam func_param;
 
-				// Handle empty parameter names
+			// Handle empty parameter names
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
 				func_param.name = StringTable::getOrInternStringHandle(
@@ -792,12 +793,12 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
 	symbol_table.enter_scope(ScopeType::Function);
 
-		// Reset the temporary variable counter for each new function
-		// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
-		// TempVar(1) is reserved for 'this', so we start at TempVar(2).
+	// Reset the temporary variable counter for each new function
+	// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
+	// TempVar(1) is reserved for 'this', so we start at TempVar(2).
 	var_counter = TempVar(2);
 
-		// Clear global TempVar metadata to prevent stale data from bleeding into this function
+	// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
 
 	// Set current function return type and size for type checking in return statements
@@ -806,12 +807,12 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	current_function_return_size_ = lambda_info.return_size;
 	current_function_return_value_mode_ = lambda_info.return_value_mode;
 
-		// Set lambda context for captured variable access
+	// Set lambda context for captured variable access
 	pushLambdaContext(lambda_info);
 
-		// Add lambda parameters to symbol table as function parameters (operator() context).
-		// Instantiation-time semantic normalization has already rewritten generic
-		// lambda placeholder parameters to their deduced concrete declarations.
+	// Add lambda parameters to symbol table as function parameters (operator() context).
+	// Instantiation-time semantic normalization has already rewritten generic
+	// lambda placeholder parameters to their deduced concrete declarations.
 	for (const auto& param_node : param_nodes) {
 		if (param_node.is<DeclarationNode>()) {
 			const auto& param_decl = param_node.as<DeclarationNode>();
@@ -819,11 +820,11 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		}
 	}
 
-		// Add captured variables to symbol table
-		// These will be accessed through member access (this->x)
+	// Add captured variables to symbol table
+	// These will be accessed through member access (this->x)
 	addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
 
-		// Generate the lambda body
+	// Generate the lambda body
 	bool has_return_statement = false;
 	if (lambda_info.lambda_body.is<BlockNode>()) {
 		const auto& body = lambda_info.lambda_body.as<BlockNode>();
@@ -835,19 +836,19 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		});
 	}
 
-		// Add implicit return for void lambdas (matching regular function behavior)
+	// Add implicit return for void lambdas (matching regular function behavior)
 	if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
 		ReturnOp ret_op;	 // No return value for void
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 	}
 
-		// Restore outer lambda context (if any)
+	// Restore outer lambda context (if any)
 	popLambdaContext();
 
 	symbol_table.exit_scope();
 
-		// Note: Nested lambdas collected during body generation will be processed
-		// by the main generateCollectedLambdas() loop - no recursive call needed here
+	// Note: Nested lambdas collected during body generation will be processed
+	// by the main generateCollectedLambdas() loop - no recursive call needed here
 }
 
 void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
@@ -874,7 +875,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 	std::vector<TypeSpecifierNode> param_types;

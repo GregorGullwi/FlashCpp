@@ -916,15 +916,21 @@ ParseResult Parser::parse_lambda_expression() {
 					// The guard in get_expression_type will prevent infinite recursion
 					auto expr_type_opt = get_expression_type(*ret.expression());
 					if (expr_type_opt.has_value()) {
+						// For plain auto (the common case), strip top-level references and
+						// cv-qualifiers per C++ [dcl.spec.auto]/6 (template argument deduction).
+						// If the lambda later switches to decltype(auto), the qualifiers come
+						// back through the sema re-deduction path in normalizeLambda.
+						TypeSpecifierNode finalized_type = finalizePlaceholderTypeDeduction(TypeCategory::Auto, *expr_type_opt);
+
 						// Store this return type for validation
-						all_return_types.emplace_back(*expr_type_opt, lambda_token);
+						all_return_types.emplace_back(finalized_type, lambda_token);
 
 						FLASH_LOG(Parser, Debug, "Lambda found return statement #", all_return_types.size(),
-								  " with type=", (int)expr_type_opt->type(), " size=", (int)expr_type_opt->size_in_bits());
+								  " with type=", (int)finalized_type.type(), " size=", (int)finalized_type.size_in_bits());
 
 						// Set the deduced type from the first return statement
 						if (!deduced_type.has_value()) {
-							deduced_type = *expr_type_opt;
+							deduced_type = finalized_type;
 							FLASH_LOG(Parser, Debug, "Lambda return type deduced from expression: type=",
 									  (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
 						}

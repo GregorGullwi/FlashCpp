@@ -207,7 +207,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 							matched_lambda_info->return_size,
 							matched_lambda_info->lambda_token,
 							CVQualifier::None,
-							ReferenceQualifier::None);
+							matched_lambda_info->return_ref_qualifier);
 						call_op.return_type_index = return_type_node.type_index().withCategory(return_type_node.type());
 						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_node.size_in_bits())};
 					}
@@ -1893,11 +1893,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 								matched_lambda_info->return_size,
 								matched_lambda_info->lambda_token,
 								CVQualifier::None,
-								ReferenceQualifier::None);
-							if (matched_lambda_info->returnsReference()) {
-								resolved_generic_return_type->set_reference_qualifier(ReferenceQualifier::LValueReference);
-								resolved_generic_return_type->set_size_in_bits(64);
-							}
+								matched_lambda_info->return_ref_qualifier);
 							mangling_return_type = &*resolved_generic_return_type;
 						}
 					}

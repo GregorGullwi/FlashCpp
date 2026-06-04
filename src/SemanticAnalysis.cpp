@@ -2034,6 +2034,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			}
 			if (deduced_type->is_reference() || deduced_type->is_rvalue_reference()) {
 				lambda_info.return_value_mode |= ReturnValueMode::Reference;
+				lambda_info.return_ref_qualifier = deduced_type->reference_qualifier();
 			}
 			if (deduced_type->is_function_pointer() || deduced_type->has_function_signature()) {
 				lambda_info.return_value_mode |= ReturnValueMode::FunctionPointer;
@@ -2052,7 +2053,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			CVQualifier::None,
 			ReferenceQualifier::None);
 		if (lambda_info.returnsReference()) {
-			lambda_return_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			lambda_return_type.set_reference_qualifier(lambda_info.return_ref_qualifier);
 			lambda_return_type.set_size_in_bits(64);
 		}
 		lambda_ctx.current_function_return_type_id = canonicalizeType(lambda_return_type);
