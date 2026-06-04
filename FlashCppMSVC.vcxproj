@@ -212,7 +212,19 @@
     <ClCompile Include="src\ConstExprEvaluator_Core.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\ConstExprEvaluator_Members.cpp">
+    <ClCompile Include="src\ConstExprEvaluator_Bindings.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ConstExprEvaluator_Arithmetic.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ConstExprEvaluator_MemberAccess.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ConstExprEvaluator_Materialize.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\ConstExprEvalHelpers.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="src\ElfFileWriter_EH.cpp">
@@ -429,6 +441,7 @@
     <ClInclude Include="src\CompilerIncludes.h" />
     <ClInclude Include="src\VariantUtils.h" />
     <ClInclude Include="src\ConstExprEvaluator.h" />
+    <ClInclude Include="src\ConstExprEvalHelpers.h" />
     <ClInclude Include="src\CrashHandler.h" />
     <ClInclude Include="src\DwarfCFI.h" />
     <ClInclude Include="src\ElfFileWriter.h" />

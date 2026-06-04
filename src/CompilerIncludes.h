@@ -78,7 +78,11 @@
 #include "CodeViewDebug.cpp"
 #include "ExpressionSubstitutor.cpp"
 #include "ConstExprEvaluator_Core.cpp"
-#include "ConstExprEvaluator_Members.cpp"
+#include "ConstExprEvaluator_Bindings.cpp"
+#include "ConstExprEvaluator_Arithmetic.cpp"
+#include "ConstExprEvaluator_MemberAccess.cpp"
+#include "ConstExprEvaluator_Materialize.cpp"
+#include "ConstExprEvalHelpers.cpp"
 #include "StringLiteralTokenUtils.cpp"
 #include "SemanticAnalysis.cpp"
 #endif
