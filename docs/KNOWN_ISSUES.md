@@ -33,6 +33,15 @@ still accepted.
   A `_fail` regression (`test_copy_assign_default_arg_fail.cpp`) was tried and
   unexpectedly compiled; keep this tracked here until parser/sema rejects it.
 
+## Alias-backed callable objects can bypass missing `operator()` diagnostics
+Calls through local aliases/typedefs to non-callable struct types are not
+consistently rejected yet. A reduced case like `using Alias = NotCallable;
+Alias a; a(1);` can still compile instead of diagnosing that no matching
+`operator()` exists. The review-driven helper refactor in PR #1753 narrowed the
+semantic duplication around local callable lookup, but the remaining acceptance
+bug still needs a parser/sema/codegen follow-up before a stable `_fail`
+regression can be landed.
+
 ## Constructor overload selection mismatch (string literal/lvalue case)
 The original `tests/test_ctor_string_literal_lvalue_ret0.cpp` shape exposed a
 wrong overload pick around string-literal binding vs deleted rvalue-reference

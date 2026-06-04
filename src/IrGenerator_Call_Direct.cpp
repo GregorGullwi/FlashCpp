@@ -568,17 +568,26 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	if (func_ptr_decl) {
 		const auto& func_type = func_ptr_decl->type_specifier_node();
-		const ResolvedFunctionQueryResult resolved_operator_call_query =
+		const TypeInfo* callable_owner_type_info =
+			(func_type.type_index().is_valid() &&
+			 !func_type.is_function_pointer() &&
+			 !func_type.has_function_signature())
+				? resolveToConcreteStructTypeInfo(func_type.type_index())
+				: nullptr;
+		const bool callee_is_struct_callable =
+			callable_owner_type_info != nullptr &&
+			callable_owner_type_info->getStructInfo() != nullptr;
+		ResolvedFunctionQueryResult resolved_operator_call_query =
 			sema_services.getResolvedOpCallQuery(sema_call_key);
+		if (callee_is_struct_callable &&
+			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+			sema_services.ensureCallableOperatorResolved(callExprNode);
+			resolved_operator_call_query = sema_services.getResolvedOpCallQuery(sema_call_key);
+		}
 		const FunctionDeclarationNode* resolved_operator_call =
 			resolved_operator_call_query.state == ResolvedFunctionQueryResult::State::Available
 				? resolved_operator_call_query.function
 				: nullptr;
-		const bool callee_is_struct_callable =
-			(func_type.category() == TypeCategory::Struct ||
-			 func_type.category() == TypeCategory::UserDefined) &&
-			!func_type.is_function_pointer() &&
-			!func_type.has_function_signature();
 		const bool recursive_self_forward_pattern = [&]() {
 			if (!current_lambda_context_.isActive()) {
 				return false;

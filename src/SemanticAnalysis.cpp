@@ -7344,13 +7344,10 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 		return;
 
 	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-	if (callee_desc.category() != TypeCategory::Struct)
+	if (callee_desc.category() != TypeCategory::Struct &&
+		callee_desc.category() != TypeCategory::UserDefined)
 		return;
-	const TypeInfo* callee_type_info = tryGetTypeInfo(callee_desc.type_index);
-	if (!callee_type_info)
-		return;
-
-	const StructTypeInfo* struct_info = callee_type_info->getStructInfo();
+	const StructTypeInfo* struct_info = tryResolveLocalCallableStructInfo(callee_name);
 	if (!struct_info)
 		return;
 
@@ -7827,20 +7824,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			qualified_name.substr(scope_sep + 2)
 		};
 	};
-	auto resolveStructOwnerType = [&](const TypeInfo* type_info) -> const TypeInfo* {
-		constexpr size_t kMaxAliasDepth = 100;
-		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
-			if (type_info->getStructInfo()) {
-				return type_info;
-			}
-			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
-			if (!underlying || underlying == type_info) {
-				break;
-			}
-			type_info = underlying;
-		}
-		return nullptr;
-	};
 	auto appendOwnerMemberOverloads = [&](const TypeInfo* owner_type,
 										  std::string_view member_name,
 										  std::vector<ASTNode>& target) {
@@ -7872,7 +7855,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (!owner_type) {
 			return;
 		}
-		if (const TypeInfo* resolved_owner = resolveStructOwnerType(owner_type)) {
+		if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(owner_type)) {
 			appendFromStruct(resolved_owner->getStructInfo());
 			if (resolved_owner->isTemplateInstantiation()) {
 				auto pattern_it = getTypesByNameMap().find(resolved_owner->baseTemplateName());
@@ -7889,7 +7872,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				**call_info.dependent_qualified_lookup_record;
 			if (dependent_record.owner_type.is_valid()) {
 				if (const TypeInfo* owner_from_record = tryGetTypeInfo(dependent_record.owner_type)) {
-					return resolveStructOwnerType(owner_from_record);
+					return tryResolveStructOwnerTypeInfo(owner_from_record);
 				}
 			}
 		}
@@ -7924,40 +7907,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		if (!type_info) {
 			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
 		}
-		return resolveStructOwnerType(type_info);
+		return tryResolveStructOwnerTypeInfo(type_info);
 	};
 	auto resolveLocalCallableStructInfo = [&]() -> const StructTypeInfo* {
 		if (call_info.has_receiver) {
 			return nullptr;
 		}
-		const StringHandle callee_name = callee_decl.identifier_token().handle();
-		if (!callee_name.isValid()) {
-			return nullptr;
-		}
-		const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
-		if (!callee_type_id) {
-			return nullptr;
-		}
-		const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-		const TypeInfo* callee_type_info = nullptr;
-		if (callee_desc.category() == TypeCategory::Struct ||
-			callee_desc.category() == TypeCategory::UserDefined) {
-			callee_type_info = tryGetTypeInfo(callee_desc.type_index);
-			if (!callee_type_info &&
-				callee_desc.category() == TypeCategory::UserDefined &&
-				callee_desc.type_index.is_valid()) {
-				const ResolvedAliasTypeInfo resolved_alias =
-					resolveAliasTypeInfo(callee_desc.type_index);
-				callee_type_info = resolved_alias.terminal_type_info;
-			}
-		}
-		if (callee_type_info == nullptr) {
-			return nullptr;
-		}
-		if (const TypeInfo* resolved_owner = resolveStructOwnerType(callee_type_info)) {
-			return resolved_owner->getStructInfo();
-		}
-		return nullptr;
+		return tryResolveLocalCallableStructInfo(callee_decl.identifier_token().handle());
 	};
 	if (call_info.is_indirect) {
 		return nullptr;
@@ -7984,7 +7940,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			if (receiver_type_info == nullptr) {
 				return nullptr;
 			}
-			if (const TypeInfo* resolved_owner = resolveStructOwnerType(receiver_type_info)) {
+			if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(receiver_type_info)) {
 				return resolved_owner->getStructInfo();
 			}
 			return nullptr;
@@ -8394,6 +8350,51 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	return result;
 }
 
+const TypeInfo* SemanticAnalysis::tryResolveStructOwnerTypeInfo(const TypeInfo* type_info) const {
+	constexpr size_t kMaxAliasDepth = 100;
+	for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
+		if (type_info->getStructInfo()) {
+			return type_info;
+		}
+		const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+		if (!underlying || underlying == type_info) {
+			break;
+		}
+		type_info = underlying;
+	}
+	return nullptr;
+}
+
+const StructTypeInfo* SemanticAnalysis::tryResolveLocalCallableStructInfo(StringHandle callee_name) const {
+	if (!callee_name.isValid()) {
+		return nullptr;
+	}
+	const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
+	if (!callee_type_id) {
+		return nullptr;
+	}
+	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
+	const TypeInfo* callee_type_info = nullptr;
+	if (callee_desc.category() == TypeCategory::Struct ||
+		callee_desc.category() == TypeCategory::UserDefined) {
+		callee_type_info = tryGetTypeInfo(callee_desc.type_index);
+		if (!callee_type_info &&
+			callee_desc.category() == TypeCategory::UserDefined &&
+			callee_desc.type_index.is_valid()) {
+			const ResolvedAliasTypeInfo resolved_alias =
+				resolveAliasTypeInfo(callee_desc.type_index);
+			callee_type_info = resolved_alias.terminal_type_info;
+		}
+	}
+	if (callee_type_info == nullptr) {
+		return nullptr;
+	}
+	if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(callee_type_info)) {
+		return resolved_owner->getStructInfo();
+	}
+	return nullptr;
+}
+
 void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_expr_node,
 														 const CallInfo& call_info,
 														 const void* call_key,
@@ -8413,28 +8414,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 				return false;
 			}
 			const StringHandle callee_name = callee_decl.identifier_token().handle();
-			if (!callee_name.isValid()) {
-				return false;
-			}
-			const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
-			if (!callee_type_id) {
-				return false;
-			}
-			const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-			const TypeInfo* callee_type_info = nullptr;
-			if (callee_desc.category() == TypeCategory::Struct ||
-				callee_desc.category() == TypeCategory::UserDefined) {
-				callee_type_info = tryGetTypeInfo(callee_desc.type_index);
-				if (!callee_type_info &&
-					callee_desc.category() == TypeCategory::UserDefined &&
-					callee_desc.type_index.is_valid()) {
-					const ResolvedAliasTypeInfo resolved_alias =
-						resolveAliasTypeInfo(callee_desc.type_index);
-					callee_type_info = resolved_alias.terminal_type_info;
-				}
-			}
-			if (callee_type_info == nullptr ||
-				callee_type_info->getStructInfo() == nullptr) {
+			if (tryResolveLocalCallableStructInfo(callee_name) == nullptr) {
 				return false;
 			}
 			InlineVector<TypeSpecifierNode, 6> arg_types;
