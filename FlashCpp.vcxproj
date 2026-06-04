@@ -486,6 +486,7 @@
     <ClInclude Include="src\LazyMemberResolver.h" />
     <ClInclude Include="src\Lexer.h" />
     <ClInclude Include="src\Log.h" />
+    <ClInclude Include="src\MemberFunctionLookupShared.h" />
     <ClInclude Include="src\NameMangling.h" />
     <ClInclude Include="src\NamespaceRegistry.h" />
     <ClInclude Include="src\ObjFileWriter.h" />

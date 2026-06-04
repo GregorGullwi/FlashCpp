@@ -295,14 +295,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			sema_call_key != nullptr
 				? sema_services.getResolvedOpCallQuery(sema_call_key)
 				: sema_services.getResolvedOpCallQuery(&callExprNode);
-		ResolvedFunctionQueryResult exact_call_query =
-			sema_services.getResolvedOpCallQuery(&callExprNode);
-		if (exact_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
+		if (resolved_op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 			sema_services.ensureCallableOperatorResolved(callExprNode);
-			exact_call_query = sema_services.getResolvedOpCallQuery(&callExprNode);
-		}
-		if (!resolved_op_call_query.hasValue() && exact_call_query.hasValue()) {
-			resolved_op_call_query = exact_call_query;
+			resolved_op_call_query =
+				sema_call_key != nullptr
+					? sema_services.getResolvedOpCallQuery(sema_call_key)
+					: sema_services.getResolvedOpCallQuery(&callExprNode);
 		}
 		const FunctionDeclarationNode* resolved_op_call =
 			resolved_op_call_query.state == ResolvedFunctionQueryResult::State::Available
@@ -327,33 +325,6 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						identifier.nameHandle());
 				static_member_function_type.has_value()) {
 				callee_type = *static_member_function_type;
-			}
-		}
-		if (isInconclusiveCallableType(callee_type)) {
-			const FunctionDeclarationNode* callable_target =
-				resolved_op_call != nullptr ? resolved_op_call : &member_func_decl;
-			if (callable_target != nullptr && !callable_target->parent_struct_name().empty()) {
-				const StringHandle owner_name =
-					StringTable::getOrInternStringHandle(callable_target->parent_struct_name());
-				if (auto owner_type_it = getTypesByNameMap().find(owner_name);
-					owner_type_it != getTypesByNameMap().end() &&
-					owner_type_it->second != nullptr) {
-					const TypeInfo* owner_type_info = owner_type_it->second;
-					TypeIndex owner_type_index =
-						owner_type_info->registeredTypeIndex().withCategory(owner_type_info->typeEnum());
-					if (!owner_type_index.is_valid()) {
-						owner_type_index =
-							owner_type_info->type_index_.withCategory(owner_type_info->typeEnum());
-					}
-					if (owner_type_index.is_valid()) {
-						callee_type.emplace(
-							owner_type_index.withCategory(TypeCategory::Struct),
-							owner_type_info->sizeInBits(),
-							callExprNode.called_from(),
-							CVQualifier::None,
-							ReferenceQualifier::None);
-					}
-				}
 			}
 		}
 		const bool callee_type_unusable_for_callable =
@@ -622,7 +593,31 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	if (object_expr && std::holds_alternative<IdentifierNode>(*object_expr)) {
 		const IdentifierNode& object_ident = std::get<IdentifierNode>(*object_expr);
-		object_name = object_ident.name();
+		const StringHandle object_name_handle = object_ident.nameHandle().isValid()
+			? object_ident.nameHandle()
+			: StringTable::getOrInternStringHandle(object_ident.name());
+		const bool is_explicit_lambda_capture =
+			object_ident.binding() == IdentifierBinding::CapturedByValue ||
+			object_ident.binding() == IdentifierBinding::CapturedByRef;
+		const bool is_implicit_lambda_capture =
+			!is_explicit_lambda_capture &&
+			current_lambda_context_.isActive() &&
+			current_lambda_context_.captures.find(object_name_handle) != current_lambda_context_.captures.end();
+		const bool object_is_lambda_capture =
+			is_explicit_lambda_capture ||
+			is_implicit_lambda_capture;
+		if (!object_is_lambda_capture) {
+			object_name = object_ident.name();
+		} else {
+			auto capture_type_it = current_lambda_context_.capture_types.find(object_name_handle);
+			if (capture_type_it != current_lambda_context_.capture_types.end()) {
+				if (auto resolved_capture_type = normalizeResolvedStructType(capture_type_it->second); resolved_capture_type.has_value()) {
+					object_type = *resolved_capture_type;
+				} else {
+					object_type = capture_type_it->second;
+				}
+			}
+		}
 
 		if (object_name == "this" &&
 			current_lambda_context_.isActive() &&
@@ -2000,13 +1995,38 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		ValueStorage this_arg_storage = ValueStorage::ContainsData;
 		bool object_is_pointer_like = object_type.pointer_depth() > 0 || object_type.is_reference() || object_type.is_rvalue_reference();
 		bool object_is_lambda_captured_this = false;
+		bool object_is_lambda_capture = false;
+		bool object_is_lambda_capture_by_reference = false;
 		if (object_expr && std::holds_alternative<IdentifierNode>(*object_expr)) {
 			const IdentifierNode& object_ident = std::get<IdentifierNode>(*object_expr);
+			const StringHandle object_name_handle = object_ident.nameHandle().isValid()
+				? object_ident.nameHandle()
+				: StringTable::getOrInternStringHandle(object_ident.name());
 			object_is_lambda_captured_this =
 				object_ident.name() == "this" &&
 				current_lambda_context_.isActive() &&
 				current_lambda_context_.enclosing_struct_type_index.is_valid() &&
 				(current_lambda_context_.has_this_pointer || current_lambda_context_.has_copy_this);
+			const bool is_explicit_lambda_capture =
+				object_ident.binding() == IdentifierBinding::CapturedByValue ||
+				object_ident.binding() == IdentifierBinding::CapturedByRef;
+			const bool is_implicit_lambda_capture =
+				!is_explicit_lambda_capture &&
+				current_lambda_context_.isActive() &&
+				current_lambda_context_.captures.find(object_name_handle) != current_lambda_context_.captures.end();
+			object_is_lambda_capture =
+				!object_is_lambda_captured_this &&
+				(is_explicit_lambda_capture || is_implicit_lambda_capture);
+			if (object_is_lambda_capture) {
+				object_is_lambda_capture_by_reference =
+					object_ident.binding() == IdentifierBinding::CapturedByRef;
+				if (!object_is_lambda_capture_by_reference && is_implicit_lambda_capture) {
+					auto capture_kind_it = current_lambda_context_.capture_kinds.find(object_name_handle);
+					object_is_lambda_capture_by_reference =
+						capture_kind_it != current_lambda_context_.capture_kinds.end() &&
+						capture_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference;
+				}
+			}
 		}
 		if (object_is_lambda_captured_this) {
 			if (current_lambda_context_.has_copy_this) {
@@ -2032,6 +2052,55 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					throw InternalError("Lambda [this] member-call receiver could not load captured object pointer");
 				}
 				this_arg_value = IrValue(*this_ptr);
+				this_arg_is_pointer_value = true;
+				this_arg_storage = ValueStorage::ContainsAddress;
+			}
+		} else if (object_is_lambda_capture && object_expr &&
+				   std::holds_alternative<IdentifierNode>(*object_expr)) {
+			const IdentifierNode& object_ident = std::get<IdentifierNode>(*object_expr);
+			const StringHandle object_name_handle = object_ident.nameHandle().isValid()
+				? object_ident.nameHandle()
+				: StringTable::getOrInternStringHandle(object_ident.name());
+			auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+			if (closure_type_it == getTypesByNameMap().end() || !closure_type_it->second->isStruct()) {
+				throw InternalError("Lambda capture receiver missing closure type info");
+			}
+			const auto capture_result = FlashCpp::gLazyMemberResolver.resolve(
+				closure_type_it->second->type_index_,
+				object_name_handle);
+			if (!capture_result || capture_result.member == nullptr) {
+				throw InternalError("Lambda capture receiver missing closure member");
+			}
+
+			if (object_is_lambda_capture_by_reference) {
+				TempVar capture_ptr_temp = var_counter.next();
+				MemberLoadOp member_load;
+				member_load.result.value = capture_ptr_temp;
+				member_load.result.setType(capture_result.member->type_index.category());
+				member_load.result.size_in_bits = SizeInBits{64};
+				member_load.object = StringTable::getOrInternStringHandle("this"sv);
+				member_load.member_name = capture_result.member->getName();
+				member_load.offset = static_cast<int>(capture_result.adjusted_offset);
+				member_load.ref_qualifier = capture_result.member->is_rvalue_reference()
+					? CVReferenceQualifier::RValueReference
+					: capture_result.member->is_reference()
+						? CVReferenceQualifier::LValueReference
+						: CVReferenceQualifier::None;
+				member_load.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), callExprNode.called_from()));
+				this_arg_value = IrValue(capture_ptr_temp);
+				this_arg_is_pointer_value = true;
+				this_arg_storage = ValueStorage::ContainsAddress;
+			} else {
+				TempVar capture_addr_temp = var_counter.next();
+				AddressOfMemberOp addr_op;
+				addr_op.result = capture_addr_temp;
+				addr_op.base_object = StringTable::getOrInternStringHandle("this"sv);
+				addr_op.member_offset = static_cast<int>(capture_result.adjusted_offset);
+				addr_op.member_type_index = object_type.type_index();
+				addr_op.member_size_in_bits = static_cast<int>(object_type.size_in_bits());
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), callExprNode.called_from()));
+				this_arg_value = IrValue(capture_addr_temp);
 				this_arg_is_pointer_value = true;
 				this_arg_storage = ValueStorage::ContainsAddress;
 			}

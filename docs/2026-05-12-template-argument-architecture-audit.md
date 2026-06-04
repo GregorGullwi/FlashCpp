@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-04
 
 This document is not a release log. It should explain what the current template
 architecture can assume, what is still structurally wrong, and what the next
@@ -15,7 +15,10 @@ owner-aware semantic records plus replay-first attachment. The legacy textual
 alias resolution is semantic-only. The newest high-impact fix also moves
 normalized template-call overload lookup onto sema-owned argument typing, so
 replayed dependent member overloads no longer inherit stale parser-selected
-targets. The biggest remaining gap is keeping every replay/materialization path
+targets. A concrete follow-up now brings semantic `operator[]` resolution onto
+that same receiver-aware, sema-owned argument-typing path, so const receivers
+and lvalue/rvalue index overloads no longer depend on reduced parser-shaped
+typing. The biggest remaining gap is keeping every replay/materialization path
 equally evidence-driven rather than shape-driven.
 
 ## What the current design can assume
@@ -34,6 +37,10 @@ equally evidence-driven rather than shape-driven.
   collects overload-resolution argument types from semantic expression typing
   instead of parser-owned call-argument typing, so dependent out-of-line member
   overloads resolve by the concrete substituted call signature seen during sema
+- semantic `operator[]` resolution now shares sema-owned overload-resolution
+  argument typing and the same receiver-const candidate partitioning used by
+  direct member-call lookup, so normalized subscripts no longer bind non-const
+  members through const receivers or lose lvalue/rvalue index evidence
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
@@ -109,9 +116,11 @@ Tightening those is the next best cleanup target.
 
 3. Extend sema-owned lookup unification where it unlocks step 2.
    The recent member-call fix closed one concrete gap by replacing parser-owned
-   call-argument typing inside sema with normalized semantic argument typing.
-   The next useful expansion is to audit the remaining semantic call-resolution
-   sites that still do not share that collector.
+   call-argument typing inside sema with normalized semantic argument typing,
+   and the 2026-06-04 follow-up applied the same model to semantic
+   `operator[]` resolution. The next useful expansion is to audit the remaining
+   semantic call-resolution sites that still do not share that collector or the
+   receiver-aware candidate partitioning around it.
 
 4. Extend dependent-name modeling only where it unlocks steps 2 and 3.
    Richer current-instantiation and unknown-specialization handling still
@@ -135,9 +144,9 @@ Tightening those is the next best cleanup target.
 ## Next steps
 
 1. Audit the remaining semantic call-resolution entry points that do not yet
-   share `tryCollectOverloadResolutionArgTypes(...)`, especially operator-call
-   and other normalized-call paths where parser-owned expression typing can
-   diverge from sema-owned substituted types.
+   share `tryCollectOverloadResolutionArgTypes(...)` or the shared
+   receiver-aware candidate partitioning, especially callable-operator and
+   other normalized-call paths beyond the now-fixed `operator[]` route.
 
 2. Tighten the remaining replay-attachment sites that can still succeed without
    positive substituted-signature evidence outside the now-hardened plain-member,
@@ -146,6 +155,33 @@ Tightening those is the next best cleanup target.
 3. Expand current-instantiation / unknown-specialization modeling only for the
    concrete cases that still block standards-conforming typed lookup after steps
    1 and 2.
+
+## 2026-06-04 semantic operator[] note
+
+Auditing the remaining semantic call-resolution entry points found one
+standards-visible live bug in `SemanticAnalysis::tryResolveSubscriptOperator`:
+subscript overload resolution still used reduced expression typing and did not
+filter member candidates by receiver constness before fallback selection. That
+allowed const objects to bind non-const `operator[]` members and could erase
+lvalue/rvalue index evidence needed for overload selection.
+
+The fix now:
+
+- partitions `operator[]` candidates with the same receiver-const rule used by
+  ordinary member-call lookup
+- resolves the subscript index through sema-owned overload-resolution argument
+  typing rather than raw `inferExpressionType(...)`
+- shares the small overload-set helpers with ordinary member-call resolution so
+  future receiver-sensitive fixes cannot drift between the two paths
+
+Validated with:
+
+- `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_operator_subscript_const_ambiguity_fail.cpp`
+- `test_operator_subscript_const_ret42.cpp`
+- `test_operator_subscript_overloads_ret42.cpp`
+- `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
 
 ## 2026-06-02 constexpr lambda capture-lowering note
 
@@ -179,6 +215,10 @@ Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
 When changing this area, always rerun:
 
 - the focused regression that motivated the slice
+- `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp` and
+  `test_operator_subscript_const_ambiguity_fail.cpp` and
+  `test_constexpr_operator_bracket_const_nonconst_ret0.cpp` when touching
+  semantic subscript resolution or receiver-sensitive normalized-call lookup
 - the three former textual-path blockers listed above when touching dependent
   alias ownership (they now exercise the semantic-only route)
 - the dependent member-template static constexpr regressions when touching

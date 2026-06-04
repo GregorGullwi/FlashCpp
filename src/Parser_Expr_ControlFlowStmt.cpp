@@ -1314,8 +1314,27 @@ ParseResult Parser::parse_lambda_expression() {
 				member_alignment = 8;
 			} else {
 				// By-value capture: store the actual value
-				member_size = var_type.size_in_bits() / 8;
-				member_alignment = member_size;	// Simple alignment = size
+				MemberSizeAndAlignment member_layout =
+					calculateResolvedMemberSizeAndAlignment(var_type, var_type.type_index());
+				member_size = member_layout.size;
+				member_alignment = member_layout.alignment;
+				if (member_size == 0 && var_type.type_index().is_valid()) {
+					if (const TypeInfo* captured_type_info = tryGetTypeInfo(var_type.type_index());
+						captured_type_info != nullptr) {
+						if (const StructTypeInfo* captured_struct_info = captured_type_info->getStructInfo()) {
+							const size_t struct_size = toSizeT(captured_struct_info->sizeInBytes());
+							if (struct_size > 0) {
+								member_size = struct_size;
+								member_alignment = captured_struct_info->alignment > 0
+									? captured_struct_info->alignment
+									: 1;
+							}
+						}
+					}
+				}
+				if (member_alignment == 0) {
+					member_alignment = member_size > 0 ? member_size : 1;
+				}
 			}
 
 			// Resolve type category and type index from the captured variable's type.

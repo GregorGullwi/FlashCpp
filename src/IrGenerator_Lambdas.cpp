@@ -89,7 +89,16 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 		std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
 
 		if (var_symbol.has_value()) {
-			info.captured_var_decls.push_back(*var_symbol);
+			if (std::optional<TypeSpecifierNode> deduced_lambda_closure_type =
+					deduceLambdaClosureType(*var_symbol, capture.identifier_token());
+				deduced_lambda_closure_type.has_value()) {
+				ASTNode deduced_type_node = ASTNode::emplace_node<TypeSpecifierNode>(*deduced_lambda_closure_type);
+				DeclarationNode& synthetic_decl =
+					gChunkedAnyStorage.emplace_back<DeclarationNode>(deduced_type_node, capture.identifier_token());
+				info.captured_var_decls.push_back(ASTNode::emplace_node<DeclarationNode>(synthetic_decl));
+			} else {
+				info.captured_var_decls.push_back(*var_symbol);
+			}
 		} else if (current_lambda_context_.isActive()) {
 			StringHandle var_name_handle = StringTable::getOrInternStringHandle(var_name);
 			auto capture_type_it = current_lambda_context_.capture_types.find(var_name_handle);
@@ -176,7 +185,91 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 		return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{dummy}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
-	const TypeInfo* closure_type = type_it->second;
+	TypeInfo* closure_type = type_it->second;
+	StructTypeInfo* closure_struct_info = closure_type != nullptr ? closure_type->getStructInfo() : nullptr;
+
+	// Generic lambda instantiation can materialize concrete capture types after the
+	// closure was first registered with dependent placeholder member sizes.
+	// Backfill any unresolved by-value capture member shape before emitting stores.
+	if (closure_struct_info != nullptr) {
+		bool layout_changed = false;
+		size_t capture_decl_index = 0;
+		for (const auto& capture : lambda_info.captures) {
+			if (capture.is_capture_all() ||
+				capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+				capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis ||
+				capture.has_initializer()) {
+				continue;
+			}
+
+			if (capture_decl_index >= lambda_info.captured_var_decls.size()) {
+				break;
+			}
+
+			const DeclarationNode* capture_decl = get_decl_from_symbol(lambda_info.captured_var_decls[capture_decl_index]);
+			capture_decl_index++;
+			if (capture_decl == nullptr || capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+				continue;
+			}
+
+			const StringHandle capture_name = StringTable::getOrInternStringHandle(capture.identifier_name());
+			StructMember* capture_member = nullptr;
+			for (auto& member : closure_struct_info->members) {
+				if (member.getName() == capture_name) {
+					capture_member = &member;
+					break;
+				}
+			}
+			if (capture_member == nullptr || capture_member->size != 0) {
+				continue;
+			}
+
+			const TypeSpecifierNode& capture_type = capture_decl->type_specifier_node();
+			size_t resolved_size = capture_type.size_in_bits() / 8;
+			size_t resolved_alignment = resolved_size > 0
+										 ? get_type_alignment(capture_type.type(), resolved_size)
+										 : 1;
+			if (capture_type.type_index().is_valid()) {
+				if (const TypeInfo* capture_type_info = tryGetTypeInfo(capture_type.type_index())) {
+					if (resolved_size == 0 && capture_type_info->hasStoredSize()) {
+						resolved_size = toSizeT(capture_type_info->sizeInBytes());
+					}
+					if (const StructTypeInfo* capture_struct_info = capture_type_info->getStructInfo()) {
+						if (resolved_size == 0) {
+							resolved_size = toSizeT(capture_struct_info->sizeInBytes());
+						}
+						if (capture_struct_info->alignment > 0) {
+							resolved_alignment = capture_struct_info->alignment;
+						}
+					}
+				}
+			}
+			if (resolved_size == 0 && is_builtin_type(capture_type.type())) {
+				resolved_size = get_type_size_bits(capture_type.type()) / 8;
+			}
+			if (resolved_size == 0) {
+				continue;
+			}
+			if (resolved_alignment == 0) {
+				resolved_alignment = 1;
+			}
+
+			capture_member->size = resolved_size;
+			capture_member->alignment = resolved_alignment;
+			capture_member->referenced_size_bits = std::max(capture_member->referenced_size_bits, resolved_size * 8);
+			if (capture_member->type_index.category() == TypeCategory::Invalid) {
+				TypeIndex resolved_member_type_index = capture_type.type_index();
+				if (!resolved_member_type_index.is_valid()) {
+					resolved_member_type_index = nativeTypeIndex(capture_type.type());
+				}
+				capture_member->type_index = resolved_member_type_index.withCategory(capture_type.type());
+			}
+			layout_changed = true;
+		}
+		if (layout_changed) {
+			closure_struct_info->recalculateLayout();
+		}
+	}
 
 	// Use target variable name if provided, otherwise create a temporary closure variable
 	std::string_view closure_var_name;
