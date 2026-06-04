@@ -3,9 +3,15 @@
 struct Point {
 	int x, y;
 	int operator<=>(const Point& other) const {
-		if (x != other.x)
-			return x - other.x;
-		return y - other.y;
+		if (x < other.x)
+			return -1;
+		if (x > other.x)
+			return 1;
+		if (y < other.y)
+			return -1;
+		if (y > other.y)
+			return 1;
+		return 0;
 	}
 };
 

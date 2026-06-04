@@ -12,16 +12,12 @@
 
 ### Compile failures
 
-- `concept_comprehensive_ret15.cpp`
-- `countof_test.cpp`
 - `problem_statement_example.cpp`
 - `spaceship_default.cpp`
 - `test_complex_keywords.cpp`
 - `test_constexpr_lambda_immediate_ret0.cpp`
 - `test_constexpr_offsetof_nested_ret0.cpp`
 - `test_constexpr_offsetof_ret0.cpp`
-- `test_copy_assign_default_arg_ret42.cpp`
-- `test_ctor_string_literal_lvalue_ret0.cpp`
 - `test_declspec_class_ret0.cpp`
 - `test_declspec_dllimport_var_ret42.cpp`
 - `test_dependent_decltype_arrow_member_pointer_ret0.cpp`
@@ -31,14 +27,10 @@
 - `test_infer_expr_type_expansion_ret0.cpp`
 - `test_local_declspec_attribute_prefix_ret42.cpp`
 - `test_no_unique_address_empty_member_same_type_overlap_ret0.cpp`
-- `test_operator_addressof_overload_baseline_ret99.cpp`
-- `test_operator_member_tiebreak_ret0.cpp`
 - `test_outofline_nested_pack_ret0.cpp`
 - `test_outofline_nested_union_ret0.cpp`
 - `test_rtti_basic_ret1.cpp`
-- `test_separator_chars.cpp`
 - `test_sizeof_offsetof.cpp`
-- `test_sizeof_template_param_default_ret4.cpp`
 - `test_spaceship_3member_ret15.cpp`
 - `test_spaceship_all_ops_ret255.cpp`
 - `test_spaceship_inline_expr_ret17.cpp`
@@ -71,7 +63,6 @@
 - `test_va_mixed_types_ret0.cpp`
 - `test_va_struct_args_ret0.cpp`
 - `test_varargs.cpp`
-- `test_variadic_overload.cpp`
 
 ### Return mismatches
 
@@ -82,7 +73,7 @@
 
 ## Notes
 
-- Compile failures: 59 unique tests
+- Compile failures: 50 unique tests
 - Link failures: 0
 - Runtime crashes: 0
 - Return mismatches: 4 unique tests
@@ -107,12 +98,10 @@ No test files were changed in this pass.
 
 These are not interesting language-invalid cases yet; they need the right standard headers first.
 
-- `countof_test.cpp`: uses `size_t` without including a header that provides it.
 - `problem_statement_example.cpp`: defaulted spaceship requires `<compare>`.
 - `spaceship_default.cpp`: defaulted spaceship requires `<compare>`.
 - `test_friend_default_spaceship_ret0.cpp`: defaulted spaceship requires `<compare>`.
 - `test_rtti_basic_ret1.cpp`: uses `typeid` without including `<typeinfo>`.
-- `test_sizeof_template_param_default_ret4.cpp`: uses `size_t` without including a header that provides it.
 - `test_spaceship_3member_ret15.cpp`: defaulted spaceship requires `<compare>`.
 - `test_spaceship_all_ops_ret255.cpp`: defaulted spaceship requires `<compare>`.
 - `test_spaceship_inline_expr_ret17.cpp`: defaulted spaceship requires `<compare>`.
@@ -156,25 +145,18 @@ These are outside portable standard C++20 and should be tracked separately from 
 
 These still reject after setting aside header omissions and extension-only cases.
 
-- `concept_comprehensive_ret15.cpp`: declares non-template concepts like `concept AlwaysTrue = true;`; a concept definition must be a template declaration.
 - `test_constexpr_offsetof_nested_ret0.cpp`: uses `offsetof(PackedOuter, inner.value)`; nested member designators are rejected by this standard-library `offsetof` form.
 - `test_constexpr_offsetof_ret0.cpp`: uses `offsetof` without first making the macro available, so the token sequence is parsed as ordinary code and becomes invalid.
-- `test_copy_assign_default_arg_ret42.cpp`: adds a default argument to `operator=`, which is not allowed.
-- `test_ctor_string_literal_lvalue_ret0.cpp`: overload set makes the string-literal call bind to a deleted constructor.
 - `test_dependent_decltype_arrow_member_pointer_ret0.cpp`: forms a pointer to a reference type.
 - `test_dependent_decltype_member_pointer_local_ret0.cpp`: forms a pointer to a reference type.
 - `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`: initializes a `constexpr` data member from a function call that is not accepted as a constant expression in this form.
 - `test_infer_expr_type_expansion_ret0.cpp`: uses `offsetof` without first making the macro available, so the expression is not parsed as an `offsetof` invocation.
 - `test_no_unique_address_empty_member_same_type_overlap_ret0.cpp`: uses `offsetof` without first making the macro available, so the expression is invalid as written.
-- `test_operator_addressof_overload_baseline_ret99.cpp`: expects built-in address-of behavior even though the overloaded `operator&` changes the expression type.
-- `test_operator_member_tiebreak_ret0.cpp`: both member and non-member `operator+` are viable and the call is ambiguous.
 - `test_outofline_nested_pack_ret0.cpp`: uses `offsetof(Wrapper<int>::Nested, x)` without making `offsetof` available.
 - `test_outofline_nested_union_ret0.cpp`: uses `offsetof(Wrapper<int>::Nested, a)` without making `offsetof` available.
-- `test_separator_chars.cpp`: contains `#if ABC, XYZ`; the comma operator is not valid in a preprocessor conditional expression.
 - `test_sizeof_offsetof.cpp`: uses `offsetof` without first making the macro available.
 - `test_spaceship_user_synth_ret255.cpp`: expects the relational operators to synthesize from a user-defined `operator<=>` returning `int`; that is not how C++20 synthesis works.
 - `test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`: provides an invalid `get` customization / specialization shape, so the intended structured-binding lookup does not match.
-- `test_variadic_overload.cpp`: overload resolution between the `print` candidates is ambiguous.
 
 ### Not Reproduced As C++20 Rejects In This Pass
 

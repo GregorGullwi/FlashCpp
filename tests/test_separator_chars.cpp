@@ -33,7 +33,8 @@
 #endif
 #if (ABC)			 // ( ) should be separators
 #endif
-#if ABC, XYZ			 // , should be separator (in macro args)
+#define ADD_PAIR(a, b) ((a) + (b))
+#if ADD_PAIR(ABC, XYZ)	 // , is valid as a macro-argument separator
 #endif
 
 int main() {

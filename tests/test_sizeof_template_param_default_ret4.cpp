@@ -1,4 +1,6 @@
 // Test: sizeof in non-type template parameter default
+using size_t = decltype(sizeof(0));
+
 template <typename T, size_t N = sizeof(T)>
 struct test {
 	char data[N];

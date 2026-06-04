@@ -27,8 +27,10 @@ void log(int level, const char* message) {
 }
 
 int main() {
-	print("Hello");
+	int (*print_non_variadic)(const char*) = &print;
+	print_non_variadic("Hello");
 	log(1);
-	log(2, "Test");
+	void (*log_non_variadic)(int, const char*) = &log;
+	log_non_variadic(2, "Test");
 	return 0;
 }

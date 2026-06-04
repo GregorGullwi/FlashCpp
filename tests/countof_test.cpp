@@ -7,6 +7,7 @@
 // 1. A template function with two parameters: type T and non-type size_t N
 // 2. Return type is char (*)[N] - pointer to array of N chars
 // 3. Parameter is T (&_Array)[N] - reference to array of T with size N
+using size_t = decltype(sizeof(0));
 
 #define _UNALIGNED
 

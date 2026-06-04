@@ -1,19 +1,20 @@
 // Regression: structured binding tuple-like lookup must prefer member get<I>()
 // over non-member get<I>(e) when both are available.
-
 namespace std {
+	using size_t = decltype(sizeof(0));
+
 	template <typename T>
 	struct tuple_size;
 
-	template <unsigned long I, typename T>
+	template <size_t I, typename T>
 	struct tuple_element;
-} // namespace std
+}
 
 struct Pair {
 	int first;
 	int second;
 
-	template <unsigned long I>
+	template <std::size_t I>
 	int get() const;
 };
 
@@ -23,20 +24,10 @@ int Pair::get<0>() const { return first; }
 template <>
 int Pair::get<1>() const { return second; }
 
-// Deliberately conflicting free get specializations. If chosen, the result is wrong.
-template <unsigned long I>
-typename std::tuple_element<I, Pair>::type get(const Pair& p);
-
-template <>
-int get<0>(const Pair&) { return -100; }
-
-template <>
-int get<1>(const Pair&) { return -200; }
-
 namespace std {
 	template <>
 	struct tuple_size<Pair> {
-		static constexpr unsigned long value = 2;
+		static constexpr std::size_t value = 2;
 	};
 
 	template <>
@@ -49,6 +40,16 @@ namespace std {
 		using type = int;
 	};
 } // namespace std
+
+// Deliberately conflicting free get specializations. If chosen, the result is wrong.
+template <std::size_t I>
+typename std::tuple_element<I, Pair>::type get(const Pair& p);
+
+template <>
+int get<0>(const Pair&) { return -100; }
+
+template <>
+int get<1>(const Pair&) { return -200; }
 
 int main() {
 	Pair p{10, 32};

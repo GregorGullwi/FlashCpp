@@ -210,6 +210,29 @@ Result: all updated tests pass `clang++ --target=x86_64-unknown-linux-gnu
 `pwsh tests/run_all_tests.ps1` runs. No new missing-feature entry was required
 for this subset.
 
+## 2026-06-04 wider non-standard C++20 cleanup (non-extension set)
+
+A wider pass converted the remaining non-extension non-standard tests to
+portable C++20 forms and verified them with `clang++ -std=c++20
+-pedantic-errors -fsyntax-only`. (Per repo preference, test edits avoid
+`#include <cstddef>`.)
+
+Now-passing tests from this wider pass were removed from
+`docs/TEST_RUNNER_FAILURE_REPORT.md`.
+
+Remaining blockers in FlashCpp for the edited non-extension set are now grouped
+as implementation gaps rather than language-invalid test input:
+
+- Standard library header/template ingestion gaps (`<compare>`, `<utility>`,
+  `<typeinfo>`) affecting spaceship, forwarding, and RTTI test families.
+- Remaining dependent/member-type paths in pointer-to-member `decltype` tests.
+- `constexpr` member-call binding in
+  `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`.
+- Structured-binding tuple customization lookup in
+  `test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`.
+- `no_unique_address` and several `offsetof`/layout tests under the current
+  header-ingestion/runtime-layout path.
+
 ## 2026-06-02 constexpr lambda conformance note
 
 The updated constexpr-lambda tests exposed runtime capture-lowering bugs rather

@@ -1,4 +1,26 @@
 // Test std::forward with observable forwarding behavior
+namespace std {
+	template <typename T>
+	struct remove_reference {
+		using type = T;
+	};
+	template <typename T>
+	struct remove_reference<T&> {
+		using type = T;
+	};
+	template <typename T>
+	struct remove_reference<T&&> {
+		using type = T;
+	};
+	template <typename T>
+	constexpr T&& forward(typename remove_reference<T>::type& value) noexcept {
+		return static_cast<T&&>(value);
+	}
+	template <typename T>
+	constexpr T&& forward(typename remove_reference<T>::type&& value) noexcept {
+		return static_cast<T&&>(value);
+	}
+}
 
 // External printf declaration
 extern "C" int printf(const char*, ...);
