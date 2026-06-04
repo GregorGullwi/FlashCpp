@@ -394,8 +394,7 @@ int main_impl(int argc, char* argv[]) {
 	setTypeTableStatsEnabled(show_perf_stats);
 	{
 		PhaseTimer timer("Lexer Setup", false, &lexer_setup_time);
-		lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
-		lexer_ptr->setMsvcSehKeywords(context.isMsvcMode());
+		lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths(), context.isMsvcMode());
 		sema = std::make_unique<SemanticAnalysis>(context, gSymbolTable);
 		// Allocate Parser on the heap to reduce stack usage - Parser has many large member variables
 		parser = std::make_unique<Parser>(*lexer_ptr, context, *sema);
@@ -412,8 +411,7 @@ int main_impl(int argc, char* argv[]) {
 	std::string parse_compile_error_notes;
 	{
 		PhaseTimer timer("Parsing", false, &parsing_time);
-		// Note: Lexing happens lazily during parsing in this implementation
-		// Template instantiation also happens during parsing
+		// Template instantiation still happens during parsing.
 
 		try {
 			parse_result = parser->parse();
