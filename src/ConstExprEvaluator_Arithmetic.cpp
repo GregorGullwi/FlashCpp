@@ -232,8 +232,9 @@ std::optional<long long> Evaluator::safe_mul(long long a, long long b) {
 	if (a == 0 || b == 0) {
 		result = 0;
 	} else if (a == LLONG_MIN || b == LLONG_MIN) {
-		// Special case: LLONG_MIN * anything except 0 or 1 overflows
-		if ((a == LLONG_MIN && (b < -1 || b > 1)) || (b == LLONG_MIN && (a < -1 || a > 1))) {
+		// Special case: LLONG_MIN * anything except 0 or 1 overflows.
+		// LLONG_MIN * -1 is also overflow (-LLONG_MIN is not representable).
+		if ((a == LLONG_MIN && b != 0 && b != 1) || (b == LLONG_MIN && a != 0 && a != 1)) {
 			return std::nullopt;
 		}
 		result = a * b;

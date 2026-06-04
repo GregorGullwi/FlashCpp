@@ -9,6 +9,7 @@
 #include "TypeTraitEvaluator.h"
 #include <algorithm>
 #include <limits>
+#include <numeric>
 
 #include "ConstExprEvalHelpers.h"
 
@@ -336,11 +337,9 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	// dims[0]    = outer element count (number of rows)
 	// dims[1..N] = inner dimensions (size of each row)
 	size_t outer_size = dims[0];
-	std::vector<size_t> inner_dims(dims.begin() + 1, dims.end());
-
 	// Build a TypeSpecifierNode for the inner (element) type.
 	TypeSpecifierNode inner_type_spec = type_spec;
-	inner_type_spec.set_array_dimensions(inner_dims);
+	inner_type_spec.set_array_dimensions(dims.subspan(1));
 
 	// Check if the init_list is "fully flat" — non-empty and all elements are scalars
 	// (no nested InitializerListNode).
@@ -364,7 +363,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	if (is_fully_flat) {
 		// Compute the number of scalar elements each inner array consumes.
 		size_t inner_size = 1;
-		for (size_t d : inner_dims)
+		for (size_t d : dims.subspan(1))
 			inner_size *= d;
 
 		size_t scalar_cursor = 0;
@@ -372,7 +371,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 			EvalResult elem;
 			if (scalar_cursor >= init_list.size()) {
 				// No more scalars: zero-initialise.
-				elem = make_zero_array_for_dims(inner_dims, type_spec.type());
+				elem = make_zero_array_for_dims(dims.subspan(1), type_spec.type());
 			} else {
 				// Build a sub-init-list consuming up to inner_size scalars from the flat list.
 				InitializerListNode sub_init;
@@ -388,7 +387,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 		}
 	} else {
 		size_t inner_size = 1;
-		for (size_t d : inner_dims)
+		for (size_t d : dims.subspan(1))
 			inner_size *= d;
 
 		size_t cursor = 0;
@@ -419,7 +418,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 				}
 			} else {
 				// Missing initializer: zero-initialise the entire inner array.
-				elem = make_zero_array_for_dims(inner_dims, type_spec.type());
+				elem = make_zero_array_for_dims(dims.subspan(1), type_spec.type());
 			}
 			if (!elem.success()) {
 				return elem;
