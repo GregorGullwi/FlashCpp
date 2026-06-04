@@ -392,6 +392,9 @@ ParseResult Parser::parse_type_and_name() {
 		skip_noop_gnu_qualifiers();
 		ptr_cv |= parse_cv_qualifiers();
 
+		if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+			return ParseResult::error("Cannot form a pointer to reference type", current_token_);
+		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
 

@@ -4455,9 +4455,30 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 			}
 			return ValueCategory::LValue;
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode> ||
-							 std::is_same_v<T, PointerToMemberAccessNode> ||
 							 std::is_same_v<T, StringLiteralNode>) {
 			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+			const CanonicalTypeId member_pointer_type_id =
+				inferExpressionType(inner.member_pointer());
+			if (member_pointer_type_id) {
+				const CanonicalTypeDesc& member_pointer_desc =
+					type_context_.get(member_pointer_type_id);
+				if (member_pointer_desc.function_signature.has_value()) {
+					return ValueCategory::PRValue;
+				}
+			}
+			const ValueCategory object_category = inner.is_arrow()
+				? ValueCategory::LValue
+				: inferExpressionValueCategory(inner.object());
+			switch (object_category) {
+				case ValueCategory::LValue:
+					return ValueCategory::LValue;
+				case ValueCategory::XValue:
+				case ValueCategory::PRValue:
+					return ValueCategory::XValue;
+				default:
+					throw InternalError("Unexpected pointer-to-member object value category");
+			}
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 			// C++20 [expr.ref]/4: if the member is a reference, the result is
 			// always an lvalue regardless of the object's value category.
@@ -5243,7 +5264,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			}
 		}
 
-		return std::visit([this](const auto& e) -> CanonicalTypeId {
+		return std::visit([this, &node](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
@@ -5407,6 +5428,21 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				CanonicalTypeDesc result_desc = type_context_.get(member_pointer_type_id);
 				if (!result_desc.pointer_levels.empty()) {
 					result_desc.pointer_levels.pop_back();
+				}
+				if (!result_desc.function_signature.has_value() &&
+					result_desc.ref_qualifier == ReferenceQualifier::None) {
+					switch (inferExpressionValueCategory(node)) {
+						case ValueCategory::LValue:
+							result_desc.ref_qualifier = ReferenceQualifier::LValueReference;
+							break;
+						case ValueCategory::XValue:
+							result_desc.ref_qualifier = ReferenceQualifier::RValueReference;
+							break;
+						case ValueCategory::PRValue:
+							break;
+						default:
+							throw InternalError("Unexpected pointer-to-member value category");
+					}
 				}
 				return type_context_.intern(result_desc);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {

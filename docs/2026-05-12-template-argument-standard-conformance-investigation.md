@@ -68,6 +68,11 @@ Move FlashCpp toward a sema-owned template system where:
   where the instantiated name resolves to a member type
 - member type aliases preserve surface modifiers (pointer/reference/cv/array/
   function) across alias chains rather than collapsing to the terminal type
+- function-template trailing return `decltype(...)` reparsing now runs against
+  the instantiated parameter declarations rather than the pre-materialized
+  template pattern
+- non-explicit template-parameter materialization now preserves full
+  pointer-to-member metadata for bound type arguments
 
 ## Highest-value remaining standards gap
 
@@ -134,6 +139,46 @@ unknown-specialization modeling only where it unblocks those paths.
 
 3. Only after those are stable, extend current-instantiation and
    unknown-specialization modeling for the specific unresolved cases that remain.
+
+## 2026-06-04 dependent decltype conformance note
+
+The remaining pointer-to-member `decltype` failures were not primarily member
+access bugs. The deeper standards gap was that free-function template trailing
+return clauses were being reparsed before the instantiated parameter list
+existed, and non-explicit parameter materialization could erase bound
+pointer-to-member structure by reducing a template argument like `int Box::*`
+to `int`.
+
+The fix now:
+
+- reparses saved free-function trailing return clauses after parameter
+  materialization, with the concrete instantiated parameter declarations in
+  scope
+- copies the saved trailing-return/template parse positions onto the
+  instantiated function before replay
+- materializes non-explicit bound parameter types through the full substituted
+  type-specifier path so member-pointer category/owner data survive deduction
+- preserves member-pointer owner metadata when converting stored bound template
+  arguments back into `TypeSpecifierNode`s
+
+Standards-visible result:
+
+- `decltype(wrapped.get())` in a function-template trailing return now
+  preserves `T&`
+- `decltype(wrapped.get().*pmd)` likewise preserves the lvalue reference and no
+  longer admits invalid `Result*` forms
+
+Validated with:
+
+- `test_dependent_decltype_member_call_ref_ret0.cpp`
+- `test_dependent_decltype_member_pointer_local_ret0.cpp`
+- `test_dependent_decltype_member_pointer_local_fail.cpp`
+- `test_dependent_decltype_arrow_member_pointer_ret0.cpp`
+- `test_dependent_decltype_arrow_member_pointer_fail.cpp`
+- `test_template_trailing_return_decltype_nttp_ret0.cpp`
+- `test_template_trailing_return_namespace_lookup_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04, with only the unrelated
+  pre-existing lambda-link failures remaining
 
 ## 2026-06-04 semantic operator[] conformance note
 
@@ -225,7 +270,6 @@ as implementation gaps rather than language-invalid test input:
 
 - Standard library header/template ingestion gaps (`<compare>`, `<utility>`,
   `<typeinfo>`) affecting spaceship, forwarding, and RTTI test families.
-- Remaining dependent/member-type paths in pointer-to-member `decltype` tests.
 - `constexpr` member-call binding in
   `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`.
 - Structured-binding tuple customization lookup in

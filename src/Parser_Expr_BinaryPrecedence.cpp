@@ -1512,6 +1512,9 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		while (peek().is_keyword() && is_msvc_pointer_modifier(peek_info().value())) {
 			advance();
 		}
+		if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+			throw CompileError("Cannot form a pointer to reference type");
+		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
 	// Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)

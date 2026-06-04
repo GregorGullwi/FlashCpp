@@ -1114,6 +1114,9 @@ inline TypeSpecifierNode makeTypeSpecifierFromTemplateTypeArg(
 			substituted_spec.set_array_dimensions(arg.array_dimensions);
 		}
 	}
+	if (arg.member_class_name.isValid()) {
+		substituted_spec.set_member_class_name(arg.member_class_name);
+	}
 	if (arg.function_signature.has_value()) {
 		substituted_spec.set_function_signature(*arg.function_signature);
 	}
@@ -1161,6 +1164,9 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 		} else {
 			substituted_spec.set_array_dimensions(arg_info.array_dimensions);
 		}
+	}
+	if (arg_info.member_class_name.isValid()) {
+		substituted_spec.set_member_class_name(arg_info.member_class_name);
 	}
 	if (arg_info.function_signature.has_value()) {
 		substituted_spec.set_function_signature(*arg_info.function_signature);

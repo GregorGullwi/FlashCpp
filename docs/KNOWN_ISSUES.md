@@ -32,13 +32,6 @@ still accepted.
   Original case: `tests/test_copy_assign_default_arg_ret42.cpp` (before removal).
   A `_fail` regression (`test_copy_assign_default_arg_fail.cpp`) was tried and
   unexpectedly compiled; keep this tracked here until parser/sema rejects it.
-- `tests/test_dependent_decltype_member_pointer_local_ret0.cpp` (original form)
-  can accept a path that effectively permits pointer-to-reference formation
-  (`Result*` where `Result` is reference-like in the dependent `decltype` flow),
-  which should be ill-formed and diagnosed.
-- `tests/test_dependent_decltype_arrow_member_pointer_ret0.cpp` (original form)
-  has the same dependent `decltype` pointer-to-reference issue on the `->*`
-  path and should be diagnosed as ill-formed.
 
 ## Constructor overload selection mismatch (string literal/lvalue case)
 The original `tests/test_ctor_string_literal_lvalue_ret0.cpp` shape exposed a
