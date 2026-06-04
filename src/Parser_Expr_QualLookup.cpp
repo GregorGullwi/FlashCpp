@@ -2889,6 +2889,13 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 							member_type,
 							object_type,
 							member_access.is_arrow());
+						// C++20 [expr.ref]/4: non-arrow member access on a prvalue yields an xvalue
+						if (!member_access.is_arrow() &&
+							!object_type.is_lvalue_reference() &&
+							!object_type.is_rvalue_reference() &&
+							member_type.reference_qualifier() == ReferenceQualifier::None) {
+							member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+						}
 					}
 					return member_type;
 				}

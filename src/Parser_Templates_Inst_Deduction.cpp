@@ -2745,56 +2745,61 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			exitSourceNamespaceIfNeeded(entered_namespace_count);
 		});
 
-		auto return_type_result = parse_type_specifier();
-		if (return_type_result.node().has_value() &&
-			return_type_result.node()->is<TypeSpecifierNode>()) {
-			auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
-			consume_pointer_ref_modifiers(rt);
-		}
+		try {
+			auto return_type_result = parse_type_specifier();
+			if (return_type_result.node().has_value() &&
+				return_type_result.node()->is<TypeSpecifierNode>()) {
+				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
+				consume_pointer_ref_modifiers(rt);
+			}
 
-		if (return_type_result.is_error() ||
-			!return_type_result.node().has_value() ||
-			!return_type_result.node()->is<TypeSpecifierNode>()) {
-			failTemplateInstantiation(
-				return_type_result.is_error()
-					? return_type_result.error_message()
-					: StringBuilder()
-						  .append("template function '")
-						  .append(template_name)
-						  .append("' return type parsing returned no node")
-						  .commit(),
-				&key,
-				overload_id);
-			return false;
-		}
+			if (return_type_result.is_error() ||
+				!return_type_result.node().has_value() ||
+				!return_type_result.node()->is<TypeSpecifierNode>()) {
+				failTemplateInstantiation(
+					return_type_result.is_error()
+						? return_type_result.error_message()
+						: StringBuilder()
+							  .append("template function '")
+							  .append(template_name)
+							  .append("' return type parsing returned no node")
+							  .commit(),
+					&key,
+					overload_id);
+				return false;
+			}
 
-		ASTNode resolved_return_type = *return_type_result.node();
-		resolveDependentMemberAlias(resolved_return_type, template_params, template_args);
-		TypeSpecifierNode& resolved_type = resolved_return_type.as<TypeSpecifierNode>();
-		resolveAliasTemplateInstantiation(resolved_type);
-		apply_resolved_alias_metadata_local(resolved_type);
-		if ((resolved_type.category() == TypeCategory::UserDefined ||
-			 resolved_type.category() == TypeCategory::TypeAlias ||
-			 resolved_type.category() == TypeCategory::Template) &&
-			resolved_type.type_index().is_valid()) {
-			if (const TypeInfo* resolved_type_info = tryGetTypeInfo(resolved_type.type_index())) {
-				if (resolved_type_info->is_incomplete_instantiation_ &&
-					resolved_type_info->isDependentMemberType()) {
-					failTemplateInstantiation(
-						StringBuilder()
-							.append("template function '")
-							.append(template_name)
-							.append("' trailing return type stayed dependent after materialization")
-							.commit(),
-						&key,
-						overload_id);
-					return false;
+			ASTNode resolved_return_type = *return_type_result.node();
+			resolveDependentMemberAlias(resolved_return_type, template_params, template_args);
+			TypeSpecifierNode& resolved_type = resolved_return_type.as<TypeSpecifierNode>();
+			resolveAliasTemplateInstantiation(resolved_type);
+			apply_resolved_alias_metadata_local(resolved_type);
+			if ((resolved_type.category() == TypeCategory::UserDefined ||
+				 resolved_type.category() == TypeCategory::TypeAlias ||
+				 resolved_type.category() == TypeCategory::Template) &&
+				resolved_type.type_index().is_valid()) {
+				if (const TypeInfo* resolved_type_info = tryGetTypeInfo(resolved_type.type_index())) {
+					if (resolved_type_info->is_incomplete_instantiation_ &&
+						resolved_type_info->isDependentMemberType()) {
+						failTemplateInstantiation(
+							StringBuilder()
+								.append("template function '")
+								.append(template_name)
+								.append("' trailing return type stayed dependent after materialization")
+								.commit(),
+							&key,
+							overload_id);
+						return false;
+					}
 				}
 			}
-		}
 
-		target_func.decl_node().set_type_node(resolved_type);
-		return true;
+			target_func.decl_node().set_type_node(resolved_type);
+			return true;
+		} catch (const CompileError& err) {
+			failTemplateInstantiation(err.what(), &key, overload_id);
+			return false;
+		}
 	};
 
 	ASTNode return_type;
