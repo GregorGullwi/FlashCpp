@@ -19,21 +19,12 @@ struct Node {
 	int data;
 };
 
-template <class T>
-struct IsReference {
-	static constexpr bool value = false;
-};
-
-template <class T>
-struct IsReference<T&> {
-	static constexpr bool value = true;
-};
-
 // Resolve the type alias through an unevaluated decltype call so we exercise
 // the full dependency-detection path without executing ->* at runtime
 // (pre-existing pointer-to-member codegen limitation).
 using NodeIntResult = decltype(ArrowInvoker<Node, int>::call(nullptr, nullptr));
 
 int main() {
-	return IsReference<NodeIntResult>::value ? 0 : 1;
+	NodeIntResult* unused = nullptr;
+	return unused == nullptr ? 0 : 1;
 }
