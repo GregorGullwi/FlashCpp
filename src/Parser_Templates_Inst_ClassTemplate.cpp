@@ -1,3 +1,17 @@
+#include <cctype>
+#include <functional>
+
+#include "Parser.h"
+#include "CallNodeHelpers.h"
+#include "RebindStaticMemberAst.h"
+#include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
+#include "OverloadResolution.h"
+#include "TypeTraitEvaluator.h"
+#include "InstantiationQueue.h"
+#include "ParserTemplateClassShared.h"
+#include "AstTraversal.h"
+#include "TemplateEnvironment.h"
 #include "ParserTemplateHelpers.h"
 
 static constexpr size_t kMaxAliasUnwrapIterations = 64;

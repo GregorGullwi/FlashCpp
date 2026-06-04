@@ -224,6 +224,9 @@
     <ClCompile Include="src\ConstExprEvaluator_Materialize.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\ConstExprEvalHelpers.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\ElfFileWriter_EH.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)'!='Modular'">true</ExcludedFromBuild>
     </ClCompile>
@@ -438,6 +441,7 @@
     <ClInclude Include="src\CompilerIncludes.h" />
     <ClInclude Include="src\VariantUtils.h" />
     <ClInclude Include="src\ConstExprEvaluator.h" />
+    <ClInclude Include="src\ConstExprEvalHelpers.h" />
     <ClInclude Include="src\CrashHandler.h" />
     <ClInclude Include="src\DwarfCFI.h" />
     <ClInclude Include="src\ElfFileWriter.h" />

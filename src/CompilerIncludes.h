@@ -82,6 +82,7 @@
 #include "ConstExprEvaluator_Arithmetic.cpp"
 #include "ConstExprEvaluator_MemberAccess.cpp"
 #include "ConstExprEvaluator_Materialize.cpp"
+#include "ConstExprEvalHelpers.cpp"
 #include "StringLiteralTokenUtils.cpp"
 #include "SemanticAnalysis.cpp"
 #endif
