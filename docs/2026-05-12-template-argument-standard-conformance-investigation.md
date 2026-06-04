@@ -162,6 +162,41 @@ Validated with:
 - `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-04
 
+## 2026-06-04 callable/operator() conformance note
+
+The remaining standards-callable regressions in normalized/deferred paths were:
+
+- nested generic-lambda callable captures could remain zero-sized in closure
+  layout, causing overlap with subsequent captures
+- normalized direct-call lowering could hard-fail when sema-owned target
+  metadata was missing, even for late/deferred call paths that still had typed
+  lookup evidence
+- unresolved callable-reference recursive self calls could miss the correct
+  mangled target because self-argument qualifier handling diverged from ordinary
+  recursive self lowering
+
+The fix now:
+
+- backfills unresolved by-value capture size/alignment from capture member type
+  info and recalculates closure layout before emission
+- preserves strict sema-owned direct-call target use when available, and limits
+  compatibility behavior to an explicit metadata-missing boundary
+- unifies unresolved callable-reference recursive self-call lowering with the
+  ordinary recursive self path, including lvalue-reference self-argument
+  qualifier treatment
+
+Conformance debt to remove next:
+
+- delete the metadata-missing direct-call compatibility boundary once sema
+  always provides owned direct-call targets for these normalized/deferred calls
+
+Validated with:
+
+- `test_generic_lambda_callable_nested_clone_ret0.cpp`
+- `test_generic_lambda_recursive_self_ret0.cpp`
+- `test_lambda_cpp20_comprehensive_ret135.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
+
 ## 2026-06-02 constexpr lambda conformance note
 
 The updated constexpr-lambda tests exposed runtime capture-lowering bugs rather

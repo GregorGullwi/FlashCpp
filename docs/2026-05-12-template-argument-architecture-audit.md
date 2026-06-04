@@ -183,6 +183,42 @@ Validated with:
 - `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-04
 
+## 2026-06-04 callable/operator() standards follow-up note
+
+Continuing the standards-callable cleanup exposed three coupled regressions in
+normalized/deferred lambda call paths:
+
+- nested generic-lambda closures could place callable and scalar captures at the
+  same offset when callable capture size metadata remained unresolved
+- normalized direct-call lowering failed too early when sema-owned target
+  metadata was absent, even though the call still had enough typed context for
+  late/deferred lookup resolution
+- unresolved callable-reference recursive self calls (`self(self, ...)`) could
+  lower with mismatched self-argument qualifier expectations, breaking mangled
+  target resolution
+
+The fix now:
+
+- backfills unresolved by-value capture size/alignment from capture-member type
+  information and recalculates closure layout before emission
+- keeps strict sema-owned direct-call target behavior when metadata exists, and
+  constrains compatibility behavior to an explicit metadata-missing boundary
+- aligns unresolved callable-reference recursive self lowering with the ordinary
+  recursive self path (including lvalue-reference self argument handling)
+
+Remaining debt:
+
+- the metadata-missing direct-call compatibility boundary is still temporary and
+  should be removed once sema always materializes owned direct-call targets for
+  these normalized/deferred paths
+
+Validated with:
+
+- `test_generic_lambda_callable_nested_clone_ret0.cpp`
+- `test_generic_lambda_recursive_self_ret0.cpp`
+- `test_lambda_cpp20_comprehensive_ret135.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
+
 ## 2026-06-02 constexpr lambda capture-lowering note
 
 The updated constexpr-lambda tests exposed runtime-only closure-lowering gaps:
