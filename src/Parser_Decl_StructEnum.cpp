@@ -81,6 +81,88 @@ void registerTypeLookupAliases(
 		}
 	}
 }
+
+bool isPlainIntIncDecPostfixParameter(const ASTNode& param_node) {
+	if (!param_node.is<DeclarationNode>()) {
+		return false;
+	}
+
+	const auto& param_decl = param_node.as<DeclarationNode>();
+	if (param_decl.has_default_value()) {
+		return false;
+	}
+
+	const auto& type_spec = param_decl.type_specifier_node();
+	if (type_spec.is_reference() ||
+		type_spec.is_pointer() ||
+		type_spec.is_array() ||
+		type_spec.has_function_signature() ||
+		type_spec.has_member_class()) {
+		return false;
+	}
+
+	if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
+		return true;
+	}
+
+	if (resolve_type_alias(type_spec.type_index()) != TypeCategory::Int) {
+		return false;
+	}
+
+	return true;
+}
+
+bool hasDefaultArgument(const ASTNode& param_node) {
+	return param_node.is<DeclarationNode>() &&
+		   param_node.as<DeclarationNode>().has_default_value();
+}
+
+bool operatorDeclarationAllowsDefaultArguments(OverloadableOperator operator_kind) {
+	return operator_kind == OverloadableOperator::Call;
+}
+
+enum class OrdinaryOperatorArityKind {
+	Skip,
+	UnaryOnly,
+	BinaryOnly,
+	UnaryOrBinary
+};
+
+OrdinaryOperatorArityKind classifyOrdinaryOperatorArity(OverloadableOperator operator_kind) {
+	switch (operator_kind) {
+		case OverloadableOperator::None:
+		case OverloadableOperator::Assign:
+		case OverloadableOperator::CopyAssign:
+		case OverloadableOperator::MoveAssign:
+		case OverloadableOperator::Subscript:
+		case OverloadableOperator::Call:
+		case OverloadableOperator::Arrow:
+		case OverloadableOperator::Increment:
+		case OverloadableOperator::Decrement:
+		case OverloadableOperator::New:
+		case OverloadableOperator::Delete:
+		case OverloadableOperator::NewArray:
+		case OverloadableOperator::DeleteArray:
+			return OrdinaryOperatorArityKind::Skip;
+		case OverloadableOperator::LogicalNot:
+		case OverloadableOperator::BitwiseNot:
+			return OrdinaryOperatorArityKind::UnaryOnly;
+		case OverloadableOperator::Plus:
+		case OverloadableOperator::Minus:
+		case OverloadableOperator::Multiply:
+		case OverloadableOperator::BitwiseAnd:
+			return OrdinaryOperatorArityKind::UnaryOrBinary;
+		default:
+			return OrdinaryOperatorArityKind::BinaryOnly;
+	}
+}
+
+bool mustBeMemberOperator(OverloadableOperator operator_kind) {
+	return operator_kind == OverloadableOperator::Assign ||
+		   operator_kind == OverloadableOperator::Subscript ||
+		   operator_kind == OverloadableOperator::Call ||
+		   operator_kind == OverloadableOperator::Arrow;
+}
 } // namespace
 
 ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
@@ -102,7 +184,7 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 	}
 
 	out_decl = &member_result.node()->as<DeclarationNode>();
-	auto func_result = parse_function_declaration(*out_decl);
+	auto func_result = parse_function_declaration(*out_decl, CallingConvention::Default, true);
 	if (func_result.is_error()) {
 		return func_result;
 	}
@@ -112,6 +194,95 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 
 	out_func_decl = &func_result.node()->as<FunctionDeclarationNode>();
 	return ParseResult::success();
+}
+
+ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const {
+	const OverloadableOperator operator_kind =
+		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
+	if (!is_member && mustBeMemberOperator(operator_kind)) {
+		return ParseResult::error(std::string(StringBuilder()
+			.append(func_decl.decl_node().identifier_token().value())
+			.append(" must be a non-static member function")
+			.commit()),
+			func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind != OverloadableOperator::None &&
+		!operatorDeclarationAllowsDefaultArguments(operator_kind) &&
+		std::ranges::any_of(func_decl.parameter_nodes(), hasDefaultArgument)) {
+		return ParseResult::error("operator overloads other than operator() must not have default arguments",
+								  func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind == OverloadableOperator::Assign &&
+		func_decl.parameter_nodes().size() != 1) {
+		return ParseResult::error("operator= must have exactly one parameter",
+								  func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind == OverloadableOperator::Subscript &&
+		func_decl.parameter_nodes().size() != 1) {
+		return ParseResult::error("operator[] must have exactly one parameter",
+								  func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind == OverloadableOperator::Arrow &&
+		!func_decl.parameter_nodes().empty()) {
+		return ParseResult::error("operator-> must have no parameters",
+								  func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind == OverloadableOperator::Increment ||
+		operator_kind == OverloadableOperator::Decrement) {
+		const auto& params = func_decl.parameter_nodes();
+		if (is_member) {
+			if (params.empty()) {
+				return ParseResult::success();
+			}
+			if (params.size() == 1 && isPlainIntIncDecPostfixParameter(params[0])) {
+				return ParseResult::success();
+			}
+			return ParseResult::error("member operator++/operator-- must be prefix with no parameters or postfix with one int parameter",
+									  func_decl.decl_node().identifier_token());
+		}
+		if (params.size() == 1) {
+			return ParseResult::success();
+		}
+		if (params.size() == 2 && isPlainIntIncDecPostfixParameter(params[1])) {
+			return ParseResult::success();
+		}
+		return ParseResult::error("non-member operator++/operator-- must be prefix with one parameter or postfix with two parameters where the second is int",
+								  func_decl.decl_node().identifier_token());
+	}
+
+	const OrdinaryOperatorArityKind arity_kind = classifyOrdinaryOperatorArity(operator_kind);
+	if (arity_kind == OrdinaryOperatorArityKind::Skip) {
+		return ParseResult::success();
+	}
+
+	const size_t param_count = func_decl.parameter_nodes().size();
+	const bool valid = [&]() {
+		switch (arity_kind) {
+			case OrdinaryOperatorArityKind::UnaryOnly:
+				return is_member ? param_count == 0 : param_count == 1;
+			case OrdinaryOperatorArityKind::BinaryOnly:
+				return is_member ? param_count == 1 : param_count == 2;
+			case OrdinaryOperatorArityKind::UnaryOrBinary:
+				return is_member ? (param_count == 0 || param_count == 1)
+								 : (param_count == 1 || param_count == 2);
+			case OrdinaryOperatorArityKind::Skip:
+				return true;
+		}
+		return true;
+	}();
+	if (!valid) {
+		const std::string message = std::string(StringBuilder()
+			.append(is_member ? "member " : "non-member ")
+			.append(func_decl.decl_node().identifier_token().value())
+			.append(" has invalid parameter count for its operator form")
+			.commit());
+		return ParseResult::error(message, func_decl.decl_node().identifier_token());
+	}
+	return ParseResult::success();
+}
+
+ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const {
+	return validateOperatorSignature(func_decl, true);
 }
 
 ParseResult Parser::parse_struct_declaration() {
@@ -2306,6 +2477,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
 			if (trailing_return_result.is_error()) {
 				return trailing_return_result;
+			}
+			if (auto signature_result = validateMemberOperatorSignature(member_func_ref);
+				signature_result.is_error()) {
+				return signature_result;
 			}
 
 			// Extract parsed specifiers for use in member function registration

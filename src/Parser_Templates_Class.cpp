@@ -2442,6 +2442,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					if (trailing_return_result.is_error()) {
 						return trailing_return_result;
 					}
+					if (auto signature_result = validateMemberOperatorSignature(member_func_ref);
+						signature_result.is_error()) {
+						return signature_result;
+					}
 
 					// Propagate noexcept specifier to the function declaration node
 					if (func_specs.is_noexcept) {
@@ -3905,6 +3909,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
 					if (trailing_return_result.is_error()) {
 						return trailing_return_result;
+					}
+					if (auto signature_result = validateMemberOperatorSignature(member_func_ref);
+						signature_result.is_error()) {
+						return signature_result;
 					}
 
 					// Propagate noexcept specifier to the function declaration node
@@ -5614,6 +5622,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (trailing_return_result.is_error()) {
 					return trailing_return_result;
 				}
+				if (auto signature_result = validateMemberOperatorSignature(member_func_ref);
+					signature_result.is_error()) {
+					return signature_result;
+				}
 
 				// Propagate cv-qualifiers and noexcept to the function declaration node immediately.
 				member_func_ref.set_is_const_member_function(member_quals.is_const());
@@ -6130,6 +6142,10 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
 			if (trailing_return_result.is_error()) {
 				return trailing_return_result;
+			}
+			if (auto signature_result = validateMemberOperatorSignature(member_func_ref);
+				signature_result.is_error()) {
+				return signature_result;
 			}
 
 			// Propagate cv-qualifiers and noexcept to the function declaration node immediately.

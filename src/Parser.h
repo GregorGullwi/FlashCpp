@@ -1525,6 +1525,8 @@ private:
 	ParseResult parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types, bool& out_is_variadic);
 	bool parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context);
 	ParseResult parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl);
+	ParseResult validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const;
+	ParseResult validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const;
 	ParseResult parse_namespace();
 	ParseResult parse_using_directive_or_declaration();	// Parse using directive/declaration/alias
 	ParseResult parse_type_specifier();
@@ -1575,7 +1577,7 @@ private:
 	// Legacy functions - now implemented as wrappers around parse_declaration()
 	ParseResult parse_declaration_or_function_definition();
 	ParseResult parse_out_of_line_constructor_or_destructor(std::string_view class_name, bool is_destructor, const FlashCpp::DeclarationSpecifiers& specs);	// NEW: Parse out-of-line constructor/destructor
-	ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
+	ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default, bool is_member = false);
 	ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);	// Phase 1: Unified parameter list parsing
 	FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
 	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, std::span<const TypeSpecifierNode> arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding

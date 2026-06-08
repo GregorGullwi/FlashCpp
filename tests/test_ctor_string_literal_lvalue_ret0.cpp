@@ -6,7 +6,6 @@ struct PickCtor {
 };
 
 int main() {
-	const char* text = "hello";
-	PickCtor pick(text);
+	PickCtor pick("hello");
 	return pick.selected == 1 ? 0 : 1;
 }

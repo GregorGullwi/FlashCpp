@@ -88,7 +88,8 @@ ParseResult Parser::parse_template_function_declaration_body(
 		DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
 
 		// Parse function declaration with parameters
-		auto func_result = parse_function_declaration(decl_node);
+		const bool is_member = !struct_parsing_context_stack_.empty();
+		auto func_result = parse_function_declaration(decl_node, CallingConvention::Default, is_member);
 		if (func_result.is_error()) {
 			return func_result;
 		}
