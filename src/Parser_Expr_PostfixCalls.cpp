@@ -22,12 +22,10 @@ void setResolvedMemberCallMetadata(ExpressionNode& call_expr, const FunctionDecl
 	}
 }
 
-const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_spec) {
+const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_spec, bool allow_pointers) {
 	if (type_spec.is_function_pointer() ||
 		type_spec.has_function_signature() ||
-		type_spec.pointer_depth() > 0 ||
-		type_spec.is_reference() ||
-		type_spec.is_rvalue_reference() ||
+		(!allow_pointers && type_spec.pointer_depth() > 0) ||
 		type_spec.is_array() ||
 		!type_spec.type_index().is_valid()) {
 		return nullptr;
@@ -41,8 +39,7 @@ const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_
 
 	const ResolvedAliasTypeInfo resolved_alias =
 		resolveAliasTypeInfo(type_spec.type_index().withCategory(type_spec.category()));
-	if (resolved_alias.pointer_depth != 0 ||
-		resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+	if ((!allow_pointers && resolved_alias.pointer_depth != 0) ||
 		resolved_alias.function_signature.has_value() ||
 		resolved_alias.isArray() ||
 		resolved_alias.terminal_type_info == nullptr ||
@@ -66,7 +63,7 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value())
 		return std::nullopt;
-	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt);
+	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt, true);
 	if (!type_info)
 		return std::nullopt;
 	if (type_info->is_incomplete_instantiation_) {
@@ -100,7 +97,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value())
 		return nullptr;
-	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt);
+	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt, true);
 	if (!type_info)
 		return nullptr;
 	if (type_info->is_incomplete_instantiation_) {
@@ -164,7 +161,7 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value())
 		return {};
-	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt);
+	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt, false);
 	if (!type_info)
 		return {};
 	if (type_info->is_incomplete_instantiation_) {
