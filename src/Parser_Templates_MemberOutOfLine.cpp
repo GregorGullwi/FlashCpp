@@ -356,128 +356,106 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	// Discard the saved position - we're committed to parsing this
 	discard_saved_token(saved_pos);
 
-	// Parse function name (or constructor/destructor/operator name)
-	if (!peek().is_identifier()) {
-		// Handle 'operator' keyword for operator member functions
-		// (e.g., ClassName<T>::operator()(...))
-		if (peek() == "operator"_tok) {
-			Token op_token = peek_info();
-			advance(); // consume 'operator'
-			StringBuilder op_builder;
-			op_builder.append("operator"sv);
+	auto parseOperatorMemberName = [&]() -> std::optional<Token> {
+		if (peek() != "operator"_tok) {
+			return std::nullopt;
+		}
 
-			// Special handling for operator() - '(' followed by ')' is the call operator name
-			if (peek() == "("_tok) {
-				auto next_saved = save_token_position();
-				advance(); // consume '('
-				if (peek() == ")"_tok) {
-					advance(); // consume ')'
-					discard_saved_token(next_saved);
-					op_builder.append("()"sv);
-				} else {
-					// Not operator() — the '(' starts the parameter list
-					restore_token_position(next_saved);
-				}
-			}
-			// Special handling for operator[] - '[' followed by ']'
-			else if (peek() == "["_tok) {
-				auto bracket_saved = save_token_position();
-				advance(); // consume '['
-				if (peek() == "]"_tok) {
-					advance(); // consume ']'
-					discard_saved_token(bracket_saved);
-					op_builder.append("[]"sv);
-				} else {
-					restore_token_position(bracket_saved);
-				}
+		Token op_token = peek_info();
+		advance(); // consume 'operator'
+		StringBuilder op_builder;
+		op_builder.append("operator"sv);
+
+		if (peek() == "("_tok) {
+			auto next_saved = save_token_position();
+			advance(); // consume '('
+			if (peek() == ")"_tok) {
+				advance(); // consume ')'
+				discard_saved_token(next_saved);
+				op_builder.append("()"sv);
 			} else {
-				// Other operators: consume tokens until we hit '(' (parameter list start)
-				while (!peek().is_eof() && peek() != "("_tok) {
-					if (peek() == "{"_tok || peek() == ";"_tok)
-						break;
-					op_builder.append(peek_info().value());
-					advance();
-				}
+				restore_token_position(next_saved);
 			}
-
-			std::string_view op_name = op_builder.commit();
-			Token function_name_token_op = Token(Token::Type::Identifier, op_name,
-												 op_token.line(), op_token.column(), op_token.file_index());
-
-			// Skip to parameter list parsing with operator name
-			// Create function declaration and skip the body
-			auto [func_decl_node_op, func_decl_ref_op] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token_op);
-			[[maybe_unused]] auto [func_node_op, func_ref_op] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref_op, function_name_token_op.value());
-
-			if (peek() == "("_tok) {
-				skip_balanced_parens();
+		} else if (peek() == "["_tok) {
+			auto bracket_saved = save_token_position();
+			advance(); // consume '['
+			if (peek() == "]"_tok) {
+				advance(); // consume ']'
+				discard_saved_token(bracket_saved);
+				op_builder.append("[]"sv);
+			} else {
+				restore_token_position(bracket_saved);
 			}
-			FlashCpp::MemberQualifiers op_quals;
-			skip_function_trailing_specifiers(op_quals);
-			// Handle trailing return type: auto Class<T>::operator()(params) -> RetType
-			if (peek() == "->"_tok) {
-				advance(); // consume '->'
-				auto trailing_type = parse_type_specifier();
-				if (trailing_type.node().has_value() && trailing_type.node()->is<TypeSpecifierNode>()) {
-					TypeSpecifierNode& trailing_ts = trailing_type.node()->as<TypeSpecifierNode>();
-					consume_pointer_ref_modifiers(trailing_ts);
-				}
-			}
-			if (peek() == "{"_tok) {
-				skip_balanced_braces();
-			} else if (peek() == ";"_tok) {
-				advance();
-			}
-
-			FLASH_LOG(Templates, Debug, "Skipped out-of-line template operator: ",
-					  class_name, "::", op_name);
-			return true;
-		}
-
-		// Check for destructor: ~ClassName
-		if (peek_info().value() == "~") {
-			advance(); // consume '~'
-			if (peek().is_identifier()) {
-				// Destructor - skip the name and body
-				advance(); // consume destructor name
-				// Skip the parameter list and body
-				if (peek() == "("_tok) {
-					skip_balanced_parens();
-				}
-				FlashCpp::MemberQualifiers dtor_quals;
-				skip_function_trailing_specifiers(dtor_quals);
-				if (peek() == "{"_tok) {
-					skip_balanced_braces();
-				} else if (peek() == ";"_tok) {
-					advance();
-				}
-				return true;
-			}
-		}
-		return std::nullopt;	 // Error - expected function name
-	}
-
-	Token function_name_token = peek_info();
-	advance();
-
-	// Check for template arguments after function name: handle<SmallStruct>
-	// We need to parse these to register the specialization correctly
-	std::vector<TemplateTypeArg> function_template_args;
-	if (peek() == "<"_tok) {
-		auto template_args_opt = parse_explicit_template_arguments();
-		if (template_args_opt.has_value()) {
-			function_template_args = template_args_opt->toVector();
 		} else {
-			// If we can't parse template arguments, just skip them
-			advance();  // consume '<'
-			int angle_bracket_depth = 1;
-			while (angle_bracket_depth > 0 && !peek().is_eof()) {
-				if (peek() == "<"_tok) {
-					angle_bracket_depth++;
-				} else if (peek() == ">"_tok) {
-					angle_bracket_depth--;
+			while (!peek().is_eof() && peek() != "("_tok) {
+				if (peek() == "{"_tok || peek() == ";"_tok) {
+					break;
 				}
+				op_builder.append(peek_info().value());
 				advance();
+			}
+		}
+
+		return Token(
+			Token::Type::Identifier,
+			op_builder.commit(),
+			op_token.line(),
+			op_token.column(),
+			op_token.file_index());
+	};
+
+	// Parse function name (or constructor/destructor/operator name)
+	Token function_name_token;
+	std::vector<TemplateTypeArg> function_template_args;
+	if (!peek().is_identifier()) {
+		if (auto operator_name = parseOperatorMemberName(); operator_name.has_value()) {
+			function_name_token = *operator_name;
+		} else {
+
+			// Check for destructor: ~ClassName
+			if (peek_info().value() == "~") {
+				advance(); // consume '~'
+				if (peek().is_identifier()) {
+					// Destructor - skip the name and body
+					advance(); // consume destructor name
+					// Skip the parameter list and body
+					if (peek() == "("_tok) {
+						skip_balanced_parens();
+					}
+					FlashCpp::MemberQualifiers dtor_quals;
+					skip_function_trailing_specifiers(dtor_quals);
+					if (peek() == "{"_tok) {
+						skip_balanced_braces();
+					} else if (peek() == ";"_tok) {
+						advance();
+					}
+					return true;
+				}
+			}
+			return std::nullopt;	 // Error - expected function name
+		}
+	} else {
+		function_name_token = peek_info();
+		advance();
+
+		// Check for template arguments after function name: handle<SmallStruct>
+		// We need to parse these to register the specialization correctly
+		if (peek() == "<"_tok) {
+			auto template_args_opt = parse_explicit_template_arguments();
+			if (template_args_opt.has_value()) {
+				function_template_args = template_args_opt->toVector();
+			} else {
+				// If we can't parse template arguments, just skip them
+				advance();  // consume '<'
+				int angle_bracket_depth = 1;
+				while (angle_bracket_depth > 0 && !peek().is_eof()) {
+					if (peek() == "<"_tok) {
+						angle_bracket_depth++;
+					} else if (peek() == ">"_tok) {
+						angle_bracket_depth--;
+					}
+					advance();
+				}
 			}
 		}
 	}
@@ -504,50 +482,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		// Handle 'operator' keyword for operator member functions
 		// (e.g., ClassName::operator==, ClassName::operator(), ClassName::operator[])
 		if (peek() == "operator"_tok) {
-			function_name_token = peek_info();
-			advance(); // consume 'operator'
-			// Build the operator name (operator==, operator(), operator[], etc.)
-			StringBuilder op_builder;
-			op_builder.append("operator"sv);
-
-			// Special handling for operator() - '(' followed by ')' is the call operator name
-			if (peek() == "("_tok) {
-				auto next_saved = save_token_position();
-				advance(); // consume '('
-				if (peek() == ")"_tok) {
-					advance(); // consume ')'
-					discard_saved_token(next_saved);
-					op_builder.append("()"sv);
-				} else {
-					// Not operator() — the '(' starts the parameter list
-					restore_token_position(next_saved);
-				}
-			}
-			// Special handling for operator[] - '[' followed by ']'
-			else if (peek() == "["_tok) {
-				auto bracket_saved = save_token_position();
-				advance(); // consume '['
-				if (peek() == "]"_tok) {
-					advance(); // consume ']'
-					discard_saved_token(bracket_saved);
-					op_builder.append("[]"sv);
-				} else {
-					restore_token_position(bracket_saved);
-				}
-			} else {
-				// Other operators: consume tokens until we hit '(' (parameter list start)
-				while (!peek().is_eof() && peek() != "("_tok) {
-					if (peek() == "{"_tok || peek() == ";"_tok)
-						break;
-					op_builder.append(peek_info().value());
-					advance();
-				}
-			}
-
-			std::string_view op_name = op_builder.commit();
-			function_name_token = Token(Token::Type::Identifier, op_name,
-										function_name_token.line(), function_name_token.column(),
-										function_name_token.file_index());
+			function_name_token = *parseOperatorMemberName();
 			function_template_args.clear();
 			break; // operator name consumed; next token should be '('
 		}
