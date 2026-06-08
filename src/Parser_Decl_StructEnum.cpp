@@ -127,6 +127,11 @@ ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNod
 		return ParseResult::error("operator[] must have exactly one parameter",
 								  func_decl.decl_node().identifier_token());
 	}
+	if (operator_kind == OverloadableOperator::Arrow &&
+		!func_decl.parameter_nodes().empty()) {
+		return ParseResult::error("operator-> must have no parameters",
+								  func_decl.decl_node().identifier_token());
+	}
 	return ParseResult::success();
 }
 
