@@ -2536,6 +2536,20 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 }
 
 template <class TWriterClass>
+int IrToObjConverter<TWriterClass>::getStackVariableLoadSizeBits(StringHandle variable_name, int fallback_size_in_bits) const {
+	for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
+		auto variable_it = scope_it->variables.find(variable_name);
+		if (variable_it == scope_it->variables.end() || variable_it->second.offset == INT_MIN) {
+			continue;
+		}
+		if (variable_it->second.size_in_bits.value > 0) {
+			return variable_it->second.size_in_bits.value;
+		}
+	}
+	return fallback_size_in_bits;
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::flushAllDirtyRegisters() {
 	regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int size_in_bits) {
 				// Always flush dirty registers to stack, regardless of offset alignment.
@@ -12442,6 +12456,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		auto index_it = variable_scopes.back().variables.find(index_var_name_handle);
 		assert(index_it != variable_scopes.back().variables.end() && "Index variable not found");
 		int64_t index_var_offset = index_it->second.offset;
+		int index_size_in_bits = getStackVariableLoadSizeBits(index_var_name_handle, op.index.size_in_bits.value);
 
 			// Allocate a second register for the index
 		X64Register index_reg = allocateRegisterWithSpilling();
@@ -12470,7 +12485,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		bool is_signed = isSignedType(op.index.typeEnum());
 		emitMovFromFrameSized(
 			SizedRegister{index_reg, 64, false},
-			SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed});
+			SizedStackSlot{static_cast<int32_t>(index_var_offset), index_size_in_bits, is_signed});
 
 		emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 		emitAddRegs(textSectionData, base_reg, index_reg);
@@ -12606,11 +12621,12 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 				return;
 			}
 			int64_t index_offset = it->second.offset;
+			int index_size_in_bits = getStackVariableLoadSizeBits(index_var_name, op.index.size_in_bits.value);
 
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RCX, 64, false},	// dest: 64-bit register
-				SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.typeEnum())}  // source: index from stack
+				SizedStackSlot{static_cast<int32_t>(index_offset), index_size_in_bits, isSignedType(op.index.typeEnum())}  // source: index from stack
 			);
 
 				// Multiply index by element size
@@ -14178,12 +14194,13 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 				return;
 			}
 			int64_t index_offset = it->second.offset;
+			int index_size_in_bits = getStackVariableLoadSizeBits(index_var_name, arr_idx.index_size_bits.value);
 
 				// Load index into RCX with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RCX, 64, false},
-				SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed});
+				SizedStackSlot{static_cast<int32_t>(index_offset), index_size_in_bits, is_signed});
 
 				// Multiply RCX by element size
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);

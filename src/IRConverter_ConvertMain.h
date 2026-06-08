@@ -206,6 +206,7 @@ private:
 	// - Extends scope_stack_space if the offset exceeds current tracked allocation
 	// - Registers the TempVar in variables for consistent subsequent lookups
 	int32_t getStackOffsetFromTempVar(TempVar tempVar, int size_in_bits = 64);
+	int getStackVariableLoadSizeBits(StringHandle variable_name, int fallback_size_in_bits) const;
 
 	void flushAllDirtyRegisters();
 
