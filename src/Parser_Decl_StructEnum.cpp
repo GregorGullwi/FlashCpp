@@ -114,6 +114,16 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 	return ParseResult::success();
 }
 
+ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const {
+	if (overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value()) ==
+			OverloadableOperator::Assign &&
+		func_decl.parameter_nodes().size() != 1) {
+		return ParseResult::error("operator= must have exactly one parameter",
+								  func_decl.decl_node().identifier_token());
+	}
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_struct_declaration() {
 	return parse_struct_declaration_with_specs(false, false);
 }
@@ -2306,6 +2316,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto trailing_return_result = parse_member_trailing_return_type(member_func_ref);
 			if (trailing_return_result.is_error()) {
 				return trailing_return_result;
+			}
+			if (auto signature_result = validateMemberOperatorSignature(member_func_ref);
+				signature_result.is_error()) {
+				return signature_result;
 			}
 
 			// Extract parsed specifiers for use in member function registration

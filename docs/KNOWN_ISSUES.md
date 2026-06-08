@@ -24,15 +24,6 @@ documented a conformance gap where unary `&` on class type did not reliably
 select overloaded `operator&` as required, effectively collapsing behavior toward
 `__builtin_addressof`.
 
-## Missing required diagnostics for special member function signatures
-Some declarations that should be rejected by C++ rules for special members are
-still accepted.
-
-- `operator=` overloads with extra/defaulted parameters are currently accepted.
-  Original case: `tests/test_copy_assign_default_arg_ret42.cpp` (before removal).
-  A `_fail` regression (`test_copy_assign_default_arg_fail.cpp`) was tried and
-  unexpectedly compiled; keep this tracked here until parser/sema rejects it.
-
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a
