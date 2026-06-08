@@ -81,6 +81,24 @@ void registerTypeLookupAliases(
 		}
 	}
 }
+
+bool isPlainIntIncDecPostfixParameter(const ASTNode& param_node) {
+	if (!param_node.is<DeclarationNode>()) {
+		return false;
+	}
+
+	const auto& param_decl = param_node.as<DeclarationNode>();
+	const auto& type_spec = param_decl.type_specifier_node();
+	if (resolve_type_alias(type_spec.type_index()) != TypeCategory::Int) {
+		return false;
+	}
+
+	return !type_spec.is_reference() &&
+		   !type_spec.is_pointer() &&
+		   !type_spec.is_array() &&
+		   !type_spec.has_function_signature() &&
+		   !type_spec.has_member_class();
+}
 } // namespace
 
 ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
@@ -130,6 +148,18 @@ ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNod
 	if (operator_kind == OverloadableOperator::Arrow &&
 		!func_decl.parameter_nodes().empty()) {
 		return ParseResult::error("operator-> must have no parameters",
+								  func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind == OverloadableOperator::Increment ||
+		operator_kind == OverloadableOperator::Decrement) {
+		const auto& params = func_decl.parameter_nodes();
+		if (params.empty()) {
+			return ParseResult::success();
+		}
+		if (params.size() == 1 && isPlainIntIncDecPostfixParameter(params[0])) {
+			return ParseResult::success();
+		}
+		return ParseResult::error("member operator++/operator-- must be prefix with no parameters or postfix with one int parameter",
 								  func_decl.decl_node().identifier_token());
 	}
 	return ParseResult::success();
