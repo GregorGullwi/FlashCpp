@@ -7921,33 +7921,12 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 	if (call_info.has_receiver) {
-		auto resolveReceiverStructInfo = [&]() -> const StructTypeInfo* {
-			const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
-			if (!receiver_type_id) {
-				return nullptr;
-			}
-			const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-			const TypeInfo* receiver_type_info = nullptr;
-			if (receiver_desc.category() == TypeCategory::Struct ||
-				receiver_desc.category() == TypeCategory::UserDefined) {
-				receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
-				if (!receiver_type_info &&
-					receiver_desc.category() == TypeCategory::UserDefined &&
-					receiver_desc.type_index.is_valid()) {
-					const ResolvedAliasTypeInfo resolved_alias =
-						resolveAliasTypeInfo(receiver_desc.type_index);
-					receiver_type_info = resolved_alias.terminal_type_info;
-				}
-			}
-			if (receiver_type_info == nullptr) {
-				return nullptr;
-			}
-			if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(receiver_type_info)) {
-				return resolved_owner->getStructInfo();
-			}
-			return nullptr;
-		};
-		if (const StructTypeInfo* receiver_struct_info = resolveReceiverStructInfo()) {
+		if (const TypeInfo* receiver_owner_type_info =
+				tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
+			receiver_owner_type_info != nullptr &&
+			receiver_owner_type_info->getStructInfo() != nullptr) {
+			const StructTypeInfo* receiver_struct_info =
+				receiver_owner_type_info->getStructInfo();
 			const StringHandle member_name_handle =
 				callee_decl.identifier_token().handle();
 			const std::optional<TypeSpecifierNode> receiver_arg_type =
@@ -8324,19 +8303,8 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	// non-member-view of the decl (e.g. using-decl pack statics, certain
 	// static-member / free-function overload candidates). In that case we
 	// derive the instantiated owner purely from the receiver type below.
-	const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
-	const TypeInfo* receiver_type_info = nullptr;
-	if (receiver_type_id) {
-		const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-		if (receiver_desc.category() == TypeCategory::Struct ||
-			receiver_desc.category() == TypeCategory::UserDefined) {
-			receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
-			if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
-				const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
-				receiver_type_info = resolved_alias.terminal_type_info;
-			}
-		}
-	}
+	const TypeInfo* receiver_type_info =
+		tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
 	// Fallback: if receiver type inference failed (e.g. unresolved `this`
 	// in a late-materialised dependent member body), use the innermost
 	// member-context. That is the struct whose body we are currently
@@ -8373,6 +8341,32 @@ const TypeInfo* SemanticAnalysis::tryResolveStructOwnerTypeInfo(const TypeInfo* 
 		type_info = underlying;
 	}
 	return nullptr;
+}
+
+const TypeInfo* SemanticAnalysis::tryResolveStructOwnerTypeInfoForExpression(const ASTNode& expr) {
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr);
+	if (!expr_type_id) {
+		return nullptr;
+	}
+
+	const CanonicalTypeDesc& expr_desc = type_context_.get(expr_type_id);
+	const TypeInfo* expr_type_info = nullptr;
+	if (expr_desc.category() == TypeCategory::Struct ||
+		expr_desc.category() == TypeCategory::UserDefined) {
+		expr_type_info = tryGetTypeInfo(expr_desc.type_index);
+		if (!expr_type_info &&
+			expr_desc.category() == TypeCategory::UserDefined &&
+			expr_desc.type_index.is_valid()) {
+			const ResolvedAliasTypeInfo resolved_alias =
+				resolveAliasTypeInfo(expr_desc.type_index);
+			expr_type_info = resolved_alias.terminal_type_info;
+		}
+	}
+	if (expr_type_info == nullptr) {
+		return nullptr;
+	}
+
+	return tryResolveStructOwnerTypeInfo(expr_type_info);
 }
 
 const StructTypeInfo* SemanticAnalysis::tryResolveLocalCallableStructInfo(StringHandle callee_name) const {
@@ -8446,36 +8440,15 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 			if (!receiver_arg_type.has_value() || !receiver_arg_type->is_const()) {
 				return std::nullopt;
 			}
-			const CanonicalTypeId receiver_type_id =
-				inferExpressionType(call_info.receiver);
-			if (!receiver_type_id) {
-				return std::nullopt;
-			}
-			const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-			const TypeInfo* receiver_type_info = nullptr;
-			if (receiver_desc.category() == TypeCategory::Struct ||
-				receiver_desc.category() == TypeCategory::UserDefined) {
-				receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
-				if (!receiver_type_info &&
-					receiver_desc.category() == TypeCategory::UserDefined &&
-					receiver_desc.type_index.is_valid()) {
-					const ResolvedAliasTypeInfo resolved_alias =
-						resolveAliasTypeInfo(receiver_desc.type_index);
-					receiver_type_info = resolved_alias.terminal_type_info;
-				}
-			}
-			if (receiver_type_info == nullptr) {
-				return std::nullopt;
-			}
-			const TypeInfo* resolved_owner =
-				tryResolveStructOwnerTypeInfo(receiver_type_info);
-			if (resolved_owner == nullptr ||
-				resolved_owner->getStructInfo() == nullptr) {
+			const TypeInfo* receiver_owner_type_info =
+				tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
+			if (receiver_owner_type_info == nullptr ||
+				receiver_owner_type_info->getStructInfo() == nullptr) {
 				return std::nullopt;
 			}
 			const ConstAwareMemberCandidateSet member_candidates =
 				collectConstAwareVisibleMemberFunctionCandidates(
-					resolved_owner->getStructInfo(),
+					receiver_owner_type_info->getStructInfo(),
 					callee_decl.identifier_token().handle(),
 					true,
 					true,
