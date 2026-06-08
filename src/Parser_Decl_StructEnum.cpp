@@ -135,6 +135,13 @@ OrdinaryOperatorArityKind classifyOrdinaryOperatorArity(OverloadableOperator ope
 			return OrdinaryOperatorArityKind::BinaryOnly;
 	}
 }
+
+bool mustBeMemberOperator(OverloadableOperator operator_kind) {
+	return operator_kind == OverloadableOperator::Assign ||
+		   operator_kind == OverloadableOperator::Subscript ||
+		   operator_kind == OverloadableOperator::Call ||
+		   operator_kind == OverloadableOperator::Arrow;
+}
 } // namespace
 
 ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
@@ -171,6 +178,13 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const {
 	const OverloadableOperator operator_kind =
 		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
+	if (!is_member && mustBeMemberOperator(operator_kind)) {
+		return ParseResult::error(std::string(StringBuilder()
+			.append(func_decl.decl_node().identifier_token().value())
+			.append(" must be a non-static member function")
+			.commit()),
+			func_decl.decl_node().identifier_token());
+	}
 	if (operator_kind == OverloadableOperator::Assign &&
 		func_decl.parameter_nodes().size() != 1) {
 		return ParseResult::error("operator= must have exactly one parameter",
@@ -189,13 +203,23 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 	if (operator_kind == OverloadableOperator::Increment ||
 		operator_kind == OverloadableOperator::Decrement) {
 		const auto& params = func_decl.parameter_nodes();
-		if (params.empty()) {
+		if (is_member) {
+			if (params.empty()) {
+				return ParseResult::success();
+			}
+			if (params.size() == 1 && isPlainIntIncDecPostfixParameter(params[0])) {
+				return ParseResult::success();
+			}
+			return ParseResult::error("member operator++/operator-- must be prefix with no parameters or postfix with one int parameter",
+									  func_decl.decl_node().identifier_token());
+		}
+		if (params.size() == 1) {
 			return ParseResult::success();
 		}
-		if (params.size() == 1 && isPlainIntIncDecPostfixParameter(params[0])) {
+		if (params.size() == 2 && isPlainIntIncDecPostfixParameter(params[1])) {
 			return ParseResult::success();
 		}
-		return ParseResult::error("member operator++/operator-- must be prefix with no parameters or postfix with one int parameter",
+		return ParseResult::error("non-member operator++/operator-- must be prefix with one parameter or postfix with two parameters where the second is int",
 								  func_decl.decl_node().identifier_token());
 	}
 
