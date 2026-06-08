@@ -21,6 +21,34 @@ void setResolvedMemberCallMetadata(ExpressionNode& call_expr, const FunctionDecl
 		setCallQualifiedName(call_expr, qualified_name_builder.commit());
 	}
 }
+
+const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_spec, bool allow_pointers) {
+	if (type_spec.is_function_pointer() ||
+		type_spec.has_function_signature() ||
+		(!allow_pointers && type_spec.pointer_depth() > 0) ||
+		type_spec.is_array() ||
+		!type_spec.type_index().is_valid()) {
+		return nullptr;
+	}
+
+	if (const TypeInfo* direct_type_info = tryGetTypeInfo(type_spec.type_index());
+		direct_type_info != nullptr &&
+		direct_type_info->getStructInfo() != nullptr) {
+		return direct_type_info;
+	}
+
+	const ResolvedAliasTypeInfo resolved_alias =
+		resolveAliasTypeInfo(type_spec.type_index().withCategory(type_spec.category()));
+	if ((!allow_pointers && resolved_alias.pointer_depth != 0) ||
+		resolved_alias.function_signature.has_value() ||
+		resolved_alias.isArray() ||
+		resolved_alias.terminal_type_info == nullptr ||
+		resolved_alias.terminal_type_info->getStructInfo() == nullptr) {
+		return nullptr;
+	}
+
+	return resolved_alias.terminal_type_info;
+}
 } // namespace
 
 // Helper: resolve object type from expression and try to instantiate member function template.
@@ -35,11 +63,7 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value())
 		return std::nullopt;
-	const auto& type_spec = *type_opt;
-	if (!is_struct_type(type_spec.category()))
-		return std::nullopt;
-	TypeIndex type_idx = type_spec.type_index();
-	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt, true);
 	if (!type_info)
 		return std::nullopt;
 	if (type_info->is_incomplete_instantiation_) {
@@ -73,11 +97,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value())
 		return nullptr;
-	const auto& type_spec = *type_opt;
-	if (!is_struct_type(type_spec.category()))
-		return nullptr;
-	TypeIndex type_idx = type_spec.type_index();
-	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt, true);
 	if (!type_info)
 		return nullptr;
 	if (type_info->is_incomplete_instantiation_) {
@@ -131,35 +151,31 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	return match;
 }
 
-const FunctionDeclarationNode* Parser::tryResolveConcreteCallOperator(
+Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	const std::optional<ASTNode>& object_expr,
 	std::span<const TypeSpecifierNode> arg_types,
 	size_t argument_count,
 	bool all_arg_types_known) {
 	if (!object_expr.has_value())
-		return nullptr;
+		return {};
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value())
-		return nullptr;
-	const auto& type_spec = *type_opt;
-	if (!is_struct_type(type_spec.category()))
-		return nullptr;
-	TypeIndex type_idx = type_spec.type_index();
-	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+		return {};
+	const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt, false);
 	if (!type_info)
-		return nullptr;
+		return {};
 	if (type_info->is_incomplete_instantiation_) {
 		instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 		type_info = findTypeByName(type_info->name());
 		if (!type_info || type_info->is_incomplete_instantiation_) {
-			return nullptr;
+			return {};
 		}
 	}
 
 	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 	const StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info)
-		return nullptr;
+		return {};
 
 	std::vector<ASTNode> call_candidates;
 	std::unordered_set<const StructTypeInfo*> visited;
@@ -194,16 +210,19 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteCallOperator(
 	collect_visible_call_operators(struct_info, collect_visible_call_operators);
 
 	if (call_candidates.empty()) {
-		return nullptr;
+		return {ConcreteCallOperatorResolution::State::NoViableMatch, nullptr};
 	}
 
 	if (all_arg_types_known) {
 		const OverloadResolutionResult op_result = resolve_overload(call_candidates, arg_types);
 		if (op_result.has_match && !op_result.is_ambiguous && op_result.selected_overload != nullptr) {
-			return &op_result.selected_overload->as<FunctionDeclarationNode>();
+			return {
+				ConcreteCallOperatorResolution::State::Resolved,
+				&op_result.selected_overload->as<FunctionDeclarationNode>()
+			};
 		}
 		if (op_result.is_ambiguous) {
-			return nullptr;
+			return {ConcreteCallOperatorResolution::State::Ambiguous, nullptr};
 		}
 	}
 
@@ -225,10 +244,13 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteCallOperator(
 		same_arity_candidate = &candidate;
 	}
 	if (same_arity_candidate != nullptr && !ambiguous_same_arity) {
-		return same_arity_candidate;
+		return {ConcreteCallOperatorResolution::State::Resolved, same_arity_candidate};
 	}
 	if (call_candidates.size() == 1) {
-		return &call_candidates.front().as<FunctionDeclarationNode>();
+		return {
+			ConcreteCallOperatorResolution::State::Resolved,
+			&call_candidates.front().as<FunctionDeclarationNode>()
+		};
 	}
 
 	if (all_arg_types_known) {
@@ -239,11 +261,14 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteCallOperator(
 				arg_types);
 			instantiated_operator.has_value() &&
 			instantiated_operator->is<FunctionDeclarationNode>()) {
-			return &instantiated_operator->as<FunctionDeclarationNode>();
+			return {
+				ConcreteCallOperatorResolution::State::Resolved,
+				&instantiated_operator->as<FunctionDeclarationNode>()
+			};
 		}
 	}
 
-	return nullptr;
+	return {ConcreteCallOperatorResolution::State::NoViableMatch, nullptr};
 }
 
 void Parser::finalizePostfixCallExpression(
@@ -313,11 +338,18 @@ void Parser::finalizePostfixCallExpression(
 		paren_token.column(),
 		paren_token.file_index());
 	const bool all_arg_types_known = arg_types.size() == args.size();
-	const FunctionDeclarationNode* func_ref = tryResolveConcreteCallOperator(
+	const ConcreteCallOperatorResolution call_operator_resolution = tryResolveConcreteCallOperator(
 		result,
 		arg_types,
 		args.size(),
 		all_arg_types_known);
+	const FunctionDeclarationNode* func_ref = call_operator_resolution.function;
+	if (call_operator_resolution.state == ConcreteCallOperatorResolution::State::Ambiguous) {
+		throw CompileError("call to overloaded operator() is ambiguous");
+	}
+	if (call_operator_resolution.state == ConcreteCallOperatorResolution::State::NoViableMatch) {
+		throw CompileError("callable object has no matching operator()");
+	}
 	if (!func_ref) {
 		// Keep the deferred member-call representation for unresolved/dependent
 		// callable objects so sema can handle the remaining compatibility cases.

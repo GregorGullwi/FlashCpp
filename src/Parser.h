@@ -3332,8 +3332,19 @@ private:	 // Resume private methods
 		const Token& paren_token,
 		ChunkedVector<ASTNode>&& args,
 		std::vector<TypeSpecifierNode>&& arg_types);
+	struct ConcreteCallOperatorResolution {
+		enum class State : uint8_t {
+			Unavailable,
+			Resolved,
+			NoViableMatch,
+			Ambiguous,
+		};
+
+		State state = State::Unavailable;
+		const FunctionDeclarationNode* function = nullptr;
+	};
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
-	const FunctionDeclarationNode* tryResolveConcreteCallOperator(
+	ConcreteCallOperatorResolution tryResolveConcreteCallOperator(
 		const std::optional<ASTNode>& object_expr,
 		std::span<const TypeSpecifierNode> arg_types,
 		size_t argument_count,
