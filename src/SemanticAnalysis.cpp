@@ -7572,6 +7572,9 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	if (!best_match)
 		return;
 
+	best_match = tryMaterializeLazyReceiverMemberTarget(
+		best_match,
+		subscript_node.array_expr());
 	op_subscript_table_[&subscript_node] = best_match;
 
 	FLASH_LOG_FORMAT(General, Debug,
@@ -8282,29 +8285,35 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	const FunctionDeclarationNode* func_decl,
 	const CallInfo& call_info) {
+	if (!call_info.has_receiver || !call_info.receiver.has_value()) {
+		return tryMaterializeLazyCallTarget(func_decl);
+	}
+	return tryMaterializeLazyReceiverMemberTarget(func_decl, call_info.receiver);
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyReceiverMemberTarget(
+	const FunctionDeclarationNode* func_decl,
+	const ASTNode& receiver) {
 	// First run the base marker (intra-instantiation remap + pattern-parent
 	// lazy materialization).
 	const FunctionDeclarationNode* result = tryMaterializeLazyCallTarget(func_decl);
-	if (!func_decl) {
+	if (!func_decl || !receiver.has_value()) {
 		return result;
 	}
+
 	// Phase 5 Slice G item #4 blockers (5)/(6): when the resolver returns a
 	// member-function decl whose parent_struct_name is empty (using-decl pack
 	// or static-like overload pick) or points at a template pattern (pattern
 	// member reached via an instantiation receiver), derive the concrete
-	// instantiated owner from the call's receiver type and mark that lazy
+	// instantiated owner from the receiver type and mark that lazy
 	// member ODR-used so drain pass-2 materialises it.
-	if (!call_info.has_receiver || !call_info.receiver.has_value()) {
-		return result;
-	}
-
 	const std::string_view parent_sv = func_decl->parent_struct_name();
 	// Note: parent_sv may be empty for member calls whose resolver picked a
 	// non-member-view of the decl (e.g. using-decl pack statics, certain
 	// static-member / free-function overload candidates). In that case we
 	// derive the instantiated owner purely from the receiver type below.
 	const TypeInfo* receiver_type_info =
-		tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
+		tryResolveStructOwnerTypeInfoForExpression(receiver);
 	// Fallback: if receiver type inference failed (e.g. unresolved `this`
 	// in a late-materialised dependent member body), use the innermost
 	// member-context. That is the struct whose body we are currently

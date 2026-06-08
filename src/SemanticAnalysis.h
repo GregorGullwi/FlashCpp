@@ -574,6 +574,10 @@ private:
 	const FunctionDeclarationNode* tryMaterializeLazyCallTarget(
 		const FunctionDeclarationNode* func_decl);
 
+	const FunctionDeclarationNode* tryMaterializeLazyReceiverMemberTarget(
+		const FunctionDeclarationNode* func_decl,
+		const ASTNode& receiver);
+
 	// Phase 5 Slice G item #4: receiver-aware variant. When the resolved
 	// `func_decl` carries a template-pattern parent_struct_name (e.g.
 	// `Box` rather than `Box$hash`), the receiver's TypeInfo gives us the
