@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-04
+**Last updated:** 2026-06-08
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -41,6 +41,10 @@ Move FlashCpp toward a sema-owned template system where:
   plus receiver-const candidate filtering, so template-instantiated functors no
   longer rely on reduced expression typing for const or lvalue/rvalue overload
   selection
+- sema now also rejects parser-selected non-const `operator()` targets on
+  const dependent/local callable receivers once semantic lookup has shown there
+  is no viable const-compatible overload, so this standards-visible negative
+  case no longer compiles through member-call fallback
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -111,9 +115,11 @@ unknown-specialization modeling only where it unblocks those paths.
    template/member direct calls. The 2026-06-04 follow-ups closed the concrete
    `operator[]` and dependent/local callable `operator()` gaps by sharing
    receiver-aware candidate filtering plus sema-owned argument typing with
-   direct member-call resolution. The next step here is the remaining hard
-   diagnostic cleanup for no-viable dependent callable objects, then any other
-   residual semantic call sites still outside that model.
+   direct member-call resolution, and the 2026-06-08 follow-up closes the
+   documented const-receiver no-viable callable diagnostic hole. The next step
+   here is auditing any residual semantic call sites still outside that model,
+   then removing the temporary parser-target compatibility fallbacks that
+   remain once typed sema evidence is available.
 
 4. Expand current-instantiation, dependent-base, and unknown-specialization
    handling only where that unblocks steps 2 and 3.
@@ -140,14 +146,13 @@ unknown-specialization modeling only where it unblocks those paths.
    reduced argument modeling beyond the now-fixed `operator[]` and
    dependent/local callable `operator()` routes.
 
-2. Add a sema-owned hard diagnostic and `_fail` regression for the remaining
-   dependent callable-object no-viable case discovered in this slice:
-   `const Callable& c; c(...)` can still compile through an older path after
-   sema declines to resolve a viable `operator()`.
-
-3. Continue deleting replay-attachment acceptance paths that still allow
+2. Continue deleting replay-attachment acceptance paths that still allow
    insufficient substituted-signature evidence outside the now-hardened member
    and constructor routes.
+
+3. Audit the remaining semantic call compatibility fallbacks that still reuse
+   parser-selected targets after typed sema evidence is available, and remove
+   them incrementally as each owning semantic path becomes complete.
 
 4. Only after those are stable, extend current-instantiation and
    unknown-specialization modeling for the specific unresolved cases that remain.
@@ -282,12 +287,29 @@ Validated with:
 - `test_generic_lambda_recursive_self_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-04
 
-Remaining conformance debt:
+## 2026-06-08 dependent callable const-receiver conformance note
 
-- a local scratch negative case (`const Callable& c; c(...)` with only a
-  non-const call operator) still compiles through an older path, so this slice
-  deliberately stops short of adding the `_fail` regression until that
-  diagnostic is made fully sema-owned
+The documented remaining callable negative case is now closed: a dependent
+`const Callable& c; c(...)` with only a non-const `operator()` used to compile
+because the parser-selected member-call target could survive even after sema's
+const-aware lookup found no viable callable overload.
+
+The fix now:
+
+- blocks reuse of that stale parser-selected non-const `operator()` target for
+  const receivers once sema has no const-compatible callable candidate
+- emits the failure from sema as a hard callable diagnostic instead of
+  continuing through member-call fallback
+- adds a stable template-instantiation `_fail` regression for the covered case
+
+Validated with:
+
+- `test_template_callable_operator_const_receiver_fail.cpp`
+- `test_template_callable_operator_const_receiver_explicit_member_fail.cpp`
+- `test_template_callable_operator_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_operator_call_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_callable_operator_default_arg_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-08
 
 ## 2026-06-04 non-standard template test cleanup
 

@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-04
+**Last updated:** 2026-06-08
 
 This document is not a release log. It should explain what the current template
 architecture can assume, what is still structurally wrong, and what the next
@@ -22,11 +22,14 @@ typing. The latest template-`decltype` fix now also reparses function-template
 trailing return clauses against materialized parameter declarations and keeps
 bound member-pointer metadata intact in the non-explicit parameter
 materialization path, so dependent trailing-return `decltype` no longer drops
-reference qualification or pointer-to-member owner identity. The biggest
-remaining gaps are (1) keeping every replay/materialization path equally
-evidence-driven rather than shape-driven and (2) finishing the last hard
-diagnostic cleanup around no-viable dependent callable-object `operator()`
-cases.
+reference qualification or pointer-to-member owner identity. The most recent
+callable follow-up now also makes the dependent `const Callable& c; c(...)`
+negative case sema-owned, so parser-selected non-const `operator()` targets no
+longer compile through const receivers after sema has already found no viable
+const-compatible callable target. The biggest remaining gap is keeping every
+replay/materialization path equally evidence-driven rather than shape-driven
+while continuing to narrow the remaining compatibility fallbacks around
+semantic call resolution.
 
 ## What the current design can assume
 
@@ -53,6 +56,10 @@ cases.
   typing plus receiver-const candidate partitioning, so template-instantiated
   functors no longer depend on reduced expression typing for lvalue/rvalue or
   const overload selection
+- sema now also rejects parser-selected non-const `operator()` targets on
+  const dependent/local callable receivers once semantic lookup has shown there
+  is no viable const-compatible overload, so this negative path no longer
+  compiles through fallback attachment
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
@@ -137,11 +144,13 @@ Tightening those is the next best cleanup target.
    The recent member-call fix closed one concrete gap by replacing parser-owned
    call-argument typing inside sema with normalized semantic argument typing,
    and the 2026-06-04 follow-ups applied the same model to semantic
-   `operator[]` and dependent/local callable `operator()` resolution. The next
-   useful expansion is to finish the remaining hard diagnostic cleanup around
-   no-viable dependent callable objects, then audit any other semantic
-   call-resolution sites that still do not share that collector or the
-   receiver-aware candidate partitioning around it.
+   `operator[]` and dependent/local callable `operator()` resolution. The
+   2026-06-08 follow-up closes the documented const-receiver no-viable
+   callable diagnostic hole; the next useful expansion is to audit any other
+   semantic call-resolution sites that still do not share that collector or the
+   receiver-aware candidate partitioning around it, and then remove the
+   temporary compatibility fallbacks that remain once typed sema evidence is
+   present.
 
 4. Extend dependent-name modeling only where it unlocks steps 2 and 3.
    Richer current-instantiation and unknown-specialization handling still
@@ -169,15 +178,13 @@ Tightening those is the next best cleanup target.
    receiver-aware candidate partitioning beyond the now-fixed `operator[]` and
    dependent/local callable `operator()` routes.
 
-2. Finish the hard diagnostic follow-up for dependent callable objects: a local
-   scratch `const Callable& c; c(...)` negative case still found an older path
-   that compiled after sema declined to resolve a viable `operator()`, so the
-   next callable slice should make that failure sema-owned and add a stable
-   `_fail` regression.
-
-3. Tighten the remaining replay-attachment sites that can still succeed without
+2. Tighten the remaining replay-attachment sites that can still succeed without
    positive substituted-signature evidence outside the now-hardened plain-member,
    member-template, and constructor-template routes.
+
+3. Audit the remaining semantic call compatibility fallbacks that still reuse
+   parser-selected targets after typed sema evidence is available, and remove
+   each fallback once the owning semantic path is fully covered.
 
 4. Expand current-instantiation / unknown-specialization modeling only for the
    concrete cases that still block standards-conforming typed lookup after steps
@@ -310,12 +317,31 @@ Validated with:
 - `test_generic_lambda_recursive_self_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-04
 
-Remaining debt:
+## 2026-06-08 dependent callable const-receiver diagnostic note
 
-- a local scratch negative case (`const Callable& c; c(...)` with only a
-  non-const call operator) still found an older compile-through path, so the
-  next callable follow-up should add a sema-owned hard diagnostic and land a
-  stable `_fail` regression for that case
+The next callable audit slice closed the remaining documented compile-through
+case for dependent/local callable objects: a templated `const Callable& c;
+c(...)` could still compile when the parser had already attached a non-const
+`operator()` target, even though sema's const-aware member lookup found no
+viable const-compatible overload.
+
+This slice now:
+
+- blocks the stale parser-selected member-call target from being reused once
+  semantic lookup has proven that a const receiver has no const-compatible
+  `operator()` candidate to bind
+- raises the failure from sema as an explicit callable diagnostic rather than
+  allowing the member-call fallback to continue
+- locks the case down with a stable template-instantiation `_fail` regression
+
+Validated with:
+
+- `test_template_callable_operator_const_receiver_fail.cpp`
+- `test_template_callable_operator_const_receiver_explicit_member_fail.cpp`
+- `test_template_callable_operator_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_operator_call_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_callable_operator_default_arg_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-08
 
 ## 2026-06-02 constexpr lambda capture-lowering note
 
