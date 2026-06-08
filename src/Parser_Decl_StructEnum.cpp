@@ -115,10 +115,16 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 }
 
 ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const {
-	if (overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value()) ==
-			OverloadableOperator::Assign &&
+	const OverloadableOperator operator_kind =
+		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
+	if (operator_kind == OverloadableOperator::Assign &&
 		func_decl.parameter_nodes().size() != 1) {
 		return ParseResult::error("operator= must have exactly one parameter",
+								  func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind == OverloadableOperator::Subscript &&
+		func_decl.parameter_nodes().size() != 1) {
+		return ParseResult::error("operator[] must have exactly one parameter",
 								  func_decl.decl_node().identifier_token());
 	}
 	return ParseResult::success();
