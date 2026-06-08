@@ -88,16 +88,37 @@ bool isPlainIntIncDecPostfixParameter(const ASTNode& param_node) {
 	}
 
 	const auto& param_decl = param_node.as<DeclarationNode>();
+	if (param_decl.has_default_value()) {
+		return false;
+	}
+
 	const auto& type_spec = param_decl.type_specifier_node();
+	if (type_spec.is_reference() ||
+		type_spec.is_pointer() ||
+		type_spec.is_array() ||
+		type_spec.has_function_signature() ||
+		type_spec.has_member_class()) {
+		return false;
+	}
+
+	if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
+		return true;
+	}
+
 	if (resolve_type_alias(type_spec.type_index()) != TypeCategory::Int) {
 		return false;
 	}
 
-	return !type_spec.is_reference() &&
-		   !type_spec.is_pointer() &&
-		   !type_spec.is_array() &&
-		   !type_spec.has_function_signature() &&
-		   !type_spec.has_member_class();
+	return true;
+}
+
+bool hasDefaultArgument(const ASTNode& param_node) {
+	return param_node.is<DeclarationNode>() &&
+		   param_node.as<DeclarationNode>().has_default_value();
+}
+
+bool operatorDeclarationAllowsDefaultArguments(OverloadableOperator operator_kind) {
+	return operator_kind == OverloadableOperator::Call;
 }
 
 enum class OrdinaryOperatorArityKind {
@@ -184,6 +205,12 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 			.append(" must be a non-static member function")
 			.commit()),
 			func_decl.decl_node().identifier_token());
+	}
+	if (operator_kind != OverloadableOperator::None &&
+		!operatorDeclarationAllowsDefaultArguments(operator_kind) &&
+		std::ranges::any_of(func_decl.parameter_nodes(), hasDefaultArgument)) {
+		return ParseResult::error("operator overloads other than operator() must not have default arguments",
+								  func_decl.decl_node().identifier_token());
 	}
 	if (operator_kind == OverloadableOperator::Assign &&
 		func_decl.parameter_nodes().size() != 1) {
