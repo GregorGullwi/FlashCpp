@@ -99,6 +99,42 @@ bool isPlainIntIncDecPostfixParameter(const ASTNode& param_node) {
 		   !type_spec.has_function_signature() &&
 		   !type_spec.has_member_class();
 }
+
+enum class OrdinaryOperatorArityKind {
+	Skip,
+	UnaryOnly,
+	BinaryOnly,
+	UnaryOrBinary
+};
+
+OrdinaryOperatorArityKind classifyOrdinaryOperatorArity(OverloadableOperator operator_kind) {
+	switch (operator_kind) {
+		case OverloadableOperator::None:
+		case OverloadableOperator::Assign:
+		case OverloadableOperator::CopyAssign:
+		case OverloadableOperator::MoveAssign:
+		case OverloadableOperator::Subscript:
+		case OverloadableOperator::Call:
+		case OverloadableOperator::Arrow:
+		case OverloadableOperator::Increment:
+		case OverloadableOperator::Decrement:
+		case OverloadableOperator::New:
+		case OverloadableOperator::Delete:
+		case OverloadableOperator::NewArray:
+		case OverloadableOperator::DeleteArray:
+			return OrdinaryOperatorArityKind::Skip;
+		case OverloadableOperator::LogicalNot:
+		case OverloadableOperator::BitwiseNot:
+			return OrdinaryOperatorArityKind::UnaryOnly;
+		case OverloadableOperator::Plus:
+		case OverloadableOperator::Minus:
+		case OverloadableOperator::Multiply:
+		case OverloadableOperator::BitwiseAnd:
+			return OrdinaryOperatorArityKind::UnaryOrBinary;
+		default:
+			return OrdinaryOperatorArityKind::BinaryOnly;
+	}
+}
 } // namespace
 
 ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
@@ -120,7 +156,7 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 	}
 
 	out_decl = &member_result.node()->as<DeclarationNode>();
-	auto func_result = parse_function_declaration(*out_decl);
+	auto func_result = parse_function_declaration(*out_decl, CallingConvention::Default, true);
 	if (func_result.is_error()) {
 		return func_result;
 	}
@@ -132,7 +168,7 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 	return ParseResult::success();
 }
 
-ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const {
+ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const {
 	const OverloadableOperator operator_kind =
 		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
 	if (operator_kind == OverloadableOperator::Assign &&
@@ -162,7 +198,40 @@ ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNod
 		return ParseResult::error("member operator++/operator-- must be prefix with no parameters or postfix with one int parameter",
 								  func_decl.decl_node().identifier_token());
 	}
+
+	const OrdinaryOperatorArityKind arity_kind = classifyOrdinaryOperatorArity(operator_kind);
+	if (arity_kind == OrdinaryOperatorArityKind::Skip) {
+		return ParseResult::success();
+	}
+
+	const size_t param_count = func_decl.parameter_nodes().size();
+	const bool valid = [&]() {
+		switch (arity_kind) {
+			case OrdinaryOperatorArityKind::UnaryOnly:
+				return is_member ? param_count == 0 : param_count == 1;
+			case OrdinaryOperatorArityKind::BinaryOnly:
+				return is_member ? param_count == 1 : param_count == 2;
+			case OrdinaryOperatorArityKind::UnaryOrBinary:
+				return is_member ? (param_count == 0 || param_count == 1)
+								 : (param_count == 1 || param_count == 2);
+			case OrdinaryOperatorArityKind::Skip:
+				return true;
+		}
+		return true;
+	}();
+	if (!valid) {
+		const std::string message = std::string(StringBuilder()
+			.append(is_member ? "member " : "non-member ")
+			.append(func_decl.decl_node().identifier_token().value())
+			.append(" has invalid parameter count for its operator form")
+			.commit());
+		return ParseResult::error(message, func_decl.decl_node().identifier_token());
+	}
 	return ParseResult::success();
+}
+
+ParseResult Parser::validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const {
+	return validateOperatorSignature(func_decl, true);
 }
 
 ParseResult Parser::parse_struct_declaration() {

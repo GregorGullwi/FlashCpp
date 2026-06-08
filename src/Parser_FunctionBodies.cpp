@@ -689,7 +689,7 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 	func_node.set_mangled_name(mangled.view());
 }
 
-ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention) {
+ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention, bool is_member) {
 	// Create the function declaration first
 	auto [func_node, func_ref] =
 		create_node_ref<FunctionDeclarationNode>(declaration_node);
@@ -717,6 +717,10 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		func_ref.add_parameter_node(param);
 	}
 	func_ref.set_is_variadic(params.is_variadic);
+	if (auto signature_result = validateOperatorSignature(func_ref, is_member);
+		signature_result.is_error()) {
+		return signature_result;
+	}
 
 	// If linkage wasn't set from current context, check if there's a forward declaration with linkage
 	if (func_ref.linkage() == Linkage::None) {
