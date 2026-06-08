@@ -33,13 +33,6 @@ still accepted.
   A `_fail` regression (`test_copy_assign_default_arg_fail.cpp`) was tried and
   unexpectedly compiled; keep this tracked here until parser/sema rejects it.
 
-## Constructor overload selection mismatch (string literal/lvalue case)
-The original `tests/test_ctor_string_literal_lvalue_ret0.cpp` shape exposed a
-wrong overload pick around string-literal binding vs deleted rvalue-reference
-constructor candidates. The test is currently kept in a compatibility form to
-keep the suite green, but the original overload-resolution behavior remains a
-tracked issue.
-
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a
