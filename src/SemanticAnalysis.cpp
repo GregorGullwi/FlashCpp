@@ -7572,6 +7572,9 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	if (!best_match)
 		return;
 
+	best_match = tryMaterializeLazyReceiverMemberTarget(
+		best_match,
+		subscript_node.array_expr());
 	op_subscript_table_[&subscript_node] = best_match;
 
 	FLASH_LOG_FORMAT(General, Debug,
@@ -7775,6 +7778,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	const bool normalized_call =
 		call_key != nullptr &&
 		normalized_ast_nodes_.count(call_key) > 0;
+	const bool is_callable_operator =
+		callee_decl.identifier_token().value() == "operator()"sv;
 	auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
 		if (!mangled_name.isValid()) {
 			return nullptr;
@@ -7919,33 +7924,12 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 	if (call_info.has_receiver) {
-		auto resolveReceiverStructInfo = [&]() -> const StructTypeInfo* {
-			const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
-			if (!receiver_type_id) {
-				return nullptr;
-			}
-			const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-			const TypeInfo* receiver_type_info = nullptr;
-			if (receiver_desc.category() == TypeCategory::Struct ||
-				receiver_desc.category() == TypeCategory::UserDefined) {
-				receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
-				if (!receiver_type_info &&
-					receiver_desc.category() == TypeCategory::UserDefined &&
-					receiver_desc.type_index.is_valid()) {
-					const ResolvedAliasTypeInfo resolved_alias =
-						resolveAliasTypeInfo(receiver_desc.type_index);
-					receiver_type_info = resolved_alias.terminal_type_info;
-				}
-			}
-			if (receiver_type_info == nullptr) {
-				return nullptr;
-			}
-			if (const TypeInfo* resolved_owner = tryResolveStructOwnerTypeInfo(receiver_type_info)) {
-				return resolved_owner->getStructInfo();
-			}
-			return nullptr;
-		};
-		if (const StructTypeInfo* receiver_struct_info = resolveReceiverStructInfo()) {
+		if (const TypeInfo* receiver_owner_type_info =
+				tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
+			receiver_owner_type_info != nullptr &&
+			receiver_owner_type_info->getStructInfo() != nullptr) {
+			const StructTypeInfo* receiver_struct_info =
+				receiver_owner_type_info->getStructInfo();
 			const StringHandle member_name_handle =
 				callee_decl.identifier_token().handle();
 			const std::optional<TypeSpecifierNode> receiver_arg_type =
@@ -8025,6 +8009,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 						return candidate;
 					}
 				}
+			}
+			if (is_callable_operator &&
+				receiver_is_const &&
+				member_candidates.compatible.empty() &&
+				call_info.function_declaration != nullptr &&
+				!call_info.function_declaration->is_static() &&
+				!call_info.function_declaration->is_const_member_function()) {
+				return nullptr;
 			}
 		}
 		if (!normalized_call && call_info.function_declaration) {
@@ -8293,40 +8285,35 @@ const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyCallTarget(
 	const FunctionDeclarationNode* func_decl,
 	const CallInfo& call_info) {
+	if (!call_info.has_receiver || !call_info.receiver.has_value()) {
+		return tryMaterializeLazyCallTarget(func_decl);
+	}
+	return tryMaterializeLazyReceiverMemberTarget(func_decl, call_info.receiver);
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::tryMaterializeLazyReceiverMemberTarget(
+	const FunctionDeclarationNode* func_decl,
+	const ASTNode& receiver) {
 	// First run the base marker (intra-instantiation remap + pattern-parent
 	// lazy materialization).
 	const FunctionDeclarationNode* result = tryMaterializeLazyCallTarget(func_decl);
-	if (!func_decl) {
+	if (!func_decl || !receiver.has_value()) {
 		return result;
 	}
+
 	// Phase 5 Slice G item #4 blockers (5)/(6): when the resolver returns a
 	// member-function decl whose parent_struct_name is empty (using-decl pack
 	// or static-like overload pick) or points at a template pattern (pattern
 	// member reached via an instantiation receiver), derive the concrete
-	// instantiated owner from the call's receiver type and mark that lazy
+	// instantiated owner from the receiver type and mark that lazy
 	// member ODR-used so drain pass-2 materialises it.
-	if (!call_info.has_receiver || !call_info.receiver.has_value()) {
-		return result;
-	}
-
 	const std::string_view parent_sv = func_decl->parent_struct_name();
 	// Note: parent_sv may be empty for member calls whose resolver picked a
 	// non-member-view of the decl (e.g. using-decl pack statics, certain
 	// static-member / free-function overload candidates). In that case we
 	// derive the instantiated owner purely from the receiver type below.
-	const CanonicalTypeId receiver_type_id = inferExpressionType(call_info.receiver);
-	const TypeInfo* receiver_type_info = nullptr;
-	if (receiver_type_id) {
-		const CanonicalTypeDesc& receiver_desc = type_context_.get(receiver_type_id);
-		if (receiver_desc.category() == TypeCategory::Struct ||
-			receiver_desc.category() == TypeCategory::UserDefined) {
-			receiver_type_info = tryGetTypeInfo(receiver_desc.type_index);
-			if (!receiver_type_info && receiver_desc.category() == TypeCategory::UserDefined) {
-				const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(receiver_desc.type_index);
-				receiver_type_info = resolved_alias.terminal_type_info;
-			}
-		}
-	}
+	const TypeInfo* receiver_type_info =
+		tryResolveStructOwnerTypeInfoForExpression(receiver);
 	// Fallback: if receiver type inference failed (e.g. unresolved `this`
 	// in a late-materialised dependent member body), use the innermost
 	// member-context. That is the struct whose body we are currently
@@ -8365,6 +8352,32 @@ const TypeInfo* SemanticAnalysis::tryResolveStructOwnerTypeInfo(const TypeInfo* 
 	return nullptr;
 }
 
+const TypeInfo* SemanticAnalysis::tryResolveStructOwnerTypeInfoForExpression(const ASTNode& expr) {
+	const CanonicalTypeId expr_type_id = inferExpressionType(expr);
+	if (!expr_type_id) {
+		return nullptr;
+	}
+
+	const CanonicalTypeDesc& expr_desc = type_context_.get(expr_type_id);
+	const TypeInfo* expr_type_info = nullptr;
+	if (expr_desc.category() == TypeCategory::Struct ||
+		expr_desc.category() == TypeCategory::UserDefined) {
+		expr_type_info = tryGetTypeInfo(expr_desc.type_index);
+		if (!expr_type_info &&
+			expr_desc.category() == TypeCategory::UserDefined &&
+			expr_desc.type_index.is_valid()) {
+			const ResolvedAliasTypeInfo resolved_alias =
+				resolveAliasTypeInfo(expr_desc.type_index);
+			expr_type_info = resolved_alias.terminal_type_info;
+		}
+	}
+	if (expr_type_info == nullptr) {
+		return nullptr;
+	}
+
+	return tryResolveStructOwnerTypeInfo(expr_type_info);
+}
+
 const StructTypeInfo* SemanticAnalysis::tryResolveLocalCallableStructInfo(StringHandle callee_name) const {
 	if (!callee_name.isValid()) {
 		return nullptr;
@@ -8401,6 +8414,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 														 const char* context_description) {
 	analyzed_direct_call_queries_.insert(call_key);
 	const DeclarationNode& callee_decl = requireCallDeclaration(call_info, "tryAnnotateCallArgConversionsImpl");
+	const bool is_callable_operator =
+		callee_decl.identifier_token().value() == "operator()"sv;
 
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl) {
@@ -8420,11 +8435,63 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 			InlineVector<TypeSpecifierNode, 6> arg_types;
 			return tryCollectOverloadResolutionArgTypes(*call_info.arguments, arg_types);
 		};
+		auto diagnosableConstReceiverCallableName = [&]() -> std::optional<std::string> {
+			if (!call_info.has_receiver ||
+				call_info.is_indirect ||
+				!is_callable_operator ||
+				call_info.function_declaration == nullptr ||
+				call_info.function_declaration->is_static() ||
+				call_info.function_declaration->is_const_member_function()) {
+				return std::nullopt;
+			}
+			const std::optional<TypeSpecifierNode> receiver_arg_type =
+				buildOverloadResolutionArgType(call_info.receiver, nullptr);
+			if (!receiver_arg_type.has_value() || !receiver_arg_type->is_const()) {
+				return std::nullopt;
+			}
+			const TypeInfo* receiver_owner_type_info =
+				tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
+			if (receiver_owner_type_info == nullptr ||
+				receiver_owner_type_info->getStructInfo() == nullptr) {
+				return std::nullopt;
+			}
+			const ConstAwareMemberCandidateSet member_candidates =
+				collectConstAwareVisibleMemberFunctionCandidates(
+					receiver_owner_type_info->getStructInfo(),
+					callee_decl.identifier_token().handle(),
+					true,
+					true,
+					[](const StructMemberFunction&, const FunctionDeclarationNode&) {
+						return true;
+					});
+			if (!member_candidates.compatible.empty()) {
+				return std::nullopt;
+			}
+			if (call_info.receiver.is<ExpressionNode>()) {
+				const ExpressionNode& receiver_expr = call_info.receiver.as<ExpressionNode>();
+				if (const auto* ident = std::get_if<IdentifierNode>(&receiver_expr)) {
+					return std::string(ident->name());
+				}
+			}
+			return std::string{};
+		};
 		if (hasDiagnosableLocalCallableMiss()) {
 			throw CompileError(
 				std::string("callable object '") +
 				std::string(callee_decl.identifier_token().value()) +
 				"' has no matching operator()");
+		}
+		if (std::optional<std::string> receiver_name =
+				diagnosableConstReceiverCallableName();
+			receiver_name.has_value()) {
+			if (!receiver_name->empty()) {
+				throw CompileError(
+					std::string("callable object '") +
+					*receiver_name +
+					"' cannot call non-const operator() through a const receiver");
+			}
+			throw CompileError(
+				"callable object cannot call non-const operator() through a const receiver");
 		}
 
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);

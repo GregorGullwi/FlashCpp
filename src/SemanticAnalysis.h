@@ -549,6 +549,7 @@ private:
 	const FunctionDeclarationNode* resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																 const void* call_key);
 	const TypeInfo* tryResolveStructOwnerTypeInfo(const TypeInfo* type_info) const;
+	const TypeInfo* tryResolveStructOwnerTypeInfoForExpression(const ASTNode& expr);
 	const StructTypeInfo* tryResolveLocalCallableStructInfo(StringHandle callee_name) const;
 	struct ResolvedMemberAccessInfo {
 		TypeIndex owner_type_index{};
@@ -572,6 +573,10 @@ private:
 	// unchanged when the target is already materialized, not lazy, or anonymous.
 	const FunctionDeclarationNode* tryMaterializeLazyCallTarget(
 		const FunctionDeclarationNode* func_decl);
+
+	const FunctionDeclarationNode* tryMaterializeLazyReceiverMemberTarget(
+		const FunctionDeclarationNode* func_decl,
+		const ASTNode& receiver);
 
 	// Phase 5 Slice G item #4: receiver-aware variant. When the resolved
 	// `func_decl` carries a template-pattern parent_struct_name (e.g.
