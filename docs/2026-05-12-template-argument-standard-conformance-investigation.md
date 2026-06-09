@@ -94,6 +94,13 @@ Move FlashCpp toward a sema-owned template system where:
   template pattern
 - non-explicit template-parameter materialization now preserves full
   pointer-to-member metadata for bound type arguments
+- ordinary overload viability now requires a real conversion path before a
+  concrete struct argument can match a scalar parameter, instead of accepting a
+  parser-only `Struct -> scalar` guess
+- parser-side indirect call typing now preserves the callee return type when a
+  function pointer or function reference is called, so ordinary overload
+  ranking sees `fp(args...)` as the returned object type rather than the pointer
+  itself
 
 ## Highest-value remaining standards gap
 
@@ -152,10 +159,11 @@ unknown-specialization modeling only where it unblocks those paths.
 
 ## Next steps
 
-1. Remove the remaining non-receiver / direct-call compatibility branches that
-   still let ordinary calls continue after typed sema evidence has produced no
-   viable target or an ambiguity, now that the receiver-sensitive negative
-   cases are closed and the dead shared `StructTypeInfo` sync fallback is gone.
+1. Re-audit the remaining non-receiver / direct-call compatibility branches in
+   `resolveCallArgAnnotationTarget(...)` now that the last active blocker in
+   this area was ordinary overload viability plus indirect-call typing, not a
+   missing template-only fallback. Remove or narrow only the branches that are
+   now demonstrably dead once typed parser/sema evidence is complete.
 
 2. If another replay/`StructTypeInfo` sync gap turns up, fix it by preserving
    source replay identity into that path rather than restoring any
@@ -512,6 +520,41 @@ Next step:
   `resolveCallArgAnnotationTarget(...)` again and remove or narrow the
   remaining branch only after each surviving direct-call route is proven to
   reach typed semantic lookup with complete argument evidence
+
+## 2026-06-09 ordinary direct-call viability conformance note
+
+The next live ordinary-call conformance blocker after the pack-substitution
+follow-up was not a template-only replay issue anymore. A plain call such as
+`pick(NotInt{})` could still compile even though `NotInt` had no conversion
+operator or converting constructor for `int`, and the same false viability then
+reappeared through instantiated dependent direct calls. Tightening that path
+also exposed a second parser typing bug: indirect calls like `sumBig(fp(10))`
+were being ranked as though `fp(10)` had function-pointer type instead of the
+return type `Big`.
+
+The fix now:
+
+- preserves concrete `TypeSpecifierNode` identity through parser-side
+  reference-unwrapping during overload viability instead of reducing those
+  comparisons to coarse `TypeCategory` pairs
+- requires a real conversion path before a concrete struct argument can match a
+  scalar parameter in ordinary overload resolution, while preserving the
+  existing incomplete-type optimism for genuinely unresolved parse-time cases
+- recovers indirect-call return types from function-pointer and
+  function-reference signatures so parser-side argument typing feeds the real
+  returned object type into later overload ranking
+
+Validated with:
+
+- `test_overload_resolution_struct_without_conversion_to_int_fail.cpp`
+- `test_overload_resolution_struct_temporary_without_conversion_to_int_fail.cpp`
+- `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
+- `test_funcptr_large_struct_return_direct_use_ret0.cpp`
+- `test_implicit_conversion_arg_ret42.cpp`
+- `test_func_arg_conv_ctor_sema_ret42.cpp`
+- `test_dependent_identifier_template_call_ret0.cpp`
+- `test_pack_expansion_in_template_body_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
 
 ## Validation guidance
 

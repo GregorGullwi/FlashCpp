@@ -11,6 +11,7 @@
 #include "InstantiationQueue.h"
 #include "RebindStaticMemberAst.h"
 #include "SemanticAnalysis.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TemplateEnvironment.h"
 #include <atomic> // Include atomic for constrained partial specialization counter
 #include <string_view> // Include string_view header
@@ -431,6 +432,14 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 					arg_type = ret_node.template as<TypeSpecifierNode>();
 					return;
 				}
+			}
+			if (auto indirect_return_type =
+					FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+						inner.callee().declaration().type_specifier_node(),
+						inner.called_from());
+				indirect_return_type.has_value()) {
+				arg_type = *indirect_return_type;
+				return;
 			}
 			arg_type = TypeSpecifierNode(TypeCategory::Invalid, TypeQualifier::None, 0, Token(), CVQualifier::None);
 		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {

@@ -39,8 +39,14 @@ partial-specialization plain-member `StructTypeInfo` sync by preserving
 source-member identity there too, so the remaining replay cleanup is now
 narrower still: the residual signature-equivalent `StructTypeInfo` sync branch
 was probed across the full suite, found dead on the current corpus, and then
-deleted. The next highest-value task is back on the semantic-call side unless a
-new replay route proves it still loses identity metadata.
+deleted. The newest direct-call follow-up closes the standards-visible
+ordinary-call blocker that was still distorting the remaining template audit:
+shared overload viability no longer accepts concrete struct-to-scalar calls
+without a real conversion path, and indirect-call argument typing now preserves
+the callee return type instead of collapsing `fp(args...)` back to the function
+pointer type during parser-side overload ranking. The next highest-value task
+is back on the residual semantic-call compatibility surface unless a new replay
+route proves it still loses identity metadata.
 
 ## What the current design can assume
 
@@ -125,6 +131,13 @@ new replay route proves it still loses identity metadata.
 - constructor replay sync into StructTypeInfo now requires signature-validation
   evidence and no longer accepts token/name shape equivalence for
   mismatched parameter types
+- ordinary overload viability now requires a real conversion path before a
+  concrete struct argument can match a scalar parameter, instead of letting
+  parser-side `Struct -> scalar` optimism survive into normal direct-call
+  ranking
+- parser-side indirect/direct call argument typing now preserves the return
+  type of function-pointer and function-reference calls, so downstream overload
+  ranking no longer sees `fp(args...)` as the pointer type itself
 - function-template trailing-return reparse now happens after parameter
   materialization when a saved `->` position exists, so dependent
   `decltype(param_expr)` sees the same concrete parameter declarations used by
@@ -196,11 +209,11 @@ Tightening those is the next best cleanup target.
 
 ## Next steps
 
-1. Return to the remaining non-receiver / direct-call compatibility branches
-   that still allow ordinary calls to continue after typed sema evidence has
-   produced no viable target or an ambiguity, now that the receiver-sensitive
-   negative cases are closed and the dead signature-equivalent
-   `StructTypeInfo` sync branch is gone.
+1. Re-audit the remaining non-receiver / direct-call compatibility branches in
+   `resolveCallArgAnnotationTarget(...)` now that the active ordinary-call
+   blocker was not fallback at all, but ordinary overload viability plus
+   indirect-call argument typing. Remove or narrow only the branches that are
+   now truly dead after typed parser/sema evidence is complete.
 
 2. If another replay/`StructTypeInfo` sync gap appears, prefer preserving
    source replay identity into that path rather than reintroducing any
@@ -533,6 +546,42 @@ Next step:
 - re-audit `resolveCallArgAnnotationTarget(...)` / direct-call compatibility
   now that this pack-substitution gap is closed, and remove or narrow the
   remaining non-receiver fallback only where typed sema evidence is complete
+
+## 2026-06-09 ordinary direct-call viability note
+
+Continuing that direct-call audit exposed a broader standards-visible blocker
+than template fallback alone: a plain ordinary call could still accept a
+concrete struct argument for a scalar parameter even when no conversion
+operator or converting constructor existed, and the same bug then reproduced
+through dependent direct calls in instantiated template bodies. Tightening that
+path also surfaced a second parser-typing gap: indirect calls such as
+`sumBig(fp(10))` were being ranked as though `fp(10)` had function-pointer type
+instead of the callee return type.
+
+This slice now:
+
+- keeps `TypeSpecifierNode` identity through parser-side reference unwrapping in
+  overload viability instead of degrading concrete types to coarse
+  `TypeCategory` pairs
+- requires a real conversion path before a concrete struct argument can match a
+  scalar parameter in ordinary overload ranking, while still preserving the
+  existing incomplete-type optimism for genuinely unresolved parse-time cases
+- teaches parser-side call typing to recover the return type from
+  function-pointer / function-reference signatures, so indirect calls feed the
+  right argument type into later overload resolution
+
+Validated with:
+
+- `test_overload_resolution_struct_without_conversion_to_int_fail.cpp`
+- `test_overload_resolution_struct_temporary_without_conversion_to_int_fail.cpp`
+- `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
+- `test_funcptr_large_struct_return_direct_use_ret0.cpp`
+- `test_implicit_conversion_arg_ret42.cpp`
+- `test_func_arg_conv_ctor_sema_ret42.cpp`
+- `test_dependent_identifier_template_call_ret0.cpp`
+- `test_pack_expansion_in_template_body_ret0.cpp`
+- `test_template_builtin_addressof_substitution_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
 
 ## Validation guidance
 

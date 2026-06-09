@@ -53,6 +53,55 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 	return fp_type;
 }
 
+inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(
+	const TypeSpecifierNode& function_like_type,
+	const Token& source_token) {
+	if (!function_like_type.has_function_signature()) {
+		return std::nullopt;
+	}
+
+	const FunctionSignature& sig = function_like_type.function_signature();
+	TypeIndex return_type_index = sig.return_type_index;
+	TypeCategory return_category = sig.returnType();
+	if (return_type_index.is_valid()) {
+		return_type_index = return_type_index.withCategory(return_category);
+	}
+
+	SizeInBits return_size_bits{};
+	if (sig.return_pointer_depth > 0 ||
+		return_category == TypeCategory::FunctionPointer ||
+		return_category == TypeCategory::MemberFunctionPointer ||
+		return_category == TypeCategory::MemberObjectPointer) {
+		return_size_bits = SizeInBits{64};
+	} else if (return_type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(return_type_index)) {
+			if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+				return_size_bits = struct_info->sizeInBits();
+			} else if (type_info->hasStoredSize()) {
+				return_size_bits = type_info->sizeInBits();
+			}
+		}
+	}
+	if (!return_size_bits.is_set() &&
+		return_category != TypeCategory::Invalid &&
+		return_category != TypeCategory::Void) {
+		return_size_bits = SizeInBits{get_type_size_bits(return_category)};
+	}
+
+	TypeSpecifierNode return_type(
+		return_category,
+		TypeQualifier::None,
+		return_size_bits.is_set() ? return_size_bits.value : 0,
+		source_token,
+		CVQualifier::None);
+	if (return_type_index.is_valid()) {
+		return_type.set_type_index(return_type_index);
+	}
+	return_type.set_reference_qualifier(sig.return_reference_qualifier);
+	return_type.add_pointer_levels(sig.return_pointer_depth);
+	return return_type;
+}
+
 inline std::optional<TypeSpecifierNode> tryGetBareFunctionIdentifierType(const ASTNode& arg_node) {
 	if (!arg_node.is<ExpressionNode>()) {
 		return std::nullopt;
