@@ -31,10 +31,11 @@ the same const-receiver hole for dependent `const T& obj; obj.member(...)`
 calls, so stale parser-selected non-const member targets no longer compile once
 shared sema lookup has found no const-compatible overload; function-pointer
 members are explicitly excluded by requiring real member-function ownership
-before raising the diagnostic. The biggest remaining gap is keeping every
-replay/materialization path equally evidence-driven rather than shape-driven
-while continuing to narrow the remaining compatibility fallbacks around
-semantic call resolution.
+before raising the diagnostic. The next receiver-member follow-up now also
+blocks parser-selected fallback after typed sema has already proven a dependent
+member call ambiguous, so replay/materialization remains the biggest remaining
+gap while semantic-call fallback debt narrows toward the non-receiver/direct-call
+cases that still have temporary compatibility behavior.
 
 ## What the current design can assume
 
@@ -69,6 +70,9 @@ semantic call resolution.
   targets on const dependent/member-call receivers once shared const-aware
   lookup has shown there is no const-compatible overload, while leaving
   function-pointer member calls on the indirect-call path
+- sema now also rejects parser-selected ordinary member-call fallback once
+  shared typed overload resolution has already proven the dependent receiver
+  call ambiguous
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
@@ -182,11 +186,11 @@ Tightening those is the next best cleanup target.
 
 ## Next steps
 
-1. Audit the remaining semantic call-resolution entry points and compatibility
-   branches that still allow normalized ordinary calls to continue after typed
-   sema evidence has produced no viable target or an ambiguity, now that the
-   const-receiver negative cases are closed for `operator[]`, callable
-   `operator()`, and ordinary member functions.
+1. Audit the remaining non-receiver / direct-call compatibility branches that
+   still allow ordinary calls to continue after typed sema evidence has
+   produced no viable target or an ambiguity, now that the receiver-sensitive
+   negative cases are closed for `operator[]`, callable `operator()`, and
+   ordinary member functions.
 
 2. Tighten the remaining replay-attachment sites that can still succeed without
    positive substituted-signature evidence outside the now-hardened plain-member,
@@ -224,6 +228,31 @@ Validated with:
 
 - `test_template_member_call_const_receiver_fail.cpp`
 - `test_template_callable_operator_const_receiver_fail.cpp`
+- `test_funcptr_nested_template_struct_ret0.cpp`
+- `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 ordinary member ambiguity sema note
+
+Continuing the same fallback audit found a second receiver-member hole: a
+dependent member call that became ambiguous at instantiation could still
+compile because sema reduced the typed overload result to "no unique target"
+and then fell back to the parser-selected member candidate.
+
+This slice now:
+
+- preserves ambiguity information across the shared receiver-member typed
+  overload helper instead of collapsing it to a generic miss
+- blocks parser-selected fallback once shared sema has already proven the
+  receiver-member call ambiguous
+- raises the covered ambiguity from the shared call-annotation path as a hard
+  member-call diagnostic
+
+Validated with:
+
+- `test_template_member_call_ambiguous_fail.cpp`
+- `test_template_member_call_no_viable_overload_fail.cpp`
+- `test_template_member_call_const_receiver_fail.cpp`
 - `test_funcptr_nested_template_struct_ret0.cpp`
 - `test_typedef_function_ptr_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09

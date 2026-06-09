@@ -49,6 +49,9 @@ Move FlashCpp toward a sema-owned template system where:
   targets on const dependent/member-call receivers once const-aware lookup has
   shown there is no viable const-compatible overload, while leaving
   function-pointer member calls on their ordinary indirect-call path
+- sema now also rejects parser-selected ordinary member-call fallback once
+  typed receiver-member overload resolution has already proven the dependent
+  call ambiguous
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -144,11 +147,11 @@ unknown-specialization modeling only where it unblocks those paths.
 
 ## Next steps
 
-1. Remove the remaining normalized-call compatibility branches that still let
-   ordinary calls continue after typed sema evidence has produced no viable
-   target or an ambiguity, now that the const-receiver negative cases are
-   closed for `operator[]`, callable `operator()`, and ordinary member
-   functions.
+1. Remove the remaining non-receiver / direct-call compatibility branches that
+   still let ordinary calls continue after typed sema evidence has produced no
+   viable target or an ambiguity, now that the receiver-sensitive negative
+   cases are closed for `operator[]`, callable `operator()`, and ordinary
+   member functions.
 
 2. Continue deleting replay-attachment acceptance paths that still allow
    insufficient substituted-signature evidence outside the now-hardened member
@@ -183,6 +186,31 @@ Validated with:
 
 - `test_template_member_call_const_receiver_fail.cpp`
 - `test_template_callable_operator_const_receiver_fail.cpp`
+- `test_funcptr_nested_template_struct_ret0.cpp`
+- `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 ordinary member ambiguity conformance note
+
+The next live standards-visible gap in the same family was ambiguity handling
+for dependent ordinary member calls: once instantiation made the receiver call
+ambiguous, sema could still degrade that typed result to "no unique target"
+and continue by reusing a parser-selected member candidate.
+
+The fix now:
+
+- preserves explicit ambiguity in the shared receiver-member typed overload
+  helper instead of collapsing it to a generic miss
+- blocks parser-selected fallback once sema has already proven the receiver
+  call ambiguous
+- emits a hard member-call ambiguity diagnostic from the shared call-annotation
+  path for the covered cases
+
+Validated with:
+
+- `test_template_member_call_ambiguous_fail.cpp`
+- `test_template_member_call_no_viable_overload_fail.cpp`
+- `test_template_member_call_const_receiver_fail.cpp`
 - `test_funcptr_nested_template_struct_ret0.cpp`
 - `test_typedef_function_ptr_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09

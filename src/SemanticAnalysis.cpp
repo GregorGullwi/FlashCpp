@@ -124,6 +124,36 @@ const FunctionDeclarationNode* tryResolveUniqueOverloadByArgTypes(
 	return getCallTargetFunctionCandidate(*result.selected_overload);
 }
 
+struct MemberOverloadResolutionByArgTypesResult {
+	const FunctionDeclarationNode* function = nullptr;
+	bool ambiguous = false;
+};
+
+inline MemberOverloadResolutionByArgTypesResult resolveConstAwareMemberOverloadByArgTypes(
+	std::span<const ASTNode> preferred_overloads,
+	std::span<const ASTNode> compatible_overloads,
+	std::span<const TypeSpecifierNode> arg_types) {
+	MemberOverloadResolutionByArgTypesResult result;
+	bool preferred_ambiguous = false;
+	result.function = tryResolveUniqueOverloadByArgTypes(
+		preferred_overloads,
+		arg_types,
+		&preferred_ambiguous);
+	if (result.function != nullptr || preferred_ambiguous) {
+		result.ambiguous = preferred_ambiguous;
+		return result;
+	}
+	if (!sameOverloadSet(preferred_overloads, compatible_overloads)) {
+		bool compatible_ambiguous = false;
+		result.function = tryResolveUniqueOverloadByArgTypes(
+			compatible_overloads,
+			arg_types,
+			&compatible_ambiguous);
+		result.ambiguous = compatible_ambiguous;
+	}
+	return result;
+}
+
 const DeclarationNode& requireCallDeclaration(const CallInfo& call_info, const char* operation) {
 	if (call_info.declaration == nullptr) {
 		throw InternalError(std::string(operation) + " received null callee declaration");
@@ -7955,23 +7985,17 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				InlineVector<TypeSpecifierNode, 6> member_arg_types;
 				const bool has_member_arg_types =
 					tryCollectOverloadResolutionArgTypes(arguments, member_arg_types);
-				auto tryResolveMemberOverloadSet =
-					[&](std::span<const ASTNode> overload_set) -> const FunctionDeclarationNode* {
-						if (overload_set.empty() || !has_member_arg_types) {
-							return nullptr;
-						}
-						return tryResolveUniqueOverloadByArgTypes(overload_set, member_arg_types);
-					};
-				if (const FunctionDeclarationNode* resolved_candidate =
-						tryResolveMemberOverloadSet(preferred_member_overloads);
-					resolved_candidate != nullptr) {
-					return resolved_candidate;
-				}
-				if (!sameOverloadSet(preferred_member_overloads, compatible_member_overloads)) {
-					if (const FunctionDeclarationNode* resolved_candidate =
-							tryResolveMemberOverloadSet(compatible_member_overloads);
-						resolved_candidate != nullptr) {
-						return resolved_candidate;
+				if (has_member_arg_types) {
+					const MemberOverloadResolutionByArgTypesResult overload_resolution =
+						resolveConstAwareMemberOverloadByArgTypes(
+							preferred_member_overloads,
+							compatible_member_overloads,
+							member_arg_types);
+					if (overload_resolution.function != nullptr) {
+						return overload_resolution.function;
+					}
+					if (overload_resolution.ambiguous) {
+						return nullptr;
 					}
 				}
 				if (normalized_call) {
@@ -8474,6 +8498,51 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 			}
 			return std::string(callee_decl.identifier_token().value());
 		};
+		auto hasDiagnosableAmbiguousReceiverMemberCall = [&]() -> bool {
+			if (!call_info.has_receiver || call_info.is_indirect) {
+				return false;
+			}
+			const TypeInfo* receiver_owner_type_info =
+				tryResolveStructOwnerTypeInfoForExpression(call_info.receiver);
+			if (receiver_owner_type_info == nullptr ||
+				receiver_owner_type_info->getStructInfo() == nullptr) {
+				return false;
+			}
+			const std::optional<TypeSpecifierNode> receiver_arg_type =
+				buildOverloadResolutionArgType(call_info.receiver, nullptr);
+			const bool receiver_is_const =
+				receiver_arg_type.has_value() && receiver_arg_type->is_const();
+			const ConstAwareMemberCandidateSet member_candidates =
+				collectConstAwareVisibleMemberFunctionCandidates(
+					receiver_owner_type_info->getStructInfo(),
+					callee_decl.identifier_token().handle(),
+					receiver_is_const,
+					true,
+					[](const StructMemberFunction&, const FunctionDeclarationNode&) {
+						return true;
+					});
+			if (member_candidates.compatible.empty()) {
+				return false;
+			}
+			InlineVector<TypeSpecifierNode, 6> member_arg_types;
+			if (!tryCollectOverloadResolutionArgTypes(*call_info.arguments, member_arg_types)) {
+				return false;
+			}
+			InlineVector<ASTNode, 8> preferred_member_overloads;
+			InlineVector<ASTNode, 8> compatible_member_overloads;
+			appendUniqueMemberFunctionOverloadNodes(
+				preferred_member_overloads,
+				member_candidates.preferred);
+			appendUniqueMemberFunctionOverloadNodes(
+				compatible_member_overloads,
+				member_candidates.compatible);
+			const MemberOverloadResolutionByArgTypesResult overload_resolution =
+				resolveConstAwareMemberOverloadByArgTypes(
+					preferred_member_overloads,
+					compatible_member_overloads,
+					member_arg_types);
+			return overload_resolution.ambiguous;
+		};
 		if (hasDiagnosableLocalCallableMiss()) {
 			throw CompileError(
 				std::string("callable object '") +
@@ -8498,8 +8567,14 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 				*member_name +
 				"' cannot be called through a const receiver");
 		}
-
 		const bool normalized_call_expr = hasNormalizedAstNode(call_expr_node);
+		if (hasDiagnosableAmbiguousReceiverMemberCall()) {
+			throw CompileError(
+				std::string("Ambiguous member function overload for '") +
+				std::string(callee_decl.identifier_token().value()) +
+				"'");
+		}
+
 		const std::string_view call_name = call_info.qualified_name.isValid()
 											   ? call_info.qualified_name.view()
 											   : callee_decl.identifier_token().value();
