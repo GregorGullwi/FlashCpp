@@ -501,6 +501,39 @@ member-candidate collector so future overload fixes cannot drift between paths.
 
 Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
 
+## 2026-06-09 direct-call pack-substitution sema note
+
+Returning to the remaining non-receiver/direct-call compatibility surface
+showed that one active route was no longer a semantic lookup hole in
+`SemanticAnalysis`, but an earlier substitution gap in
+`ExpressionSubstitutor`: when a substituted direct call still carried a
+`PackExpansionExprNode` in its argument list, the dependent-unqualified
+point-of-instantiation replay could not collect concrete argument types and the
+later direct-call compatibility branch remained live.
+
+This slice now:
+
+- preserves call-site pack expansion while rebuilding substituted constructor,
+  direct-call, and receiver-call argument lists inside `ExpressionSubstitutor`
+- lets dependent-unqualified direct calls materialize concrete argument types
+  before point-of-instantiation lookup, covering the active
+  `add(readValue(__builtin_addressof(args))...)` route
+- removes the confirmed live traffic from the remaining non-receiver
+  compatibility branch without widening semantic fallback
+
+Validated with:
+
+- `test_template_builtin_addressof_substitution_ret0.cpp`
+- `test_dependent_identifier_template_call_ret0.cpp`
+- `test_pack_expansion_in_template_body_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+Next step:
+
+- re-audit `resolveCallArgAnnotationTarget(...)` / direct-call compatibility
+  now that this pack-substitution gap is closed, and remove or narrow the
+  remaining non-receiver fallback only where typed sema evidence is complete
+
 ## Validation guidance
 
 When changing this area, always rerun:

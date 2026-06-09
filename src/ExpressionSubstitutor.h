@@ -138,6 +138,11 @@ private:
 	ASTNode substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr);
 	ASTNode substituteStaticCast(const StaticCastNode& cast_node);
 	ASTNode substituteLiteral(const ASTNode& literal);
+	void substituteCallArgumentPreservingPackExpansion(
+		const ASTNode& arg,
+		ChunkedVector<ASTNode>& out);
+	ChunkedVector<ASTNode> substituteCallArgumentsPreservingPackExpansion(
+		const ChunkedVector<ASTNode>& args);
 
 	// Helper: substitute in a type specifier with template args
 	TypeSpecifierNode substituteInType(const TypeSpecifierNode& type);

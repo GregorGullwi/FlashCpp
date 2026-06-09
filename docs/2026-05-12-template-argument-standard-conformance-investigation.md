@@ -478,6 +478,41 @@ closure model for captured `this` and nested captures:
 
 Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
 
+## 2026-06-09 direct-call pack-substitution conformance note
+
+The next live ordinary-call conformance blocker after the receiver-side fixes
+was narrower than expected: the remaining non-receiver compatibility path was
+still being exercised by a substitution gap, not by a fundamentally missing
+semantic lookup rule. When `ExpressionSubstitutor` rebuilt a substituted direct
+call and left a `PackExpansionExprNode` in the argument list, the dependent
+unqualified call could not collect concrete argument types at the point of
+instantiation, so the later compatibility branch still had to recover the
+call.
+
+The fix now:
+
+- preserves pack expansion while rebuilding substituted constructor, direct,
+  and receiver-call argument lists inside `ExpressionSubstitutor`
+- allows dependent-unqualified direct calls to arrive at point-of-instantiation
+  lookup with concrete argument types in the covered path
+- removes the active standards-visible fallback route exercised by
+  `add(readValue(__builtin_addressof(args))...)` without restoring any broad
+  parser-target recovery
+
+Validated with:
+
+- `test_template_builtin_addressof_substitution_ret0.cpp`
+- `test_dependent_identifier_template_call_ret0.cpp`
+- `test_pack_expansion_in_template_body_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+Next step:
+
+- audit the residual non-receiver compatibility logic in
+  `resolveCallArgAnnotationTarget(...)` again and remove or narrow the
+  remaining branch only after each surviving direct-call route is proven to
+  reach typed semantic lookup with complete argument evidence
+
 ## Validation guidance
 
 For work in this area:
