@@ -2328,6 +2328,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			SourceMemberIdentityMaps struct_info_source_member_identity_maps;
+			SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
 
 			// Copy member functions from pattern
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
@@ -2465,6 +2466,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_pure_virtual,
 						mem_func.is_override,
 						mem_func.is_final);
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
+						mem_func.function_declaration,
+						struct_info->member_functions.size() - 1);
 					// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 				}
 			}
@@ -4302,10 +4307,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_pattern.size()),
 								"partial-spec",
 								plain_ool_name)) {
-							OutOfLineFunctionStubResolution info_func_resolution =
-								findReplayedOutOfLineMemberInStructInfo(
-									struct_type_info.getStructInfo(),
-									*inst_func);
+							FunctionDeclarationNode* struct_info_func =
+								member_resolution.source_member != nullptr
+									? findStructInfoFunctionBySourceMemberIdentity(
+										  struct_type_info.getStructInfo(),
+										  struct_info_member_identity_maps,
+										  *member_resolution.source_member)
+									: nullptr;
+							OutOfLineFunctionStubResolution info_func_resolution;
+							if (struct_info_func != nullptr) {
+								info_func_resolution.func = struct_info_func;
+							} else {
+								info_func_resolution =
+									findReplayedOutOfLineMemberInStructInfo(
+										struct_type_info.getStructInfo(),
+										*inst_func);
+							}
 							if (info_func_resolution.ambiguous) {
 								FLASH_LOG(
 									Templates,

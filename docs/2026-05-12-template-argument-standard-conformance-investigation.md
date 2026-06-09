@@ -52,6 +52,9 @@ Move FlashCpp toward a sema-owned template system where:
 - sema now also rejects parser-selected ordinary member-call fallback once
   typed receiver-member overload resolution has already proven the dependent
   call ambiguous
+- partial-specialization plain out-of-line member replay now also syncs its
+  `StructTypeInfo` copy through source-member identity instead of
+  signature-equivalent matching
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -153,9 +156,9 @@ unknown-specialization modeling only where it unblocks those paths.
    cases are closed for `operator[]`, callable `operator()`, and ordinary
    member functions.
 
-2. Continue deleting replay-attachment acceptance paths that still allow
-   insufficient substituted-signature evidence outside the now-hardened member
-   and constructor routes.
+2. Continue deleting replay/`StructTypeInfo` sync paths that still allow
+   signature-equivalent fallback when source replay identity was not preserved,
+   now that the partial-specialization plain-member route is identity-driven.
 
 3. Audit the remaining semantic call compatibility fallbacks that still reuse
    parser-selected targets after typed sema evidence is available, and remove
@@ -213,6 +216,38 @@ Validated with:
 - `test_template_member_call_const_receiver_fail.cpp`
 - `test_funcptr_nested_template_struct_ret0.cpp`
 - `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 partial-specialization StructTypeInfo replay-sync conformance note
+
+The next active standards-relevant replay gap was no longer initial attachment;
+that part was already identity-driven. The remaining weakness was the later
+`StructTypeInfo` sync for partial-specialization plain out-of-line members:
+the instantiated stub was attached by source-member identity, but the parallel
+`StructTypeInfo` copy could still be rediscovered only by signature-equivalent
+matching because the partial-specialization copy path never preserved
+source-member -> struct-info-member identity for ordinary functions.
+
+The fix now:
+
+- records source-member -> `StructTypeInfo` member index identity for ordinary
+  function copies in the partial-specialization struct-info build path
+- uses that identity first during partial-specialization plain-member replay
+  sync instead of rediscovering the `StructTypeInfo` target by equivalent
+  signature
+- removes the active same-name overload dependence on weak signature-shaped
+  sync in the covered route
+
+Validated with:
+
+- `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_ret0.cpp`
+- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
+- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
+- `test_template_ool_plain_member_dependent_member_template_alias_overload_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09
 
 ## 2026-06-04 dependent decltype conformance note

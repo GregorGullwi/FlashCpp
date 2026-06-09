@@ -34,8 +34,11 @@ members are explicitly excluded by requiring real member-function ownership
 before raising the diagnostic. The next receiver-member follow-up now also
 blocks parser-selected fallback after typed sema has already proven a dependent
 member call ambiguous, so replay/materialization remains the biggest remaining
-gap while semantic-call fallback debt narrows toward the non-receiver/direct-call
-cases that still have temporary compatibility behavior.
+gap. The newest replay follow-up closes one active weak-evidence route in
+partial-specialization plain-member `StructTypeInfo` sync by preserving
+source-member identity there too, so the remaining replay cleanup is now
+narrower: the residual `StructTypeInfo` sync helpers that still fall back to
+signature equivalence when identity metadata is missing.
 
 ## What the current design can assume
 
@@ -73,6 +76,9 @@ cases that still have temporary compatibility behavior.
 - sema now also rejects parser-selected ordinary member-call fallback once
   shared typed overload resolution has already proven the dependent receiver
   call ambiguous
+- partial-specialization plain out-of-line member replay now also syncs its
+  `StructTypeInfo` copy through source-member identity instead of dropping to
+  signature-equivalent matching
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
@@ -192,9 +198,10 @@ Tightening those is the next best cleanup target.
    negative cases are closed for `operator[]`, callable `operator()`, and
    ordinary member functions.
 
-2. Tighten the remaining replay-attachment sites that can still succeed without
-   positive substituted-signature evidence outside the now-hardened plain-member,
-   member-template, and constructor-template routes.
+2. Tighten the remaining replay/`StructTypeInfo` sync helpers that still fall
+   back to signature-equivalent matching when source replay identity was not
+   preserved, now that the partial-specialization plain-member route is
+   identity-driven too.
 
 3. Audit the remaining semantic call compatibility fallbacks that still reuse
    parser-selected targets after typed sema evidence is available, and remove
@@ -255,6 +262,37 @@ Validated with:
 - `test_template_member_call_const_receiver_fail.cpp`
 - `test_funcptr_nested_template_struct_ret0.cpp`
 - `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 partial-specialization StructTypeInfo replay-sync note
+
+Moving to the next active replay slice found that one weak-evidence route still
+survived outside the hardened replay-attachment helpers: partial-specialization
+plain out-of-line member replay attached the instantiated stub correctly by
+source-member identity, but the later `StructTypeInfo` sync path could still
+drop to signature-equivalent matching because the partial-specialization
+`StructTypeInfo` copy never recorded source-member -> struct-info-member
+identity for ordinary member functions.
+
+This slice now:
+
+- records source-member -> `StructTypeInfo` member index identity for ordinary
+  function copies in the partial-specialization struct-info build path
+- reuses that identity in partial-specialization plain out-of-line member sync
+  before any `StructTypeInfo` signature-equivalence fallback is considered
+- removes the active dependence on weak signature-equivalent sync for the
+  covered same-name overload route
+
+Validated with:
+
+- `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_ret0.cpp`
+- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
+- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
+- `test_template_ool_plain_member_dependent_member_template_alias_overload_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09
 
 ## 2026-06-04 dependent decltype trailing-return note

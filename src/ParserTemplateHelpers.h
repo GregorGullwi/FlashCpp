@@ -719,7 +719,6 @@ inline OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
 				ctor_decl)) {
 			continue;
 		}
-
 		if (resolution.ctor != nullptr) {
 			resolution.ambiguous = true;
 			return resolution;
@@ -806,7 +805,6 @@ inline OutOfLineFunctionStubResolution findMatchingFunctionInStructInfo(
 				func_decl)) {
 			continue;
 		}
-
 		if (resolution.func != nullptr) {
 			resolution.ambiguous = true;
 			return resolution;
@@ -3996,5 +3994,3 @@ inline const StructDeclarationNode* getCachedTemplateStructDecl(const ASTNode* c
 	}
 	return &cached_node->as<StructDeclarationNode>();
 }
-
-
