@@ -706,25 +706,6 @@ inline OutOfLineConstructorStubResolution findMatchingConstructorInStructInfo(
 		}
 	}
 
-	for (auto& info_func : struct_info.member_functions) {
-		if (!info_func.is_constructor ||
-			!info_func.function_decl.is<ConstructorDeclarationNode>()) {
-			continue;
-		}
-
-		auto& info_ctor = info_func.function_decl.as<ConstructorDeclarationNode>();
-		if (!is_candidate_eligible(info_ctor) ||
-			!constructorDeclarationsHaveEquivalentInstantiatedSignature(
-				info_ctor,
-				ctor_decl)) {
-			continue;
-		}
-		if (resolution.ctor != nullptr) {
-			resolution.ambiguous = true;
-			return resolution;
-		}
-		resolution.ctor = &info_ctor;
-	}
 	return resolution;
 }
 
@@ -789,27 +770,6 @@ inline OutOfLineFunctionStubResolution findMatchingFunctionInStructInfo(
 		if (resolution.func != nullptr || resolution.ambiguous) {
 			return resolution;
 		}
-	}
-
-	for (auto& info_func : struct_info.member_functions) {
-		if (info_func.is_constructor) {
-			continue;
-		}
-
-		FunctionDeclarationNode* info_decl =
-			get_function_decl_node_mut(info_func.function_decl);
-		if (info_decl == nullptr ||
-			!is_candidate_eligible(*info_decl) ||
-			!functionDeclarationsHaveEquivalentInstantiatedSignature(
-				*info_decl,
-				func_decl)) {
-			continue;
-		}
-		if (resolution.func != nullptr) {
-			resolution.ambiguous = true;
-			return resolution;
-		}
-		resolution.func = info_decl;
 	}
 
 	return resolution;

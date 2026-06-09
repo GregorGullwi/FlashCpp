@@ -55,6 +55,8 @@ Move FlashCpp toward a sema-owned template system where:
 - partial-specialization plain out-of-line member replay now also syncs its
   `StructTypeInfo` copy through source-member identity instead of
   signature-equivalent matching
+- the dead shared signature-equivalent `StructTypeInfo` sync fallback is now
+  removed; current sync paths consume only preserved identity evidence
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -153,12 +155,11 @@ unknown-specialization modeling only where it unblocks those paths.
 1. Remove the remaining non-receiver / direct-call compatibility branches that
    still let ordinary calls continue after typed sema evidence has produced no
    viable target or an ambiguity, now that the receiver-sensitive negative
-   cases are closed for `operator[]`, callable `operator()`, and ordinary
-   member functions.
+   cases are closed and the dead shared `StructTypeInfo` sync fallback is gone.
 
-2. Continue deleting replay/`StructTypeInfo` sync paths that still allow
-   signature-equivalent fallback when source replay identity was not preserved,
-   now that the partial-specialization plain-member route is identity-driven.
+2. If another replay/`StructTypeInfo` sync gap turns up, fix it by preserving
+   source replay identity into that path rather than restoring any
+   signature-equivalent fallback.
 
 3. Audit the remaining semantic call compatibility fallbacks that still reuse
    parser-selected targets after typed sema evidence is available, and remove
@@ -249,6 +250,26 @@ Validated with:
 - `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
 - `test_template_ool_plain_member_dependent_member_template_alias_overload_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 dead shared StructTypeInfo sync fallback cleanup note
+
+After the partial-specialization replay-sync fix, the remaining shared
+signature-equivalent `StructTypeInfo` sync fallback was probed directly with
+hard-fail guards across the full suite. No current test depended on it.
+
+The cleanup now:
+
+- deletes that dead signature-equivalent fallback from the shared constructor
+  and function `StructTypeInfo` sync helpers
+- leaves those helpers keyed only by stronger replay evidence already preserved
+  in the current architecture: direct node identity and replay source keys
+- reclassifies the next standards-facing task back to the live direct-call
+  compatibility boundary instead of to a dead replay branch
+
+Validated with:
+
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09 with the hard-fail probe
+- full `pwsh tests/run_all_tests.ps1` again after removing the dead fallback
 
 ## 2026-06-04 dependent decltype conformance note
 

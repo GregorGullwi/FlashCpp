@@ -37,8 +37,10 @@ member call ambiguous, so replay/materialization remains the biggest remaining
 gap. The newest replay follow-up closes one active weak-evidence route in
 partial-specialization plain-member `StructTypeInfo` sync by preserving
 source-member identity there too, so the remaining replay cleanup is now
-narrower: the residual `StructTypeInfo` sync helpers that still fall back to
-signature equivalence when identity metadata is missing.
+narrower still: the residual signature-equivalent `StructTypeInfo` sync branch
+was probed across the full suite, found dead on the current corpus, and then
+deleted. The next highest-value task is back on the semantic-call side unless a
+new replay route proves it still loses identity metadata.
 
 ## What the current design can assume
 
@@ -79,6 +81,8 @@ signature equivalence when identity metadata is missing.
 - partial-specialization plain out-of-line member replay now also syncs its
   `StructTypeInfo` copy through source-member identity instead of dropping to
   signature-equivalent matching
+- the last shared signature-equivalent `StructTypeInfo` sync fallback in the
+  current corpus has been removed after a full-suite probe showed it was dead
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
@@ -192,16 +196,15 @@ Tightening those is the next best cleanup target.
 
 ## Next steps
 
-1. Audit the remaining non-receiver / direct-call compatibility branches that
-   still allow ordinary calls to continue after typed sema evidence has
+1. Return to the remaining non-receiver / direct-call compatibility branches
+   that still allow ordinary calls to continue after typed sema evidence has
    produced no viable target or an ambiguity, now that the receiver-sensitive
-   negative cases are closed for `operator[]`, callable `operator()`, and
-   ordinary member functions.
+   negative cases are closed and the dead signature-equivalent
+   `StructTypeInfo` sync branch is gone.
 
-2. Tighten the remaining replay/`StructTypeInfo` sync helpers that still fall
-   back to signature-equivalent matching when source replay identity was not
-   preserved, now that the partial-specialization plain-member route is
-   identity-driven too.
+2. If another replay/`StructTypeInfo` sync gap appears, prefer preserving
+   source replay identity into that path rather than reintroducing any
+   signature-equivalent fallback.
 
 3. Audit the remaining semantic call compatibility fallbacks that still reuse
    parser-selected targets after typed sema evidence is available, and remove
@@ -294,6 +297,29 @@ Validated with:
 - `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
 - `test_template_ool_plain_member_dependent_member_template_alias_overload_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 dead signature-equivalent StructTypeInfo sync cleanup note
+
+After the partial-specialization fix, the remaining shared
+`findMatchingFunctionInStructInfo(...)` /
+`findMatchingConstructorInStructInfo(...)` signature-equivalent fallback was
+probed directly with hard-fail guards across the full suite. No current test
+hit that branch.
+
+This slice now:
+
+- deletes the dead signature-equivalent `StructTypeInfo` sync fallback from the
+  shared constructor/function helpers
+- leaves those helpers consuming only stronger evidence already preserved in the
+  current design: direct node identity and replay source keys
+- keeps the docs honest by moving the next recommended task back to the live
+  semantic-call compatibility boundary instead of implying this dead replay
+  branch still needed root-fixing
+
+Validated with:
+
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09 under the hard-fail probe
+- full `pwsh tests/run_all_tests.ps1` again after deleting the dead fallback
 
 ## 2026-06-04 dependent decltype trailing-return note
 
