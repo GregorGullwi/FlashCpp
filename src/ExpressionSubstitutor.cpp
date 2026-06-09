@@ -2069,9 +2069,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				return false;
 			};
-			auto makeSubstitutedCallArguments = [&]() {
-				return substituteCallArgumentsPreservingPackExpansion(call.arguments());
-			};
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
 			if (!qualified_name.empty()) {
@@ -2216,7 +2213,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				FLASH_LOG(Templates, Debug,
 					"  Preserving unresolved dependent call after explicit template/variable-template instantiation miss: ",
 					!qualified_name.empty() ? qualified_name : func_name);
-				return materializeSubstitutedUnresolvedCall(makeSubstitutedCallArguments());
+				return materializeSubstitutedUnresolvedCall(
+					substituteCallArgumentsPreservingPackExpansion(call.arguments()));
 			}
 
 			Parser::AliasTemplateMaterializationResult materialized_type =
@@ -2262,7 +2260,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				if (has_variable_template_candidate) {
 					FLASH_LOG(Templates, Debug,
 						"  Variable-template candidate instantiation failed; preserving explicit unresolved call");
-					return materializeSubstitutedUnresolvedCall(makeSubstitutedCallArguments());
+					return materializeSubstitutedUnresolvedCall(
+						substituteCallArgumentsPreservingPackExpansion(call.arguments()));
 				}
 			}
 		}
