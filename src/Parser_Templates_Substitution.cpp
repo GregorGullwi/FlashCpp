@@ -220,11 +220,17 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 	if (!expr.has_value() || pack_name.empty()) {
 		return false;
 	}
+	if (expr.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = expr.as<TypeSpecifierNode>();
+		return type_spec.token().value() == pack_name;
+	}
 
 	return AstTraversal::visitExpressionNode(expr, [&](const auto& node) -> bool {
 		using T = std::decay_t<decltype(node)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
 			return node.name() == pack_name;
+		} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
+			return StringTable::getStringView(node.param_name()) == pack_name;
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
 			if (node.has_receiver() && exprContainsIdentifier(node.receiver(), pack_name))
 				return true;
@@ -279,7 +285,6 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 							 std::is_same_v<T, NewExpressionNode> ||
 							 std::is_same_v<T, DeleteExpressionNode> ||
 							 std::is_same_v<T, LambdaExpressionNode> ||
-							 std::is_same_v<T, TemplateParameterReferenceNode> ||
 							 std::is_same_v<T, FoldExpressionNode> ||
 							 std::is_same_v<T, PackExpansionExprNode> ||
 							 std::is_same_v<T, PseudoDestructorCallNode> ||
