@@ -7949,6 +7949,31 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return tryResolveLocalCallableStructInfo(callee_decl.identifier_token().handle());
 	};
+	auto matchesParserSelectedTarget =
+		[&](const FunctionDeclarationNode& candidate) -> bool {
+			if (call_info.function_declaration == nullptr) {
+				return false;
+			}
+			if (&candidate == call_info.function_declaration ||
+				&candidate.decl_node() == &call_info.function_declaration->decl_node()) {
+				return true;
+			}
+			return candidate.has_mangled_name() &&
+				   call_info.function_declaration->has_mangled_name() &&
+				   candidate.mangled_name() == call_info.function_declaration->mangled_name();
+		};
+	auto findViableTargetByArgCount =
+		[&](std::span<const ASTNode> overloads) -> const FunctionDeclarationNode* {
+			for (const ASTNode& overload : overloads) {
+				if (const FunctionDeclarationNode* candidate =
+						getCallTargetFunctionCandidate(overload);
+					candidate != nullptr &&
+					isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
+					return candidate;
+				}
+			}
+			return nullptr;
+		};
 	auto fallbackToEarlyParserSelectedTarget = [&]() -> const FunctionDeclarationNode* {
 		if (normalized_call) {
 			return nullptr;
@@ -8030,28 +8055,16 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 					for (const ASTNode& candidate_node : ordered_member_overloads) {
 						const FunctionDeclarationNode* candidate =
 							getCallTargetFunctionCandidate(candidate_node);
-						if (candidate == nullptr) {
-							continue;
-						}
-						if (candidate == call_info.function_declaration ||
-							&candidate->decl_node() == &call_info.function_declaration->decl_node()) {
-							return candidate;
-						}
-						if (candidate->has_mangled_name() &&
-							call_info.function_declaration->has_mangled_name() &&
-							candidate->mangled_name() ==
-								call_info.function_declaration->mangled_name()) {
+						if (candidate != nullptr &&
+							matchesParserSelectedTarget(*candidate)) {
 							return candidate;
 						}
 					}
 				}
-				for (const ASTNode& candidate_node : ordered_member_overloads) {
-					if (const FunctionDeclarationNode* candidate =
-							getCallTargetFunctionCandidate(candidate_node);
-						candidate != nullptr &&
-						isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
-						return candidate;
-					}
+				if (const FunctionDeclarationNode* viable_member_target =
+						findViableTargetByArgCount(ordered_member_overloads);
+					viable_member_target != nullptr) {
+					return viable_member_target;
 				}
 			}
 			if (receiver_is_const &&
@@ -8062,8 +8075,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				return nullptr;
 			}
 		}
-		if (!normalized_call && call_info.function_declaration) {
-			return call_info.function_declaration;
+		if (const FunctionDeclarationNode* parser_selected_target =
+				fallbackToEarlyParserSelectedTarget();
+			parser_selected_target != nullptr) {
+			return parser_selected_target;
 		}
 
 		return nullptr;
@@ -8222,20 +8237,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (!func_decl) {
-		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
-			for (const auto& overload : overloads) {
-				if (const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(overload)) {
-					if (isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
-						return candidate;
-					}
-				}
-			}
-			return nullptr;
-		};
 		if (overloads.size() == 1) {
 			func_decl = getCallTargetFunctionCandidate(overloads[0]);
 		} else {
-			func_decl = find_by_arg_count();
+			func_decl = findViableTargetByArgCount(overloads);
 		}
 	}
 
