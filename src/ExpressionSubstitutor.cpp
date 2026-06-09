@@ -294,6 +294,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	Parser& parser)
 	: param_map_(param_map), parser_(parser) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -302,6 +303,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	std::span<const std::string_view> template_param_order)
 	: param_map_(param_map), parser_(parser), template_param_order_(template_param_order.begin(), template_param_order.end()) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -310,6 +312,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	Parser& parser)
 	: param_map_(param_map), pack_map_(pack_map), parser_(parser) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -319,6 +322,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	std::span<const std::string_view> template_param_order)
 	: param_map_(param_map), pack_map_(pack_map), parser_(parser), template_param_order_(template_param_order.begin(), template_param_order.end()) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -367,12 +371,17 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	};
 	append_environment(append_environment, &environment);
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
 	const TemplateInstantiationContext& context,
 	Parser& parser)
 	: ExpressionSubstitutor(context.environment, parser) {
+}
+
+void ExpressionSubstitutor::captureParserPackState() {
+	captured_pack_param_info_ = parser_.pack_param_info_;
 }
 
 void ExpressionSubstitutor::rebuildEnvironmentFromCurrentBindings() {
@@ -531,10 +540,8 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 
 	// Create new ConstructorCallNode with substituted type
 	// First, we need to copy the arguments
-	ChunkedVector<ASTNode> substituted_args;
-	for (size_t i = 0; i < ctor.arguments().size(); ++i) {
-		substituted_args.push_back(substitute(ctor.arguments()[i]));
-	}
+	ChunkedVector<ASTNode> substituted_args =
+		substituteCallArgumentsPreservingPackExpansion(ctor.arguments());
 
 	// Create new TypeSpecifierNode and ConstructorCallNode
 	TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
@@ -546,6 +553,99 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	// Wrap in ExpressionNode
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
 	return ASTNode(&new_expr);
+}
+
+void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
+	const ASTNode& arg,
+	ChunkedVector<ASTNode>& out) {
+	if (arg.is<ExpressionNode>()) {
+		const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+		if (const auto* pack_expansion_expr = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+			InlineVector<TemplateParameterNode, 4> template_params;
+			InlineVector<TemplateTypeArg, 4> template_args;
+			template_params.reserve(environment_.bindings.size());
+			for (const TemplateBinding& binding : environment_.bindings) {
+				if (!binding.name.isValid()) {
+					continue;
+				}
+				Token param_token(
+					Token::Type::Identifier,
+					StringTable::getStringView(binding.name),
+					0,
+					0,
+					0);
+				TemplateParameterNode template_param;
+				switch (binding.kind) {
+				case TemplateParameterKind::Type:
+					template_param = TemplateParameterNode(binding.name, param_token);
+					break;
+				case TemplateParameterKind::NonType: {
+					TypeSpecifierNode parameter_type;
+					if (!binding.args.empty()) {
+						const TemplateTypeArg& bound_arg = binding.args.front();
+						if (bound_arg.type_index.is_valid()) {
+							parameter_type = TypeSpecifierNode(
+								bound_arg.type_index,
+								computeTypeSizeInBits(bound_arg.type_index),
+								param_token,
+								CVQualifier::None,
+								ReferenceQualifier::None);
+						} else if (bound_arg.typeEnum() != TypeCategory::Invalid) {
+							parameter_type = TypeSpecifierNode(
+								bound_arg.typeEnum(),
+								TypeQualifier::None,
+								get_type_size_bits(bound_arg.typeEnum()),
+								param_token,
+								CVQualifier::None);
+						}
+					}
+					template_param = TemplateParameterNode(binding.name, parameter_type, param_token);
+					break;
+				}
+				case TemplateParameterKind::Template:
+					template_param = TemplateParameterNode(
+						binding.name,
+						std::span<const TemplateParameterNode>{},
+						param_token);
+					break;
+				default:
+					throw InternalError("Unsupported template parameter kind while preserving pack expansion during call substitution");
+				}
+				template_param.set_variadic(binding.is_pack);
+				template_params.push_back(std::move(template_param));
+				if (binding.is_pack) {
+					for (const TemplateTypeArg& pack_arg : binding.args) {
+						template_args.push_back(pack_arg);
+					}
+				} else if (!binding.args.empty()) {
+					template_args.push_back(binding.args.front());
+				}
+			}
+
+			if (!template_params.empty() &&
+				parser_.expandPackExpansionArgs(
+					*pack_expansion_expr,
+					std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
+					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+					std::span<const Parser::PackParamInfo>(
+						captured_pack_param_info_.data(),
+						captured_pack_param_info_.size()),
+					out)) {
+				return;
+			}
+		}
+	}
+
+	out.push_back(substitute(arg));
+}
+
+ChunkedVector<ASTNode> ExpressionSubstitutor::substituteCallArgumentsPreservingPackExpansion(
+	const ChunkedVector<ASTNode>& args) {
+	ChunkedVector<ASTNode> substituted_args;
+	for (const ASTNode& arg : args) {
+		substituteCallArgumentPreservingPackExpansion(arg, substituted_args);
+	}
+	return substituted_args;
 }
 
 std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateArgs(std::string_view use_site) const {
@@ -1981,13 +2081,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				return false;
 			};
-			auto makeSubstitutedCallArguments = [&]() {
-				ChunkedVector<ASTNode> substituted_args;
-				for (size_t i = 0; i < call.arguments().size(); ++i) {
-					substituted_args.push_back(substitute(call.arguments()[i]));
-				}
-				return substituted_args;
-			};
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
 			if (!qualified_name.empty()) {
@@ -2062,10 +2155,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				if (instantiated_template->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
 
-					substituted_args_nodes.clear();
-					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
-					}
+					substituted_args_nodes =
+						substituteCallArgumentsPreservingPackExpansion(call.arguments());
 					ASTNode resolved_call = materializeResolvedCallExpr(
 						func_decl,
 						std::move(substituted_args_nodes),
@@ -2134,7 +2225,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				FLASH_LOG(Templates, Debug,
 					"  Preserving unresolved dependent call after explicit template/variable-template instantiation miss: ",
 					!qualified_name.empty() ? qualified_name : func_name);
-				return materializeSubstitutedUnresolvedCall(makeSubstitutedCallArguments());
+				return materializeSubstitutedUnresolvedCall(
+					substituteCallArgumentsPreservingPackExpansion(call.arguments()));
 			}
 
 			Parser::AliasTemplateMaterializationResult materialized_type =
@@ -2165,10 +2257,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					ReferenceQualifier::None);
 
 				// Create a ConstructorCallNode instead of an ordinary CallExprNode
-				substituted_args_nodes.clear();
-				for (size_t i = 0; i < call.arguments().size(); ++i) {
-					substituted_args_nodes.push_back(substitute(call.arguments()[i]));
-				}
+				substituted_args_nodes =
+					substituteCallArgumentsPreservingPackExpansion(call.arguments());
 				ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
 					ASTNode(&new_type),
 					std::move(substituted_args_nodes),
@@ -2182,7 +2272,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				if (has_variable_template_candidate) {
 					FLASH_LOG(Templates, Debug,
 						"  Variable-template candidate instantiation failed; preserving explicit unresolved call");
-					return materializeSubstitutedUnresolvedCall(makeSubstitutedCallArguments());
+					return materializeSubstitutedUnresolvedCall(
+						substituteCallArgumentsPreservingPackExpansion(call.arguments()));
 				}
 			}
 		}
@@ -2213,10 +2304,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					FLASH_LOG(Templates, Debug, "  Type was substituted, creating ConstructorCallNode");
 
 					// Create a ConstructorCallNode instead of an ordinary CallExprNode
-					ChunkedVector<ASTNode> substituted_args_nodes;
-					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
-					}
+					ChunkedVector<ASTNode> substituted_args_nodes =
+						substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(substituted_type);
 					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
@@ -2239,11 +2328,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	if (symbol_opt.has_value() && symbol_opt->is<TemplateFunctionDeclarationNode>()) {
 		FLASH_LOG(Templates, Debug, "  Function is a template: ", template_func_name);
 
-		ChunkedVector<ASTNode> substituted_args;
-		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			ASTNode substituted_arg = substitute(call.arguments()[i]);
-			substituted_args.push_back(substituted_arg);
-		}
+		ChunkedVector<ASTNode> substituted_args =
+			substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 		std::optional<ASTNode> instantiated_opt = parser_.tryInstantiateTemplateFromCallArguments(
 			call.has_qualified_name() ? call.qualified_name() : std::string_view(),
@@ -2272,10 +2358,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	}
 
 	if (call.has_dependent_unqualified_lookup_record()) {
-		ChunkedVector<ASTNode> substituted_args;
-		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			substituted_args.push_back(substitute(call.arguments()[i]));
-		}
+		ChunkedVector<ASTNode> substituted_args =
+			substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 		std::vector<TypeSpecifierNode> substituted_arg_types;
 		if (parser_.tryCollectFunctionCallArgTypes(substituted_args, substituted_arg_types)) {
@@ -2332,10 +2416,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					const std::string_view resolved_member_name =
 						resolved_qual_id->name();
 					if (!resolved_owner_name.empty()) {
-						ChunkedVector<ASTNode> substituted_args;
-						for (size_t i = 0; i < call.arguments().size(); ++i) {
-							substituted_args.push_back(substitute(call.arguments()[i]));
-						}
+						ChunkedVector<ASTNode> substituted_args =
+							substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 						const FunctionDeclarationNode* target_func = nullptr;
 						std::string_view mutable_resolved_owner_name =
@@ -2421,10 +2503,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			}
 
 			if (!materialized_owner_name.empty()) {
-					ChunkedVector<ASTNode> substituted_args;
-					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_args.push_back(substitute(call.arguments()[i]));
-					}
+					ChunkedVector<ASTNode> substituted_args =
+						substituteCallArgumentsPreservingPackExpansion(call.arguments());
 					const FunctionDeclarationNode* target_func = nullptr;
 
 					std::optional<ASTNode> instantiated_member =
@@ -2573,10 +2653,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 									 call.called_from().line(), call.called_from().column(), call.called_from().file_index());
 
 				// Substitute arguments
-				ChunkedVector<ASTNode> substituted_args;
-				for (size_t i = 0; i < call.arguments().size(); ++i) {
-					substituted_args.push_back(substitute(call.arguments()[i]));
-				}
+				ChunkedVector<ASTNode> substituted_args =
+					substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 				// Try to trigger lazy member function instantiation for the target
 				parser_.instantiateLazyMemberForCanonicalOwner(
@@ -2620,10 +2698,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 	// Return with substituted children preserved.
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
-	ChunkedVector<ASTNode> substituted_fallback_args;
-	for (size_t i = 0; i < call.arguments().size(); ++i) {
-		substituted_fallback_args.push_back(substitute(call.arguments()[i]));
-	}
+	ChunkedVector<ASTNode> substituted_fallback_args =
+		substituteCallArgumentsPreservingPackExpansion(call.arguments());
 	return materializeSubstitutedUnresolvedCall(std::move(substituted_fallback_args));
 }
 
@@ -2633,10 +2709,8 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 	}
 
 	ASTNode substituted_receiver = substitute(call.receiver());
-	ChunkedVector<ASTNode> substituted_args;
-	for (size_t i = 0; i < call.arguments().size(); ++i) {
-		substituted_args.push_back(substitute(call.arguments()[i]));
-	}
+	ChunkedVector<ASTNode> substituted_args =
+		substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
 	if ((call.callee().is_member() || call.callee().is_static_member()) &&
 		call.called_from().kind().is_identifier()) {

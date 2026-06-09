@@ -220,11 +220,17 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 	if (!expr.has_value() || pack_name.empty()) {
 		return false;
 	}
+	if (expr.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& type_spec = expr.as<TypeSpecifierNode>();
+		return type_spec.token().value() == pack_name;
+	}
 
 	return AstTraversal::visitExpressionNode(expr, [&](const auto& node) -> bool {
 		using T = std::decay_t<decltype(node)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
 			return node.name() == pack_name;
+		} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
+			return StringTable::getStringView(node.param_name()) == pack_name;
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
 			if (node.has_receiver() && exprContainsIdentifier(node.receiver(), pack_name))
 				return true;
@@ -279,7 +285,6 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 							 std::is_same_v<T, NewExpressionNode> ||
 							 std::is_same_v<T, DeleteExpressionNode> ||
 							 std::is_same_v<T, LambdaExpressionNode> ||
-							 std::is_same_v<T, TemplateParameterReferenceNode> ||
 							 std::is_same_v<T, FoldExpressionNode> ||
 							 std::is_same_v<T, PackExpansionExprNode> ||
 							 std::is_same_v<T, PseudoDestructorCallNode> ||
@@ -2122,67 +2127,125 @@ bool Parser::expandPackExpansionArgs(
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args,
 	ChunkedVector<ASTNode>& out_args) {
+	return expandPackExpansionArgs(
+		pack_expansion,
+		template_params,
+		template_args,
+		std::span<const PackParamInfo>(pack_param_info_.data(), pack_param_info_.size()),
+		out_args);
+}
 
+bool Parser::expandPackExpansionArgs(
+	const PackExpansionExprNode& pack_expansion,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	std::span<const PackParamInfo> function_pack_infos,
+	ChunkedVector<ASTNode>& out_args) {
 	const ASTNode& pattern = pack_expansion.pattern();
+	InlineVector<std::pair<size_t, size_t>, 4> template_param_arg_ranges;
+	template_param_arg_ranges.reserve(template_params.size());
+	size_t variadic_template_param_count = 0;
 
-	// Find the variadic template parameter and count non-variadic params
-	size_t variadic_param_idx = SIZE_MAX;
-	size_t non_variadic_count = 0;
-	for (size_t p = 0; p < template_params.size(); ++p) {
-		const auto& tparam = template_params[p];
-		if (tparam.is_variadic())
-			variadic_param_idx = p;
-		else
-			non_variadic_count++;
+	size_t total_non_variadic = 0;
+	for (const TemplateParameterNode& param : template_params) {
+		if (!param.is_variadic()) {
+			++total_non_variadic;
+		} else {
+			++variadic_template_param_count;
+		}
 	}
 
-	size_t num_pack_elements = 0;
-	bool found_pack_context = false;
-	if (variadic_param_idx != SIZE_MAX && template_args.size() >= non_variadic_count) {
-		found_pack_context = true;
-		num_pack_elements = template_args.size() - non_variadic_count;
+	size_t arg_cursor = 0;
+	size_t non_variadic_seen = 0;
+	for (const TemplateParameterNode& param : template_params) {
+		if (!param.is_variadic()) {
+			template_param_arg_ranges.push_back({arg_cursor, arg_cursor < template_args.size() ? 1u : 0u});
+			if (arg_cursor < template_args.size()) {
+				++arg_cursor;
+			}
+			++non_variadic_seen;
+			continue;
+		}
+
+		size_t required_after = total_non_variadic - non_variadic_seen;
+		size_t remaining = arg_cursor < template_args.size() ? template_args.size() - arg_cursor : 0;
+		size_t pack_size = remaining > required_after ? remaining - required_after : 0;
+		template_param_arg_ranges.push_back({arg_cursor, pack_size});
+		arg_cursor += pack_size;
+	}
+
+	std::optional<size_t> num_pack_elements;
+	for (size_t p = 0; p < template_params.size(); ++p) {
+		const TemplateParameterNode& tparam = template_params[p];
+		if (!tparam.is_variadic() || !exprContainsIdentifier(pattern, tparam.name())) {
+			continue;
+		}
+		const size_t pack_size = template_param_arg_ranges[p].second;
+		if (!num_pack_elements.has_value()) {
+			num_pack_elements = pack_size;
+		} else if (*num_pack_elements != pack_size) {
+			throw InternalError("Mismatched template parameter pack sizes while expanding call arguments");
+		}
+	}
+	if (!num_pack_elements.has_value() && variadic_template_param_count == 1) {
+		for (size_t p = 0; p < template_params.size(); ++p) {
+			if (template_params[p].is_variadic()) {
+				num_pack_elements = template_param_arg_ranges[p].second;
+				break;
+			}
+		}
 	}
 
 	// Also check pack_param_info_ for function parameter packs. Match the pack
 	// name against the pattern so empty packs are still recognized and consumed
 	// instead of leaking a PackExpansionExprNode across the parser/sema boundary.
-	std::string_view func_pack_name;
-	for (const auto& pack_info : pack_param_info_) {
+	InlineVector<std::string_view, 4> matched_function_pack_names;
+	for (const auto& pack_info : function_pack_infos) {
 		if (exprContainsIdentifier(pattern, pack_info.original_name)) {
-			found_pack_context = true;
-			func_pack_name = pack_info.original_name;
-			num_pack_elements = pack_info.pack_size;
-			break;
+			matched_function_pack_names.push_back(pack_info.original_name);
+			if (!num_pack_elements.has_value()) {
+				num_pack_elements = pack_info.pack_size;
+			} else if (*num_pack_elements != pack_info.pack_size) {
+				throw InternalError("Mismatched function parameter pack sizes while expanding call arguments");
+			}
 		}
 	}
 
-	if (!found_pack_context)
+	if (!num_pack_elements.has_value())
 		return false;
-	if (num_pack_elements == 0) {
+	if (*num_pack_elements == 0) {
 		FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: empty pack");
 		return true;
 	}
 
-	FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: ", num_pack_elements, " elements");
-	for (size_t pi = 0; pi < num_pack_elements; ++pi) {
+	FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: ", *num_pack_elements, " elements");
+	for (size_t pi = 0; pi < *num_pack_elements; ++pi) {
 		// Build substitution params for this single pack element
 		InlineVector<TemplateParameterNode, 4> subst_params;
 		InlineVector<TemplateTypeArg, 4> subst_args;
 		for (size_t p = 0; p < template_params.size(); ++p) {
 			const auto& tparam = template_params[p];
 			if (tparam.is_variadic()) {
-				TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
+				const auto& [pack_start, pack_size] = template_param_arg_ranges[p];
+				if (pi >= pack_size) {
+					continue;
+				}
+				TemplateParameterNode single_tparam = tparam;
+				single_tparam.set_variadic(false);
 				subst_params.push_back(single_tparam);
-				subst_args.push_back(template_args[non_variadic_count + pi]);
-			} else if (p < template_args.size()) {
+				subst_args.push_back(template_args[pack_start + pi]);
+			} else if (template_param_arg_ranges[p].second != 0) {
 				subst_params.push_back(template_params[p]);
-				subst_args.push_back(template_args[p]);
+				subst_args.push_back(template_args[template_param_arg_ranges[p].first]);
 			}
 		}
 
 		// Replace the function parameter pack identifier (e.g., "args") with
 		// the expanded element name (e.g., "args_0") in the pattern before substitution
-		ASTNode expanded_pattern = replacePackIdentifierInExpr(pattern, func_pack_name, pi);
+		ASTNode expanded_pattern = pattern;
+		for (std::string_view func_pack_name : matched_function_pack_names) {
+			expanded_pattern = replacePackIdentifierInExpr(expanded_pattern, func_pack_name, pi);
+		}
 		ASTNode substituted = substituteTemplateParameters(expanded_pattern, std::span<const TemplateParameterNode>(subst_params.data(), subst_params.size()), std::span<const TemplateTypeArg>(subst_args.data(), subst_args.size()));
 		out_args.push_back(substituted);
 	}

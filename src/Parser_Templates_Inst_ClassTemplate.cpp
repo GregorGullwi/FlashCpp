@@ -778,12 +778,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								 const ASTNode& arg,
 								 std::vector<ASTNode>& out,
 								 const auto& tmpl_params,
-								 const auto& tmpl_args) {
+								 const auto& tmpl_args,
+								 std::span<const PackParamInfo> function_pack_infos) {
 		if (arg.is<ExpressionNode>()) {
 			const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
 			if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
 				ChunkedVector<ASTNode> expanded;
-				if (expandPackExpansionArgs(*pack_exp, tmpl_params, tmpl_args, expanded)) {
+				if (expandPackExpansionArgs(*pack_exp, tmpl_params, tmpl_args, function_pack_infos, expanded)) {
 					for (size_t ei = 0; ei < expanded.size(); ++ei) {
 						out.push_back(expanded[ei]);
 					}
@@ -800,7 +801,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											 const ConstructorDeclarationNode& orig_ctor,
 											 ConstructorDeclarationNode& new_ctor,
 											 const auto& tmpl_params,
-											 const auto& tmpl_args) {
+											 const auto& tmpl_args,
+											 std::span<const PackParamInfo> function_pack_infos) {
 		for (const auto& [name, expr] : orig_ctor.member_initializers()) {
 			new_ctor.add_member_initializer(name, substituteTemplateParameters(expr, tmpl_params, tmpl_args));
 		}
@@ -808,7 +810,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<ASTNode> substituted_args;
 			substituted_args.reserve(init.arguments.size());
 			for (const auto& arg : init.arguments) {
-				substituteInitArg(arg, substituted_args, tmpl_params, tmpl_args);
+				substituteInitArg(arg, substituted_args, tmpl_params, tmpl_args, function_pack_infos);
 			}
 			new_ctor.add_base_initializer(
 				resolveBaseInitializerNameForTemplateArgs(init.getBaseClassName(), tmpl_params, tmpl_args),
@@ -819,7 +821,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::vector<ASTNode> substituted_del_args;
 			substituted_del_args.reserve(del_init.arguments.size());
 			for (const auto& arg : del_init.arguments) {
-				substituteInitArg(arg, substituted_del_args, tmpl_params, tmpl_args);
+				substituteInitArg(arg, substituted_del_args, tmpl_params, tmpl_args, function_pack_infos);
 			}
 			new_ctor.set_delegating_initializer(std::move(substituted_del_args));
 		}
@@ -2328,6 +2330,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			SourceMemberIdentityMaps struct_info_source_member_identity_maps;
+			SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
 
 			// Copy member functions from pattern
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
@@ -2359,11 +2362,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								pattern_struct.name(),
 								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
 							: std::nullopt);
+					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 					substituteAndCopyInitializers(
 						orig_ctor,
 						new_ctor_ref,
 						template_params,
-						template_args_for_member_copy);
+						template_args_for_member_copy,
+						std::span<const PackParamInfo>(
+							ctor_pack_param_info.data(),
+							ctor_pack_param_info.size()));
 					if (orig_ctor.is_materialized()) {
 						new_ctor_ref.set_definition(substituteTemplateParameters(
 							*orig_ctor.get_definition(),
@@ -2465,6 +2472,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_pure_virtual,
 						mem_func.is_override,
 						mem_func.is_final);
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
+						mem_func.function_declaration,
+						struct_info->member_functions.size() - 1);
 					// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 				}
 			}
@@ -3690,9 +3701,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								pattern_struct.name(),
 								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
 							: std::nullopt);
+					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 
 					// Copy initializers (member, base, delegating)
-					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args_for_pattern);
+					substituteAndCopyInitializers(
+						orig_ctor,
+						new_ctor_ref,
+						template_params,
+						template_args_for_pattern,
+						std::span<const PackParamInfo>(
+							ctor_pack_param_info.data(),
+							ctor_pack_param_info.size()));
 
 					// Copy definition if present (with template parameter substitution)
 					if (orig_ctor.is_materialized()) {
@@ -4302,10 +4321,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_pattern.size()),
 								"partial-spec",
 								plain_ool_name)) {
-							OutOfLineFunctionStubResolution info_func_resolution =
-								findReplayedOutOfLineMemberInStructInfo(
-									struct_type_info.getStructInfo(),
-									*inst_func);
+							FunctionDeclarationNode* struct_info_func =
+								member_resolution.source_member != nullptr
+									? findStructInfoFunctionBySourceMemberIdentity(
+										  struct_type_info.getStructInfo(),
+										  struct_info_member_identity_maps,
+										  *member_resolution.source_member)
+									: nullptr;
+							OutOfLineFunctionStubResolution info_func_resolution;
+							if (struct_info_func != nullptr) {
+								info_func_resolution.func = struct_info_func;
+							} else {
+								info_func_resolution =
+									findReplayedOutOfLineMemberInStructInfo(
+										struct_type_info.getStructInfo(),
+										*inst_func);
+							}
 							if (info_func_resolution.ambiguous) {
 								FLASH_LOG(
 									Templates,
@@ -9990,6 +10021,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// so that pack expansions in the body and initializers resolve correctly.
 					size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
+					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 
 					std::optional<ASTNode> substituted_body;
 					if (ctor_decl.is_materialized()) {
@@ -10000,7 +10032,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					// Copy all initializers (member, base, delegating) with template parameter substitution
-					substituteAndCopyInitializers(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
+					substituteAndCopyInitializers(
+						ctor_decl,
+						new_ctor_ref,
+						template_params,
+						template_args_to_use,
+						std::span<const PackParamInfo>(
+							ctor_pack_param_info.data(),
+							ctor_pack_param_info.size()));
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());

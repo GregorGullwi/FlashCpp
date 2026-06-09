@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-09
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -45,6 +45,18 @@ Move FlashCpp toward a sema-owned template system where:
   const dependent/local callable receivers once semantic lookup has shown there
   is no viable const-compatible overload, so this standards-visible negative
   case no longer compiles through member-call fallback
+- sema now also rejects parser-selected non-const ordinary member-function
+  targets on const dependent/member-call receivers once const-aware lookup has
+  shown there is no viable const-compatible overload, while leaving
+  function-pointer member calls on their ordinary indirect-call path
+- sema now also rejects parser-selected ordinary member-call fallback once
+  typed receiver-member overload resolution has already proven the dependent
+  call ambiguous
+- partial-specialization plain out-of-line member replay now also syncs its
+  `StructTypeInfo` copy through source-member identity instead of
+  signature-equivalent matching
+- the dead shared signature-equivalent `StructTypeInfo` sync fallback is now
+  removed; current sync paths consume only preserved identity evidence
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -115,11 +127,11 @@ unknown-specialization modeling only where it unblocks those paths.
    template/member direct calls. The 2026-06-04 follow-ups closed the concrete
    `operator[]` and dependent/local callable `operator()` gaps by sharing
    receiver-aware candidate filtering plus sema-owned argument typing with
-   direct member-call resolution, and the 2026-06-08 follow-up closes the
-   documented const-receiver no-viable callable diagnostic hole. The next step
-   here is auditing any residual semantic call sites still outside that model,
-   then removing the temporary parser-target compatibility fallbacks that
-   remain once typed sema evidence is available.
+   direct member-call resolution, and the 2026-06-08/2026-06-09 follow-ups
+   close the documented const-receiver no-viable callable and ordinary-member
+   diagnostic holes. The next step here is auditing any residual semantic call
+   sites still outside that model, then removing the temporary parser-target
+   compatibility fallbacks that remain once typed sema evidence is available.
 
 4. Expand current-instantiation, dependent-base, and unknown-specialization
    handling only where that unblocks steps 2 and 3.
@@ -140,15 +152,14 @@ unknown-specialization modeling only where it unblocks those paths.
 
 ## Next steps
 
-1. Apply the sema-owned overload-resolution argument collector and the shared
-   receiver-aware candidate partitioning to the remaining semantic
-   call-resolution sites that still rely on parser-owned expression typing or
-   reduced argument modeling beyond the now-fixed `operator[]` and
-   dependent/local callable `operator()` routes.
+1. Remove the remaining non-receiver / direct-call compatibility branches that
+   still let ordinary calls continue after typed sema evidence has produced no
+   viable target or an ambiguity, now that the receiver-sensitive negative
+   cases are closed and the dead shared `StructTypeInfo` sync fallback is gone.
 
-2. Continue deleting replay-attachment acceptance paths that still allow
-   insufficient substituted-signature evidence outside the now-hardened member
-   and constructor routes.
+2. If another replay/`StructTypeInfo` sync gap turns up, fix it by preserving
+   source replay identity into that path rather than restoring any
+   signature-equivalent fallback.
 
 3. Audit the remaining semantic call compatibility fallbacks that still reuse
    parser-selected targets after typed sema evidence is available, and remove
@@ -156,6 +167,109 @@ unknown-specialization modeling only where it unblocks those paths.
 
 4. Only after those are stable, extend current-instantiation and
    unknown-specialization modeling for the specific unresolved cases that remain.
+
+## 2026-06-09 ordinary member const-receiver conformance note
+
+The next live standards-visible call gap was the ordinary member-call analogue
+of the already-fixed callable case: a dependent `const T& obj; obj.member(...)`
+could still compile when the parser had attached a non-const member target,
+even though sema's const-aware member lookup found no viable const-compatible
+overload.
+
+The fix now:
+
+- blocks reuse of that stale parser-selected non-const member target in the
+  shared sema call-annotation path once const-aware lookup has shown there is
+  no const-compatible overload
+- emits a hard member-call diagnostic for the covered path instead of letting
+  normalized/template calls continue toward codegen fallback
+- preserves valid function-pointer member calls by requiring actual
+  member-function ownership before applying the const-receiver diagnostic
+
+Validated with:
+
+- `test_template_member_call_const_receiver_fail.cpp`
+- `test_template_callable_operator_const_receiver_fail.cpp`
+- `test_funcptr_nested_template_struct_ret0.cpp`
+- `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 ordinary member ambiguity conformance note
+
+The next live standards-visible gap in the same family was ambiguity handling
+for dependent ordinary member calls: once instantiation made the receiver call
+ambiguous, sema could still degrade that typed result to "no unique target"
+and continue by reusing a parser-selected member candidate.
+
+The fix now:
+
+- preserves explicit ambiguity in the shared receiver-member typed overload
+  helper instead of collapsing it to a generic miss
+- blocks parser-selected fallback once sema has already proven the receiver
+  call ambiguous
+- emits a hard member-call ambiguity diagnostic from the shared call-annotation
+  path for the covered cases
+
+Validated with:
+
+- `test_template_member_call_ambiguous_fail.cpp`
+- `test_template_member_call_no_viable_overload_fail.cpp`
+- `test_template_member_call_const_receiver_fail.cpp`
+- `test_funcptr_nested_template_struct_ret0.cpp`
+- `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 partial-specialization StructTypeInfo replay-sync conformance note
+
+The next active standards-relevant replay gap was no longer initial attachment;
+that part was already identity-driven. The remaining weakness was the later
+`StructTypeInfo` sync for partial-specialization plain out-of-line members:
+the instantiated stub was attached by source-member identity, but the parallel
+`StructTypeInfo` copy could still be rediscovered only by signature-equivalent
+matching because the partial-specialization copy path never preserved
+source-member -> struct-info-member identity for ordinary functions.
+
+The fix now:
+
+- records source-member -> `StructTypeInfo` member index identity for ordinary
+  function copies in the partial-specialization struct-info build path
+- uses that identity first during partial-specialization plain-member replay
+  sync instead of rediscovering the `StructTypeInfo` target by equivalent
+  signature
+- removes the active same-name overload dependence on weak signature-shaped
+  sync in the covered route
+
+Validated with:
+
+- `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_ool_plain_member_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_ret0.cpp`
+- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
+- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
+- `test_template_ool_plain_member_dependent_member_template_alias_overload_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-09 dead shared StructTypeInfo sync fallback cleanup note
+
+After the partial-specialization replay-sync fix, the remaining shared
+signature-equivalent `StructTypeInfo` sync fallback was probed directly with
+hard-fail guards across the full suite. No current test depended on it.
+
+The cleanup now:
+
+- deletes that dead signature-equivalent fallback from the shared constructor
+  and function `StructTypeInfo` sync helpers
+- leaves those helpers keyed only by stronger replay evidence already preserved
+  in the current architecture: direct node identity and replay source keys
+- reclassifies the next standards-facing task back to the live direct-call
+  compatibility boundary instead of to a dead replay branch
+
+Validated with:
+
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09 with the hard-fail probe
+- full `pwsh tests/run_all_tests.ps1` again after removing the dead fallback
 
 ## 2026-06-04 dependent decltype conformance note
 
@@ -363,6 +477,41 @@ closure model for captured `this` and nested captures:
   evaluating calls from a const member body
 
 Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
+
+## 2026-06-09 direct-call pack-substitution conformance note
+
+The next live ordinary-call conformance blocker after the receiver-side fixes
+was narrower than expected: the remaining non-receiver compatibility path was
+still being exercised by a substitution gap, not by a fundamentally missing
+semantic lookup rule. When `ExpressionSubstitutor` rebuilt a substituted direct
+call and left a `PackExpansionExprNode` in the argument list, the dependent
+unqualified call could not collect concrete argument types at the point of
+instantiation, so the later compatibility branch still had to recover the
+call.
+
+The fix now:
+
+- preserves pack expansion while rebuilding substituted constructor, direct,
+  and receiver-call argument lists inside `ExpressionSubstitutor`
+- allows dependent-unqualified direct calls to arrive at point-of-instantiation
+  lookup with concrete argument types in the covered path
+- removes the active standards-visible fallback route exercised by
+  `add(readValue(__builtin_addressof(args))...)` without restoring any broad
+  parser-target recovery
+
+Validated with:
+
+- `test_template_builtin_addressof_substitution_ret0.cpp`
+- `test_dependent_identifier_template_call_ret0.cpp`
+- `test_pack_expansion_in_template_body_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+Next step:
+
+- audit the residual non-receiver compatibility logic in
+  `resolveCallArgAnnotationTarget(...)` again and remove or narrow the
+  remaining branch only after each surviving direct-call route is proven to
+  reach typed semantic lookup with complete argument evidence
 
 ## Validation guidance
 
