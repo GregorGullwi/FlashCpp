@@ -138,6 +138,7 @@ private:
 	ASTNode substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr);
 	ASTNode substituteStaticCast(const StaticCastNode& cast_node);
 	ASTNode substituteLiteral(const ASTNode& literal);
+	void captureParserPackState();
 	void substituteCallArgumentPreservingPackExpansion(
 		const ASTNode& arg,
 		ChunkedVector<ASTNode>& out);
@@ -190,6 +191,7 @@ private:
 	Parser& parser_;
 	std::vector<std::string_view> template_param_order_;
 	TemplateEnvironment environment_;
+	std::vector<Parser::PackParamInfo> captured_pack_param_info_;
 	StringHandle current_owner_type_name_{};
 	// Cycle-detection guard for materializeStoredTemplateArgs:
 	// tracks TypeInfo pointers currently being materialized to prevent

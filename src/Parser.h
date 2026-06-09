@@ -3294,6 +3294,12 @@ private:	 // Resume private methods
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args,
 		ChunkedVector<ASTNode>& out_args);
+	bool expandPackExpansionArgs(
+		const PackExpansionExprNode& pack_expansion,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		std::span<const PackParamInfo> function_pack_infos,
+		ChunkedVector<ASTNode>& out_args);
 
 	void substituteArgWithPackExpansion(
 		const ASTNode& arg,

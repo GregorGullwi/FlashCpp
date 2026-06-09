@@ -294,6 +294,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	Parser& parser)
 	: param_map_(param_map), parser_(parser) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -302,6 +303,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	std::span<const std::string_view> template_param_order)
 	: param_map_(param_map), parser_(parser), template_param_order_(template_param_order.begin(), template_param_order.end()) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -310,6 +312,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	Parser& parser)
 	: param_map_(param_map), pack_map_(pack_map), parser_(parser) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -319,6 +322,7 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	std::span<const std::string_view> template_param_order)
 	: param_map_(param_map), pack_map_(pack_map), parser_(parser), template_param_order_(template_param_order.begin(), template_param_order.end()) {
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
@@ -367,12 +371,17 @@ ExpressionSubstitutor::ExpressionSubstitutor(
 	};
 	append_environment(append_environment, &environment);
 	rebuildEnvironmentFromCurrentBindings();
+	captureParserPackState();
 }
 
 ExpressionSubstitutor::ExpressionSubstitutor(
 	const TemplateInstantiationContext& context,
 	Parser& parser)
 	: ExpressionSubstitutor(context.environment, parser) {
+}
+
+void ExpressionSubstitutor::captureParserPackState() {
+	captured_pack_param_info_ = parser_.pack_param_info_;
 }
 
 void ExpressionSubstitutor::rebuildEnvironmentFromCurrentBindings() {
@@ -618,6 +627,9 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 					*pack_expansion_expr,
 					std::span<const TemplateParameterNode>(template_params.data(), template_params.size()),
 					std::span<const TemplateTypeArg>(template_args.data(), template_args.size()),
+					std::span<const Parser::PackParamInfo>(
+						captured_pack_param_info_.data(),
+						captured_pack_param_info_.size()),
 					out)) {
 				return;
 			}
