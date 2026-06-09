@@ -586,6 +586,32 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 //   • Set is_lvalue_reference(true) on 'from' for lvalue expressions (named variables, etc.)
 //   • Leave 'from' as non-reference for rvalue expressions (literals, temporaries, etc.)
 inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const TypeSpecifierNode& to) {
+	auto stripReferenceQualifier = [](TypeSpecifierNode spec) {
+		spec.set_reference_qualifier(ReferenceQualifier::None);
+		return spec;
+	};
+	auto effectiveCategory = [](const TypeSpecifierNode& spec) -> TypeCategory {
+		TypeCategory category = spec.category();
+		if (spec.type_index().is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(spec.type_index())) {
+				if (const TypeCategory concrete = type_info->typeEnum();
+					concrete != TypeCategory::Invalid) {
+					category = concrete;
+				}
+			}
+		}
+		return category;
+	};
+	auto hasCompleteStructInfo = [](TypeIndex type_index) -> bool {
+		if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
+			return false;
+		}
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			return type_info->getStructInfo() != nullptr;
+		}
+		return false;
+	};
+
 	// String literals and other array expressions can reach overload resolution as
 	// array-only types. Identifier arrays may already carry pointer metadata plus
 	// retained array extents from earlier decay paths; !from.is_pointer() keeps
@@ -761,7 +787,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// rvalue reference can bind to a temporary materialized from an xvalue when
 				// a standard conversion is required.
 				if (!to_is_rvalue && to.is_const()) {
-					auto plan = buildConversionPlan(from_base_category, to_base_category);
+					auto plan = buildConversionPlan(
+						stripReferenceQualifier(from),
+						stripReferenceQualifier(to));
 					if (plan.is_valid) {
 						// C++20 [over.ics.rank]/3.2.3 prefers binding an rvalue to T&& over
 						// binding it to const T& when the implied conversion sequences are
@@ -772,7 +800,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					}
 				}
 				if (from_is_rvalue && to_is_rvalue) {
-					auto plan = buildConversionPlan(from_base_category, to_base_category);
+					auto plan = buildConversionPlan(
+						stripReferenceQualifier(from),
+						stripReferenceQualifier(to));
 					if (plan.is_valid) {
 						return plan;
 					}
@@ -805,7 +835,9 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!types_match) {
 					// Allow conversions for const lvalue refs and rvalue refs by
 					// materializing a temporary of the referred-to type.
-					auto plan = buildConversionPlan(from_base_category, to_base_category);
+					auto plan = buildConversionPlan(
+						stripReferenceQualifier(from),
+						stripReferenceQualifier(to));
 					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
 						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
@@ -875,25 +907,42 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				return {ConversionRank::Conversion, StandardConversionKind::None, true};
 			}
 			// Try conversion of the referenced type to target type
-			return buildConversionPlan(from_resolved_category, to_resolved_category);
+			return buildConversionPlan(
+				stripReferenceQualifier(from),
+				stripReferenceQualifier(to));
 		}
 	}
 
 	// Check for user-defined conversion operators
-	// If 'from' is a struct type and 'to' is a different type, assume conversion might be possible
-	// The actual conversion operator existence will be checked during CodeGen
-	if (from.category() == TypeCategory::Struct && to.category() != TypeCategory::Struct) {
-		// For struct-to-primitive conversions, optimistically assume a conversion operator exists
-		// CodeGen will verify and generate the actual call
-		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	// For concrete struct/scalar conversions, require a real conversion path once
+	// the relevant type metadata exists. Keep optimistic acceptance only for
+	// genuinely incomplete parse-time types.
+	const TypeCategory effective_from_category = effectiveCategory(from);
+	const TypeCategory effective_to_category = effectiveCategory(to);
+	if (effective_from_category == TypeCategory::Struct &&
+		effective_to_category != TypeCategory::Struct) {
+		if (from.type_index().is_valid() &&
+			hasConversionOperator(from.type_index(), effective_to_category, to.type_index())) {
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
+		if (!hasCompleteStructInfo(from.type_index())) {
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
+		return ConversionPlan::no_match();
 	}
 
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
-	// This handles constructor conversions (not conversion operators, but similar concept)
-	if (to.category() == TypeCategory::Struct && from.category() != TypeCategory::Struct) {
-		// Could be a converting constructor in 'to' struct - accept it tentatively
-		// CodeGen will handle the actual constructor call
-		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+	// This handles constructor conversions (not conversion operators, but similar concept).
+	if (effective_to_category == TypeCategory::Struct &&
+		effective_from_category != TypeCategory::Struct) {
+		if (to.type_index().is_valid() &&
+			hasImplicitConvertingConstructorForArgument(to.type_index(), from)) {
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
+		if (!hasCompleteStructInfo(to.type_index())) {
+			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
+		}
+		return ConversionPlan::no_match();
 	}
 
 	// Handle UserDefined type aliases:

@@ -7818,26 +7818,27 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return nullptr;
 	};
+	auto resolveBoundFunctionTarget =
+		[&](const FunctionDeclarationNode* resolved_function,
+			StringHandle mangled_name) -> const FunctionDeclarationNode* {
+			if (resolved_function != nullptr) {
+				return resolved_function;
+			}
+			return lookupFunctionByMangledName(mangled_name);
+		};
 	auto resolveDefinitionLookupRecordTarget = [&]() -> const FunctionDeclarationNode* {
 		if (call_info.definition_lookup_record == nullptr ||
 			!call_info.definition_lookup_record->has_value()) {
 			return nullptr;
 		}
-		if (const FunctionDeclarationNode* resolved_function =
-				call_info.definition_lookup_record->value().resolved_function;
-			resolved_function != nullptr) {
-			return resolved_function;
-		}
-		return lookupFunctionByMangledName(
-			call_info.definition_lookup_record->value().resolved_mangled_name);
+		const FunctionCallDefinitionLookupRecord& record =
+			call_info.definition_lookup_record->value();
+		return resolveBoundFunctionTarget(
+			record.resolved_function,
+			record.resolved_mangled_name);
 	};
-	auto resolveDependentUnqualifiedRecordTarget =
-		[&](const DependentUnqualifiedCallLookupRecord& record) -> const FunctionDeclarationNode* {
-			if (record.definition_bound_function != nullptr) {
-				return record.definition_bound_function;
-			}
-			return lookupFunctionByMangledName(record.definition_bound_mangled_name);
-		};
+	const FunctionDeclarationNode* definition_lookup_record_target =
+		resolveDefinitionLookupRecordTarget();
 	struct QualifiedLookupTarget {
 		NamespaceHandle namespace_handle;
 		std::string_view identifier;
@@ -7948,6 +7949,52 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return tryResolveLocalCallableStructInfo(callee_decl.identifier_token().handle());
 	};
+	auto matchesParserSelectedTarget =
+		[&](const FunctionDeclarationNode& candidate) -> bool {
+			if (call_info.function_declaration == nullptr) {
+				return false;
+			}
+			if (&candidate == call_info.function_declaration ||
+				&candidate.decl_node() == &call_info.function_declaration->decl_node()) {
+				return true;
+			}
+			return candidate.has_mangled_name() &&
+				   call_info.function_declaration->has_mangled_name() &&
+				   candidate.mangled_name() == call_info.function_declaration->mangled_name();
+		};
+	auto findViableTargetByArgCount =
+		[&](std::span<const ASTNode> overloads) -> const FunctionDeclarationNode* {
+			for (const ASTNode& overload : overloads) {
+				if (const FunctionDeclarationNode* candidate =
+						getCallTargetFunctionCandidate(overload);
+					candidate != nullptr &&
+					isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
+					return candidate;
+				}
+			}
+			return nullptr;
+		};
+	auto fallbackToEarlyParserSelectedTarget = [&]() -> const FunctionDeclarationNode* {
+		if (normalized_call) {
+			return nullptr;
+		}
+		return call_info.function_declaration;
+	};
+	auto fallbackToLateNonNormalizedCompatibilityTarget = [&]() -> const FunctionDeclarationNode* {
+		if (normalized_call) {
+			return nullptr;
+		}
+		if (definition_lookup_record_target != nullptr) {
+			return definition_lookup_record_target;
+		}
+		return call_info.function_declaration;
+	};
+
+	// Resolution order:
+	// 1. receiver-member direct lookup
+	// 2. callable operator / local callable resolution
+	// 3. non-receiver compatibility metadata (mangled / definition-bound / POI)
+	// 4. fresh overload lookup + ranking
 	if (call_info.is_indirect) {
 		return nullptr;
 	}
@@ -8008,28 +8055,16 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 					for (const ASTNode& candidate_node : ordered_member_overloads) {
 						const FunctionDeclarationNode* candidate =
 							getCallTargetFunctionCandidate(candidate_node);
-						if (candidate == nullptr) {
-							continue;
-						}
-						if (candidate == call_info.function_declaration ||
-							&candidate->decl_node() == &call_info.function_declaration->decl_node()) {
-							return candidate;
-						}
-						if (candidate->has_mangled_name() &&
-							call_info.function_declaration->has_mangled_name() &&
-							candidate->mangled_name() ==
-								call_info.function_declaration->mangled_name()) {
+						if (candidate != nullptr &&
+							matchesParserSelectedTarget(*candidate)) {
 							return candidate;
 						}
 					}
 				}
-				for (const ASTNode& candidate_node : ordered_member_overloads) {
-					if (const FunctionDeclarationNode* candidate =
-							getCallTargetFunctionCandidate(candidate_node);
-						candidate != nullptr &&
-						isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
-						return candidate;
-					}
+				if (const FunctionDeclarationNode* viable_member_target =
+						findViableTargetByArgCount(ordered_member_overloads);
+					viable_member_target != nullptr) {
+					return viable_member_target;
 				}
 			}
 			if (receiver_is_const &&
@@ -8040,14 +8075,18 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				return nullptr;
 			}
 		}
-		if (!normalized_call && call_info.function_declaration) {
-			return call_info.function_declaration;
+		if (const FunctionDeclarationNode* parser_selected_target =
+				fallbackToEarlyParserSelectedTarget();
+			parser_selected_target != nullptr) {
+			return parser_selected_target;
 		}
 
 		return nullptr;
 	}
-	if (!normalized_call && call_info.function_declaration) {
-		return call_info.function_declaration;
+	if (const FunctionDeclarationNode* parser_selected_target =
+			fallbackToEarlyParserSelectedTarget();
+		parser_selected_target != nullptr) {
+		return parser_selected_target;
 	}
 
 	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
@@ -8078,7 +8117,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		const DependentUnqualifiedCallLookupRecord& dependent_record =
 			**call_info.dependent_unqualified_lookup_record;
 		if (const FunctionDeclarationNode* dependent_record_target =
-				resolveDependentUnqualifiedRecordTarget(dependent_record);
+				resolveBoundFunctionTarget(
+					dependent_record.definition_bound_function,
+					dependent_record.definition_bound_mangled_name);
 			dependent_record_target != nullptr) {
 			return dependent_record_target;
 		}
@@ -8097,24 +8138,17 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				}
 			}
 		}
-		if (const FunctionDeclarationNode* definition_record_target =
-				resolveDefinitionLookupRecordTarget();
-			definition_record_target != nullptr) {
-			return definition_record_target;
+		if (definition_lookup_record_target != nullptr) {
+			return definition_lookup_record_target;
 		}
 		return nullptr;
 	}
 
-	if (!normalized_call) {
-		if (const FunctionDeclarationNode* definition_record_target =
-				resolveDefinitionLookupRecordTarget();
-			definition_record_target != nullptr) {
-			return definition_record_target;
-		}
+	if (const FunctionDeclarationNode* compatibility_target =
+			fallbackToLateNonNormalizedCompatibilityTarget();
+		compatibility_target != nullptr) {
+		return compatibility_target;
 	}
-
-	if (!normalized_call && call_info.function_declaration)
-		return call_info.function_declaration;
 
 	const DeclarationNode& decl = callee_decl;
 
@@ -8203,20 +8237,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (!func_decl) {
-		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
-			for (const auto& overload : overloads) {
-				if (const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(overload)) {
-					if (isFunctionCandidateViableForArgCount(*candidate, arguments.size())) {
-						return candidate;
-					}
-				}
-			}
-			return nullptr;
-		};
 		if (overloads.size() == 1) {
 			func_decl = getCallTargetFunctionCandidate(overloads[0]);
 		} else {
-			func_decl = find_by_arg_count();
+			func_decl = findViableTargetByArgCount(overloads);
 		}
 	}
 
