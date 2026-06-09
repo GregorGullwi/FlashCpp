@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-09
 
 This document is not a release log. It should explain what the current template
 architecture can assume, what is still structurally wrong, and what the next
@@ -26,7 +26,12 @@ reference qualification or pointer-to-member owner identity. The most recent
 callable follow-up now also makes the dependent `const Callable& c; c(...)`
 negative case sema-owned, so parser-selected non-const `operator()` targets no
 longer compile through const receivers after sema has already found no viable
-const-compatible callable target. The biggest remaining gap is keeping every
+const-compatible callable target. The next ordinary-member follow-up now closes
+the same const-receiver hole for dependent `const T& obj; obj.member(...)`
+calls, so stale parser-selected non-const member targets no longer compile once
+shared sema lookup has found no const-compatible overload; function-pointer
+members are explicitly excluded by requiring real member-function ownership
+before raising the diagnostic. The biggest remaining gap is keeping every
 replay/materialization path equally evidence-driven rather than shape-driven
 while continuing to narrow the remaining compatibility fallbacks around
 semantic call resolution.
@@ -60,6 +65,10 @@ semantic call resolution.
   const dependent/local callable receivers once semantic lookup has shown there
   is no viable const-compatible overload, so this negative path no longer
   compiles through fallback attachment
+- sema now also rejects parser-selected non-const ordinary member-function
+  targets on const dependent/member-call receivers once shared const-aware
+  lookup has shown there is no const-compatible overload, while leaving
+  function-pointer member calls on the indirect-call path
 - nested member-template alias materialization now preserves substantially more
   outer owner/member-template metadata through parsing, rebinding, and
   materialization
@@ -145,12 +154,12 @@ Tightening those is the next best cleanup target.
    call-argument typing inside sema with normalized semantic argument typing,
    and the 2026-06-04 follow-ups applied the same model to semantic
    `operator[]` and dependent/local callable `operator()` resolution. The
-   2026-06-08 follow-up closes the documented const-receiver no-viable
-   callable diagnostic hole; the next useful expansion is to audit any other
-   semantic call-resolution sites that still do not share that collector or the
-   receiver-aware candidate partitioning around it, and then remove the
-   temporary compatibility fallbacks that remain once typed sema evidence is
-   present.
+   2026-06-08/2026-06-09 follow-ups close the documented const-receiver
+   no-viable callable and ordinary-member diagnostic holes; the next useful
+   expansion is to audit any other semantic call-resolution sites that still do
+   not share that collector or the receiver-aware candidate partitioning around
+   it, and then remove the temporary compatibility fallbacks that remain once
+   typed sema evidence is present.
 
 4. Extend dependent-name modeling only where it unlocks steps 2 and 3.
    Richer current-instantiation and unknown-specialization handling still
@@ -173,10 +182,11 @@ Tightening those is the next best cleanup target.
 
 ## Next steps
 
-1. Audit the remaining semantic call-resolution entry points that do not yet
-   share `tryCollectOverloadResolutionArgTypes(...)` or the shared
-   receiver-aware candidate partitioning beyond the now-fixed `operator[]` and
-   dependent/local callable `operator()` routes.
+1. Audit the remaining semantic call-resolution entry points and compatibility
+   branches that still allow normalized ordinary calls to continue after typed
+   sema evidence has produced no viable target or an ambiguity, now that the
+   const-receiver negative cases are closed for `operator[]`, callable
+   `operator()`, and ordinary member functions.
 
 2. Tighten the remaining replay-attachment sites that can still succeed without
    positive substituted-signature evidence outside the now-hardened plain-member,
@@ -189,6 +199,34 @@ Tightening those is the next best cleanup target.
 4. Expand current-instantiation / unknown-specialization modeling only for the
    concrete cases that still block standards-conforming typed lookup after steps
    1-3.
+
+## 2026-06-09 ordinary member const-receiver sema note
+
+Continuing the semantic-call fallback audit found that the shared
+`resolveCallArgAnnotationTarget(...)` / `tryAnnotateCallArgConversionsImpl(...)`
+path still left one standards-visible ordinary member-call hole open: a
+dependent `const T& obj; obj.member(...)` could compile when the parser had
+already attached a non-const member target, even though sema's const-aware
+member lookup found no viable const-compatible overload.
+
+This slice now:
+
+- blocks reuse of that stale parser-selected non-const member target once
+  shared const-aware lookup has proven the receiver has no const-compatible
+  overload for the named member
+- raises the failure from the shared sema call-annotation path as a hard member
+  call diagnostic instead of letting normalized/template calls continue into
+  codegen fallback
+- keeps function-pointer member calls valid by requiring actual member-function
+  ownership before applying the const-receiver diagnostic guard
+
+Validated with:
+
+- `test_template_member_call_const_receiver_fail.cpp`
+- `test_template_callable_operator_const_receiver_fail.cpp`
+- `test_funcptr_nested_template_struct_ret0.cpp`
+- `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
 
 ## 2026-06-04 dependent decltype trailing-return note
 

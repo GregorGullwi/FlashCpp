@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-09
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -45,6 +45,10 @@ Move FlashCpp toward a sema-owned template system where:
   const dependent/local callable receivers once semantic lookup has shown there
   is no viable const-compatible overload, so this standards-visible negative
   case no longer compiles through member-call fallback
+- sema now also rejects parser-selected non-const ordinary member-function
+  targets on const dependent/member-call receivers once const-aware lookup has
+  shown there is no viable const-compatible overload, while leaving
+  function-pointer member calls on their ordinary indirect-call path
 - dependent alias resolution is semantic-only: the textual recovery path in
   `resolveDependentMemberAlias(...)` has been removed in favor of preserved
   owner/member-chain records and instantiation-context bindings
@@ -115,11 +119,11 @@ unknown-specialization modeling only where it unblocks those paths.
    template/member direct calls. The 2026-06-04 follow-ups closed the concrete
    `operator[]` and dependent/local callable `operator()` gaps by sharing
    receiver-aware candidate filtering plus sema-owned argument typing with
-   direct member-call resolution, and the 2026-06-08 follow-up closes the
-   documented const-receiver no-viable callable diagnostic hole. The next step
-   here is auditing any residual semantic call sites still outside that model,
-   then removing the temporary parser-target compatibility fallbacks that
-   remain once typed sema evidence is available.
+   direct member-call resolution, and the 2026-06-08/2026-06-09 follow-ups
+   close the documented const-receiver no-viable callable and ordinary-member
+   diagnostic holes. The next step here is auditing any residual semantic call
+   sites still outside that model, then removing the temporary parser-target
+   compatibility fallbacks that remain once typed sema evidence is available.
 
 4. Expand current-instantiation, dependent-base, and unknown-specialization
    handling only where that unblocks steps 2 and 3.
@@ -140,11 +144,11 @@ unknown-specialization modeling only where it unblocks those paths.
 
 ## Next steps
 
-1. Apply the sema-owned overload-resolution argument collector and the shared
-   receiver-aware candidate partitioning to the remaining semantic
-   call-resolution sites that still rely on parser-owned expression typing or
-   reduced argument modeling beyond the now-fixed `operator[]` and
-   dependent/local callable `operator()` routes.
+1. Remove the remaining normalized-call compatibility branches that still let
+   ordinary calls continue after typed sema evidence has produced no viable
+   target or an ambiguity, now that the const-receiver negative cases are
+   closed for `operator[]`, callable `operator()`, and ordinary member
+   functions.
 
 2. Continue deleting replay-attachment acceptance paths that still allow
    insufficient substituted-signature evidence outside the now-hardened member
@@ -156,6 +160,32 @@ unknown-specialization modeling only where it unblocks those paths.
 
 4. Only after those are stable, extend current-instantiation and
    unknown-specialization modeling for the specific unresolved cases that remain.
+
+## 2026-06-09 ordinary member const-receiver conformance note
+
+The next live standards-visible call gap was the ordinary member-call analogue
+of the already-fixed callable case: a dependent `const T& obj; obj.member(...)`
+could still compile when the parser had attached a non-const member target,
+even though sema's const-aware member lookup found no viable const-compatible
+overload.
+
+The fix now:
+
+- blocks reuse of that stale parser-selected non-const member target in the
+  shared sema call-annotation path once const-aware lookup has shown there is
+  no const-compatible overload
+- emits a hard member-call diagnostic for the covered path instead of letting
+  normalized/template calls continue toward codegen fallback
+- preserves valid function-pointer member calls by requiring actual
+  member-function ownership before applying the const-receiver diagnostic
+
+Validated with:
+
+- `test_template_member_call_const_receiver_fail.cpp`
+- `test_template_callable_operator_const_receiver_fail.cpp`
+- `test_funcptr_nested_template_struct_ret0.cpp`
+- `test_typedef_function_ptr_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
 
 ## 2026-06-04 dependent decltype conformance note
 
