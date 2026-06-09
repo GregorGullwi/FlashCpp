@@ -7949,13 +7949,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return tryResolveLocalCallableStructInfo(callee_decl.identifier_token().handle());
 	};
-	auto fallbackToParserSelectedTarget = [&]() -> const FunctionDeclarationNode* {
+	auto fallbackToEarlyParserSelectedTarget = [&]() -> const FunctionDeclarationNode* {
 		if (normalized_call) {
 			return nullptr;
 		}
 		return call_info.function_declaration;
 	};
-	auto fallbackToNonNormalizedLookupTarget = [&]() -> const FunctionDeclarationNode* {
+	auto fallbackToLateNonNormalizedCompatibilityTarget = [&]() -> const FunctionDeclarationNode* {
 		if (normalized_call) {
 			return nullptr;
 		}
@@ -8069,7 +8069,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 	if (const FunctionDeclarationNode* parser_selected_target =
-			fallbackToParserSelectedTarget();
+			fallbackToEarlyParserSelectedTarget();
 		parser_selected_target != nullptr) {
 		return parser_selected_target;
 	}
@@ -8130,7 +8130,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (const FunctionDeclarationNode* compatibility_target =
-			fallbackToNonNormalizedLookupTarget();
+			fallbackToLateNonNormalizedCompatibilityTarget();
 		compatibility_target != nullptr) {
 		return compatibility_target;
 	}
