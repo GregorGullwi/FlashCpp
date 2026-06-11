@@ -56,6 +56,11 @@ blocking areas:
   specialization paths, including operator overloads, so out-of-line replay
   sync no longer depends on replay-source-key recovery there once semantic
   matching already identified the source declaration
+- nested class-template member functions are now inserted into
+  `StructTypeInfo` before nested out-of-line replay with identity recorded at
+  insertion time, and lazy nested-member registration is split from that
+  structural insertion so nested constructor/member-template replay no longer
+  depends on positional `StructTypeInfo` back-filling in the covered path
 
 ## Highest-value remaining standards gaps
 
@@ -90,11 +95,10 @@ Near-term remaining scope:
 - partial-specialization nested member-template replay now also syncs the
   `StructTypeInfo` copy through the shared identity-first helper once the
   matched source declaration is preserved
-- member-template `StructTypeInfo` copies in the covered primary/specialization
-  paths now carry source identity directly; the remaining work in this bucket
-  is to find any still-uncovered constructor-template or replay-only nested
-  path that reaches the shared sync helpers without a populated identity map
-  after source matching already succeeded
+- the previously highest-value replay/sync identity gaps for covered
+  member-template and nested constructor-template replay are now closed; any
+  remaining work in this bucket should be driven by a concrete uncovered
+  attachment failure rather than treated as the default next slice
 
 ### 2. Compatibility recovery is still covering direct-call metadata loss outside dependent-unqualified completion
 
@@ -125,11 +129,7 @@ it only for concrete unresolved cases that block steps 1-2.
 
 ## Priority order
 
-1. Tighten the next constructor-template or replay-only nested
-   `StructTypeInfo` sync gap by preserving source identity rather than routing
-   through a helper scan after the source declaration is already known.
-
-2. Tighten the next remaining mangled-name compatibility path by preserving
+1. Tighten the next remaining mangled-name compatibility path by preserving
    structured direct-call metadata in the owning replay/materialization path
    instead of relying on mangled recovery.
 
@@ -139,9 +139,9 @@ Next direct-call target:
   still reaches sema with only `call_info.mangled_name`, then replace that
   fallback with preserved structured target metadata
 
-3. Expand current-instantiation and unknown-specialization handling only where
+2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
-   steps 1-2.
+   step 1.
 
 ## Standards rules for follow-up work
 
@@ -159,6 +159,9 @@ For work in this area, rerun:
 
 - the focused regression that motivated the slice
 - `test_template_ool_member_template_operator_identity_ret0.cpp`
+- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
+- `test_template_nested_ool_ctor_template_init_replay_ret42.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
@@ -173,16 +176,11 @@ For work in this area, rerun:
 
 ## Next steps
 
-1. Audit the remaining constructor-template and replay-only nested sync callers
-   and ensure they populate `SourceMemberStructInfoIndexMaps` before invoking
-   shared `StructTypeInfo` replay sync helpers once a source declaration match
-   is known.
-
-2. Trace the remaining ordinary direct-call path that still reaches sema with
+1. Trace the remaining ordinary direct-call path that still reaches sema with
    only `call_info.mangled_name`, then preserve the structured semantic target
    in that owning replay/materialization flow so the compatibility fallback can
    be narrowed or removed.
 
-3. Use any concrete failures left after steps 1-2 to drive the next
+2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than
    widening that model preemptively.

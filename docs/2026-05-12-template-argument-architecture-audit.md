@@ -52,6 +52,11 @@ the areas that were previously blocking standards-visible behavior:
   specialization paths, including operator overloads, so later out-of-line
   replay sync no longer has to recover those copies through replay-source-key
   scans once the matched source declaration is already known
+- nested class-template member-function population now happens before
+  nested out-of-line replay, with `StructTypeInfo` identity recorded at
+  insertion time and lazy-registration split from structural insertion, so the
+  nested constructor/member-template replay helpers no longer depend on
+  positional back-fill of `StructTypeInfo` indices in that path
 
 ## Architectural invariants to preserve
 
@@ -100,11 +105,10 @@ Near-term remaining scope:
 - partial-specialization nested member-template replay now also syncs the
   `StructTypeInfo` copy through the shared identity-first helper once the
   matched source declaration is preserved
-- primary-template and covered specialization member-template copies now record
-  `StructTypeInfo` identity at insertion time, so the remaining sync debt in
-  this bucket is narrower: audit any still-uncovered constructor-template or
-  replay-driven nested attachment path that reaches shared sync helpers without
-  an identity index even after the matched source declaration is known
+- the previously highest-impact nested replay/sync gap is now covered in the
+  primary nested-class path as well; remaining replay debt in this bucket is no
+  longer the obvious first task and should be handled opportunistically only if
+  a concrete uncovered attachment/sync failure appears
 
 ### 2. Remaining direct-call metadata loss outside dependent-unqualified completion
 
@@ -137,12 +141,7 @@ real replay or typed-lookup failures.
 
 ## Recommended task order
 
-1. Audit the remaining constructor-template / nested replay `StructTypeInfo`
-   sync path that still reaches shared helpers without a preserved identity
-   index, and close it the same way this slice closed the member-template
-   copies.
-
-2. Tighten the next remaining mangled-name compatibility path by preserving
+1. Tighten the next remaining mangled-name compatibility path by preserving
    structured direct-call metadata in the owning replay/materialization path
    instead of relying on mangled recovery.
 
@@ -153,7 +152,7 @@ Next direct-call target:
   identifying which parser/materialization path still arrives there without a
   trustworthy structured direct-call target
 
-3. Only after steps 1-2 are stable, expand
+2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
    that still block standards-conforming typed lookup.
 
@@ -163,6 +162,9 @@ When changing this area, always rerun:
 
 - the focused regression that motivated the slice
 - `test_template_ool_member_template_operator_identity_ret0.cpp`
+- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
+- `test_template_nested_ool_ctor_template_init_replay_ret42.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
@@ -177,17 +179,11 @@ When changing this area, always rerun:
 
 ## Next steps
 
-1. Inspect the remaining constructor-template and replay-only nested sync
-   callers for any path that still reaches
-   `findReplayedOutOfLineConstructorInStructInfo(...)` without a populated
-   `SourceMemberStructInfoIndexMaps` entry after source matching succeeded.
-
-2. After the replay/sync identity coverage is closed, remove or narrow the
-   remaining generic ordinary-call
+1. Remove or narrow the remaining generic ordinary-call
    `lookupFunctionByMangledName(call_info.mangled_name)` compatibility path in
    sema by preserving the structured direct-call target in the owning
    materialization path.
 
-3. Only then spend complexity on current-instantiation /
+2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or
-   replay failures that remain after steps 1-2.
+   replay failures that remain after step 1.

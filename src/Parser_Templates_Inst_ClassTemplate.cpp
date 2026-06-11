@@ -8240,20 +8240,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			SourceMemberIdentityMaps nested_source_member_identity_maps;
 			SourceMemberStructInfoIndexMaps nested_struct_info_member_identity_maps;
+			addNestedMemberFunctionsToStructInfo(
+				nested_struct,
+				*nested_struct_info,
+				&nested_struct_info_member_identity_maps);
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,
 					source_member.function_declaration,
 					source_member.function_declaration);
-			}
-			if (nested_struct_info != nullptr &&
-				nested_struct_info->member_functions.size() == nested_source_member_functions.size()) {
-				for (size_t i = 0; i < nested_source_member_functions.size(); ++i) {
-					registerSourceMemberStructInfoIndex(
-						nested_struct_info_member_identity_maps,
-						nested_source_member_functions[i].function_declaration,
-						i);
-				}
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {
@@ -8586,9 +8581,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// top-level member functions of the parent template and would otherwise
 			// never be registered, causing link errors when called.
 			TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_nested_struct_ref.outer_template_environment_snapshot()};
-			registerNestedMemberFunctionsForLazy(
+			registerNestedMemberFunctionsLazyEntries(
 				nested_struct,
-				*nested_struct_info,
 				instantiated_name,
 				qualified_name,
 				effective_template_params,
