@@ -8218,10 +8218,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
-		if (!normalized_call &&
-			call_info.function_declaration != nullptr) {
-			return call_info.function_declaration;
-		}
 		if (!call_info.is_indirect) {
 			++stats_.direct_call_unresolved_after_lookup;
 		}
@@ -8270,11 +8266,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		} else {
 			func_decl = findViableTargetByArgCount(overloads);
 		}
-	}
-	if (!func_decl &&
-		!normalized_call &&
-		call_info.function_declaration != nullptr) {
-		func_decl = call_info.function_declaration;
 	}
 
 	if (!func_decl && !call_info.is_indirect) {

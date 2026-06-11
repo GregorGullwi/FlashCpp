@@ -39,6 +39,10 @@ the areas that were previously blocking standards-visible behavior:
   a different final function, so sema/constexpr can reuse structured call
   metadata instead of re-running parser lookup or relying on mangled-name
   recovery in those paths
+- the final parser-selected non-receiver direct-call fallback in
+  `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
+  resolve through preserved semantic metadata, typed lookup, or explicit
+  unresolved terminals instead of reusing the parser-selected target late
 
 ## Architectural invariants to preserve
 
@@ -57,29 +61,7 @@ Follow-up work in this area should preserve these rules:
 
 ## Highest-value remaining architectural gaps
 
-### 1. Remaining direct-call metadata loss outside dependent-unqualified completion
-
-Dependent-unqualified direct-call completion now preserves both the
-definition-bound ordinary lookup and the final point-of-instantiation target
-through resolved-call materialization. The remaining direct-call metadata risk
-is therefore narrower: other instantiated ordinary direct-call paths may still
-reach sema with only mangled or parser-selected compatibility evidence instead
-of preserved structured lookup metadata.
-
-The current mangled-name recovery and parser-selected compatibility boundary in
-sema remain acceptable narrow transitions there, but they are not the desired
-end state.
-
-Desired end state:
-
-- every instantiated ordinary direct call preserves enough structured semantic
-  evidence to recover its final target directly
-- sema does not need mangled-name recovery or parser-selected compatibility to
-  reuse a completed replay/materialization result
-- the final parser-selected fallback in `resolveCallArgAnnotationTarget(...)`
-  becomes removable
-
-### 2. Residual replay/`StructTypeInfo` sync gaps
+### 1. Residual replay/`StructTypeInfo` sync gaps
 
 The broad signature-equivalent sync fallback is gone from the currently-covered
 paths, but future failures in replay-heavy areas will likely still come from
@@ -92,33 +74,37 @@ Desired end state:
 - `StructTypeInfo` repair scans are not used to rediscover targets by name or
   arity when identity could have been preserved
 
-### 3. Remaining semantic call compatibility fallback
+### 2. Remaining direct-call metadata loss outside dependent-unqualified completion
 
-The ordinary non-receiver direct-call path is much narrower now, but one final
-parser-selected compatibility route still exists after typed lookup. That
-fallback should only survive where replay/materialization still drops decisive
-semantic evidence.
+Dependent-unqualified direct-call completion now preserves both the
+definition-bound ordinary lookup and the final point-of-instantiation target
+through resolved-call materialization, and the final parser-selected
+non-receiver fallback is gone. The remaining direct-call metadata risk is
+therefore narrower: other instantiated ordinary direct-call paths may still
+reach sema with only mangled compatibility evidence instead of preserved
+structured lookup metadata.
 
 Desired end state:
 
-- sema-owned typed lookup resolves or rejects ordinary direct calls directly
-- parser-selected direct-call fallback disappears from normalized flows
+- every instantiated ordinary direct call preserves enough structured semantic
+  evidence to recover its final target directly
+- sema does not need mangled-name recovery to reuse a completed
+  replay/materialization result
 
-### 4. Current-instantiation / unknown-specialization precision
+### 3. Current-instantiation / unknown-specialization precision
 
 This is no longer the first task, but it remains the next structural lever once
-the direct-call and replay-identity gaps above are smaller. Expand it only
-where it unblocks real replay or typed-lookup failures.
+the replay-identity gaps above are smaller. Expand it only where it unblocks
+real replay or typed-lookup failures.
 
 ## Recommended task order
 
-1. Remove the remaining final parser-selected non-receiver direct-call fallback
-   in `resolveCallArgAnnotationTarget(...)`. Any regression it exposes should
-   be fixed by preserving semantic metadata in the owning replay/materialization
-   path rather than restoring the fallback.
-
-2. Fix the next replay/`StructTypeInfo` sync miss by preserving source identity
+1. Fix the next replay/`StructTypeInfo` sync miss by preserving source identity
    in that path instead of restoring any signature-equivalent recovery logic.
+
+2. Tighten the next remaining mangled-name compatibility path by preserving
+   structured direct-call metadata in the owning replay/materialization path
+   instead of relying on mangled recovery.
 
 3. Only after steps 1-2 are stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
