@@ -78,6 +78,10 @@ Near-term remaining scope:
   identity-first helpers for plain members and constructors; the remaining
   duplication is in nested/member-template-specific attachment paths that do
   not all route through those helpers yet
+- partial-specialization constructor copies now use the same
+  source-member-to-`StructTypeInfo` index map as the primary-template path,
+  and the nested/member-template replay sites that already preserve a matched
+  source declaration now route through the shared identity-first helpers too
 - remaining member-template and constructor-template `StructTypeInfo` sync
   sites that still route through replay-source-key helper scans after the
   matched source declaration is already known

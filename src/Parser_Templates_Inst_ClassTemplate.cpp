@@ -2329,7 +2329,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.is_no_unique_address);
 			}
 
-			SourceMemberIdentityMaps struct_info_source_member_identity_maps;
 			SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
 
 			// Copy member functions from pattern
@@ -2382,10 +2381,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
-					registerSourceMemberStubIdentity(
-						struct_info_source_member_identity_maps,
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
 						mem_func.function_declaration,
-						new_ctor_node);
+						struct_info->member_functions.size() - 1);
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					struct_info->addDestructor(
@@ -3740,18 +3739,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_struct_ref.has_outer_template_bindings() ? &outer_parent_snapshot : nullptr);
 					if (lazy_registry_key.isValid() &&
 						instantiated_struct_info_mut != nullptr) {
-						OutOfLineConstructorStubResolution info_ctor_resolution =
-							findMatchingConstructorInStructInfo(
-								*instantiated_struct_info_mut,
-								new_ctor_ref,
-								[](const ConstructorDeclarationNode&) {
-									return true;
-								});
-						if (info_ctor_resolution.ctor != nullptr) {
-								info_ctor_resolution.ctor->set_lazy_member_registry_key(lazy_registry_key);
-							}
+						ConstructorDeclarationNode* struct_info_ctor =
+							findStructInfoConstructorBySourceMemberIdentity(
+								instantiated_struct_info_mut,
+								struct_info_member_identity_maps,
+								mem_func.function_declaration);
+						if (struct_info_ctor != nullptr) {
+							struct_info_ctor->set_lazy_member_registry_key(lazy_registry_key);
 						}
 					}
+				}
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
@@ -4644,23 +4641,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (StructTypeInfo* ctor_instantiated_struct_info = struct_type_info.getStructInfo();
 					ctor_instantiated_struct_info != nullptr) {
 					OutOfLineConstructorStubResolution info_ctor_resolution =
-						findOutOfLineConstructorTemplateStubByIdentity(
-							*this,
-							struct_info_source_member_identity_maps,
-							std::span<const StructMemberFunctionDecl>(
-								pattern_struct.member_functions().data(),
-								pattern_struct.member_functions().size()),
-							ool_func,
-							std::span<const TemplateParameterNode>(
-								template_params.data(),
-								template_params.size()),
-							std::span<const TemplateTypeArg>(
-								template_args_for_pattern.data(),
-								template_args_for_pattern.size()),
-							instantiated_name,
-							std::span<const TemplateParameterNode>(
-								out_of_line_member.inner_template_params.data(),
-								out_of_line_member.inner_template_params.size()));
+						findReplayedOutOfLineConstructorInStructInfo(
+							ctor_instantiated_struct_info,
+							struct_info_member_identity_maps,
+							ctor_resolution.source_member,
+							ctor_decl,
+							[](const ConstructorDeclarationNode& info_ctor) {
+								return !info_ctor.has_template_body_position();
+							});
 
 					if (info_ctor_resolution.ctor != nullptr) {
 						setOutOfLineConstructorTemplateReplayMetadata(
@@ -8176,11 +8164,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct.member_functions();
 
 			SourceMemberIdentityMaps nested_source_member_identity_maps;
+			SourceMemberStructInfoIndexMaps nested_struct_info_member_identity_maps;
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,
 					source_member.function_declaration,
 					source_member.function_declaration);
+			}
+			if (nested_struct_info != nullptr &&
+				nested_struct_info->member_functions.size() == nested_source_member_functions.size()) {
+				for (size_t i = 0; i < nested_source_member_functions.size(); ++i) {
+					registerSourceMemberStructInfoIndex(
+						nested_struct_info_member_identity_maps,
+						nested_source_member_functions[i].function_declaration,
+						i);
+				}
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {
@@ -8331,8 +8329,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					if (nested_struct_info != nullptr) {
 						OutOfLineConstructorStubResolution info_ctor_resolution =
-							findMatchingConstructorInStructInfo(
-								*nested_struct_info,
+							findReplayedOutOfLineConstructorInStructInfo(
+								nested_struct_info.get(),
+								nested_struct_info_member_identity_maps,
+								ctor_resolution.source_member,
 								ctor_decl,
 								[](const ConstructorDeclarationNode& info_ctor) {
 									return !info_ctor.has_template_body_position();
@@ -10953,6 +10953,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Replay-first attachment path: match against source template members and
 			// resolve to instantiated stubs via source_member_to_stub identity mapping.
 			FunctionDeclarationNode* inst_func_decl = nullptr;
+			const ASTNode* matched_source_member = nullptr;
 			bool saw_insufficient_replay_evidence = false;
 			bool saw_ambiguous_replay_match = false;
 			for (const auto& source_member : effective_member_functions) {
@@ -11008,6 +11009,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					break;
 				}
 				inst_func_decl = matched_template_func_decl;
+				matched_source_member = &source_member.function_declaration;
 			}
 
 			if (saw_ambiguous_replay_match) {
@@ -11049,8 +11051,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				inst_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 				if (struct_info_ptr != nullptr) {
 					OutOfLineFunctionStubResolution info_func_resolution =
-						findMatchingFunctionInStructInfo(
-							*struct_info_ptr,
+						findReplayedOutOfLineMemberInStructInfo(
+							struct_info_ptr,
+							struct_info_member_identity_maps,
+							matched_source_member,
 							*inst_func_decl,
 							[](const FunctionDeclarationNode& info_func) {
 								return !info_func.has_template_body_position();
