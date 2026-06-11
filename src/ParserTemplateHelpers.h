@@ -2972,6 +2972,64 @@ inline OutOfLineFunctionStubResolution findReplayedOutOfLineMemberInStructInfo(
 		});
 }
 
+template <typename EligibleFn>
+inline OutOfLineFunctionStubResolution findReplayedOutOfLineMemberInStructInfo(
+	StructTypeInfo* struct_info,
+	const SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode* source_member,
+	const FunctionDeclarationNode& replayed_func,
+	EligibleFn&& is_candidate_eligible) {
+	if (struct_info == nullptr) {
+		return {};
+	}
+
+	if (source_member != nullptr) {
+		FunctionDeclarationNode* struct_info_func =
+			findStructInfoFunctionBySourceMemberIdentity(
+				struct_info,
+				index_maps,
+				*source_member);
+		if (struct_info_func != nullptr &&
+			is_candidate_eligible(*struct_info_func)) {
+			return {.func = struct_info_func};
+		}
+	}
+
+	return findMatchingFunctionInStructInfo(
+		*struct_info,
+		replayed_func,
+		std::forward<EligibleFn>(is_candidate_eligible));
+}
+
+template <typename EligibleFn>
+inline OutOfLineConstructorStubResolution findReplayedOutOfLineConstructorInStructInfo(
+	StructTypeInfo* struct_info,
+	const SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode* source_member,
+	const ConstructorDeclarationNode& replayed_ctor,
+	EligibleFn&& is_candidate_eligible) {
+	if (struct_info == nullptr) {
+		return {};
+	}
+
+	if (source_member != nullptr) {
+		ConstructorDeclarationNode* struct_info_ctor =
+			findStructInfoConstructorBySourceMemberIdentity(
+				struct_info,
+				index_maps,
+				*source_member);
+		if (struct_info_ctor != nullptr &&
+			is_candidate_eligible(*struct_info_ctor)) {
+			return {.ctor = struct_info_ctor};
+		}
+	}
+
+	return findMatchingConstructorInStructInfo(
+		*struct_info,
+		replayed_ctor,
+		std::forward<EligibleFn>(is_candidate_eligible));
+}
+
 // Resolve any stored template arguments on a deferred base member-type chain after a class
 // template's substitution maps are available.
 // Returns std::nullopt when any pack expansion or concrete member argument cannot be resolved.

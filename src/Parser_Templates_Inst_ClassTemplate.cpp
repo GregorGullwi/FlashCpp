@@ -4321,22 +4321,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_pattern.size()),
 								"partial-spec",
 								plain_ool_name)) {
-							FunctionDeclarationNode* struct_info_func =
-								member_resolution.source_member != nullptr
-									? findStructInfoFunctionBySourceMemberIdentity(
-										  struct_type_info.getStructInfo(),
-										  struct_info_member_identity_maps,
-										  *member_resolution.source_member)
-									: nullptr;
-							OutOfLineFunctionStubResolution info_func_resolution;
-							if (struct_info_func != nullptr) {
-								info_func_resolution.func = struct_info_func;
-							} else {
-								info_func_resolution =
-									findReplayedOutOfLineMemberInStructInfo(
-										struct_type_info.getStructInfo(),
-										*inst_func);
-							}
+							OutOfLineFunctionStubResolution info_func_resolution =
+								findReplayedOutOfLineMemberInStructInfo(
+									struct_type_info.getStructInfo(),
+									struct_info_member_identity_maps,
+									member_resolution.source_member,
+									*inst_func,
+									[](const FunctionDeclarationNode& info_func) {
+										return !info_func.is_materialized();
+									});
 							if (info_func_resolution.ambiguous) {
 								FLASH_LOG(
 									Templates,
@@ -10917,31 +10910,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ool_func.parameter_nodes());
 
 				if (struct_info_ptr != nullptr) {
-					ConstructorDeclarationNode* struct_info_ctor =
-						ctor_resolution.source_member != nullptr
-							? findStructInfoConstructorBySourceMemberIdentity(
-								  struct_info_ptr,
-								  struct_info_member_identity_maps,
-								  *ctor_resolution.source_member)
-							: nullptr;
-					OutOfLineConstructorStubResolution info_ctor_resolution;
-					if (struct_info_ctor == nullptr) {
-						info_ctor_resolution =
-							findMatchingConstructorInStructInfo(
-								*struct_info_ptr,
-								ctor_decl,
-								[](const ConstructorDeclarationNode& info_ctor) {
-									return !info_ctor.has_template_body_position();
-								});
-						struct_info_ctor = info_ctor_resolution.ctor;
-					}
+					OutOfLineConstructorStubResolution info_ctor_resolution =
+						findReplayedOutOfLineConstructorInStructInfo(
+							struct_info_ptr,
+							struct_info_member_identity_maps,
+							ctor_resolution.source_member,
+							ctor_decl,
+							[](const ConstructorDeclarationNode& info_ctor) {
+								return !info_ctor.has_template_body_position();
+							});
 
-					if (struct_info_ctor != nullptr) {
+					if (info_ctor_resolution.ctor != nullptr) {
 						setOutOfLineConstructorTemplateReplayMetadata(
-							*struct_info_ctor,
+							*info_ctor_resolution.ctor,
 							out_of_line_member);
 						syncOutOfLineConstructorTemplateParameters(
-							struct_info_ctor->parameter_nodes(),
+							info_ctor_resolution.ctor->parameter_nodes(),
 							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
 						std::string error_msg = std::string(StringBuilder()
@@ -11231,22 +11215,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				"primary-template",
 				decl.identifier_token().value());
 			if (found_match) {
-				FunctionDeclarationNode* struct_info_func =
-					plain_member_resolution.source_member != nullptr
-						? findStructInfoFunctionBySourceMemberIdentity(
-							  struct_info_ptr,
-							  struct_info_member_identity_maps,
-							  *plain_member_resolution.source_member)
-						: nullptr;
-				OutOfLineFunctionStubResolution info_func_resolution;
-				if (struct_info_func != nullptr) {
-					info_func_resolution.func = struct_info_func;
-				} else {
-					info_func_resolution =
-						findReplayedOutOfLineMemberInStructInfo(
-							struct_info_ptr,
-							*inst_func);
-				}
+				OutOfLineFunctionStubResolution info_func_resolution =
+					findReplayedOutOfLineMemberInStructInfo(
+						struct_info_ptr,
+						struct_info_member_identity_maps,
+						plain_member_resolution.source_member,
+						*inst_func,
+						[](const FunctionDeclarationNode& info_func) {
+							return !info_func.is_materialized();
+						});
 				if (info_func_resolution.ambiguous) {
 					std::string error_msg = std::string(StringBuilder()
 						.append("Ambiguous StructTypeInfo sync for out-of-line member '")
@@ -11593,29 +11570,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ctor.set_definition(substituted_body);
 					// Also update the StructTypeInfo's copy (used by codegen)
 					if (struct_type_info.struct_info_) {
-						ConstructorDeclarationNode* struct_info_ctor =
-							ctor_resolution.source_member != nullptr
-								? findStructInfoConstructorBySourceMemberIdentity(
-									  struct_type_info.struct_info_.get(),
-									  struct_info_member_identity_maps,
-									  *ctor_resolution.source_member)
-								: nullptr;
-						OutOfLineConstructorStubResolution info_ctor_resolution;
-						if (struct_info_ctor == nullptr) {
-							info_ctor_resolution =
-								findMatchingConstructorInStructInfo(
-									*struct_type_info.struct_info_,
-									ctor,
-									[](const ConstructorDeclarationNode& info_ctor) {
-										return !info_ctor.is_materialized();
-									});
-							struct_info_ctor = info_ctor_resolution.ctor;
-						}
-						if (struct_info_ctor != nullptr) {
+						OutOfLineConstructorStubResolution info_ctor_resolution =
+							findReplayedOutOfLineConstructorInStructInfo(
+								struct_type_info.struct_info_.get(),
+								struct_info_member_identity_maps,
+								ctor_resolution.source_member,
+								ctor,
+								[](const ConstructorDeclarationNode& info_ctor) {
+									return !info_ctor.is_materialized();
+								});
+						if (info_ctor_resolution.ctor != nullptr) {
 							copyDefinitionParameterIdentifiers(
-								struct_info_ctor->parameter_nodes(),
+								info_ctor_resolution.ctor->parameter_nodes(),
 								func_decl.parameter_nodes());
-							struct_info_ctor->set_definition(substituted_body);
+							info_ctor_resolution.ctor->set_definition(substituted_body);
 						} else if (info_ctor_resolution.ambiguous) {
 							std::string error_msg = std::string(StringBuilder()
 								.append("Ambiguous StructTypeInfo constructor sync for out-of-line constructor '")

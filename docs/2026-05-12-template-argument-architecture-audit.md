@@ -84,6 +84,10 @@ Near-term remaining scope:
   `Parser::try_instantiate_class_template()` is now unified locally, so the
   next cleanup target in this area is the remaining out-of-line replay/sync
   helper duplication rather than more registration drift
+- top-level replay-driven `StructTypeInfo` sync now uses shared
+  identity-first helpers for plain members and constructors; the remaining
+  duplication is in nested/member-template-specific attachment paths that do
+  not all route through those helpers yet
 - remaining member-template and constructor-template `StructTypeInfo` sync
   sites still recover through replay-source-key helper scans after the source
   declaration is already known
