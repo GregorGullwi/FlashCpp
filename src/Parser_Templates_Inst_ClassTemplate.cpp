@@ -9508,6 +9508,56 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			const DeclarationNode& decl = func_decl.decl_node();
+			auto registerInstantiatedMemberFunction =
+				[&](ASTNode new_func_node, StringHandle effective_name, const FunctionDeclarationNode& new_func_ref) {
+					// Add the substituted function to the instantiated struct.
+					if (mem_func.operator_kind != OverloadableOperator::None) {
+						instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
+					} else {
+						instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+					}
+
+					// Also add to struct_info so it can be found during codegen.
+					if (mem_func.operator_kind != OverloadableOperator::None) {
+						struct_info_ptr->addOperatorOverload(
+							mem_func.operator_kind,
+							new_func_node,
+							mem_func.access,
+							mem_func.is_virtual,
+							mem_func.is_pure_virtual,
+							mem_func.is_override,
+							mem_func.is_final);
+					} else {
+						FLASH_LOG(
+							Templates,
+							Debug,
+							"Adding member function '",
+							StringTable::getStringView(effective_name),
+							"' to struct_info for ",
+							instantiated_name,
+							", parent_struct_name='",
+							new_func_ref.parent_struct_name(),
+							"'");
+						struct_info_ptr->addMemberFunction(
+							effective_name,
+							new_func_node,
+							mem_func.access,
+							mem_func.is_virtual,
+							mem_func.is_pure_virtual,
+							mem_func.is_override,
+							mem_func.is_final);
+						registerSourceMemberStructInfoIndex(
+							struct_info_member_identity_maps,
+							mem_func.function_declaration,
+							struct_info_ptr->member_functions.size() - 1);
+					}
+
+					// Record the stub for identity-map lookup during deferred-body replay.
+					registerSourceMemberStubIdentity(
+						source_member_identity_maps,
+						mem_func.function_declaration,
+						new_func_node);
+				};
 
 			// For lazy instantiation, register function for later instantiation instead of instantiating now.
 			// Namespaced implicit instantiations intentionally use the same stub path; the
@@ -9612,39 +9662,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 
-				// Add the signature-only function to the instantiated struct
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
-				} else {
-					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
-				}
-
-				// Also add to struct_info so it can be found during codegen
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
-														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
-				} else {
-					StringHandle func_name_handle = shell.effective_name;
-					struct_info_ptr->addMemberFunction(
-						func_name_handle,
-						new_func_node,
-						mem_func.access,
-						mem_func.is_virtual,
-						mem_func.is_pure_virtual,
-						mem_func.is_override,
-						mem_func.is_final);
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info_ptr->member_functions.size() - 1);
-				}
-				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
-
-				// Slice 3: record lazy-path stub for identity-map lookup during deferred-body replay.
-				registerSourceMemberStubIdentity(
-					source_member_identity_maps,
-					mem_func.function_declaration,
-					new_func_node);
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties.
+				registerInstantiatedMemberFunction(new_func_node, shell.effective_name, new_func_ref);
 
 				StringBuilder qualified_name_builder;
 				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
@@ -9820,41 +9839,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				pack_param_info_.resize(saved_pack_info);
 
-				// Add the substituted function to the instantiated struct
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
-				} else {
-					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
-				}
-
-				// Also add to struct_info so it can be found during codegen
-				// Phase 7B: Intern function name and use StringHandle overload
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
-														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
-				} else {
-					FLASH_LOG(Templates, Debug, "Adding member function '", StringTable::getStringView(effective_name),
-							  "' to struct_info for ", instantiated_name, ", parent_struct_name='", new_func_ref.parent_struct_name(), "'");
-					struct_info_ptr->addMemberFunction(
-						effective_name,
-						new_func_node,
-						mem_func.access,
-						mem_func.is_virtual,
-						mem_func.is_pure_virtual,
-						mem_func.is_override,
-						mem_func.is_final);
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info_ptr->member_functions.size() - 1);
-				}
-				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
-
-				// Slice 3: record eager-with-definition stub for identity-map lookup.
-				registerSourceMemberStubIdentity(
-					source_member_identity_maps,
-					mem_func.function_declaration,
-					new_func_node);
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties.
+				registerInstantiatedMemberFunction(new_func_node, effective_name, new_func_ref);
 			} else {
 				// No definition, but still need to substitute parameter types and return type
 
@@ -9951,39 +9937,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 
-				// Add the substituted function to the instantiated struct
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
-				} else {
-					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
-				}
-
-				// Also add to struct_info so it can be found during codegen
-				// Intern function name and use StringHandle overload
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
-														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
-				} else {
-					struct_info_ptr->addMemberFunction(
-						effective_name,
-						new_func_node,
-						mem_func.access,
-						mem_func.is_virtual,
-						mem_func.is_pure_virtual,
-						mem_func.is_override,
-						mem_func.is_final);
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info_ptr->member_functions.size() - 1);
-				}
-				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
-
-				// record no-definition stub for identity-map lookup.
-				registerSourceMemberStubIdentity(
-					source_member_identity_maps,
-					mem_func.function_declaration,
-					new_func_node);
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties.
+				registerInstantiatedMemberFunction(new_func_node, effective_name, new_func_ref);
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();

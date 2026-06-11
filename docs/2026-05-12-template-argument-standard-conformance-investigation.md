@@ -70,6 +70,10 @@ Why this matters:
 
 Near-term remaining scope:
 
+- in-loop member-function / constructor registration inside
+  `Parser::try_instantiate_class_template()` is now unified locally, so the
+  next cleanup target in this area is the remaining out-of-line replay/sync
+  helper duplication rather than more registration drift
 - remaining member-template and constructor-template `StructTypeInfo` sync
   sites that still route through replay-source-key helper scans after the
   matched source declaration is already known
