@@ -3967,6 +3967,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_pure_virtual,
 								mem_func.is_override,
 								mem_func.is_final);
+							registerSourceMemberStructInfoIndex(
+								struct_info_member_identity_maps,
+								mem_func.function_declaration,
+								struct_type_info.getStructInfo()->member_functions.size() - 1);
 						}
 
 						registerMemberTemplateInRegistry(
@@ -4024,6 +4028,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_pure_virtual,
 								mem_func.is_override,
 								mem_func.is_final);
+							registerSourceMemberStructInfoIndex(
+								struct_info_member_identity_maps,
+								mem_func.function_declaration,
+								struct_type_info.getStructInfo()->member_functions.size() - 1);
 						}
 
 						registerMemberTemplateInRegistry(
@@ -4435,6 +4443,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					FunctionDeclarationNode* inst_func_decl = nullptr;
+					const ASTNode* matched_source_member = nullptr;
 					bool saw_insufficient_replay_evidence = false;
 					bool saw_ambiguous_replay_match = false;
 					for (const StructMemberFunctionDecl* source_member :
@@ -4483,6 +4492,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							break;
 						}
 						inst_func_decl = matched_template_func_decl;
+						matched_source_member = &source_member->function_declaration;
 					}
 					if (saw_ambiguous_replay_match) {
 						std::string error_msg = std::string(StringBuilder()
@@ -4498,6 +4508,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 					if (inst_func_decl != nullptr) {
+						auto outer_params_span = std::span<const TemplateParameterNode>(
+							template_params.data(),
+							template_params.size());
+						auto outer_args_span = std::span<const TemplateTypeArg>(
+							template_args_for_pattern.data(),
+							template_args_for_pattern.size());
 						inst_func_decl->set_template_body_position(out_of_line_member.body_start);
 						copyDefinitionParameterIdentifiers(
 							inst_func_decl->parameter_nodes(),
@@ -4505,8 +4521,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						copyDefinitionParameterTypesForDependentMemberTemplateSegments(
 							inst_func_decl->parameter_nodes(),
 							ool_func.parameter_nodes());
+						syncReplayAttachedMemberTemplateParameterTypesFromDefinition(
+							*this,
+							inst_func_decl->parameter_nodes(),
+							ool_func.parameter_nodes(),
+							outer_params_span,
+							outer_args_span);
 						inst_func_decl->set_definition_lookup_context(
 							out_of_line_member.definition_lookup_context);
+						if (StructTypeInfo* info = struct_type_info.getStructInfo();
+							info != nullptr) {
+							OutOfLineFunctionStubResolution info_func_resolution =
+								findReplayedOutOfLineMemberInStructInfo(
+									info,
+									struct_info_member_identity_maps,
+									matched_source_member,
+									*inst_func_decl,
+									[](const FunctionDeclarationNode& info_func) {
+										return !info_func.has_template_body_position();
+									});
+							if (info_func_resolution.func != nullptr) {
+								info_func_resolution.func->set_template_body_position(out_of_line_member.body_start);
+								copyDefinitionParameterIdentifiers(
+									info_func_resolution.func->parameter_nodes(),
+									ool_func.parameter_nodes());
+								copyDefinitionParameterTypes(
+									info_func_resolution.func->parameter_nodes(),
+									inst_func_decl->parameter_nodes());
+								syncReplayAttachedMemberTemplateParameterTypesFromDefinition(
+									*this,
+									info_func_resolution.func->parameter_nodes(),
+									ool_func.parameter_nodes(),
+									outer_params_span,
+									outer_args_span);
+								info_func_resolution.func->set_definition_lookup_context(
+									out_of_line_member.definition_lookup_context);
+							} else if (info_func_resolution.ambiguous) {
+								FLASH_LOG(
+									Templates,
+									Error,
+									"Ambiguous StructTypeInfo sync for partial-spec nested out-of-line member template '",
+									ool_func_name,
+									"' in instantiated class '",
+									instantiated_name,
+									"'");
+							}
+						}
 						{
 							StringBuilder qualified_name_builder;
 							qualified_name_builder

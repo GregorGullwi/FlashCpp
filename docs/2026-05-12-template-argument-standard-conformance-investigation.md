@@ -82,6 +82,9 @@ Near-term remaining scope:
   source-member-to-`StructTypeInfo` index map as the primary-template path,
   and the nested/member-template replay sites that already preserve a matched
   source declaration now route through the shared identity-first helpers too
+- partial-specialization nested member-template replay now also syncs the
+  `StructTypeInfo` copy through the shared identity-first helper once the
+  matched source declaration is preserved
 - remaining member-template and constructor-template `StructTypeInfo` sync
   sites that still route through replay-source-key helper scans after the
   matched source declaration is already known
