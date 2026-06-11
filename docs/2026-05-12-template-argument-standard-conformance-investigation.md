@@ -39,21 +39,28 @@ blocking areas:
 - replay attachment in the covered routes now expects positive
   identity/signature evidence rather than accepting unresolved
   shape-based matches
+- resolved direct-call materialization now preserves
+  `DependentUnqualifiedCallLookupRecord` when the instantiated target still
+  matches the definition-bound ordinary lookup, reducing replay-heavy
+  template-member dependence on mangled-name recovery
 
 ## Highest-value remaining standards gaps
 
-### 1. Compatibility recovery is still covering direct-call metadata loss
+### 1. Compatibility recovery is still covering non-definition-bound direct-call metadata loss
 
-Some instantiated ordinary direct calls still lose their preserved
-definition-bound lookup record while retaining an authoritative mangled target.
-Sema now recovers that target, which prevents standards-visible rebinding to a
-later overload, but the standards-conforming endpoint is to preserve the
-semantic lookup record itself.
+The definition-bound dependent-unqualified replay path is now preserved through
+resolved-call materialization, but instantiated ordinary direct calls can still
+lose structured point-of-instantiation evidence when the final result is not
+the same function captured by the definition-bound ordinary lookup record.
+Those cases currently retain an authoritative mangled target, and sema recovers
+that target, but the standards-conforming endpoint is to preserve structured
+semantic evidence for the final result itself.
 
 Why this matters:
 
 - a preserved mangled target is only a compatibility boundary
-- the real semantic model should still know *why* the call is definition-bound
+- the real semantic model should still know why the call is definition-bound
+  or which point-of-instantiation completion selected it
 - removing the final parser-selected fallback depends on closing this metadata
   gap first
 
@@ -90,8 +97,10 @@ it only for concrete unresolved cases that block steps 1-3.
 
 ## Priority order
 
-1. Preserve direct-call lookup records across the remaining replay and
-   materialization paths that currently rely on mangled-name recovery.
+1. Extend preserved direct-call metadata so non-definition-bound
+   point-of-instantiation results, especially ADL-completed
+   dependent-unqualified calls, survive replay/materialization without
+   mangled-name recovery.
 
 2. Remove the final parser-selected non-receiver direct-call fallback in
    `resolveCallArgAnnotationTarget(...)` once step 1 is complete for the
@@ -122,6 +131,7 @@ For work in this area, rerun:
 - the focused regression that motivated the slice
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
+- `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
 - `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
 - `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`

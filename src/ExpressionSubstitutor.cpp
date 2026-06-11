@@ -1737,7 +1737,22 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			called_from_token);
 		CallMetadataCopyOptions copy_options;
 		copy_options.copy_template_arguments = copy_template_arguments;
-		copy_options.copy_dependent_unqualified_lookup_record = false;
+		copy_options.copy_dependent_unqualified_lookup_record =
+			call.has_dependent_unqualified_lookup_record() &&
+			[&]() {
+				const DependentUnqualifiedCallLookupRecord& record =
+					*call.dependent_unqualified_lookup_record();
+				if (record.definition_bound_function != nullptr &&
+					(&target_func == record.definition_bound_function ||
+					 &target_func.decl_node() ==
+						 &record.definition_bound_function->decl_node())) {
+					return true;
+				}
+				return record.definition_bound_mangled_name.isValid() &&
+					   target_func.has_mangled_name() &&
+					   target_func.mangled_name() ==
+						   record.definition_bound_mangled_name.view();
+			}();
 		copy_options.copy_dependent_qualified_lookup_record = false;
 		copyMetadataToExpr(new_expr, copy_options);
 		if (qualified_call_name.has_value() && !qualified_call_name->empty()) {

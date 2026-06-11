@@ -33,6 +33,10 @@ the areas that were previously blocking standards-visible behavior:
 - replay attachment in the covered out-of-line member and constructor paths now
   expects positive identity/signature evidence rather than silently accepting
   unresolved shape-based matches
+- resolved direct-call materialization now preserves
+  `DependentUnqualifiedCallLookupRecord` when the instantiated target still
+  matches the definition-bound ordinary lookup, covering replay-heavy member
+  instantiations without relying on sema mangled-name recovery
 
 ## Architectural invariants to preserve
 
@@ -51,18 +55,23 @@ Follow-up work in this area should preserve these rules:
 
 ## Highest-value remaining architectural gaps
 
-### 1. Direct-call metadata loss across replay/materialization
+### 1. Remaining non-definition-bound direct-call metadata loss
 
-Some instantiated ordinary direct calls still lose their preserved
-`FunctionCallDefinitionLookupRecord` /
-`DependentUnqualifiedCallLookupRecord` while keeping an authoritative mangled
-target. The current mangled-name recovery in sema is acceptable as a narrow
-compatibility boundary, but it is not the desired end state.
+The definition-bound dependent-unqualified replay path is now preserved through
+resolved-call materialization, but some instantiated ordinary direct calls can
+still reach sema with only an authoritative mangled target when the final
+point-of-instantiation result is not representable by the current preserved
+record alone (for example, ADL-completed dependent-unqualified calls).
+
+The current mangled-name recovery in sema remains an acceptable narrow
+compatibility boundary there, but it is not the desired end state.
 
 Desired end state:
 
-- the instantiated call preserves the original semantic lookup record
-- sema does not need mangled-name recovery to stay definition-bound
+- the instantiated call preserves enough structured semantic evidence to
+  recover the final point-of-instantiation result directly
+- sema does not need mangled-name recovery to stay definition-bound or to
+  reuse a completed dependent-unqualified result
 - the final parser-selected fallback in `resolveCallArgAnnotationTarget(...)`
   becomes removable
 
@@ -99,9 +108,10 @@ where it unblocks real replay or typed-lookup failures.
 
 ## Recommended task order
 
-1. Preserve direct-call lookup records across replay/materialization in the
-   remaining instantiated-call paths that still fall back to mangled-name
-   recovery.
+1. Extend the preserved direct-call metadata so non-definition-bound
+   point-of-instantiation results (especially ADL-completed
+   dependent-unqualified calls) survive replay/materialization without
+   mangled-name recovery.
 
 2. Remove the remaining final parser-selected non-receiver direct-call fallback
    in `resolveCallArgAnnotationTarget(...)` once step 1 proves the owning paths
@@ -121,6 +131,7 @@ When changing this area, always rerun:
 - the focused regression that motivated the slice
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
+- `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
 - `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
 - `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`
