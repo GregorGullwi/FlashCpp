@@ -479,6 +479,19 @@ static bool hasTopLevelPackExpansionInConstructorInitializers(const ConstructorD
 	return false;
 }
 
+void setMaterializedTypeSpecifierSize(TypeSpecifierNode& type_node) {
+	int size_bits = 0;
+	if (type_node.reference_qualifier() != ReferenceQualifier::None ||
+		type_node.pointer_depth() > 0) {
+		size_bits = 64;
+	} else if (type_node.category() == TypeCategory::Invalid) {
+		size_bits = 0;
+	} else {
+		size_bits = getTypeSpecSizeBits(type_node);
+	}
+	type_node.set_size_in_bits(size_bits);
+}
+
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
@@ -493,16 +506,16 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	if (desc.function_signature.has_value()) {
 		type_node.set_function_signature(*desc.function_signature);
 	}
+	setMaterializedTypeSpecifierSize(type_node);
+	return type_node;
+}
 
-	int size_bits = 0;
-	if (desc.ref_qualifier != ReferenceQualifier::None || !desc.pointer_levels.empty()) {
-		size_bits = 64;
-	} else if (desc.category() == TypeCategory::Invalid) {
-		size_bits = 0;
-	} else {
-		size_bits = getTypeSpecSizeBits(type_node);
-	}
-	type_node.set_size_in_bits(size_bits);
+TypeSpecifierNode materializeTypeSpecifierWithMaxPointerDepth(
+	const CanonicalTypeDesc& desc,
+	size_t max_pointer_depth) {
+	TypeSpecifierNode type_node = materializeTypeSpecifier(desc);
+	type_node.limit_pointer_depth(max_pointer_depth);
+	setMaterializedTypeSpecifierSize(type_node);
 	return type_node;
 }
 
@@ -609,17 +622,10 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 			}
 		}
 
-		TypeSpecifierNode element_type = materializeTypeSpecifier(return_desc);
-		const size_t pointer_depth = element_type.pointer_depth();
-		if (pointer_depth == 0) {
-			continue;
-		}
-		element_type.limit_pointer_depth(pointer_depth - 1);
-		if (pointer_depth > 1) {
-			element_type.set_size_in_bits(64);
-		} else {
-			element_type.set_size_in_bits(getTypeSpecSizeBits(element_type));
-		}
+		TypeSpecifierNode element_type =
+			materializeTypeSpecifierWithMaxPointerDepth(
+				return_desc,
+				return_desc.pointer_levels.size() - 1);
 		const CanonicalTypeId element_type_id =
 			sema.canonicalizeTypeForImplicitConversion(element_type);
 		return PointerConversionInfo{conv_op_return_type_id, element_type_id, &function_decl};
@@ -691,17 +697,10 @@ static void collectAllStructPointerConversionOperators(
 		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
 			continue;
 
-		TypeSpecifierNode element_type = materializeTypeSpecifier(return_desc);
-		const size_t pointer_depth = element_type.pointer_depth();
-		if (pointer_depth == 0) {
-			continue;
-		}
-		element_type.limit_pointer_depth(pointer_depth - 1);
-		if (pointer_depth > 1) {
-			element_type.set_size_in_bits(64);
-		} else {
-			element_type.set_size_in_bits(getTypeSpecSizeBits(element_type));
-		}
+		TypeSpecifierNode element_type =
+			materializeTypeSpecifierWithMaxPointerDepth(
+				return_desc,
+				return_desc.pointer_levels.size() - 1);
 		const CanonicalTypeId element_type_id =
 			sema.canonicalizeTypeForImplicitConversion(element_type);
 		out_ops.push_back({conv_op_return_type_id, element_type_id, &function_decl});
