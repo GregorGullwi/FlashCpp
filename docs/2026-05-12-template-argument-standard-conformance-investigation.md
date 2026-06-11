@@ -48,6 +48,9 @@ blocking areas:
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
   terminals instead of reusing the parser-selected target late
+- primary-template out-of-line constructor replay now synchronizes the
+  `StructTypeInfo` constructor copy through preserved source-member identity
+  when that identity is already known, instead of recovering it afterward
 
 ## Highest-value remaining standards gaps
 
@@ -64,6 +67,12 @@ Why this matters:
   declaration
 - those weak paths tend to reopen non-conforming fallback behavior later in
   sema or codegen
+
+Near-term remaining scope:
+
+- remaining member-template and constructor-template `StructTypeInfo` sync
+  sites that still route through replay-source-key helper scans after the
+  matched source declaration is already known
 
 ### 2. Compatibility recovery is still covering direct-call metadata loss outside dependent-unqualified completion
 
@@ -88,9 +97,9 @@ it only for concrete unresolved cases that block steps 1-2.
 
 ## Priority order
 
-1. Tighten the next replay/`StructTypeInfo` sync gap by preserving source
-   identity rather than restoring any signature-equivalent or textual repair
-   logic.
+1. Tighten the next member-template or constructor-template
+   `StructTypeInfo` sync gap by preserving source identity rather than routing
+   through a helper scan after the source declaration is already known.
 
 2. Tighten the next remaining mangled-name compatibility path by preserving
    structured direct-call metadata in the owning replay/materialization path

@@ -9959,7 +9959,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				// Also add to struct_info so it can be found during codegen
-				// Phase 7B: Intern function name and use StringHandle overload
+				// Intern function name and use StringHandle overload
 				if (mem_func.operator_kind != OverloadableOperator::None) {
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
@@ -9979,7 +9979,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 
-				// Slice 3: record no-definition stub for identity-map lookup.
+				// record no-definition stub for identity-map lookup.
 				registerSourceMemberStubIdentity(
 					source_member_identity_maps,
 					mem_func.function_declaration,
@@ -9987,6 +9987,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+			auto registerInstantiatedConstructor = [&](ASTNode new_ctor_node) {
+				// Add the constructor to the instantiated struct AST node.
+				instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+
+				// Also add to struct_info so it can be found during codegen.
+				struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
+				registerSourceMemberStructInfoIndex(
+					struct_info_member_identity_maps,
+					mem_func.function_declaration,
+					struct_info_ptr->member_functions.size() - 1);
+
+				// map the original template-pattern key to the fresh
+				// instantiated stub so deferred-body-replay can find and
+				// materialise it later, regardless of whether this path already
+				// has a definition.
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_ctor_node);
+			};
 
 			// NOTE: Constructors are ALWAYS eagerly instantiated (not lazy)
 			// because they're needed for object creation
@@ -10048,17 +10068,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					pack_param_info_.resize(saved_pack_info);
 
-					// Add the substituted constructor to the instantiated struct AST node
-					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
-
-					// Also add to struct_info so it can be found during codegen
-					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
-
-					// Slice 3: record constructor-with-definition stub.
-					registerSourceMemberStubIdentity(
-						source_member_identity_maps,
-						mem_func.function_declaration,
-						new_ctor_node);
+					// Centralize constructor registration so AST / StructTypeInfo /
+					// source-identity updates stay identical across constructor paths.
+					registerInstantiatedConstructor(new_ctor_node);
 
 					// Register lazy constructor stubs with deferred bodies in the lazy registry
 					// for on-demand materialization when odr-used. The stub carries
@@ -10131,16 +10143,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref.set_requires_clause(*ctor_decl.requires_clause());
 					}
 
-					// Add the fresh stub to the instantiated struct AST node and to struct_info.
-					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
-					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
-
-					// Slice 3: map original template-pattern key to fresh instantiated stub,
-					// so deferred-body-replay can find and materialise it later.
-					registerSourceMemberStubIdentity(
-						source_member_identity_maps,
-						mem_func.function_declaration,
-						new_ctor_node);
+					// Centralize constructor registration so AST / StructTypeInfo /
+					// source-identity updates stay identical across constructor paths.
+					registerInstantiatedConstructor(new_ctor_node);
 					if (is_implicit_instantiation &&
 						!ctor_decl.is_materialized() &&
 						shouldCommitTemplateInstantiationArtifacts()) {
@@ -10957,20 +10962,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ool_func.parameter_nodes());
 
 				if (struct_info_ptr != nullptr) {
-					OutOfLineConstructorStubResolution info_ctor_resolution =
-						findMatchingConstructorInStructInfo(
-							*struct_info_ptr,
-							ctor_decl,
-							[](const ConstructorDeclarationNode& info_ctor) {
-								return !info_ctor.has_template_body_position();
-							});
+					ConstructorDeclarationNode* struct_info_ctor =
+						ctor_resolution.source_member != nullptr
+							? findStructInfoConstructorBySourceMemberIdentity(
+								  struct_info_ptr,
+								  struct_info_member_identity_maps,
+								  *ctor_resolution.source_member)
+							: nullptr;
+					OutOfLineConstructorStubResolution info_ctor_resolution;
+					if (struct_info_ctor == nullptr) {
+						info_ctor_resolution =
+							findMatchingConstructorInStructInfo(
+								*struct_info_ptr,
+								ctor_decl,
+								[](const ConstructorDeclarationNode& info_ctor) {
+									return !info_ctor.has_template_body_position();
+								});
+						struct_info_ctor = info_ctor_resolution.ctor;
+					}
 
-					if (info_ctor_resolution.ctor != nullptr) {
+					if (struct_info_ctor != nullptr) {
 						setOutOfLineConstructorTemplateReplayMetadata(
-							*info_ctor_resolution.ctor,
+							*struct_info_ctor,
 							out_of_line_member);
 						syncOutOfLineConstructorTemplateParameters(
-							info_ctor_resolution.ctor->parameter_nodes(),
+							struct_info_ctor->parameter_nodes(),
 							ool_func.parameter_nodes());
 					} else if (info_ctor_resolution.ambiguous) {
 						std::string error_msg = std::string(StringBuilder()
@@ -11622,18 +11638,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ctor.set_definition(substituted_body);
 					// Also update the StructTypeInfo's copy (used by codegen)
 					if (struct_type_info.struct_info_) {
-						OutOfLineConstructorStubResolution info_ctor_resolution =
-							findMatchingConstructorInStructInfo(
-								*struct_type_info.struct_info_,
-								ctor,
-								[](const ConstructorDeclarationNode& info_ctor) {
-									return !info_ctor.is_materialized();
-								});
-						if (info_ctor_resolution.ctor != nullptr) {
+						ConstructorDeclarationNode* struct_info_ctor =
+							ctor_resolution.source_member != nullptr
+								? findStructInfoConstructorBySourceMemberIdentity(
+									  struct_type_info.struct_info_.get(),
+									  struct_info_member_identity_maps,
+									  *ctor_resolution.source_member)
+								: nullptr;
+						OutOfLineConstructorStubResolution info_ctor_resolution;
+						if (struct_info_ctor == nullptr) {
+							info_ctor_resolution =
+								findMatchingConstructorInStructInfo(
+									*struct_type_info.struct_info_,
+									ctor,
+									[](const ConstructorDeclarationNode& info_ctor) {
+										return !info_ctor.is_materialized();
+									});
+							struct_info_ctor = info_ctor_resolution.ctor;
+						}
+						if (struct_info_ctor != nullptr) {
 							copyDefinitionParameterIdentifiers(
-								info_ctor_resolution.ctor->parameter_nodes(),
+								struct_info_ctor->parameter_nodes(),
 								func_decl.parameter_nodes());
-							info_ctor_resolution.ctor->set_definition(substituted_body);
+							struct_info_ctor->set_definition(substituted_body);
 						} else if (info_ctor_resolution.ambiguous) {
 							std::string error_msg = std::string(StringBuilder()
 								.append("Ambiguous StructTypeInfo constructor sync for out-of-line constructor '")

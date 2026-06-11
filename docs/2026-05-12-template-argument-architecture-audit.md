@@ -43,6 +43,10 @@ the areas that were previously blocking standards-visible behavior:
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through preserved semantic metadata, typed lookup, or explicit
   unresolved terminals instead of reusing the parser-selected target late
+- primary-template out-of-line constructor replay now synchronizes the
+  `StructTypeInfo` constructor copy through preserved source-member identity
+  when that identity is already known, instead of always rescanning
+  `StructTypeInfo` constructors afterward
 
 ## Architectural invariants to preserve
 
@@ -74,6 +78,12 @@ Desired end state:
 - `StructTypeInfo` repair scans are not used to rediscover targets by name or
   arity when identity could have been preserved
 
+Near-term remaining scope:
+
+- remaining member-template and constructor-template `StructTypeInfo` sync
+  sites still recover through replay-source-key helper scans after the source
+  declaration is already known
+
 ### 2. Remaining direct-call metadata loss outside dependent-unqualified completion
 
 Dependent-unqualified direct-call completion now preserves both the
@@ -99,8 +109,9 @@ real replay or typed-lookup failures.
 
 ## Recommended task order
 
-1. Fix the next replay/`StructTypeInfo` sync miss by preserving source identity
-   in that path instead of restoring any signature-equivalent recovery logic.
+1. Fix the next member-template or constructor-template `StructTypeInfo` sync
+   miss by preserving source identity in that path instead of recovering the
+   copy through a helper scan.
 
 2. Tighten the next remaining mangled-name compatibility path by preserving
    structured direct-call metadata in the owning replay/materialization path
