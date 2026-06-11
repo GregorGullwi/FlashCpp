@@ -7848,13 +7848,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	auto resolveBoundFunctionTarget =
 		[&](const FunctionDeclarationNode* resolved_function,
 			StringHandle mangled_name) -> const FunctionDeclarationNode* {
+			if (resolved_function != nullptr) {
+				return resolved_function;
+			}
 			if (const FunctionDeclarationNode* canonical_function =
 					lookupFunctionByMangledName(mangled_name);
 				canonical_function != nullptr) {
 				return canonical_function;
-			}
-			if (resolved_function != nullptr) {
-				return resolved_function;
 			}
 			return nullptr;
 		};

@@ -109,6 +109,12 @@ therefore narrower: other instantiated ordinary direct-call paths may still
 reach sema with only mangled compatibility evidence instead of preserved
 structured lookup metadata.
 
+Latest progress:
+
+- sema now prefers the structured `FunctionDeclarationNode*` already stored in
+  definition-lookup and dependent-unqualified records, and only falls back to
+  mangled-name canonicalization when that structured target is absent
+
 Desired end state:
 
 - every instantiated ordinary direct call preserves enough structured semantic
@@ -131,6 +137,13 @@ real replay or typed-lookup failures.
 2. Tighten the next remaining mangled-name compatibility path by preserving
    structured direct-call metadata in the owning replay/materialization path
    instead of relying on mangled recovery.
+
+Next direct-call target:
+
+- remove or narrow the remaining generic ordinary-call
+  `lookupFunctionByMangledName(call_info.mangled_name)` fallback in sema by
+  identifying which parser/materialization path still arrives there without a
+  trustworthy structured direct-call target
 
 3. Only after steps 1-2 are stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
