@@ -2329,7 +2329,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_decl.is_no_unique_address);
 			}
 
-			SourceMemberIdentityMaps struct_info_source_member_identity_maps;
 			SourceMemberStructInfoIndexMaps struct_info_member_identity_maps;
 
 			// Copy member functions from pattern
@@ -2382,10 +2381,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_is_explicitly_defaulted(orig_ctor.is_explicitly_defaulted());
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
-					registerSourceMemberStubIdentity(
-						struct_info_source_member_identity_maps,
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
 						mem_func.function_declaration,
-						new_ctor_node);
+						struct_info->member_functions.size() - 1);
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					struct_info->addDestructor(
@@ -3740,18 +3739,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_struct_ref.has_outer_template_bindings() ? &outer_parent_snapshot : nullptr);
 					if (lazy_registry_key.isValid() &&
 						instantiated_struct_info_mut != nullptr) {
-						OutOfLineConstructorStubResolution info_ctor_resolution =
-							findMatchingConstructorInStructInfo(
-								*instantiated_struct_info_mut,
-								new_ctor_ref,
-								[](const ConstructorDeclarationNode&) {
-									return true;
-								});
-						if (info_ctor_resolution.ctor != nullptr) {
-								info_ctor_resolution.ctor->set_lazy_member_registry_key(lazy_registry_key);
-							}
+						ConstructorDeclarationNode* struct_info_ctor =
+							findStructInfoConstructorBySourceMemberIdentity(
+								instantiated_struct_info_mut,
+								struct_info_member_identity_maps,
+								mem_func.function_declaration);
+						if (struct_info_ctor != nullptr) {
+							struct_info_ctor->set_lazy_member_registry_key(lazy_registry_key);
 						}
 					}
+				}
 				} else if (mem_func.is_destructor) {
 					// Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
@@ -3970,6 +3967,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_pure_virtual,
 								mem_func.is_override,
 								mem_func.is_final);
+							registerSourceMemberStructInfoIndex(
+								struct_info_member_identity_maps,
+								mem_func.function_declaration,
+								struct_type_info.getStructInfo()->member_functions.size() - 1);
 						}
 
 						registerMemberTemplateInRegistry(
@@ -4027,6 +4028,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_pure_virtual,
 								mem_func.is_override,
 								mem_func.is_final);
+							registerSourceMemberStructInfoIndex(
+								struct_info_member_identity_maps,
+								mem_func.function_declaration,
+								struct_type_info.getStructInfo()->member_functions.size() - 1);
 						}
 
 						registerMemberTemplateInRegistry(
@@ -4321,22 +4326,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									template_args_for_pattern.size()),
 								"partial-spec",
 								plain_ool_name)) {
-							FunctionDeclarationNode* struct_info_func =
-								member_resolution.source_member != nullptr
-									? findStructInfoFunctionBySourceMemberIdentity(
-										  struct_type_info.getStructInfo(),
-										  struct_info_member_identity_maps,
-										  *member_resolution.source_member)
-									: nullptr;
-							OutOfLineFunctionStubResolution info_func_resolution;
-							if (struct_info_func != nullptr) {
-								info_func_resolution.func = struct_info_func;
-							} else {
-								info_func_resolution =
-									findReplayedOutOfLineMemberInStructInfo(
-										struct_type_info.getStructInfo(),
-										*inst_func);
-							}
+							OutOfLineFunctionStubResolution info_func_resolution =
+								findReplayedOutOfLineMemberInStructInfo(
+									struct_type_info.getStructInfo(),
+									struct_info_member_identity_maps,
+									member_resolution.source_member,
+									*inst_func,
+									[](const FunctionDeclarationNode& info_func) {
+										return !info_func.is_materialized();
+									});
 							if (info_func_resolution.ambiguous) {
 								FLASH_LOG(
 									Templates,
@@ -4445,6 +4443,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 					FunctionDeclarationNode* inst_func_decl = nullptr;
+					const ASTNode* matched_source_member = nullptr;
 					bool saw_insufficient_replay_evidence = false;
 					bool saw_ambiguous_replay_match = false;
 					for (const StructMemberFunctionDecl* source_member :
@@ -4493,6 +4492,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							break;
 						}
 						inst_func_decl = matched_template_func_decl;
+						matched_source_member = &source_member->function_declaration;
 					}
 					if (saw_ambiguous_replay_match) {
 						std::string error_msg = std::string(StringBuilder()
@@ -4508,6 +4508,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return failTemplateInstantiation(error_msg, nullptr, std::nullopt);
 					}
 					if (inst_func_decl != nullptr) {
+						auto outer_params_span = std::span<const TemplateParameterNode>(
+							template_params.data(),
+							template_params.size());
+						auto outer_args_span = std::span<const TemplateTypeArg>(
+							template_args_for_pattern.data(),
+							template_args_for_pattern.size());
 						inst_func_decl->set_template_body_position(out_of_line_member.body_start);
 						copyDefinitionParameterIdentifiers(
 							inst_func_decl->parameter_nodes(),
@@ -4515,8 +4521,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						copyDefinitionParameterTypesForDependentMemberTemplateSegments(
 							inst_func_decl->parameter_nodes(),
 							ool_func.parameter_nodes());
+						syncReplayAttachedMemberTemplateParameterTypesFromDefinition(
+							*this,
+							inst_func_decl->parameter_nodes(),
+							ool_func.parameter_nodes(),
+							outer_params_span,
+							outer_args_span);
 						inst_func_decl->set_definition_lookup_context(
 							out_of_line_member.definition_lookup_context);
+						if (StructTypeInfo* info = struct_type_info.getStructInfo();
+							info != nullptr) {
+							OutOfLineFunctionStubResolution info_func_resolution =
+								findReplayedOutOfLineMemberInStructInfo(
+									info,
+									struct_info_member_identity_maps,
+									matched_source_member,
+									*inst_func_decl,
+									[](const FunctionDeclarationNode& info_func) {
+										return !info_func.has_template_body_position();
+									});
+							if (info_func_resolution.func != nullptr) {
+								info_func_resolution.func->set_template_body_position(out_of_line_member.body_start);
+								copyDefinitionParameterIdentifiers(
+									info_func_resolution.func->parameter_nodes(),
+									ool_func.parameter_nodes());
+								copyDefinitionParameterTypes(
+									info_func_resolution.func->parameter_nodes(),
+									inst_func_decl->parameter_nodes());
+								syncReplayAttachedMemberTemplateParameterTypesFromDefinition(
+									*this,
+									info_func_resolution.func->parameter_nodes(),
+									ool_func.parameter_nodes(),
+									outer_params_span,
+									outer_args_span);
+								info_func_resolution.func->set_definition_lookup_context(
+									out_of_line_member.definition_lookup_context);
+							} else if (info_func_resolution.ambiguous) {
+								FLASH_LOG(
+									Templates,
+									Error,
+									"Ambiguous StructTypeInfo sync for partial-spec nested out-of-line member template '",
+									ool_func_name,
+									"' in instantiated class '",
+									instantiated_name,
+									"'");
+							}
+						}
 						{
 							StringBuilder qualified_name_builder;
 							qualified_name_builder
@@ -4651,23 +4701,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (StructTypeInfo* ctor_instantiated_struct_info = struct_type_info.getStructInfo();
 					ctor_instantiated_struct_info != nullptr) {
 					OutOfLineConstructorStubResolution info_ctor_resolution =
-						findOutOfLineConstructorTemplateStubByIdentity(
-							*this,
-							struct_info_source_member_identity_maps,
-							std::span<const StructMemberFunctionDecl>(
-								pattern_struct.member_functions().data(),
-								pattern_struct.member_functions().size()),
-							ool_func,
-							std::span<const TemplateParameterNode>(
-								template_params.data(),
-								template_params.size()),
-							std::span<const TemplateTypeArg>(
-								template_args_for_pattern.data(),
-								template_args_for_pattern.size()),
-							instantiated_name,
-							std::span<const TemplateParameterNode>(
-								out_of_line_member.inner_template_params.data(),
-								out_of_line_member.inner_template_params.size()));
+						findReplayedOutOfLineConstructorInStructInfo(
+							ctor_instantiated_struct_info,
+							struct_info_member_identity_maps,
+							ctor_resolution.source_member,
+							ctor_decl,
+							[](const ConstructorDeclarationNode& info_ctor) {
+								return !info_ctor.has_template_body_position();
+							});
 
 					if (info_ctor_resolution.ctor != nullptr) {
 						setOutOfLineConstructorTemplateReplayMetadata(
@@ -8183,11 +8224,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct.member_functions();
 
 			SourceMemberIdentityMaps nested_source_member_identity_maps;
+			SourceMemberStructInfoIndexMaps nested_struct_info_member_identity_maps;
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,
 					source_member.function_declaration,
 					source_member.function_declaration);
+			}
+			if (nested_struct_info != nullptr &&
+				nested_struct_info->member_functions.size() == nested_source_member_functions.size()) {
+				for (size_t i = 0; i < nested_source_member_functions.size(); ++i) {
+					registerSourceMemberStructInfoIndex(
+						nested_struct_info_member_identity_maps,
+						nested_source_member_functions[i].function_declaration,
+						i);
+				}
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {
@@ -8338,8 +8389,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					if (nested_struct_info != nullptr) {
 						OutOfLineConstructorStubResolution info_ctor_resolution =
-							findMatchingConstructorInStructInfo(
-								*nested_struct_info,
+							findReplayedOutOfLineConstructorInStructInfo(
+								nested_struct_info.get(),
+								nested_struct_info_member_identity_maps,
+								ctor_resolution.source_member,
 								ctor_decl,
 								[](const ConstructorDeclarationNode& info_ctor) {
 									return !info_ctor.has_template_body_position();
@@ -9508,6 +9561,56 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
 			const DeclarationNode& decl = func_decl.decl_node();
+			auto registerInstantiatedMemberFunction =
+				[&](ASTNode new_func_node, StringHandle effective_name, const FunctionDeclarationNode& new_func_ref) {
+					// Add the substituted function to the instantiated struct.
+					if (mem_func.operator_kind != OverloadableOperator::None) {
+						instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
+					} else {
+						instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
+					}
+
+					// Also add to struct_info so it can be found during codegen.
+					if (mem_func.operator_kind != OverloadableOperator::None) {
+						struct_info_ptr->addOperatorOverload(
+							mem_func.operator_kind,
+							new_func_node,
+							mem_func.access,
+							mem_func.is_virtual,
+							mem_func.is_pure_virtual,
+							mem_func.is_override,
+							mem_func.is_final);
+					} else {
+						FLASH_LOG(
+							Templates,
+							Debug,
+							"Adding member function '",
+							StringTable::getStringView(effective_name),
+							"' to struct_info for ",
+							instantiated_name,
+							", parent_struct_name='",
+							new_func_ref.parent_struct_name(),
+							"'");
+						struct_info_ptr->addMemberFunction(
+							effective_name,
+							new_func_node,
+							mem_func.access,
+							mem_func.is_virtual,
+							mem_func.is_pure_virtual,
+							mem_func.is_override,
+							mem_func.is_final);
+						registerSourceMemberStructInfoIndex(
+							struct_info_member_identity_maps,
+							mem_func.function_declaration,
+							struct_info_ptr->member_functions.size() - 1);
+					}
+
+					// Record the stub for identity-map lookup during deferred-body replay.
+					registerSourceMemberStubIdentity(
+						source_member_identity_maps,
+						mem_func.function_declaration,
+						new_func_node);
+				};
 
 			// For lazy instantiation, register function for later instantiation instead of instantiating now.
 			// Namespaced implicit instantiations intentionally use the same stub path; the
@@ -9612,39 +9715,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				new_func_ref.set_is_const_member_function(mem_func.is_const());
 				new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 
-				// Add the signature-only function to the instantiated struct
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
-				} else {
-					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
-				}
-
-				// Also add to struct_info so it can be found during codegen
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
-														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
-				} else {
-					StringHandle func_name_handle = shell.effective_name;
-					struct_info_ptr->addMemberFunction(
-						func_name_handle,
-						new_func_node,
-						mem_func.access,
-						mem_func.is_virtual,
-						mem_func.is_pure_virtual,
-						mem_func.is_override,
-						mem_func.is_final);
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info_ptr->member_functions.size() - 1);
-				}
-				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
-
-				// Slice 3: record lazy-path stub for identity-map lookup during deferred-body replay.
-				registerSourceMemberStubIdentity(
-					source_member_identity_maps,
-					mem_func.function_declaration,
-					new_func_node);
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties.
+				registerInstantiatedMemberFunction(new_func_node, shell.effective_name, new_func_ref);
 
 				StringBuilder qualified_name_builder;
 				qualified_name_builder.append(StringTable::getStringView(instantiated_name))
@@ -9820,41 +9892,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				pack_param_info_.resize(saved_pack_info);
 
-				// Add the substituted function to the instantiated struct
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
-				} else {
-					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
-				}
-
-				// Also add to struct_info so it can be found during codegen
-				// Phase 7B: Intern function name and use StringHandle overload
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
-														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
-				} else {
-					FLASH_LOG(Templates, Debug, "Adding member function '", StringTable::getStringView(effective_name),
-							  "' to struct_info for ", instantiated_name, ", parent_struct_name='", new_func_ref.parent_struct_name(), "'");
-					struct_info_ptr->addMemberFunction(
-						effective_name,
-						new_func_node,
-						mem_func.access,
-						mem_func.is_virtual,
-						mem_func.is_pure_virtual,
-						mem_func.is_override,
-						mem_func.is_final);
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info_ptr->member_functions.size() - 1);
-				}
-				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
-
-				// Slice 3: record eager-with-definition stub for identity-map lookup.
-				registerSourceMemberStubIdentity(
-					source_member_identity_maps,
-					mem_func.function_declaration,
-					new_func_node);
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties.
+				registerInstantiatedMemberFunction(new_func_node, effective_name, new_func_ref);
 			} else {
 				// No definition, but still need to substitute parameter types and return type
 
@@ -9951,42 +9990,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 
-				// Add the substituted function to the instantiated struct
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					instantiated_struct_ref.add_operator_overload(mem_func.operator_kind, new_func_node, mem_func.access);
-				} else {
-					instantiated_struct_ref.add_member_function(new_func_node, mem_func.access);
-				}
-
-				// Also add to struct_info so it can be found during codegen
-				// Phase 7B: Intern function name and use StringHandle overload
-				if (mem_func.operator_kind != OverloadableOperator::None) {
-					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
-														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
-				} else {
-					struct_info_ptr->addMemberFunction(
-						effective_name,
-						new_func_node,
-						mem_func.access,
-						mem_func.is_virtual,
-						mem_func.is_pure_virtual,
-						mem_func.is_override,
-						mem_func.is_final);
-					registerSourceMemberStructInfoIndex(
-						struct_info_member_identity_maps,
-						mem_func.function_declaration,
-						struct_info_ptr->member_functions.size() - 1);
-				}
-				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
-
-				// Slice 3: record no-definition stub for identity-map lookup.
-				registerSourceMemberStubIdentity(
-					source_member_identity_maps,
-					mem_func.function_declaration,
-					new_func_node);
+				// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties.
+				registerInstantiatedMemberFunction(new_func_node, effective_name, new_func_ref);
 			}
 		} else if (mem_func.function_declaration.is<ConstructorDeclarationNode>()) {
 			const ConstructorDeclarationNode& ctor_decl = mem_func.function_declaration.as<ConstructorDeclarationNode>();
+			auto registerInstantiatedConstructor = [&](ASTNode new_ctor_node) {
+				// Add the constructor to the instantiated struct AST node.
+				instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
+
+				// Also add to struct_info so it can be found during codegen.
+				struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
+				registerSourceMemberStructInfoIndex(
+					struct_info_member_identity_maps,
+					mem_func.function_declaration,
+					struct_info_ptr->member_functions.size() - 1);
+
+				// map the original template-pattern key to the fresh
+				// instantiated stub so deferred-body-replay can find and
+				// materialise it later, regardless of whether this path already
+				// has a definition.
+				registerSourceMemberStubIdentity(
+					source_member_identity_maps,
+					mem_func.function_declaration,
+					new_ctor_node);
+			};
 
 			// NOTE: Constructors are ALWAYS eagerly instantiated (not lazy)
 			// because they're needed for object creation
@@ -10048,17 +10076,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					pack_param_info_.resize(saved_pack_info);
 
-					// Add the substituted constructor to the instantiated struct AST node
-					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
-
-					// Also add to struct_info so it can be found during codegen
-					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
-
-					// Slice 3: record constructor-with-definition stub.
-					registerSourceMemberStubIdentity(
-						source_member_identity_maps,
-						mem_func.function_declaration,
-						new_ctor_node);
+					// Centralize constructor registration so AST / StructTypeInfo /
+					// source-identity updates stay identical across constructor paths.
+					registerInstantiatedConstructor(new_ctor_node);
 
 					// Register lazy constructor stubs with deferred bodies in the lazy registry
 					// for on-demand materialization when odr-used. The stub carries
@@ -10131,16 +10151,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref.set_requires_clause(*ctor_decl.requires_clause());
 					}
 
-					// Add the fresh stub to the instantiated struct AST node and to struct_info.
-					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
-					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
-
-					// Slice 3: map original template-pattern key to fresh instantiated stub,
-					// so deferred-body-replay can find and materialise it later.
-					registerSourceMemberStubIdentity(
-						source_member_identity_maps,
-						mem_func.function_declaration,
-						new_ctor_node);
+					// Centralize constructor registration so AST / StructTypeInfo /
+					// source-identity updates stay identical across constructor paths.
+					registerInstantiatedConstructor(new_ctor_node);
 					if (is_implicit_instantiation &&
 						!ctor_decl.is_materialized() &&
 						shouldCommitTemplateInstantiationArtifacts()) {
@@ -10958,8 +10971,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				if (struct_info_ptr != nullptr) {
 					OutOfLineConstructorStubResolution info_ctor_resolution =
-						findMatchingConstructorInStructInfo(
-							*struct_info_ptr,
+						findReplayedOutOfLineConstructorInStructInfo(
+							struct_info_ptr,
+							struct_info_member_identity_maps,
+							ctor_resolution.source_member,
 							ctor_decl,
 							[](const ConstructorDeclarationNode& info_ctor) {
 								return !info_ctor.has_template_body_position();
@@ -10998,6 +11013,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Replay-first attachment path: match against source template members and
 			// resolve to instantiated stubs via source_member_to_stub identity mapping.
 			FunctionDeclarationNode* inst_func_decl = nullptr;
+			const ASTNode* matched_source_member = nullptr;
 			bool saw_insufficient_replay_evidence = false;
 			bool saw_ambiguous_replay_match = false;
 			for (const auto& source_member : effective_member_functions) {
@@ -11053,6 +11069,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					break;
 				}
 				inst_func_decl = matched_template_func_decl;
+				matched_source_member = &source_member.function_declaration;
 			}
 
 			if (saw_ambiguous_replay_match) {
@@ -11094,8 +11111,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				inst_func_decl->set_definition_lookup_context(out_of_line_member.definition_lookup_context);
 				if (struct_info_ptr != nullptr) {
 					OutOfLineFunctionStubResolution info_func_resolution =
-						findMatchingFunctionInStructInfo(
-							*struct_info_ptr,
+						findReplayedOutOfLineMemberInStructInfo(
+							struct_info_ptr,
+							struct_info_member_identity_maps,
+							matched_source_member,
 							*inst_func_decl,
 							[](const FunctionDeclarationNode& info_func) {
 								return !info_func.has_template_body_position();
@@ -11260,22 +11279,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				"primary-template",
 				decl.identifier_token().value());
 			if (found_match) {
-				FunctionDeclarationNode* struct_info_func =
-					plain_member_resolution.source_member != nullptr
-						? findStructInfoFunctionBySourceMemberIdentity(
-							  struct_info_ptr,
-							  struct_info_member_identity_maps,
-							  *plain_member_resolution.source_member)
-						: nullptr;
-				OutOfLineFunctionStubResolution info_func_resolution;
-				if (struct_info_func != nullptr) {
-					info_func_resolution.func = struct_info_func;
-				} else {
-					info_func_resolution =
-						findReplayedOutOfLineMemberInStructInfo(
-							struct_info_ptr,
-							*inst_func);
-				}
+				OutOfLineFunctionStubResolution info_func_resolution =
+					findReplayedOutOfLineMemberInStructInfo(
+						struct_info_ptr,
+						struct_info_member_identity_maps,
+						plain_member_resolution.source_member,
+						*inst_func,
+						[](const FunctionDeclarationNode& info_func) {
+							return !info_func.is_materialized();
+						});
 				if (info_func_resolution.ambiguous) {
 					std::string error_msg = std::string(StringBuilder()
 						.append("Ambiguous StructTypeInfo sync for out-of-line member '")
@@ -11623,8 +11635,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Also update the StructTypeInfo's copy (used by codegen)
 					if (struct_type_info.struct_info_) {
 						OutOfLineConstructorStubResolution info_ctor_resolution =
-							findMatchingConstructorInStructInfo(
-								*struct_type_info.struct_info_,
+							findReplayedOutOfLineConstructorInStructInfo(
+								struct_type_info.struct_info_.get(),
+								struct_info_member_identity_maps,
+								ctor_resolution.source_member,
 								ctor,
 								[](const ConstructorDeclarationNode& info_ctor) {
 									return !info_ctor.is_materialized();

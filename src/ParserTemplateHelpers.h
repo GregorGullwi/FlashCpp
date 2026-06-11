@@ -383,6 +383,51 @@ inline FunctionDeclarationNode* findStructInfoFunctionBySourceMemberIdentity(
 	return get_function_decl_node_mut(function_decl);
 }
 
+inline ConstructorDeclarationNode* findStructInfoConstructorBySourceMemberIdentity(
+	StructTypeInfo* struct_info,
+	const SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode& source_member) {
+	if (struct_info == nullptr) {
+		return nullptr;
+	}
+
+	auto find_index = [&](const void* key) -> std::optional<size_t> {
+		if (key == nullptr) {
+			return std::nullopt;
+		}
+		auto it = index_maps.by_node.find(key);
+		if (it == index_maps.by_node.end()) {
+			return std::nullopt;
+		}
+		return it->second;
+	};
+
+	std::optional<size_t> index = find_index(sourceMemberAstNodeKey(source_member));
+	if (!index.has_value() &&
+		source_member.is<TemplateFunctionDeclarationNode>()) {
+		index = find_index(sourceMemberAstNodeKey(
+			source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
+	}
+	if (!index.has_value()) {
+		if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
+			location_key.has_value()) {
+			auto it = index_maps.by_location.find(*location_key);
+			if (it != index_maps.by_location.end()) {
+				index = it->second;
+			}
+		}
+	}
+	if (!index.has_value() ||
+		*index >= struct_info->member_functions.size()) {
+		return nullptr;
+	}
+
+	ASTNode& function_decl = struct_info->member_functions[*index].function_decl;
+	return function_decl.is<ConstructorDeclarationNode>()
+		? &function_decl.as<ConstructorDeclarationNode>()
+		: nullptr;
+}
+
 struct OutOfLineMemberStubResolution {
 	FunctionDeclarationNode* func = nullptr;
 	const ASTNode* source_member = nullptr;
@@ -464,6 +509,7 @@ inline OutOfLineMemberStubResolution findPlainOutOfLineMemberStubByIdentity(
 
 struct OutOfLineConstructorStubResolution {
 	ConstructorDeclarationNode* ctor = nullptr;
+	const ASTNode* source_member = nullptr;
 	bool ambiguous = false;
 	bool insufficient_evidence = false;
 };
@@ -478,6 +524,7 @@ inline OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 	StringHandle owner_type_name) {
 	OutOfLineConstructorStubResolution resolution;
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
+	const ASTNode* matched_source_member = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -511,11 +558,13 @@ inline OutOfLineConstructorStubResolution findPlainOutOfLineConstructorStubByIde
 
 		if (matches_candidate) {
 			resolved_matches.push_back(inst_ctor_decl);
+			matched_source_member = &source_member.function_declaration;
 		}
 	}
 
 	if (resolved_matches.size() == 1) {
 		resolution.ctor = resolved_matches.front();
+		resolution.source_member = matched_source_member;
 		return resolution;
 	}
 	if (resolved_matches.size() > 1) {
@@ -536,6 +585,7 @@ inline OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 	std::span<const TemplateParameterNode> out_of_line_inner_template_params) {
 	OutOfLineConstructorStubResolution resolution;
 	InlineVector<ConstructorDeclarationNode*, 4> resolved_matches;
+	const ASTNode* matched_source_member = nullptr;
 	for (const StructMemberFunctionDecl& source_member : source_members) {
 		if (!source_member.function_declaration.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -584,10 +634,12 @@ inline OutOfLineConstructorStubResolution findOutOfLineConstructorTemplateStubBy
 		}
 
 		resolved_matches.push_back(inst_ctor_decl);
+		matched_source_member = &source_member.function_declaration;
 	}
 
 	if (resolved_matches.size() == 1) {
 		resolution.ctor = resolved_matches.front();
+		resolution.source_member = matched_source_member;
 		return resolution;
 	}
 	if (resolved_matches.size() > 1) {
@@ -2918,6 +2970,64 @@ inline OutOfLineFunctionStubResolution findReplayedOutOfLineMemberInStructInfo(
 		[](const FunctionDeclarationNode& info_func) {
 			return !info_func.is_materialized();
 		});
+}
+
+template <typename EligibleFn>
+inline OutOfLineFunctionStubResolution findReplayedOutOfLineMemberInStructInfo(
+	StructTypeInfo* struct_info,
+	const SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode* source_member,
+	const FunctionDeclarationNode& replayed_func,
+	EligibleFn&& is_candidate_eligible) {
+	if (struct_info == nullptr) {
+		return {};
+	}
+
+	if (source_member != nullptr) {
+		FunctionDeclarationNode* struct_info_func =
+			findStructInfoFunctionBySourceMemberIdentity(
+				struct_info,
+				index_maps,
+				*source_member);
+		if (struct_info_func != nullptr &&
+			is_candidate_eligible(*struct_info_func)) {
+			return {.func = struct_info_func};
+		}
+	}
+
+	return findMatchingFunctionInStructInfo(
+		*struct_info,
+		replayed_func,
+		std::forward<EligibleFn>(is_candidate_eligible));
+}
+
+template <typename EligibleFn>
+inline OutOfLineConstructorStubResolution findReplayedOutOfLineConstructorInStructInfo(
+	StructTypeInfo* struct_info,
+	const SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode* source_member,
+	const ConstructorDeclarationNode& replayed_ctor,
+	EligibleFn&& is_candidate_eligible) {
+	if (struct_info == nullptr) {
+		return {};
+	}
+
+	if (source_member != nullptr) {
+		ConstructorDeclarationNode* struct_info_ctor =
+			findStructInfoConstructorBySourceMemberIdentity(
+				struct_info,
+				index_maps,
+				*source_member);
+		if (struct_info_ctor != nullptr &&
+			is_candidate_eligible(*struct_info_ctor)) {
+			return {.ctor = struct_info_ctor};
+		}
+	}
+
+	return findMatchingConstructorInStructInfo(
+		*struct_info,
+		replayed_ctor,
+		std::forward<EligibleFn>(is_candidate_eligible));
 }
 
 // Resolve any stored template arguments on a deferred base member-type chain after a class
