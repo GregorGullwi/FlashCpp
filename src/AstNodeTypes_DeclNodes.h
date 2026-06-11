@@ -2992,6 +2992,8 @@ struct DependentUnqualifiedCallLookupRecord : CallLookupRecordShared {
 	bool argument_dependent_lookup_included = true;
 	const FunctionDeclarationNode* definition_bound_function = nullptr;
 	StringHandle definition_bound_mangled_name{};
+	const FunctionDeclarationNode* point_of_instantiation_function = nullptr;
+	StringHandle point_of_instantiation_mangled_name{};
 };
 
 // Describes what kind of call site this is.

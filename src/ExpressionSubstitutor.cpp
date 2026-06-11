@@ -1730,6 +1730,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		std::optional<std::string_view> qualified_call_name,
 		bool copy_template_arguments,
 		bool infer_qualified_name_from_parent) -> ASTNode {
+		const auto matchesDefinitionBoundDependentRecordTarget = [&]() -> bool {
+			if (!call.has_dependent_unqualified_lookup_record()) {
+				return false;
+			}
+			const DependentUnqualifiedCallLookupRecord& record =
+				*call.dependent_unqualified_lookup_record();
+			if (record.definition_bound_function != nullptr &&
+				(&target_func == record.definition_bound_function ||
+				 &target_func.decl_node() ==
+					 &record.definition_bound_function->decl_node())) {
+				return true;
+			}
+			return record.definition_bound_mangled_name.isValid() &&
+				   target_func.has_mangled_name() &&
+				   target_func.mangled_name() ==
+					   record.definition_bound_mangled_name.view();
+		};
 		ExpressionNode& new_expr = emplaceDirectCallExpr(
 			target_func.decl_node(),
 			&target_func,
@@ -1737,9 +1754,22 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			called_from_token);
 		CallMetadataCopyOptions copy_options;
 		copy_options.copy_template_arguments = copy_template_arguments;
-		copy_options.copy_dependent_unqualified_lookup_record = false;
+		copy_options.copy_dependent_unqualified_lookup_record =
+			matchesDefinitionBoundDependentRecordTarget();
 		copy_options.copy_dependent_qualified_lookup_record = false;
 		copyMetadataToExpr(new_expr, copy_options);
+		if (call.has_dependent_unqualified_lookup_record() &&
+			!copy_options.copy_dependent_unqualified_lookup_record) {
+			DependentUnqualifiedCallLookupRecord completed_record =
+				*call.dependent_unqualified_lookup_record();
+			completed_record.point_of_instantiation_function = &target_func;
+			if (target_func.has_mangled_name()) {
+				completed_record.point_of_instantiation_mangled_name =
+					StringTable::getOrInternStringHandle(
+						target_func.mangled_name());
+			}
+			setCallDependentUnqualifiedLookupRecord(new_expr, completed_record);
+		}
 		if (qualified_call_name.has_value() && !qualified_call_name->empty()) {
 			setCallQualifiedName(new_expr, *qualified_call_name);
 		} else if (infer_qualified_name_from_parent &&

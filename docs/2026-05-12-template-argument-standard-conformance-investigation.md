@@ -39,25 +39,19 @@ blocking areas:
 - replay attachment in the covered routes now expects positive
   identity/signature evidence rather than accepting unresolved
   shape-based matches
+- resolved direct-call materialization now preserves
+  `DependentUnqualifiedCallLookupRecord` both when the instantiated target
+  stays definition-bound and when dependent-unqualified POI completion selects
+  a different final function, reducing replay-heavy dependence on parser
+  reruns and mangled-name recovery in those paths
+- the final parser-selected non-receiver direct-call fallback in
+  `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
+  resolve through semantic metadata, typed lookup, or explicit unresolved
+  terminals instead of reusing the parser-selected target late
 
 ## Highest-value remaining standards gaps
 
-### 1. Compatibility recovery is still covering direct-call metadata loss
-
-Some instantiated ordinary direct calls still lose their preserved
-definition-bound lookup record while retaining an authoritative mangled target.
-Sema now recovers that target, which prevents standards-visible rebinding to a
-later overload, but the standards-conforming endpoint is to preserve the
-semantic lookup record itself.
-
-Why this matters:
-
-- a preserved mangled target is only a compatibility boundary
-- the real semantic model should still know *why* the call is definition-bound
-- removing the final parser-selected fallback depends on closing this metadata
-  gap first
-
-### 2. Replay must stay invariant-driven
+### 1. Replay must stay invariant-driven
 
 The remaining standards risk is no longer textual dependent-name recovery. It
 is replay/materialization paths that may still succeed or sync through weak
@@ -71,39 +65,40 @@ Why this matters:
 - those weak paths tend to reopen non-conforming fallback behavior later in
   sema or codegen
 
-### 3. Final parser-selected ordinary direct-call fallback
+### 2. Compatibility recovery is still covering direct-call metadata loss outside dependent-unqualified completion
 
-The remaining ordinary non-receiver compatibility route should disappear from
-normalized flows once replay/materialization preserves enough typed evidence.
+Dependent-unqualified replay/materialization now preserves both the
+definition-bound ordinary lookup and the final point-of-instantiation target.
+The remaining compatibility risk is therefore narrower: other instantiated
+ordinary direct calls can still lose structured semantic evidence and fall back
+to mangled-name recovery instead of carrying their final lookup result
+directly.
 
 Why this matters:
 
-- as long as the fallback exists, sema is not yet the sole owner of final
-  ordinary direct-call target selection
-- the standard model is cleaner when typed sema evidence resolves or rejects
-  the call directly
+- a preserved mangled target is only a compatibility boundary
+- the real semantic model should still know why the call is definition-bound
+  and, when POI completion changes the winner, which final semantic target was
+  selected
 
-### 4. Current-instantiation / unknown-specialization coverage
+### 3. Current-instantiation / unknown-specialization coverage
 
 This is still necessary, but it is no longer the immediate next task. Expand
-it only for concrete unresolved cases that block steps 1-3.
+it only for concrete unresolved cases that block steps 1-2.
 
 ## Priority order
 
-1. Preserve direct-call lookup records across the remaining replay and
-   materialization paths that currently rely on mangled-name recovery.
-
-2. Remove the final parser-selected non-receiver direct-call fallback in
-   `resolveCallArgAnnotationTarget(...)` once step 1 is complete for the
-   remaining live paths.
-
-3. Tighten the next replay/`StructTypeInfo` sync gap by preserving source
+1. Tighten the next replay/`StructTypeInfo` sync gap by preserving source
    identity rather than restoring any signature-equivalent or textual repair
    logic.
 
-4. Expand current-instantiation and unknown-specialization handling only where
+2. Tighten the next remaining mangled-name compatibility path by preserving
+   structured direct-call metadata in the owning replay/materialization path
+   instead of relying on mangled recovery.
+
+3. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
-   steps 1-3.
+   steps 1-2.
 
 ## Standards rules for follow-up work
 
@@ -122,6 +117,8 @@ For work in this area, rerun:
 - the focused regression that motivated the slice
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
+- `test_template_dependent_unqualified_member_replay_ret0.cpp`
+- `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
 - `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
 - `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
 - `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`
