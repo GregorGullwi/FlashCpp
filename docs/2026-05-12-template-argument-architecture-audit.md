@@ -47,6 +47,11 @@ the areas that were previously blocking standards-visible behavior:
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
   `StructTypeInfo` constructors afterward
+- copied member-function-template stubs now register source-member identity
+  into `StructTypeInfo` immediately in the primary-template and covered
+  specialization paths, including operator overloads, so later out-of-line
+  replay sync no longer has to recover those copies through replay-source-key
+  scans once the matched source declaration is already known
 
 ## Architectural invariants to preserve
 
@@ -95,9 +100,11 @@ Near-term remaining scope:
 - partial-specialization nested member-template replay now also syncs the
   `StructTypeInfo` copy through the shared identity-first helper once the
   matched source declaration is preserved
-- remaining member-template and constructor-template `StructTypeInfo` sync
-  sites still recover through replay-source-key helper scans after the source
-  declaration is already known
+- primary-template and covered specialization member-template copies now record
+  `StructTypeInfo` identity at insertion time, so the remaining sync debt in
+  this bucket is narrower: audit any still-uncovered constructor-template or
+  replay-driven nested attachment path that reaches shared sync helpers without
+  an identity index even after the matched source declaration is known
 
 ### 2. Remaining direct-call metadata loss outside dependent-unqualified completion
 
@@ -130,9 +137,10 @@ real replay or typed-lookup failures.
 
 ## Recommended task order
 
-1. Fix the next member-template or constructor-template `StructTypeInfo` sync
-   miss by preserving source identity in that path instead of recovering the
-   copy through a helper scan.
+1. Audit the remaining constructor-template / nested replay `StructTypeInfo`
+   sync path that still reaches shared helpers without a preserved identity
+   index, and close it the same way this slice closed the member-template
+   copies.
 
 2. Tighten the next remaining mangled-name compatibility path by preserving
    structured direct-call metadata in the owning replay/materialization path
@@ -154,6 +162,7 @@ Next direct-call target:
 When changing this area, always rerun:
 
 - the focused regression that motivated the slice
+- `test_template_ool_member_template_operator_identity_ret0.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
@@ -165,3 +174,20 @@ When changing this area, always rerun:
 - `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
 - `test_subscript_pointer_conversion_template_ret42.cpp`
 - full `pwsh tests/run_all_tests.ps1` before closing the slice
+
+## Next steps
+
+1. Inspect the remaining constructor-template and replay-only nested sync
+   callers for any path that still reaches
+   `findReplayedOutOfLineConstructorInStructInfo(...)` without a populated
+   `SourceMemberStructInfoIndexMaps` entry after source matching succeeded.
+
+2. After the replay/sync identity coverage is closed, remove or narrow the
+   remaining generic ordinary-call
+   `lookupFunctionByMangledName(call_info.mangled_name)` compatibility path in
+   sema by preserving the structured direct-call target in the owning
+   materialization path.
+
+3. Only then spend complexity on current-instantiation /
+   unknown-specialization expansion, and only for concrete typed-lookup or
+   replay failures that remain after steps 1-2.
