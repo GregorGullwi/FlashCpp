@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-09
+**Last updated:** 2026-06-11
 
 This document tracks the standards-facing endpoint for template argument and
 dependent-name work. It should describe the intended model and the shortest path
@@ -32,6 +32,11 @@ Move FlashCpp toward a sema-owned template system where:
   sema-owned overload-resolution argument typing instead of parser-owned
   argument collection, so dependent out-of-line member overloads are selected
   from the concrete substituted call signature seen during semantic analysis
+- ordinary non-receiver direct calls now also defer bare parser-selected target
+  reuse until after preserved definition-context records and fresh typed lookup
+  have both had a chance to resolve the call, so non-dependent two-phase
+  lookup remains definition-bound while the ordinary fallback surface is
+  smaller
 - semantic `operator[]` resolution now also uses sema-owned
   overload-resolution argument typing plus receiver-const candidate filtering,
   so normalized subscripts preserve lvalue/rvalue index evidence and do not
@@ -159,11 +164,10 @@ unknown-specialization modeling only where it unblocks those paths.
 
 ## Next steps
 
-1. Re-audit the remaining non-receiver / direct-call compatibility branches in
-   `resolveCallArgAnnotationTarget(...)` now that the last active blocker in
-   this area was ordinary overload viability plus indirect-call typing, not a
-   missing template-only fallback. Remove or narrow only the branches that are
-   now demonstrably dead once typed parser/sema evidence is complete.
+1. Audit the remaining last-resort non-receiver direct-call fallback in
+   `resolveCallArgAnnotationTarget(...)` and remove each surviving parser-
+   selected route only after the owning replay/materialization path preserves
+   enough typed overload evidence to make that fallback unnecessary.
 
 2. If another replay/`StructTypeInfo` sync gap turns up, fix it by preserving
    source replay identity into that path rather than restoring any
@@ -555,6 +559,41 @@ Validated with:
 - `test_dependent_identifier_template_call_ret0.cpp`
 - `test_pack_expansion_in_template_body_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-11 non-receiver direct-call compatibility conformance note
+
+The next direct-call cleanup slice after the ordinary viability fix was no
+longer a broad overload-rule bug. It was a remaining compatibility decision in
+`resolveCallArgAnnotationTarget(...)`: for ordinary non-receiver direct calls,
+the resolver still accepted the parser-selected target before sema had tried a
+fresh typed lookup. That was too broad for standards-conforming ordinary-call
+behavior, but preserved definition-context records still had to remain
+authoritative for non-dependent template-body calls.
+
+The fix now:
+
+- returns preserved `FunctionCallDefinitionLookupRecord` targets immediately for
+  non-receiver direct calls so non-dependent two-phase lookup stays
+  definition-bound
+- stops reusing bare parser-selected non-receiver targets before fresh typed
+  lookup when no definition-bound record exists
+- keeps parser-selected target reuse only as the final compatibility boundary
+  after typed overload lookup and ordinary overload-set recovery still cannot
+  determine the call
+
+Validated with:
+
+- `template_lookup_non_dependent_no_rebind_ret0.cpp`
+- `test_template_two_phase_nondependent_later_better_overload_ret42.cpp`
+- `test_template_two_phase_member_func_template_ret42.cpp`
+- `test_template_out_of_line_member_two_phase_lookup_ret0.cpp`
+- `test_template_out_of_line_ctor_two_phase_lookup_ret0.cpp`
+- `test_template_ool_member_template_deferred_base_two_phase_lookup_ret0.cpp`
+- `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
+- `test_dependent_identifier_template_call_ret0.cpp`
+- `test_pack_expansion_in_template_body_ret0.cpp`
+- `test_template_builtin_addressof_substitution_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-11
 
 ## Validation guidance
 

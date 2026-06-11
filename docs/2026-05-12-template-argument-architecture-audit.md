@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-09
+**Last updated:** 2026-06-11
 
 This document is not a release log. It should explain what the current template
 architecture can assume, what is still structurally wrong, and what the next
@@ -44,9 +44,17 @@ ordinary-call blocker that was still distorting the remaining template audit:
 shared overload viability no longer accepts concrete struct-to-scalar calls
 without a real conversion path, and indirect-call argument typing now preserves
 the callee return type instead of collapsing `fp(args...)` back to the function
-pointer type during parser-side overload ranking. The next highest-value task
-is back on the residual semantic-call compatibility surface unless a new replay
-route proves it still loses identity metadata.
+pointer type during parser-side overload ranking. The newest non-receiver
+direct-call follow-up now also narrows the remaining compatibility surface:
+ordinary direct calls no longer reuse bare parser-selected targets up front
+when no definition-bound lookup record exists, while preserved
+definition-context call records still short-circuit non-dependent two-phase
+lookup exactly where the standard requires. Fresh typed sema lookup now owns
+ordinary non-receiver direct-call selection across the covered paths, with the
+parser-selected target kept only as the last compatibility resort after typed
+lookup has already had its chance. The next highest-value task is therefore the
+remaining last-resort direct-call fallback surface unless a new replay route
+proves it still loses identity metadata.
 
 ## What the current design can assume
 
@@ -64,6 +72,10 @@ route proves it still loses identity metadata.
   collects overload-resolution argument types from semantic expression typing
   instead of parser-owned call-argument typing, so dependent out-of-line member
   overloads resolve by the concrete substituted call signature seen during sema
+- ordinary non-receiver direct calls now also defer bare parser-selected target
+  reuse until after preserved definition-context records and fresh typed lookup
+  have both had a chance to resolve the call, so non-dependent two-phase lookup
+  remains definition-bound while ordinary direct-call fallback is narrower
 - semantic `operator[]` resolution now shares sema-owned overload-resolution
   argument typing and the same receiver-const candidate partitioning used by
   direct member-call lookup, so normalized subscripts no longer bind non-const
@@ -209,11 +221,10 @@ Tightening those is the next best cleanup target.
 
 ## Next steps
 
-1. Re-audit the remaining non-receiver / direct-call compatibility branches in
-   `resolveCallArgAnnotationTarget(...)` now that the active ordinary-call
-   blocker was not fallback at all, but ordinary overload viability plus
-   indirect-call argument typing. Remove or narrow only the branches that are
-   now truly dead after typed parser/sema evidence is complete.
+1. Audit the remaining last-resort non-receiver direct-call fallback in
+   `resolveCallArgAnnotationTarget(...)` and remove each surviving parser-
+   selected route only after the owning replay/materialization path preserves
+   enough typed overload evidence to make that fallback dead.
 
 2. If another replay/`StructTypeInfo` sync gap appears, prefer preserving
    source replay identity into that path rather than reintroducing any
@@ -582,6 +593,41 @@ Validated with:
 - `test_pack_expansion_in_template_body_ret0.cpp`
 - `test_template_builtin_addressof_substitution_ret0.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-09
+
+## 2026-06-11 non-receiver direct-call compatibility note
+
+Re-auditing `resolveCallArgAnnotationTarget(...)` showed that the live
+non-receiver compatibility branch was broader than the remaining standards
+debt warranted: ordinary direct calls still returned the parser-selected target
+immediately, before sema even attempted a fresh typed overload lookup. That
+was no longer needed for the covered ordinary-call paths after the recent
+argument-typing and overload-viability fixes, but non-dependent template-body
+calls still had to preserve definition-context binding.
+
+This slice now:
+
+- returns preserved `FunctionCallDefinitionLookupRecord` targets immediately for
+  non-receiver direct calls, so non-dependent two-phase lookup remains
+  definition-bound
+- stops reusing bare parser-selected non-receiver direct-call targets before
+  fresh typed lookup when no definition-bound record exists
+- keeps parser-selected target reuse only as the final compatibility boundary
+  after typed overload lookup and ordinary overload-set recovery still cannot
+  decide the call
+
+Validated with:
+
+- `template_lookup_non_dependent_no_rebind_ret0.cpp`
+- `test_template_two_phase_nondependent_later_better_overload_ret42.cpp`
+- `test_template_two_phase_member_func_template_ret42.cpp`
+- `test_template_out_of_line_member_two_phase_lookup_ret0.cpp`
+- `test_template_out_of_line_ctor_two_phase_lookup_ret0.cpp`
+- `test_template_ool_member_template_deferred_base_two_phase_lookup_ret0.cpp`
+- `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
+- `test_dependent_identifier_template_call_ret0.cpp`
+- `test_pack_expansion_in_template_body_ret0.cpp`
+- `test_template_builtin_addressof_substitution_ret0.cpp`
+- full `pwsh tests/run_all_tests.ps1` on 2026-06-11
 
 ## Validation guidance
 

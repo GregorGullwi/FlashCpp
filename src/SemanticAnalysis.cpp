@@ -7980,15 +7980,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return call_info.function_declaration;
 	};
-	auto fallbackToLateNonNormalizedCompatibilityTarget = [&]() -> const FunctionDeclarationNode* {
-		if (normalized_call) {
-			return nullptr;
-		}
-		if (definition_lookup_record_target != nullptr) {
-			return definition_lookup_record_target;
-		}
-		return call_info.function_declaration;
-	};
 
 	// Resolution order:
 	// 1. receiver-member direct lookup
@@ -8089,6 +8080,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return parser_selected_target;
 	}
 
+	if (!normalized_call &&
+		!call_info.is_indirect &&
+		!call_info.has_receiver &&
+		definition_lookup_record_target != nullptr) {
+		return definition_lookup_record_target;
+	}
+
 	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
 	const FunctionDeclarationNode* func_decl = op_call_query.hasValue() ? op_call_query.function : nullptr;
 	if (!func_decl && op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
@@ -8144,12 +8142,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 
-	if (const FunctionDeclarationNode* compatibility_target =
-			fallbackToLateNonNormalizedCompatibilityTarget();
-		compatibility_target != nullptr) {
-		return compatibility_target;
-	}
-
 	const DeclarationNode& decl = callee_decl;
 
 	const std::string_view name = call_info.qualified_name.isValid()
@@ -8194,6 +8186,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
+		if (!normalized_call &&
+			call_info.function_declaration != nullptr) {
+			return call_info.function_declaration;
+		}
 		if (!call_info.is_indirect) {
 			++stats_.direct_call_unresolved_after_lookup;
 		}
@@ -8242,6 +8238,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		} else {
 			func_decl = findViableTargetByArgCount(overloads);
 		}
+	}
+	if (!func_decl &&
+		!normalized_call &&
+		call_info.function_declaration != nullptr) {
+		func_decl = call_info.function_declaration;
 	}
 
 	if (!func_decl && !call_info.is_indirect) {
