@@ -3,624 +3,129 @@
 **Date:** 2026-05-12  
 **Last updated:** 2026-06-11
 
-This document tracks the standards-facing endpoint for template argument and
-dependent-name work. It should describe the intended model and the shortest path
-from the current implementation to that model, not a full branch history.
+This document tracks the standards-facing target for the remaining template
+infrastructure work. It should describe the intended semantic model, the
+highest-value remaining conformance gaps, and the next tasks required to close
+them. It is intentionally not a branch diary.
 
-## Goal
+## Target model
 
-Move FlashCpp toward a sema-owned template system where:
+Move FlashCpp toward a template implementation where:
 
 - dependency classification is explicit
-- template arguments are classified against the actual target parameter
+- non-dependent lookup remains definition-bound through instantiation
 - dependent names preserve semantic identity end-to-end
-- substitution, deduction, ranking, and materialization stay separate
-- replay-heavy paths become invariant-driven instead of repair-driven
+- substitution, deduction, ranking, and replay/materialization stay separate
+- semantic analysis, not parser leftovers, owns final call-target selection in
+  normalized flows
+- replay succeeds because invariant evidence matches, not because a repair scan
+  guessed correctly
 
-## What is already true enough to build on
+## Current conformance baseline
 
-- semantic lookup records cover the main template lookup paths
-- covered non-dependent template-body lookup preserves definition-context
-  binding
-- several replay paths already preserve source identity and enough context to
-  avoid AST-only intent recovery
-- owner/member-template chains are preserved semantically in many covered alias
-  and replay cases
-- explicit member-template call handling now carries enough early argument
-  information to avoid wrong cached overload reuse
-- semantic direct-call resolution for normalized template/member calls now uses
-  sema-owned overload-resolution argument typing instead of parser-owned
-  argument collection, so dependent out-of-line member overloads are selected
-  from the concrete substituted call signature seen during semantic analysis
-- ordinary non-receiver direct calls now also defer bare parser-selected target
-  reuse until after preserved definition-context records and fresh typed lookup
-  have both had a chance to resolve the call, so non-dependent two-phase
-  lookup remains definition-bound while the ordinary fallback surface is
-  smaller
-- semantic `operator[]` resolution now also uses sema-owned
-  overload-resolution argument typing plus receiver-const candidate filtering,
-  so normalized subscripts preserve lvalue/rvalue index evidence and do not
-  bind non-const members through const receivers
-- semantic receiverless callable `operator()` resolution for dependent/local
-  callable objects now also uses sema-owned overload-resolution argument typing
-  plus receiver-const candidate filtering, so template-instantiated functors no
-  longer rely on reduced expression typing for const or lvalue/rvalue overload
-  selection
-- sema now also rejects parser-selected non-const `operator()` targets on
-  const dependent/local callable receivers once semantic lookup has shown there
-  is no viable const-compatible overload, so this standards-visible negative
-  case no longer compiles through member-call fallback
-- sema now also rejects parser-selected non-const ordinary member-function
-  targets on const dependent/member-call receivers once const-aware lookup has
-  shown there is no viable const-compatible overload, while leaving
-  function-pointer member calls on their ordinary indirect-call path
-- sema now also rejects parser-selected ordinary member-call fallback once
-  typed receiver-member overload resolution has already proven the dependent
-  call ambiguous
-- partial-specialization plain out-of-line member replay now also syncs its
-  `StructTypeInfo` copy through source-member identity instead of
-  signature-equivalent matching
-- the dead shared signature-equivalent `StructTypeInfo` sync fallback is now
-  removed; current sync paths consume only preserved identity evidence
-- dependent alias resolution is semantic-only: the textual recovery path in
-  `resolveDependentMemberAlias(...)` has been removed in favor of preserved
-  owner/member-chain records and instantiation-context bindings
-- dependent nested member-template static constexpr chains now reuse typed
-  owner/member-chain records, active template bindings, and inherited
-  member-template lookup instead of hard-coded constexpr name scans
-- out-of-line member replay attachment now fails instantiation when replay
-  identity plus substituted-signature evidence cannot attach the definition,
-  instead of silently continuing into later template instantiation
-- plain out-of-line member replay now also requires positive signature
-  evidence for single-candidate same-name attachment; unresolved
-  substituted-signature outcomes no longer attach by default
-- nested and partial-specialization constructor-template replay now fails
-  directly when replay identity plus substituted-signature evidence cannot
-  attach the out-of-line definition
-- replay signature matching now reports explicit
-  `Match`/`Mismatch`/`InsufficientEvidence` outcomes; attachment paths treat
-  only `Match` as valid evidence
-- replay attachment loops that previously flattened matching to boolean now
-  preserve `InsufficientEvidence` and fail instantiation directly for
-  nested/partial member-template and constructor-stub routes
-- plain out-of-line member replay now also preserves `InsufficientEvidence`
-  and fails instantiation directly instead of degrading to generic
-  replay-attachment misses
-- constructor replay sync into StructTypeInfo now requires
-  `typeSpecifiersMatchForSignatureValidation(...)` evidence and no longer
-  treats token/name shape equivalence as valid evidence
-- `materializeAliasTemplateInstance` now delegates to
-  `materializeInstantiatedMemberAliasTarget` for direct-parameter alias cases
-  where the instantiated name resolves to a member type
-- member type aliases preserve surface modifiers (pointer/reference/cv/array/
-  function) across alias chains rather than collapsing to the terminal type
-- function-template trailing return `decltype(...)` reparsing now runs against
-  the instantiated parameter declarations rather than the pre-materialized
-  template pattern
-- non-explicit template-parameter materialization now preserves full
-  pointer-to-member metadata for bound type arguments
-- ordinary overload viability now requires a real conversion path before a
-  concrete struct argument can match a scalar parameter, instead of accepting a
-  parser-only `Struct -> scalar` guess
-- parser-side indirect call typing now preserves the callee return type when a
-  function pointer or function reference is called, so ordinary overload
-  ranking sees `fp(args...)` as the returned object type rather than the pointer
-  itself
+The compiler now has a workable standards-facing baseline in several previously
+blocking areas:
 
-## Highest-value remaining standards gap
+- covered non-dependent template-body lookup remains definition-bound
+- dependent alias resolution no longer relies on textual reconstruction
+- normalized direct-call resolution for template/member calls uses sema-owned
+  overload-resolution argument typing
+- semantic const-aware lookup for ordinary member calls, `operator[]`, and
+  callable `operator()` now rejects stale non-const parser-selected targets
+  once sema has typed evidence
+- direct-call viability now requires real conversion paths
+- indirect call typing preserves the returned object type during overload
+  ranking
+- replay attachment in the covered routes now expects positive
+  identity/signature evidence rather than accepting unresolved
+  shape-based matches
 
-The textual dependent-alias recovery path has been deleted; the former blockers
-now resolve through preserved semantic records:
+## Highest-value remaining standards gaps
 
-- `test_member_template_alias_preserves_outer_metadata_ret0.cpp`
-- `test_alias_template_nested_member_value_ret42.cpp`
-- `test_template_current_instantiation_alias_qualified_deeper_member_ret0.cpp`
+### 1. Compatibility recovery is still covering direct-call metadata loss
 
-With textual recovery gone, the next conformance step is keeping replay
-attachment invariant-driven: tighten the remaining replay paths so valid cases
-succeed via source identity plus canonical substituted-signature evidence rather
-than name/arity repair scans, and expand current-instantiation /
-unknown-specialization modeling only where it unblocks those paths.
+Some instantiated ordinary direct calls still lose their preserved
+definition-bound lookup record while retaining an authoritative mangled target.
+Sema now recovers that target, which prevents standards-visible rebinding to a
+later overload, but the standards-conforming endpoint is to preserve the
+semantic lookup record itself.
+
+Why this matters:
+
+- a preserved mangled target is only a compatibility boundary
+- the real semantic model should still know *why* the call is definition-bound
+- removing the final parser-selected fallback depends on closing this metadata
+  gap first
+
+### 2. Replay must stay invariant-driven
+
+The remaining standards risk is no longer textual dependent-name recovery. It
+is replay/materialization paths that may still succeed or sync through weak
+name/arity evidence instead of source identity plus canonical substituted
+signatures.
+
+Why this matters:
+
+- replay that succeeds through shape-based repair can silently select the wrong
+  declaration
+- those weak paths tend to reopen non-conforming fallback behavior later in
+  sema or codegen
+
+### 3. Final parser-selected ordinary direct-call fallback
+
+The remaining ordinary non-receiver compatibility route should disappear from
+normalized flows once replay/materialization preserves enough typed evidence.
+
+Why this matters:
+
+- as long as the fallback exists, sema is not yet the sole owner of final
+  ordinary direct-call target selection
+- the standard model is cleaner when typed sema evidence resolves or rejects
+  the call directly
+
+### 4. Current-instantiation / unknown-specialization coverage
+
+This is still necessary, but it is no longer the immediate next task. Expand
+it only for concrete unresolved cases that block steps 1-3.
 
 ## Priority order
 
-1. ~~Preserve semantic owner/member-chain records in the remaining dependent
-   alias callers.~~ **Done** — the textual recovery path is removed.
+1. Preserve direct-call lookup records across the remaining replay and
+   materialization paths that currently rely on mangled-name recovery.
 
-2. Continue tightening replay attachment so valid cases succeed via source
-   identity plus canonical substituted-signature evidence, not shape-based
-   repair scans.
-   The next slice is likely the remaining unresolved-signature acceptance paths
-   where replay can still succeed without enough evidence outside the now-
-   tightened plain-member and member-template paths.
+2. Remove the final parser-selected non-receiver direct-call fallback in
+   `resolveCallArgAnnotationTarget(...)` once step 1 is complete for the
+   remaining live paths.
 
-3. Unify the remaining semantic call-resolution entry points around the same
-   sema-owned overload-resolution argument collector now used for normalized
-   template/member direct calls. The 2026-06-04 follow-ups closed the concrete
-   `operator[]` and dependent/local callable `operator()` gaps by sharing
-   receiver-aware candidate filtering plus sema-owned argument typing with
-   direct member-call resolution, and the 2026-06-08/2026-06-09 follow-ups
-   close the documented const-receiver no-viable callable and ordinary-member
-   diagnostic holes. The next step here is auditing any residual semantic call
-   sites still outside that model, then removing the temporary parser-target
-   compatibility fallbacks that remain once typed sema evidence is available.
+3. Tighten the next replay/`StructTypeInfo` sync gap by preserving source
+   identity rather than restoring any signature-equivalent or textual repair
+   logic.
 
-4. Expand current-instantiation, dependent-base, and unknown-specialization
-   handling only where that unblocks steps 2 and 3.
-
-5. Leave broader cleanup for later unless it becomes a blocker:
-   sema-owned ranking/deduction expansion, remaining repair-path removal, and
-   sema-level modeling for aggregate-forwarding constructor sequences.
+4. Expand current-instantiation and unknown-specialization handling only where
+   it unblocks concrete replay or typed-lookup failures still remaining after
+   steps 1-3.
 
 ## Standards rules for follow-up work
 
 - do not normalize textual reconstruction as acceptable semantics
-- prefer invariant failures or proper diagnostics over silent repair in
-  normalized flows
+- prefer hard failure or proper diagnostics over silent repair in normalized
+  semantic flows
 - keep compatibility behavior explicit, narrow, and temporary
-- treat codegen-side recovery as debt to remove, not a design tool; when a
-  late retry is still needed, it should delegate to typed lookup such as
-  `resolveBaseClassMemberTypeChain`
-
-## Next steps
-
-1. Audit why some instantiated ordinary direct calls still lose
-   `FunctionCallDefinitionLookupRecord` / `DependentUnqualifiedCallLookupRecord`
-   while preserving an authoritative mangled target. The current mangled-name
-   recovery is a compatibility boundary, not the desired end state.
-
-2. Continue removing the final parser-selected non-receiver fallback in
-   `resolveCallArgAnnotationTarget(...)` only after the owning replay or
-   materialization path preserves enough typed evidence to make that route
-   unnecessary.
-
-3. If another replay/`StructTypeInfo` sync gap turns up, fix it by preserving
-   source replay identity into that path rather than restoring any
-   signature-equivalent fallback.
-
-4. Only after those are stable, extend current-instantiation and
-   unknown-specialization modeling for the specific unresolved cases that remain.
-
-## 2026-06-09 ordinary member const-receiver conformance note
-
-The next live standards-visible call gap was the ordinary member-call analogue
-of the already-fixed callable case: a dependent `const T& obj; obj.member(...)`
-could still compile when the parser had attached a non-const member target,
-even though sema's const-aware member lookup found no viable const-compatible
-overload.
-
-The fix now:
-
-- blocks reuse of that stale parser-selected non-const member target in the
-  shared sema call-annotation path once const-aware lookup has shown there is
-  no const-compatible overload
-- emits a hard member-call diagnostic for the covered path instead of letting
-  normalized/template calls continue toward codegen fallback
-- preserves valid function-pointer member calls by requiring actual
-  member-function ownership before applying the const-receiver diagnostic
-
-Validated with:
-
-- `test_template_member_call_const_receiver_fail.cpp`
-- `test_template_callable_operator_const_receiver_fail.cpp`
-- `test_funcptr_nested_template_struct_ret0.cpp`
-- `test_typedef_function_ptr_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
-
-## 2026-06-09 ordinary member ambiguity conformance note
-
-The next live standards-visible gap in the same family was ambiguity handling
-for dependent ordinary member calls: once instantiation made the receiver call
-ambiguous, sema could still degrade that typed result to "no unique target"
-and continue by reusing a parser-selected member candidate.
-
-The fix now:
-
-- preserves explicit ambiguity in the shared receiver-member typed overload
-  helper instead of collapsing it to a generic miss
-- blocks parser-selected fallback once sema has already proven the receiver
-  call ambiguous
-- emits a hard member-call ambiguity diagnostic from the shared call-annotation
-  path for the covered cases
-
-Validated with:
-
-- `test_template_member_call_ambiguous_fail.cpp`
-- `test_template_member_call_no_viable_overload_fail.cpp`
-- `test_template_member_call_const_receiver_fail.cpp`
-- `test_funcptr_nested_template_struct_ret0.cpp`
-- `test_typedef_function_ptr_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
-
-## 2026-06-09 partial-specialization StructTypeInfo replay-sync conformance note
-
-The next active standards-relevant replay gap was no longer initial attachment;
-that part was already identity-driven. The remaining weakness was the later
-`StructTypeInfo` sync for partial-specialization plain out-of-line members:
-the instantiated stub was attached by source-member identity, but the parallel
-`StructTypeInfo` copy could still be rediscovered only by signature-equivalent
-matching because the partial-specialization copy path never preserved
-source-member -> struct-info-member identity for ordinary functions.
-
-The fix now:
-
-- records source-member -> `StructTypeInfo` member index identity for ordinary
-  function copies in the partial-specialization struct-info build path
-- uses that identity first during partial-specialization plain-member replay
-  sync instead of rediscovering the `StructTypeInfo` target by equivalent
-  signature
-- removes the active same-name overload dependence on weak signature-shaped
-  sync in the covered route
-
-Validated with:
-
-- `test_template_partial_spec_ool_plain_member_same_name_overload_ret0.cpp`
-- `test_template_ool_plain_member_same_name_overload_ret0.cpp`
-- `test_template_ool_ctor_same_name_overload_ret0.cpp`
-- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
-- `test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp`
-- `test_template_ool_ctor_same_name_overload_template_default_arg_ret0.cpp`
-- `test_template_ool_ctor_template_nullopt_single_candidate_no_attach_ret0.cpp`
-- `test_template_ool_plain_member_dependent_member_template_alias_overload_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
-
-## 2026-06-09 dead shared StructTypeInfo sync fallback cleanup note
-
-After the partial-specialization replay-sync fix, the remaining shared
-signature-equivalent `StructTypeInfo` sync fallback was probed directly with
-hard-fail guards across the full suite. No current test depended on it.
-
-The cleanup now:
-
-- deletes that dead signature-equivalent fallback from the shared constructor
-  and function `StructTypeInfo` sync helpers
-- leaves those helpers keyed only by stronger replay evidence already preserved
-  in the current architecture: direct node identity and replay source keys
-- reclassifies the next standards-facing task back to the live direct-call
-  compatibility boundary instead of to a dead replay branch
-
-Validated with:
-
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-09 with the hard-fail probe
-- full `pwsh tests/run_all_tests.ps1` again after removing the dead fallback
-
-## 2026-06-04 dependent decltype conformance note
-
-The remaining pointer-to-member `decltype` failures were not primarily member
-access bugs. The deeper standards gap was that free-function template trailing
-return clauses were being reparsed before the instantiated parameter list
-existed, and non-explicit parameter materialization could erase bound
-pointer-to-member structure by reducing a template argument like `int Box::*`
-to `int`.
-
-The fix now:
-
-- reparses saved free-function trailing return clauses after parameter
-  materialization, with the concrete instantiated parameter declarations in
-  scope
-- copies the saved trailing-return/template parse positions onto the
-  instantiated function before replay
-- materializes non-explicit bound parameter types through the full substituted
-  type-specifier path so member-pointer category/owner data survive deduction
-- preserves member-pointer owner metadata when converting stored bound template
-  arguments back into `TypeSpecifierNode`s
-
-Standards-visible result:
-
-- `decltype(wrapped.get())` in a function-template trailing return now
-  preserves `T&`
-- `decltype(wrapped.get().*pmd)` likewise preserves the lvalue reference and no
-  longer admits invalid `Result*` forms
-
-Validated with:
-
-- `test_dependent_decltype_member_call_ref_ret0.cpp`
-- `test_dependent_decltype_member_pointer_local_ret0.cpp`
-- `test_dependent_decltype_member_pointer_local_fail.cpp`
-- `test_dependent_decltype_arrow_member_pointer_ret0.cpp`
-- `test_dependent_decltype_arrow_member_pointer_fail.cpp`
-- `test_template_trailing_return_decltype_nttp_ret0.cpp`
-- `test_template_trailing_return_namespace_lookup_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-04, with only the unrelated
-  pre-existing lambda-link failures remaining
-
-## 2026-06-04 semantic operator[] conformance note
-
-Auditing the remaining sema call-resolution entry points found a live C++20
-conformance bug in semantic `operator[]` resolution: the overload set was
-still classified from reduced expression typing and fallback selection ignored
-receiver constness. That made two ordinary language rules unstable in normalized
-subscript calls:
-
-- a const receiver must not bind a non-const `operator[]`
-- lvalue and prvalue index expressions must preserve the overload-resolution
-  categories seen by ordinary member-call lookup
-
-`SemanticAnalysis::tryResolveSubscriptOperator` now reuses the same
-receiver-aware candidate partitioning and sema-owned overload-resolution
-argument typing already used by normalized member-call resolution. This keeps
-the semantic subscript path aligned with the broader sema-owned call model
-instead of depending on reduced parser-shaped typing.
-
-Validated with:
-
-- `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`
-- `test_operator_subscript_const_ambiguity_fail.cpp`
-- `test_operator_subscript_const_ret42.cpp`
-- `test_operator_subscript_overloads_ret42.cpp`
-- `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
-
-## 2026-06-04 callable/operator() conformance note
-
-The remaining standards-callable regressions in normalized/deferred paths were:
-
-- nested generic-lambda callable captures could remain zero-sized in closure
-  layout, causing overlap with subsequent captures
-- normalized direct-call lowering could hard-fail when sema-owned target
-  metadata was missing, even for late/deferred call paths that still had typed
-  lookup evidence
-- unresolved callable-reference recursive self calls could miss the correct
-  mangled target because self-argument qualifier handling diverged from ordinary
-  recursive self lowering
-
-The fix now:
-
-- backfills unresolved by-value capture size/alignment from capture member type
-  info and recalculates closure layout before emission
-- preserves strict sema-owned direct-call target use when available, and limits
-  compatibility behavior to an explicit metadata-missing boundary
-- unifies unresolved callable-reference recursive self-call lowering with the
-  ordinary recursive self path, including lvalue-reference self-argument
-  qualifier treatment
-
-Conformance debt to remove next:
-
-- delete the metadata-missing direct-call compatibility boundary once sema
-  always provides owned direct-call targets for these normalized/deferred calls
-
-Validated with:
-
-- `test_generic_lambda_callable_nested_clone_ret0.cpp`
-- `test_generic_lambda_recursive_self_ret0.cpp`
-- `test_lambda_cpp20_comprehensive_ret135.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
-
-## 2026-06-04 dependent callable operator() conformance note
-
-The next live callable conformance gap was not another parser issue. It was the
-late semantic resolution path for receiverless dependent/local callable objects:
-`SemanticAnalysis::tryResolveCallableOperatorImpl` still classified overloads
-from reduced expression typing and did not partition candidates by receiver
-constness before fallback selection. That meant a template-instantiated functor
-call could preserve the wrong overload category even after the concrete
-callable type was known.
-
-The fix now:
-
-- reuses sema-owned overload-resolution argument typing for dependent/local
-  callable `operator()` calls
-- applies the same receiver-const candidate filtering used by ordinary member
-  calls and semantic `operator[]`
-- preserves recursive lambda self forwarding while treating sema-analyzed
-  absent struct-callable targets as invalid in the covered codegen path
-
-Validated with:
-
-- `test_template_callable_operator_sema_receiver_and_arg_overload_ret0.cpp`
-- `test_operator_call_sema_receiver_and_arg_overload_ret0.cpp`
-- `test_callable_sema_resolved_ret0.cpp`
-- `test_template_out_of_line_operator_call_ret0.cpp`
-- `test_generic_lambda_recursive_self_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-04
-
-## 2026-06-08 dependent callable const-receiver conformance note
-
-The documented remaining callable negative case is now closed: a dependent
-`const Callable& c; c(...)` with only a non-const `operator()` used to compile
-because the parser-selected member-call target could survive even after sema's
-const-aware lookup found no viable callable overload.
-
-The fix now:
-
-- blocks reuse of that stale parser-selected non-const `operator()` target for
-  const receivers once sema has no const-compatible callable candidate
-- emits the failure from sema as a hard callable diagnostic instead of
-  continuing through member-call fallback
-- adds a stable template-instantiation `_fail` regression for the covered case
-
-Validated with:
-
-- `test_template_callable_operator_const_receiver_fail.cpp`
-- `test_template_callable_operator_const_receiver_explicit_member_fail.cpp`
-- `test_template_callable_operator_sema_receiver_and_arg_overload_ret0.cpp`
-- `test_operator_call_sema_receiver_and_arg_overload_ret0.cpp`
-- `test_callable_operator_default_arg_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-08
-
-## 2026-06-04 non-standard template test cleanup
-
-A focused cleanup pass converted template-focused non-standard tests from
-`docs/TEST_RUNNER_FAILURE_REPORT.md` to valid C++20 forms while preserving test
-intent (friend declarations for class templates, protected-access setup, pack
-expansion form, forward declarations, overload ambiguity trigger, and constexpr
-initializer requirements).
-
-Result: all updated tests pass `clang++ --target=x86_64-unknown-linux-gnu
--std=c++20 -pedantic-errors -fsyntax-only` and also pass targeted
-`pwsh tests/run_all_tests.ps1` runs. No new missing-feature entry was required
-for this subset.
-
-## 2026-06-04 wider non-standard C++20 cleanup (non-extension set)
-
-A wider pass converted the remaining non-extension non-standard tests to
-portable C++20 forms and verified them with `clang++ -std=c++20
--pedantic-errors -fsyntax-only`. (Per repo preference, test edits avoid
-`#include <cstddef>`.)
-
-Now-passing tests from this wider pass were removed from
-`docs/TEST_RUNNER_FAILURE_REPORT.md`.
-
-Remaining blockers in FlashCpp for the edited non-extension set are now grouped
-as implementation gaps rather than language-invalid test input:
-
-- Standard library header/template ingestion gaps (`<compare>`, `<utility>`,
-  `<typeinfo>`) affecting spaceship, forwarding, and RTTI test families.
-- `constexpr` member-call binding in
-  `test_identifier_binding_constexpr_function_call_member_access_prefers_static_member_function_ret42.cpp`.
-- Structured-binding tuple customization lookup in
-  `test_structured_binding_member_get_preferred_over_free_get_ret42.cpp`.
-- `no_unique_address` and several `offsetof`/layout tests under the current
-  header-ingestion/runtime-layout path.
-
-## 2026-06-02 constexpr lambda conformance note
-
-The updated constexpr-lambda tests exposed runtime capture-lowering bugs rather
-than compile-time evaluation failures. Generated code now follows the C++20
-closure model for captured `this` and nested captures:
-
-- `[this]` member calls use the captured enclosing object pointer
-- `[*this]` member calls use the copied object stored in the closure
-- nested `[this]` captures propagate the effective enclosing object pointer,
-  including when the enclosing lambda captured `*this`
-- nested reference captures of enclosing closure members take the member's
-  address directly and preserve the referenced object's real size
-- constexpr member evaluation now preserves receiver cv-qualification through
-  synthetic `this` bindings and rejects stale lowered non-const targets when
-  evaluating calls from a const member body
-
-Validated with all `tests/*constexpr_lambda*.cpp` tests on 2026-06-02.
-
-## 2026-06-09 direct-call pack-substitution conformance note
-
-The next live ordinary-call conformance blocker after the receiver-side fixes
-was narrower than expected: the remaining non-receiver compatibility path was
-still being exercised by a substitution gap, not by a fundamentally missing
-semantic lookup rule. When `ExpressionSubstitutor` rebuilt a substituted direct
-call and left a `PackExpansionExprNode` in the argument list, the dependent
-unqualified call could not collect concrete argument types at the point of
-instantiation, so the later compatibility branch still had to recover the
-call.
-
-The fix now:
-
-- preserves pack expansion while rebuilding substituted constructor, direct,
-  and receiver-call argument lists inside `ExpressionSubstitutor`
-- allows dependent-unqualified direct calls to arrive at point-of-instantiation
-  lookup with concrete argument types in the covered path
-- removes the active standards-visible fallback route exercised by
-  `add(readValue(__builtin_addressof(args))...)` without restoring any broad
-  parser-target recovery
-
-Validated with:
-
-- `test_template_builtin_addressof_substitution_ret0.cpp`
-- `test_dependent_identifier_template_call_ret0.cpp`
-- `test_pack_expansion_in_template_body_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
-
-Next step:
-
-- audit the residual non-receiver compatibility logic in
-  `resolveCallArgAnnotationTarget(...)` again and remove or narrow the
-  remaining branch only after each surviving direct-call route is proven to
-  reach typed semantic lookup with complete argument evidence
-
-## 2026-06-09 ordinary direct-call viability conformance note
-
-The next live ordinary-call conformance blocker after the pack-substitution
-follow-up was not a template-only replay issue anymore. A plain call such as
-`pick(NotInt{})` could still compile even though `NotInt` had no conversion
-operator or converting constructor for `int`, and the same false viability then
-reappeared through instantiated dependent direct calls. Tightening that path
-also exposed a second parser typing bug: indirect calls like `sumBig(fp(10))`
-were being ranked as though `fp(10)` had function-pointer type instead of the
-return type `Big`.
-
-The fix now:
-
-- preserves concrete `TypeSpecifierNode` identity through parser-side
-  reference-unwrapping during overload viability instead of reducing those
-  comparisons to coarse `TypeCategory` pairs
-- requires a real conversion path before a concrete struct argument can match a
-  scalar parameter in ordinary overload resolution, while preserving the
-  existing incomplete-type optimism for genuinely unresolved parse-time cases
-- recovers indirect-call return types from function-pointer and
-  function-reference signatures so parser-side argument typing feeds the real
-  returned object type into later overload ranking
-
-Validated with:
-
-- `test_overload_resolution_struct_without_conversion_to_int_fail.cpp`
-- `test_overload_resolution_struct_temporary_without_conversion_to_int_fail.cpp`
-- `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
-- `test_funcptr_large_struct_return_direct_use_ret0.cpp`
-- `test_implicit_conversion_arg_ret42.cpp`
-- `test_func_arg_conv_ctor_sema_ret42.cpp`
-- `test_dependent_identifier_template_call_ret0.cpp`
-- `test_pack_expansion_in_template_body_ret0.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-09
-
-## 2026-06-11 non-receiver direct-call compatibility conformance note
-
-The next direct-call cleanup slice after the ordinary viability fix was no
-longer a broad overload-rule bug. It was a remaining compatibility decision in
-`resolveCallArgAnnotationTarget(...)`: for ordinary non-receiver direct calls,
-the resolver still accepted the parser-selected target before sema had tried a
-fresh typed lookup. That was too broad for standards-conforming ordinary-call
-behavior, but preserved definition-context records still had to remain
-authoritative for non-dependent template-body calls.
-
-The fix now:
-
-- returns preserved `FunctionCallDefinitionLookupRecord` targets immediately for
-  non-receiver direct calls so non-dependent two-phase lookup stays
-  definition-bound
-- stops reusing bare parser-selected non-receiver targets before fresh typed
-  lookup when no definition-bound record exists
-- recovers authoritative non-receiver direct-call targets from preserved
-  mangled metadata when an instantiated call no longer carries the original
-  definition/dependent lookup record, avoiding a later ordinary-lookup rebound
-- keeps parser-selected target reuse only as the final compatibility boundary
-  after typed overload lookup and ordinary overload-set recovery still cannot
-  determine the call
-- fixes a validation regression in struct-to-pointer built-in subscripting by
-  deriving conversion-operator element types without mutating a copied
-  canonical pointer-level container that could assert at runtime
-
-Validated with:
-
-- `template_lookup_non_dependent_no_rebind_ret0.cpp`
-- `test_template_two_phase_nondependent_later_better_overload_ret42.cpp`
-- `test_template_two_phase_member_func_template_ret42.cpp`
-- `test_template_out_of_line_member_two_phase_lookup_ret0.cpp`
-- `test_template_out_of_line_ctor_two_phase_lookup_ret0.cpp`
-- `test_template_ool_member_template_deferred_base_two_phase_lookup_ret0.cpp`
-- `test_template_two_phase_explicit_nondependent_later_overload_ret42.cpp`
-- `test_template_two_phase_nondependent_later_function_template_overload_ret42.cpp`
-- `test_template_qualified_phase1_fallback_ret0.cpp`
-- `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
-- `test_dependent_identifier_template_call_ret0.cpp`
-- `test_pack_expansion_in_template_body_ret0.cpp`
-- `test_template_builtin_addressof_substitution_ret0.cpp`
-- `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
-- `test_subscript_pointer_conversion_template_ret42.cpp`
-- full `pwsh tests/run_all_tests.ps1` on 2026-06-11
+- treat codegen-side recovery as debt to remove, not as architecture
+- when a late retry is still necessary, route it through typed semantic lookup
+  instead of rebuilding intent from strings or shallow shape matches
 
 ## Validation guidance
 
-For work in this area:
+For work in this area, rerun:
 
-- add a focused regression first when a new gap is identified
-- rerun `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp` and
-  `test_operator_subscript_const_ambiguity_fail.cpp` and
-  `test_constexpr_operator_bracket_const_nonconst_ret0.cpp` and
-  `test_subscript_pointer_conversion_template_ret42.cpp` when touching
-  semantic subscript resolution, pointer-conversion discovery, or
-  receiver-sensitive normalized-call lookup
-- rerun the three former dependent-alias blocker tests when touching alias
-  ownership or current-instantiation handling (they now exercise the
-  semantic-only route)
-- rerun the dependent member-template static constexpr regressions when touching
-  nested owner/member-chain replay or static member initializer materialization
-- run `pwsh tests/run_all_tests.ps1` before considering the slice complete
+- the focused regression that motivated the slice
+- `template_lookup_non_dependent_no_rebind_ret0.cpp`
+- `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
+- `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
+- `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
+- `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`
+- `test_operator_subscript_const_ambiguity_fail.cpp`
+- `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
+- `test_subscript_pointer_conversion_template_ret42.cpp`
+- full `pwsh tests/run_all_tests.ps1` before considering the slice complete
