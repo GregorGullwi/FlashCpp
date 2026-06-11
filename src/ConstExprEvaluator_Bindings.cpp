@@ -500,6 +500,16 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	}
 
 	if (call_expr.has_dependent_unqualified_lookup_record()) {
+		const DependentUnqualifiedCallLookupRecord& dependent_record =
+			*call_expr.dependent_unqualified_lookup_record();
+		if (dependent_record.point_of_instantiation_function != nullptr) {
+			return evaluate_function_call_with_bindings(
+				*dependent_record.point_of_instantiation_function,
+				call_expr.arguments(),
+				bindings,
+				context,
+				mutable_bindings);
+		}
 		// POI resolution requires parser-owned context. Missing parser/sema is a
 		// contract violation and must hard-fail.
 		SemanticAnalysis& sema_ref =
@@ -539,7 +549,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		}
 		std::optional<ASTNode> resolved_target =
 			parser.resolveDependentUnqualifiedCallAtPointOfInstantiation(
-				*call_expr.dependent_unqualified_lookup_record(),
+				dependent_record,
 				call_expr.arguments(),
 				arg_types);
 		if (!resolved_target.has_value()) {

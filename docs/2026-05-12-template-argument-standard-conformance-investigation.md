@@ -40,27 +40,28 @@ blocking areas:
   identity/signature evidence rather than accepting unresolved
   shape-based matches
 - resolved direct-call materialization now preserves
-  `DependentUnqualifiedCallLookupRecord` when the instantiated target still
-  matches the definition-bound ordinary lookup, reducing replay-heavy
-  template-member dependence on mangled-name recovery
+  `DependentUnqualifiedCallLookupRecord` both when the instantiated target
+  stays definition-bound and when dependent-unqualified POI completion selects
+  a different final function, reducing replay-heavy dependence on parser
+  reruns and mangled-name recovery in those paths
 
 ## Highest-value remaining standards gaps
 
-### 1. Compatibility recovery is still covering non-definition-bound direct-call metadata loss
+### 1. Compatibility recovery is still covering direct-call metadata loss outside dependent-unqualified completion
 
-The definition-bound dependent-unqualified replay path is now preserved through
-resolved-call materialization, but instantiated ordinary direct calls can still
-lose structured point-of-instantiation evidence when the final result is not
-the same function captured by the definition-bound ordinary lookup record.
-Those cases currently retain an authoritative mangled target, and sema recovers
-that target, but the standards-conforming endpoint is to preserve structured
-semantic evidence for the final result itself.
+Dependent-unqualified replay/materialization now preserves both the
+definition-bound ordinary lookup and the final point-of-instantiation target.
+The remaining compatibility risk is therefore narrower: other instantiated
+ordinary direct calls can still lose structured semantic evidence and fall back
+to mangled-name or parser-selected compatibility behavior instead of carrying
+their final lookup result directly.
 
 Why this matters:
 
 - a preserved mangled target is only a compatibility boundary
 - the real semantic model should still know why the call is definition-bound
-  or which point-of-instantiation completion selected it
+  and, when POI completion changes the winner, which final semantic target was
+  selected
 - removing the final parser-selected fallback depends on closing this metadata
   gap first
 
@@ -97,22 +98,18 @@ it only for concrete unresolved cases that block steps 1-3.
 
 ## Priority order
 
-1. Extend preserved direct-call metadata so non-definition-bound
-   point-of-instantiation results, especially ADL-completed
-   dependent-unqualified calls, survive replay/materialization without
-   mangled-name recovery.
+1. Remove the final parser-selected non-receiver direct-call fallback in
+   `resolveCallArgAnnotationTarget(...)`, and fix the first exposed regression
+   by preserving semantic metadata in the owning replay/materialization path
+   instead of reintroducing compatibility recovery.
 
-2. Remove the final parser-selected non-receiver direct-call fallback in
-   `resolveCallArgAnnotationTarget(...)` once step 1 is complete for the
-   remaining live paths.
-
-3. Tighten the next replay/`StructTypeInfo` sync gap by preserving source
+2. Tighten the next replay/`StructTypeInfo` sync gap by preserving source
    identity rather than restoring any signature-equivalent or textual repair
    logic.
 
-4. Expand current-instantiation and unknown-specialization handling only where
+3. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
-   steps 1-3.
+   steps 1-2.
 
 ## Standards rules for follow-up work
 
@@ -132,6 +129,7 @@ For work in this area, rerun:
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
+- `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
 - `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
 - `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
 - `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`

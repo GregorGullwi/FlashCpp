@@ -34,9 +34,11 @@ the areas that were previously blocking standards-visible behavior:
   expects positive identity/signature evidence rather than silently accepting
   unresolved shape-based matches
 - resolved direct-call materialization now preserves
-  `DependentUnqualifiedCallLookupRecord` when the instantiated target still
-  matches the definition-bound ordinary lookup, covering replay-heavy member
-  instantiations without relying on sema mangled-name recovery
+  `DependentUnqualifiedCallLookupRecord` both when the instantiated target
+  stays definition-bound and when dependent-unqualified POI completion selects
+  a different final function, so sema/constexpr can reuse structured call
+  metadata instead of re-running parser lookup or relying on mangled-name
+  recovery in those paths
 
 ## Architectural invariants to preserve
 
@@ -55,23 +57,25 @@ Follow-up work in this area should preserve these rules:
 
 ## Highest-value remaining architectural gaps
 
-### 1. Remaining non-definition-bound direct-call metadata loss
+### 1. Remaining direct-call metadata loss outside dependent-unqualified completion
 
-The definition-bound dependent-unqualified replay path is now preserved through
-resolved-call materialization, but some instantiated ordinary direct calls can
-still reach sema with only an authoritative mangled target when the final
-point-of-instantiation result is not representable by the current preserved
-record alone (for example, ADL-completed dependent-unqualified calls).
+Dependent-unqualified direct-call completion now preserves both the
+definition-bound ordinary lookup and the final point-of-instantiation target
+through resolved-call materialization. The remaining direct-call metadata risk
+is therefore narrower: other instantiated ordinary direct-call paths may still
+reach sema with only mangled or parser-selected compatibility evidence instead
+of preserved structured lookup metadata.
 
-The current mangled-name recovery in sema remains an acceptable narrow
-compatibility boundary there, but it is not the desired end state.
+The current mangled-name recovery and parser-selected compatibility boundary in
+sema remain acceptable narrow transitions there, but they are not the desired
+end state.
 
 Desired end state:
 
-- the instantiated call preserves enough structured semantic evidence to
-  recover the final point-of-instantiation result directly
-- sema does not need mangled-name recovery to stay definition-bound or to
-  reuse a completed dependent-unqualified result
+- every instantiated ordinary direct call preserves enough structured semantic
+  evidence to recover its final target directly
+- sema does not need mangled-name recovery or parser-selected compatibility to
+  reuse a completed replay/materialization result
 - the final parser-selected fallback in `resolveCallArgAnnotationTarget(...)`
   becomes removable
 
@@ -108,19 +112,15 @@ where it unblocks real replay or typed-lookup failures.
 
 ## Recommended task order
 
-1. Extend the preserved direct-call metadata so non-definition-bound
-   point-of-instantiation results (especially ADL-completed
-   dependent-unqualified calls) survive replay/materialization without
-   mangled-name recovery.
+1. Remove the remaining final parser-selected non-receiver direct-call fallback
+   in `resolveCallArgAnnotationTarget(...)`. Any regression it exposes should
+   be fixed by preserving semantic metadata in the owning replay/materialization
+   path rather than restoring the fallback.
 
-2. Remove the remaining final parser-selected non-receiver direct-call fallback
-   in `resolveCallArgAnnotationTarget(...)` once step 1 proves the owning paths
-   carry enough semantic evidence.
-
-3. Fix the next replay/`StructTypeInfo` sync miss by preserving source identity
+2. Fix the next replay/`StructTypeInfo` sync miss by preserving source identity
    in that path instead of restoring any signature-equivalent recovery logic.
 
-4. Only after steps 1-3 are stable, expand
+3. Only after steps 1-2 are stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
    that still block standards-conforming typed lookup.
 
@@ -132,6 +132,7 @@ When changing this area, always rerun:
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
+- `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
 - `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
 - `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
 - `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp`

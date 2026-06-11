@@ -8132,6 +8132,13 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		call_info.dependent_unqualified_lookup_record->has_value()) {
 		const DependentUnqualifiedCallLookupRecord& dependent_record =
 			**call_info.dependent_unqualified_lookup_record;
+		if (const FunctionDeclarationNode* completed_poi_target =
+				resolveBoundFunctionTarget(
+					dependent_record.point_of_instantiation_function,
+					dependent_record.point_of_instantiation_mangled_name);
+			completed_poi_target != nullptr) {
+			return completed_poi_target;
+		}
 		if (const FunctionDeclarationNode* dependent_record_target =
 				resolveBoundFunctionTarget(
 					dependent_record.definition_bound_function,
