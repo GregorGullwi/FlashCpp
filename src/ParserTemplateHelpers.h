@@ -340,14 +340,9 @@ inline void registerSourceMemberStructInfoIndex(
 	}
 }
 
-inline FunctionDeclarationNode* findStructInfoFunctionBySourceMemberIdentity(
-	StructTypeInfo* struct_info,
+inline std::optional<size_t> findStructInfoIndexBySourceMemberIdentity(
 	const SourceMemberStructInfoIndexMaps& index_maps,
 	const ASTNode& source_member) {
-	if (struct_info == nullptr) {
-		return nullptr;
-	}
-
 	auto find_index = [&](const void* key) -> std::optional<size_t> {
 		if (key == nullptr) {
 			return std::nullopt;
@@ -374,6 +369,19 @@ inline FunctionDeclarationNode* findStructInfoFunctionBySourceMemberIdentity(
 			}
 		}
 	}
+	return index;
+}
+
+inline FunctionDeclarationNode* findStructInfoFunctionBySourceMemberIdentity(
+	StructTypeInfo* struct_info,
+	const SourceMemberStructInfoIndexMaps& index_maps,
+	const ASTNode& source_member) {
+	if (struct_info == nullptr) {
+		return nullptr;
+	}
+
+	std::optional<size_t> index =
+		findStructInfoIndexBySourceMemberIdentity(index_maps, source_member);
 	if (!index.has_value() ||
 		*index >= struct_info->member_functions.size()) {
 		return nullptr;
@@ -391,32 +399,8 @@ inline ConstructorDeclarationNode* findStructInfoConstructorBySourceMemberIdenti
 		return nullptr;
 	}
 
-	auto find_index = [&](const void* key) -> std::optional<size_t> {
-		if (key == nullptr) {
-			return std::nullopt;
-		}
-		auto it = index_maps.by_node.find(key);
-		if (it == index_maps.by_node.end()) {
-			return std::nullopt;
-		}
-		return it->second;
-	};
-
-	std::optional<size_t> index = find_index(sourceMemberAstNodeKey(source_member));
-	if (!index.has_value() &&
-		source_member.is<TemplateFunctionDeclarationNode>()) {
-		index = find_index(sourceMemberAstNodeKey(
-			source_member.as<TemplateFunctionDeclarationNode>().function_declaration()));
-	}
-	if (!index.has_value()) {
-		if (std::optional<uint64_t> location_key = sourceMemberLocationKey(source_member);
-			location_key.has_value()) {
-			auto it = index_maps.by_location.find(*location_key);
-			if (it != index_maps.by_location.end()) {
-				index = it->second;
-			}
-		}
-	}
+	std::optional<size_t> index =
+		findStructInfoIndexBySourceMemberIdentity(index_maps, source_member);
 	if (!index.has_value() ||
 		*index >= struct_info->member_functions.size()) {
 		return nullptr;
