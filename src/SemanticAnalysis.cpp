@@ -479,6 +479,19 @@ static bool hasTopLevelPackExpansionInConstructorInitializers(const ConstructorD
 	return false;
 }
 
+void setMaterializedTypeSpecifierSize(TypeSpecifierNode& type_node) {
+	int size_bits = 0;
+	if (type_node.reference_qualifier() != ReferenceQualifier::None ||
+		type_node.pointer_depth() > 0) {
+		size_bits = 64;
+	} else if (type_node.category() == TypeCategory::Invalid) {
+		size_bits = 0;
+	} else {
+		size_bits = getTypeSpecSizeBits(type_node);
+	}
+	type_node.set_size_in_bits(size_bits);
+}
+
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
@@ -493,16 +506,16 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	if (desc.function_signature.has_value()) {
 		type_node.set_function_signature(*desc.function_signature);
 	}
+	setMaterializedTypeSpecifierSize(type_node);
+	return type_node;
+}
 
-	int size_bits = 0;
-	if (desc.ref_qualifier != ReferenceQualifier::None || !desc.pointer_levels.empty()) {
-		size_bits = 64;
-	} else if (desc.category() == TypeCategory::Invalid) {
-		size_bits = 0;
-	} else {
-		size_bits = getTypeSpecSizeBits(type_node);
-	}
-	type_node.set_size_in_bits(size_bits);
+TypeSpecifierNode materializeTypeSpecifierWithMaxPointerDepth(
+	const CanonicalTypeDesc& desc,
+	size_t max_pointer_depth) {
+	TypeSpecifierNode type_node = materializeTypeSpecifier(desc);
+	type_node.limit_pointer_depth(max_pointer_depth);
+	setMaterializedTypeSpecifierSize(type_node);
 	return type_node;
 }
 
@@ -609,9 +622,12 @@ std::optional<PointerConversionInfo> findStructPointerConversionOperator(
 			}
 		}
 
-		CanonicalTypeDesc element_desc = return_desc;
-		element_desc.pointer_levels.pop_back();
-		const CanonicalTypeId element_type_id = sema.canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
+		TypeSpecifierNode element_type =
+			materializeTypeSpecifierWithMaxPointerDepth(
+				return_desc,
+				return_desc.pointer_levels.size() - 1);
+		const CanonicalTypeId element_type_id =
+			sema.canonicalizeTypeForImplicitConversion(element_type);
 		return PointerConversionInfo{conv_op_return_type_id, element_type_id, &function_decl};
 	}
 
@@ -681,10 +697,12 @@ static void collectAllStructPointerConversionOperators(
 		if (return_desc.pointer_levels.empty() || !return_desc.array_dimensions.empty())
 			continue;
 
-		CanonicalTypeDesc element_desc = return_desc;
-		element_desc.pointer_levels.pop_back();
+		TypeSpecifierNode element_type =
+			materializeTypeSpecifierWithMaxPointerDepth(
+				return_desc,
+				return_desc.pointer_levels.size() - 1);
 		const CanonicalTypeId element_type_id =
-			sema.canonicalizeTypeForImplicitConversion(materializeTypeSpecifier(element_desc));
+			sema.canonicalizeTypeForImplicitConversion(element_type);
 		out_ops.push_back({conv_op_return_type_id, element_type_id, &function_decl});
 	}
 
@@ -7788,7 +7806,6 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
 			continue;
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
-
 		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
 			if (auto binding = buildCallArgReferenceBinding(arg, param_type, context_description)) {
 				ref_bindings[i] = *binding;
@@ -7816,15 +7833,30 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			mangled_symbol.has_value()) {
 			return getCallTargetFunctionCandidate(*mangled_symbol);
 		}
+		for (const ASTNode& overload :
+			 symbols_.lookup_all(callee_decl.identifier_token().value())) {
+			const FunctionDeclarationNode* candidate =
+				getCallTargetFunctionCandidate(overload);
+			if (candidate != nullptr &&
+				candidate->has_mangled_name() &&
+				candidate->mangled_name() == mangled_name.view()) {
+				return candidate;
+			}
+		}
 		return nullptr;
 	};
 	auto resolveBoundFunctionTarget =
 		[&](const FunctionDeclarationNode* resolved_function,
 			StringHandle mangled_name) -> const FunctionDeclarationNode* {
+			if (const FunctionDeclarationNode* canonical_function =
+					lookupFunctionByMangledName(mangled_name);
+				canonical_function != nullptr) {
+				return canonical_function;
+			}
 			if (resolved_function != nullptr) {
 				return resolved_function;
 			}
-			return lookupFunctionByMangledName(mangled_name);
+			return nullptr;
 		};
 	auto resolveDefinitionLookupRecordTarget = [&]() -> const FunctionDeclarationNode* {
 		if (call_info.definition_lookup_record == nullptr ||
@@ -7980,16 +8012,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return call_info.function_declaration;
 	};
-	auto fallbackToLateNonNormalizedCompatibilityTarget = [&]() -> const FunctionDeclarationNode* {
-		if (normalized_call) {
-			return nullptr;
-		}
-		if (definition_lookup_record_target != nullptr) {
-			return definition_lookup_record_target;
-		}
-		return call_info.function_declaration;
-	};
-
 	// Resolution order:
 	// 1. receiver-member direct lookup
 	// 2. callable operator / local callable resolution
@@ -8083,10 +8105,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 
 		return nullptr;
 	}
-	if (const FunctionDeclarationNode* parser_selected_target =
-			fallbackToEarlyParserSelectedTarget();
-		parser_selected_target != nullptr) {
-		return parser_selected_target;
+	if (!normalized_call &&
+		!call_info.is_indirect &&
+		!call_info.has_receiver &&
+		definition_lookup_record_target != nullptr) {
+		return definition_lookup_record_target;
 	}
 
 	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
@@ -8101,13 +8124,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (resolveLocalCallableStructInfo() != nullptr &&
 		op_call_query.state != ResolvedFunctionQueryResult::State::NotYetAnalyzed) {
 		return nullptr;
-	}
-
-	if (!normalized_call) {
-		if (const FunctionDeclarationNode* mangled_candidate =
-				lookupFunctionByMangledName(call_info.mangled_name)) {
-			return mangled_candidate;
-		}
 	}
 
 	if (!normalized_call &&
@@ -8144,10 +8160,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 
-	if (const FunctionDeclarationNode* compatibility_target =
-			fallbackToLateNonNormalizedCompatibilityTarget();
-		compatibility_target != nullptr) {
-		return compatibility_target;
+	if (!normalized_call) {
+		if (const FunctionDeclarationNode* mangled_candidate =
+				lookupFunctionByMangledName(call_info.mangled_name)) {
+			return mangled_candidate;
+		}
 	}
 
 	const DeclarationNode& decl = callee_decl;
@@ -8194,6 +8211,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		appendUniqueOverloads(overloads, adl_candidates);
 	}
 	if (overloads.empty()) {
+		if (!normalized_call &&
+			call_info.function_declaration != nullptr) {
+			return call_info.function_declaration;
+		}
 		if (!call_info.is_indirect) {
 			++stats_.direct_call_unresolved_after_lookup;
 		}
@@ -8242,6 +8263,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		} else {
 			func_decl = findViableTargetByArgCount(overloads);
 		}
+	}
+	if (!func_decl &&
+		!normalized_call &&
+		call_info.function_declaration != nullptr) {
+		func_decl = call_info.function_declaration;
 	}
 
 	if (!func_decl && !call_info.is_indirect) {
