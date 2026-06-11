@@ -221,18 +221,20 @@ Tightening those is the next best cleanup target.
 
 ## Next steps
 
-1. Audit the remaining last-resort non-receiver direct-call fallback in
-   `resolveCallArgAnnotationTarget(...)` and remove each surviving parser-
-   selected route only after the owning replay/materialization path preserves
-   enough typed overload evidence to make that fallback dead.
+1. Audit why some instantiated ordinary direct calls still lose
+   `FunctionCallDefinitionLookupRecord` / `DependentUnqualifiedCallLookupRecord`
+   while preserving an authoritative mangled target. The new mangled-name
+   overload scan keeps those calls definition-bound, but the real goal is to
+   preserve the owning semantic replay metadata so that compatibility recovery
+   becomes unnecessary.
 
-2. If another replay/`StructTypeInfo` sync gap appears, prefer preserving
+2. Continue removing the remaining final parser-selected non-receiver fallback
+   in `resolveCallArgAnnotationTarget(...)` only where replay/materialization
+   now preserves enough typed evidence to make that route provably dead.
+
+3. If another replay/`StructTypeInfo` sync gap appears, prefer preserving
    source replay identity into that path rather than reintroducing any
    signature-equivalent fallback.
-
-3. Audit the remaining semantic call compatibility fallbacks that still reuse
-   parser-selected targets after typed sema evidence is available, and remove
-   each fallback once the owning semantic path is fully covered.
 
 4. Expand current-instantiation / unknown-specialization modeling only for the
    concrete cases that still block standards-conforming typed lookup after steps
@@ -611,9 +613,17 @@ This slice now:
   definition-bound
 - stops reusing bare parser-selected non-receiver direct-call targets before
   fresh typed lookup when no definition-bound record exists
+- recovers authoritative non-receiver direct-call targets from the preserved
+  mangled name even when the instantiated call dropped its definition/dependent
+  lookup records, preventing sema from falling back to a fresh later-overload
+  scan
 - keeps parser-selected target reuse only as the final compatibility boundary
   after typed overload lookup and ordinary overload-set recovery still cannot
   decide the call
+- fixes a full-suite regression in struct-to-pointer built-in subscript
+  normalization by deriving conversion-operator element types without the
+  brittle `CanonicalTypeDesc` pointer-level pop path that could assert on
+  `test_subscript_pointer_conversion_template_ret42.cpp`
 
 Validated with:
 
@@ -623,10 +633,15 @@ Validated with:
 - `test_template_out_of_line_member_two_phase_lookup_ret0.cpp`
 - `test_template_out_of_line_ctor_two_phase_lookup_ret0.cpp`
 - `test_template_ool_member_template_deferred_base_two_phase_lookup_ret0.cpp`
+- `test_template_two_phase_explicit_nondependent_later_overload_ret42.cpp`
+- `test_template_two_phase_nondependent_later_function_template_overload_ret42.cpp`
+- `test_template_qualified_phase1_fallback_ret0.cpp`
 - `test_template_qualified_direct_call_inner_return_overload_ret0.cpp`
 - `test_dependent_identifier_template_call_ret0.cpp`
 - `test_pack_expansion_in_template_body_ret0.cpp`
 - `test_template_builtin_addressof_substitution_ret0.cpp`
+- `test_template_dependent_unqualified_direct_call_nonviable_fail.cpp`
+- `test_subscript_pointer_conversion_template_ret42.cpp`
 - full `pwsh tests/run_all_tests.ps1` on 2026-06-11
 
 ## Validation guidance
@@ -636,8 +651,10 @@ When changing this area, always rerun:
 - the focused regression that motivated the slice
 - `test_operator_subscript_sema_receiver_and_arg_overload_ret0.cpp` and
   `test_operator_subscript_const_ambiguity_fail.cpp` and
-  `test_constexpr_operator_bracket_const_nonconst_ret0.cpp` when touching
-  semantic subscript resolution or receiver-sensitive normalized-call lookup
+  `test_constexpr_operator_bracket_const_nonconst_ret0.cpp` and
+  `test_subscript_pointer_conversion_template_ret42.cpp` when touching
+  semantic subscript resolution, pointer-conversion discovery, or
+  receiver-sensitive normalized-call lookup
 - the three former textual-path blockers listed above when touching dependent
   alias ownership (they now exercise the semantic-only route)
 - the dependent member-template static constexpr regressions when touching
