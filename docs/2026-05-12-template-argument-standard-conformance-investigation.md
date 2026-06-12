@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-11
+**Last updated:** 2026-06-12
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -44,6 +44,10 @@ blocking areas:
   stays definition-bound and when dependent-unqualified POI completion selects
   a different final function, reducing replay-heavy dependence on parser
   reruns and mangled-name recovery in those paths
+- non-dependent ordinary overload-resolution and namespace-qualified direct
+  call materialization in the covered template paths now also preserve
+  `FunctionCallDefinitionLookupRecord`, reducing the remaining standards risk
+  that sema will reconstruct definition-bound targets from mangled names alone
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
@@ -51,6 +55,16 @@ blocking areas:
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
+- copied member-function-template stubs now preserve source-member identity in
+  `StructTypeInfo` at insertion time in the primary-template and covered
+  specialization paths, including operator overloads, so out-of-line replay
+  sync no longer depends on replay-source-key recovery there once semantic
+  matching already identified the source declaration
+- nested class-template member functions are now inserted into
+  `StructTypeInfo` before nested out-of-line replay with identity recorded at
+  insertion time, and lazy nested-member registration is split from that
+  structural insertion so nested constructor/member-template replay no longer
+  depends on positional `StructTypeInfo` back-filling in the covered path
 
 ## Highest-value remaining standards gaps
 
@@ -85,9 +99,10 @@ Near-term remaining scope:
 - partial-specialization nested member-template replay now also syncs the
   `StructTypeInfo` copy through the shared identity-first helper once the
   matched source declaration is preserved
-- remaining member-template and constructor-template `StructTypeInfo` sync
-  sites that still route through replay-source-key helper scans after the
-  matched source declaration is already known
+- the previously highest-value replay/sync identity gaps for covered
+  member-template and nested constructor-template replay are now closed; any
+  remaining work in this bucket should be driven by a concrete uncovered
+  attachment failure rather than treated as the default next slice
 
 ### 2. Compatibility recovery is still covering direct-call metadata loss outside dependent-unqualified completion
 
@@ -103,6 +118,9 @@ Latest progress:
 - sema now consumes the structured `FunctionDeclarationNode*` already stored in
   definition-lookup and dependent-unqualified records before considering
   mangled-name canonicalization
+- the highest-traffic non-dependent ordinary direct-call branches now preserve
+  `FunctionCallDefinitionLookupRecord` directly, including unqualified
+  overload-resolution in template bodies and namespace-qualified direct calls
 
 Why this matters:
 
@@ -111,6 +129,14 @@ Why this matters:
   and, when POI completion changes the winner, which final semantic target was
   selected
 
+Remaining near-term scope:
+
+- the remaining compatibility boundary is now concentrated in parser
+  materialization paths that still carry only `mangled_name` or
+  `qualified_name`, especially current-member-context shortcuts, untyped
+  fallbacks, some qualified member-template call materializers, and the
+  user-defined literal operator path
+
 ### 3. Current-instantiation / unknown-specialization coverage
 
 This is still necessary, but it is no longer the immediate next task. Expand
@@ -118,23 +144,19 @@ it only for concrete unresolved cases that block steps 1-2.
 
 ## Priority order
 
-1. Tighten the next member-template or constructor-template
-   `StructTypeInfo` sync gap by preserving source identity rather than routing
-   through a helper scan after the source declaration is already known.
-
-2. Tighten the next remaining mangled-name compatibility path by preserving
+1. Tighten the next remaining mangled-name compatibility path by preserving
    structured direct-call metadata in the owning replay/materialization path
    instead of relying on mangled recovery.
 
 Next direct-call target:
 
-- identify the remaining ordinary direct-call parser/materialization path that
-  still reaches sema with only `call_info.mangled_name`, then replace that
-  fallback with preserved structured target metadata
+- identify the remaining direct-call parser/materialization sites that still
+  reach sema with compatibility-only metadata, then replace each typed case
+  with preserved structured target metadata before touching the sema fallback
 
-3. Expand current-instantiation and unknown-specialization handling only where
+2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
-   steps 1-2.
+   step 1.
 
 ## Standards rules for follow-up work
 
@@ -151,7 +173,12 @@ Next direct-call target:
 For work in this area, rerun:
 
 - the focused regression that motivated the slice
+- `test_template_ool_member_template_operator_identity_ret0.cpp`
+- `test_template_nested_ool_ctor_template_same_name_overload_ret0.cpp`
+- `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
+- `test_template_nested_ool_ctor_template_init_replay_ret42.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
+- `test_template_explicit_function_id_definition_bound_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -162,3 +189,17 @@ For work in this area, rerun:
 - `test_constexpr_operator_bracket_const_nonconst_ret0.cpp`
 - `test_subscript_pointer_conversion_template_ret42.cpp`
 - full `pwsh tests/run_all_tests.ps1` before considering the slice complete
+
+## Next steps
+
+1. Continue eliminating compatibility-only parser metadata in the remaining
+   resolved direct-call sites, starting with the typed current-member-context
+   and qualified-member materializers and then the untyped fallback branches.
+   Immediate follow-up: preserve `FunctionCallDefinitionLookupRecord` in the
+   `resolved_member_function_from_context` path and add a focused regression
+   for replayed member calls that would otherwise be vulnerable to later
+   same-name overloads.
+
+2. Use any concrete failures left after step 1 to drive the next
+   current-instantiation / unknown-specialization expansion rather than
+   widening that model preemptively.

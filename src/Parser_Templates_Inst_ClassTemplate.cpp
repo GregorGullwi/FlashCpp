@@ -2397,14 +2397,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const TemplateFunctionDeclarationNode& tmpl_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
 					const FunctionDeclarationNode& inner_func = tmpl_func.function_decl_node();
 					StringHandle func_name_handle = inner_func.decl_node().identifier_token().handle();
-					struct_info->addMemberFunction(
-						func_name_handle,
+					if (mem_func.operator_kind != OverloadableOperator::None) {
+						struct_info->addOperatorOverload(
+							mem_func.operator_kind,
+							mem_func.function_declaration,
+							mem_func.access,
+							mem_func.is_virtual,
+							mem_func.is_pure_virtual,
+							mem_func.is_override,
+							mem_func.is_final);
+					} else {
+						struct_info->addMemberFunction(
+							func_name_handle,
+							mem_func.function_declaration,
+							mem_func.access,
+							mem_func.is_virtual,
+							mem_func.is_pure_virtual,
+							mem_func.is_override,
+							mem_func.is_final);
+					}
+					registerSourceMemberStructInfoIndex(
+						struct_info_member_identity_maps,
 						mem_func.function_declaration,
-						mem_func.access,
-						mem_func.is_virtual,
-						mem_func.is_pure_virtual,
-						mem_func.is_override,
-						mem_func.is_final);
+						struct_info->member_functions.size() - 1);
 				} else {
 					const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& orig_decl = orig_func.decl_node();
@@ -3967,11 +3982,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_pure_virtual,
 								mem_func.is_override,
 								mem_func.is_final);
-							registerSourceMemberStructInfoIndex(
-								struct_info_member_identity_maps,
-								mem_func.function_declaration,
-								struct_type_info.getStructInfo()->member_functions.size() - 1);
 						}
+						registerSourceMemberStructInfoIndex(
+							struct_info_member_identity_maps,
+							mem_func.function_declaration,
+							struct_type_info.getStructInfo()->member_functions.size() - 1);
 
 						registerMemberTemplateInRegistry(
 							new_template_func,
@@ -4028,11 +4043,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								mem_func.is_pure_virtual,
 								mem_func.is_override,
 								mem_func.is_final);
-							registerSourceMemberStructInfoIndex(
-								struct_info_member_identity_maps,
-								mem_func.function_declaration,
-								struct_type_info.getStructInfo()->member_functions.size() - 1);
 						}
+						registerSourceMemberStructInfoIndex(
+							struct_info_member_identity_maps,
+							mem_func.function_declaration,
+							struct_type_info.getStructInfo()->member_functions.size() - 1);
 
 						registerMemberTemplateInRegistry(
 							new_template_func_no_subst,
@@ -8225,20 +8240,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			SourceMemberIdentityMaps nested_source_member_identity_maps;
 			SourceMemberStructInfoIndexMaps nested_struct_info_member_identity_maps;
+			addNestedMemberFunctionsToStructInfo(
+				nested_struct,
+				*nested_struct_info,
+				&nested_struct_info_member_identity_maps);
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,
 					source_member.function_declaration,
 					source_member.function_declaration);
-			}
-			if (nested_struct_info != nullptr &&
-				nested_struct_info->member_functions.size() == nested_source_member_functions.size()) {
-				for (size_t i = 0; i < nested_source_member_functions.size(); ++i) {
-					registerSourceMemberStructInfoIndex(
-						nested_struct_info_member_identity_maps,
-						nested_source_member_functions[i].function_declaration,
-						i);
-				}
 			}
 
 			for (const auto& out_of_line_member : nested_out_of_line_members) {
@@ -8571,9 +8581,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// top-level member functions of the parent template and would otherwise
 			// never be registered, causing link errors when called.
 			TemplateEnvironmentSnapshot outer_parent_snapshot{instantiated_nested_struct_ref.outer_template_environment_snapshot()};
-			registerNestedMemberFunctionsForLazy(
+			registerNestedMemberFunctionsLazyEntries(
 				nested_struct,
-				*nested_struct_info,
 				instantiated_name,
 				qualified_name,
 				effective_template_params,
@@ -10609,6 +10618,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_override,
 						mem_func.is_final);
 				}
+				registerSourceMemberStructInfoIndex(
+					struct_info_member_identity_maps,
+					mem_func.function_declaration,
+					struct_info_ptr->member_functions.size() - 1);
 
 				// Register with qualified name
 				StringBuilder qualified_name_builder;
@@ -10787,6 +10800,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_override,
 						mem_func.is_final);
 				}
+				registerSourceMemberStructInfoIndex(
+					struct_info_member_identity_maps,
+					mem_func.function_declaration,
+					struct_info_ptr->member_functions.size() - 1);
 
 				// Register with qualified name
 				StringBuilder qualified_name_builder;
