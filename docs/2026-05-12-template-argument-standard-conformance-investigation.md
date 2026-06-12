@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-11
+**Last updated:** 2026-06-12
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -44,6 +44,10 @@ blocking areas:
   stays definition-bound and when dependent-unqualified POI completion selects
   a different final function, reducing replay-heavy dependence on parser
   reruns and mangled-name recovery in those paths
+- non-dependent ordinary overload-resolution and namespace-qualified direct
+  call materialization in the covered template paths now also preserve
+  `FunctionCallDefinitionLookupRecord`, reducing the remaining standards risk
+  that sema will reconstruct definition-bound targets from mangled names alone
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
@@ -114,6 +118,9 @@ Latest progress:
 - sema now consumes the structured `FunctionDeclarationNode*` already stored in
   definition-lookup and dependent-unqualified records before considering
   mangled-name canonicalization
+- the highest-traffic non-dependent ordinary direct-call branches now preserve
+  `FunctionCallDefinitionLookupRecord` directly, including unqualified
+  overload-resolution in template bodies and namespace-qualified direct calls
 
 Why this matters:
 
@@ -121,6 +128,14 @@ Why this matters:
 - the real semantic model should still know why the call is definition-bound
   and, when POI completion changes the winner, which final semantic target was
   selected
+
+Remaining near-term scope:
+
+- the remaining compatibility boundary is now concentrated in parser
+  materialization paths that still carry only `mangled_name` or
+  `qualified_name`, especially current-member-context shortcuts, untyped
+  fallbacks, some qualified member-template call materializers, and the
+  user-defined literal operator path
 
 ### 3. Current-instantiation / unknown-specialization coverage
 
@@ -135,9 +150,9 @@ it only for concrete unresolved cases that block steps 1-2.
 
 Next direct-call target:
 
-- identify the remaining ordinary direct-call parser/materialization path that
-  still reaches sema with only `call_info.mangled_name`, then replace that
-  fallback with preserved structured target metadata
+- identify the remaining direct-call parser/materialization sites that still
+  reach sema with compatibility-only metadata, then replace each typed case
+  with preserved structured target metadata before touching the sema fallback
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -163,6 +178,7 @@ For work in this area, rerun:
 - `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
 - `test_template_nested_ool_ctor_template_init_replay_ret42.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
+- `test_template_explicit_function_id_definition_bound_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -176,10 +192,9 @@ For work in this area, rerun:
 
 ## Next steps
 
-1. Trace the remaining ordinary direct-call path that still reaches sema with
-   only `call_info.mangled_name`, then preserve the structured semantic target
-   in that owning replay/materialization flow so the compatibility fallback can
-   be narrowed or removed.
+1. Continue eliminating compatibility-only parser metadata in the remaining
+   resolved direct-call sites, starting with the typed current-member-context
+   and qualified-member materializers and then the untyped fallback branches.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

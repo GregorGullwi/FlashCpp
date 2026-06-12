@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-11
+**Last updated:** 2026-06-12
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -39,6 +39,10 @@ the areas that were previously blocking standards-visible behavior:
   a different final function, so sema/constexpr can reuse structured call
   metadata instead of re-running parser lookup or relying on mangled-name
   recovery in those paths
+- non-dependent ordinary overload-resolution and namespace-qualified direct
+  call materialization in the covered template/replay paths now preserve
+  `FunctionCallDefinitionLookupRecord`, so sema no longer has to recover those
+  definition-bound targets from `call_info.mangled_name`
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through preserved semantic metadata, typed lookup, or explicit
@@ -125,6 +129,10 @@ Latest progress:
 - sema now prefers the structured `FunctionDeclarationNode*` already stored in
   definition-lookup and dependent-unqualified records, and only falls back to
   mangled-name canonicalization when that structured target is absent
+- the highest-traffic non-dependent ordinary direct-call branches now preserve
+  `FunctionCallDefinitionLookupRecord` instead of only stamping
+  `mangled_name`, including unqualified overload-resolution paths in template
+  bodies and namespace-qualified direct-call materialization
 
 Desired end state:
 
@@ -132,6 +140,14 @@ Desired end state:
   evidence to recover its final target directly
 - sema does not need mangled-name recovery to reuse a completed
   replay/materialization result
+
+Remaining near-term scope:
+
+- the remaining compatibility surface is now concentrated in parser paths that
+  still stamp only `mangled_name` or `qualified_name` without a typed
+  definition-lookup record, especially current-member-context shortcuts,
+  untyped fallback branches, some qualified member-template call materializers,
+  and the user-defined literal operator path
 
 ### 3. Current-instantiation / unknown-specialization precision
 
@@ -147,10 +163,10 @@ real replay or typed-lookup failures.
 
 Next direct-call target:
 
-- remove or narrow the remaining generic ordinary-call
-  `lookupFunctionByMangledName(call_info.mangled_name)` fallback in sema by
-  identifying which parser/materialization path still arrives there without a
-  trustworthy structured direct-call target
+- trace the remaining `Parser_Expr_PrimaryExpr.cpp` direct-call sites that
+  still attach only compatibility metadata, then either preserve a typed
+  `FunctionCallDefinitionLookupRecord` there or explicitly document why the
+  call cannot yet carry one
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -166,6 +182,7 @@ When changing this area, always rerun:
 - `test_template_nested_ool_ctor_template_outer_inner_param_rename_ret42.cpp`
 - `test_template_nested_ool_ctor_template_init_replay_ret42.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
+- `test_template_explicit_function_id_definition_bound_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -179,10 +196,10 @@ When changing this area, always rerun:
 
 ## Next steps
 
-1. Remove or narrow the remaining generic ordinary-call
-   `lookupFunctionByMangledName(call_info.mangled_name)` compatibility path in
-   sema by preserving the structured direct-call target in the owning
-   materialization path.
+1. Finish the remaining parser-side direct-call metadata preservation in the
+   still-uncovered resolved-call paths that only stamp `mangled_name` or
+   `qualified_name`, starting with the typed current-member-context /
+   qualified-member materializers and then the untyped fallback branches.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

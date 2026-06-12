@@ -246,6 +246,67 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 	return record;
 }
 
+void attachResolvedOrdinaryDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included,
+	std::optional<std::string_view> qualified_name_override) {
+	if (func_decl.has_mangled_name()) {
+		setCallMangledName(call_expr, func_decl.mangled_name());
+	}
+
+	if (qualified_name_override.has_value() && !qualified_name_override->empty()) {
+		setCallQualifiedName(call_expr, *qualified_name_override);
+	} else if (!func_decl.parent_struct_name().empty()) {
+		setCallQualifiedName(
+			call_expr,
+			StringBuilder()
+				.append(func_decl.parent_struct_name())
+				.append("::")
+				.append(func_decl.decl_node().identifier_token().value())
+				.commit());
+	}
+
+	if (std::optional<FunctionCallDefinitionLookupRecord> record =
+			makeFunctionCallDefinitionLookupRecord(
+				definition_context,
+				callee_token,
+				arg_types,
+				has_deferred_template_call_args,
+				ASTNode(&func_decl),
+				ordinary_lookup_included,
+				argument_dependent_lookup_included);
+		record.has_value()) {
+		setCallDefinitionLookupRecord(call_expr, *record);
+	}
+}
+
+void attachResolvedOrdinaryDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included) {
+	attachResolvedOrdinaryDirectCallMetadata(
+		call_expr,
+		definition_context,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		ordinary_lookup_included,
+		argument_dependent_lookup_included,
+		std::nullopt);
+}
+
 std::optional<DependentUnqualifiedCallLookupRecord> makeDependentUnqualifiedCallLookupRecord(
 	const TemplateDefinitionLookupContext* definition_context,
 	const Token& callee_token,
@@ -4874,6 +4935,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 				}
 				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				std::vector<TypeSpecifierNode> arg_types =
+					apply_lvalue_reference_deduction(args, args_result.arg_types);
+				const bool has_deferred_qualified_call_args =
+					argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
@@ -4883,7 +4949,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (!identifierType.has_value() && current_linkage_ != Linkage::C) {
 					// Build qualified template name
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
-					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 					// If explicit template arguments were provided, use them for instantiation
 					if (template_args.has_value() && !template_args->empty()) {
@@ -4958,8 +5023,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					FLASH_LOG(Parser, Debug, "Namespace-qualified function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
+					attachResolvedOrdinaryDirectCallMetadata(
+						function_call_node.as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						final_identifier,
+						arg_types,
+						has_deferred_qualified_call_args,
+						func_decl,
+						true,
+						false,
+						buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()));
 					if (func_decl.has_mangled_name()) {
-						setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
 						FLASH_LOG(Parser, Debug, "Set mangled name on namespace-qualified call expression: {}", func_decl.mangled_name());
 					}
 				}
@@ -5323,11 +5397,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				const auto& func = template_func_inst->as<FunctionDeclarationNode>();
 				auto function_call_node = emplace_node<ExpressionNode>(
 					makeResolvedCallExpr(func, std::move(args), identifier_token));
-
-				// Set the mangled name on the function call if the instantiated function has one
-				if (func.has_mangled_name()) {
-					setCallMangledName(function_call_node.as<ExpressionNode>(), func.mangled_name());
-				}
+				attachResolvedOrdinaryDirectCallMetadata(
+					function_call_node.as<ExpressionNode>(),
+					current_template_definition_lookup_context_,
+					identifier_token,
+					arg_types,
+					false,
+					func,
+					true,
+					true);
 
 				result = function_call_node;
 				return ParseResult::success(*result);
@@ -5367,9 +5445,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						makeCallExprFromNode(*resolution.selected_overload, std::move(args), identifier_token));
 					if (resolution.selected_overload->is<FunctionDeclarationNode>()) {
 						const auto& func_decl = resolution.selected_overload->as<FunctionDeclarationNode>();
-						if (func_decl.has_mangled_name()) {
-							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-						}
+						attachResolvedOrdinaryDirectCallMetadata(
+							result->as<ExpressionNode>(),
+							current_template_definition_lookup_context_,
+							identifier_token,
+							arg_types,
+							has_dependent_call_args,
+							func_decl,
+							true,
+							true);
 					}
 					maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 						result->as<ExpressionNode>(),
@@ -5784,9 +5868,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					result = emplace_node<ExpressionNode>(makeCallExprFromNode(*identifierType, std::move(args_ref), identifier_token));
 					if (identifierType->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
-						if (func_decl.has_mangled_name()) {
-							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-						}
+						attachResolvedOrdinaryDirectCallMetadata(
+							result->as<ExpressionNode>(),
+							current_template_definition_lookup_context_,
+							identifier_token,
+							arg_types,
+							has_deferred_template_call_args,
+							func_decl,
+							true,
+							argumentDependentLookupIncluded);
 					}
 					if (has_deferred_template_call_args) {
 						std::optional<DependentUnqualifiedCallLookupRecord> record =
@@ -5822,24 +5912,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					result = emplace_node<ExpressionNode>(makeCallExprFromNode(resolved_decl, std::move(args_ref), identifier_token));
 					if (resolved_decl.is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& func_decl = resolved_decl.as<FunctionDeclarationNode>();
-						if (func_decl.has_mangled_name()) {
-							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-						}
-						if (!func_decl.parent_struct_name().empty()) {
-							setCallQualifiedName(result->as<ExpressionNode>(), StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
-						}
-						if (std::optional<FunctionCallDefinitionLookupRecord> record =
-								makeFunctionCallDefinitionLookupRecord(
-									current_template_definition_lookup_context_,
-									identifier_token,
-									arg_types,
-									has_deferred_template_call_args,
-									resolved_decl,
-									true,
-									argumentDependentLookupIncludedRuntime);
-							record.has_value()) {
-							setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
-						}
+						attachResolvedOrdinaryDirectCallMetadata(
+							result->as<ExpressionNode>(),
+							current_template_definition_lookup_context_,
+							identifier_token,
+							arg_types,
+							has_deferred_template_call_args,
+							func_decl,
+							true,
+							argumentDependentLookupIncludedRuntime);
 					}
 					maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 						result->as<ExpressionNode>(),
@@ -6175,10 +6256,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						const auto& func = template_func_inst->as<FunctionDeclarationNode>();
 						auto function_call_node = emplace_node<ExpressionNode>(
 							makeResolvedCallExpr(func, std::move(args), identifier_token));
-						// Set the mangled name so the IR generator emits the correct symbol.
-						if (func.has_mangled_name()) {
-							setCallMangledName(function_call_node.as<ExpressionNode>(), func.mangled_name());
-						}
+						attachResolvedOrdinaryDirectCallMetadata(
+							function_call_node.as<ExpressionNode>(),
+							current_template_definition_lookup_context_,
+							identifier_token,
+							arg_types,
+							false,
+							func,
+							true,
+							true);
 						result = function_call_node;
 						return ParseResult::success(*result);
 					} else {
@@ -8514,21 +8600,28 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								return *default_args_error;
 							}
 							result = emplace_node<ExpressionNode>(makeResolvedCallExpr(func_decl, std::move(args), identifier_token));
-							if (func_decl.has_mangled_name()) {
-								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-							}
 							std::string_view qualified_owner = func_decl.parent_struct_name();
 							if (qualified_owner.empty() && !member_function_context_stack_.empty()) {
 								qualified_owner = StringTable::getStringView(member_function_context_stack_.back().struct_name);
 							}
+							std::optional<std::string_view> qualified_call_name = std::nullopt;
+							std::string qualified_call_name_storage;
 							if (!qualified_owner.empty()) {
-								setCallQualifiedName(
-									result->as<ExpressionNode>(),
+								qualified_call_name_storage = std::string(
 									StringBuilder()
 										.append(qualified_owner)
 										.append("::")
 										.append(func_decl.decl_node().identifier_token().value())
 										.commit());
+								qualified_call_name = qualified_call_name_storage;
+							}
+							if (func_decl.has_mangled_name()) {
+								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+							}
+							if (qualified_call_name.has_value() && !qualified_call_name->empty()) {
+								setCallQualifiedName(
+									result->as<ExpressionNode>(),
+									*qualified_call_name);
 							}
 							return ParseResult::success(*result);
 						}
@@ -8646,6 +8739,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									return argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
 										   argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 								};
+								const bool has_deferred_call_args =
+									deleted_call_has_dependent_arguments();
 
 								auto make_late_dependent_call_result = [&]() -> ParseResult {
 									FLASH_LOG(Templates, Debug, "Creating dependent call expression for deleted dependent call to '", identifier_token.value(), "'");
@@ -8744,7 +8839,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										// Check if the function is deleted
 										const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 										if (func_check && func_check->is_deleted()) {
-											if (deleted_call_has_dependent_arguments()) {
+											if (has_deferred_call_args) {
 												return make_late_dependent_call_result();
 											}
 											return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
@@ -8791,18 +8886,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											set_current_struct_qualified_name(struct_name_for_qual);
 										}
 
-										// Copy mangled name if available
 										if (instantiated_func->is<FunctionDeclarationNode>()) {
 											const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
-											if (func_decl.has_mangled_name()) {
-												setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-											}
+											attachResolvedOrdinaryDirectCallMetadata(
+												result->as<ExpressionNode>(),
+												current_template_definition_lookup_context_,
+												identifier_token,
+												arg_types,
+												false,
+												func_decl,
+												true,
+												true);
 										}
 										maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 											result->as<ExpressionNode>(),
 											identifier_token,
-											argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+											has_deferred_call_args,
 											current_template_definition_lookup_context_,
 											true,
 											*instantiated_func);
@@ -8907,7 +9006,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											// Check if the function is deleted
 											const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 											if (func_check && func_check->is_deleted()) {
-												if (deleted_call_has_dependent_arguments()) {
+												if (has_deferred_call_args) {
 													return make_late_dependent_call_result();
 												}
 												return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
@@ -8924,25 +9023,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											}
 											result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 
-											// Copy mangled name if available
 											if (instantiated_func->is<FunctionDeclarationNode>()) {
 												const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
-												if (func_decl.has_mangled_name()) {
-													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-												}
+												attachResolvedOrdinaryDirectCallMetadata(
+													result->as<ExpressionNode>(),
+													current_template_definition_lookup_context_,
+													identifier_token,
+													arg_types,
+													false,
+													func_decl,
+													true,
+													true);
 											}
 											maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 												result->as<ExpressionNode>(),
 												identifier_token,
-												argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-													argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+												has_deferred_call_args,
 												current_template_definition_lookup_context_,
 												true,
 												*instantiated_func);
 									} else {
-										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
-										if (has_dependent_call_args ||
-											argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+										if (has_deferred_call_args) {
 											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -8993,7 +9094,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												// Check if the function is deleted
 												const FunctionDeclarationNode* func_check = get_function_decl_node(*instantiated_func);
 												if (func_check && func_check->is_deleted()) {
-													if (deleted_call_has_dependent_arguments()) {
+													if (has_deferred_call_args) {
 														return make_late_dependent_call_result();
 													}
 													return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
@@ -9005,25 +9106,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												}
 												result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 
-												// Copy mangled name if available
 												if (instantiated_func->is<FunctionDeclarationNode>()) {
 													const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
-													if (func_decl.has_mangled_name()) {
-														setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-													}
+													attachResolvedOrdinaryDirectCallMetadata(
+														result->as<ExpressionNode>(),
+														current_template_definition_lookup_context_,
+														identifier_token,
+														arg_types,
+														false,
+														func_decl,
+														true,
+														true);
 												}
 												maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 													result->as<ExpressionNode>(),
 													identifier_token,
-													argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-														argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+													has_deferred_call_args,
 													current_template_definition_lookup_context_,
 													true,
 													*instantiated_func);
 										} else {
-											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args, currentTemplateParamNames());
-											if (has_dependent_call_args ||
-												argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames())) {
+											if (has_deferred_call_args) {
 												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
 												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
@@ -9061,18 +9164,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											// This is important for functions in namespaces accessed via using directives
 											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
 												const FunctionDeclarationNode& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
-												if (func_decl.has_mangled_name()) {
-													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-												}
-												if (!func_decl.parent_struct_name().empty()) {
-													setCallQualifiedName(result->as<ExpressionNode>(), StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
-												}
+												attachResolvedOrdinaryDirectCallMetadata(
+													result->as<ExpressionNode>(),
+													current_template_definition_lookup_context_,
+													identifier_token,
+													arg_types,
+													has_deferred_call_args,
+													func_decl,
+													true,
+													true);
 											}
 											maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 												result->as<ExpressionNode>(),
 												identifier_token,
-												argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-													argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames()),
+												has_deferred_call_args,
 												current_template_definition_lookup_context_,
 												true,
 												*resolution_result.selected_overload);
