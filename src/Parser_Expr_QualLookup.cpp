@@ -393,6 +393,20 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
 		setCallMangledName(result.as<ExpressionNode>(), func_decl_ptr->mangled_name());
 	}
+	if (func_decl_ptr) {
+		if (std::optional<FunctionCallDefinitionLookupRecord> record =
+				tryBuildFunctionCallDefinitionLookupRecord(
+					current_template_definition_lookup_context_,
+					member_token,
+					deduced_arg_types,
+					has_dependent_call_arg,
+					*func_decl_ptr,
+					true,
+					false);
+			record.has_value()) {
+			setCallDefinitionLookupRecord(result.as<ExpressionNode>(), *record);
+		}
+	}
 
 	return ParseResult::success(result);
 }

@@ -61,6 +61,10 @@ the areas that were previously blocking standards-visible behavior:
   qualified-name override through the shared direct-call metadata helper instead
   of stamping the qualified name separately before attaching the rest of the
   call metadata
+- the shared qualified member-template call helper now also preserves
+  `FunctionCallDefinitionLookupRecord` when it has a concrete direct-call
+  target plus typed arguments, instead of carrying only
+  `qualified_name`/`mangled_name` compatibility metadata
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through preserved semantic metadata, typed lookup, or explicit
@@ -190,7 +194,8 @@ Next direct-call target:
   still attach only compatibility metadata, then either preserve a typed
   `FunctionCallDefinitionLookupRecord` there or explicitly document why the
   call cannot yet carry one; after the current-member-context fast path, the
-  next typed branch to tighten is the remaining qualified-member materializer
+  next typed branch to tighten is the remaining manual qualified-member
+  materializer coverage that still bypasses the shared helper
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -209,6 +214,7 @@ When changing this area, always rerun:
 - `test_template_explicit_function_id_definition_bound_ret0.cpp`
 - `test_template_current_member_static_hides_base_overload_ret0.cpp`
 - `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
+- `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -226,13 +232,14 @@ When changing this area, always rerun:
    still-uncovered resolved-call paths that only stamp `mangled_name` or
    `qualified_name`, starting with the remaining typed qualified-member
    materializers and then the untyped fallback branches.
-   Immediate follow-up: convert the next compatibility-only qualified-member
-   or untyped fallback materializer in `Parser_Expr_PrimaryExpr.cpp` to
-   preserve `FunctionCallDefinitionLookupRecord`, and keep using focused
-   regressions where hidden or later same-name overloads could otherwise steal
-   replayed call targets. After that, collapse the new whole-call sema
-   synchronization hook by proving those paths carry their conversion
-   annotations before lowering.
+   Immediate follow-up: convert the remaining manual compatibility-only
+   qualified-member materializer branches in `Parser_Expr_PrimaryExpr.cpp`
+   that still bypass the shared helper to preserve
+   `FunctionCallDefinitionLookupRecord`, then move on to the untyped fallback
+   branches. Keep using focused regressions where hidden or later same-name
+   overloads could otherwise steal replayed call targets. After that, collapse
+   the new whole-call sema synchronization hook by proving those paths carry
+   their conversion annotations before lowering.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or
