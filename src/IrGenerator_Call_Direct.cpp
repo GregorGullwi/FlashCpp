@@ -1361,64 +1361,108 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			TypeCategory param_base_type = param_type->type();
 
 			TypeIndex arg_type_index = argumentIrOperands.type_index;
+			auto applySemaAnnotatedArgConversion =
+				[&](const SemanticSlot& slot) -> bool {
+					if (!slot.has_cast()) {
+						return false;
+					}
+					const ImplicitCastInfo& cast_info =
+						sema_.castInfoTable()[slot.cast_info_index.value - 1];
+					TypeCategory from_type =
+						sema_.typeContext().get(cast_info.source_type_id).category();
+					const TypeCategory to_type =
+						sema_.typeContext().get(cast_info.target_type_id).category();
+					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
+						from_type == TypeCategory::Struct) {
+						TypeIndex source_type_idx =
+							sema_.typeContext().get(cast_info.source_type_id).type_index;
+						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
+							const bool source_is_const =
+								((static_cast<uint8_t>(
+									 sema_.typeContext().get(cast_info.source_type_id).base_cv)) &
+								 (static_cast<uint8_t>(CVQualifier::Const))) != 0;
+							const StructMemberFunction* conv_op = findConversionOperator(
+								src_type_info->getStructInfo(),
+								param_type->type_index(),
+								source_is_const);
+							if (conv_op) {
+								FLASH_LOG(
+									Codegen,
+									Debug,
+									"Sema-annotated user-defined conversion in function arg from ",
+									StringTable::getStringView(src_type_info->name()),
+									" to parameter type");
+								const int param_size =
+									static_cast<int>(param_type->size_in_bits());
+								if (auto result = emitConversionOperatorCall(
+										argumentIrOperands,
+										*src_type_info,
+										*conv_op,
+										param_type->type_index(),
+										param_size,
+										callExprNode.called_from())) {
+									argumentIrOperands = *result;
+									arg_type = argumentIrOperands.typeEnum();
+									arg_type_index = argumentIrOperands.type_index;
+									return true;
+								}
+							}
+						}
+						return false;
+					}
+					if (!is_struct_type(from_type) &&
+						!is_struct_type(to_type) &&
+						cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {
+						if (from_type == TypeCategory::Enum &&
+							from_type != argumentIrOperands.typeEnum()) {
+							from_type = argumentIrOperands.typeEnum();
+						}
+						argumentIrOperands = generateTypeConversion(
+							argumentIrOperands,
+							from_type,
+							to_type,
+							callExprNode.called_from());
+						arg_type = argumentIrOperands.typeEnum();
+						arg_type_index = argumentIrOperands.type_index;
+						return true;
+					}
+					return false;
+				};
 
 			// Check sema annotation first: if the semantic pass pre-computed a conversion, use it.
 			bool sema_applied_arg_conversion = false;
 			if (argument.is<ExpressionNode>()) {
 				const void* key = &argument.as<ExpressionNode>();
 				const auto slot = sema_.getSlot(key);
-				if (slot.has_value() && slot->has_cast()) {
-					const ImplicitCastInfo& cast_info =
-						sema_.castInfoTable()[slot->cast_info_index.value - 1];
-					TypeCategory from_type = sema_.typeContext().get(cast_info.source_type_id).category();
-					const TypeCategory to_type = sema_.typeContext().get(cast_info.target_type_id).category();
-					if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-						from_type == TypeCategory::Struct) {
-							// Sema annotated a user-defined conversion operator call
-						TypeIndex source_type_idx = sema_.typeContext().get(cast_info.source_type_id).type_index;
-						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
-							const bool source_is_const = ((static_cast<uint8_t>(sema_.typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
-							const StructMemberFunction* conv_op = findConversionOperator(
-								src_type_info->getStructInfo(), param_type->type_index(), source_is_const);
-							if (conv_op) {
-								FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
-										  StringTable::getStringView(src_type_info->name()), " to parameter type");
-								const int param_size = static_cast<int>(param_type->size_in_bits());
-								if (auto result = emitConversionOperatorCall(argumentIrOperands, *src_type_info, *conv_op,
-																			 param_type->type_index(), param_size,
-																			 callExprNode.called_from())) {
-									argumentIrOperands = *result;
-									arg_type = argumentIrOperands.typeEnum();
-									arg_type_index = argumentIrOperands.type_index;
-									sema_applied_arg_conversion = true;
-								}
-							}
-						}
-					} else if (!is_struct_type(from_type) && !is_struct_type(to_type) &&
-								   cast_info.cast_kind != StandardConversionKind::ArrayToPointer) {
-						// Sema may annotate as Type::Enum while codegen resolves enum
-						// constants to their underlying type; use actual runtime type.
-						// NOTE: ArrayToPointer is excluded from generateTypeConversion because that
-						//   function converts between scalar types (e.g. int->long), whereas
-						//   array-to-pointer decay requires emitting an AddressOf IR node to
-						//   materialise the base pointer from a stack-allocated array object.
-						//   Calling generateTypeConversion on an array operand would instead
-						//   integer-widen or reinterpret the value, producing garbage.
-						//   String-literal args already carry a 64-bit TempVar pointer from
-						//   generateStringLiteralIr, so decay is already complete.
-						//   Identifier-array args are handled in the needs_array_decay block
-						//   further below, which calls emitAddressOf to get the base pointer.
-						if (from_type == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
-							from_type = argumentIrOperands.typeEnum();
-						argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, callExprNode.called_from());
-						arg_type = argumentIrOperands.typeEnum();
-						arg_type_index = argumentIrOperands.type_index;
-						sema_applied_arg_conversion = true;
-					}
+				if (slot.has_value()) {
+					sema_applied_arg_conversion =
+						applySemaAnnotatedArgConversion(*slot);
 				}
 			}
 
 			// sema should annotate all resolved standard argument conversions.
+			if (!sema_applied_arg_conversion &&
+				param_ref_qualifier == CVReferenceQualifier::None &&
+				param_type->pointer_depth() == 0 &&
+				arg_type != param_base_type) {
+				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
+				if (standard_conversion.is_valid &&
+					standard_conversion.rank != ConversionRank::UserDefined) {
+					if (argument.is<ExpressionNode>()) {
+						const void* key = &argument.as<ExpressionNode>();
+						sema_.ensureSingleArgConversionAnnotated(
+							argument,
+							*param_type,
+							" in function call");
+						if (const auto retry_slot = sema_.getSlot(key);
+							retry_slot.has_value()) {
+							sema_applied_arg_conversion =
+								applySemaAnnotatedArgConversion(*retry_slot);
+						}
+					}
+				}
+			}
+
 			if (!sema_applied_arg_conversion &&
 				param_ref_qualifier == CVReferenceQualifier::None &&
 				param_type->pointer_depth() == 0 &&

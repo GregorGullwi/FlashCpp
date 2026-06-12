@@ -4,19 +4,19 @@
 
 template <typename T>
 struct Base {
-	static int select() {
+	static int select(int) {
 		return 7;
 	}
 };
 
 template <typename T>
 struct Derived : Base<T> {
-	static int select(int value = 0) {
-		return value + static_cast<int>(sizeof(T)) + 38;
+	static int select(long) {
+		return static_cast<int>(sizeof(T)) + 38;
 	}
 
 	static int run() {
-		return select();
+		return select(0);
 	}
 };
 

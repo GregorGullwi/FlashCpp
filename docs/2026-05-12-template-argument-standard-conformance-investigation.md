@@ -53,6 +53,14 @@ blocking areas:
   `resolved_member_function_from_context` fast path, so sema no longer has to
   recover those definition-bound member targets from compatibility metadata
   alone in that route
+- builtin-like literal/pointer argument types no longer prevent that fast path
+  from carrying `FunctionCallDefinitionLookupRecord` just because the parser
+  has not yet materialized a concrete `type_index` for the temporary
+  `TypeSpecifierNode`
+- normalized direct-call lowering now asks sema to annotate a missing scalar
+  argument conversion on the exact argument/parameter pair before asserting,
+  which restores the standards-facing `int -> long` current-member static case
+  while keeping conversion policy in sema instead of codegen heuristics
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
@@ -141,6 +149,11 @@ Remaining near-term scope:
   `qualified_name`, especially qualified-member materializers, untyped
   fallbacks, some qualified member-template call materializers, and the
   user-defined literal operator path
+- the direct-call lowering backfill added for the restored
+  `test_template_current_member_static_hides_base_overload_ret0.cpp` case
+  should remain temporary; the remaining parser/materialization work should
+  make that late retry unnecessary by ensuring the structured call path already
+  owns the needed argument-conversion annotation
 
 ### 3. Current-instantiation / unknown-specialization coverage
 
@@ -206,7 +219,9 @@ For work in this area, rerun:
    Immediate follow-up: preserve `FunctionCallDefinitionLookupRecord` in the
    next qualified-member materializer path and keep adding focused regressions
    for replayed member calls that would otherwise be vulnerable to hidden or
-   later same-name overloads.
+   later same-name overloads. Once those paths are covered, remove the new
+   late direct-call conversion-annotation retry by pushing that work back to
+   earlier semantic ownership.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

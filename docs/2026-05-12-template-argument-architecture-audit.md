@@ -48,6 +48,16 @@ the areas that were previously blocking standards-visible behavior:
   `resolved_member_function_from_context` fast path, so later recovery does
   not have to rediscover those definition-bound member targets from
   `mangled_name`/`qualified_name` compatibility data alone
+- builtin-like literal/pointer argument types no longer block
+  `FunctionCallDefinitionLookupRecord` creation in that fast path just because
+  parser-side `TypeSpecifierNode` materialization has not populated a concrete
+  `type_index` yet
+- when a normalized direct call still reaches codegen without a scalar
+  argument-conversion slot, codegen now triggers the same sema single-argument
+  conversion annotator on that exact argument/parameter pair before asserting,
+  which closes the replay hole exposed by the restored
+  `int -> long` current-member static regression while keeping the conversion
+  decision sema-owned
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through preserved semantic metadata, typed lookup, or explicit
@@ -153,6 +163,9 @@ Remaining near-term scope:
   definition-lookup record, especially qualified-member materializers,
   untyped fallback branches, some qualified member-template call materializers,
   and the user-defined literal operator path
+- the new late sema backfill in direct-call lowering should stay narrow and be
+  retired once the remaining replay/materialization paths reliably preserve or
+  reconstruct the needed argument-conversion annotations earlier
 
 ### 3. Current-instantiation / unknown-specialization precision
 
@@ -211,7 +224,8 @@ When changing this area, always rerun:
    `Parser_Expr_PrimaryExpr.cpp` to preserve
    `FunctionCallDefinitionLookupRecord`, and keep using focused regressions
    where hidden or later same-name overloads could otherwise steal replayed
-   call targets.
+   call targets. After that, collapse the new codegen-triggered sema backfill
+   by proving those paths carry their conversion annotations before lowering.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

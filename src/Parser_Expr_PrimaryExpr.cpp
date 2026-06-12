@@ -183,8 +183,11 @@ bool isEligibleDefinitionLookupCall(
 	}
 	for (const TypeSpecifierNode& arg_type : arg_types) {
 		if (arg_type.category() == TypeCategory::Auto ||
-			arg_type.category() == TypeCategory::Template ||
-			!arg_type.type_index().is_valid()) {
+			arg_type.category() == TypeCategory::Template) {
+			return false;
+		}
+		if (!arg_type.type_index().is_valid() &&
+			!is_builtin_type(arg_type.category())) {
 			return false;
 		}
 	}

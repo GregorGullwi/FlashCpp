@@ -4178,6 +4178,13 @@ CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const Ty
 	return canonicalizeType(type);
 }
 
+void SemanticAnalysis::ensureSingleArgConversionAnnotated(
+	const ASTNode& arg,
+	const TypeSpecifierNode& param_type,
+	const char* context_description) {
+	tryAnnotateSingleArgConversion(arg, param_type, context_description);
+}
+
 std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	auto it = semantic_slots_.find(key);
 	if (it != semantic_slots_.end())
@@ -8105,8 +8112,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 
 		return nullptr;
 	}
-	if (!normalized_call &&
-		!call_info.is_indirect &&
+	if (!call_info.is_indirect &&
 		!call_info.has_receiver &&
 		definition_lookup_record_target != nullptr) {
 		return definition_lookup_record_target;
@@ -8167,11 +8173,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 
-	if (!normalized_call) {
-		if (const FunctionDeclarationNode* mangled_candidate =
-				lookupFunctionByMangledName(call_info.mangled_name)) {
-			return mangled_candidate;
-		}
+	if (const FunctionDeclarationNode* mangled_candidate =
+			lookupFunctionByMangledName(call_info.mangled_name)) {
+		return mangled_candidate;
 	}
 
 	const DeclarationNode& decl = callee_decl;
@@ -8180,6 +8184,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 									  ? call_info.qualified_name.view()
 									  : decl.identifier_token().value();
 	std::vector<ASTNode> overloads;
+	bool used_qualified_owner_static_member_lookup = false;
 	if (call_info.qualified_name.isValid()) {
 		if (const std::optional<QualifiedLookupTarget> qualified_lookup =
 				resolveQualifiedLookupTarget(call_info.qualified_name.view());
@@ -8187,6 +8192,45 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			overloads = symbols_.lookup_qualified_all(
 				qualified_lookup->namespace_handle,
 				qualified_lookup->identifier);
+		}
+		if (overloads.empty()) {
+			const std::string_view qualified_name = call_info.qualified_name.view();
+			const size_t scope_sep = qualified_name.rfind("::");
+			if (scope_sep != std::string_view::npos) {
+				const std::string_view owner_name = qualified_name.substr(0, scope_sep);
+				if (const TypeInfo* owner_type = resolveQualifiedOwnerTypeForCall(owner_name);
+					owner_type != nullptr &&
+					owner_type->getStructInfo() != nullptr) {
+					const ConstAwareMemberCandidateSet member_candidates =
+						collectConstAwareVisibleMemberFunctionCandidates(
+							owner_type->getStructInfo(),
+							decl.identifier_token().handle(),
+							false,
+							true,
+							[](const StructMemberFunction&, const FunctionDeclarationNode& func_decl) {
+								return func_decl.is_static();
+							});
+					if (!member_candidates.compatible.empty()) {
+						for (const StructMemberFunction* member_candidate :
+							 member_candidates.preferred) {
+							if (member_candidate != nullptr) {
+								appendUniqueOverload(
+									overloads,
+									member_candidate->function_decl);
+							}
+						}
+						for (const StructMemberFunction* member_candidate :
+							 member_candidates.compatible) {
+							if (member_candidate != nullptr) {
+								appendUniqueOverload(
+									overloads,
+									member_candidate->function_decl);
+							}
+						}
+						used_qualified_owner_static_member_lookup = true;
+					}
+				}
+			}
 		}
 	}
 	if (overloads.empty()) {
@@ -8198,7 +8242,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			overloads = symbols_.lookup_all(unqualified_name);
 		}
 	}
-	if (overloads.empty() && call_info.qualified_name.isValid()) {
+	if (overloads.empty() &&
+		call_info.qualified_name.isValid() &&
+		!used_qualified_owner_static_member_lookup) {
 		const std::string_view qualified_name = call_info.qualified_name.view();
 		const size_t scope_sep = qualified_name.rfind("::");
 		if (scope_sep != std::string_view::npos) {

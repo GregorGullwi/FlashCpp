@@ -197,6 +197,9 @@ public:
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg);
 	void registerCodegenSynthesizedOverloadArgType(const ASTNode& arg, const TypeSpecifierNode& type);
 	void registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type);
+	void ensureSingleArgConversionAnnotated(const ASTNode& arg,
+											const TypeSpecifierNode& param_type,
+											const char* context_description);
 
 	enum class StructuredBindingDecompositionKind : uint8_t {
 		Aggregate,
