@@ -73,6 +73,14 @@ blocking areas:
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
   terminals instead of reusing the parser-selected target late
+- ordinary direct-call parsing now performs one last structured
+  `appendFunctionCallArgType(...)` collection pass before falling back to
+  compatibility-only metadata when primary `get_expression_type(...)` typing
+  fails, reducing the remaining surface where parser materialization lag alone
+  strips away definition-bound call identity
+- string-literal user-defined literal calls now preserve
+  `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
+  name and argument list instead of carrying only `mangled_name`
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -154,9 +162,10 @@ Remaining near-term scope:
 
 - the remaining compatibility boundary is now concentrated in parser
   materialization paths that still carry only `mangled_name` or
-  `qualified_name`, especially qualified-member materializers, untyped
-  fallbacks, some qualified member-template call materializers, and the
-  user-defined literal operator path
+  `qualified_name`, especially the fallback exits that still cannot assemble
+  stable typed arguments even after the new structured retry pass, plus any
+  remaining niche qualified/member-template materializers that do not yet
+  route through the shared helpers
 - the remaining whole-call sema synchronization hook for direct calls should
   remain temporary; the remaining parser/materialization work should make even
   that narrowed retry unnecessary by ensuring the structured call path already
@@ -178,9 +187,9 @@ Next direct-call target:
 - identify the remaining direct-call parser/materialization sites that still
   reach sema with compatibility-only metadata, then replace each typed case
   with preserved structured target metadata before touching the sema fallback;
-  after the current-member-context fast path, the next typed branch to tighten
-  is the remaining manual qualified-member materializer coverage that still
-  bypasses the shared helper
+  after the now-covered typed qualified-member and string-literal UDL paths,
+  the next target is the final fallback exits that still cannot produce stable
+  typed arguments even after the structured retry
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -224,15 +233,16 @@ For work in this area, rerun:
 ## Next steps
 
 1. Continue eliminating compatibility-only parser metadata in the remaining
-   resolved direct-call sites, starting with the remaining typed
-   qualified-member materializers and then the untyped fallback branches.
-   Immediate follow-up: preserve `FunctionCallDefinitionLookupRecord` in the
-   remaining manual compatibility-only qualified-member materializer paths that
-   still bypass the shared helper, then move on to the untyped fallback
-   branches. Keep adding focused regressions for replayed member calls that
-   would otherwise be vulnerable to hidden or later same-name overloads. Once
-   those paths are covered, remove the new whole-call sema synchronization hook
-   by pushing that work back to earlier semantic ownership.
+   resolved direct-call sites, now focusing on the branches that still cannot
+   produce stable typed arguments even after the structured retry pass.
+   Immediate follow-up: audit the last compatibility-only fallback exits in
+   `Parser_Expr_PrimaryExpr.cpp` and either preserve
+   `FunctionCallDefinitionLookupRecord` there or reclassify those calls as
+   unresolved/deferred instead of pretending they are fully resolved. Keep
+   adding focused regressions for replayed calls that would otherwise be
+   vulnerable to hidden or later same-name overloads. Once those paths are
+   covered, remove the new whole-call sema synchronization hook by pushing that
+   work back to earlier semantic ownership.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

@@ -3837,13 +3837,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							// Get the declaration node for the function
 							const DeclarationNode* decl_ptr = nullptr;
 							std::optional<ASTNode> instantiated_member_lookup;
+							std::vector<TypeSpecifierNode> deduced_arg_types =
+								apply_lvalue_reference_deduction(args, args_result.arg_types);
+							const bool has_dependent_call_arg =
+								argTypesAreDeferredTemplateDependent(
+									deduced_arg_types,
+									currentTemplateParamNames());
 							if (member_template_args.has_value()) {
-								std::vector<TypeSpecifierNode> deduced_arg_types =
-									apply_lvalue_reference_deduction(args, args_result.arg_types);
-								const bool has_dependent_call_arg =
-									argTypesAreDeferredTemplateDependent(
-										deduced_arg_types,
-										currentTemplateParamNames());
 								instantiated_member_lookup =
 									tryInstantiateMemberFunctionTemplateCall(
 										gNamespaceRegistry.getQualifiedName(full_ns_handle),
@@ -3930,13 +3930,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									result->as<ExpressionNode>(),
 									std::move(member_template_arg_nodes));
 							}
-
-						// Set mangled name if available
 							if (member_lookup.has_value() && member_lookup->is<FunctionDeclarationNode>()) {
 								const FunctionDeclarationNode& func_decl = member_lookup->as<FunctionDeclarationNode>();
-								if (func_decl.has_mangled_name()) {
-									setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-								}
+								attachResolvedOrdinaryDirectCallMetadata(
+									result->as<ExpressionNode>(),
+									current_template_definition_lookup_context_,
+									member_token,
+									deduced_arg_types,
+									has_dependent_call_arg,
+									func_decl,
+									true,
+									false,
+									buildQualifiedNameFromHandle(
+										full_ns_handle,
+										member_token.value()));
 							}
 
 							return ParseResult::success(*result);
@@ -8685,17 +8692,74 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 							// Extract argument types
 							std::vector<TypeSpecifierNode> arg_types;
+							auto applyLValueArgumentReference =
+								[&](const ASTNode& arg_node, TypeSpecifierNode& arg_type_node) {
+									if (!arg_node.is<ExpressionNode>()) {
+										return;
+									}
+									const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+									bool is_lvalue = std::visit([](const auto& inner) -> bool {
+										using T = std::decay_t<decltype(inner)>;
+										if constexpr (std::is_same_v<T, IdentifierNode>) {
+											return true;
+										} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+											return true;
+										} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+											return true;
+										} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+											return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
+										} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+											return true;
+										} else {
+											return false;
+										}
+									},
+																	arg_expr);
+									if (is_lvalue) {
+										arg_type_node.set_reference_qualifier(
+											ReferenceQualifier::LValueReference);
+									}
+								};
+							bool needs_untyped_arg_fallback = false;
 							for (size_t i = 0; i < args.size(); ++i) {
 								auto arg_type = get_expression_type(args[i]);
 								if (!arg_type.has_value()) {
-									// If we can't determine the type, fall back to old behavior
+									needs_untyped_arg_fallback = true;
+									break;
+								}
+
+								TypeSpecifierNode arg_type_node = *arg_type;
+								applyIdentifierArgumentArrayBounds(args[i], arg_type_node);
+
+								FLASH_LOG(Parser, Debug, "  get_expression_type returned: type=", (int)arg_type_node.type(), ", is_ref=", arg_type_node.is_reference(), ", is_rvalue_ref=", arg_type_node.is_rvalue_reference());
+
+								applyLValueArgumentReference(args[i], arg_type_node);
+
+								arg_types.push_back(arg_type_node);
+							}
+							if (needs_untyped_arg_fallback) {
+								std::vector<TypeSpecifierNode> fallback_arg_types;
+								fallback_arg_types.reserve(args.size());
+								for (const ASTNode& arg : args) {
+									const size_t before = fallback_arg_types.size();
+									appendFunctionCallArgType(arg, &fallback_arg_types);
+									if (fallback_arg_types.size() != before + 1 ||
+										fallback_arg_types.back().category() == TypeCategory::Invalid) {
+										fallback_arg_types.clear();
+										break;
+									}
+									applyIdentifierArgumentArrayBounds(arg, fallback_arg_types.back());
+									applyLValueArgumentReference(arg, fallback_arg_types.back());
+								}
+								if (fallback_arg_types.size() == args.size()) {
+									arg_types = std::move(fallback_arg_types);
+								} else {
 									const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 									if (!decl_ptr) {
 										return ParseResult::error("Invalid function declaration", identifier_token);
 									}
-									result = emplace_node<ExpressionNode>(makeCallExprFromNode(*identifierType, std::move(args), identifier_token));
-
-									// Copy mangled name if available
+									result = emplace_node<ExpressionNode>(
+										makeCallExprFromNode(*identifierType, std::move(args), identifier_token));
 									if (identifierType->is<FunctionDeclarationNode>()) {
 										const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 										if (func_decl.has_mangled_name()) {
@@ -8710,54 +8774,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										current_template_definition_lookup_context_,
 										true,
 										*identifierType);
-									// Return early - we've created the call expression with the args
-									if (result.has_value())
+									if (result.has_value()) {
 										return ParseResult::success(*result);
-									break;
-								}
-
-								TypeSpecifierNode arg_type_node = *arg_type;
-								applyIdentifierArgumentArrayBounds(args[i], arg_type_node);
-
-								FLASH_LOG(Parser, Debug, "  get_expression_type returned: type=", (int)arg_type_node.type(), ", is_ref=", arg_type_node.is_reference(), ", is_rvalue_ref=", arg_type_node.is_rvalue_reference());
-
-								// For perfect forwarding: check if argument is an lvalue
-								// Lvalues: named variables, array subscripts, member access, dereferences, string literals
-								// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-								if (args[i].is<ExpressionNode>()) {
-									const ExpressionNode& arg_expr = args[i].as<ExpressionNode>();
-									bool is_lvalue = std::visit([](const auto& inner) -> bool {
-										using T = std::decay_t<decltype(inner)>;
-										if constexpr (std::is_same_v<T, IdentifierNode>) {
-											// Named variables are lvalues
-											return true;
-										} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-											// Array subscript expressions are lvalues
-											return true;
-										} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-											// Member access expressions are lvalues
-											return true;
-										} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-											// Dereference (*ptr) is an lvalue
-											// Other unary operators like ++, --, etc. may also be lvalues
-											return inner.op() == "*" || inner.op() == "++" || inner.op() == "--";
-										} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-											// String literals are lvalues in C++
-											return true;
-										} else {
-											// All other expressions (literals, temporaries, etc.) are rvalues
-											return false;
-										}
-									},
-																arg_expr);
-
-									if (is_lvalue) {
-										// For forwarding reference deduction: Args&& deduces to T& for lvalues
-										arg_type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
 									}
 								}
-
-								arg_types.push_back(arg_type_node);
 							}
 
 							// If we successfully extracted all argument types, perform overload resolution
@@ -9327,10 +9347,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					result = emplace_node<ExpressionNode>(
 						makeResolvedCallExpr(func_decl, std::move(args), suffix_token));
 
-					// Set mangled name if available
-					if (func_decl.has_mangled_name()) {
-						setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+					std::vector<TypeSpecifierNode> udl_arg_types;
+					udl_arg_types.reserve(2);
+					for (const ASTNode& arg :
+						 std::get<CallExprNode>(result->as<ExpressionNode>()).arguments()) {
+						appendFunctionCallArgType(arg, &udl_arg_types);
 					}
+					Token operator_name_token(
+						Token::Type::Identifier,
+						operator_name,
+						suffix_token.line(),
+						suffix_token.column(),
+						suffix_token.file_index());
+					attachResolvedOrdinaryDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						operator_name_token,
+						udl_arg_types,
+						false,
+						func_decl,
+						true,
+						false);
 				} else {
 					// Operator not found - restore position so suffix token is not lost
 					restore_token_position(pre_suffix_pos);

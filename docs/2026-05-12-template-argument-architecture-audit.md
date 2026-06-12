@@ -69,6 +69,15 @@ the areas that were previously blocking standards-visible behavior:
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through preserved semantic metadata, typed lookup, or explicit
   unresolved terminals instead of reusing the parser-selected target late
+- ordinary direct-call parsing now makes one last structured
+  `appendFunctionCallArgType(...)` pass before dropping to the
+  compatibility-only fallback when primary `get_expression_type(...)`
+  collection fails, shrinking the cases that still lose
+  `FunctionCallDefinitionLookupRecord` just because parser-side type
+  materialization lagged behind
+- string-literal user-defined literal calls now preserve
+  `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
+  name and argument list, instead of carrying only `mangled_name`
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
@@ -167,9 +176,10 @@ Remaining near-term scope:
 
 - the remaining compatibility surface is now concentrated in parser paths that
   still stamp only `mangled_name` or `qualified_name` without a typed
-  definition-lookup record, especially qualified-member materializers,
-  untyped fallback branches, some qualified member-template call materializers,
-  and the user-defined literal operator path
+  definition-lookup record, especially the truly untypable fallback branches
+  where both `get_expression_type(...)` and `appendFunctionCallArgType(...)`
+  still fail, plus any remaining niche qualified/member-template materializers
+  outside the now-covered shared helpers
 - the remaining sema/codegen boundary sync for direct calls should stay narrow;
   it now operates at whole-call granularity on the exact lowered AST, but the
   long-term target is still to remove even that hook once the remaining
@@ -194,8 +204,9 @@ Next direct-call target:
   still attach only compatibility metadata, then either preserve a typed
   `FunctionCallDefinitionLookupRecord` there or explicitly document why the
   call cannot yet carry one; after the current-member-context fast path, the
-  next typed branch to tighten is the remaining manual qualified-member
-  materializer coverage that still bypasses the shared helper
+  remaining highest-value cleanup is the final compatibility-only fallback
+  branches that still cannot produce stable typed arguments even after the
+  structured retry
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -230,16 +241,16 @@ When changing this area, always rerun:
 
 1. Finish the remaining parser-side direct-call metadata preservation in the
    still-uncovered resolved-call paths that only stamp `mangled_name` or
-   `qualified_name`, starting with the remaining typed qualified-member
-   materializers and then the untyped fallback branches.
-   Immediate follow-up: convert the remaining manual compatibility-only
-   qualified-member materializer branches in `Parser_Expr_PrimaryExpr.cpp`
-   that still bypass the shared helper to preserve
-   `FunctionCallDefinitionLookupRecord`, then move on to the untyped fallback
-   branches. Keep using focused regressions where hidden or later same-name
-   overloads could otherwise steal replayed call targets. After that, collapse
-   the new whole-call sema synchronization hook by proving those paths carry
-   their conversion annotations before lowering.
+   `qualified_name`, now focusing on the branches that still cannot assemble
+   stable typed arguments even after the new structured retry pass.
+   Immediate follow-up: audit the last compatibility-only fallback exits in
+   `Parser_Expr_PrimaryExpr.cpp` and either teach them to preserve
+   `FunctionCallDefinitionLookupRecord` or explicitly classify them as
+   unresolved/deferred instead of pretending to be fully resolved calls. Keep
+   using focused regressions where hidden or later same-name overloads could
+   otherwise steal replayed call targets. After that, collapse the new
+   whole-call sema synchronization hook by proving those paths carry their
+   conversion annotations before lowering.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or
