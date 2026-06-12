@@ -78,6 +78,9 @@ blocking areas:
   compatibility-only metadata when primary `get_expression_type(...)` typing
   fails, reducing the remaining surface where parser materialization lag alone
   strips away definition-bound call identity
+- that structured retry is now reused by the current-member static fast path
+  too, so definition-bound replay coverage no longer depends on a separate
+  weaker argument-typing branch there
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list instead of carrying only `mangled_name`

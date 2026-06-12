@@ -75,6 +75,9 @@ the areas that were previously blocking standards-visible behavior:
   collection fails, shrinking the cases that still lose
   `FunctionCallDefinitionLookupRecord` just because parser-side type
   materialization lagged behind
+- that structured retry is now shared with the current-member static fast
+  path as well, so those replay-preserving calls do not regress into a
+  separate weaker argument-typing path
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list, instead of carrying only `mangled_name`

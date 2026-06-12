@@ -1924,6 +1924,9 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::span<const TypeSpecifierNode> arg_types,
 		std::span<const ASTNode> overload_candidates = {});
 	void appendFunctionCallArgType(const ASTNode& arg_node, std::vector<TypeSpecifierNode>* arg_types_out);
+	bool tryCollectOrdinaryDirectCallArgTypes(
+		const ChunkedVector<ASTNode>& args,
+		std::vector<TypeSpecifierNode>* arg_types_out);
 	// Shared helper: re-parse a template function body with concrete argument substitution.
 	// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
 	// try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle
