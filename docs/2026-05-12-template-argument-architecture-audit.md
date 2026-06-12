@@ -95,6 +95,12 @@ the areas that were previously blocking standards-visible behavior:
   insertion time and lazy-registration split from structural insertion, so the
   nested constructor/member-template replay helpers no longer depend on
   positional back-fill of `StructTypeInfo` indices in that path
+- parser-side pack-expansion handling for ordinary identifier-call and shared
+  argument-list parsing no longer treats "no matching function-parameter pack
+  found" as a successful expansion; unmatched complex expansions now stay as
+  `PackExpansionExprNode` until substitution, and call-site substitution can
+  scalarize the active pack bindings element-by-element instead of silently
+  flattening `expr...` into a single ordinary argument
 
 ## Architectural invariants to preserve
 
@@ -183,6 +189,10 @@ Remaining near-term scope:
   where both `get_expression_type(...)` and `appendFunctionCallArgType(...)`
   still fail, plus any remaining niche qualified/member-template materializers
   outside the now-covered shared helpers
+- the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
+  now fixed at the parser/substitution boundary; future work here should keep
+  pack-expansion ownership at that boundary instead of reintroducing
+  call-specific explicit-template-argument repairs deeper in sema/codegen
 - the remaining sema/codegen boundary sync for direct calls should stay narrow;
   it now operates at whole-call granularity on the exact lowered AST, but the
   long-term target is still to remove even that hook once the remaining
@@ -254,6 +264,10 @@ When changing this area, always rerun:
    otherwise steal replayed call targets. After that, collapse the new
    whole-call sema synchronization hook by proving those paths carry their
    conversion annotations before lowering.
+   Also clean up the remaining legacy parser sites that still hand-roll
+   `expr...` handling (constructor/initializer parsing) so they share the same
+   "expand only when a real function pack matched, otherwise preserve the pack
+   node" rule now enforced in ordinary call parsing.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

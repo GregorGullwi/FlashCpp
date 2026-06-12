@@ -2835,6 +2835,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// For constructor calls like Widget(42), return the type being constructed
 		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
 		return ctor_call.type_node();
+	} else if (std::holds_alternative<InitializerListConstructionNode>(expr)) {
+		const auto& init_list = std::get<InitializerListConstructionNode>(expr);
+		if (init_list.target_type().is<TypeSpecifierNode>()) {
+			return init_list.target_type().as<TypeSpecifierNode>();
+		}
+		return std::nullopt;
 	} else if (std::holds_alternative<StaticCastNode>(expr)) {
 		// For cast expressions like (Type)expr or static_cast<Type>(expr), return the target type
 		const auto& cast = std::get<StaticCastNode>(expr);

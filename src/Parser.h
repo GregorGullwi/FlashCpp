@@ -3283,7 +3283,7 @@ private:	 // Resume private methods
 		return typed_template_parameters;
 	}
 
-	std::vector<ASTNode> expandPackExpressionArgument(const ASTNode& pattern);
+	InlineVector<ASTNode, 4> expandPackExpressionArgument(const ASTNode& pattern);
 
 	// Replace a pack parameter identifier in an expression pattern with its expanded name
 	// e.g., replace "args" with "args_0" in a pattern like identity(args)

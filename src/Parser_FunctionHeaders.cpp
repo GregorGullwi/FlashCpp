@@ -297,30 +297,9 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						pack_name = std::get<IdentifierNode>(arg->as<ExpressionNode>()).name();
 					}
 					if (!pack_name.empty()) {
-
-					// Try to find expanded pack elements in the symbol table
-					// Pattern: pack_name_0, pack_name_1, etc.
-						size_t pack_size = 0;
-						StringBuilder sb;
-						for (size_t i = 0; i < MAX_PACK_ELEMENTS; ++i) {
-							std::string_view element_name = sb
-																.append(pack_name)
-																.append("_")
-																.append(i)
-																.preview();
-
-							if (gSymbolTable.lookup(element_name).has_value()) {
-								++pack_size;
-								sb.reset();
-							} else {
-								break;
-							}
-						}
-						sb.reset();
-
-						if (pack_size > 0) {
-						// Add each pack element as a separate argument
-							for (size_t i = 0; i < pack_size; ++i) {
+						if (std::optional<size_t> pack_size = get_pack_size(pack_name);
+							pack_size.has_value()) {
+							for (size_t i = 0; i < *pack_size; ++i) {
 								std::string_view element_name = StringBuilder()
 																	.append(pack_name)
 																	.append("_")
@@ -344,8 +323,72 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								}
 							}
 							expanded = true;
+						} else {
+							// Fallback for older parser flows that still materialize pack
+							// elements in the symbol table without active pack metadata.
+							size_t symbol_pack_size = 0;
+							StringBuilder sb;
+							for (size_t i = 0; i < MAX_PACK_ELEMENTS; ++i) {
+								std::string_view element_name = sb
+																	.append(pack_name)
+																	.append("_")
+																	.append(i)
+																	.preview();
+
+								if (gSymbolTable.lookup(element_name).has_value()) {
+									++symbol_pack_size;
+									sb.reset();
+								} else {
+									break;
+								}
+							}
+							sb.reset();
+
+							if (symbol_pack_size > 0) {
+								for (size_t i = 0; i < symbol_pack_size; ++i) {
+									std::string_view element_name = StringBuilder()
+																		.append(pack_name)
+																		.append("_")
+																		.append(i)
+																		.commit();
+
+									Token elem_token(Token::Type::Identifier, element_name,
+													 ellipsis_token.line(), ellipsis_token.column(), ellipsis_token.file_index());
+									auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+									args.push_back(elem_node);
+
+									if (ctx.collect_types) {
+										std::optional<TypeSpecifierNode> elem_type = get_expression_type(elem_node);
+										if (elem_type.has_value()) {
+											arg_types.push_back(*elem_type);
+										} else {
+											arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
+										}
+									}
+								}
+								expanded = true;
+							}
 						}
 					} // !pack_name.empty()
+
+					if (!expanded && !pack_param_info_.empty()) {
+						InlineVector<ASTNode, 4> expanded_args = expandPackExpressionArgument(*arg);
+						if (!expanded_args.empty()) {
+							for (const ASTNode& expanded_arg : expanded_args) {
+								args.push_back(expanded_arg);
+								if (ctx.collect_types) {
+									std::optional<TypeSpecifierNode> expanded_arg_type =
+										get_expression_type(expanded_arg);
+									if (expanded_arg_type.has_value()) {
+										arg_types.push_back(*expanded_arg_type);
+									} else {
+										arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
+									}
+								}
+							}
+							expanded = true;
+						}
+					}
 				}
 
 				if (!expanded) {

@@ -2510,8 +2510,8 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 }
 
 
-std::vector<ASTNode> Parser::expandPackExpressionArgument(const ASTNode& pattern) {
-	std::vector<const PackParamInfo*> packs_in_expr;
+InlineVector<ASTNode, 4> Parser::expandPackExpressionArgument(const ASTNode& pattern) {
+	InlineVector<const PackParamInfo*, 4> packs_in_expr;
 	for (const auto& pack_info : pack_param_info_) {
 		if (pack_info.pack_size > 0 && exprContainsIdentifier(pattern, pack_info.original_name)) {
 			packs_in_expr.push_back(&pack_info);
@@ -2519,7 +2519,7 @@ std::vector<ASTNode> Parser::expandPackExpressionArgument(const ASTNode& pattern
 	}
 
 	if (packs_in_expr.empty()) {
-		return {pattern};
+		return {};
 	}
 
 	size_t pack_size = packs_in_expr[0]->pack_size;
@@ -2530,7 +2530,7 @@ std::vector<ASTNode> Parser::expandPackExpressionArgument(const ASTNode& pattern
 		}
 	}
 
-	std::vector<ASTNode> expanded_args;
+	InlineVector<ASTNode, 4> expanded_args;
 	expanded_args.reserve(pack_size);
 	for (size_t i = 0; i < pack_size; ++i) {
 		ASTNode expanded_pattern = pattern;

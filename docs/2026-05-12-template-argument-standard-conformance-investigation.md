@@ -97,6 +97,11 @@ blocking areas:
   insertion time, and lazy nested-member registration is split from that
   structural insertion so nested constructor/member-template replay no longer
   depends on positional `StructTypeInfo` back-filling in the covered path
+- parser-side call-argument pack expansion now preserves unmatched complex
+  `expr...` nodes until substitution instead of treating "no function-parameter
+  pack matched" as a successful expansion; that closes the standards-visible
+  leak where `typeCode<Rest>()...` in `add3(..., tail)` lost pack semantics
+  before sema could scalarize the bound template pack
 
 ## Highest-value remaining standards gaps
 
@@ -169,6 +174,10 @@ Remaining near-term scope:
   stable typed arguments even after the new structured retry pass, plus any
   remaining niche qualified/member-template materializers that do not yet
   route through the shared helpers
+- the newly fixed explicit-template-argument pack-expansion leak confirms the
+  right layer for this class of problem: preserve the parser-only pack node
+  until substitution instead of teaching deeper sema/template-argument logic to
+  guess when a plain call expression was really meant to be expanded
 - the remaining whole-call sema synchronization hook for direct calls should
   remain temporary; the remaining parser/materialization work should make even
   that narrowed retry unnecessary by ensuring the structured call path already
@@ -246,6 +255,10 @@ For work in this area, rerun:
    vulnerable to hidden or later same-name overloads. Once those paths are
    covered, remove the new whole-call sema synchronization hook by pushing that
    work back to earlier semantic ownership.
+   In parallel with that audit, finish deleting the remaining legacy
+   parser-side `expr...` loops that still duplicate pack-expansion behavior
+   instead of routing through the shared helper and the new "preserve when not
+   truly expandable" rule.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

@@ -5173,6 +5173,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (auto node = argResult.node()) {
 						// Check for pack expansion: arg...
 						if (current_token_.value() == "...") {
+							Token ellipsis_token = current_token_;
 							advance();  // consume '...'
 							// Mirror append_function_call_argument: use identifier-pack path for
 							// simple packs (correctly handles zero-size packs), expression-pack
@@ -5195,8 +5196,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 							}
 							if (!added) {
-								for (ASTNode expanded_arg : expandPackExpressionArgument(*node)) {
-									args.push_back(std::move(expanded_arg));
+								InlineVector<ASTNode, 4> expanded_args =
+									expandPackExpressionArgument(*node);
+								if (!expanded_args.empty()) {
+									for (ASTNode expanded_arg : expanded_args) {
+										args.push_back(std::move(expanded_arg));
+									}
+								} else {
+									args.push_back(emplace_node<ExpressionNode>(
+										PackExpansionExprNode(*node, ellipsis_token)));
 								}
 							}
 						} else {
@@ -6177,48 +6185,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return make_call_result(*resolution.selected_overload);
 			};
 
-			auto append_function_call_argument =
-				[&](const ParseResult& arg_result, ChunkedVector<ASTNode>& args_out, std::vector<TypeSpecifierNode>* arg_types_out) -> std::optional<ParseResult> {
-				auto append_single_arg = [&](const ASTNode& node) {
-					args_out.push_back(node);
-					appendFunctionCallArgType(node, arg_types_out);
-				};
-
-				if (peek() == "..."_tok) {
-					advance();
-
-					if (auto arg_node = arg_result.node()) {
-						if (arg_node->is<IdentifierNode>()) {
-							std::string_view pack_name = arg_node->as<IdentifierNode>().name();
-							if (auto identifier_pack_size = get_pack_size(pack_name); identifier_pack_size.has_value()) {
-								StringBuilder sb;
-								for (size_t i = 0; i < *identifier_pack_size; ++i) {
-									std::string_view element_name = sb
-																		.append(pack_name)
-																		.append("_")
-																		.append(i)
-																		.commit();
-
-									Token elem_token(Token::Type::Identifier, element_name, 0, 0, 0);
-									append_single_arg(emplace_node<ExpressionNode>(createBoundIdentifier(elem_token)));
-								}
-							} else {
-								append_single_arg(*arg_node);
-							}
-						} else {
-							std::vector<ASTNode> expanded_args = expandPackExpressionArgument(*arg_node);
-							for (ASTNode& expanded_arg : expanded_args) {
-								append_single_arg(expanded_arg);
-							}
-						}
-					}
-				} else if (auto node = arg_result.node()) {
-					append_single_arg(*node);
-				}
-
-				return std::nullopt;
-			};
-
 			// Check if this is a function call or constructor call (forward reference)
 			// Identifier already consumed at line 1621
 			// Skip this check for lambda variables - they should be handled by postfix operator parsing
@@ -6305,28 +6271,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (peek().is_eof())
 						return ParseResult::error(ParserError::NotImplemented, identifier_token);
 
-					ChunkedVector<ASTNode> args;
-					std::vector<TypeSpecifierNode> arg_types;
-
-					while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
-						ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-						if (argResult.is_error()) {
-							return argResult;
-						}
-
-						if (auto append_error = append_function_call_argument(argResult, args, &arg_types); append_error.has_value()) {
-							return *append_error;
-						}
-
-						if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
-							advance(); // Consume comma
-						} else if (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
-							return ParseResult::error("Expected ',' or ')' after function argument", current_token_);
-						}
-
-						if (peek().is_eof())
-							return ParseResult::error(ParserError::NotImplemented, Token());
+					auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+						.handle_pack_expansion = true,
+						.collect_types = true,
+						.expand_simple_packs = false});
+					if (!args_result.success) {
+						return ParseResult::error(
+							args_result.error_message,
+							args_result.error_token.value_or(current_token_));
 					}
+					ChunkedVector<ASTNode> args = std::move(args_result.args);
+					std::vector<TypeSpecifierNode> arg_types =
+						apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 					if (!consume(")"_tok)) {
 						return ParseResult::error("Expected ')' after function call arguments", current_token_);
@@ -6394,27 +6350,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (peek().is_eof())
 					return ParseResult::error(ParserError::NotImplemented, identifier_token);
 
-				ChunkedVector<ASTNode> args;
-				std::vector<TypeSpecifierNode> arg_types;
-				while (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
-					ParseResult argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-					if (argResult.is_error()) {
-						return argResult;
-					}
-
-					if (auto append_error = append_function_call_argument(argResult, args, &arg_types); append_error.has_value()) {
-						return *append_error;
-					}
-
-					if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
-						advance(); // Consume comma
-					} else if (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
-						return ParseResult::error("Expected ',' or ')' after function argument", current_token_);
-					}
-
-					if (peek().is_eof())
-						return ParseResult::error(ParserError::NotImplemented, Token());
+				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+					.handle_pack_expansion = true,
+					.collect_types = true,
+					.expand_simple_packs = false});
+				if (!args_result.success) {
+					return ParseResult::error(
+						args_result.error_message,
+						args_result.error_token.value_or(current_token_));
 				}
+				ChunkedVector<ASTNode> args = std::move(args_result.args);
+				std::vector<TypeSpecifierNode> arg_types =
+					apply_lvalue_reference_deduction(args, args_result.arg_types);
 
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
