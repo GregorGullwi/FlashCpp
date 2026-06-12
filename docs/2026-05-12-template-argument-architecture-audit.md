@@ -200,6 +200,10 @@ When changing this area, always rerun:
    still-uncovered resolved-call paths that only stamp `mangled_name` or
    `qualified_name`, starting with the typed current-member-context /
    qualified-member materializers and then the untyped fallback branches.
+   Immediate follow-up: convert the `resolved_member_function_from_context`
+   fast path in `Parser_Expr_PrimaryExpr.cpp` to preserve
+   `FunctionCallDefinitionLookupRecord`, and add a focused regression that
+   proves later overloads cannot steal that replayed member call target.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

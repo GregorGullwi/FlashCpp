@@ -1,7 +1,7 @@
 #pragma once
 
 struct SourceMemberStructInfoIndexMaps;
-inline void registerSourceMemberStructInfoIndex(
+void registerSourceMemberStructInfoIndex(
 	SourceMemberStructInfoIndexMaps& index_maps,
 	const ASTNode& source_member,
 	size_t struct_info_index);

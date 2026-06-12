@@ -195,6 +195,10 @@ For work in this area, rerun:
 1. Continue eliminating compatibility-only parser metadata in the remaining
    resolved direct-call sites, starting with the typed current-member-context
    and qualified-member materializers and then the untyped fallback branches.
+   Immediate follow-up: preserve `FunctionCallDefinitionLookupRecord` in the
+   `resolved_member_function_from_context` path and add a focused regression
+   for replayed member calls that would otherwise be vulnerable to later
+   same-name overloads.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

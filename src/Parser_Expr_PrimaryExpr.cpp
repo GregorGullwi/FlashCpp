@@ -8604,24 +8604,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (qualified_owner.empty() && !member_function_context_stack_.empty()) {
 								qualified_owner = StringTable::getStringView(member_function_context_stack_.back().struct_name);
 							}
-							std::optional<std::string_view> qualified_call_name = std::nullopt;
-							std::string qualified_call_name_storage;
+							if (func_decl.has_mangled_name()) {
+								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
+							}
 							if (!qualified_owner.empty()) {
-								qualified_call_name_storage = std::string(
+								setCallQualifiedName(
+									result->as<ExpressionNode>(),
 									StringBuilder()
 										.append(qualified_owner)
 										.append("::")
 										.append(func_decl.decl_node().identifier_token().value())
 										.commit());
-								qualified_call_name = qualified_call_name_storage;
-							}
-							if (func_decl.has_mangled_name()) {
-								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-							}
-							if (qualified_call_name.has_value() && !qualified_call_name->empty()) {
-								setCallQualifiedName(
-									result->as<ExpressionNode>(),
-									*qualified_call_name);
 							}
 							return ParseResult::success(*result);
 						}
