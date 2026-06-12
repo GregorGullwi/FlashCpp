@@ -1257,6 +1257,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Function returns (by value) produce temporaries with no persistent identity
 	setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
+	if (sema_normalized_current_function_) {
+		sema_.ensureCallArgConversionsAnnotated(callExprNode);
+	}
+
 	const std::vector<CachedParamInfo>* cached_param_list = nullptr;
 	{
 		StringHandle cache_key = callExprNode.has_mangled_name()
@@ -1441,28 +1445,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			}
 
 			// sema should annotate all resolved standard argument conversions.
-			if (!sema_applied_arg_conversion &&
-				param_ref_qualifier == CVReferenceQualifier::None &&
-				param_type->pointer_depth() == 0 &&
-				arg_type != param_base_type) {
-				TypeConversionResult standard_conversion = can_convert_type(arg_type, param_base_type);
-				if (standard_conversion.is_valid &&
-					standard_conversion.rank != ConversionRank::UserDefined) {
-					if (argument.is<ExpressionNode>()) {
-						const void* key = &argument.as<ExpressionNode>();
-						sema_.ensureSingleArgConversionAnnotated(
-							argument,
-							*param_type,
-							" in function call");
-						if (const auto retry_slot = sema_.getSlot(key);
-							retry_slot.has_value()) {
-							sema_applied_arg_conversion =
-								applySemaAnnotatedArgConversion(*retry_slot);
-						}
-					}
-				}
-			}
-
 			if (!sema_applied_arg_conversion &&
 				param_ref_qualifier == CVReferenceQualifier::None &&
 				param_type->pointer_depth() == 0 &&

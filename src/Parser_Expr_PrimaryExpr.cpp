@@ -249,6 +249,19 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 	return record;
 }
 
+std::optional<std::string_view> makeQualifiedMemberCallNameOverride(
+	std::string_view owner_name,
+	std::string_view member_name) {
+	if (owner_name.empty()) {
+		return std::nullopt;
+	}
+	return StringBuilder()
+		.append(owner_name)
+		.append("::")
+		.append(member_name)
+		.commit();
+}
+
 void attachResolvedOrdinaryDirectCallMetadata(
 	ExpressionNode& call_expr,
 	const TemplateDefinitionLookupContext* definition_context,
@@ -8610,14 +8623,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								qualified_owner = StringTable::getStringView(member_function_context_stack_.back().struct_name);
 							}
 							const std::optional<std::string_view> qualified_name_override =
-								qualified_owner.empty()
-									? std::nullopt
-									: std::optional<std::string_view>(
-										StringBuilder()
-											.append(qualified_owner)
-											.append("::")
-											.append(func_decl.decl_node().identifier_token().value())
-											.commit());
+								makeQualifiedMemberCallNameOverride(
+									qualified_owner,
+									func_decl.decl_node().identifier_token().value());
 							std::vector<TypeSpecifierNode> fast_path_arg_types;
 							for (size_t arg_index = 0; arg_index < current_member_call.arguments().size(); ++arg_index) {
 								const ASTNode& arg = current_member_call.arguments()[arg_index];
@@ -8892,17 +8900,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (!explicit_template_arg_nodes.empty()) {
 											setCallTemplateArguments(result->as<ExpressionNode>(), std::move(explicit_template_arg_nodes));
 										}
-										auto set_current_struct_qualified_name = [&](std::string_view struct_name) {
-											if (!struct_name.empty()) {
-												setCallQualifiedName(
-													result->as<ExpressionNode>(),
-													StringBuilder()
-														.append(struct_name)
-														.append("::")
-														.append(identifier_token.value())
-														.commit());
-											}
-										};
+										std::optional<std::string_view> qualified_name_override;
 										if (resolved_as_struct_member) {
 											std::string_view struct_name_for_qual;
 											if (!member_function_context_stack_.empty()) {
@@ -8912,7 +8910,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												struct_name_for_qual =
 													struct_parsing_context_stack_.back().struct_name;
 											}
-											set_current_struct_qualified_name(struct_name_for_qual);
+											qualified_name_override =
+												makeQualifiedMemberCallNameOverride(
+													struct_name_for_qual,
+													identifier_token.value());
 										}
 
 										if (instantiated_func->is<FunctionDeclarationNode>()) {
@@ -8925,7 +8926,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												false,
 												func_decl,
 												true,
-												true);
+												true,
+												qualified_name_override);
 										}
 										maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 											result->as<ExpressionNode>(),

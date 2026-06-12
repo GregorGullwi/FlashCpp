@@ -4178,18 +4178,45 @@ CanonicalTypeId SemanticAnalysis::canonicalizeTypeForImplicitConversion(const Ty
 	return canonicalizeType(type);
 }
 
-void SemanticAnalysis::ensureSingleArgConversionAnnotated(
-	const ASTNode& arg,
-	const TypeSpecifierNode& param_type,
-	const char* context_description) {
-	tryAnnotateSingleArgConversion(arg, param_type, context_description);
-}
-
 std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	auto it = semantic_slots_.find(key);
 	if (it != semantic_slots_.end())
 		return it->second;
 	return std::nullopt;
+}
+
+void SemanticAnalysis::ensureCallArgConversionsAnnotated(
+	const CallExprNode& call_node) {
+	tryAnnotateCallArgConversions(call_node);
+	const FunctionDeclarationNode* parser_target =
+		getParserStoredDirectCallTarget(call_node);
+	if (parser_target == nullptr ||
+		call_node.has_receiver() ||
+		call_node.callee().is_indirect()) {
+		return;
+	}
+	const bool has_definition_bound_metadata =
+		call_node.has_definition_lookup_record();
+	const bool has_qualified_name = call_node.has_qualified_name();
+	const bool is_static_member_direct_call =
+		!parser_target->parent_struct_name().empty() &&
+		parser_target->is_static();
+	if (!has_definition_bound_metadata &&
+		!has_qualified_name &&
+		!is_static_member_direct_call) {
+		return;
+	}
+	annotateResolvedCallResultType(ASTNode(&call_node), *parser_target);
+	annotateResolvedCallArgConversions(
+		&call_node,
+		call_node.arguments(),
+		*parser_target,
+		" in call argument");
+	ensureResolvedCallArgConversionsComplete(
+		&call_node,
+		call_node.arguments(),
+		*parser_target,
+		" in call argument");
 }
 
 namespace {
@@ -7727,7 +7754,18 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 	}
 
 	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
-	const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+	std::optional<TypeSpecifierNode> arg_binding_type;
+	CanonicalTypeId arg_type_id{};
+	if (std::optional<TypeSpecifierNode> resolved_arg_binding_type =
+			buildOverloadResolutionArgType(arg, &arg_type_id);
+		resolved_arg_binding_type.has_value()) {
+		arg_binding_type = *resolved_arg_binding_type;
+		TypeSpecifierNode arg_value_type = *arg_binding_type;
+		arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
+		if (const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type)) {
+			arg_type_id = arg_value_type_id;
+		}
+	}
 	// Skip conversion annotation only when types truly match AND the source is not an array.
 	// An array source (e.g. char[5]) may need to decay to a pointer (const char*) even when
 	// canonical_types_match returns true due to the hybrid pointer+array descriptor produced
@@ -7739,8 +7777,32 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 
 	if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
 												  context_description, arg_type_id)) {
-		tryAnnotateConversion(arg, param_type_id, arg_type_id);
+		const bool annotated_standard_conversion =
+			tryAnnotateConversion(arg, param_type_id, arg_type_id);
 		diagnoseScopedEnumConversion(arg, param_type_id, context_description, arg_type_id);
+		if (!annotated_standard_conversion &&
+			arg_binding_type.has_value() &&
+			param_type_id) {
+			TypeSpecifierNode arg_value_type = *arg_binding_type;
+			arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
+			TypeSpecifierNode param_value_type = param_type;
+			param_value_type.set_reference_qualifier(ReferenceQualifier::None);
+			const ConversionPlan plan =
+				buildConversionPlan(arg_value_type, param_value_type);
+			if (plan.is_valid &&
+				plan.rank != ConversionRank::UserDefined &&
+				plan.kind != StandardConversionKind::None) {
+				SemanticSlot slot =
+					getSlot(getExpressionKey(arg)).value_or(SemanticSlot{});
+				slot.type_id = param_type_id;
+				slot.cast_info_index = allocateNonUserDefinedCastInfo(
+					arg_type_id,
+					param_type_id,
+					plan.kind);
+				slot.value_category = ValueCategory::PRValue;
+				setSlot(getExpressionKey(arg), slot);
+			}
+		}
 	}
 }
 
@@ -7822,6 +7884,98 @@ void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
 
 		tryAnnotateSingleArgConversion(arg, param_type, context_description);
 		buildOverloadResolutionArgType(arg, nullptr);
+	}
+}
+
+void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
+	const void* call_key,
+	const ChunkedVector<ASTNode>& arguments,
+	const FunctionDeclarationNode& func_decl,
+	const char* context_description) {
+	const auto& param_nodes = func_decl.parameter_nodes();
+	if (arguments.size() < countMinRequiredArgs(func_decl))
+		return;
+	if (!func_decl.is_variadic() && arguments.size() > param_nodes.size())
+		return;
+
+	const size_t annotate_arg_count = std::min(arguments.size(), param_nodes.size());
+	auto& ref_bindings = call_ref_bindings_[call_key];
+	if (ref_bindings.size() < annotate_arg_count) {
+		ref_bindings.resize(annotate_arg_count);
+	}
+
+	const bool normalized_call =
+		call_key != nullptr &&
+		normalized_ast_nodes_.count(call_key) > 0;
+
+	for (size_t i = 0; i < annotate_arg_count; ++i) {
+		const ASTNode& arg = arguments[i];
+		if (!arg.is<ExpressionNode>())
+			continue;
+
+		const ASTNode& param_node = param_nodes[i];
+		if (!param_node.is<DeclarationNode>())
+			continue;
+		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
+			continue;
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (!ref_bindings[i].is_valid()) {
+				if (auto binding =
+						buildCallArgReferenceBinding(arg, param_type, context_description);
+					binding.has_value()) {
+					ref_bindings[i] = *binding;
+				}
+			}
+			continue;
+		}
+
+		tryAnnotateSingleArgConversion(arg, param_type, context_description);
+		if (!normalized_call) {
+			continue;
+		}
+
+		CanonicalTypeId arg_type_id{};
+		std::optional<TypeSpecifierNode> arg_binding_type =
+			buildOverloadResolutionArgType(arg, &arg_type_id);
+		if (!arg_binding_type.has_value()) {
+			continue;
+		}
+		TypeSpecifierNode arg_value_type = *arg_binding_type;
+		arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
+		const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type);
+		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
+		if (!arg_value_type_id || !param_type_id) {
+			continue;
+		}
+
+		const CanonicalTypeDesc& arg_desc = type_context_.get(arg_value_type_id);
+		if (canonical_types_match(arg_value_type_id, param_type_id) &&
+			arg_desc.array_dimensions.empty()) {
+			continue;
+		}
+
+		const SemanticSlot slot =
+			getSlot(static_cast<const void*>(&arg.as<ExpressionNode>()))
+				.value_or(SemanticSlot{});
+		if (slot.has_cast()) {
+			continue;
+		}
+
+		TypeSpecifierNode param_value_type = param_type;
+		param_value_type.set_reference_qualifier(ReferenceQualifier::None);
+		const ConversionPlan value_plan =
+			buildConversionPlan(arg_value_type, param_value_type);
+		const bool needs_standard_conversion =
+			!arg_desc.array_dimensions.empty() ||
+			(value_plan.is_valid && value_plan.kind != StandardConversionKind::None);
+		if (needs_standard_conversion) {
+			throw InternalError(
+				std::string("Phase 1: sema missed resolved function call argument conversion for parameter ") +
+				std::to_string(i));
+		}
 	}
 }
 
@@ -8019,6 +8173,24 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return call_info.function_declaration;
 	};
+	auto fallbackToParserSelectedStaticDirectTarget =
+		[&]() -> const FunctionDeclarationNode* {
+			if (call_info.is_indirect ||
+				call_info.has_receiver ||
+				call_info.function_declaration == nullptr ||
+				call_info.function_declaration->parent_struct_name().empty() ||
+				!call_info.function_declaration->is_static()) {
+				return nullptr;
+			}
+			if (call_info.definition_lookup_record != nullptr &&
+				call_info.definition_lookup_record->has_value()) {
+				return call_info.function_declaration;
+			}
+			if (call_info.qualified_name.isValid()) {
+				return call_info.function_declaration;
+			}
+			return nullptr;
+		};
 	// Resolution order:
 	// 1. receiver-member direct lookup
 	// 2. callable operator / local callable resolution
@@ -8116,6 +8288,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		!call_info.has_receiver &&
 		definition_lookup_record_target != nullptr) {
 		return definition_lookup_record_target;
+	}
+	if (const FunctionDeclarationNode* parser_selected_static_target =
+			fallbackToParserSelectedStaticDirectTarget();
+		parser_selected_static_target != nullptr) {
+		return parser_selected_static_target;
 	}
 
 	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
@@ -8746,6 +8923,11 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 
 	annotateResolvedCallResultType(call_expr_node, *func_decl);
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);
+	ensureResolvedCallArgConversionsComplete(
+		call_key,
+		*call_info.arguments,
+		*func_decl,
+		context_description);
 }
 
 

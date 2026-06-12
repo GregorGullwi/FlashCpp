@@ -57,10 +57,14 @@ blocking areas:
   from carrying `FunctionCallDefinitionLookupRecord` just because the parser
   has not yet materialized a concrete `type_index` for the temporary
   `TypeSpecifierNode`
-- normalized direct-call lowering now asks sema to annotate a missing scalar
-  argument conversion on the exact argument/parameter pair before asserting,
-  which restores the standards-facing `int -> long` current-member static case
-  while keeping conversion policy in sema instead of codegen heuristics
+- the restored `int -> long` current-member static case no longer relies on a
+  per-argument codegen patch; sema now synchronizes the exact lowered
+  `CallExprNode` at whole-call granularity, and that retry is narrowly bounded
+  to definition-bound / qualified / static-member direct calls whose selected
+  target is already preserved on the AST
+- current-struct explicit member-template materialization now routes its
+  qualified-name override through the same shared direct-call metadata helper
+  that attaches the rest of the structured call metadata
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
@@ -149,11 +153,10 @@ Remaining near-term scope:
   `qualified_name`, especially qualified-member materializers, untyped
   fallbacks, some qualified member-template call materializers, and the
   user-defined literal operator path
-- the direct-call lowering backfill added for the restored
-  `test_template_current_member_static_hides_base_overload_ret0.cpp` case
-  should remain temporary; the remaining parser/materialization work should
-  make that late retry unnecessary by ensuring the structured call path already
-  owns the needed argument-conversion annotation
+- the remaining whole-call sema synchronization hook for direct calls should
+  remain temporary; the remaining parser/materialization work should make even
+  that narrowed retry unnecessary by ensuring the structured call path already
+  owns the needed target and argument-conversion state
 
 ### 3. Current-instantiation / unknown-specialization coverage
 
@@ -200,6 +203,7 @@ For work in this area, rerun:
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_explicit_function_id_definition_bound_ret0.cpp`
 - `test_template_current_member_static_hides_base_overload_ret0.cpp`
+- `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -217,11 +221,11 @@ For work in this area, rerun:
    resolved direct-call sites, starting with the remaining typed
    qualified-member materializers and then the untyped fallback branches.
    Immediate follow-up: preserve `FunctionCallDefinitionLookupRecord` in the
-   next qualified-member materializer path and keep adding focused regressions
-   for replayed member calls that would otherwise be vulnerable to hidden or
-   later same-name overloads. Once those paths are covered, remove the new
-   late direct-call conversion-annotation retry by pushing that work back to
-   earlier semantic ownership.
+   next compatibility-only qualified-member or untyped fallback materializer
+   path and keep adding focused regressions for replayed member calls that
+   would otherwise be vulnerable to hidden or later same-name overloads. Once
+   those paths are covered, remove the new whole-call sema synchronization hook
+   by pushing that work back to earlier semantic ownership.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

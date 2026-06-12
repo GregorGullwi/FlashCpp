@@ -52,12 +52,15 @@ the areas that were previously blocking standards-visible behavior:
   `FunctionCallDefinitionLookupRecord` creation in that fast path just because
   parser-side `TypeSpecifierNode` materialization has not populated a concrete
   `type_index` yet
-- when a normalized direct call still reaches codegen without a scalar
-  argument-conversion slot, codegen now triggers the same sema single-argument
-  conversion annotator on that exact argument/parameter pair before asserting,
-  which closes the replay hole exposed by the restored
-  `int -> long` current-member static regression while keeping the conversion
-  decision sema-owned
+- the restored `int -> long` current-member static regression no longer relies
+  on a per-argument codegen repair; sema now has a whole-call synchronization
+  hook on the exact `CallExprNode` codegen lowers, and that hook is narrowly
+  limited to definition-bound / qualified / static-member direct calls where
+  the parser already preserves the selected target
+- current-struct explicit member-template materialization now routes its
+  qualified-name override through the shared direct-call metadata helper instead
+  of stamping the qualified name separately before attaching the rest of the
+  call metadata
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through preserved semantic metadata, typed lookup, or explicit
@@ -163,9 +166,11 @@ Remaining near-term scope:
   definition-lookup record, especially qualified-member materializers,
   untyped fallback branches, some qualified member-template call materializers,
   and the user-defined literal operator path
-- the new late sema backfill in direct-call lowering should stay narrow and be
-  retired once the remaining replay/materialization paths reliably preserve or
-  reconstruct the needed argument-conversion annotations earlier
+- the remaining sema/codegen boundary sync for direct calls should stay narrow;
+  it now operates at whole-call granularity on the exact lowered AST, but the
+  long-term target is still to remove even that hook once the remaining
+  replay/materialization paths preserve enough structured call identity that
+  sema never has to resynchronize the lowered node
 
 ### 3. Current-instantiation / unknown-specialization precision
 
@@ -203,6 +208,7 @@ When changing this area, always rerun:
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_explicit_function_id_definition_bound_ret0.cpp`
 - `test_template_current_member_static_hides_base_overload_ret0.cpp`
+- `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -220,12 +226,13 @@ When changing this area, always rerun:
    still-uncovered resolved-call paths that only stamp `mangled_name` or
    `qualified_name`, starting with the remaining typed qualified-member
    materializers and then the untyped fallback branches.
-   Immediate follow-up: convert the next qualified-member materializer in
-   `Parser_Expr_PrimaryExpr.cpp` to preserve
-   `FunctionCallDefinitionLookupRecord`, and keep using focused regressions
-   where hidden or later same-name overloads could otherwise steal replayed
-   call targets. After that, collapse the new codegen-triggered sema backfill
-   by proving those paths carry their conversion annotations before lowering.
+   Immediate follow-up: convert the next compatibility-only qualified-member
+   or untyped fallback materializer in `Parser_Expr_PrimaryExpr.cpp` to
+   preserve `FunctionCallDefinitionLookupRecord`, and keep using focused
+   regressions where hidden or later same-name overloads could otherwise steal
+   replayed call targets. After that, collapse the new whole-call sema
+   synchronization hook by proving those paths carry their conversion
+   annotations before lowering.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or
