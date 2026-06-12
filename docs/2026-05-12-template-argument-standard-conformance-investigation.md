@@ -48,6 +48,11 @@ blocking areas:
   call materialization in the covered template paths now also preserve
   `FunctionCallDefinitionLookupRecord`, reducing the remaining standards risk
   that sema will reconstruct definition-bound targets from mangled names alone
+- current-member-context static direct-call replay now also preserves
+  `FunctionCallDefinitionLookupRecord` in the
+  `resolved_member_function_from_context` fast path, so sema no longer has to
+  recover those definition-bound member targets from compatibility metadata
+  alone in that route
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
@@ -133,7 +138,7 @@ Remaining near-term scope:
 
 - the remaining compatibility boundary is now concentrated in parser
   materialization paths that still carry only `mangled_name` or
-  `qualified_name`, especially current-member-context shortcuts, untyped
+  `qualified_name`, especially qualified-member materializers, untyped
   fallbacks, some qualified member-template call materializers, and the
   user-defined literal operator path
 
@@ -152,7 +157,9 @@ Next direct-call target:
 
 - identify the remaining direct-call parser/materialization sites that still
   reach sema with compatibility-only metadata, then replace each typed case
-  with preserved structured target metadata before touching the sema fallback
+  with preserved structured target metadata before touching the sema fallback;
+  after the current-member-context fast path, the next typed branch to tighten
+  is the remaining qualified-member materializer coverage
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -179,6 +186,7 @@ For work in this area, rerun:
 - `test_template_nested_ool_ctor_template_init_replay_ret42.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_explicit_function_id_definition_bound_ret0.cpp`
+- `test_template_current_member_static_hides_base_overload_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -193,12 +201,12 @@ For work in this area, rerun:
 ## Next steps
 
 1. Continue eliminating compatibility-only parser metadata in the remaining
-   resolved direct-call sites, starting with the typed current-member-context
-   and qualified-member materializers and then the untyped fallback branches.
+   resolved direct-call sites, starting with the remaining typed
+   qualified-member materializers and then the untyped fallback branches.
    Immediate follow-up: preserve `FunctionCallDefinitionLookupRecord` in the
-   `resolved_member_function_from_context` path and add a focused regression
-   for replayed member calls that would otherwise be vulnerable to later
-   same-name overloads.
+   next qualified-member materializer path and keep adding focused regressions
+   for replayed member calls that would otherwise be vulnerable to hidden or
+   later same-name overloads.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

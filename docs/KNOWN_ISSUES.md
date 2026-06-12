@@ -1,5 +1,19 @@
 # Known Issues
 
+## Current-member static replay misses some sema conversion attachment
+While shaping the direct-call metadata refactor for
+`resolved_member_function_from_context`, a nearby gap showed up in a focused
+variant where the preserved current-member target required an `int -> long`
+conversion. The call stayed bound to the intended member, but IR conversion
+failed later with:
+
+`Phase 15: sema missed function call argument conversion (int -> long)`
+
+The committed regression for this slice was rewritten to isolate the metadata
+issue without depending on that separate conversion path. Follow-up should
+trace why replayed current-member static calls can still miss sema-owned
+implicit conversion attachment after the call target has already been fixed.
+
 ## Modular-build-only crash: test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp
 `ConstructorDeclarationNode::has_template_parameters()` dereferences a null inner
 pointer in `InlineVector::size()` during `materializeMatchingConstructorTemplate`.

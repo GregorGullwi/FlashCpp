@@ -8600,21 +8600,54 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								return *default_args_error;
 							}
 							result = emplace_node<ExpressionNode>(makeResolvedCallExpr(func_decl, std::move(args), identifier_token));
+							CallExprNode& current_member_call =
+								std::get<CallExprNode>(result->as<ExpressionNode>());
 							std::string_view qualified_owner = func_decl.parent_struct_name();
 							if (qualified_owner.empty() && !member_function_context_stack_.empty()) {
 								qualified_owner = StringTable::getStringView(member_function_context_stack_.back().struct_name);
 							}
-							if (func_decl.has_mangled_name()) {
+							const std::optional<std::string_view> qualified_name_override =
+								qualified_owner.empty()
+									? std::nullopt
+									: std::optional<std::string_view>(
+										StringBuilder()
+											.append(qualified_owner)
+											.append("::")
+											.append(func_decl.decl_node().identifier_token().value())
+											.commit());
+							std::vector<TypeSpecifierNode> fast_path_arg_types;
+							for (size_t arg_index = 0; arg_index < current_member_call.arguments().size(); ++arg_index) {
+								const ASTNode& arg = current_member_call.arguments()[arg_index];
+								const size_t arg_type_count_before = fast_path_arg_types.size();
+								appendFunctionCallArgType(arg, &fast_path_arg_types);
+								if (fast_path_arg_types.size() == arg_type_count_before + 1) {
+									applyIdentifierArgumentArrayBounds(arg, fast_path_arg_types.back());
+								}
+							}
+							const bool has_deferred_fast_path_call_args =
+								argsHaveDeferredTemplateDependency(
+									current_member_call.arguments(),
+									currentTemplateParamNames()) ||
+								argTypesAreDeferredTemplateDependent(
+									fast_path_arg_types,
+									currentTemplateParamNames());
+							if (fast_path_arg_types.size() == current_member_call.arguments().size()) {
+								attachResolvedOrdinaryDirectCallMetadata(
+									result->as<ExpressionNode>(),
+									current_template_definition_lookup_context_,
+									identifier_token,
+									fast_path_arg_types,
+									has_deferred_fast_path_call_args,
+									func_decl,
+									true,
+									false,
+									qualified_name_override);
+							} else if (func_decl.has_mangled_name()) {
 								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 							}
-							if (!qualified_owner.empty()) {
-								setCallQualifiedName(
-									result->as<ExpressionNode>(),
-									StringBuilder()
-										.append(qualified_owner)
-										.append("::")
-										.append(func_decl.decl_node().identifier_token().value())
-										.commit());
+							if (qualified_name_override.has_value() &&
+								!current_member_call.has_qualified_name()) {
+								setCallQualifiedName(result->as<ExpressionNode>(), *qualified_name_override);
 							}
 							return ParseResult::success(*result);
 						}
