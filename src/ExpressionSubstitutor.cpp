@@ -693,21 +693,24 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 					}
 				}
 
+				std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> remaining_pack_bindings =
+					pack_map_;
+				for (StringHandle matched_pack_name : matched_pack_names) {
+					remaining_pack_bindings.erase(matched_pack_name);
+				}
+
 				for (size_t expansion_index = 0; expansion_index < pack_size; ++expansion_index) {
 					std::unordered_map<std::string_view, TemplateTypeArg> scalar_bindings =
 						param_map_;
-					std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> remaining_pack_bindings =
-						pack_map_;
 					for (StringHandle matched_pack_name : matched_pack_names) {
-						auto pack_it = remaining_pack_bindings.find(matched_pack_name);
-						if (pack_it == remaining_pack_bindings.end() ||
+						auto pack_it = pack_map_.find(matched_pack_name);
+						if (pack_it == pack_map_.end() ||
 							expansion_index >= pack_it->second.size()) {
 							throw InternalError(
 								"Missing pack element while preserving pack expansion during call substitution");
 						}
 						scalar_bindings[StringTable::getStringView(matched_pack_name)] =
 							pack_it->second[expansion_index];
-						remaining_pack_bindings.erase(pack_it);
 					}
 
 					ExpressionSubstitutor element_substitutor(

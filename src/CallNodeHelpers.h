@@ -67,9 +67,7 @@ inline std::optional<FunctionCallDefinitionLookupRecord> tryBuildFunctionCallDef
 	}
 
 	FunctionCallDefinitionLookupRecord record;
-	if (definition_context != nullptr && definition_context->is_valid()) {
-		record.definition_context = *definition_context;
-	}
+	record.definition_context = *definition_context;
 	record.callee_name = callee_token.handle();
 	record.resolved_function = &func_decl;
 	if (func_decl.has_mangled_name()) {
