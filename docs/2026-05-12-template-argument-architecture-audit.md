@@ -107,6 +107,15 @@ the areas that were previously blocking standards-visible behavior:
   `PackExpansionExprNode` until substitution, and call-site substitution can
   scalarize the active pack bindings element-by-element instead of silently
   flattening `expr...` into a single ordinary argument
+- deferred qualified/member-template direct calls now preserve explicit
+  template-argument AST, parser return-type hints, and dependent-qualified
+  lookup records separately instead of collapsing semantic ownership onto a
+  parser-selected callee
+- qualified direct-call target resolution now distinguishes type owners from
+  namespace qualifiers before consuming definition-bound compatibility data, so
+  sema resolves nested current-instantiation owners structurally and no longer
+  lets unrelated global templates steal calls like `Ops::read(value)` inside
+  `Runner<T>`
 
 ## Architectural invariants to preserve
 
@@ -198,6 +207,12 @@ Remaining near-term scope:
   materialization sites that still stamp only `mangled_name` or
   `qualified_name` without a typed semantic record, especially niche
   qualified/member-template paths outside the now-covered ordinary-call routes
+- the newly-covered qualified-owner split is intentionally sema-owned: the
+  deferred-template resolver is now bypassed for non-template qualified calls
+  whose left-hand side is a real type owner, but the parser helper still has a
+  compatibility-only ordinary-static-member branch that should eventually be
+  folded into the same structured owner/lookup model instead of remaining a
+  side path
 - the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
@@ -269,9 +284,13 @@ When changing this area, always rerun:
    now used by untyped ordinary calls:
    parser-time return-type hints on the call node, structured deferred lookup
    state for semantic ownership, and no parser-selected callee as the source of
-   final meaning. After that, collapse the new whole-call sema synchronization
-   hook by proving those paths carry their conversion annotations before
-   lowering. Also clean up the remaining legacy parser sites that still
+   final meaning. First target: remove the remaining ordinary-static-member
+   compatibility branch inside `resolveDeferredQualifiedTemplateCall(...)` by
+   routing those cases through the same sema-owned type-owner vs
+   namespace-qualifier split now used in
+   `resolveCallArgAnnotationTarget(...)`. After that, collapse the new
+   whole-call sema synchronization hook by proving those paths carry their
+   conversion annotations before lowering. Also clean up the remaining legacy parser sites that still
    hand-roll `expr...` handling (constructor/initializer parsing) so they share
    the same "expand only when a real function pack matched, otherwise preserve
    the pack node" rule now enforced in ordinary call parsing.

@@ -1910,6 +1910,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	bool tryCollectFunctionCallArgTypes(
 		const ChunkedVector<ASTNode>& arguments,
 		std::vector<TypeSpecifierNode>& arg_types_out);
+	std::optional<InlineVector<TemplateTypeArg, 4>> materializeConcreteCallTemplateArguments(
+		std::span<const ASTNode> template_argument_nodes);
 	std::optional<ASTNode> resolveDependentUnqualifiedCallAtPointOfInstantiation(
 		const DependentUnqualifiedCallLookupRecord& record,
 		const ChunkedVector<ASTNode>& arguments,
@@ -1933,6 +1935,11 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		Token called_from_token);
 	std::optional<ASTNode> resolveDefinitionBoundOrdinaryCall(
 		const FunctionCallDefinitionLookupRecord& record,
+		const ChunkedVector<ASTNode>& arguments,
+		std::span<const TypeSpecifierNode> arg_types);
+	std::optional<ASTNode> resolveDeferredQualifiedTemplateCall(
+		std::string_view qualified_name,
+		std::span<const ASTNode> template_argument_nodes,
 		const ChunkedVector<ASTNode>& arguments,
 		std::span<const TypeSpecifierNode> arg_types);
 	// Shared helper: re-parse a template function body with concrete argument substitution.
@@ -3414,7 +3421,8 @@ private:	 // Resume private methods
 		std::string_view instantiated_class_name,
 		std::string_view member_name,
 		const Token& member_token,
-		std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args);
+		std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args,
+		const std::vector<ASTNode>* pre_parsed_member_template_arg_nodes);
 
 	// Utility functions
 	bool consume_punctuator(const std::string_view& value);

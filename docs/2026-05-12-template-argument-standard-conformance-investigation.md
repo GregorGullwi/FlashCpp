@@ -108,6 +108,15 @@ blocking areas:
   pack matched" as a successful expansion; that closes the standards-visible
   leak where `typeCode<Rest>()...` in `add3(..., tail)` lost pack semantics
   before sema could scalarize the bound template pack
+- deferred qualified/member-template calls now preserve explicit template
+  arguments, parser return-type hints, and dependent-qualified lookup records
+  as separate metadata so later semantic resolution can replay the correct
+  lookup instead of inheriting a parser-selected callee as final meaning
+- sema now distinguishes real type owners from namespace qualifiers before it
+  consumes definition-bound compatibility metadata for qualified direct calls,
+  which fixes current-instantiation nested-owner cases like
+  `Runner<T>::Ops::read(value)` being stolen by an unrelated global
+  `Ops<T>::read`
 
 ## Highest-value remaining standards gaps
 
@@ -182,6 +191,12 @@ Remaining near-term scope:
   materialization paths that still carry only `mangled_name` or
   `qualified_name`, especially niche qualified/member-template materializers
   that do not yet route through the same deferred-lookup model
+- the just-fixed qualified-owner collision confirms the right ownership split:
+  non-template qualified calls must first decide whether the left-hand side is
+  a type owner or a namespace qualifier, and only then may compatibility
+  records participate; the remaining parser helper that still does ordinary
+  static-member recovery inside `resolveDeferredQualifiedTemplateCall(...)`
+  should be moved onto that same model
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -260,9 +275,13 @@ For work in this area, rerun:
    untyped ordinary calls, and keep
    `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` in the
    guard set so parser-time constexpr users never again need a parser-selected
-   callee for return-type visibility. Once those paths match the split model,
-   remove the new whole-call sema synchronization hook by pushing that work
-   back to earlier semantic ownership.
+   callee for return-type visibility. First subtask: remove the remaining
+   ordinary-static-member compatibility branch from
+   `resolveDeferredQualifiedTemplateCall(...)` by reusing the same sema-owned
+   type-owner / namespace-qualifier split that now protects qualified direct
+   calls in `resolveCallArgAnnotationTarget(...)`. Once those paths match the
+   split model, remove the new whole-call sema synchronization hook by pushing
+   that work back to earlier semantic ownership.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not

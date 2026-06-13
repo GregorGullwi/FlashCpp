@@ -199,13 +199,18 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::string_view instantiated_class_name,
 	std::string_view member_name,
 	const Token& member_token,
-	std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args) {
+	std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args,
+	const std::vector<ASTNode>* pre_parsed_member_template_arg_nodes) {
 
 	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call called for: ", instantiated_class_name, "::", member_name);
 
 	// Check for member template arguments: Template<T>::member<U>
 	std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args =
 		std::move(pre_parsed_member_template_args);
+	std::vector<ASTNode> member_template_arg_nodes =
+		pre_parsed_member_template_arg_nodes != nullptr
+			? *pre_parsed_member_template_arg_nodes
+			: std::vector<ASTNode>{};
 	SaveHandle member_template_args_start = 0;
 	bool parsed_member_template_args = member_template_args.has_value();
 	bool tentatively_parsed_member_template_args = false;
@@ -214,7 +219,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		// Parse tentatively and only keep the parse if this is a call form.
 		member_template_args_start = save_token_position();
 		last_failed_template_arg_parse_handle_ = SIZE_MAX;
-		member_template_args = parse_explicit_template_arguments();
+		member_template_args =
+			parse_explicit_template_arguments(&member_template_arg_nodes);
 		if (member_template_args.has_value()) {
 			parsed_member_template_args = true;
 			tentatively_parsed_member_template_args = true;
@@ -295,6 +301,16 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		!canonical_owner.instantiated_name.empty()) {
 		instantiated_class_name = canonical_owner.instantiated_name;
 	}
+	const bool has_dependent_template_args =
+		member_template_args.has_value() &&
+		std::any_of(
+			member_template_args->begin(),
+			member_template_args->end(),
+			[](const TemplateTypeArg& arg) {
+				return arg.is_dependent;
+			});
+	const bool has_deferred_template_call_args =
+		has_dependent_call_arg || has_dependent_template_args;
 	std::optional<ASTNode> instantiated_func = tryInstantiateMemberFunctionTemplateCall(
 		instantiated_class_name,
 		member_name,
@@ -313,43 +329,27 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 				member_name,
 				std::span<const TemplateTypeArg>{});
 	}
-
-	// Build qualified function name including template args
-	StringBuilder func_name_builder;
-	func_name_builder.append(instantiated_class_name);
-	func_name_builder.append("::");
-	func_name_builder.append(member_name);
-
-	// If member has template args, append them using hash-based naming
-	if (member_template_args.has_value() && !member_template_args->empty()) {
-		// Generate hash suffix for template args
-		auto key = FlashCpp::makeInstantiationKey(StringTable::getOrInternStringHandle(member_name), *member_template_args);
-		func_name_builder.append("$");
-		auto hash_val = FlashCpp::TemplateInstantiationKeyHash{}(key);
-		char hex[17];
-		std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(hash_val));
-		func_name_builder.append(std::string_view(hex, 16));
-	}
-	std::string_view func_name = func_name_builder.commit();
-
-	// Create function call token
-	Token func_token(Token::Type::Identifier, func_name,
-					 member_token.line(),
-					 member_token.column(),
-					 member_token.file_index());
+	const std::string_view qualified_name =
+		StringBuilder()
+			.append(instantiated_class_name)
+			.append("::")
+			.append(member_name)
+			.commit();
+	const StringHandle owner_name_handle =
+		StringTable::getOrInternStringHandle(instantiated_class_name);
+	const StringHandle member_name_handle =
+		StringTable::getOrInternStringHandle(member_name);
 
 	// If we successfully instantiated the function, use its declaration
-	const DeclarationNode* decl_ptr = nullptr;
-	const FunctionDeclarationNode* func_decl_ptr = nullptr;
+	const FunctionDeclarationNode* resolved_function = nullptr;
+	const FunctionDeclarationNode* parser_hint_function = nullptr;
 	if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-		func_decl_ptr = &instantiated_func->as<FunctionDeclarationNode>();
-		decl_ptr = &func_decl_ptr->decl_node();
+		resolved_function = &instantiated_func->as<FunctionDeclarationNode>();
+		parser_hint_function = resolved_function;
 	} else {
 		// For non-template member functions (e.g. Template<T>::allocate()),
 		// resolve directly from the instantiated class before creating a fallback decl.
-		StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_class_name);
-		StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-		auto type_it = getTypesByNameMap().find(class_name_handle);
+		auto type_it = getTypesByNameMap().find(owner_name_handle);
 		if (type_it != getTypesByNameMap().end() && type_it->second) {
 			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 			if (struct_info) {
@@ -362,50 +362,111 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 							first_name_match = &candidate;
 						}
 						if (candidate.parameter_nodes().size() == call_arg_count) {
-							func_decl_ptr = &candidate;
-							decl_ptr = &func_decl_ptr->decl_node();
+							resolved_function = &candidate;
 							break;
 						}
 					}
 				}
-				if (!decl_ptr && first_name_match) {
-					func_decl_ptr = first_name_match;
-					decl_ptr = &func_decl_ptr->decl_node();
+				if (resolved_function == nullptr && first_name_match != nullptr) {
+					parser_hint_function = first_name_match;
 				}
 			}
 		}
-
-		// Fall back to forward declaration only if we still couldn't resolve.
-		if (!decl_ptr) {
-			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, func_token, CVQualifier::None);
-			auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
-			decl_ptr = &forward_decl.as<DeclarationNode>();
+		if (parser_hint_function == nullptr &&
+			member_template_args.has_value()) {
+			if (const std::vector<ASTNode>* template_overloads =
+					gTemplateRegistry.lookupAllTemplates(qualified_name);
+				template_overloads != nullptr) {
+				for (const ASTNode& template_overload : *template_overloads) {
+					if (const FunctionDeclarationNode* template_function =
+							get_function_decl_node(template_overload);
+						template_function != nullptr) {
+						parser_hint_function = template_function;
+						break;
+					}
+				}
+			}
 		}
 	}
 
-	auto result = emplace_node<ExpressionNode>(
-		func_decl_ptr
-			? makeResolvedCallExpr(*func_decl_ptr, std::move(args), func_token)
-			: makeDirectCallExpr(*decl_ptr, std::move(args), func_token));
-	setCallQualifiedName(result.as<ExpressionNode>(), func_name);
-
-	// Set the mangled name on the function call if we have the function declaration
-	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
-		setCallMangledName(result.as<ExpressionNode>(), func_decl_ptr->mangled_name());
+	std::optional<ExpressionNode> call_expr;
+	if (resolved_function != nullptr) {
+		call_expr = makeResolvedCallExpr(
+			*resolved_function,
+			std::move(args),
+			member_token);
+	} else {
+		auto placeholder_type = emplace_node<TypeSpecifierNode>(
+			TypeCategory::Int,
+			TypeQualifier::None,
+			32,
+			member_token,
+			CVQualifier::None);
+		auto placeholder_decl = emplace_node<DeclarationNode>(
+			placeholder_type.as<TypeSpecifierNode>(),
+			member_token);
+		call_expr = makeDeferredOrdinaryDirectCallExpr(
+			placeholder_decl,
+			std::move(args),
+			member_token);
 	}
-	if (func_decl_ptr) {
+	auto result = emplace_node<ExpressionNode>(std::move(*call_expr));
+	setCallQualifiedName(result.as<ExpressionNode>(), qualified_name);
+	if (!member_template_arg_nodes.empty()) {
+		setCallTemplateArguments(
+			result.as<ExpressionNode>(),
+			std::move(member_template_arg_nodes));
+	}
+	if (resolved_function == nullptr) {
+		auto owner_type_it = getTypesByNameMap().find(owner_name_handle);
+		if (owner_type_it != getTypesByNameMap().end() &&
+			owner_type_it->second != nullptr &&
+			owner_type_it->second->isTemplateInstantiation() &&
+			owner_type_it->second->getStructInfo() == nullptr) {
+			TypeInfo::DependentQualifiedNameRecord dependent_record;
+			dependent_record.owner_kind =
+				TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
+			dependent_record.owner_name = owner_name_handle;
+			dependent_record.owner_type =
+				owner_type_it->second->registeredTypeIndex();
+			dependent_record.owner_template_arguments =
+				owner_type_it->second->templateArgs();
+			TypeInfo::DependentQualifiedNameRecord::Member member_record;
+			member_record.name = member_name_handle;
+			if (member_template_args.has_value()) {
+				member_record.template_arguments =
+					toTemplateArgInfoList(*member_template_args);
+				member_record.has_template_arguments = true;
+			}
+			dependent_record.member_chain.push_back(std::move(member_record));
+			setCallDependentQualifiedLookupRecord(
+				result.as<ExpressionNode>(),
+				dependent_record);
+		}
+	}
+
+	if (resolved_function != nullptr && resolved_function->has_mangled_name()) {
+		setCallMangledName(
+			result.as<ExpressionNode>(),
+			resolved_function->mangled_name());
+	}
+	if (resolved_function != nullptr) {
 		if (std::optional<FunctionCallDefinitionLookupRecord> record =
 				tryBuildFunctionCallDefinitionLookupRecord(
 					current_template_definition_lookup_context_,
 					member_token,
 					deduced_arg_types,
-					has_dependent_call_arg,
-					*func_decl_ptr,
+					has_deferred_template_call_args,
+					*resolved_function,
 					true,
 					false);
 			record.has_value()) {
 			setCallDefinitionLookupRecord(result.as<ExpressionNode>(), *record);
 		}
+	} else if (parser_hint_function != nullptr) {
+		setCallParserReturnTypeHint(
+			result.as<ExpressionNode>(),
+			parser_hint_function->decl_node().type_specifier_node());
 	}
 
 	return ParseResult::success(result);
