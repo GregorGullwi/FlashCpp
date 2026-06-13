@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-12
+**Last updated:** 2026-06-13
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -84,6 +84,11 @@ blocking areas:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list instead of carrying only `mangled_name`
+- the newer untyped ordinary direct-call fallback exits now use an explicit
+  compatibility-only metadata helper instead of silently manufacturing
+  definition-bound lookup records without complete typed evidence, and the
+  remaining untyped current-member-context static fast path now goes through
+  that same helper
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -174,6 +179,12 @@ Remaining near-term scope:
   stable typed arguments even after the new structured retry pass, plus any
   remaining niche qualified/member-template materializers that do not yet
   route through the shared helpers
+- the older unified ordinary identifier-call path still uses its legacy
+  manual `get_expression_type(...)` fallback because a direct conversion to the
+  shared retry/compatibility-only shape regressed
+  `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp`; that path
+  needs a dedicated split between parse-time return-type availability and final
+  semantic call-target authority before it can join the newer model safely
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -200,8 +211,9 @@ Next direct-call target:
   reach sema with compatibility-only metadata, then replace each typed case
   with preserved structured target metadata before touching the sema fallback;
   after the now-covered typed qualified-member and string-literal UDL paths,
-  the next target is the final fallback exits that still cannot produce stable
-  typed arguments even after the structured retry
+  the next target is the legacy unified identifier-call fallback that still
+  cannot adopt the shared retry path until parser-time return-type needs are
+  separated from semantic target identity
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -245,16 +257,15 @@ For work in this area, rerun:
 ## Next steps
 
 1. Continue eliminating compatibility-only parser metadata in the remaining
-   resolved direct-call sites, now focusing on the branches that still cannot
-   produce stable typed arguments even after the structured retry pass.
-   Immediate follow-up: audit the last compatibility-only fallback exits in
-   `Parser_Expr_PrimaryExpr.cpp` and either preserve
-   `FunctionCallDefinitionLookupRecord` there or reclassify those calls as
-   unresolved/deferred instead of pretending they are fully resolved. Keep
-   adding focused regressions for replayed calls that would otherwise be
-   vulnerable to hidden or later same-name overloads. Once those paths are
-   covered, remove the new whole-call sema synchronization hook by pushing that
-   work back to earlier semantic ownership.
+   resolved direct-call sites, now focusing first on the legacy unified
+   identifier-call fallback in `Parser_Expr_PrimaryExpr.cpp`.
+   Immediate follow-up: refactor that path so parser-time constexpr/dependent
+   consumers can still recover a callee return type without treating the
+   parser-selected callee as final semantic identity; use
+   `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` as the
+   regression that guards this split. Once that path matches the newer
+   compatibility-only model, remove the new whole-call sema synchronization
+   hook by pushing that work back to earlier semantic ownership.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not

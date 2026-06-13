@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-12
+**Last updated:** 2026-06-13
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -81,6 +81,12 @@ the areas that were previously blocking standards-visible behavior:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list, instead of carrying only `mangled_name`
+- the newer ordinary direct-call fallback branches that still cannot assemble
+  stable typed arguments now route through a shared
+  compatibility-only metadata helper instead of silently upgrading those calls
+  to `FunctionCallDefinitionLookupRecord` in the absence of full typed
+  evidence; the current-member-context static fast path uses the same helper
+  on its remaining untyped exit
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
@@ -189,6 +195,15 @@ Remaining near-term scope:
   where both `get_expression_type(...)` and `appendFunctionCallArgType(...)`
   still fail, plus any remaining niche qualified/member-template materializers
   outside the now-covered shared helpers
+- the older unified ordinary identifier-call path in
+  `Parser_Expr_PrimaryExpr.cpp` still uses its pre-existing manual
+  `get_expression_type(...)` fallback instead of the shared structured retry;
+  a direct swap regressed
+  `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` because
+  parser-time constexpr/dependent-call consumers still rely on the resolved
+  callee's return type there, so that path now needs an explicit split between
+  "parse-time return-type preservation" and "authoritative semantic call
+  identity" instead of another broad helper transplant
 - the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
@@ -216,10 +231,11 @@ Next direct-call target:
 - trace the remaining `Parser_Expr_PrimaryExpr.cpp` direct-call sites that
   still attach only compatibility metadata, then either preserve a typed
   `FunctionCallDefinitionLookupRecord` there or explicitly document why the
-  call cannot yet carry one; after the current-member-context fast path, the
-  remaining highest-value cleanup is the final compatibility-only fallback
-  branches that still cannot produce stable typed arguments even after the
-  structured retry
+  call cannot yet carry one; after the current-member-context fast path and
+  the newer compatibility-only fallback cleanup, the next highest-value target
+  is the older unified identifier-call fallback that still cannot adopt the
+  shared structured retry without first separating parser-time return-type
+  needs from semantic target identity
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -254,16 +270,17 @@ When changing this area, always rerun:
 
 1. Finish the remaining parser-side direct-call metadata preservation in the
    still-uncovered resolved-call paths that only stamp `mangled_name` or
-   `qualified_name`, now focusing on the branches that still cannot assemble
-   stable typed arguments even after the new structured retry pass.
-   Immediate follow-up: audit the last compatibility-only fallback exits in
-   `Parser_Expr_PrimaryExpr.cpp` and either teach them to preserve
-   `FunctionCallDefinitionLookupRecord` or explicitly classify them as
-   unresolved/deferred instead of pretending to be fully resolved calls. Keep
-   using focused regressions where hidden or later same-name overloads could
-   otherwise steal replayed call targets. After that, collapse the new
-   whole-call sema synchronization hook by proving those paths carry their
-   conversion annotations before lowering.
+   `qualified_name`, now focusing first on the legacy unified
+   identifier-call path in `Parser_Expr_PrimaryExpr.cpp`.
+   Immediate follow-up: split that path's "keep a callee return type visible to
+   parser-time constexpr/dependent consumers" concern from its "do not treat a
+   parser-selected callee as authoritative semantic identity" concern, then
+   move it onto the same explicit compatibility-only model already used by the
+   newer fallback exits. Use
+   `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` as the
+   guardrail when doing that split, because it exposed the current coupling.
+   After that, collapse the new whole-call sema synchronization hook by
+   proving those paths carry their conversion annotations before lowering.
    Also clean up the remaining legacy parser sites that still hand-roll
    `expr...` handling (constructor/initializer parsing) so they share the same
    "expand only when a real function pack matched, otherwise preserve the pack
