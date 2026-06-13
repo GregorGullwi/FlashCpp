@@ -81,12 +81,12 @@ the areas that were previously blocking standards-visible behavior:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list, instead of carrying only `mangled_name`
-- the newer ordinary direct-call fallback branches that still cannot assemble
-  stable typed arguments now route through a shared
-  compatibility-only metadata helper instead of silently upgrading those calls
-  to `FunctionCallDefinitionLookupRecord` in the absence of full typed
-  evidence; the current-member-context static fast path uses the same helper
-  on its remaining untyped exit
+- the remaining untyped ordinary direct-call fallback exits no longer keep a
+  parser-selected callee as the call's semantic identity just to preserve
+  parse-time typing; they now carry an explicit parser return-type hint plus
+  either a deferred definition-bound lookup record or the existing deferred
+  dependent-unqualified lookup record, and sema can resolve those calls later
+  from structured lookup state instead of mangled-name recovery
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
@@ -189,21 +189,15 @@ Desired end state:
 
 Remaining near-term scope:
 
-- the remaining compatibility surface is now concentrated in parser paths that
-  still stamp only `mangled_name` or `qualified_name` without a typed
-  definition-lookup record, especially the truly untypable fallback branches
-  where both `get_expression_type(...)` and `appendFunctionCallArgType(...)`
-  still fail, plus any remaining niche qualified/member-template materializers
-  outside the now-covered shared helpers
-- the older unified ordinary identifier-call path in
-  `Parser_Expr_PrimaryExpr.cpp` still uses its pre-existing manual
-  `get_expression_type(...)` fallback instead of the shared structured retry;
-  a direct swap regressed
-  `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` because
-  parser-time constexpr/dependent-call consumers still rely on the resolved
-  callee's return type there, so that path now needs an explicit split between
-  "parse-time return-type preservation" and "authoritative semantic call
-  identity" instead of another broad helper transplant
+- the highest-impact legacy unified ordinary identifier-call fallback is now on
+  the proper split model: parse-time return-type visibility lives on an
+  explicit call-node hint, while deferred semantic ownership lives on a
+  definition-bound or dependent-unqualified lookup record rather than on a
+  parser-selected callee
+- the remaining debt is narrower and now concentrated in other parser
+  materialization sites that still stamp only `mangled_name` or
+  `qualified_name` without a typed semantic record, especially niche
+  qualified/member-template paths outside the now-covered ordinary-call routes
 - the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
@@ -232,10 +226,9 @@ Next direct-call target:
   still attach only compatibility metadata, then either preserve a typed
   `FunctionCallDefinitionLookupRecord` there or explicitly document why the
   call cannot yet carry one; after the current-member-context fast path and
-  the newer compatibility-only fallback cleanup, the next highest-value target
-  is the older unified identifier-call fallback that still cannot adopt the
-  shared structured retry without first separating parser-time return-type
-  needs from semantic target identity
+  the untyped ordinary-call deferred-lookup split, the next highest-value
+  targets are the remaining qualified/member-template materializers that still
+  carry only `qualified_name`/`mangled_name` compatibility data
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -270,21 +263,18 @@ When changing this area, always rerun:
 
 1. Finish the remaining parser-side direct-call metadata preservation in the
    still-uncovered resolved-call paths that only stamp `mangled_name` or
-   `qualified_name`, now focusing first on the legacy unified
-   identifier-call path in `Parser_Expr_PrimaryExpr.cpp`.
-   Immediate follow-up: split that path's "keep a callee return type visible to
-   parser-time constexpr/dependent consumers" concern from its "do not treat a
-   parser-selected callee as authoritative semantic identity" concern, then
-   move it onto the same explicit compatibility-only model already used by the
-   newer fallback exits. Use
-   `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` as the
-   guardrail when doing that split, because it exposed the current coupling.
-   After that, collapse the new whole-call sema synchronization hook by
-   proving those paths carry their conversion annotations before lowering.
-   Also clean up the remaining legacy parser sites that still hand-roll
-   `expr...` handling (constructor/initializer parsing) so they share the same
-   "expand only when a real function pack matched, otherwise preserve the pack
-   node" rule now enforced in ordinary call parsing.
+   `qualified_name`, now focusing on qualified/member-template materializers
+   outside the now-covered ordinary identifier-call routes.
+   Immediate follow-up: move those paths onto the same split ownership model
+   now used by untyped ordinary calls:
+   parser-time return-type hints on the call node, structured deferred lookup
+   state for semantic ownership, and no parser-selected callee as the source of
+   final meaning. After that, collapse the new whole-call sema synchronization
+   hook by proving those paths carry their conversion annotations before
+   lowering. Also clean up the remaining legacy parser sites that still
+   hand-roll `expr...` handling (constructor/initializer parsing) so they share
+   the same "expand only when a real function pack matched, otherwise preserve
+   the pack node" rule now enforced in ordinary call parsing.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

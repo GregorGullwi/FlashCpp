@@ -84,11 +84,12 @@ blocking areas:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list instead of carrying only `mangled_name`
-- the newer untyped ordinary direct-call fallback exits now use an explicit
-  compatibility-only metadata helper instead of silently manufacturing
-  definition-bound lookup records without complete typed evidence, and the
-  remaining untyped current-member-context static fast path now goes through
-  that same helper
+- untyped ordinary direct-call fallback exits no longer need a parser-selected
+  callee to keep parse-time typing alive: they now carry an explicit parser
+  return-type hint on the call node plus either a deferred
+  definition-context lookup record or a deferred dependent-unqualified lookup
+  record, so later semantic resolution can re-run the correct lookup instead of
+  leaning on mangled-name or parser-target compatibility
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -173,18 +174,14 @@ Why this matters:
 
 Remaining near-term scope:
 
-- the remaining compatibility boundary is now concentrated in parser
+- the biggest ordinary identifier-call coupling is now gone: parse-time
+  return-type availability and final semantic call-target authority are
+  separated on the call node / lookup-record boundary instead of being tied to
+  a parser-selected callee
+- the remaining compatibility boundary is now concentrated in other parser
   materialization paths that still carry only `mangled_name` or
-  `qualified_name`, especially the fallback exits that still cannot assemble
-  stable typed arguments even after the new structured retry pass, plus any
-  remaining niche qualified/member-template materializers that do not yet
-  route through the shared helpers
-- the older unified ordinary identifier-call path still uses its legacy
-  manual `get_expression_type(...)` fallback because a direct conversion to the
-  shared retry/compatibility-only shape regressed
-  `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp`; that path
-  needs a dedicated split between parse-time return-type availability and final
-  semantic call-target authority before it can join the newer model safely
+  `qualified_name`, especially niche qualified/member-template materializers
+  that do not yet route through the same deferred-lookup model
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -211,9 +208,8 @@ Next direct-call target:
   reach sema with compatibility-only metadata, then replace each typed case
   with preserved structured target metadata before touching the sema fallback;
   after the now-covered typed qualified-member and string-literal UDL paths,
-  the next target is the legacy unified identifier-call fallback that still
-  cannot adopt the shared retry path until parser-time return-type needs are
-  separated from semantic target identity
+  the next targets are the remaining qualified/member-template paths that still
+  have not adopted the deferred lookup + parser return-type hint split
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -257,15 +253,16 @@ For work in this area, rerun:
 ## Next steps
 
 1. Continue eliminating compatibility-only parser metadata in the remaining
-   resolved direct-call sites, now focusing first on the legacy unified
-   identifier-call fallback in `Parser_Expr_PrimaryExpr.cpp`.
-   Immediate follow-up: refactor that path so parser-time constexpr/dependent
-   consumers can still recover a callee return type without treating the
-   parser-selected callee as final semantic identity; use
-   `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` as the
-   regression that guards this split. Once that path matches the newer
-   compatibility-only model, remove the new whole-call sema synchronization
-   hook by pushing that work back to earlier semantic ownership.
+   resolved direct-call sites, now focusing on the qualified/member-template
+   materializers that still have not adopted the deferred lookup + parser
+   return-type hint split.
+   Immediate follow-up: move those paths onto the same model now used by
+   untyped ordinary calls, and keep
+   `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` in the
+   guard set so parser-time constexpr users never again need a parser-selected
+   callee for return-type visibility. Once those paths match the split model,
+   remove the new whole-call sema synchronization hook by pushing that work
+   back to earlier semantic ownership.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not

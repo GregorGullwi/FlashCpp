@@ -280,6 +280,24 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 	return record;
 }
 
+std::optional<FunctionCallDefinitionLookupRecord> makeDeferredFunctionCallDefinitionLookupRecord(
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included) {
+	if (definition_context == nullptr ||
+		!definition_context->is_valid() ||
+		callee_token.type() != Token::Type::Identifier) {
+		return std::nullopt;
+	}
+
+	FunctionCallDefinitionLookupRecord record;
+	initializeCallLookupRecordCommon(record, definition_context, callee_token);
+	record.ordinary_lookup_included = ordinary_lookup_included;
+	record.argument_dependent_lookup_included = argument_dependent_lookup_included;
+	return record;
+}
+
 std::optional<std::string_view> makeQualifiedMemberCallNameOverride(
 	std::string_view owner_name,
 	std::string_view member_name) {
@@ -333,14 +351,10 @@ void attachResolvedOrdinaryDirectCallMetadata(
 	}
 }
 
-void attachCompatibilityOnlyOrdinaryDirectCallMetadata(
+void attachDeferredOrdinaryDirectCallHints(
 	ExpressionNode& call_expr,
 	const FunctionDeclarationNode& func_decl,
 	std::optional<std::string_view> qualified_name_override) {
-	if (func_decl.has_mangled_name()) {
-		setCallMangledName(call_expr, func_decl.mangled_name());
-	}
-
 	if (qualified_name_override.has_value() && !qualified_name_override->empty()) {
 		setCallQualifiedName(call_expr, *qualified_name_override);
 	} else if (!func_decl.parent_struct_name().empty()) {
@@ -352,6 +366,9 @@ void attachCompatibilityOnlyOrdinaryDirectCallMetadata(
 				.append(func_decl.decl_node().identifier_token().value())
 				.commit());
 	}
+	setCallParserReturnTypeHint(
+		call_expr,
+		func_decl.decl_node().type_specifier_node());
 }
 
 void attachResolvedOrdinaryDirectCallMetadata(
@@ -602,6 +619,42 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 	}
 
 	return std::nullopt;
+}
+
+std::optional<ASTNode> Parser::resolveDefinitionBoundOrdinaryCall(
+	const FunctionCallDefinitionLookupRecord& record,
+	const ChunkedVector<ASTNode>& arguments,
+	std::span<const TypeSpecifierNode> arg_types) {
+	if (!record.callee_name.isValid()) {
+		return std::nullopt;
+	}
+
+	ScopedDefinitionLookupContext ctx_scope(
+		current_template_definition_lookup_context_,
+		record.definition_context.is_valid() ? &record.definition_context : nullptr);
+
+	std::vector<ASTNode> all_overloads =
+		gSymbolTable.lookup_all(StringTable::getStringView(record.callee_name));
+	filterPhase1OrdinaryFunctionOverloads(all_overloads);
+	if (record.argument_dependent_lookup_included && !arg_types.empty()) {
+		std::vector<ASTNode> adl_candidates =
+			gSymbolTable.lookup_adl_only(
+				StringTable::getStringView(record.callee_name),
+				arg_types);
+		appendUniqueOverloads(all_overloads, adl_candidates);
+	}
+
+	if (all_overloads.empty()) {
+		return std::nullopt;
+	}
+
+	OverloadResolutionResult resolution = resolve_overload(all_overloads, arg_types);
+	if (resolution.is_ambiguous ||
+		!resolution.has_match ||
+		resolution.selected_overload == nullptr) {
+		return std::nullopt;
+	}
+	return *resolution.selected_overload;
 }
 
 std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
@@ -1006,6 +1059,61 @@ bool Parser::tryCollectOrdinaryDirectCallArgTypes(
 		applyOrdinaryCallLValueReference(arg, arg_types_out->back());
 	}
 	return arg_types_out->size() == args.size();
+}
+
+ExpressionNode Parser::makeDeferredOrdinaryDirectCallExpr(
+	const ASTNode& resolved_decl,
+	ChunkedVector<ASTNode>&& arguments,
+	Token called_from_token) {
+	if (resolved_decl.is<FunctionDeclarationNode>()) {
+		const FunctionDeclarationNode& func_decl =
+			resolved_decl.as<FunctionDeclarationNode>();
+		auto type_node = emplace_node<TypeSpecifierNode>(
+			TypeIndex{}.withCategory(TypeCategory::Auto),
+			0,
+			called_from_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		auto placeholder_decl =
+			emplace_node<DeclarationNode>(type_node, called_from_token);
+		ExpressionNode call_expr = makeDirectCallExpr(
+			placeholder_decl.as<DeclarationNode>(),
+			std::move(arguments),
+			called_from_token);
+		setCallParserReturnTypeHint(
+			call_expr,
+			func_decl.decl_node().type_specifier_node());
+		return call_expr;
+	}
+
+	if (resolved_decl.is<DeclarationNode>()) {
+		return makeDirectCallExpr(
+			resolved_decl.as<DeclarationNode>(),
+			std::move(arguments),
+			called_from_token);
+	}
+
+	if (resolved_decl.is<VariableDeclarationNode>()) {
+		return makeDirectCallExpr(
+			resolved_decl.as<VariableDeclarationNode>().declaration(),
+			std::move(arguments),
+			called_from_token);
+	}
+
+	if (resolved_decl.is<TemplateFunctionDeclarationNode>()) {
+		const ASTNode& function_decl =
+			resolved_decl.as<TemplateFunctionDeclarationNode>()
+				.function_declaration();
+		if (function_decl.is<FunctionDeclarationNode>()) {
+			return makeDeferredOrdinaryDirectCallExpr(
+				function_decl,
+				std::move(arguments),
+				called_from_token);
+		}
+	}
+
+	throw InternalError(
+		"Unsupported call target node type in makeDeferredOrdinaryDirectCallExpr");
 }
 
 namespace {
@@ -5992,21 +6100,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::error("Invalid function declaration", identifier_token);
 					}
 					result = emplace_node<ExpressionNode>(
-						makeCallExprFromNode(
+						makeDeferredOrdinaryDirectCallExpr(
 							*identifierType,
 							std::move(args_ref),
 							identifier_token));
 					if (identifierType->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
-						attachResolvedOrdinaryDirectCallMetadata(
+						attachDeferredOrdinaryDirectCallHints(
 							result->as<ExpressionNode>(),
-							current_template_definition_lookup_context_,
-							identifier_token,
-							arg_types,
-							has_deferred_template_call_args,
 							func_decl,
-							true,
-							argumentDependentLookupIncluded);
+							std::nullopt);
 					}
 					if (has_deferred_template_call_args) {
 						std::optional<DependentUnqualifiedCallLookupRecord> record =
@@ -6018,6 +6121,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (record.has_value()) {
 							setCallDependentUnqualifiedLookupRecord(result->as<ExpressionNode>(), *record);
 						}
+					} else if (std::optional<FunctionCallDefinitionLookupRecord> record =
+								   makeDeferredFunctionCallDefinitionLookupRecord(
+									   current_template_definition_lookup_context_,
+									   identifier_token,
+									   true,
+									   argumentDependentLookupIncluded);
+							   record.has_value()) {
+						setCallDefinitionLookupRecord(
+							result->as<ExpressionNode>(),
+							*record);
 					}
 					return ParseResult::success(*result);
 				}
@@ -8703,13 +8816,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									false,
 									qualified_name_override);
 							} else {
-								attachCompatibilityOnlyOrdinaryDirectCallMetadata(
+								result = emplace_node<ExpressionNode>(
+									makeDeferredOrdinaryDirectCallExpr(
+										ASTNode(&func_decl),
+										copyCallArguments(current_member_call.arguments()),
+										identifier_token));
+								attachDeferredOrdinaryDirectCallHints(
 									result->as<ExpressionNode>(),
 									func_decl,
 									qualified_name_override);
 							}
 							if (qualified_name_override.has_value() &&
-								!current_member_call.has_qualified_name()) {
+								!std::get<CallExprNode>(result->as<ExpressionNode>()).has_qualified_name()) {
 								setCallQualifiedName(result->as<ExpressionNode>(), *qualified_name_override);
 							}
 							return ParseResult::success(*result);
@@ -8746,24 +8864,36 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										return ParseResult::error("Invalid function declaration", identifier_token);
 									}
 									result = emplace_node<ExpressionNode>(
-										makeCallExprFromNode(
+										makeDeferredOrdinaryDirectCallExpr(
 											*identifierType,
 											std::move(args),
 											identifier_token));
 									if (identifierType->is<FunctionDeclarationNode>()) {
 										const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
-										attachCompatibilityOnlyOrdinaryDirectCallMetadata(
+										attachDeferredOrdinaryDirectCallHints(
 											result->as<ExpressionNode>(),
 											func_decl,
 											std::nullopt);
 									}
-									maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
-										result->as<ExpressionNode>(),
-										identifier_token,
-										has_deferred_ordinary_call_args,
-										current_template_definition_lookup_context_,
-										true,
-										*identifierType);
+									if (has_deferred_ordinary_call_args) {
+										maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
+											result->as<ExpressionNode>(),
+											identifier_token,
+											true,
+											current_template_definition_lookup_context_,
+											true,
+											*identifierType);
+									} else if (std::optional<FunctionCallDefinitionLookupRecord> record =
+												   makeDeferredFunctionCallDefinitionLookupRecord(
+													   current_template_definition_lookup_context_,
+													   identifier_token,
+													   true,
+													   true);
+											   record.has_value()) {
+										setCallDefinitionLookupRecord(
+											result->as<ExpressionNode>(),
+											*record);
+									}
 									if (result.has_value()) {
 										return ParseResult::success(*result);
 									}

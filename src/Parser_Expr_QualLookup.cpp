@@ -2719,6 +2719,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		TypeSpecifierNode return_type;
 		if (call_info.function_declaration) {
 			return_type = call_info.function_declaration->decl_node().type_specifier_node();
+		} else if (call_info.parser_return_type_hint != nullptr &&
+				   call_info.parser_return_type_hint->has_value()) {
+			return_type = call_info.parser_return_type_hint->value();
 		} else if (auto indirect_return_type =
 					   FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
 						   callee_decl.type_specifier_node(),

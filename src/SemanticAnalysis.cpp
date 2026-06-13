@@ -8289,6 +8289,30 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		definition_lookup_record_target != nullptr) {
 		return definition_lookup_record_target;
 	}
+	if (!normalized_call &&
+		!call_info.is_indirect &&
+		!call_info.has_receiver &&
+		definition_lookup_record_target == nullptr &&
+		call_info.definition_lookup_record != nullptr &&
+		call_info.definition_lookup_record->has_value()) {
+		const FunctionCallDefinitionLookupRecord& deferred_record =
+			call_info.definition_lookup_record->value();
+		InlineVector<TypeSpecifierNode, 6> arg_types;
+		if (tryCollectOverloadResolutionArgTypes(arguments, arg_types)) {
+			if (std::optional<ASTNode> resolved_target =
+					parser().resolveDefinitionBoundOrdinaryCall(
+						deferred_record,
+						arguments,
+						arg_types);
+				resolved_target.has_value()) {
+				if (const FunctionDeclarationNode* resolved_function =
+						get_function_decl_node(*resolved_target);
+					resolved_function != nullptr) {
+					return resolved_function;
+				}
+			}
+		}
+	}
 	if (const FunctionDeclarationNode* parser_selected_static_target =
 			fallbackToParserSelectedStaticDirectTarget();
 		parser_selected_static_target != nullptr) {

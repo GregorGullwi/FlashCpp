@@ -433,6 +433,10 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 					return;
 				}
 			}
+			if (inner.has_parser_return_type_hint()) {
+				arg_type = *inner.parser_return_type_hint();
+				return;
+			}
 			if (auto indirect_return_type =
 					FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
 						inner.callee().declaration().type_specifier_node(),
