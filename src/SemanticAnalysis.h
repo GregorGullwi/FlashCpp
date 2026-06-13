@@ -197,6 +197,7 @@ public:
 	std::optional<TypeSpecifierNode> getOverloadResolutionArgType(const ASTNode& arg);
 	void registerCodegenSynthesizedOverloadArgType(const ASTNode& arg, const TypeSpecifierNode& type);
 	void registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type);
+	void ensureCallArgConversionsAnnotated(const CallExprNode& call_node);
 
 	enum class StructuredBindingDecompositionKind : uint8_t {
 		Aggregate,
@@ -542,6 +543,10 @@ private:
 											const ChunkedVector<ASTNode>& arguments,
 											const FunctionDeclarationNode& func_decl,
 											const char* context_description);
+	void ensureResolvedCallArgConversionsComplete(const void* call_key,
+												  const ChunkedVector<ASTNode>& arguments,
+												  const FunctionDeclarationNode& func_decl,
+												  const char* context_description);
 	void tryAnnotateCallArgConversionsImpl(const ASTNode& call_expr_node,
 										   const CallInfo& call_info,
 										   const void* call_key,

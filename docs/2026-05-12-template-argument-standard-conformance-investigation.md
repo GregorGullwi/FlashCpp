@@ -48,10 +48,42 @@ blocking areas:
   call materialization in the covered template paths now also preserve
   `FunctionCallDefinitionLookupRecord`, reducing the remaining standards risk
   that sema will reconstruct definition-bound targets from mangled names alone
+- current-member-context static direct-call replay now also preserves
+  `FunctionCallDefinitionLookupRecord` in the
+  `resolved_member_function_from_context` fast path, so sema no longer has to
+  recover those definition-bound member targets from compatibility metadata
+  alone in that route
+- builtin-like literal/pointer argument types no longer prevent that fast path
+  from carrying `FunctionCallDefinitionLookupRecord` just because the parser
+  has not yet materialized a concrete `type_index` for the temporary
+  `TypeSpecifierNode`
+- the restored `int -> long` current-member static case no longer relies on a
+  per-argument codegen patch; sema now synchronizes the exact lowered
+  `CallExprNode` at whole-call granularity, and that retry is narrowly bounded
+  to definition-bound / qualified / static-member direct calls whose selected
+  target is already preserved on the AST
+- current-struct explicit member-template materialization now routes its
+  qualified-name override through the same shared direct-call metadata helper
+  that attaches the rest of the structured call metadata
+- the shared qualified member-template call helper now also preserves
+  `FunctionCallDefinitionLookupRecord` when it has a concrete direct-call
+  target plus typed arguments, instead of falling back to
+  `qualified_name`/`mangled_name` compatibility metadata alone
 - the final parser-selected non-receiver direct-call fallback in
   `resolveCallArgAnnotationTarget(...)` is gone; ordinary direct calls now
   resolve through semantic metadata, typed lookup, or explicit unresolved
   terminals instead of reusing the parser-selected target late
+- ordinary direct-call parsing now performs one last structured
+  `appendFunctionCallArgType(...)` collection pass before falling back to
+  compatibility-only metadata when primary `get_expression_type(...)` typing
+  fails, reducing the remaining surface where parser materialization lag alone
+  strips away definition-bound call identity
+- that structured retry is now reused by the current-member static fast path
+  too, so definition-bound replay coverage no longer depends on a separate
+  weaker argument-typing branch there
+- string-literal user-defined literal calls now preserve
+  `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
+  name and argument list instead of carrying only `mangled_name`
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -65,6 +97,11 @@ blocking areas:
   insertion time, and lazy nested-member registration is split from that
   structural insertion so nested constructor/member-template replay no longer
   depends on positional `StructTypeInfo` back-filling in the covered path
+- parser-side call-argument pack expansion now preserves unmatched complex
+  `expr...` nodes until substitution instead of treating "no function-parameter
+  pack matched" as a successful expansion; that closes the standards-visible
+  leak where `typeCode<Rest>()...` in `add3(..., tail)` lost pack semantics
+  before sema could scalarize the bound template pack
 
 ## Highest-value remaining standards gaps
 
@@ -133,9 +170,18 @@ Remaining near-term scope:
 
 - the remaining compatibility boundary is now concentrated in parser
   materialization paths that still carry only `mangled_name` or
-  `qualified_name`, especially current-member-context shortcuts, untyped
-  fallbacks, some qualified member-template call materializers, and the
-  user-defined literal operator path
+  `qualified_name`, especially the fallback exits that still cannot assemble
+  stable typed arguments even after the new structured retry pass, plus any
+  remaining niche qualified/member-template materializers that do not yet
+  route through the shared helpers
+- the newly fixed explicit-template-argument pack-expansion leak confirms the
+  right layer for this class of problem: preserve the parser-only pack node
+  until substitution instead of teaching deeper sema/template-argument logic to
+  guess when a plain call expression was really meant to be expanded
+- the remaining whole-call sema synchronization hook for direct calls should
+  remain temporary; the remaining parser/materialization work should make even
+  that narrowed retry unnecessary by ensuring the structured call path already
+  owns the needed target and argument-conversion state
 
 ### 3. Current-instantiation / unknown-specialization coverage
 
@@ -152,7 +198,10 @@ Next direct-call target:
 
 - identify the remaining direct-call parser/materialization sites that still
   reach sema with compatibility-only metadata, then replace each typed case
-  with preserved structured target metadata before touching the sema fallback
+  with preserved structured target metadata before touching the sema fallback;
+  after the now-covered typed qualified-member and string-literal UDL paths,
+  the next target is the final fallback exits that still cannot produce stable
+  typed arguments even after the structured retry
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -179,6 +228,9 @@ For work in this area, rerun:
 - `test_template_nested_ool_ctor_template_init_replay_ret42.cpp`
 - `template_lookup_non_dependent_no_rebind_ret0.cpp`
 - `test_template_explicit_function_id_definition_bound_ret0.cpp`
+- `test_template_current_member_static_hides_base_overload_ret0.cpp`
+- `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
+- `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -193,12 +245,20 @@ For work in this area, rerun:
 ## Next steps
 
 1. Continue eliminating compatibility-only parser metadata in the remaining
-   resolved direct-call sites, starting with the typed current-member-context
-   and qualified-member materializers and then the untyped fallback branches.
-   Immediate follow-up: preserve `FunctionCallDefinitionLookupRecord` in the
-   `resolved_member_function_from_context` path and add a focused regression
-   for replayed member calls that would otherwise be vulnerable to later
-   same-name overloads.
+   resolved direct-call sites, now focusing on the branches that still cannot
+   produce stable typed arguments even after the structured retry pass.
+   Immediate follow-up: audit the last compatibility-only fallback exits in
+   `Parser_Expr_PrimaryExpr.cpp` and either preserve
+   `FunctionCallDefinitionLookupRecord` there or reclassify those calls as
+   unresolved/deferred instead of pretending they are fully resolved. Keep
+   adding focused regressions for replayed calls that would otherwise be
+   vulnerable to hidden or later same-name overloads. Once those paths are
+   covered, remove the new whole-call sema synchronization hook by pushing that
+   work back to earlier semantic ownership.
+   In parallel with that audit, finish deleting the remaining legacy
+   parser-side `expr...` loops that still duplicate pack-expansion behavior
+   instead of routing through the shared helper and the new "preserve when not
+   truly expandable" rule.
 
 2. Use any concrete failures left after step 1 to drive the next
    current-instantiation / unknown-specialization expansion rather than

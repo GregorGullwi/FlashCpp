@@ -26,6 +26,60 @@ inline const FunctionDeclarationNode* getParserStoredDirectCallTarget(const Call
 	return node.callee().function_declaration_or_null();
 }
 
+inline bool canBuildFunctionCallDefinitionLookupRecord(
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args) {
+	if (definition_context == nullptr ||
+		!definition_context->is_valid() ||
+		has_deferred_template_call_args ||
+		callee_token.type() != Token::Type::Identifier) {
+		return false;
+	}
+	for (const TypeSpecifierNode& arg_type : arg_types) {
+		if (arg_type.category() == TypeCategory::Auto ||
+			arg_type.category() == TypeCategory::Template) {
+			return false;
+		}
+		if (!arg_type.type_index().is_valid() &&
+			!is_builtin_type(arg_type.category())) {
+			return false;
+		}
+	}
+	return true;
+}
+
+inline std::optional<FunctionCallDefinitionLookupRecord> tryBuildFunctionCallDefinitionLookupRecord(
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included) {
+	if (!canBuildFunctionCallDefinitionLookupRecord(
+			definition_context,
+			callee_token,
+			arg_types,
+			has_deferred_template_call_args)) {
+		return std::nullopt;
+	}
+
+	FunctionCallDefinitionLookupRecord record;
+	record.definition_context = *definition_context;
+	record.callee_name = callee_token.handle();
+	record.resolved_function = &func_decl;
+	if (func_decl.has_mangled_name()) {
+		record.resolved_mangled_name =
+			StringTable::getOrInternStringHandle(func_decl.mangled_name());
+	}
+	record.ordinary_lookup_included = ordinary_lookup_included;
+	record.argument_dependent_lookup_included =
+		argument_dependent_lookup_included;
+	return record;
+}
+
 struct CallInfo {
 	// Callee declaration (always present).
 	const DeclarationNode* declaration;

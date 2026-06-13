@@ -633,6 +633,99 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 					out)) {
 				return;
 			}
+
+			InlineVector<StringHandle, 4> matched_pack_names;
+			AstTraversal::visitAST(pack_expansion_expr->pattern(), [&](const ASTNode& node) {
+				StringHandle candidate_name;
+				if (node.is<TemplateParameterReferenceNode>()) {
+					candidate_name = node.as<TemplateParameterReferenceNode>().param_name();
+				} else if (node.is<IdentifierNode>()) {
+					candidate_name = node.as<IdentifierNode>().getOrInternNameHandle();
+				} else if (node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
+					if (!type_spec.token().value().empty()) {
+						candidate_name = StringTable::getOrInternStringHandle(
+							type_spec.token().value());
+					} else if (type_spec.type_index().is_valid()) {
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+							candidate_name = type_info->name();
+						}
+					}
+				}
+				if (!candidate_name.isValid() ||
+					pack_map_.find(candidate_name) == pack_map_.end()) {
+					return;
+				}
+				for (StringHandle matched_name : matched_pack_names) {
+					if (matched_name == candidate_name) {
+						return;
+					}
+				}
+				matched_pack_names.push_back(candidate_name);
+			});
+
+			if (!matched_pack_names.empty()) {
+				size_t pack_size = pack_map_.find(matched_pack_names[0])->second.size();
+				for (size_t pack_index = 1; pack_index < matched_pack_names.size(); ++pack_index) {
+					size_t current_pack_size =
+						pack_map_.find(matched_pack_names[pack_index])->second.size();
+					if (current_pack_size != pack_size) {
+						throw InternalError(
+							"Mismatched pack sizes while preserving pack expansion during call substitution");
+					}
+				}
+				if (pack_size == 0) {
+					return;
+				}
+
+				InlineVector<std::string_view, 8> ordered_param_names;
+				if (!template_param_order_.empty()) {
+					for (std::string_view param_name : template_param_order_) {
+						ordered_param_names.push_back(param_name);
+					}
+				} else {
+					for (const TemplateBinding& binding : environment_.bindings) {
+						if (!binding.name.isValid()) {
+							continue;
+						}
+						ordered_param_names.push_back(
+							StringTable::getStringView(binding.name));
+					}
+				}
+
+				std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> remaining_pack_bindings =
+					pack_map_;
+				for (StringHandle matched_pack_name : matched_pack_names) {
+					remaining_pack_bindings.erase(matched_pack_name);
+				}
+
+				for (size_t expansion_index = 0; expansion_index < pack_size; ++expansion_index) {
+					std::unordered_map<std::string_view, TemplateTypeArg> scalar_bindings =
+						param_map_;
+					for (StringHandle matched_pack_name : matched_pack_names) {
+						auto pack_it = pack_map_.find(matched_pack_name);
+						if (pack_it == pack_map_.end() ||
+							expansion_index >= pack_it->second.size()) {
+							throw InternalError(
+								"Missing pack element while preserving pack expansion during call substitution");
+						}
+						scalar_bindings[StringTable::getStringView(matched_pack_name)] =
+							pack_it->second[expansion_index];
+					}
+
+					ExpressionSubstitutor element_substitutor(
+						scalar_bindings,
+						remaining_pack_bindings,
+						parser_,
+						std::span<const std::string_view>(
+							ordered_param_names.data(),
+							ordered_param_names.size()));
+					element_substitutor.setCurrentOwnerTypeName(current_owner_type_name_);
+					out.push_back(element_substitutor.substitute(
+						pack_expansion_expr->pattern()));
+				}
+				return;
+			}
 		}
 	}
 

@@ -1384,6 +1384,7 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 		if (auto arg_node = arg_result.node()) {
 			// Handle pack expansion: arg...
 			if (current_token_.value() == "...") {
+				Token ellipsis_token = current_token_;
 				advance();  // consume '...'
 				// Mirror append_function_call_argument: use identifier-pack path for simple
 				// packs (correctly handles zero-size packs), expression-pack path for complex.
@@ -1405,8 +1406,15 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 					}
 				}
 				if (!added) {
-					for (ASTNode expanded : expandPackExpressionArgument(*arg_node)) {
-						init_list_ref.add_initializer(expanded);
+					InlineVector<ASTNode, 4> expanded_args =
+						expandPackExpressionArgument(*arg_node);
+					if (!expanded_args.empty()) {
+						for (ASTNode expanded : expanded_args) {
+							init_list_ref.add_initializer(expanded);
+						}
+					} else {
+						init_list_ref.add_initializer(emplace_node<ExpressionNode>(
+							PackExpansionExprNode(*arg_node, ellipsis_token)));
 					}
 				}
 			} else {
