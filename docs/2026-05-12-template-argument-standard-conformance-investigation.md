@@ -119,6 +119,11 @@ blocking areas:
   and callable-object `operator()` builders in `Parser_Expr_PrimaryExpr.cpp`
   all attach structured receiver-call metadata once they already know the
   exact `FunctionDeclarationNode`
+- template-parameter function-pointer direct-call materialization in
+  `Parser_Expr_PrimaryExpr.cpp` now preserves
+  `FunctionCallDefinitionLookupRecord` when definition-context lookup already
+  resolves the bound function, so late sema does not have to rebind that call
+  from compatibility data after later same-name overloads appear
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -234,9 +239,11 @@ Remaining near-term scope:
   that do not yet route through the same deferred-lookup model; the main
   postfix qualified/member fast paths plus the direct operator/declaration-
   address non-receiver paths are now covered too, and the main concrete
-  receiver-call builders are covered as well, so the remaining work is in the
-  smaller set of indirect/value-callable or placeholder builders that still
-  return immediately without any structured lookup record
+  receiver-call builders plus template-parameter function-pointer call
+  materialization are covered as well, so the remaining work is in the
+  smaller set of ordinary function-pointer / member-function-pointer and
+  placeholder builders that still return immediately without any structured
+  lookup record
 - the just-fixed qualified-owner collision confirms the right ownership split:
   non-template qualified calls must first decide whether the left-hand side is
   a type owner or a namespace qualifier, and only then may compatibility
@@ -280,10 +287,9 @@ Next direct-call target:
   preserved structured target metadata before touching the sema fallback;
   after the now-covered typed qualified-member, string-literal UDL, postfix
   qualified/member, direct operator/declaration-address, and substitution-
-  materialization paths, the next targets are the remaining
-  indirect/value-callable and placeholder builders such as template-parameter
-  function-pointer call materialization, ordinary function-pointer /
-  member-function-pointer fast paths, and explicit-qualified placeholder
+  materialization paths plus template-parameter function-pointer call
+  preservation, the next targets are the remaining ordinary function-pointer /
+  member-function-pointer fast paths and explicit-qualified placeholder
   member/operator builders that still return without shared structured
   metadata
 
@@ -372,6 +378,13 @@ For work in this area, rerun:
    The new focused guards for concrete receiver-call metadata preservation are
    `test_template_postfix_call_operator_default_arg_ret0.cpp` and
    `test_template_implicit_this_member_call_default_arg_ret0.cpp`.
+   The new focused guard for template-parameter function-pointer target
+   preservation is
+   `test_template_function_pointer_nttp_definition_bound_ret0.cpp`.
+   The next concrete target in this slice is now the ordinary
+   function-pointer / member-function-pointer fast-path surface, followed by
+   the explicit-qualified placeholder member/operator builders that still stop
+   at compatibility metadata.
    Long-term direction: replace these per-call-site parser repairs with one
    shared structured qualified-owner representation plus a single resolver used
    by both parser materialization and later sema fallback, so future

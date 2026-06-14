@@ -9182,11 +9182,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (std::optional<ASTNode> function_symbol = gSymbolTable.lookup(identity.entity_name);
 							function_symbol.has_value() &&
 							function_symbol->is<FunctionDeclarationNode>()) {
+							const FunctionDeclarationNode& func_decl =
+								function_symbol->as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
 								makeResolvedCallExpr(
-									function_symbol->as<FunctionDeclarationNode>(),
+									func_decl,
 									std::move(args),
 									identifier_token));
+							CallExprNode& nttp_call =
+								std::get<CallExprNode>(result->as<ExpressionNode>());
+							std::vector<TypeSpecifierNode> nttp_arg_types;
+							if (tryCollectOrdinaryDirectCallArgTypes(
+									nttp_call.arguments(),
+									&nttp_arg_types)) {
+								attachResolvedOrdinaryDirectCallMetadata(
+									result->as<ExpressionNode>(),
+									current_template_definition_lookup_context_,
+									identifier_token,
+									nttp_arg_types,
+									argsHaveDeferredTemplateDependency(
+										nttp_call.arguments(),
+										currentTemplateParamNames()) ||
+										argTypesAreDeferredTemplateDependent(
+											nttp_arg_types,
+											currentTemplateParamNames()),
+									func_decl,
+									true,
+									false);
+							}
 							handled_value_callable = true;
 						}
 						break;
