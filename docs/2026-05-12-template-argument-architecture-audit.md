@@ -121,6 +121,10 @@ the areas that were previously blocking standards-visible behavior:
   owner spelling names a real nested owner (for example `Ops::template read<int>(value)`
   inside `Runner<T>`), instead of normalizing through the standalone owner
   spelling and letting an unrelated global template owner win
+- that owner recovery now walks enclosing nested class/member-function contexts
+  from inner to outer, so the same explicit qualified member-template path also
+  resolves owners declared on an enclosing current instantiation from inside a
+  nested class body
 - that parser-side owner rewrite is now intentionally narrow: it only rewrites
   short owner spellings when the resolved owner is a true nested owner
   extension (for example `Runner<int>::Ops`), so alias/self-owner qualified
@@ -288,6 +292,7 @@ When changing this area, always rerun:
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
+- `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -323,7 +328,9 @@ When changing this area, always rerun:
    parser source and guarded by
    `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
    plus the multi-segment owner-chain variant
-   `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`.
+   `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
+   and the enclosing-scope nested-class variant
+   `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`.
    The next concrete target in this slice is therefore the remaining
    ordinary-static-member compatibility branch inside
    `resolveDeferredQualifiedTemplateCall(...)`: move that branch onto the same

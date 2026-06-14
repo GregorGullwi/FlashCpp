@@ -121,6 +121,10 @@ blocking areas:
   identity in the parser/materialization layer when the owner spelling names a
   real nested owner, so `Ops::template read<int>(value)` inside `Runner<T>`
   no longer rebinds through an unrelated global `Ops<T>::read`
+- that owner recovery now also walks enclosing nested class/member-function
+  contexts from inner to outer, so a nested class body can still resolve an
+  owner declared on the enclosing current instantiation through the same
+  explicit qualified member-template path
 - that owner rewrite is now constrained to true nested-owner extensions only
   (for example `Runner<int>::Ops` from `Ops`), preventing alias/self-owner
   qualified calls from being eagerly collapsed onto unrelated concrete owner
@@ -277,6 +281,7 @@ For work in this area, rerun:
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
+- `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -310,7 +315,9 @@ For work in this area, rerun:
    guarded by
    `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
    plus the multi-segment owner-chain regression
-   `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`.
+   `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
+   and the enclosing-scope nested-class regression
+   `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`.
    The next concrete follow-up is narrower:
    remove the remaining ordinary static-member compatibility recovery inside
    `resolveDeferredQualifiedTemplateCall(...)` by routing those calls through

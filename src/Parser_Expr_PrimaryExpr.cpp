@@ -744,9 +744,7 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 				tryResolveQualifiedTypeOwnerFromCurrentContext(owner_name);
 			current_owner.has_value() &&
 			isNestedOwnerExtension(owner_name, current_owner->instantiated_name)) {
-			if (!current_owner->instantiated_name.empty()) {
-				owner_name = current_owner->instantiated_name;
-			}
+			owner_name = current_owner->instantiated_name;
 			resolved_owner_type_info = current_owner->resolved_type_info;
 		} else if (AliasTemplateMaterializationResult canonical_owner =
 					   resolveCanonicalInstantiatedOwnerForLookup(owner_name);
@@ -1267,21 +1265,23 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveQual
 			return std::nullopt;
 		};
 
-	if (!member_function_context_stack_.empty()) {
-		const MemberFunctionContext& member_ctx =
-			member_function_context_stack_.back();
+	for (auto member_ctx_it = member_function_context_stack_.rbegin();
+		 member_ctx_it != member_function_context_stack_.rend();
+		 ++member_ctx_it) {
 		if (std::optional<AliasTemplateMaterializationResult> current_owner =
 				try_resolve_from_current_owner(
-					tryGetTypeInfo(member_ctx.struct_type_index));
+					tryGetTypeInfo(member_ctx_it->struct_type_index));
 			current_owner.has_value()) {
 			return current_owner;
 		}
 	}
 
-	if (!struct_parsing_context_stack_.empty()) {
+	for (auto struct_ctx_it = struct_parsing_context_stack_.rbegin();
+		 struct_ctx_it != struct_parsing_context_stack_.rend();
+		 ++struct_ctx_it) {
 		StringHandle active_struct_handle =
 			StringTable::getOrInternStringHandle(
-				struct_parsing_context_stack_.back().struct_name);
+				struct_ctx_it->struct_name);
 		if (auto active_struct_it = getTypesByNameMap().find(active_struct_handle);
 			active_struct_it != getTypesByNameMap().end() &&
 			active_struct_it->second != nullptr) {
@@ -4681,7 +4681,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							tryResolveQualifiedTypeOwnerFromCurrentContext(
 								owner_name);
 						resolved_owner.has_value() &&
-						!resolved_owner->instantiated_name.empty() &&
 						isNestedOwnerExtension(
 							owner_name,
 							resolved_owner->instantiated_name)) {
