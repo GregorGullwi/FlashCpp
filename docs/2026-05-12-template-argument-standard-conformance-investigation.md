@@ -276,6 +276,7 @@ For work in this area, rerun:
 - `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
+- `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -307,7 +308,9 @@ For work in this area, rerun:
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by
-   `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`.
+   `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
+   plus the multi-segment owner-chain regression
+   `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`.
    The next concrete follow-up is narrower:
    remove the remaining ordinary static-member compatibility recovery inside
    `resolveDeferredQualifiedTemplateCall(...)` by routing those calls through

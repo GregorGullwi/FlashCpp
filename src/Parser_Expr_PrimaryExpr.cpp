@@ -58,6 +58,16 @@ bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<Templat
 	});
 }
 
+bool isNestedOwnerExtension(
+	std::string_view owner_name,
+	std::string_view resolved_owner_name) {
+	return resolved_owner_name.size() > owner_name.size() + 2 &&
+		resolved_owner_name.ends_with(owner_name) &&
+		resolved_owner_name.substr(
+			resolved_owner_name.size() - owner_name.size() - 2,
+			2) == "::";
+}
+
 struct ExpressionDependentMemberSegmentInfo {
 	StringHandle name;
 	bool has_template_keyword = false;
@@ -730,18 +740,10 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 		std::string_view owner_name = qualified_name.substr(0, scope_sep);
 		const std::string_view member_name = qualified_name.substr(scope_sep + 2);
 		const TypeInfo* resolved_owner_type_info = nullptr;
-		const auto is_nested_owner_match =
-			[owner_name](std::string_view resolved_owner_name) {
-				return resolved_owner_name.size() > owner_name.size() + 2 &&
-					resolved_owner_name.ends_with(owner_name) &&
-					resolved_owner_name.substr(
-						resolved_owner_name.size() - owner_name.size() - 2,
-						2) == "::";
-			};
 		if (std::optional<AliasTemplateMaterializationResult> current_owner =
 				tryResolveQualifiedTypeOwnerFromCurrentContext(owner_name);
 			current_owner.has_value() &&
-			is_nested_owner_match(current_owner->instantiated_name)) {
+			isNestedOwnerExtension(owner_name, current_owner->instantiated_name)) {
 			if (!current_owner->instantiated_name.empty()) {
 				owner_name = current_owner->instantiated_name;
 			}
@@ -4675,20 +4677,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						parsed_qualified_name.substr(0, parsed_scope_sep);
 					const std::string_view member_name =
 						parsed_qualified_name.substr(parsed_scope_sep + 2);
-					const auto is_nested_owner_match =
-						[owner_name](std::string_view resolved_owner_name) {
-							return resolved_owner_name.size() > owner_name.size() + 2 &&
-								resolved_owner_name.ends_with(owner_name) &&
-								resolved_owner_name.substr(
-									resolved_owner_name.size() - owner_name.size() - 2,
-									2) == "::";
-						};
 					if (std::optional<AliasTemplateMaterializationResult> resolved_owner =
 							tryResolveQualifiedTypeOwnerFromCurrentContext(
 								owner_name);
 						resolved_owner.has_value() &&
 						!resolved_owner->instantiated_name.empty() &&
-						is_nested_owner_match(
+						isNestedOwnerExtension(
+							owner_name,
 							resolved_owner->instantiated_name)) {
 						resolved_qualified_name =
 							StringBuilder()
