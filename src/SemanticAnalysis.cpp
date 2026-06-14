@@ -8379,7 +8379,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			if (std::optional<ASTNode> resolved_target =
 					parser().resolveDefinitionBoundOrdinaryCall(
 						deferred_record,
-						arguments,
 						arg_types);
 				resolved_target.has_value()) {
 				if (const FunctionDeclarationNode* resolved_function =

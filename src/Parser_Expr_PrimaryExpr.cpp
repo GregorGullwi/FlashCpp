@@ -623,7 +623,6 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 
 std::optional<ASTNode> Parser::resolveDefinitionBoundOrdinaryCall(
 	const FunctionCallDefinitionLookupRecord& record,
-	const ChunkedVector<ASTNode>& arguments,
 	std::span<const TypeSpecifierNode> arg_types) {
 	if (!record.callee_name.isValid()) {
 		return std::nullopt;

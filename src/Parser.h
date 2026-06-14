@@ -1935,7 +1935,6 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		Token called_from_token);
 	std::optional<ASTNode> resolveDefinitionBoundOrdinaryCall(
 		const FunctionCallDefinitionLookupRecord& record,
-		const ChunkedVector<ASTNode>& arguments,
 		std::span<const TypeSpecifierNode> arg_types);
 	std::optional<ASTNode> resolveDeferredQualifiedTemplateCall(
 		std::string_view qualified_name,
