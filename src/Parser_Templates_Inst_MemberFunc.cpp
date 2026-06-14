@@ -14,7 +14,15 @@ std::string_view unqualifiedTypeComponent(std::string_view type_name) {
 }
 
 std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_name) {
-	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+	const StringHandle struct_name_handle =
+		StringTable::getOrInternStringHandle(struct_name);
+	if (auto pattern_name =
+			gTemplateRegistry.get_instantiation_pattern(struct_name_handle);
+		pattern_name.has_value()) {
+		return *pattern_name;
+	}
+
+	auto type_it = getTypesByNameMap().find(struct_name_handle);
 	if (type_it == getTypesByNameMap().end()) {
 		return std::nullopt;
 	}
@@ -81,6 +89,31 @@ StringHandle getMemberTemplateOwnerName(StringHandle qualified_lookup_name, cons
 	}
 
 	return {};
+}
+
+void rebindConcreteMemberTemplateLookupResult(
+	TemplateNameLookupResult& lookup_result,
+	StringHandle concrete_owner_name,
+	StringHandle member_name) {
+	if (!concrete_owner_name.isValid() || !member_name.isValid()) {
+		return;
+	}
+
+	StringHandle concrete_lookup_name = StringTable::getOrInternStringHandle(
+		StringBuilder()
+			.append(StringTable::getStringView(concrete_owner_name))
+			.append("::")
+			.append(StringTable::getStringView(member_name))
+			.commit());
+	lookup_result.resolved_name = concrete_lookup_name;
+	for (auto& candidate : lookup_result.candidates) {
+		if (candidate.identity.kind != TemplateDeclarationKind::FunctionTemplate) {
+			continue;
+		}
+		candidate.identity.lookup_name = concrete_lookup_name;
+		candidate.lookup_owner_name = concrete_owner_name;
+		candidate.declaring_owner_name = concrete_owner_name;
+	}
 }
 
 void propagateSubstitutedFunctionSignature(
@@ -355,7 +388,15 @@ InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplat
 					*lookup_owner,
 					member_name_handle,
 					false);
-				append_candidates(gTemplateRegistry.lookupTemplateName(base_request));
+				TemplateNameLookupResult base_lookup_result =
+					gTemplateRegistry.lookupTemplateName(base_request);
+				if (base_lookup_result.hasFunctionTemplate()) {
+					rebindConcreteMemberTemplateLookupResult(
+						base_lookup_result,
+						requested_owner,
+						member_name_handle);
+				}
+				append_candidates(base_lookup_result);
 				if (!candidates.empty()) {
 					FLASH_LOG(Templates, Debug, "Found base template class lookup: ", base_request.owner_name.view());
 				}
@@ -409,19 +450,10 @@ InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplat
 							// Rewrite identity.lookup_name from "Base::get_n" to
 							// "Base<int>::get_n" so outer-binding and instantiation-key
 							// lookups use the concrete instantiation's qualified name.
-							StringBuilder inst_qname_sb;
-							inst_qname_sb.append(StringTable::getStringView(struct_name_handle))
-								.append("::")
-								.append(member_name);
-							StringHandle inst_qname =
-								StringTable::getOrInternStringHandle(inst_qname_sb);
-							for (auto& cand : base_tpl_result.candidates) {
-								if (cand.identity.kind ==
-									TemplateDeclarationKind::FunctionTemplate) {
-									cand.identity.lookup_name = inst_qname;
-									cand.declaring_owner_name = struct_name_handle;
-								}
-							}
+							rebindConcreteMemberTemplateLookupResult(
+								base_tpl_result,
+								struct_name_handle,
+								member_name_handle);
 							return {struct_name_handle, depth, std::move(base_tpl_result)};
 						}
 					}

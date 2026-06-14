@@ -244,6 +244,16 @@ Next direct-call target:
   the untyped ordinary-call deferred-lookup split, the next highest-value
   targets are the remaining qualified/member-template materializers that still
   carry only `qualified_name`/`mangled_name` compatibility data
+- before expanding sema-side owner recovery further, fix the remaining
+  standards-visible nested-owner collision in explicit qualified member-template
+  calls where a nested owner name inside the current instantiation collides with
+  an unrelated global template owner
+  concrete uncovered case: inside `Runner<T>::run()`, `Ops::template read<int>(value)`
+  still binds to the unrelated global `Ops<T>::read` instead of the nested
+  `Runner<T>::Ops::read` when both exist
+  required implementation direction: preserve or reconstruct the exact nested
+  owner identity in the parser/member-template instantiation layer instead of
+  canonicalizing through a standalone owner spelling
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -294,6 +304,10 @@ When changing this area, always rerun:
    hand-roll `expr...` handling (constructor/initializer parsing) so they share
    the same "expand only when a real function pack matched, otherwise preserve
    the pack node" rule now enforced in ordinary call parsing.
+   First unresolved conformance regression to close in that slice:
+   add a focused test for the nested-owner collision described above only when
+   the parser/member-template owner identity is fixed at the source, not via a
+   new semantic or codegen compatibility branch.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

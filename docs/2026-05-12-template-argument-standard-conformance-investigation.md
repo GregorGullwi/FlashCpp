@@ -225,6 +225,12 @@ Next direct-call target:
   after the now-covered typed qualified-member and string-literal UDL paths,
   the next targets are the remaining qualified/member-template paths that still
   have not adopted the deferred lookup + parser return-type hint split
+- explicitly cover the remaining nested-owner collision in qualified
+  member-template calls before widening current-instantiation heuristics:
+  `Ops::template read<int>(value)` inside `Runner<T>` must resolve to the
+  nested `Runner<T>::Ops::read`, not to an unrelated global `Ops<T>::read`
+  when both owners are visible and share the same simple nested name
+  this is a standards-visible lookup bug, not an acceptable compatibility case
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -282,6 +288,10 @@ For work in this area, rerun:
    calls in `resolveCallArgAnnotationTarget(...)`. Once those paths match the
    split model, remove the new whole-call sema synchronization hook by pushing
    that work back to earlier semantic ownership.
+   Immediate focused follow-up under that item:
+   fix nested-owner explicit member-template instantiation so concrete owner
+   normalization preserves the full nested owner pattern instead of collapsing
+   to a standalone owner spelling that can collide with unrelated templates.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not
