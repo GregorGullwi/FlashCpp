@@ -103,6 +103,11 @@ the areas that were previously blocking standards-visible behavior:
   arguments plus a concrete `FunctionDeclarationNode`, instead of preserving
   only copied `qualified_name`/`mangled_name` compatibility metadata in those
   paths
+- postfix qualified direct-call and concrete member-postfix fast paths in
+  `Parser_Expr_PostfixCalls.cpp` now attach structured call metadata when they
+  already hold a concrete `FunctionDeclarationNode`, instead of stopping at
+  copied `qualified_name`/`mangled_name` compatibility data in those parser
+  materializers
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
@@ -236,7 +241,10 @@ Remaining near-term scope:
 - the remaining debt is narrower and now concentrated in other parser
   materialization sites that still stamp only `mangled_name` or
   `qualified_name` without a typed semantic record, especially niche
-  qualified/member-template paths outside the now-covered ordinary-call routes
+  qualified/member-template paths outside the now-covered ordinary-call routes;
+  the highest-impact postfix qualified/member fast paths are now covered too,
+  so the remaining work is in the smaller set of concrete-call builders that
+  still return immediately without any structured lookup record
 - the newly-covered qualified-owner split is intentionally sema-owned: the
   deferred-template resolver is now bypassed for non-template qualified calls
   whose left-hand side is a real type owner, and the old parser-side ordinary
@@ -253,10 +261,11 @@ Remaining near-term scope:
   member-template calls is now fixed in the parser/materialization layer by
   preserving the full nested owner identity instead of recovering from the
   short owner spelling later; the old ordinary static-member compatibility
-  branch in `resolveDeferredQualifiedTemplateCall(...)` is now gone too, so the
-  remaining work in this bucket is preserving structured call metadata in the
-  narrower substitution/parser materializers that still stop at compatibility
-  data after the owner split has already succeeded
+  branch in `resolveDeferredQualifiedTemplateCall(...)` is now gone too, and
+  the main postfix qualified/member parser path now preserves structured call
+  metadata as well, so the remaining work in this bucket is the smaller set of
+  substitution/parser materializers that still stop at compatibility data
+  after the owner split has already succeeded
 - the remaining sema/codegen boundary sync for direct calls should stay narrow;
   it now operates at whole-call granularity on the exact lowered AST, but the
   long-term target is still to remove even that hook once the remaining
@@ -277,16 +286,18 @@ real replay or typed-lookup failures.
 
 Next direct-call target:
 
-- trace the remaining `Parser_Expr_PrimaryExpr.cpp` direct-call sites that
-  still attach only compatibility metadata, then either preserve a typed
+- trace the remaining concrete resolved-call builders outside the now-covered
+  postfix qualified/member helpers, then either preserve a typed
   `FunctionCallDefinitionLookupRecord` there or explicitly document why the
-  call cannot yet carry one; after the current-member-context fast path and
-  the untyped ordinary-call deferred-lookup split plus the removal of the
-  parser-owned ordinary-static-member qualified fallback and the new
-  substitution-time qualified-call record rebuild, the next highest-value
-  targets are the remaining parser materializers that still carry only
-  `qualified_name`/`mangled_name` compatibility data despite already holding a
-  concrete `FunctionDeclarationNode`
+  call cannot yet carry one; after the current-member-context fast path, the
+  untyped ordinary-call deferred-lookup split, the postfix qualified/member
+  metadata preservation pass, the removal of the parser-owned
+  ordinary-static-member qualified fallback, and the substitution-time
+  qualified-call record rebuild, the next highest-value targets are the
+  smaller concrete call sites such as postfix `operator()` / declaration-
+  address materializers and the remaining implicit-`this` / operator builders
+  in `Parser_Expr_PrimaryExpr.cpp` that still return a concrete call without a
+  structured lookup record
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -358,6 +369,9 @@ When changing this area, always rerun:
    The focused regression for the newly-covered substitution/materialization
    path is
    `test_template_qualified_explicit_function_id_definition_bound_ret0.cpp`.
+   The focused regression for the newly-covered postfix qualified direct-call
+   path is
+   `test_template_namespace_qualified_explicit_function_id_definition_bound_ret0.cpp`.
    Long-term direction: stop teaching individual parser call sites to recover
    owner identity from short qualified spellings. Instead, preserve a shared
    structured qualified-owner record on the AST and route both parser

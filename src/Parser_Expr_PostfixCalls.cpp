@@ -7,10 +7,45 @@
 #include <limits>
 
 namespace {
-void setResolvedMemberCallMetadata(ExpressionNode& call_expr, const FunctionDeclarationNode& func_decl) {
+void attachResolvedPostfixDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included,
+	std::optional<std::string_view> qualified_name_override) {
 	if (func_decl.has_mangled_name()) {
 		setCallMangledName(call_expr, func_decl.mangled_name());
 	}
+	if (qualified_name_override.has_value() &&
+		!qualified_name_override->empty()) {
+		setCallQualifiedName(call_expr, *qualified_name_override);
+	}
+	if (std::optional<FunctionCallDefinitionLookupRecord> record =
+			tryBuildFunctionCallDefinitionLookupRecord(
+				definition_context,
+				callee_token,
+				arg_types,
+				has_deferred_template_call_args,
+				func_decl,
+				ordinary_lookup_included,
+				argument_dependent_lookup_included);
+		record.has_value()) {
+		setCallDefinitionLookupRecord(call_expr, *record);
+	}
+}
+
+void attachResolvedMemberCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl) {
+	std::optional<std::string_view> qualified_name_override;
 	if (func_decl.is_member_function() &&
 		!func_decl.parent_struct_name().empty()) {
 		StringBuilder qualified_name_builder;
@@ -18,8 +53,18 @@ void setResolvedMemberCallMetadata(ExpressionNode& call_expr, const FunctionDecl
 			.append(func_decl.parent_struct_name())
 			.append("::")
 			.append(func_decl.decl_node().identifier_token().value());
-		setCallQualifiedName(call_expr, qualified_name_builder.commit());
+		qualified_name_override = qualified_name_builder.commit();
 	}
+	attachResolvedPostfixDirectCallMetadata(
+		call_expr,
+		definition_context,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		true,
+		false,
+		qualified_name_override);
 }
 
 const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_spec, bool allow_pointers) {
@@ -491,6 +536,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 		}
 		ChunkedVector<ASTNode> args = std::move(args_result.args);
+		std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
@@ -552,7 +598,15 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_operator_name_token));
-		setResolvedMemberCallMetadata(result->as<ExpressionNode>(), *func_ref_ptr);
+		if (known_member_func != nullptr) {
+			attachResolvedMemberCallMetadata(
+				result->as<ExpressionNode>(),
+				current_template_definition_lookup_context_,
+				member_operator_name_token,
+				arg_types,
+				false,
+				*func_ref_ptr);
+		}
 		return ParseResult::success(*result);
 	}
 
@@ -811,7 +865,17 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_name_token));
-		setResolvedMemberCallMetadata(result->as<ExpressionNode>(), *func_ref_ptr);
+		if ((instantiated_func.has_value() &&
+			 instantiated_func->is<FunctionDeclarationNode>()) ||
+			known_member_func != nullptr) {
+			attachResolvedMemberCallMetadata(
+				result->as<ExpressionNode>(),
+				current_template_definition_lookup_context_,
+				member_name_token,
+				arg_types,
+				false,
+				*func_ref_ptr);
+		}
 		return ParseResult::success(*result);
 	}
 
@@ -1233,7 +1297,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
-
+				std::vector<TypeSpecifierNode> arg_types =
+					apply_lvalue_reference_deduction(
+						args,
+						args_result.arg_types);
 				// Get the DeclarationNode
 				auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
 					if (node.is<DeclarationNode>()) {
@@ -1333,8 +1400,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					// Build qualified template name (e.g., "std::move")
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 
-					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-
 					// Try explicit template instantiation first if template arguments were provided
 					// (e.g., ns::func<true>(args) should use try_instantiate_template_explicit)
 					if (template_args.has_value()) {
@@ -1386,8 +1451,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				// If the function has a pre-computed mangled name, set it on the call expression
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
+					attachResolvedPostfixDirectCallMetadata(
+						function_call_node.as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						final_identifier,
+						arg_types,
+						false,
+						func_decl,
+						true,
+						false,
+						buildQualifiedNameFromStrings(namespaces, final_identifier.value()));
 					if (func_decl.has_mangled_name()) {
-						setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
 						FLASH_LOG(Parser, Debug, "Set mangled name on qualified call expression (postfix path): {}", func_decl.mangled_name());
 					}
 				}
