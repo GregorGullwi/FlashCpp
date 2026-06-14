@@ -200,7 +200,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::string_view member_name,
 	const Token& member_token,
 	std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args,
-	const std::vector<ASTNode>* pre_parsed_member_template_arg_nodes) {
+	std::vector<ASTNode> pre_parsed_member_template_arg_nodes) {
 
 	FLASH_LOG(Templates, Debug, "try_parse_member_template_function_call called for: ", instantiated_class_name, "::", member_name);
 
@@ -208,9 +208,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args =
 		std::move(pre_parsed_member_template_args);
 	std::vector<ASTNode> member_template_arg_nodes =
-		pre_parsed_member_template_arg_nodes != nullptr
-			? *pre_parsed_member_template_arg_nodes
-			: std::vector<ASTNode>{};
+		std::move(pre_parsed_member_template_arg_nodes);
 	SaveHandle member_template_args_start = 0;
 	bool parsed_member_template_args = member_template_args.has_value();
 	bool tentatively_parsed_member_template_args = false;
@@ -329,12 +327,12 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 				member_name,
 				std::span<const TemplateTypeArg>{});
 	}
-	const std::string_view qualified_name =
+	const std::string qualified_name(
 		StringBuilder()
 			.append(instantiated_class_name)
 			.append("::")
 			.append(member_name)
-			.commit();
+			.commit());
 	const StringHandle owner_name_handle =
 		StringTable::getOrInternStringHandle(instantiated_class_name);
 	const StringHandle member_name_handle =

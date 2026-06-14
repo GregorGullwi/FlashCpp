@@ -4175,7 +4175,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								member_token.value(),
 								member_token,
 								std::nullopt,
-								nullptr);
+								{});
 							if (member_call_result.has_value()) {
 								if (member_call_result->is_error()) {
 									return *member_call_result;
@@ -5317,7 +5317,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								qualified_node2.name(),
 								qualified_node2.identifier_token(),
 								std::nullopt,
-								nullptr);
+								{});
 							if (member_call_result.has_value()) {
 								if (member_call_result->is_error()) {
 									return *member_call_result;
@@ -7339,7 +7339,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								final_identifier.value(),
 								final_identifier,
 								member_template_args,
-								&member_template_arg_nodes);
+								std::move(member_template_arg_nodes));
 							if (func_call_result.has_value()) {
 								if (func_call_result->is_error()) {
 									return *func_call_result;
@@ -8470,7 +8470,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							qualified_node.name(),
 							qualified_node.identifier_token(),
 							std::nullopt,
-							nullptr);
+							{});
 						if (func_call_result.has_value()) {
 							if (func_call_result->is_error()) {
 								return *func_call_result;

@@ -3422,7 +3422,7 @@ private:	 // Resume private methods
 		std::string_view member_name,
 		const Token& member_token,
 		std::optional<InlineVector<TemplateTypeArg, 4>> pre_parsed_member_template_args,
-		const std::vector<ASTNode>* pre_parsed_member_template_arg_nodes);
+		std::vector<ASTNode> pre_parsed_member_template_arg_nodes);
 
 	// Utility functions
 	bool consume_punctuator(const std::string_view& value);
