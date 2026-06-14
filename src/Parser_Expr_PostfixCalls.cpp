@@ -412,6 +412,17 @@ void Parser::finalizePostfixCallExpression(
 
 	result = emplace_node<ExpressionNode>(
 		makeResolvedMemberCallExpr(*result, *func_ref, std::move(args), operator_token));
+	if (call_operator_resolution.state ==
+			ConcreteCallOperatorResolution::State::Resolved &&
+		func_ref != nullptr) {
+		attachResolvedMemberCallMetadata(
+			result->as<ExpressionNode>(),
+			current_template_definition_lookup_context_,
+			operator_token,
+			arg_types,
+			false,
+			*func_ref);
+	}
 }
 
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(

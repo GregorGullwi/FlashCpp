@@ -402,6 +402,32 @@ void attachResolvedOrdinaryDirectCallMetadata(
 		std::nullopt);
 }
 
+void attachResolvedReceiverDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	std::string_view receiver_owner_fallback) {
+	std::string_view qualified_owner = func_decl.parent_struct_name();
+	if (qualified_owner.empty()) {
+		qualified_owner = receiver_owner_fallback;
+	}
+	attachResolvedOrdinaryDirectCallMetadata(
+		call_expr,
+		definition_context,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		true,
+		false,
+		makeQualifiedMemberCallNameOverride(
+			qualified_owner,
+			func_decl.decl_node().identifier_token().value()));
+}
+
 std::optional<DependentUnqualifiedCallLookupRecord> makeDependentUnqualifiedCallLookupRecord(
 	const TemplateDefinitionLookupContext* definition_context,
 	const Token& callee_token,
@@ -3119,6 +3145,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 						result = emplace_node<ExpressionNode>(
 							makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), operator_name_token));
+						if (has_operator_arg_types) {
+							attachResolvedReceiverDirectCallMetadata(
+								result->as<ExpressionNode>(),
+								current_template_definition_lookup_context_,
+								operator_name_token,
+								operator_arg_types,
+								has_deferred_operator_call_args,
+								func_decl,
+								StringTable::getStringView(member_ctx.struct_name));
+						}
 						return ParseResult::success(*result);
 					}
 				}
@@ -3132,6 +3168,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
 				result = emplace_node<ExpressionNode>(
 					makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), operator_name_token));
+				if (has_operator_arg_types) {
+					attachResolvedReceiverDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						operator_name_token,
+						operator_arg_types,
+						has_deferred_operator_call_args,
+						func_decl,
+						std::string_view());
+				}
 				return ParseResult::success(*result);
 			}
 
@@ -4941,6 +4987,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create unified member call with implicit 'this'
 			result = emplace_node<ExpressionNode>(
 				makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), identifier_token));
+			std::vector<TypeSpecifierNode> member_arg_types;
+			CallExprNode& implicit_this_call =
+				std::get<CallExprNode>(result->as<ExpressionNode>());
+			if (tryCollectOrdinaryDirectCallArgTypes(
+					implicit_this_call.arguments(),
+					&member_arg_types)) {
+				attachResolvedReceiverDirectCallMetadata(
+					result->as<ExpressionNode>(),
+					current_template_definition_lookup_context_,
+					identifier_token,
+					member_arg_types,
+					argsHaveDeferredTemplateDependency(
+						implicit_this_call.arguments(),
+						currentTemplateParamNames()) ||
+						argTypesAreDeferredTemplateDependent(
+							member_arg_types,
+							currentTemplateParamNames()),
+					func_decl,
+					StringTable::getStringView(member_function_context_stack_.back().struct_name));
+			}
 
 			FLASH_LOG_FORMAT(Parser, Debug, "Created CallExprNode for implicit this-call '{}'", identifier_token.value());
 			return ParseResult::success(*result);
@@ -6885,6 +6951,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Create unified member call with implicit 'this'
 					result = emplace_node<ExpressionNode>(
 						makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), identifier_token));
+					attachResolvedReceiverDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						identifier_token,
+						arg_types,
+						argsHaveDeferredTemplateDependency(
+							std::get<CallExprNode>(result->as<ExpressionNode>()).arguments(),
+							currentTemplateParamNames()) ||
+							argTypesAreDeferredTemplateDependent(
+								arg_types,
+								currentTemplateParamNames()),
+						func_decl,
+						StringTable::getStringView(member_function_context_stack_.back().struct_name));
 				} else {
 					return unified_resolve_function_call(args);
 				}
@@ -9073,6 +9152,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					Token operator_token(Token::Type::Identifier, "operator()"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 					result = emplace_node<ExpressionNode>(makeResolvedMemberCallExpr(object_expr, *operator_call_func, std::move(args), operator_token));
+					if (all_op_types_known) {
+						attachResolvedReceiverDirectCallMetadata(
+							result->as<ExpressionNode>(),
+							current_template_definition_lookup_context_,
+							operator_token,
+							op_arg_types,
+							false,
+							*operator_call_func,
+							StringTable::getStringView(type_info.struct_info_->name));
+					}
 				}
 				// For template parameter constructor calls, create ConstructorCallNode
 				else if (is_template_parameter) {
