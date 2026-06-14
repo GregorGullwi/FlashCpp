@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-12
+**Last updated:** 2026-06-13
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -81,6 +81,12 @@ the areas that were previously blocking standards-visible behavior:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list, instead of carrying only `mangled_name`
+- the remaining untyped ordinary direct-call fallback exits no longer keep a
+  parser-selected callee as the call's semantic identity just to preserve
+  parse-time typing; they now carry an explicit parser return-type hint plus
+  either a deferred definition-bound lookup record or the existing deferred
+  dependent-unqualified lookup record, and sema can resolve those calls later
+  from structured lookup state instead of mangled-name recovery
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
@@ -101,6 +107,15 @@ the areas that were previously blocking standards-visible behavior:
   `PackExpansionExprNode` until substitution, and call-site substitution can
   scalarize the active pack bindings element-by-element instead of silently
   flattening `expr...` into a single ordinary argument
+- deferred qualified/member-template direct calls now preserve explicit
+  template-argument AST, parser return-type hints, and dependent-qualified
+  lookup records separately instead of collapsing semantic ownership onto a
+  parser-selected callee
+- qualified direct-call target resolution now distinguishes type owners from
+  namespace qualifiers before consuming definition-bound compatibility data, so
+  sema resolves nested current-instantiation owners structurally and no longer
+  lets unrelated global templates steal calls like `Ops::read(value)` inside
+  `Runner<T>`
 
 ## Architectural invariants to preserve
 
@@ -183,12 +198,21 @@ Desired end state:
 
 Remaining near-term scope:
 
-- the remaining compatibility surface is now concentrated in parser paths that
-  still stamp only `mangled_name` or `qualified_name` without a typed
-  definition-lookup record, especially the truly untypable fallback branches
-  where both `get_expression_type(...)` and `appendFunctionCallArgType(...)`
-  still fail, plus any remaining niche qualified/member-template materializers
-  outside the now-covered shared helpers
+- the highest-impact legacy unified ordinary identifier-call fallback is now on
+  the proper split model: parse-time return-type visibility lives on an
+  explicit call-node hint, while deferred semantic ownership lives on a
+  definition-bound or dependent-unqualified lookup record rather than on a
+  parser-selected callee
+- the remaining debt is narrower and now concentrated in other parser
+  materialization sites that still stamp only `mangled_name` or
+  `qualified_name` without a typed semantic record, especially niche
+  qualified/member-template paths outside the now-covered ordinary-call routes
+- the newly-covered qualified-owner split is intentionally sema-owned: the
+  deferred-template resolver is now bypassed for non-template qualified calls
+  whose left-hand side is a real type owner, but the parser helper still has a
+  compatibility-only ordinary-static-member branch that should eventually be
+  folded into the same structured owner/lookup model instead of remaining a
+  side path
 - the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
@@ -216,10 +240,20 @@ Next direct-call target:
 - trace the remaining `Parser_Expr_PrimaryExpr.cpp` direct-call sites that
   still attach only compatibility metadata, then either preserve a typed
   `FunctionCallDefinitionLookupRecord` there or explicitly document why the
-  call cannot yet carry one; after the current-member-context fast path, the
-  remaining highest-value cleanup is the final compatibility-only fallback
-  branches that still cannot produce stable typed arguments even after the
-  structured retry
+  call cannot yet carry one; after the current-member-context fast path and
+  the untyped ordinary-call deferred-lookup split, the next highest-value
+  targets are the remaining qualified/member-template materializers that still
+  carry only `qualified_name`/`mangled_name` compatibility data
+- before expanding sema-side owner recovery further, fix the remaining
+  standards-visible nested-owner collision in explicit qualified member-template
+  calls where a nested owner name inside the current instantiation collides with
+  an unrelated global template owner
+  concrete uncovered case: inside `Runner<T>::run()`, `Ops::template read<int>(value)`
+  still binds to the unrelated global `Ops<T>::read` instead of the nested
+  `Runner<T>::Ops::read` when both exist
+  required implementation direction: preserve or reconstruct the exact nested
+  owner identity in the parser/member-template instantiation layer instead of
+  canonicalizing through a standalone owner spelling
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -254,20 +288,26 @@ When changing this area, always rerun:
 
 1. Finish the remaining parser-side direct-call metadata preservation in the
    still-uncovered resolved-call paths that only stamp `mangled_name` or
-   `qualified_name`, now focusing on the branches that still cannot assemble
-   stable typed arguments even after the new structured retry pass.
-   Immediate follow-up: audit the last compatibility-only fallback exits in
-   `Parser_Expr_PrimaryExpr.cpp` and either teach them to preserve
-   `FunctionCallDefinitionLookupRecord` or explicitly classify them as
-   unresolved/deferred instead of pretending to be fully resolved calls. Keep
-   using focused regressions where hidden or later same-name overloads could
-   otherwise steal replayed call targets. After that, collapse the new
+   `qualified_name`, now focusing on qualified/member-template materializers
+   outside the now-covered ordinary identifier-call routes.
+   Immediate follow-up: move those paths onto the same split ownership model
+   now used by untyped ordinary calls:
+   parser-time return-type hints on the call node, structured deferred lookup
+   state for semantic ownership, and no parser-selected callee as the source of
+   final meaning. First target: remove the remaining ordinary-static-member
+   compatibility branch inside `resolveDeferredQualifiedTemplateCall(...)` by
+   routing those cases through the same sema-owned type-owner vs
+   namespace-qualifier split now used in
+   `resolveCallArgAnnotationTarget(...)`. After that, collapse the new
    whole-call sema synchronization hook by proving those paths carry their
-   conversion annotations before lowering.
-   Also clean up the remaining legacy parser sites that still hand-roll
-   `expr...` handling (constructor/initializer parsing) so they share the same
-   "expand only when a real function pack matched, otherwise preserve the pack
-   node" rule now enforced in ordinary call parsing.
+   conversion annotations before lowering. Also clean up the remaining legacy parser sites that still
+   hand-roll `expr...` handling (constructor/initializer parsing) so they share
+   the same "expand only when a real function pack matched, otherwise preserve
+   the pack node" rule now enforced in ordinary call parsing.
+   First unresolved conformance regression to close in that slice:
+   add a focused test for the nested-owner collision described above only when
+   the parser/member-template owner identity is fixed at the source, not via a
+   new semantic or codegen compatibility branch.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

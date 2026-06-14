@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-12
+**Last updated:** 2026-06-13
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -84,6 +84,12 @@ blocking areas:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list instead of carrying only `mangled_name`
+- untyped ordinary direct-call fallback exits no longer need a parser-selected
+  callee to keep parse-time typing alive: they now carry an explicit parser
+  return-type hint on the call node plus either a deferred
+  definition-context lookup record or a deferred dependent-unqualified lookup
+  record, so later semantic resolution can re-run the correct lookup instead of
+  leaning on mangled-name or parser-target compatibility
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -102,6 +108,15 @@ blocking areas:
   pack matched" as a successful expansion; that closes the standards-visible
   leak where `typeCode<Rest>()...` in `add3(..., tail)` lost pack semantics
   before sema could scalarize the bound template pack
+- deferred qualified/member-template calls now preserve explicit template
+  arguments, parser return-type hints, and dependent-qualified lookup records
+  as separate metadata so later semantic resolution can replay the correct
+  lookup instead of inheriting a parser-selected callee as final meaning
+- sema now distinguishes real type owners from namespace qualifiers before it
+  consumes definition-bound compatibility metadata for qualified direct calls,
+  which fixes current-instantiation nested-owner cases like
+  `Runner<T>::Ops::read(value)` being stolen by an unrelated global
+  `Ops<T>::read`
 
 ## Highest-value remaining standards gaps
 
@@ -168,12 +183,20 @@ Why this matters:
 
 Remaining near-term scope:
 
-- the remaining compatibility boundary is now concentrated in parser
+- the biggest ordinary identifier-call coupling is now gone: parse-time
+  return-type availability and final semantic call-target authority are
+  separated on the call node / lookup-record boundary instead of being tied to
+  a parser-selected callee
+- the remaining compatibility boundary is now concentrated in other parser
   materialization paths that still carry only `mangled_name` or
-  `qualified_name`, especially the fallback exits that still cannot assemble
-  stable typed arguments even after the new structured retry pass, plus any
-  remaining niche qualified/member-template materializers that do not yet
-  route through the shared helpers
+  `qualified_name`, especially niche qualified/member-template materializers
+  that do not yet route through the same deferred-lookup model
+- the just-fixed qualified-owner collision confirms the right ownership split:
+  non-template qualified calls must first decide whether the left-hand side is
+  a type owner or a namespace qualifier, and only then may compatibility
+  records participate; the remaining parser helper that still does ordinary
+  static-member recovery inside `resolveDeferredQualifiedTemplateCall(...)`
+  should be moved onto that same model
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -200,8 +223,14 @@ Next direct-call target:
   reach sema with compatibility-only metadata, then replace each typed case
   with preserved structured target metadata before touching the sema fallback;
   after the now-covered typed qualified-member and string-literal UDL paths,
-  the next target is the final fallback exits that still cannot produce stable
-  typed arguments even after the structured retry
+  the next targets are the remaining qualified/member-template paths that still
+  have not adopted the deferred lookup + parser return-type hint split
+- explicitly cover the remaining nested-owner collision in qualified
+  member-template calls before widening current-instantiation heuristics:
+  `Ops::template read<int>(value)` inside `Runner<T>` must resolve to the
+  nested `Runner<T>::Ops::read`, not to an unrelated global `Ops<T>::read`
+  when both owners are visible and share the same simple nested name
+  this is a standards-visible lookup bug, not an acceptable compatibility case
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -245,16 +274,24 @@ For work in this area, rerun:
 ## Next steps
 
 1. Continue eliminating compatibility-only parser metadata in the remaining
-   resolved direct-call sites, now focusing on the branches that still cannot
-   produce stable typed arguments even after the structured retry pass.
-   Immediate follow-up: audit the last compatibility-only fallback exits in
-   `Parser_Expr_PrimaryExpr.cpp` and either preserve
-   `FunctionCallDefinitionLookupRecord` there or reclassify those calls as
-   unresolved/deferred instead of pretending they are fully resolved. Keep
-   adding focused regressions for replayed calls that would otherwise be
-   vulnerable to hidden or later same-name overloads. Once those paths are
-   covered, remove the new whole-call sema synchronization hook by pushing that
-   work back to earlier semantic ownership.
+   resolved direct-call sites, now focusing on the qualified/member-template
+   materializers that still have not adopted the deferred lookup + parser
+   return-type hint split.
+   Immediate follow-up: move those paths onto the same model now used by
+   untyped ordinary calls, and keep
+   `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` in the
+   guard set so parser-time constexpr users never again need a parser-selected
+   callee for return-type visibility. First subtask: remove the remaining
+   ordinary-static-member compatibility branch from
+   `resolveDeferredQualifiedTemplateCall(...)` by reusing the same sema-owned
+   type-owner / namespace-qualifier split that now protects qualified direct
+   calls in `resolveCallArgAnnotationTarget(...)`. Once those paths match the
+   split model, remove the new whole-call sema synchronization hook by pushing
+   that work back to earlier semantic ownership.
+   Immediate focused follow-up under that item:
+   fix nested-owner explicit member-template instantiation so concrete owner
+   normalization preserves the full nested owner pattern instead of collapsing
+   to a standalone owner spelling that can collide with unrelated templates.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not

@@ -3104,6 +3104,16 @@ public:
 	std::span<const ASTNode> template_arguments() const { return template_arguments_; }
 	bool has_template_arguments() const { return !template_arguments_.empty(); }
 
+	void set_parser_return_type_hint(const TypeSpecifierNode& type_hint) {
+		parser_return_type_hint_ = type_hint;
+	}
+	const std::optional<TypeSpecifierNode>& parser_return_type_hint() const {
+		return parser_return_type_hint_;
+	}
+	bool has_parser_return_type_hint() const {
+		return parser_return_type_hint_.has_value();
+	}
+
 	// --- Definition-context lookup record ---
 	void set_definition_lookup_record(const FunctionCallDefinitionLookupRecord& record) {
 		definition_lookup_record_ = record;
@@ -3142,6 +3152,7 @@ private:
 	StringHandle mangled_name_;          // Pre-computed mangled name
 	StringHandle qualified_name_;        // Source-level qualified name (e.g., "ns::func")
 	std::vector<ASTNode> template_arguments_;  // Explicit template arguments
+	std::optional<TypeSpecifierNode> parser_return_type_hint_;
 	std::optional<FunctionCallDefinitionLookupRecord> definition_lookup_record_;
 	std::optional<DependentUnqualifiedCallLookupRecord> dependent_unqualified_lookup_record_;
 	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_lookup_record_;

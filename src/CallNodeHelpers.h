@@ -101,6 +101,7 @@ struct CallInfo {
 	StringHandle mangled_name;
 	StringHandle qualified_name;
 	std::span<const ASTNode> template_arguments;
+	const std::optional<TypeSpecifierNode>* parser_return_type_hint;
 	const std::optional<FunctionCallDefinitionLookupRecord>* definition_lookup_record;
 	const std::optional<DependentUnqualifiedCallLookupRecord>* dependent_unqualified_lookup_record;
 	const std::optional<TypeInfo::DependentQualifiedNameRecord>* dependent_qualified_lookup_record;
@@ -119,6 +120,7 @@ struct CallInfo {
 		info.mangled_name          = node.mangled_name_handle();
 		info.qualified_name        = node.qualified_name_handle();
 		info.template_arguments    = node.template_arguments();
+		info.parser_return_type_hint = &node.parser_return_type_hint();
 		info.definition_lookup_record = &node.definition_lookup_record();
 		info.dependent_unqualified_lookup_record =
 			&node.dependent_unqualified_lookup_record();
@@ -141,6 +143,7 @@ struct CallMetadataCopyOptions {
 	bool copy_mangled_name = true;
 	bool copy_qualified_name = true;
 	bool copy_template_arguments = true;
+	bool copy_parser_return_type_hint = true;
 	bool copy_definition_lookup_record = true;
 	bool copy_dependent_unqualified_lookup_record = true;
 	bool copy_dependent_qualified_lookup_record = true;
@@ -165,6 +168,12 @@ inline void copyCallMetadataFromInfo(
 			copied_template_args.push_back(template_arg);
 		}
 		target.set_template_arguments(std::move(copied_template_args));
+	}
+	if (options.copy_parser_return_type_hint &&
+		source.parser_return_type_hint != nullptr &&
+		source.parser_return_type_hint->has_value()) {
+		target.set_parser_return_type_hint(
+			source.parser_return_type_hint->value());
 	}
 	if (options.copy_definition_lookup_record &&
 		source.definition_lookup_record != nullptr &&
@@ -347,6 +356,20 @@ inline void setCallDependentQualifiedLookupRecord(
 
 inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNode>&& template_args) {
 	call_expr.set_template_arguments(std::move(template_args));
+}
+
+inline void setCallParserReturnTypeHint(
+	ExpressionNode& expr,
+	const TypeSpecifierNode& type_hint) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_parser_return_type_hint(type_hint);
+	}
+}
+
+inline void setCallParserReturnTypeHint(
+	CallExprNode& call_expr,
+	const TypeSpecifierNode& type_hint) {
+	call_expr.set_parser_return_type_hint(type_hint);
 }
 
 inline void setCallIndirect(ExpressionNode& expr) {

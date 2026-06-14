@@ -8108,21 +8108,70 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			auto it = getTypesByNameMap().find(handle);
 			return it != getTypesByNameMap().end() ? it->second : nullptr;
 		};
+		auto resolve_nested_owner_from_base =
+			[&](StringHandle base_owner_handle,
+				StringHandle nested_owner_handle) -> const TypeInfo* {
+				if (!base_owner_handle.isValid() ||
+					!nested_owner_handle.isValid()) {
+					return nullptr;
+				}
+
+				auto resolve_from_owner = [&](StringHandle owner_handle) -> const TypeInfo* {
+					if (!owner_handle.isValid()) {
+						return nullptr;
+					}
+					if (LazyNestedTypeRegistry::getInstance().needsInstantiation(
+							owner_handle,
+							nested_owner_handle)) {
+						parser().instantiateLazyNestedType(
+							owner_handle,
+							nested_owner_handle);
+					}
+
+					QualifiedTypeMemberAccess nested_owner_access;
+					nested_owner_access.member_name = nested_owner_handle;
+					return parser().resolveBaseClassMemberTypeChain(
+						StringTable::getStringView(owner_handle),
+						std::span<const QualifiedTypeMemberAccess>(
+							&nested_owner_access,
+							1));
+				};
+
+				if (const TypeInfo* resolved_owner =
+						resolve_from_owner(base_owner_handle)) {
+					return resolved_owner;
+				}
+
+				if (std::optional<StringHandle> pattern_owner_handle =
+						gTemplateRegistry.get_instantiation_pattern(base_owner_handle);
+					pattern_owner_handle.has_value()) {
+					return resolve_from_owner(*pattern_owner_handle);
+				}
+
+				return nullptr;
+			};
 
 		const TypeInfo* type_info = nullptr;
 		if (const MemberContext* member_context = getCurrentMemberContext();
 			member_context &&
 			owner_name.find("::") == std::string_view::npos) {
 			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
-				const std::string_view current_type_name =
-					StringTable::getStringView(current_type_info->name());
-				type_info = resolve_type_info(
-					StringTable::getOrInternStringHandle(
-						StringBuilder()
-							.append(current_type_name)
-							.append("::")
-							.append(owner_name)
-							.commit()));
+				const StringHandle owner_name_handle =
+					StringTable::getOrInternStringHandle(owner_name);
+				type_info = resolve_nested_owner_from_base(
+					current_type_info->name(),
+					owner_name_handle);
+				if (!type_info) {
+					const std::string_view current_type_name =
+						StringTable::getStringView(current_type_info->name());
+					type_info = resolve_type_info(
+						StringTable::getOrInternStringHandle(
+							StringBuilder()
+								.append(current_type_name)
+								.append("::")
+								.append(owner_name)
+								.commit()));
+				}
 				if (!type_info) {
 					if (const TypeInfo::TemplateArgInfo* bound_arg =
 							current_type_info->findLegacyInstantiationArgByName(owner_name)) {
@@ -8136,6 +8185,27 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return tryResolveStructOwnerTypeInfo(type_info);
 	};
+	const std::optional<std::string_view> qualified_call_owner_name = [&]() -> std::optional<std::string_view> {
+		if (!call_info.qualified_name.isValid()) {
+			return std::nullopt;
+		}
+		const std::string_view qualified_name = call_info.qualified_name.view();
+		const size_t scope_sep = qualified_name.rfind("::");
+		if (scope_sep == std::string_view::npos) {
+			return std::nullopt;
+		}
+		return qualified_name.substr(0, scope_sep);
+	}();
+	const TypeInfo* const qualified_type_owner =
+		qualified_call_owner_name.has_value()
+			? resolveQualifiedOwnerTypeForCall(*qualified_call_owner_name)
+			: nullptr;
+	const bool qualified_name_has_type_owner =
+		qualified_type_owner != nullptr;
+	const bool qualified_name_targets_namespace =
+		call_info.qualified_name.isValid() &&
+		!qualified_name_has_type_owner &&
+		resolveQualifiedLookupTarget(call_info.qualified_name.view()).has_value();
 	auto resolveLocalCallableStructInfo = [&]() -> const StructTypeInfo* {
 		if (call_info.has_receiver) {
 			return nullptr;
@@ -8182,11 +8252,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				!call_info.function_declaration->is_static()) {
 				return nullptr;
 			}
+			if (call_info.qualified_name.isValid()) {
+				// Qualified static calls need sema-owned owner resolution so nested
+				// current-instantiation owners cannot be stolen by broader parser-time
+				// matches such as unrelated global templates with the same name.
+				return nullptr;
+			}
 			if (call_info.definition_lookup_record != nullptr &&
 				call_info.definition_lookup_record->has_value()) {
-				return call_info.function_declaration;
-			}
-			if (call_info.qualified_name.isValid()) {
 				return call_info.function_declaration;
 			}
 			return nullptr;
@@ -8286,8 +8359,35 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 	if (!call_info.is_indirect &&
 		!call_info.has_receiver &&
+		(!call_info.qualified_name.isValid() ||
+		 qualified_name_targets_namespace) &&
 		definition_lookup_record_target != nullptr) {
 		return definition_lookup_record_target;
+	}
+	if (!normalized_call &&
+		!call_info.is_indirect &&
+		!call_info.has_receiver &&
+		(!call_info.qualified_name.isValid() ||
+		 qualified_name_targets_namespace) &&
+		definition_lookup_record_target == nullptr &&
+		call_info.definition_lookup_record != nullptr &&
+		call_info.definition_lookup_record->has_value()) {
+		const FunctionCallDefinitionLookupRecord& deferred_record =
+			call_info.definition_lookup_record->value();
+		InlineVector<TypeSpecifierNode, 6> arg_types;
+		if (tryCollectOverloadResolutionArgTypes(arguments, arg_types)) {
+			if (std::optional<ASTNode> resolved_target =
+					parser().resolveDefinitionBoundOrdinaryCall(
+						deferred_record,
+						arg_types);
+				resolved_target.has_value()) {
+				if (const FunctionDeclarationNode* resolved_function =
+						get_function_decl_node(*resolved_target);
+					resolved_function != nullptr) {
+					return resolved_function;
+				}
+			}
+		}
 	}
 	if (const FunctionDeclarationNode* parser_selected_static_target =
 			fallbackToParserSelectedStaticDirectTarget();
@@ -8349,10 +8449,62 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return nullptr;
 	}
+	if (!call_info.has_receiver &&
+		call_info.function_declaration == nullptr &&
+		call_info.qualified_name.isValid()) {
+		const bool has_deferred_qualified_template_metadata =
+			!call_info.template_arguments.empty() ||
+			(call_info.dependent_qualified_lookup_record != nullptr &&
+			 call_info.dependent_qualified_lookup_record->has_value());
+		if (qualified_name_targets_namespace ||
+			has_deferred_qualified_template_metadata) {
+			std::string_view qualified_name_for_resolution =
+				call_info.qualified_name.view();
+			if (!qualified_name_targets_namespace &&
+				qualified_type_owner != nullptr &&
+				qualified_call_owner_name.has_value()) {
+				const std::string_view owner_name =
+					*qualified_call_owner_name;
+				const std::string_view resolved_owner_name =
+					StringTable::getStringView(qualified_type_owner->name());
+				if (!resolved_owner_name.empty() &&
+					resolved_owner_name != owner_name) {
+					const std::string_view member_name =
+						qualified_name_for_resolution.substr(
+							owner_name.size() + 2);
+					qualified_name_for_resolution =
+						StringBuilder()
+							.append(resolved_owner_name)
+							.append("::")
+							.append(member_name)
+							.commit();
+				}
+			}
+			InlineVector<TypeSpecifierNode, 6> qualified_template_arg_types;
+			if (tryCollectOverloadResolutionArgTypes(arguments, qualified_template_arg_types)) {
+				if (std::optional<ASTNode> resolved_target =
+						parser().resolveDeferredQualifiedTemplateCall(
+							qualified_name_for_resolution,
+							call_info.template_arguments,
+							arguments,
+							qualified_template_arg_types);
+					resolved_target.has_value()) {
+					if (const FunctionDeclarationNode* resolved_function =
+						get_function_decl_node(*resolved_target);
+					resolved_function != nullptr) {
+						return resolved_function;
+					}
+				}
+			}
+		}
+	}
 
-	if (const FunctionDeclarationNode* mangled_candidate =
-			lookupFunctionByMangledName(call_info.mangled_name)) {
-		return mangled_candidate;
+	if (!call_info.qualified_name.isValid() ||
+		qualified_name_targets_namespace) {
+		if (const FunctionDeclarationNode* mangled_candidate =
+				lookupFunctionByMangledName(call_info.mangled_name)) {
+			return mangled_candidate;
+		}
 	}
 
 	const DeclarationNode& decl = callee_decl;
@@ -8371,41 +8523,35 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				qualified_lookup->identifier);
 		}
 		if (overloads.empty()) {
-			const std::string_view qualified_name = call_info.qualified_name.view();
-			const size_t scope_sep = qualified_name.rfind("::");
-			if (scope_sep != std::string_view::npos) {
-				const std::string_view owner_name = qualified_name.substr(0, scope_sep);
-				if (const TypeInfo* owner_type = resolveQualifiedOwnerTypeForCall(owner_name);
-					owner_type != nullptr &&
-					owner_type->getStructInfo() != nullptr) {
-					const ConstAwareMemberCandidateSet member_candidates =
-						collectConstAwareVisibleMemberFunctionCandidates(
-							owner_type->getStructInfo(),
-							decl.identifier_token().handle(),
-							false,
-							true,
-							[](const StructMemberFunction&, const FunctionDeclarationNode& func_decl) {
-								return func_decl.is_static();
-							});
-					if (!member_candidates.compatible.empty()) {
-						for (const StructMemberFunction* member_candidate :
-							 member_candidates.preferred) {
-							if (member_candidate != nullptr) {
-								appendUniqueOverload(
-									overloads,
-									member_candidate->function_decl);
-							}
+			if (qualified_type_owner != nullptr &&
+				qualified_type_owner->getStructInfo() != nullptr) {
+				const ConstAwareMemberCandidateSet member_candidates =
+					collectConstAwareVisibleMemberFunctionCandidates(
+						qualified_type_owner->getStructInfo(),
+						decl.identifier_token().handle(),
+						false,
+						true,
+						[](const StructMemberFunction&, const FunctionDeclarationNode& func_decl) {
+							return func_decl.is_static();
+						});
+				if (!member_candidates.compatible.empty()) {
+					for (const StructMemberFunction* member_candidate :
+						 member_candidates.preferred) {
+						if (member_candidate != nullptr) {
+							appendUniqueOverload(
+								overloads,
+								member_candidate->function_decl);
 						}
-						for (const StructMemberFunction* member_candidate :
-							 member_candidates.compatible) {
-							if (member_candidate != nullptr) {
-								appendUniqueOverload(
-									overloads,
-									member_candidate->function_decl);
-							}
-						}
-						used_qualified_owner_static_member_lookup = true;
 					}
+					for (const StructMemberFunction* member_candidate :
+						 member_candidates.compatible) {
+						if (member_candidate != nullptr) {
+							appendUniqueOverload(
+								overloads,
+								member_candidate->function_decl);
+						}
+					}
+					used_qualified_owner_static_member_lookup = true;
 				}
 			}
 		}
@@ -8422,13 +8568,11 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (overloads.empty() &&
 		call_info.qualified_name.isValid() &&
 		!used_qualified_owner_static_member_lookup) {
-		const std::string_view qualified_name = call_info.qualified_name.view();
-		const size_t scope_sep = qualified_name.rfind("::");
-		if (scope_sep != std::string_view::npos) {
-			const std::string_view owner_name = qualified_name.substr(0, scope_sep);
-			if (const TypeInfo* owner_type = resolveQualifiedOwnerTypeForCall(owner_name)) {
-				appendOwnerMemberOverloads(owner_type, decl.identifier_token().value(), overloads);
-			}
+		if (qualified_type_owner != nullptr) {
+			appendOwnerMemberOverloads(
+				qualified_type_owner,
+				decl.identifier_token().value(),
+				overloads);
 		}
 	}
 	InlineVector<TypeSpecifierNode, 6> arg_types;

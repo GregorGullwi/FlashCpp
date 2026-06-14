@@ -4981,6 +4981,31 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			return builtin_result;
 		}
 
+		if (call_expr.has_qualified_name() && context.parser) {
+			Parser& parser = *context.parser;
+			std::vector<TypeSpecifierNode> arg_types;
+			if (parser.tryCollectFunctionCallArgTypes(
+					call_expr.arguments(),
+					arg_types)) {
+				if (std::optional<ASTNode> resolved_template_call =
+						parser.resolveDeferredQualifiedTemplateCall(
+							call_expr.qualified_name(),
+							call_expr.template_arguments(),
+							call_expr.arguments(),
+							arg_types);
+					resolved_template_call.has_value()) {
+					context.normalizePendingSemanticRoots();
+					if (resolved_template_call->is<FunctionDeclarationNode>()) {
+						return evaluate_resolved_function_call(
+							resolved_template_call->as<FunctionDeclarationNode>(),
+							call_expr.arguments(),
+							context,
+							nullptr);
+					}
+				}
+			}
+		}
+
 		// Try variable template instantiation before giving up
 		// Variable templates like __is_ratio_v<T> might not be in the symbol table
 		// but can be instantiated from the template registry
