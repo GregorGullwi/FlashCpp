@@ -329,7 +329,12 @@ When changing this area, always rerun:
    `resolveDeferredQualifiedTemplateCall(...)`: move that branch onto the same
    structured type-owner vs namespace-qualifier split, then remove any now-
    redundant whole-call sema resynchronization that was only compensating for
-   that compatibility path.
+   that compatibility path. Long-term direction: stop teaching individual
+   parser call sites to recover owner identity from short qualified spellings.
+   Instead, preserve a shared structured qualified-owner record on the AST and
+   route both parser materialization and sema fallback through one owner/type-
+   owner-vs-namespace resolver so this pattern does not repeat in more
+   qualified-call subpaths.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

@@ -316,7 +316,11 @@ For work in this area, rerun:
    `resolveDeferredQualifiedTemplateCall(...)` by routing those calls through
    the same structured type-owner vs namespace-qualifier split that now covers
    both non-template qualified direct calls and explicit qualified member-
-   template nested-owner materialization.
+   template nested-owner materialization. Long-term direction: replace these
+   per-call-site parser repairs with one shared structured qualified-owner
+   representation plus a single resolver used by both parser materialization
+   and later sema fallback, so future qualified/member-template paths do not
+   regress by rebuilding owner meaning from short spellings.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not
