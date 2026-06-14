@@ -90,6 +90,15 @@ blocking areas:
   definition-context lookup record or a deferred dependent-unqualified lookup
   record, so later semantic resolution can re-run the correct lookup instead of
   leaning on mangled-name or parser-target compatibility
+- `resolveDeferredQualifiedTemplateCall(...)` no longer performs ordinary
+  static-member overload recovery for qualified type owners; non-template
+  qualified direct calls now stay on sema-owned owner/overload resolution
+  instead of inheriting a parser-side compatibility branch
+- constexpr evaluation now reuses sema-owned qualified direct-call resolution
+  before falling back to parser-owned deferred template instantiation, and that
+  shared resolver accepts an explicit current-type fallback so class-scope
+  `static constexpr` initializers participate in the same nested-owner/type-
+  owner-vs-namespace split as member-function sema
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -206,9 +215,11 @@ Remaining near-term scope:
 - the just-fixed qualified-owner collision confirms the right ownership split:
   non-template qualified calls must first decide whether the left-hand side is
   a type owner or a namespace qualifier, and only then may compatibility
-  records participate; the remaining parser helper that still does ordinary
-  static-member recovery inside `resolveDeferredQualifiedTemplateCall(...)`
-  should be moved onto that same model
+  records participate; the old parser helper branch that did ordinary
+  static-member recovery inside `resolveDeferredQualifiedTemplateCall(...)` is
+  now gone, so the remaining work in this sub-area is preserving structured
+  semantic metadata in the qualified/member-template materializers that still
+  stop at compatibility-only records after that owner split
 - the explicit qualified member-template nested-owner collision is now closed
   at the parser/materialization source rather than by adding a later semantic
   compatibility branch; remaining work in this sub-area is the still-legacy
@@ -241,15 +252,8 @@ Next direct-call target:
   with preserved structured target metadata before touching the sema fallback;
   after the now-covered typed qualified-member and string-literal UDL paths,
   the next targets are the remaining qualified/member-template paths that still
-  have not adopted the deferred lookup + parser return-type hint split
-- explicitly cover the remaining nested-owner collision in qualified
-  member-template calls before widening current-instantiation heuristics:
-  `Ops::template read<int>(value)` inside `Runner<T>` must resolve to the
-  nested `Runner<T>::Ops::read`, not to an unrelated global `Ops<T>::read`
-  when both owners are visible and share the same simple nested name
-  status: fixed in the parser/member-template materialization layer and now
-  guarded by a focused regression; keep that guard while the remaining
-  compatibility branch is removed
+  have not adopted the deferred lookup + parser return-type hint split now that
+  the parser-owned ordinary static-member qualified fallback is removed
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -303,13 +307,15 @@ For work in this area, rerun:
    untyped ordinary calls, and keep
    `test_template_static_constexpr_dependent_hidden_friend_ret0.cpp` in the
    guard set so parser-time constexpr users never again need a parser-selected
-   callee for return-type visibility. First subtask: remove the remaining
-   ordinary-static-member compatibility branch from
-   `resolveDeferredQualifiedTemplateCall(...)` by reusing the same sema-owned
-   type-owner / namespace-qualifier split that now protects qualified direct
-   calls in `resolveCallArgAnnotationTarget(...)`. Once those paths match the
-   split model, remove the new whole-call sema synchronization hook by pushing
-   that work back to earlier semantic ownership.
+   callee for return-type visibility. The old ordinary-static-member
+   compatibility branch in `resolveDeferredQualifiedTemplateCall(...)` is now
+   removed, and constexpr qualified direct calls reuse the same sema-owned
+   type-owner / namespace-qualifier split with explicit current-type fallback
+   for class-scope evaluation. The next concrete step is therefore to finish
+   moving the remaining qualified/member-template materializers onto preserved
+   `FunctionCallDefinitionLookupRecord` or explicit deferred lookup records,
+   and then remove the whole-call sema synchronization hook by pushing that
+   work back to earlier semantic ownership.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by
@@ -318,16 +324,13 @@ For work in this area, rerun:
    `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
    and the enclosing-scope nested-class regression
    `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`.
-   The next concrete follow-up is narrower:
-   remove the remaining ordinary static-member compatibility recovery inside
-   `resolveDeferredQualifiedTemplateCall(...)` by routing those calls through
-   the same structured type-owner vs namespace-qualifier split that now covers
-   both non-template qualified direct calls and explicit qualified member-
-   template nested-owner materialization. Long-term direction: replace these
-   per-call-site parser repairs with one shared structured qualified-owner
-   representation plus a single resolver used by both parser materialization
-   and later sema fallback, so future qualified/member-template paths do not
-   regress by rebuilding owner meaning from short spellings.
+   The new focused guard for class-scope constexpr nested-owner recovery is
+   `test_template_static_constexpr_qualified_nested_owner_collision_ret0.cpp`.
+   Long-term direction: replace these per-call-site parser repairs with one
+   shared structured qualified-owner representation plus a single resolver used
+   by both parser materialization and later sema fallback, so future
+   qualified/member-template paths do not regress by rebuilding owner meaning
+   from short spellings.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not

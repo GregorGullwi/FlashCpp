@@ -4219,6 +4219,16 @@ void SemanticAnalysis::ensureCallArgConversionsAnnotated(
 		" in call argument");
 }
 
+const FunctionDeclarationNode* SemanticAnalysis::resolveSharedDirectCallTarget(
+	const CallInfo& call_info,
+	const void* call_key,
+	TypeIndex fallback_owner_type_index) {
+	return resolveCallArgAnnotationTarget(
+		call_info,
+		call_key,
+		fallback_owner_type_index);
+}
+
 namespace {
 const void* getExpressionKey(const ASTNode& node) {
 	return static_cast<const void*>(&node.as<ExpressionNode>());
@@ -6062,7 +6072,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 				const CallInfo call_info = CallInfo::from(e);
 				if (const CanonicalTypeId resolved_type_id =
-						inferCallReturnType(resolveCallArgAnnotationTarget(call_info, &e))) {
+						inferCallReturnType(resolveCallArgAnnotationTarget(
+							call_info,
+							&e,
+							TypeIndex{}))) {
 					return resolved_type_id;
 				}
 
@@ -7980,7 +7993,8 @@ void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
-																				const void* call_key) {
+																				const void* call_key,
+																				TypeIndex fallback_owner_type_index) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
 	const DeclarationNode& callee_decl = requireCallDeclaration(call_info, "resolveCallArgAnnotationTarget");
 	const bool normalized_call =
@@ -8151,34 +8165,54 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				return nullptr;
 			};
 
-		const TypeInfo* type_info = nullptr;
-		if (const MemberContext* member_context = getCurrentMemberContext();
-			member_context &&
-			owner_name.find("::") == std::string_view::npos) {
-			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context->type_index)) {
+		auto try_resolve_from_current_type =
+			[&](const TypeInfo* current_type_info) -> const TypeInfo* {
+				if (current_type_info == nullptr ||
+					owner_name.find("::") != std::string_view::npos) {
+					return nullptr;
+				}
+
 				const StringHandle owner_name_handle =
 					StringTable::getOrInternStringHandle(owner_name);
-				type_info = resolve_nested_owner_from_base(
-					current_type_info->name(),
-					owner_name_handle);
-				if (!type_info) {
-					const std::string_view current_type_name =
-						StringTable::getStringView(current_type_info->name());
-					type_info = resolve_type_info(
+				if (const TypeInfo* nested_owner =
+						resolve_nested_owner_from_base(
+							current_type_info->name(),
+							owner_name_handle);
+					nested_owner != nullptr) {
+					return nested_owner;
+				}
+
+				const std::string_view current_type_name =
+					StringTable::getStringView(current_type_info->name());
+				if (const TypeInfo* prefixed_owner = resolve_type_info(
 						StringTable::getOrInternStringHandle(
 							StringBuilder()
 								.append(current_type_name)
 								.append("::")
 								.append(owner_name)
 								.commit()));
+					prefixed_owner != nullptr) {
+					return prefixed_owner;
 				}
-				if (!type_info) {
-					if (const TypeInfo::TemplateArgInfo* bound_arg =
-							current_type_info->findLegacyInstantiationArgByName(owner_name)) {
-						type_info = tryGetTypeInfo(bound_arg->type_index);
-					}
+
+				if (const TypeInfo::TemplateArgInfo* bound_arg =
+						current_type_info->findLegacyInstantiationArgByName(owner_name)) {
+					return tryGetTypeInfo(bound_arg->type_index);
 				}
-			}
+
+				return nullptr;
+			};
+
+		const TypeInfo* type_info = nullptr;
+		if (const MemberContext* member_context = getCurrentMemberContext();
+			member_context) {
+			type_info = try_resolve_from_current_type(
+				tryGetTypeInfo(member_context->type_index));
+		}
+		if (!type_info &&
+			fallback_owner_type_index.is_valid()) {
+			type_info = try_resolve_from_current_type(
+				tryGetTypeInfo(fallback_owner_type_index));
 		}
 		if (!type_info) {
 			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
@@ -8853,7 +8887,11 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const ASTNode& call_exp
 	const bool is_callable_operator =
 		callee_decl.identifier_token().value() == "operator()"sv;
 
-	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
+	const FunctionDeclarationNode* func_decl =
+		resolveCallArgAnnotationTarget(
+			call_info,
+			call_key,
+			TypeIndex{});
 	if (!func_decl) {
 		auto hasDiagnosableLocalCallableMiss = [&]() -> bool {
 			if (call_info.has_receiver || call_info.is_indirect) {

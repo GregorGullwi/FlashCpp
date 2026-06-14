@@ -4981,26 +4981,47 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 			return builtin_result;
 		}
 
-		if (call_expr.has_qualified_name() && context.parser) {
-			Parser& parser = *context.parser;
-			std::vector<TypeSpecifierNode> arg_types;
-			if (parser.tryCollectFunctionCallArgTypes(
-					call_expr.arguments(),
-					arg_types)) {
-				if (std::optional<ASTNode> resolved_template_call =
-						parser.resolveDeferredQualifiedTemplateCall(
-							call_expr.qualified_name(),
-							call_expr.template_arguments(),
-							call_expr.arguments(),
-							arg_types);
-					resolved_template_call.has_value()) {
+		if (call_expr.has_qualified_name()) {
+			if (context.sema != nullptr) {
+				if (context.sema->isParserAttached()) {
 					context.normalizePendingSemanticRoots();
-					if (resolved_template_call->is<FunctionDeclarationNode>()) {
-						return evaluate_resolved_function_call(
-							resolved_template_call->as<FunctionDeclarationNode>(),
-							call_expr.arguments(),
-							context,
-							nullptr);
+				}
+				const CallInfo call_info = CallInfo::from(call_expr);
+				if (const FunctionDeclarationNode* resolved_qualified_target =
+						context.sema->resolveSharedDirectCallTarget(
+							call_info,
+							nullptr,
+							context.struct_type_index);
+					resolved_qualified_target != nullptr) {
+					return evaluate_resolved_function_call(
+						*resolved_qualified_target,
+						call_expr.arguments(),
+						context,
+						nullptr);
+				}
+			}
+
+			if (context.parser) {
+				Parser& parser = *context.parser;
+				std::vector<TypeSpecifierNode> arg_types;
+				if (parser.tryCollectFunctionCallArgTypes(
+						call_expr.arguments(),
+						arg_types)) {
+					if (std::optional<ASTNode> resolved_template_call =
+							parser.resolveDeferredQualifiedTemplateCall(
+								call_expr.qualified_name(),
+								call_expr.template_arguments(),
+								call_expr.arguments(),
+								arg_types);
+						resolved_template_call.has_value()) {
+						context.normalizePendingSemanticRoots();
+						if (resolved_template_call->is<FunctionDeclarationNode>()) {
+							return evaluate_resolved_function_call(
+								resolved_template_call->as<FunctionDeclarationNode>(),
+								call_expr.arguments(),
+								context,
+								nullptr);
+						}
 					}
 				}
 			}

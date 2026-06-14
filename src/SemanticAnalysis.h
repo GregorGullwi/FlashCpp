@@ -198,6 +198,10 @@ public:
 	void registerCodegenSynthesizedOverloadArgType(const ASTNode& arg, const TypeSpecifierNode& type);
 	void registerCodegenSynthesizedLocalType(StringHandle name, const TypeSpecifierNode& type);
 	void ensureCallArgConversionsAnnotated(const CallExprNode& call_node);
+	const FunctionDeclarationNode* resolveSharedDirectCallTarget(
+		const CallInfo& call_info,
+		const void* call_key,
+		TypeIndex fallback_owner_type_index);
 
 	enum class StructuredBindingDecompositionKind : uint8_t {
 		Aggregate,
@@ -552,7 +556,8 @@ private:
 										   const void* call_key,
 										   const char* context_description);
 	const FunctionDeclarationNode* resolveCallArgAnnotationTarget(const CallInfo& call_info,
-																 const void* call_key);
+																 const void* call_key,
+																 TypeIndex fallback_owner_type_index);
 	const TypeInfo* tryResolveStructOwnerTypeInfo(const TypeInfo* type_info) const;
 	const TypeInfo* tryResolveStructOwnerTypeInfoForExpression(const ASTNode& expr);
 	const StructTypeInfo* tryResolveLocalCallableStructInfo(StringHandle callee_name) const;
