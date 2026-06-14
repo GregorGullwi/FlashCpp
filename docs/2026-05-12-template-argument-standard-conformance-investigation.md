@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-14
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -117,6 +117,14 @@ blocking areas:
   which fixes current-instantiation nested-owner cases like
   `Runner<T>::Ops::read(value)` being stolen by an unrelated global
   `Ops<T>::read`
+- explicit qualified member-template calls now preserve the full nested owner
+  identity in the parser/materialization layer when the owner spelling names a
+  real nested owner, so `Ops::template read<int>(value)` inside `Runner<T>`
+  no longer rebinds through an unrelated global `Ops<T>::read`
+- that owner rewrite is now constrained to true nested-owner extensions only
+  (for example `Runner<int>::Ops` from `Ops`), preventing alias/self-owner
+  qualified calls from being eagerly collapsed onto unrelated concrete owner
+  names while still closing the standards-visible collision above
 
 ## Highest-value remaining standards gaps
 
@@ -197,6 +205,11 @@ Remaining near-term scope:
   records participate; the remaining parser helper that still does ordinary
   static-member recovery inside `resolveDeferredQualifiedTemplateCall(...)`
   should be moved onto that same model
+- the explicit qualified member-template nested-owner collision is now closed
+  at the parser/materialization source rather than by adding a later semantic
+  compatibility branch; remaining work in this sub-area is the still-legacy
+  ordinary static-member recovery branch in
+  `resolveDeferredQualifiedTemplateCall(...)`, not more owner-collision repair
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -230,7 +243,9 @@ Next direct-call target:
   `Ops::template read<int>(value)` inside `Runner<T>` must resolve to the
   nested `Runner<T>::Ops::read`, not to an unrelated global `Ops<T>::read`
   when both owners are visible and share the same simple nested name
-  this is a standards-visible lookup bug, not an acceptable compatibility case
+  status: fixed in the parser/member-template materialization layer and now
+  guarded by a focused regression; keep that guard while the remaining
+  compatibility branch is removed
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -260,6 +275,7 @@ For work in this area, rerun:
 - `test_template_current_member_static_hides_base_overload_ret0.cpp`
 - `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
+- `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -289,9 +305,15 @@ For work in this area, rerun:
    split model, remove the new whole-call sema synchronization hook by pushing
    that work back to earlier semantic ownership.
    Immediate focused follow-up under that item:
-   fix nested-owner explicit member-template instantiation so concrete owner
-   normalization preserves the full nested owner pattern instead of collapsing
-   to a standalone owner spelling that can collide with unrelated templates.
+   the nested-owner explicit member-template instantiation bug is now fixed and
+   guarded by
+   `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`.
+   The next concrete follow-up is narrower:
+   remove the remaining ordinary static-member compatibility recovery inside
+   `resolveDeferredQualifiedTemplateCall(...)` by routing those calls through
+   the same structured type-owner vs namespace-qualifier split that now covers
+   both non-template qualified direct calls and explicit qualified member-
+   template nested-owner materialization.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not

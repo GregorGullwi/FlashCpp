@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-14
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -116,6 +116,16 @@ the areas that were previously blocking standards-visible behavior:
   sema resolves nested current-instantiation owners structurally and no longer
   lets unrelated global templates steal calls like `Ops::read(value)` inside
   `Runner<T>`
+- explicit qualified member-template direct calls now preserve nested current-
+  instantiation owner identity in the parser/materialization layer when the
+  owner spelling names a real nested owner (for example `Ops::template read<int>(value)`
+  inside `Runner<T>`), instead of normalizing through the standalone owner
+  spelling and letting an unrelated global template owner win
+- that parser-side owner rewrite is now intentionally narrow: it only rewrites
+  short owner spellings when the resolved owner is a true nested owner
+  extension (for example `Runner<int>::Ops`), so alias/self-owner qualified
+  calls remain on their existing paths instead of being eagerly collapsed onto
+  unrelated concrete owner names
 
 ## Architectural invariants to preserve
 
@@ -217,6 +227,12 @@ Remaining near-term scope:
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
   call-specific explicit-template-argument repairs deeper in sema/codegen
+- the standards-visible nested-owner collision in explicit qualified
+  member-template calls is now fixed in the parser/materialization layer by
+  preserving the full nested owner identity instead of recovering from the
+  short owner spelling later; remaining work in this bucket is the still-legacy
+  compatibility branch for ordinary static-member fallback inside
+  `resolveDeferredQualifiedTemplateCall(...)`, not more owner-collision repair
 - the remaining sema/codegen boundary sync for direct calls should stay narrow;
   it now operates at whole-call granularity on the exact lowered AST, but the
   long-term target is still to remove even that hook once the remaining
@@ -248,12 +264,9 @@ Next direct-call target:
   standards-visible nested-owner collision in explicit qualified member-template
   calls where a nested owner name inside the current instantiation collides with
   an unrelated global template owner
-  concrete uncovered case: inside `Runner<T>::run()`, `Ops::template read<int>(value)`
-  still binds to the unrelated global `Ops<T>::read` instead of the nested
-  `Runner<T>::Ops::read` when both exist
-  required implementation direction: preserve or reconstruct the exact nested
-  owner identity in the parser/member-template instantiation layer instead of
-  canonicalizing through a standalone owner spelling
+  status: covered by the new parser-side nested-owner identity preservation;
+  keep the focused regression for this case in the guard set and do not widen
+  the rewrite past true nested-owner extensions
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -273,6 +286,7 @@ When changing this area, always rerun:
 - `test_template_current_member_static_hides_base_overload_ret0.cpp`
 - `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
+- `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -304,10 +318,15 @@ When changing this area, always rerun:
    hand-roll `expr...` handling (constructor/initializer parsing) so they share
    the same "expand only when a real function pack matched, otherwise preserve
    the pack node" rule now enforced in ordinary call parsing.
-   First unresolved conformance regression to close in that slice:
-   add a focused test for the nested-owner collision described above only when
-   the parser/member-template owner identity is fixed at the source, not via a
-   new semantic or codegen compatibility branch.
+   The nested-owner explicit member-template collision is now fixed at the
+   parser source and guarded by
+   `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`.
+   The next concrete target in this slice is therefore the remaining
+   ordinary-static-member compatibility branch inside
+   `resolveDeferredQualifiedTemplateCall(...)`: move that branch onto the same
+   structured type-owner vs namespace-qualifier split, then remove any now-
+   redundant whole-call sema resynchronization that was only compensating for
+   that compatibility path.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

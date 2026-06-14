@@ -729,10 +729,28 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 	if (scope_sep != std::string_view::npos) {
 		std::string_view owner_name = qualified_name.substr(0, scope_sep);
 		const std::string_view member_name = qualified_name.substr(scope_sep + 2);
-		if (AliasTemplateMaterializationResult canonical_owner =
-				resolveCanonicalInstantiatedOwnerForLookup(owner_name);
-			!canonical_owner.instantiated_name.empty()) {
+		const TypeInfo* resolved_owner_type_info = nullptr;
+		const auto is_nested_owner_match =
+			[owner_name](std::string_view resolved_owner_name) {
+				return resolved_owner_name.size() > owner_name.size() + 2 &&
+					resolved_owner_name.ends_with(owner_name) &&
+					resolved_owner_name.substr(
+						resolved_owner_name.size() - owner_name.size() - 2,
+						2) == "::";
+			};
+		if (std::optional<AliasTemplateMaterializationResult> current_owner =
+				tryResolveQualifiedTypeOwnerFromCurrentContext(owner_name);
+			current_owner.has_value() &&
+			is_nested_owner_match(current_owner->instantiated_name)) {
+			if (!current_owner->instantiated_name.empty()) {
+				owner_name = current_owner->instantiated_name;
+			}
+			resolved_owner_type_info = current_owner->resolved_type_info;
+		} else if (AliasTemplateMaterializationResult canonical_owner =
+					   resolveCanonicalInstantiatedOwnerForLookup(owner_name);
+				   !canonical_owner.instantiated_name.empty()) {
 			owner_name = canonical_owner.instantiated_name;
+			resolved_owner_type_info = canonical_owner.resolved_type_info;
 		}
 
 		StringHandle owner_name_handle =
@@ -741,7 +759,9 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 			owner_name_handle,
 			ClassInstantiationPhase::Full);
 		const TypeInfo* owner_type_info =
-			findTypeByName(owner_name_handle);
+			resolved_owner_type_info != nullptr
+				? resolved_owner_type_info
+				: findTypeByName(owner_name_handle);
 		FLASH_LOG_FORMAT(
 			Templates,
 			Debug,
@@ -1148,6 +1168,138 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 		result.instantiated_struct_node = ASTNode(current_struct_node);
 	}
 	return result;
+}
+
+std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveQualifiedTypeOwnerFromCurrentContext(
+	std::string_view owner_name) {
+	if (owner_name.empty()) {
+		return std::nullopt;
+	}
+
+	auto owner_matches_current_type =
+		[&](const TypeInfo& owner_type_info) {
+			if (owner_name == StringTable::getStringView(owner_type_info.name())) {
+				return true;
+			}
+			if (!owner_type_info.isTemplateInstantiation()) {
+				return false;
+			}
+
+			const std::string_view base_template_name =
+				StringTable::getStringView(owner_type_info.baseTemplateName());
+			if (owner_name == base_template_name) {
+				return true;
+			}
+
+			StringHandle qualified_base_handle =
+				gNamespaceRegistry.buildQualifiedIdentifier(
+					owner_type_info.sourceNamespace(),
+					owner_type_info.baseTemplateName());
+			const std::string_view qualified_base_name =
+				StringTable::getStringView(qualified_base_handle);
+			return !qualified_base_name.empty() &&
+				owner_name == qualified_base_name;
+		};
+
+	auto try_resolve_owner_chain =
+		[&](StringHandle base_owner_handle) -> const TypeInfo* {
+			if (!base_owner_handle.isValid()) {
+				return nullptr;
+			}
+
+			const std::vector<QualifiedTypeMemberAccess> owner_chain =
+				buildQualifiedTypeMemberChain(owner_name);
+			if (owner_chain.empty()) {
+				return nullptr;
+			}
+
+			if (owner_chain.size() == 1 &&
+				!owner_chain.front().has_template_arguments) {
+				instantiateLazyNestedType(
+					base_owner_handle,
+					owner_chain.front().member_name);
+			}
+
+			return resolveBaseClassMemberTypeChain(
+				StringTable::getStringView(base_owner_handle),
+				std::span<const QualifiedTypeMemberAccess>(
+					owner_chain.data(),
+					owner_chain.size()));
+		};
+
+	auto try_resolve_from_current_owner =
+		[&](const TypeInfo* current_type_info) -> std::optional<AliasTemplateMaterializationResult> {
+			if (current_type_info == nullptr) {
+				return std::nullopt;
+			}
+
+			if (owner_matches_current_type(*current_type_info)) {
+				return materializeCanonicalOwnerTypeForLookup(
+					*current_type_info,
+					std::span<const TemplateTypeArg>{});
+			}
+
+			if (const TypeInfo* nested_owner =
+					try_resolve_owner_chain(current_type_info->name());
+				nested_owner != nullptr &&
+				nested_owner->name().isValid()) {
+				return materializeCanonicalOwnerTypeForLookup(
+					*nested_owner,
+					std::span<const TemplateTypeArg>{});
+			}
+
+			if (std::optional<StringHandle> pattern_owner =
+					gTemplateRegistry.get_instantiation_pattern(
+						current_type_info->name());
+				pattern_owner.has_value()) {
+				if (const TypeInfo* nested_owner =
+						try_resolve_owner_chain(*pattern_owner);
+					nested_owner != nullptr &&
+					nested_owner->name().isValid()) {
+					return materializeCanonicalOwnerTypeForLookup(
+						*nested_owner,
+						std::span<const TemplateTypeArg>{});
+				}
+			}
+
+			return std::nullopt;
+		};
+
+	if (!member_function_context_stack_.empty()) {
+		const MemberFunctionContext& member_ctx =
+			member_function_context_stack_.back();
+		if (std::optional<AliasTemplateMaterializationResult> current_owner =
+				try_resolve_from_current_owner(
+					tryGetTypeInfo(member_ctx.struct_type_index));
+			current_owner.has_value()) {
+			return current_owner;
+		}
+	}
+
+	if (!struct_parsing_context_stack_.empty()) {
+		StringHandle active_struct_handle =
+			StringTable::getOrInternStringHandle(
+				struct_parsing_context_stack_.back().struct_name);
+		if (auto active_struct_it = getTypesByNameMap().find(active_struct_handle);
+			active_struct_it != getTypesByNameMap().end() &&
+			active_struct_it->second != nullptr) {
+			if (std::optional<AliasTemplateMaterializationResult> current_owner =
+					try_resolve_from_current_owner(active_struct_it->second);
+				current_owner.has_value()) {
+				return current_owner;
+			}
+		}
+	}
+
+	if (const TypeInfo* owner_type_info =
+			findTypeByName(StringTable::getOrInternStringHandle(owner_name));
+		owner_type_info != nullptr) {
+		return materializeCanonicalOwnerTypeForLookup(
+			*owner_type_info,
+			std::span<const TemplateTypeArg>{});
+	}
+
+	return std::nullopt;
 }
 
 // Helper to build an interned placeholder name for TTP instantiation.
@@ -4510,10 +4662,48 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 
+				const std::string_view parsed_qualified_name =
+					buildQualifiedNameFromHandle(
+						qual_id.namespace_handle(),
+						qual_id.name());
+				std::string_view resolved_qualified_name =
+					parsed_qualified_name;
+				if (const size_t parsed_scope_sep =
+						parsed_qualified_name.rfind("::");
+					parsed_scope_sep != std::string_view::npos) {
+					const std::string_view owner_name =
+						parsed_qualified_name.substr(0, parsed_scope_sep);
+					const std::string_view member_name =
+						parsed_qualified_name.substr(parsed_scope_sep + 2);
+					const auto is_nested_owner_match =
+						[owner_name](std::string_view resolved_owner_name) {
+							return resolved_owner_name.size() > owner_name.size() + 2 &&
+								resolved_owner_name.ends_with(owner_name) &&
+								resolved_owner_name.substr(
+									resolved_owner_name.size() - owner_name.size() - 2,
+									2) == "::";
+						};
+					if (std::optional<AliasTemplateMaterializationResult> resolved_owner =
+							tryResolveQualifiedTypeOwnerFromCurrentContext(
+								owner_name);
+						resolved_owner.has_value() &&
+						!resolved_owner->instantiated_name.empty() &&
+						is_nested_owner_match(
+							resolved_owner->instantiated_name)) {
+						resolved_qualified_name =
+							StringBuilder()
+								.append(resolved_owner->instantiated_name)
+								.append("::")
+								.append(member_name)
+								.commit();
+					}
+				}
+
 				if (!template_args.has_value()) {
 					const auto& types_by_name = getTypesByNameMap();
-					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
-					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
+					StringHandle qualified_handle =
+						StringTable::getOrInternStringHandle(
+							resolved_qualified_name);
 					auto type_it = types_by_name.find(qualified_handle);
 					const bool supports_constructor_call =
 						type_it != types_by_name.end() &&
@@ -4533,7 +4723,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				if (auto err = tryQualifiedPhase1Lookup(qual_id,
-						buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()),
+						resolved_qualified_name,
 						template_args, has_deferred_qualified_call_args, arg_types, identifierType)) {
 					return *err;
 				}
@@ -4546,7 +4736,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					current_linkage_ != Linkage::C &&
 					!has_deferred_qualified_call_args) {
 					// Build qualified template name
-					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+					std::string_view qualified_name = resolved_qualified_name;
 
 					// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
 					if (template_args.has_value() && !template_args->empty()) {
@@ -4635,7 +4825,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				// Store the qualified source name for template lookup during constexpr evaluation
-				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+				std::string_view qualified_name = resolved_qualified_name;
 				setCallQualifiedName(result->as<ExpressionNode>(), qualified_name);
 				FLASH_LOG(Parser, Debug, "Set qualified name on call expression: ", qualified_name);
 				if (has_dependent_explicit_template_args &&

@@ -2956,6 +2956,8 @@ private:
 		std::string_view primary_template_name,
 		std::string_view fallback_template_name,
 		std::span<const TemplateTypeArg> template_args);
+	std::optional<AliasTemplateMaterializationResult> tryResolveQualifiedTypeOwnerFromCurrentContext(
+		std::string_view owner_name);
 	ParseResult parseMaterializedTemplateFunctionalCast(
 		const AliasTemplateMaterializationResult& materialized_owner,
 		const Token& source_token);
