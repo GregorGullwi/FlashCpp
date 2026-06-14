@@ -97,6 +97,12 @@ the areas that were previously blocking standards-visible behavior:
   `static constexpr` initializers in the current instantiation keep the same
   nested-owner/type-owner-vs-namespace split that member-function sema already
   used
+- instantiation-time resolved-call materialization in `ExpressionSubstitutor`
+  now opportunistically rebuilds `FunctionCallDefinitionLookupRecord` for
+  qualified/member-template direct calls once substitution has concrete
+  arguments plus a concrete `FunctionDeclarationNode`, instead of preserving
+  only copied `qualified_name`/`mangled_name` compatibility metadata in those
+  paths
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
@@ -246,9 +252,11 @@ Remaining near-term scope:
 - the standards-visible nested-owner collision in explicit qualified
   member-template calls is now fixed in the parser/materialization layer by
   preserving the full nested owner identity instead of recovering from the
-  short owner spelling later; remaining work in this bucket is the still-legacy
-  compatibility branch for ordinary static-member fallback inside
-  `resolveDeferredQualifiedTemplateCall(...)`, not more owner-collision repair
+  short owner spelling later; the old ordinary static-member compatibility
+  branch in `resolveDeferredQualifiedTemplateCall(...)` is now gone too, so the
+  remaining work in this bucket is preserving structured call metadata in the
+  narrower substitution/parser materializers that still stop at compatibility
+  data after the owner split has already succeeded
 - the remaining sema/codegen boundary sync for direct calls should stay narrow;
   it now operates at whole-call granularity on the exact lowered AST, but the
   long-term target is still to remove even that hook once the remaining
@@ -274,10 +282,11 @@ Next direct-call target:
   `FunctionCallDefinitionLookupRecord` there or explicitly document why the
   call cannot yet carry one; after the current-member-context fast path and
   the untyped ordinary-call deferred-lookup split plus the removal of the
-  parser-owned ordinary-static-member qualified fallback, the next
-  highest-value targets are the remaining qualified/member-template
-  materializers that still carry only `qualified_name`/`mangled_name`
-  compatibility data
+  parser-owned ordinary-static-member qualified fallback and the new
+  substitution-time qualified-call record rebuild, the next highest-value
+  targets are the remaining parser materializers that still carry only
+  `qualified_name`/`mangled_name` compatibility data despite already holding a
+  concrete `FunctionDeclarationNode`
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -322,12 +331,14 @@ When changing this area, always rerun:
    parser-time return-type hints on the call node, structured deferred lookup
    state for semantic ownership, and no parser-selected callee as the source of
    final meaning. The old ordinary-static-member compatibility branch inside
-   `resolveDeferredQualifiedTemplateCall(...)` is now removed, and constexpr
+   `resolveDeferredQualifiedTemplateCall(...)` is now removed, constexpr
    reuse goes through the same sema-owned type-owner vs namespace-qualifier
-   split with explicit current-type fallback for class-scope evaluation.
+   split with explicit current-type fallback for class-scope evaluation, and
+   the substitution-time qualified/member-template materializer now rebuilds
+   `FunctionCallDefinitionLookupRecord` once the substituted call is concrete.
    The next concrete target in this slice is therefore narrower:
-   audit the remaining qualified/member-template materializers that still stamp
-   only `qualified_name`/`mangled_name`, preserve
+   audit the remaining parser materializers that still stamp only
+   `qualified_name`/`mangled_name`, preserve
    `FunctionCallDefinitionLookupRecord` (or an explicit deferred lookup record)
    there, and then collapse the whole-call sema synchronization hook that was
    compensating for those compatibility-only paths. Also clean up the remaining
@@ -344,6 +355,9 @@ When changing this area, always rerun:
    `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`.
    The focused regression for the newly-covered class-scope constexpr path is
    `test_template_static_constexpr_qualified_nested_owner_collision_ret0.cpp`.
+   The focused regression for the newly-covered substitution/materialization
+   path is
+   `test_template_qualified_explicit_function_id_definition_bound_ret0.cpp`.
    Long-term direction: stop teaching individual parser call sites to recover
    owner identity from short qualified spellings. Instead, preserve a shared
    structured qualified-owner record on the AST and route both parser

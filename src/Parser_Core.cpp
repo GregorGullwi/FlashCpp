@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
 #include "TemplateRegistry.h"
 #include "ConstExprEvaluator.h"
@@ -349,6 +350,24 @@ bool Parser::tryCollectFunctionCallArgTypes(
 		}
 	}
 	return true;
+}
+
+std::optional<FunctionCallDefinitionLookupRecord>
+Parser::tryBuildCurrentFunctionCallDefinitionLookupRecord(
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included) {
+	return tryBuildFunctionCallDefinitionLookupRecord(
+		current_template_definition_lookup_context_,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		ordinary_lookup_included,
+		argument_dependent_lookup_included);
 }
 
 // Try template instantiation from call arguments by first using collected

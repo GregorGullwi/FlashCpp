@@ -99,6 +99,11 @@ blocking areas:
   shared resolver accepts an explicit current-type fallback so class-scope
   `static constexpr` initializers participate in the same nested-owner/type-
   owner-vs-namespace split as member-function sema
+- instantiation-time resolved-call materialization in `ExpressionSubstitutor`
+  now rebuilds `FunctionCallDefinitionLookupRecord` for qualified/member-
+  template direct calls once substitution has concrete arguments plus a
+  concrete `FunctionDeclarationNode`, instead of preserving only copied
+  `qualified_name`/`mangled_name` compatibility metadata in those paths
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -222,9 +227,11 @@ Remaining near-term scope:
   stop at compatibility-only records after that owner split
 - the explicit qualified member-template nested-owner collision is now closed
   at the parser/materialization source rather than by adding a later semantic
-  compatibility branch; remaining work in this sub-area is the still-legacy
-  ordinary static-member recovery branch in
-  `resolveDeferredQualifiedTemplateCall(...)`, not more owner-collision repair
+  compatibility branch; the old ordinary static-member recovery branch in
+  `resolveDeferredQualifiedTemplateCall(...)` is now gone too, so the
+  remaining work in this sub-area is the narrower set of
+  parser/materialization sites that still stop at compatibility metadata even
+  after the owner resolution has succeeded
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -253,7 +260,9 @@ Next direct-call target:
   after the now-covered typed qualified-member and string-literal UDL paths,
   the next targets are the remaining qualified/member-template paths that still
   have not adopted the deferred lookup + parser return-type hint split now that
-  the parser-owned ordinary static-member qualified fallback is removed
+  the parser-owned ordinary static-member qualified fallback is removed and the
+  substitution-time qualified-call materializer rebuilds structured lookup
+  records once a concrete target is known
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -311,8 +320,10 @@ For work in this area, rerun:
    compatibility branch in `resolveDeferredQualifiedTemplateCall(...)` is now
    removed, and constexpr qualified direct calls reuse the same sema-owned
    type-owner / namespace-qualifier split with explicit current-type fallback
-   for class-scope evaluation. The next concrete step is therefore to finish
-   moving the remaining qualified/member-template materializers onto preserved
+   for class-scope evaluation. The substitution-time qualified/member-template
+   materializer now also rebuilds `FunctionCallDefinitionLookupRecord` once the
+   substituted call is concrete. The next concrete step is therefore to finish
+   moving the remaining parser materializers onto preserved
    `FunctionCallDefinitionLookupRecord` or explicit deferred lookup records,
    and then remove the whole-call sema synchronization hook by pushing that
    work back to earlier semantic ownership.
@@ -326,6 +337,9 @@ For work in this area, rerun:
    `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`.
    The new focused guard for class-scope constexpr nested-owner recovery is
    `test_template_static_constexpr_qualified_nested_owner_collision_ret0.cpp`.
+   The new focused guard for substitution-time qualified explicit-template
+   target preservation is
+   `test_template_qualified_explicit_function_id_definition_bound_ret0.cpp`.
    Long-term direction: replace these per-call-site parser repairs with one
    shared structured qualified-owner representation plus a single resolver used
    by both parser materialization and later sema fallback, so future

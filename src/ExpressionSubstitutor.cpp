@@ -1860,6 +1860,33 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		if (target_func.has_mangled_name()) {
 			setCallMangledName(new_expr, target_func.mangled_name());
 		}
+		const bool needs_structured_qualified_record =
+			call.has_qualified_name() ||
+			(qualified_call_name.has_value() && !qualified_call_name->empty()) ||
+			infer_qualified_name_from_parent;
+		if (needs_structured_qualified_record &&
+			!call.has_definition_lookup_record() &&
+			!call.has_dependent_unqualified_lookup_record()) {
+			CallExprNode* materialized_call = std::get_if<CallExprNode>(&new_expr);
+			if (materialized_call != nullptr) {
+				std::vector<TypeSpecifierNode> substituted_arg_types;
+				if (parser_.tryCollectFunctionCallArgTypes(
+						materialized_call->arguments(),
+						substituted_arg_types)) {
+					if (std::optional<FunctionCallDefinitionLookupRecord> record =
+							parser_.tryBuildCurrentFunctionCallDefinitionLookupRecord(
+								target_func.decl_node().identifier_token(),
+								substituted_arg_types,
+								false,
+								target_func,
+								true,
+								false);
+						record.has_value()) {
+						setCallDefinitionLookupRecord(*materialized_call, *record);
+					}
+				}
+			}
+		}
 		return ASTNode(&new_expr);
 	};
 	auto normalizePendingSemanticRoots = [&]() {
