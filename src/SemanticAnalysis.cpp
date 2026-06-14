@@ -8458,7 +8458,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			 call_info.dependent_qualified_lookup_record->has_value());
 		if (qualified_name_targets_namespace ||
 			has_deferred_qualified_template_metadata) {
-			std::string qualified_name_for_resolution_storage;
 			std::string_view qualified_name_for_resolution =
 				call_info.qualified_name.view();
 			if (!qualified_name_targets_namespace &&
@@ -8473,14 +8472,12 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 					const std::string_view member_name =
 						qualified_name_for_resolution.substr(
 							owner_name.size() + 2);
-					qualified_name_for_resolution_storage =
+					qualified_name_for_resolution =
 						StringBuilder()
 							.append(resolved_owner_name)
 							.append("::")
 							.append(member_name)
 							.commit();
-					qualified_name_for_resolution =
-						qualified_name_for_resolution_storage;
 				}
 			}
 			InlineVector<TypeSpecifierNode, 6> qualified_template_arg_types;

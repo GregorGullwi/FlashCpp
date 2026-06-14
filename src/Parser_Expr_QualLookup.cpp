@@ -327,12 +327,12 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 				member_name,
 				std::span<const TemplateTypeArg>{});
 	}
-	const std::string qualified_name(
+	const std::string_view qualified_name =
 		StringBuilder()
 			.append(instantiated_class_name)
 			.append("::")
 			.append(member_name)
-			.commit());
+			.commit();
 	const StringHandle owner_name_handle =
 		StringTable::getOrInternStringHandle(instantiated_class_name);
 	const StringHandle member_name_handle =
