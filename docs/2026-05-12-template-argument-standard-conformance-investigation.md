@@ -109,6 +109,11 @@ blocking areas:
   they already hold a concrete `FunctionDeclarationNode`, instead of stopping
   at copied `qualified_name`/`mangled_name` compatibility metadata in those
   parser materializers
+- direct operator function-id calls in `Parser_Expr_PrimaryExpr.cpp` and the
+  postfix declaration-address fast path in `Parser_Expr_PostfixCalls.cpp` now
+  preserve structured non-receiver call metadata too, so late sema no longer
+  has to rediscover their definition-bound target from a parser-selected
+  callee alone
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -222,9 +227,10 @@ Remaining near-term scope:
   materialization paths that still carry only `mangled_name` or
   `qualified_name`, especially niche qualified/member-template materializers
   that do not yet route through the same deferred-lookup model; the main
-  postfix qualified/member fast paths are now covered too, so the remaining
-  work is in the smaller set of concrete-call builders that still return
-  immediately without any structured lookup record
+  postfix qualified/member fast paths plus the direct operator/declaration-
+  address non-receiver paths are now covered too, so the remaining work is in
+  the smaller set of concrete-call builders that still return immediately
+  without any structured lookup record
 - the just-fixed qualified-owner collision confirms the right ownership split:
   non-template qualified calls must first decide whether the left-hand side is
   a type owner or a namespace qualifier, and only then may compatibility
@@ -267,11 +273,11 @@ Next direct-call target:
   postfix qualified/member helpers, then replace each typed case with
   preserved structured target metadata before touching the sema fallback;
   after the now-covered typed qualified-member, string-literal UDL, postfix
-  qualified/member, and substitution-materialization paths, the next targets
-  are the smaller concrete call sites such as postfix `operator()` /
-  declaration-address materializers and the remaining implicit-`this` /
+  qualified/member, direct operator/declaration-address, and substitution-
+  materialization paths, the next targets are the remaining receiver-oriented
+  concrete call sites such as postfix `operator()` and the implicit-`this` /
   operator builders in `Parser_Expr_PrimaryExpr.cpp` that still return a
-  concrete call without a structured lookup record
+  concrete call without shared structured metadata
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -352,6 +358,9 @@ For work in this area, rerun:
    The new focused guard for postfix qualified direct-call target preservation
    is
    `test_template_namespace_qualified_explicit_function_id_definition_bound_ret0.cpp`.
+   The new focused guards for non-receiver concrete-call target preservation
+   are `test_template_direct_operator_definition_bound_ret0.cpp` and
+   `test_template_postfix_address_call_definition_bound_ret0.cpp`.
    Long-term direction: replace these per-call-site parser repairs with one
    shared structured qualified-owner representation plus a single resolver used
    by both parser materialization and later sema fallback, so future

@@ -3072,6 +3072,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// Create a token with the full operator name for the identifier
 		Token operator_name_token(Token::Type::Identifier, StringBuilder().append(operator_name).commit(),
 								  operator_keyword_token.line(), operator_keyword_token.column(), operator_keyword_token.file_index());
+		std::vector<TypeSpecifierNode> operator_arg_types;
+		const bool has_operator_arg_types =
+			tryCollectOrdinaryDirectCallArgTypes(
+				args,
+				&operator_arg_types);
+		const bool has_deferred_operator_call_args =
+			has_operator_arg_types &&
+			(argsHaveDeferredTemplateDependency(
+				 args,
+				 currentTemplateParamNames()) ||
+			 argTypesAreDeferredTemplateDependent(
+				 operator_arg_types,
+				 currentTemplateParamNames()));
 
 		// Check if we're inside a member function context
 		if (!member_function_context_stack_.empty()) {
@@ -3146,6 +3159,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
 				result = emplace_node<ExpressionNode>(
 					makeResolvedCallExpr(func_decl, std::move(args), operator_name_token));
+				if (has_operator_arg_types) {
+					attachResolvedOrdinaryDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						operator_name_token,
+						operator_arg_types,
+						has_deferred_operator_call_args,
+						func_decl,
+						true,
+						true);
+				}
 				return ParseResult::success(*result);
 			}
 

@@ -365,9 +365,16 @@ void Parser::finalizePostfixCallExpression(
 							const auto& func_decl = sym->as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
 								makeResolvedCallExpr(func_decl, std::move(args), paren_token));
-							if (func_decl.has_mangled_name()) {
-								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-							}
+							attachResolvedPostfixDirectCallMetadata(
+								result->as<ExpressionNode>(),
+								current_template_definition_lookup_context_,
+								id.identifier_token(),
+								arg_types,
+								false,
+								func_decl,
+								true,
+								false,
+								std::nullopt);
 							return;
 						}
 					}
