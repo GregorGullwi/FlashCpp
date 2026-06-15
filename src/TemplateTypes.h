@@ -95,9 +95,9 @@ inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
 		h ^= hashTypeIndexIdentity(pt) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
 	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.linkage)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<bool>{}(sig.class_name.has_value()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	if (sig.class_name.has_value()) {
-		h ^= std::hash<std::string>{}(*sig.class_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	h ^= std::hash<bool>{}(sig.class_name.isValid()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	if (sig.class_name.isValid()) {
+		h ^= sig.class_name.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
 	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.calling_convention)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	h ^= std::hash<bool>{}(sig.is_variadic) + 0x9e3779b9 + (h << 6) + (h >> 2);

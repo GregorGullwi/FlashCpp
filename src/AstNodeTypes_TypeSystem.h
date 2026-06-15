@@ -1111,7 +1111,7 @@ struct FunctionSignature {
 	ReferenceQualifier return_reference_qualifier = ReferenceQualifier::None;
 	std::vector<TypeIndex> parameter_type_indices;
 	Linkage linkage = Linkage::None;			 // C vs C++ linkage
-	std::optional<std::string> class_name;	   // For member function pointers
+	StringHandle class_name;	   // For member function pointers
 	CallingConvention calling_convention = CallingConvention::Default;
 	bool is_variadic = false;
 	bool is_const = false;					   // For const member functions

@@ -1718,9 +1718,8 @@ public:
 		if (type_index_.category() == TypeCategory::MemberFunctionPointer &&
 			member_class_name_.has_value() &&
 			member_class_name_->isValid() &&
-			!function_signature_->class_name.has_value()) {
-			function_signature_->class_name =
-				std::string(StringTable::getStringView(*member_class_name_));
+			!function_signature_->class_name.isValid()) {
+			function_signature_->class_name = *member_class_name_;
 		}
 	}
 	const FunctionSignature& function_signature() const { return *function_signature_; }
@@ -1776,8 +1775,7 @@ public:
 		if (type_index_.category() == TypeCategory::MemberFunctionPointer &&
 			function_signature_.has_value() &&
 			class_name.isValid()) {
-			function_signature_->class_name =
-				std::string(StringTable::getStringView(class_name));
+			function_signature_->class_name = class_name;
 		}
 	}
 

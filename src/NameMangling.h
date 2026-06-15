@@ -235,8 +235,8 @@ inline std::string_view getMsvcMemberPointerClassName(
 	}
 	if (type_node.has_function_signature()) {
 		const FunctionSignature& sig = type_node.function_signature();
-		if (sig.class_name.has_value()) {
-			return *sig.class_name;
+		if (sig.class_name.isValid()) {
+			return sig.class_name.view();
 		}
 	}
 	return {};
@@ -685,7 +685,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			if (normalized.has_function_signature()) {
 				const FunctionSignature& sig = normalized.function_signature();
 				message.append(", sig.class_name=")
-					.append(sig.class_name.has_value() ? *sig.class_name : "<none>");
+					.append(sig.class_name.isValid() ? sig.class_name.view() : "<none>");
 			}
 			throw InternalError(std::string(message.commit()));
 		}
