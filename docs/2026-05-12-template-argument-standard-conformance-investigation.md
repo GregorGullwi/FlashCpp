@@ -129,6 +129,14 @@ blocking areas:
   for forms such as `this->Base::touch()` and `this->Base::operator()()` when
   the receiver type and arguments are concrete, instead of materializing a
   placeholder `auto` member call that later loses semantic identity
+- the shared qualified-owner member-call helper in
+  `Parser_Expr_QualLookup.cpp` now treats concrete `Type::member(...)` owner
+  calls more semantically too: non-template fallback selection is limited to
+  static members, uses real overload resolution once argument types are
+  concrete, and unresolved template-instantiation owners preserve a structured
+  dependent-qualified owner record even when `StructTypeInfo` is already
+  present instead of dropping back to `qualified_name` plus a parser return-type
+  hint alone
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -151,6 +159,12 @@ blocking areas:
   arguments, parser return-type hints, and dependent-qualified lookup records
   as separate metadata so later semantic resolution can replay the correct
   lookup instead of inheriting a parser-selected callee as final meaning
+- the unqualified/current-owner explicit-member-template placeholder path in
+  `Parser_Expr_PrimaryExpr.cpp` now preserves the same split for deferred
+  class-scope member-template calls: it keeps a structured current-
+  instantiation `DependentQualifiedNameRecord`, and parser return-type hints
+  now come from the matched current-owner member-template declaration instead
+  of whichever unrelated same-name global template happened to be found first
 - sema now distinguishes real type owners from namespace qualifiers before it
   consumes definition-bound compatibility metadata for qualified direct calls,
   which fixes current-instantiation nested-owner cases like
@@ -266,8 +280,11 @@ Remaining near-term scope:
   materialization are covered as well, and the explicit-qualified postfix
   member/operator placeholder builders are now covered too, and ordinary
   function-pointer member postfix placeholders plus the `.*` / `->*`
-  member-function-pointer fast paths now preserve the real return shape, so
-  the remaining work is no longer that whole pointer-to-member surface; it is
+  member-function-pointer fast paths now preserve the real return shape, and
+  the shared qualified static-owner helper no longer relies on a same-arity
+  shape match for its non-template fallback or drops structured owner metadata
+  just because the owner `StructTypeInfo` is already present, so the remaining
+  work is no longer that whole pointer-to-member surface; it is
   the smaller set of still-uncovered placeholder/materializer exits plus the
   canonical `TypeCategory::MemberObjectPointer` carrier gap where the
   underlying member type is not yet preserved strongly enough for every
@@ -288,6 +305,12 @@ Remaining near-term scope:
   as well, so the remaining work in this sub-area is the narrower set of
   parser/materialization sites that still stop at compatibility metadata even
   after the owner resolution has succeeded
+- the newly-covered current-owner explicit-member-template path confirms that
+  short class-scope spellings must follow the same rule too: deferred
+  `pick<int>(...)`-style calls inside a current instantiation cannot source
+  parser-time return-type visibility from an unrelated
+  `lookupAllTemplates(...)` result once the matching member-template owner is
+  already known
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -320,7 +343,11 @@ Next direct-call target:
   explicit-qualified postfix member/operator preservation, the next targets
   are the remaining qualified/member-template compatibility-only materializers
   plus any smaller placeholder builders that still return immediately without
-  a structured lookup record
+  a structured lookup record. The shared qualified static-owner helper is no
+  longer one of those weak spots: its non-template fallback now routes through
+  real static-member overload selection, and unresolved
+  template-instantiation owners keep structured owner metadata even when the
+  owner `StructTypeInfo` is already available
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -331,6 +358,14 @@ Next direct-call target:
 1. Continue eliminating compatibility-only parser metadata in the remaining
    qualified/member-template materializers that still stop at
    `qualified_name` / `mangled_name` after owner resolution already succeeded.
+   Immediate next target: audit the remaining qualified/member-template
+   placeholder/materializer exits in `Parser_Expr_PrimaryExpr.cpp` and
+   `Parser_Expr_PostfixCalls.cpp` that still stop at compatibility metadata
+   even after owner resolution or deferred lookup shape is already known. The
+   unqualified/current-owner explicit-member-template placeholder path is now
+   covered; it preserves structured current-instantiation owner metadata and
+   member-template-derived parser return-type hints instead of deferring with
+   only `qualified_name`.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -364,6 +399,8 @@ For work in this area, rerun:
 - `test_template_current_member_static_hides_base_overload_ret0.cpp`
 - `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
+- `test_template_qualified_static_member_same_arity_decltype_ret0.cpp`
+- `test_template_current_member_explicit_template_decltype_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
 - `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`
@@ -394,11 +431,20 @@ For work in this area, rerun:
    type-owner / namespace-qualifier split with explicit current-type fallback
    for class-scope evaluation. The substitution-time qualified/member-template
    materializer now also rebuilds `FunctionCallDefinitionLookupRecord` once the
-   substituted call is concrete. The next concrete step is therefore to finish
-   moving the remaining parser materializers onto preserved
+   substituted call is concrete, and the shared
+   `try_parse_member_template_function_call(...)` helper now uses real static-
+   member overload resolution plus structured deferred owner metadata instead of
+   a same-arity fallback. The current-owner explicit-member-template
+   placeholder path in `Parser_Expr_PrimaryExpr.cpp` is now on that model too:
+   it preserves a structured current-instantiation owner record and sources its
+   parser return-type hint from the matched member-template declaration instead
+   of an unrelated global template. The next concrete step is therefore to
+   finish moving the remaining parser materializers onto preserved
    `FunctionCallDefinitionLookupRecord` or explicit deferred lookup records,
-   and then remove the whole-call sema synchronization hook by pushing that
-   work back to earlier semantic ownership.
+   focusing on the other qualified/member-template placeholder/materializer
+   exits that still stop at compatibility metadata after owner resolution
+   already succeeded, and then remove the whole-call sema synchronization hook
+   by pushing that work back to earlier semantic ownership.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by
@@ -409,6 +455,9 @@ For work in this area, rerun:
    `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`.
    The new focused guard for class-scope constexpr nested-owner recovery is
    `test_template_static_constexpr_qualified_nested_owner_collision_ret0.cpp`.
+   The new focused guard for current-owner explicit-member-template deferred
+   target preservation is
+   `test_template_current_member_explicit_template_decltype_ret0.cpp`.
    The new focused guard for substitution-time qualified explicit-template
    target preservation is
    `test_template_qualified_explicit_function_id_definition_bound_ret0.cpp`.

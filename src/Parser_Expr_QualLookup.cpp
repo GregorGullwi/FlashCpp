@@ -346,27 +346,78 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		parser_hint_function = resolved_function;
 	} else {
 		// For non-template member functions (e.g. Template<T>::allocate()),
-		// resolve directly from the instantiated class before creating a fallback decl.
+		// prefer real static-member overload selection on the instantiated owner.
 		auto type_it = getTypesByNameMap().find(owner_name_handle);
-		if (type_it != getTypesByNameMap().end() && type_it->second) {
+		const bool can_use_nontemplate_owner_lookup =
+			!parsed_member_template_args;
+		const bool have_complete_call_arg_types =
+			!has_dependent_call_arg &&
+			deduced_arg_types.size() == args.size();
+		if (can_use_nontemplate_owner_lookup &&
+			type_it != getTypesByNameMap().end() &&
+			type_it->second) {
 			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 			if (struct_info) {
-				const FunctionDeclarationNode* first_name_match = nullptr;
-				size_t call_arg_count = args.size();
-				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
-						const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!first_name_match) {
-							first_name_match = &candidate;
+				std::vector<ASTNode> static_member_overloads;
+				const FunctionDeclarationNode* first_static_name_match = nullptr;
+				auto collect_static_members =
+					[&](const StructTypeInfo* current_struct,
+						const auto& self) -> void {
+						if (current_struct == nullptr) {
+							return;
 						}
-						if (candidate.parameter_nodes().size() == call_arg_count) {
-							resolved_function = &candidate;
-							break;
+						for (const auto& member_func : current_struct->member_functions) {
+							if (member_func.getName() != member_name_handle ||
+								!member_func.function_decl.is<FunctionDeclarationNode>()) {
+								continue;
+							}
+							const FunctionDeclarationNode& candidate =
+								member_func.function_decl.as<FunctionDeclarationNode>();
+							if (!candidate.is_static()) {
+								continue;
+							}
+							if (first_static_name_match == nullptr) {
+								first_static_name_match = &candidate;
+							}
+							const bool already_added =
+								std::any_of(
+									static_member_overloads.begin(),
+									static_member_overloads.end(),
+									[&](const ASTNode& existing_overload) {
+										const FunctionDeclarationNode* existing_function =
+											get_function_decl_node(existing_overload);
+										return existing_function == &candidate;
+									});
+							if (!already_added) {
+								static_member_overloads.push_back(
+									member_func.function_decl);
+							}
 						}
+						for (const auto& base_spec : current_struct->base_classes) {
+							if (const StructTypeInfo* base_struct =
+									tryGetStructTypeInfo(base_spec.type_index);
+								base_struct != nullptr) {
+								self(base_struct, self);
+							}
+						}
+					};
+				collect_static_members(struct_info, collect_static_members);
+
+				if (have_complete_call_arg_types &&
+					!static_member_overloads.empty()) {
+					const OverloadResolutionResult overload_result =
+						resolve_overload(static_member_overloads, deduced_arg_types);
+					if (overload_result.has_match &&
+						!overload_result.is_ambiguous &&
+						overload_result.selected_overload != nullptr) {
+						resolved_function = get_function_decl_node(
+							*overload_result.selected_overload);
 					}
 				}
-				if (resolved_function == nullptr && first_name_match != nullptr) {
-					parser_hint_function = first_name_match;
+
+				if (resolved_function == nullptr &&
+					first_static_name_match != nullptr) {
+					parser_hint_function = first_static_name_match;
 				}
 			}
 		}
@@ -419,8 +470,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		auto owner_type_it = getTypesByNameMap().find(owner_name_handle);
 		if (owner_type_it != getTypesByNameMap().end() &&
 			owner_type_it->second != nullptr &&
-			owner_type_it->second->isTemplateInstantiation() &&
-			owner_type_it->second->getStructInfo() == nullptr) {
+			owner_type_it->second->isTemplateInstantiation()) {
 			TypeInfo::DependentQualifiedNameRecord dependent_record;
 			dependent_record.owner_kind =
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
