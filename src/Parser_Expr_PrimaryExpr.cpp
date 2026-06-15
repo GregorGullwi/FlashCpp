@@ -357,7 +357,16 @@ void attachResolvedOrdinaryDirectCallMetadata(
 				ordinary_lookup_included,
 				argument_dependent_lookup_included);
 		record.has_value()) {
-		setCallDefinitionLookupRecord(call_expr, *record);
+			setCallDefinitionLookupRecord(call_expr, *record);
+	}
+
+	if (std::optional<TypeSpecifierNode> concrete_return_type =
+			FlashCpp::ParserFunctionTypeHelpers::
+				tryGetConcreteReturnTypeFromFunctionDeclaration(
+					func_decl,
+					callee_token);
+		concrete_return_type.has_value()) {
+		setCallParserReturnTypeHint(call_expr, *concrete_return_type);
 	}
 }
 
@@ -400,6 +409,32 @@ void attachResolvedOrdinaryDirectCallMetadata(
 		ordinary_lookup_included,
 		argument_dependent_lookup_included,
 		std::nullopt);
+}
+
+void attachResolvedReceiverDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	std::string_view receiver_owner_fallback) {
+	std::string_view qualified_owner = func_decl.parent_struct_name();
+	if (qualified_owner.empty()) {
+		qualified_owner = receiver_owner_fallback;
+	}
+	attachResolvedOrdinaryDirectCallMetadata(
+		call_expr,
+		definition_context,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		true,
+		false,
+		makeQualifiedMemberCallNameOverride(
+			qualified_owner,
+			func_decl.decl_node().identifier_token().value()));
 }
 
 std::optional<DependentUnqualifiedCallLookupRecord> makeDependentUnqualifiedCallLookupRecord(
@@ -772,110 +807,6 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 				owner_type_info->getStructInfo() != nullptr);
 		if (owner_type_info != nullptr &&
 			owner_type_info->getStructInfo() != nullptr) {
-			if (!explicit_template_args.has_value() &&
-				!gTemplateRegistry.lookupTemplate(qualified_name).has_value()) {
-				std::vector<ASTNode> ordinary_candidates;
-				const StringHandle member_name_handle =
-					StringTable::getOrInternStringHandle(member_name);
-				std::unordered_set<const StructTypeInfo*> visited_structs;
-				auto collect_visible_static_members =
-					[&](const StructTypeInfo* struct_info,
-						const auto& self) -> void {
-					if (struct_info == nullptr ||
-						!visited_structs.insert(struct_info).second) {
-						return;
-					}
-
-					bool found_local_match = false;
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.getName() != member_name_handle ||
-							!member_func.function_decl.is<FunctionDeclarationNode>()) {
-							continue;
-						}
-						const FunctionDeclarationNode& candidate =
-							member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!candidate.is_static()) {
-							continue;
-						}
-						found_local_match = true;
-						const bool already_present =
-							std::any_of(
-								ordinary_candidates.begin(),
-								ordinary_candidates.end(),
-								[&](const ASTNode& existing_candidate) {
-									if (!existing_candidate.is<FunctionDeclarationNode>()) {
-										return false;
-									}
-									return &existing_candidate.as<FunctionDeclarationNode>() ==
-										   &candidate;
-								});
-						if (!already_present) {
-							ordinary_candidates.push_back(
-								member_func.function_decl);
-						}
-					}
-					if (found_local_match) {
-						return;
-					}
-
-					for (const auto& base_spec : struct_info->base_classes) {
-						if (const StructTypeInfo* base_struct =
-								tryGetStructTypeInfo(base_spec.type_index)) {
-							self(base_struct, self);
-						}
-					}
-				};
-				collect_visible_static_members(
-					owner_type_info->getStructInfo(),
-					collect_visible_static_members);
-				FLASH_LOG_FORMAT(
-					Templates,
-					Debug,
-					"resolveDeferredQualifiedTemplateCall: ordinary static candidates for '{}': {}",
-					qualified_name,
-					ordinary_candidates.size());
-
-				if (!ordinary_candidates.empty()) {
-					if (!arg_types.empty()) {
-						OverloadResolutionResult resolution =
-							resolve_overload(ordinary_candidates, arg_types);
-						if (resolution.has_match &&
-							!resolution.is_ambiguous &&
-							resolution.selected_overload != nullptr) {
-							return *resolution.selected_overload;
-						}
-					}
-					if (arguments.empty()) {
-						const FunctionDeclarationNode* zero_arg_candidate = nullptr;
-						bool ambiguous_zero_arg = false;
-						for (const ASTNode& candidate_node : ordinary_candidates) {
-							const FunctionDeclarationNode* candidate =
-								get_function_decl_node(candidate_node);
-							if (candidate == nullptr) {
-								continue;
-							}
-							const size_t min_required =
-								countMinRequiredArgs(*candidate);
-							if (min_required > 0) {
-								continue;
-							}
-							if (zero_arg_candidate != nullptr) {
-								ambiguous_zero_arg = true;
-								break;
-							}
-							zero_arg_candidate = candidate;
-						}
-						if (zero_arg_candidate != nullptr &&
-							!ambiguous_zero_arg) {
-							return ASTNode(zero_arg_candidate);
-						}
-					}
-					if (ordinary_candidates.size() == 1) {
-						return ordinary_candidates.front();
-					}
-				}
-			}
-
 			if (std::optional<ASTNode> resolved_member =
 					tryInstantiateMemberFunctionTemplateCall(
 						owner_name,
@@ -3176,6 +3107,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// Create a token with the full operator name for the identifier
 		Token operator_name_token(Token::Type::Identifier, StringBuilder().append(operator_name).commit(),
 								  operator_keyword_token.line(), operator_keyword_token.column(), operator_keyword_token.file_index());
+		std::vector<TypeSpecifierNode> operator_arg_types;
+		const bool has_operator_arg_types =
+			tryCollectOrdinaryDirectCallArgTypes(
+				args,
+				&operator_arg_types);
+		const bool has_deferred_operator_call_args =
+			has_operator_arg_types &&
+			(argsHaveDeferredTemplateDependency(
+				 args,
+				 currentTemplateParamNames()) ||
+			 argTypesAreDeferredTemplateDependent(
+				 operator_arg_types,
+				 currentTemplateParamNames()));
 
 		// Check if we're inside a member function context
 		if (!member_function_context_stack_.empty()) {
@@ -3210,6 +3154,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 						result = emplace_node<ExpressionNode>(
 							makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), operator_name_token));
+						if (has_operator_arg_types) {
+							attachResolvedReceiverDirectCallMetadata(
+								result->as<ExpressionNode>(),
+								current_template_definition_lookup_context_,
+								operator_name_token,
+								operator_arg_types,
+								has_deferred_operator_call_args,
+								func_decl,
+								StringTable::getStringView(member_ctx.struct_name));
+						}
 						return ParseResult::success(*result);
 					}
 				}
@@ -3223,6 +3177,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
 				result = emplace_node<ExpressionNode>(
 					makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), operator_name_token));
+				if (has_operator_arg_types) {
+					attachResolvedReceiverDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						operator_name_token,
+						operator_arg_types,
+						has_deferred_operator_call_args,
+						func_decl,
+						std::string_view());
+				}
 				return ParseResult::success(*result);
 			}
 
@@ -3250,6 +3214,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				auto& func_decl = func_lookup->as<FunctionDeclarationNode>();
 				result = emplace_node<ExpressionNode>(
 					makeResolvedCallExpr(func_decl, std::move(args), operator_name_token));
+				if (has_operator_arg_types) {
+					attachResolvedOrdinaryDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						operator_name_token,
+						operator_arg_types,
+						has_deferred_operator_call_args,
+						func_decl,
+						true,
+						true);
+				}
 				return ParseResult::success(*result);
 			}
 
@@ -5021,6 +4996,26 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create unified member call with implicit 'this'
 			result = emplace_node<ExpressionNode>(
 				makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), identifier_token));
+			std::vector<TypeSpecifierNode> member_arg_types;
+			CallExprNode& implicit_this_call =
+				std::get<CallExprNode>(result->as<ExpressionNode>());
+			if (tryCollectOrdinaryDirectCallArgTypes(
+					implicit_this_call.arguments(),
+					&member_arg_types)) {
+				attachResolvedReceiverDirectCallMetadata(
+					result->as<ExpressionNode>(),
+					current_template_definition_lookup_context_,
+					identifier_token,
+					member_arg_types,
+					argsHaveDeferredTemplateDependency(
+						implicit_this_call.arguments(),
+						currentTemplateParamNames()) ||
+						argTypesAreDeferredTemplateDependent(
+							member_arg_types,
+							currentTemplateParamNames()),
+					func_decl,
+					StringTable::getStringView(member_function_context_stack_.back().struct_name));
+			}
 
 			FLASH_LOG_FORMAT(Parser, Debug, "Created CallExprNode for implicit this-call '{}'", identifier_token.value());
 			return ParseResult::success(*result);
@@ -6965,6 +6960,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Create unified member call with implicit 'this'
 					result = emplace_node<ExpressionNode>(
 						makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), identifier_token));
+					attachResolvedReceiverDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						identifier_token,
+						arg_types,
+						argsHaveDeferredTemplateDependency(
+							std::get<CallExprNode>(result->as<ExpressionNode>()).arguments(),
+							currentTemplateParamNames()) ||
+							argTypesAreDeferredTemplateDependent(
+								arg_types,
+								currentTemplateParamNames()),
+						func_decl,
+						StringTable::getStringView(member_function_context_stack_.back().struct_name));
 				} else {
 					return unified_resolve_function_call(args);
 				}
@@ -9153,6 +9161,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					Token operator_token(Token::Type::Identifier, "operator()"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 					result = emplace_node<ExpressionNode>(makeResolvedMemberCallExpr(object_expr, *operator_call_func, std::move(args), operator_token));
+					if (all_op_types_known) {
+						attachResolvedReceiverDirectCallMetadata(
+							result->as<ExpressionNode>(),
+							current_template_definition_lookup_context_,
+							operator_token,
+							op_arg_types,
+							false,
+							*operator_call_func,
+							StringTable::getStringView(type_info.struct_info_->name));
+					}
 				}
 				// For template parameter constructor calls, create ConstructorCallNode
 				else if (is_template_parameter) {
@@ -9173,11 +9191,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (std::optional<ASTNode> function_symbol = gSymbolTable.lookup(identity.entity_name);
 							function_symbol.has_value() &&
 							function_symbol->is<FunctionDeclarationNode>()) {
+							const FunctionDeclarationNode& func_decl =
+								function_symbol->as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
 								makeResolvedCallExpr(
-									function_symbol->as<FunctionDeclarationNode>(),
+									func_decl,
 									std::move(args),
 									identifier_token));
+							CallExprNode& nttp_call =
+								std::get<CallExprNode>(result->as<ExpressionNode>());
+							std::vector<TypeSpecifierNode> nttp_arg_types;
+							if (tryCollectOrdinaryDirectCallArgTypes(
+									nttp_call.arguments(),
+									&nttp_arg_types)) {
+								attachResolvedOrdinaryDirectCallMetadata(
+									result->as<ExpressionNode>(),
+									current_template_definition_lookup_context_,
+									identifier_token,
+									nttp_arg_types,
+									argsHaveDeferredTemplateDependency(
+										nttp_call.arguments(),
+										currentTemplateParamNames()) ||
+										argTypesAreDeferredTemplateDependent(
+											nttp_arg_types,
+											currentTemplateParamNames()),
+									func_decl,
+									true,
+									false);
+							}
 							handled_value_callable = true;
 						}
 						break;
@@ -9378,6 +9419,45 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									bool resolved_as_struct_member = false;
 									bool defer_struct_member_template_instantiation = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
+										auto structHasMatchingMemberTemplate =
+											[&](const StructDeclarationNode* struct_node,
+												const StructTypeInfo* local_struct_info,
+												StringHandle member_name) {
+												auto matches_template_member = [&](const ASTNode& member_func_node) {
+													if (!member_func_node.is<TemplateFunctionDeclarationNode>()) {
+														return false;
+													}
+													const FunctionDeclarationNode& member_func_decl =
+														member_func_node
+															.as<TemplateFunctionDeclarationNode>()
+															.function_declaration()
+															.as<FunctionDeclarationNode>();
+													return member_func_decl.decl_node()
+															   .identifier_token()
+															   .handle() == member_name;
+												};
+
+												if (struct_node != nullptr) {
+													for (const auto& member_func_decl :
+														 struct_node->member_functions()) {
+														if (matches_template_member(
+																member_func_decl.function_declaration)) {
+															return true;
+														}
+													}
+												}
+												if (local_struct_info != nullptr) {
+													for (const auto& member_func :
+														 local_struct_info->member_functions) {
+														if (matches_template_member(
+																member_func.function_decl)) {
+															return true;
+														}
+													}
+												}
+												return false;
+											};
+
 										auto should_defer_current_struct_member_template_instantiation =
 											[&](std::string_view struct_name, TypeIndex struct_type_index) -> bool {
 											if (struct_name.empty()) {
@@ -9399,6 +9479,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												std::string_view struct_name =
 													StringTable::getStringView(member_ctx.struct_name);
 												if (!struct_name.empty()) {
+													if (!structHasMatchingMemberTemplate(
+															member_ctx.struct_node,
+															member_ctx.local_struct_info,
+															identifier_token.handle())) {
+														return std::nullopt;
+													}
 													if (should_defer_current_struct_member_template_instantiation(
 															struct_name,
 															member_ctx.struct_type_index)) {
@@ -9417,6 +9503,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (!struct_parsing_context_stack_.empty()) {
 												const auto& struct_ctx = struct_parsing_context_stack_.back();
 												if (!struct_ctx.struct_name.empty()) {
+													if (!structHasMatchingMemberTemplate(
+															struct_ctx.struct_node,
+															struct_ctx.local_struct_info,
+															identifier_token.handle())) {
+														return std::nullopt;
+													}
 													TypeIndex struct_type_index{};
 													if (auto scope_type_it = getTypesByNameMap().find(
 															StringTable::getOrInternStringHandle(struct_ctx.struct_name));

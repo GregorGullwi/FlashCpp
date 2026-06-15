@@ -2,6 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "SymbolTable.h"
+#include "TemplateEnvironment.h"
 
 namespace FlashCpp::ParserFunctionTypeHelpers {
 
@@ -53,6 +54,37 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 	return fp_type;
 }
 
+inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
+	FunctionSignature sig;
+	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
+	sig.return_type_index = return_type.type_index();
+	sig.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
+	sig.return_reference_qualifier = return_type.reference_qualifier();
+	sig.is_const = func_decl.is_const_member_function();
+	sig.is_volatile = func_decl.is_volatile_member_function();
+	sig.is_noexcept = func_decl.is_noexcept();
+	for (const auto& param_node : func_decl.parameter_nodes()) {
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const auto& param_type = param_node.as<DeclarationNode>().type_specifier_node();
+		sig.parameter_type_indices.push_back(param_type.type_index());
+	}
+
+	TypeSpecifierNode mfp_type(
+		TypeCategory::MemberFunctionPointer,
+		TypeQualifier::None,
+		64,
+		func_decl.decl_node().identifier_token(),
+		CVQualifier::None);
+	mfp_type.set_function_signature(sig);
+	if (!func_decl.parent_struct_name().empty()) {
+		mfp_type.set_member_class_name(
+			StringTable::getOrInternStringHandle(func_decl.parent_struct_name()));
+	}
+	return mfp_type;
+}
+
 inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(
 	const TypeSpecifierNode& function_like_type,
 	const Token& source_token) {
@@ -100,6 +132,104 @@ inline std::optional<TypeSpecifierNode> tryGetReturnTypeFromFunctionType(
 	return_type.set_reference_qualifier(sig.return_reference_qualifier);
 	return_type.add_pointer_levels(sig.return_pointer_depth);
 	return return_type;
+}
+
+inline std::optional<TypeSpecifierNode> tryMaterializeTypeFromOuterTemplateBindings(
+	const TypeSpecifierNode& dependent_type,
+	const InlineVector<StringHandle, 4>& outer_template_param_names,
+	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args,
+	const Token& source_token) {
+	const size_t binding_count =
+		std::min(outer_template_param_names.size(), outer_template_args.size());
+	if (binding_count == 0) {
+		return std::nullopt;
+	}
+
+	TypeInfo::TemplateArgInfo dependent_type_arg =
+		toTemplateArgInfo(TemplateTypeArg(dependent_type));
+	InlineVector<TemplateParameterNode, 4> synthetic_params;
+	synthetic_params.reserve(binding_count);
+	InlineVector<TemplateTypeArg, 4> concrete_args;
+	concrete_args.reserve(binding_count);
+	for (size_t i = 0; i < binding_count; ++i) {
+		const StringHandle param_name = outer_template_param_names[i];
+		Token param_token(
+			Token::Type::Identifier,
+			StringTable::getStringView(param_name),
+			source_token.line(),
+			source_token.column(),
+			source_token.file_index());
+		synthetic_params.push_back(TemplateParameterNode(param_name, param_token));
+		concrete_args.push_back(toTemplateTypeArg(outer_template_args[i]));
+	}
+
+	TemplateTypeArg materialized_type_arg = materializeTemplateArg(
+		dependent_type_arg,
+		synthetic_params,
+		concrete_args);
+	if (materialized_type_arg.is_value || materialized_type_arg.is_dependent) {
+		return std::nullopt;
+	}
+	return makeTypeSpecifierFromTemplateTypeArg(
+		materialized_type_arg,
+		source_token);
+}
+
+inline std::optional<TypeSpecifierNode> tryResolveTypeFromRegisteredAlias(
+	const TypeSpecifierNode& type_spec) {
+	StringHandle type_name_handle = type_spec.token().handle();
+	if (!type_name_handle.isValid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+			type_name_handle = type_info->name();
+		}
+	}
+	if (!type_name_handle.isValid()) {
+		return std::nullopt;
+	}
+
+	auto type_it = getTypesByNameMap().find(type_name_handle);
+	if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+		return std::nullopt;
+	}
+
+	const TypeInfo* type_info = type_it->second;
+	if (!type_info->isTypeAlias() ||
+		typeIndexContainsDependentPlaceholder(
+			type_info->registeredTypeIndex().withCategory(type_info->typeEnum()))) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode outer_spec = type_spec;
+	outer_spec.set_type_index(
+		type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+	outer_spec.set_category(type_info->typeEnum());
+	TypeSpecifierNode resolved_type =
+		resolveTypeInfoToTypeSpec(*type_info, outer_spec);
+	if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_type);
+		resolved_size_bits > 0) {
+		resolved_type.set_size_in_bits(resolved_size_bits);
+	}
+	return resolved_type;
+}
+
+inline std::optional<TypeSpecifierNode> tryGetConcreteReturnTypeFromFunctionDeclaration(
+	const FunctionDeclarationNode& func_decl,
+	const Token& source_token) {
+	const TypeSpecifierNode& declared_return_type =
+		func_decl.decl_node().type_specifier_node();
+	if (!func_decl.has_outer_template_bindings()) {
+		return tryResolveTypeFromRegisteredAlias(declared_return_type);
+	}
+	if (std::optional<TypeSpecifierNode> concrete_type =
+			tryMaterializeTypeFromOuterTemplateBindings(
+				declared_return_type,
+				func_decl.outer_template_param_names(),
+				func_decl.outer_template_args(),
+				source_token);
+		concrete_type.has_value()) {
+		return concrete_type;
+	}
+	return tryResolveTypeFromRegisteredAlias(declared_return_type);
 }
 
 inline std::optional<TypeSpecifierNode> tryGetBareFunctionIdentifierType(const ASTNode& arg_node) {

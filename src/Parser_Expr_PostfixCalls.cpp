@@ -3,14 +3,50 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 #include <limits>
 
 namespace {
-void setResolvedMemberCallMetadata(ExpressionNode& call_expr, const FunctionDeclarationNode& func_decl) {
+void attachResolvedPostfixDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included,
+	std::optional<std::string_view> qualified_name_override) {
 	if (func_decl.has_mangled_name()) {
 		setCallMangledName(call_expr, func_decl.mangled_name());
 	}
+	if (qualified_name_override.has_value() &&
+		!qualified_name_override->empty()) {
+		setCallQualifiedName(call_expr, *qualified_name_override);
+	}
+	if (std::optional<FunctionCallDefinitionLookupRecord> record =
+			tryBuildFunctionCallDefinitionLookupRecord(
+				definition_context,
+				callee_token,
+				arg_types,
+				has_deferred_template_call_args,
+				func_decl,
+				ordinary_lookup_included,
+				argument_dependent_lookup_included);
+		record.has_value()) {
+		setCallDefinitionLookupRecord(call_expr, *record);
+	}
+}
+
+void attachResolvedMemberCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl) {
+	std::optional<std::string_view> qualified_name_override;
 	if (func_decl.is_member_function() &&
 		!func_decl.parent_struct_name().empty()) {
 		StringBuilder qualified_name_builder;
@@ -18,8 +54,18 @@ void setResolvedMemberCallMetadata(ExpressionNode& call_expr, const FunctionDecl
 			.append(func_decl.parent_struct_name())
 			.append("::")
 			.append(func_decl.decl_node().identifier_token().value());
-		setCallQualifiedName(call_expr, qualified_name_builder.commit());
+		qualified_name_override = qualified_name_builder.commit();
 	}
+	attachResolvedPostfixDirectCallMetadata(
+		call_expr,
+		definition_context,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		true,
+		false,
+		qualified_name_override);
 }
 
 const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_spec, bool allow_pointers) {
@@ -281,6 +327,7 @@ void Parser::finalizePostfixCallExpression(
 		if (std::holds_alternative<MemberAccessNode>(expr)) {
 			const auto& member_access = std::get<MemberAccessNode>(expr);
 			bool is_function_pointer_call = false;
+			std::optional<TypeSpecifierNode> function_pointer_return_type_hint;
 			if (!member_function_context_stack_.empty()) {
 				const auto& member_ctx = member_function_context_stack_.back();
 				if (const TypeInfo* struct_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
@@ -289,6 +336,22 @@ void Parser::finalizePostfixCallExpression(
 						for (const auto& member : struct_info->members) {
 							if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 								is_function_pointer_call = member.type_index.category() == TypeCategory::FunctionPointer;
+								if (is_function_pointer_call && member.function_signature.has_value()) {
+									TypeSpecifierNode function_pointer_type(
+										TypeCategory::FunctionPointer,
+										TypeQualifier::None,
+										64,
+										member_access.member_token(),
+										CVQualifier::None);
+									function_pointer_type.set_type_index(
+										member.type_index.withCategory(TypeCategory::FunctionPointer));
+									function_pointer_type.set_function_signature(
+										*member.function_signature);
+									function_pointer_return_type_hint =
+										FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+											function_pointer_type,
+											member_access.member_token());
+								}
 								break;
 							}
 						}
@@ -298,12 +361,65 @@ void Parser::finalizePostfixCallExpression(
 
 			if (is_function_pointer_call) {
 				Token member_token = member_access.member_token();
-				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_token, CVQualifier::None);
+				ASTNode temp_type = function_pointer_return_type_hint.has_value()
+					? emplace_node<TypeSpecifierNode>(*function_pointer_return_type_hint)
+					: emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, member_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_token);
 				[[maybe_unused]] auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 				result = emplace_node<ExpressionNode>(
 					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), member_token));
+				if (function_pointer_return_type_hint.has_value()) {
+					setCallParserReturnTypeHint(
+						result->as<ExpressionNode>(),
+						*function_pointer_return_type_hint);
+				}
 				return;
+			}
+		}
+
+		if (std::holds_alternative<PointerToMemberAccessNode>(expr)) {
+			const auto& member_pointer_access =
+				std::get<PointerToMemberAccessNode>(expr);
+			if (auto member_pointer_type_opt =
+					get_expression_type(member_pointer_access.member_pointer());
+				member_pointer_type_opt.has_value()) {
+				const TypeSpecifierNode& member_pointer_type =
+					*member_pointer_type_opt;
+				if (member_pointer_type.is_member_function_pointer() ||
+					member_pointer_type.has_function_signature()) {
+					std::optional<TypeSpecifierNode> member_function_return_type_hint =
+						FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+							member_pointer_type,
+							member_pointer_access.operator_token());
+					ASTNode temp_type =
+						member_function_return_type_hint.has_value()
+							? emplace_node<TypeSpecifierNode>(
+								  *member_function_return_type_hint)
+							: emplace_node<TypeSpecifierNode>(
+								  TypeCategory::Auto,
+								  TypeQualifier::None,
+								  0,
+								  member_pointer_access.operator_token(),
+								  CVQualifier::None);
+					auto temp_decl = emplace_node<DeclarationNode>(
+						temp_type,
+						member_pointer_access.operator_token());
+					[[maybe_unused]] auto [func_node, func_ref] =
+						emplace_node_ref<FunctionDeclarationNode>(
+							temp_decl.as<DeclarationNode>());
+					result = emplace_node<ExpressionNode>(
+						makeResolvedMemberCallExpr(
+							*result,
+							func_ref,
+							std::move(args),
+							paren_token));
+					if (member_function_return_type_hint.has_value()) {
+						setCallParserReturnTypeHint(
+							result->as<ExpressionNode>(),
+							*member_function_return_type_hint);
+					}
+					return;
+				}
 			}
 		}
 
@@ -320,9 +436,16 @@ void Parser::finalizePostfixCallExpression(
 							const auto& func_decl = sym->as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
 								makeResolvedCallExpr(func_decl, std::move(args), paren_token));
-							if (func_decl.has_mangled_name()) {
-								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-							}
+							attachResolvedPostfixDirectCallMetadata(
+								result->as<ExpressionNode>(),
+								current_template_definition_lookup_context_,
+								id.identifier_token(),
+								arg_types,
+								false,
+								func_decl,
+								true,
+								false,
+								std::nullopt);
 							return;
 						}
 					}
@@ -360,6 +483,16 @@ void Parser::finalizePostfixCallExpression(
 
 	result = emplace_node<ExpressionNode>(
 		makeResolvedMemberCallExpr(*result, *func_ref, std::move(args), operator_token));
+	if (call_operator_resolution.state ==
+			ConcreteCallOperatorResolution::State::Resolved) {
+		attachResolvedMemberCallMetadata(
+			result->as<ExpressionNode>(),
+			current_template_definition_lookup_context_,
+			operator_token,
+			arg_types,
+			false,
+			*func_ref);
+	}
 }
 
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
@@ -491,6 +624,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
 		}
 		ChunkedVector<ASTNode> args = std::move(args_result.args);
+		std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
 
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
@@ -552,7 +686,15 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_operator_name_token));
-		setResolvedMemberCallMetadata(result->as<ExpressionNode>(), *func_ref_ptr);
+		if (known_member_func != nullptr) {
+			attachResolvedMemberCallMetadata(
+				result->as<ExpressionNode>(),
+				current_template_definition_lookup_context_,
+				member_operator_name_token,
+				arg_types,
+				false,
+				*func_ref_ptr);
+		}
 		return ParseResult::success(*result);
 	}
 
@@ -797,13 +939,62 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			}
 		}
 
+		std::optional<TypeSpecifierNode> member_call_return_type_hint;
+		bool is_function_pointer_member_call = false;
+		if (!known_member_func && !instantiated_func.has_value()) {
+			if (auto type_opt = get_expression_type(*result);
+				type_opt.has_value() && is_struct_type(type_opt->category())) {
+				const TypeInfo* type_info = tryGetTypeInfo(type_opt->type_index());
+				const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+				if (struct_info) {
+					StringHandle member_name_handle =
+						StringTable::getOrInternStringHandle(member_name_token.value());
+					if (std::optional<StructMember> member =
+							struct_info->findMemberRecursive(member_name_handle);
+						member.has_value() &&
+						member->memberType() == TypeCategory::FunctionPointer &&
+						member->function_signature.has_value()) {
+						is_function_pointer_member_call = true;
+						TypeSpecifierNode function_pointer_type(
+							TypeCategory::FunctionPointer,
+							TypeQualifier::None,
+							64,
+							member_name_token,
+							CVQualifier::None);
+						function_pointer_type.set_type_index(
+							member->type_index.withCategory(TypeCategory::FunctionPointer));
+						function_pointer_type.set_function_signature(
+							*member->function_signature);
+						member_call_return_type_hint =
+							FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+								function_pointer_type,
+								member_name_token);
+					}
+				}
+			}
+		}
+
 		FunctionDeclarationNode* func_ref_ptr = nullptr;
 		if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 			func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
 		} else if (known_member_func) {
 			func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 		} else {
-			auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_name_token, CVQualifier::None);
+			ASTNode temp_type;
+			if (member_call_return_type_hint.has_value()) {
+				temp_type = emplace_node<TypeSpecifierNode>(*member_call_return_type_hint);
+			} else {
+				TypeCategory placeholder_type = is_function_pointer_member_call
+					? TypeCategory::Auto
+					: TypeCategory::Int;
+				int placeholder_size_bits = is_function_pointer_member_call ? 0 : 32;
+				temp_type = emplace_node<TypeSpecifierNode>(
+					placeholder_type,
+					TypeQualifier::None,
+					placeholder_size_bits,
+					member_name_token,
+					CVQualifier::None);
+			}
 			auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
 			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 			func_ref_ptr = &func_ref;
@@ -811,7 +1002,22 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_name_token));
-		setResolvedMemberCallMetadata(result->as<ExpressionNode>(), *func_ref_ptr);
+		if (member_call_return_type_hint.has_value()) {
+			setCallParserReturnTypeHint(
+				result->as<ExpressionNode>(),
+				*member_call_return_type_hint);
+		}
+		if ((instantiated_func.has_value() &&
+			 instantiated_func->is<FunctionDeclarationNode>()) ||
+			known_member_func != nullptr) {
+			attachResolvedMemberCallMetadata(
+				result->as<ExpressionNode>(),
+				current_template_definition_lookup_context_,
+				member_name_token,
+				arg_types,
+				false,
+				*func_ref_ptr);
+		}
 		return ParseResult::success(*result);
 	}
 
@@ -941,6 +1147,161 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 	// Note: result is now an optional<ASTNode> (extracted from ParseResult) for compatibility with the postfix loop
 
 	std::optional<ASTNode> result = prim_result.node();
+	auto tryResolveQualifiedOwnerStruct = [&](const ASTNode& object_expr, std::span<const StringHandle> owner_segments) -> const StructTypeInfo* {
+		auto type_opt = get_expression_type(object_expr);
+		if (!type_opt.has_value()) {
+			return nullptr;
+		}
+		const TypeInfo* type_info = tryResolveConcreteStructOwnerType(*type_opt, true);
+		if (!type_info) {
+			return nullptr;
+		}
+		if (type_info->is_incomplete_instantiation_) {
+			instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
+			type_info = findTypeByName(type_info->name());
+			if (!type_info || type_info->is_incomplete_instantiation_) {
+				return nullptr;
+			}
+		}
+
+		auto refreshStructInfo = [&](const StructTypeInfo* owner_struct) -> const StructTypeInfo* {
+			if (!owner_struct) {
+				return nullptr;
+			}
+			instantiateLazyClassToPhase(owner_struct->name, ClassInstantiationPhase::Full);
+			if (const TypeInfo* refreshed = findTypeByName(owner_struct->name)) {
+				if (const StructTypeInfo* refreshed_struct = refreshed->getStructInfo()) {
+					return refreshed_struct;
+				}
+			}
+			return owner_struct;
+		};
+
+		auto matchesOwnerSegment = [&](const StructTypeInfo& owner_struct, StringHandle segment) -> bool {
+			if (!segment.isValid()) {
+				return false;
+			}
+			const std::string_view segment_name = StringTable::getStringView(segment);
+			const std::string_view owner_name = StringTable::getStringView(owner_struct.name);
+			if (owner_name == segment_name) {
+				return true;
+			}
+			if (const size_t scope_pos = owner_name.rfind("::");
+				scope_pos != std::string_view::npos) {
+				return owner_name.substr(scope_pos + 2) == segment_name;
+			}
+			return false;
+		};
+
+		const StructTypeInfo* owner_struct = refreshStructInfo(type_info->getStructInfo());
+		for (StringHandle segment : owner_segments) {
+			if (!owner_struct) {
+				return nullptr;
+			}
+			if (matchesOwnerSegment(*owner_struct, segment)) {
+				continue;
+			}
+
+			const StructTypeInfo* matched_owner = nullptr;
+			for (const auto& base_class : owner_struct->base_classes) {
+				if (base_class.is_deferred || !base_class.type_index.is_valid()) {
+					continue;
+				}
+				const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
+				const StructTypeInfo* base_struct =
+					base_type_info ? refreshStructInfo(base_type_info->getStructInfo()) : nullptr;
+				if (!base_struct) {
+					continue;
+				}
+				if (base_class.name == StringTable::getStringView(segment) ||
+					matchesOwnerSegment(*base_struct, segment)) {
+					if (matched_owner && matched_owner != base_struct) {
+						return nullptr;
+					}
+					matched_owner = base_struct;
+				}
+			}
+
+			for (StructTypeInfo* nested_owner : owner_struct->getNestedClasses()) {
+				const StructTypeInfo* nested_struct = refreshStructInfo(nested_owner);
+				if (!nested_struct ||
+					!matchesOwnerSegment(*nested_struct, segment)) {
+					continue;
+				}
+				if (matched_owner && matched_owner != nested_struct) {
+					return nullptr;
+				}
+				matched_owner = nested_struct;
+			}
+
+			if (!matched_owner) {
+				return nullptr;
+			}
+			owner_struct = matched_owner;
+		}
+
+		return owner_struct;
+	};
+	auto tryResolveQualifiedMemberFunctionCall = [&](const ASTNode& object_expr,
+												   std::span<const StringHandle> owner_segments,
+												   StringHandle member_name_handle,
+												   std::span<const TypeSpecifierNode> arg_types,
+												   size_t argument_count) -> const FunctionDeclarationNode* {
+		const StructTypeInfo* owner_struct =
+			tryResolveQualifiedOwnerStruct(object_expr, owner_segments);
+		if (!owner_struct || !member_name_handle.isValid()) {
+			return nullptr;
+		}
+
+		std::vector<ASTNode> candidates;
+		for (const auto& member_func : owner_struct->member_functions) {
+			if (member_func.is_constructor || member_func.is_destructor) {
+				continue;
+			}
+			if (member_func.getName() != member_name_handle ||
+				!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const FunctionDeclarationNode& candidate =
+				member_func.function_decl.as<FunctionDeclarationNode>();
+			if (candidate.failed_substitution()) {
+				continue;
+			}
+			candidates.push_back(member_func.function_decl);
+		}
+		if (candidates.empty()) {
+			return nullptr;
+		}
+
+		if (arg_types.size() == argument_count) {
+			auto overload_result = resolve_overload(candidates, arg_types);
+			if (overload_result.has_match &&
+				!overload_result.is_ambiguous &&
+				overload_result.selected_overload != nullptr &&
+				overload_result.selected_overload->is<FunctionDeclarationNode>()) {
+				return &overload_result.selected_overload->as<FunctionDeclarationNode>();
+			}
+		}
+
+		const FunctionDeclarationNode* matched_candidate = nullptr;
+		for (const ASTNode& candidate_node : candidates) {
+			const FunctionDeclarationNode& candidate =
+				candidate_node.as<FunctionDeclarationNode>();
+			const size_t min_required = countMinRequiredArgs(candidate);
+			const size_t max_accepted = candidate.is_variadic()
+				? std::numeric_limits<size_t>::max()
+				: candidate.parameter_nodes().size();
+			if (argument_count < min_required || argument_count > max_accepted) {
+				continue;
+			}
+			if (matched_candidate) {
+				return nullptr;
+			}
+			matched_candidate = &candidate;
+		}
+
+		return matched_candidate;
+	};
 
 	// Handle postfix operators in a loop
 	constexpr int MAX_POSTFIX_ITERATIONS = 100;	// Safety limit to prevent infinite loops
@@ -1026,6 +1387,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					const auto& member_access = std::get<MemberAccessNode>(expr);
 					ASTNode object = member_access.object();
 					bool is_arrow = member_access.is_arrow();
+					std::vector<StringHandle> qualified_owner_segments;
+					if (member_access.member_token().handle().isValid()) {
+						qualified_owner_segments.push_back(member_access.member_token().handle());
+					} else {
+						qualified_owner_segments.push_back(
+							StringTable::getOrInternStringHandle(member_access.member_name()));
+					}
 
 					// Save position before consuming any tokens so we can restore the
 					// entire chain if we hit a non-identifier after any '::' in the chain
@@ -1045,6 +1413,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						advance();
 
 						if (peek() == "::"_tok) {
+							qualified_owner_segments.push_back(
+								qualified_member_token.handle().isValid()
+									? qualified_member_token.handle()
+									: StringTable::getOrInternStringHandle(qualified_member_token.value()));
 							advance(); // consume '::'
 							if (peek() == "template"_tok)
 								advance();
@@ -1066,11 +1438,32 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							if (!consume(")"_tok)) {
 								return ParseResult::error("Expected ')' after qualified member function call", current_token_);
 							}
-							auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, qualified_member_token, CVQualifier::None, ReferenceQualifier::None);
-							auto& member_decl = emplace_node<DeclarationNode>(type_spec, qualified_member_token).as<DeclarationNode>();
-							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
-							result = emplace_node<ExpressionNode>(
-								makeResolvedMemberCallExpr(object, func_decl_node, std::move(args), qualified_member_token));
+							const FunctionDeclarationNode* resolved_func =
+								tryResolveQualifiedMemberFunctionCall(
+									object,
+									qualified_owner_segments,
+									qualified_member_token.handle().isValid()
+										? qualified_member_token.handle()
+										: StringTable::getOrInternStringHandle(qualified_member_token.value()),
+									args_result.arg_types,
+									args.size());
+							if (resolved_func) {
+								result = emplace_node<ExpressionNode>(
+									makeResolvedMemberCallExpr(object, *resolved_func, std::move(args), qualified_member_token));
+								attachResolvedMemberCallMetadata(
+									result->as<ExpressionNode>(),
+									current_template_definition_lookup_context_,
+									qualified_member_token,
+									args_result.arg_types,
+									false,
+									*resolved_func);
+							} else {
+								auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, qualified_member_token, CVQualifier::None, ReferenceQualifier::None);
+								auto& member_decl = emplace_node<DeclarationNode>(type_spec, qualified_member_token).as<DeclarationNode>();
+								auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+								result = emplace_node<ExpressionNode>(
+									makeResolvedMemberCallExpr(object, func_decl_node, std::move(args), qualified_member_token));
+							}
 						} else {
 							// Simple qualified member access
 							result = emplace_node<ExpressionNode>(
@@ -1105,11 +1498,32 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 								discard_saved_token(saved_pos);
 								return ParseResult::error("Expected ')' after qualified operator member call", current_token_);
 							}
-							auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, op_token, CVQualifier::None, ReferenceQualifier::None);
-							auto& member_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
-							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
-							result = emplace_node<ExpressionNode>(
-								makeResolvedMemberCallExpr(object, func_decl_node, std::move(args_result.args), op_token));
+							const FunctionDeclarationNode* resolved_func =
+								tryResolveQualifiedMemberFunctionCall(
+									object,
+									qualified_owner_segments,
+									op_token.handle().isValid()
+										? op_token.handle()
+										: StringTable::getOrInternStringHandle(op_token.value()),
+									args_result.arg_types,
+									args_result.args.size());
+							if (resolved_func) {
+								result = emplace_node<ExpressionNode>(
+									makeResolvedMemberCallExpr(object, *resolved_func, std::move(args_result.args), op_token));
+								attachResolvedMemberCallMetadata(
+									result->as<ExpressionNode>(),
+									current_template_definition_lookup_context_,
+									op_token,
+									args_result.arg_types,
+									false,
+									*resolved_func);
+							} else {
+								auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, op_token, CVQualifier::None, ReferenceQualifier::None);
+								auto& member_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
+								auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
+								result = emplace_node<ExpressionNode>(
+									makeResolvedMemberCallExpr(object, func_decl_node, std::move(args_result.args), op_token));
+							}
 							handled = true;
 						}
 					}
@@ -1233,7 +1647,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
-
+				std::vector<TypeSpecifierNode> arg_types =
+					apply_lvalue_reference_deduction(
+						args,
+						args_result.arg_types);
 				// Get the DeclarationNode
 				auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
 					if (node.is<DeclarationNode>()) {
@@ -1333,8 +1750,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					// Build qualified template name (e.g., "std::move")
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 
-					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-
 					// Try explicit template instantiation first if template arguments were provided
 					// (e.g., ns::func<true>(args) should use try_instantiate_template_explicit)
 					if (template_args.has_value()) {
@@ -1386,8 +1801,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				// If the function has a pre-computed mangled name, set it on the call expression
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
+					attachResolvedPostfixDirectCallMetadata(
+						function_call_node.as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						final_identifier,
+						arg_types,
+						false,
+						func_decl,
+						true,
+						false,
+						buildQualifiedNameFromStrings(namespaces, final_identifier.value()));
 					if (func_decl.has_mangled_name()) {
-						setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
 						FLASH_LOG(Parser, Debug, "Set mangled name on qualified call expression (postfix path): {}", func_decl.mangled_name());
 					}
 				}

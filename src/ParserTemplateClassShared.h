@@ -115,10 +115,23 @@ inline int getSubstitutedTypeSizeBits(TypeIndex substituted_type_index) {
 	return get_type_size_bits(size_type_index.category());
 }
 
+inline const StructMember* findDirectStructMemberByName(
+	const StructTypeInfo* struct_info,
+	StringHandle member_name) {
+	if (struct_info == nullptr || !member_name.isValid())
+		return nullptr;
+	for (const StructMember& member : struct_info->members) {
+		if (member.name == member_name)
+			return &member;
+	}
+	return nullptr;
+}
+
 template <typename ParamContainer, typename ArgContainer>
 inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	const TypeSpecifierNode& type_spec,
 	TypeIndex substituted_type_index,
+	const StructMember* source_member,
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
 	if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
@@ -126,6 +139,16 @@ inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 		return std::nullopt;
 	if (type_spec.has_function_signature())
 		return type_spec.function_signature();
+	if (ResolvedAliasTypeInfo substituted_alias = resolveAliasTypeInfo(substituted_type_index);
+		substituted_alias.function_signature.has_value()) {
+		return substituted_alias.function_signature;
+	}
+	if (ResolvedAliasTypeInfo original_alias = resolveAliasTypeInfo(type_spec.type_index());
+		original_alias.function_signature.has_value()) {
+		return original_alias.function_signature;
+	}
+	if (source_member != nullptr && source_member->function_signature.has_value())
+		return source_member->function_signature;
 
 	StringHandle type_name_handle;
 	if (const TypeInfo* ts_ti = tryGetTypeInfo(type_spec.type_index()))
@@ -171,6 +194,9 @@ inline void applyBoundTemplateArgMetadata(
 	substituted_type.set_reference_qualifier(collapseReferenceQualifiers(
 		arg->ref_qualifier,
 		substituted_type.reference_qualifier()));
+	if (!substituted_type.has_member_class() && arg->member_class_name.isValid()) {
+		substituted_type.set_member_class_name(arg->member_class_name);
+	}
 	if (!substituted_type.has_function_signature() && arg->function_signature.has_value()) {
 		substituted_type.set_function_signature(*arg->function_signature);
 	}
@@ -1093,6 +1119,7 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 	} else if (auto signature = resolveTemplateFunctionPointerSignature(
 				   original_type_spec,
 				   substituted_type.type_index(),
+				   nullptr,
 				   template_params,
 				   template_args)) {
 		substituted_type.set_function_signature(*signature);

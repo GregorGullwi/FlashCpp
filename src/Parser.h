@@ -1929,6 +1929,14 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	bool tryCollectOrdinaryDirectCallArgTypes(
 		const ChunkedVector<ASTNode>& args,
 		std::vector<TypeSpecifierNode>* arg_types_out);
+	std::optional<FunctionCallDefinitionLookupRecord>
+	tryBuildCurrentFunctionCallDefinitionLookupRecord(
+		const Token& callee_token,
+		std::span<const TypeSpecifierNode> arg_types,
+		bool has_deferred_template_call_args,
+		const FunctionDeclarationNode& func_decl,
+		bool ordinary_lookup_included,
+		bool argument_dependent_lookup_included);
 	ExpressionNode makeDeferredOrdinaryDirectCallExpr(
 		const ASTNode& resolved_decl,
 		ChunkedVector<ASTNode>&& arguments,

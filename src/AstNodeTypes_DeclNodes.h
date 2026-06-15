@@ -1713,7 +1713,15 @@ public:
 	bool is_function_pointer() const { return type_index_.category() == TypeCategory::FunctionPointer; }
 	bool is_member_function_pointer() const { return type_index_.category() == TypeCategory::MemberFunctionPointer; }
 	bool is_member_object_pointer() const { return type_index_.category() == TypeCategory::MemberObjectPointer; }
-	void set_function_signature(const FunctionSignature& sig) { function_signature_ = sig; }
+	void set_function_signature(const FunctionSignature& sig) {
+		function_signature_ = sig;
+		if (type_index_.category() == TypeCategory::MemberFunctionPointer &&
+			member_class_name_.has_value() &&
+			member_class_name_->isValid() &&
+			!function_signature_->class_name.isValid()) {
+			function_signature_->class_name = *member_class_name_;
+		}
+	}
 	const FunctionSignature& function_signature() const { return *function_signature_; }
 	bool has_function_signature() const { return function_signature_.has_value(); }
 
@@ -1764,6 +1772,11 @@ public:
 	StringHandle member_class_name() const { return *member_class_name_; }
 	void set_member_class_name(StringHandle class_name) {
 		member_class_name_ = class_name;
+		if (type_index_.category() == TypeCategory::MemberFunctionPointer &&
+			function_signature_.has_value() &&
+			class_name.isValid()) {
+			function_signature_->class_name = class_name;
+		}
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
@@ -2885,22 +2898,12 @@ public:
 		}
 
 		for (const auto& arg : template_args) {
-			TypeInfo::TemplateArgInfo info;
-			info.type_index = arg.type_index;
-			info.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
-			info.pointer_depth = arg.pointer_depth;
-			info.cv_qualifier = arg.cv_qualifier;
-			info.ref_qualifier = arg.ref_qualifier;
-			info.value = arg.value;
-			info.is_value = arg.is_value;
-			info.is_array = arg.is_array;
-			// Copy array dimensions from TemplateTypeArg to TemplateArgInfo
-			if constexpr (requires(decltype(arg) a) { a.array_dimensions; }) {
-				info.array_dimensions.assign(arg.array_dimensions.begin(), arg.array_dimensions.end());
+			using ArgT = std::remove_cvref_t<decltype(arg)>;
+			if constexpr (std::is_same_v<ArgT, TypeInfo::TemplateArgInfo>) {
+				outer_template_args_.push_back(arg);
+			} else {
+				outer_template_args_.push_back(toTemplateArgInfo(arg));
 			}
-			info.dependent_name = arg.dependent_name;
-			info.function_signature = arg.function_signature;
-			outer_template_args_.push_back(std::move(info));
 		}
 	}
 

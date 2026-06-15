@@ -98,6 +98,9 @@ inline ASTNode buildMaterializedParamTypeNode(
 			if (arg->function_signature.has_value()) {
 				new_param_spec.set_function_signature(*arg->function_signature);
 			}
+			if (arg->member_class_name.isValid()) {
+				new_param_spec.set_member_class_name(arg->member_class_name);
+			}
 		}
 	}
 	normalizeSubstitutedTypeSpec(new_param_spec);

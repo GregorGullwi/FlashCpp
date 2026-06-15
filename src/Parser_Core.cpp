@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
 #include "TemplateRegistry.h"
 #include "ConstExprEvaluator.h"
@@ -351,6 +352,24 @@ bool Parser::tryCollectFunctionCallArgTypes(
 	return true;
 }
 
+std::optional<FunctionCallDefinitionLookupRecord>
+Parser::tryBuildCurrentFunctionCallDefinitionLookupRecord(
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included) {
+	return tryBuildFunctionCallDefinitionLookupRecord(
+		current_template_definition_lookup_context_,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		ordinary_lookup_included,
+		argument_dependent_lookup_included);
+}
+
 // Try template instantiation from call arguments by first using collected
 // argument types (qualified name first, then simple name) and then falling back
 // to constructor-wrapper deduction such as __type_identity<T>{}.
@@ -425,16 +444,59 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 			// The target type of a cast is directly available and exact.
 			arg_type = inner.target_type();
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			// Use the return type of the resolved callee function.
+			auto should_prefer_parser_return_type_hint =
+				[](const TypeSpecifierNode& current,
+				   const TypeSpecifierNode& candidate) {
+					if (current.type() == TypeCategory::Auto ||
+						current.type() == TypeCategory::DeclTypeAuto ||
+						current.type() == TypeCategory::Template) {
+						return true;
+					}
+					if (!current.type_index().is_valid() && candidate.type_index().is_valid()) {
+						return true;
+					}
+					if (current.reference_qualifier() == ReferenceQualifier::None &&
+						candidate.reference_qualifier() != ReferenceQualifier::None) {
+						return true;
+					}
+					if (current.pointer_depth() == 0 && candidate.pointer_depth() > 0) {
+						return true;
+					}
+					if (!current.has_function_signature() && candidate.has_function_signature()) {
+						return true;
+					}
+					if (!current.has_member_class() && candidate.has_member_class()) {
+						return true;
+					}
+					if (current.array_dimensions().empty() &&
+						!candidate.array_dimensions().empty()) {
+						return true;
+					}
+					return false;
+				};
+
+			std::optional<TypeSpecifierNode> direct_return_type;
 			if (const FunctionDeclarationNode* func_decl = inner.callee().function_declaration_or_null()) {
 				const ASTNode& ret_node = func_decl->decl_node().type_node();
 				if (ret_node.template is<TypeSpecifierNode>()) {
-					arg_type = ret_node.template as<TypeSpecifierNode>();
-					return;
+					const TypeSpecifierNode& return_type = ret_node.template as<TypeSpecifierNode>();
+					if (return_type.type() != TypeCategory::Auto &&
+						return_type.type() != TypeCategory::DeclTypeAuto) {
+						direct_return_type = return_type;
+					}
 				}
 			}
 			if (inner.has_parser_return_type_hint()) {
-				arg_type = *inner.parser_return_type_hint();
+				if (!direct_return_type.has_value() ||
+					should_prefer_parser_return_type_hint(
+						*direct_return_type,
+						*inner.parser_return_type_hint())) {
+					arg_type = *inner.parser_return_type_hint();
+					return;
+				}
+			}
+			if (direct_return_type.has_value()) {
+				arg_type = *direct_return_type;
 				return;
 			}
 			if (auto indirect_return_type =

@@ -165,8 +165,8 @@ struct hash<CanonicalTypeDesc> {
 			h = combine(h, fs.is_volatile ? 1u : 0u);
 			h = combine(h, static_cast<size_t>(fs.function_reference_qualifier));
 			h = combine(h, fs.is_noexcept ? 1u : 0u);
-			if (fs.class_name)
-				h = combine(h, std::hash<std::string>{}(*fs.class_name));
+			if (fs.class_name.isValid())
+				h = combine(h, fs.class_name.hash());
 		}
 		return h;
 	}

@@ -2457,6 +2457,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			bool is_lvalue_ref = false;
 			bool is_rvalue_ref = false;
 			bool is_member_ptr = false;
+			Token member_ptr_class_token;
 
 			if (!peek().is_eof()) {
 				if (peek() == "*"_tok) {
@@ -2471,6 +2472,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				} else if (peek().is_identifier()) {
 					// Check for member pointer syntax: _Class::*
 					SaveHandle member_check_pos = save_token_position();
+					member_ptr_class_token = peek_info();
 					advance(); // consume class name
 					if (peek() == "::"_tok) {
 						advance(); // consume '::'
@@ -2600,8 +2602,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 						type_node.set_function_signature(func_sig);
 
 						if (is_member_ptr) {
-							// Member function pointer - mark as member pointer
-							type_node.set_member_class_name(StringHandle{});
+							type_node.set_member_class_name(
+								member_ptr_class_token.handle());
 						}
 
 						if (is_lvalue_ref) {

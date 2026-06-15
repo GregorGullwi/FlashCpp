@@ -2679,16 +2679,88 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// For unary operators, handle type transformations
 		const auto& unary = std::get<UnaryOperatorNode>(expr);
 		std::string_view op = unary.op();
+		const ASTNode& operand_node = unary.get_operand();
+
+		if (op == "&") {
+			if (auto free_function_type =
+					FlashCpp::ParserFunctionTypeHelpers::tryGetBareFunctionIdentifierType(
+						operand_node);
+				free_function_type.has_value()) {
+				return *free_function_type;
+			}
+			if (operand_node.is<ExpressionNode>()) {
+				const ExpressionNode& operand_expr = operand_node.as<ExpressionNode>();
+				if (const auto* qualified_identifier =
+						std::get_if<QualifiedIdentifierNode>(&operand_expr)) {
+					NamespaceHandle ns_handle =
+						qualified_identifier->namespace_handle();
+					if (!ns_handle.isGlobal()) {
+						std::string_view struct_name =
+							gNamespaceRegistry.getName(ns_handle);
+						auto struct_type_it = getTypesByNameMap().find(
+							StringTable::getOrInternStringHandle(struct_name));
+						if (struct_type_it == getTypesByNameMap().end() &&
+							gNamespaceRegistry.getDepth(ns_handle) > 1) {
+							std::string_view full_qualified_name =
+								gNamespaceRegistry.getQualifiedName(ns_handle);
+							struct_type_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(
+									full_qualified_name));
+						}
+						if (struct_type_it != getTypesByNameMap().end() &&
+							struct_type_it->second->isStruct()) {
+							const StructTypeInfo* struct_info =
+								struct_type_it->second->getStructInfo();
+							if (struct_info != nullptr) {
+								StringHandle member_name_handle =
+									StringTable::getOrInternStringHandle(
+										qualified_identifier->name());
+								const FunctionDeclarationNode* resolved_function =
+									nullptr;
+								bool ambiguous = false;
+								for (const auto& member_func :
+									 struct_info->member_functions) {
+									if (member_func.is_constructor ||
+										member_func.is_destructor ||
+										!member_func.function_decl
+											 .is<FunctionDeclarationNode>() ||
+										member_func.getName() !=
+											member_name_handle) {
+										continue;
+									}
+									if (resolved_function != nullptr) {
+										ambiguous = true;
+										break;
+									}
+									resolved_function =
+										&member_func.function_decl
+											 .as<FunctionDeclarationNode>();
+								}
+								if (!ambiguous &&
+									resolved_function != nullptr) {
+									return resolved_function->is_static()
+										? FlashCpp::ParserFunctionTypeHelpers::
+											  buildFunctionPointerTypeFromFunctionDeclaration(
+												  *resolved_function)
+										: FlashCpp::ParserFunctionTypeHelpers::
+											  buildMemberFunctionPointerTypeFromFunctionDeclaration(
+												  *resolved_function);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 
 		// Get the operand type
-		auto operand_type_opt = get_expression_type(unary.get_operand());
+		auto operand_type_opt = get_expression_type(operand_node);
 		if (!operand_type_opt.has_value()) {
 			return std::nullopt;
 		}
 
 		// Unary plus on a captureless lambda decays to function pointer type
 		if (op == "+") {
-			const ASTNode& operand_node = unary.get_operand();
 			if (operand_node.is<LambdaExpressionNode>()) {
 				const auto& lambda = operand_node.as<LambdaExpressionNode>();
 				if (auto fp_type = build_function_pointer_type_from_lambda(lambda)) {
@@ -2775,22 +2847,6 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	} else if (auto call_info_opt = CallInfo::tryFrom(expr)) {
 		const CallInfo& call_info = *call_info_opt;
 		const DeclarationNode& callee_decl = *call_info.declaration;
-		TypeSpecifierNode return_type;
-		if (call_info.function_declaration) {
-			return_type = call_info.function_declaration->decl_node().type_specifier_node();
-		} else if (call_info.parser_return_type_hint != nullptr &&
-				   call_info.parser_return_type_hint->has_value()) {
-			return_type = call_info.parser_return_type_hint->value();
-		} else if (auto indirect_return_type =
-					   FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
-						   callee_decl.type_specifier_node(),
-						   call_info.called_from);
-				   indirect_return_type.has_value()) {
-			return_type = *indirect_return_type;
-		} else {
-			return_type = callee_decl.type_specifier_node();
-		}
-
 		auto normalize_alias_return_type = [&](TypeSpecifierNode& type) {
 			const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(type.type_index());
 			if (return_alias_info.type_index.is_valid()) {
@@ -2803,6 +2859,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			if (!type.has_function_signature() && return_alias_info.function_signature.has_value()) {
 				type.set_function_signature(*return_alias_info.function_signature);
+			}
+			if (!type.has_member_class() && return_alias_info.member_class_name.has_value()) {
+				type.set_member_class_name(*return_alias_info.member_class_name);
 			}
 			if (!return_alias_info.array_dimensions.empty()) {
 				type.set_array_dimensions(return_alias_info.array_dimensions);
@@ -2827,12 +2886,50 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (!current.has_function_signature() && candidate.has_function_signature()) {
 					return true;
 				}
+				if (!current.has_member_class() && candidate.has_member_class()) {
+					return true;
+				}
 				if (current.array_dimensions().empty() &&
 					!candidate.array_dimensions().empty()) {
 					return true;
 				}
 				return false;
 			};
+		TypeSpecifierNode return_type;
+		if (call_info.function_declaration) {
+			return_type =
+				call_info.function_declaration->decl_node().type_specifier_node();
+		} else if (call_info.parser_return_type_hint != nullptr &&
+				   call_info.parser_return_type_hint->has_value()) {
+			return_type = call_info.parser_return_type_hint->value();
+		} else if (auto indirect_return_type =
+					   FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+						   callee_decl.type_specifier_node(),
+						   call_info.called_from);
+				   indirect_return_type.has_value()) {
+			return_type = *indirect_return_type;
+		} else {
+			return_type = callee_decl.type_specifier_node();
+		}
+		if (call_info.parser_return_type_hint != nullptr &&
+			call_info.parser_return_type_hint->has_value()) {
+			const TypeSpecifierNode& parser_return_type_hint =
+				call_info.parser_return_type_hint->value();
+			if (should_prefer_struct_member_return_type(
+					return_type,
+					parser_return_type_hint)) {
+				return_type = parser_return_type_hint;
+			}
+		}
+		if (std::optional<TypeSpecifierNode> resolved_alias_return_type =
+				FlashCpp::ParserFunctionTypeHelpers::tryResolveTypeFromRegisteredAlias(
+					return_type);
+			resolved_alias_return_type.has_value() &&
+			should_prefer_struct_member_return_type(
+				return_type,
+				*resolved_alias_return_type)) {
+			return_type = *resolved_alias_return_type;
+		}
 
 		auto update_return_type_from_struct = [&](const StructTypeInfo* struct_info) {
 			if (!struct_info || !call_info.function_declaration) {

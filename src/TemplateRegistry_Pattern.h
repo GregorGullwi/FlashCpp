@@ -277,6 +277,36 @@ struct TemplatePattern {
 		return true;
 	}
 
+	static bool matchMemberPointerClassName(
+		StringHandle pattern_class_name,
+		StringHandle concrete_class_name,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) {
+		if (!pattern_class_name.isValid() || !concrete_class_name.isValid()) {
+			return pattern_class_name == concrete_class_name;
+		}
+
+		if (template_param_names.count(pattern_class_name)) {
+			auto type_it = getTypesByNameMap().find(concrete_class_name);
+			if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+				return false;
+			}
+
+			TemplateTypeArg deduced;
+			deduced.type_index = type_it->second->type_index_;
+			return recordDeduction(pattern_class_name, deduced, param_substitutions);
+		}
+
+		return pattern_class_name == concrete_class_name;
+	}
+
+	static CallingConvention normalizeCallingConventionForTemplatePatternMatch(
+		CallingConvention calling_convention) {
+		return calling_convention == CallingConvention::Default
+			? CallingConvention::Cdecl
+			: calling_convention;
+	}
+
 	static bool matchFunctionSignature(
 		const TemplateTypeArg& pattern_arg,
 		const TemplateTypeArg& concrete_arg,
@@ -293,9 +323,15 @@ struct TemplatePattern {
 		const auto& concrete_sig = *concrete_arg.function_signature;
 		if (pattern_sig.parameter_type_indices.size() != concrete_sig.parameter_type_indices.size() ||
 			pattern_sig.linkage != concrete_sig.linkage ||
-			pattern_sig.class_name != concrete_sig.class_name ||
+			normalizeCallingConventionForTemplatePatternMatch(pattern_sig.calling_convention) !=
+				normalizeCallingConventionForTemplatePatternMatch(concrete_sig.calling_convention) ||
+			pattern_sig.is_variadic != concrete_sig.is_variadic ||
+			pattern_sig.return_pointer_depth != concrete_sig.return_pointer_depth ||
+			pattern_sig.return_reference_qualifier != concrete_sig.return_reference_qualifier ||
 			pattern_sig.is_const != concrete_sig.is_const ||
-			pattern_sig.is_volatile != concrete_sig.is_volatile) {
+			pattern_sig.is_volatile != concrete_sig.is_volatile ||
+			pattern_sig.function_reference_qualifier != concrete_sig.function_reference_qualifier ||
+			pattern_sig.is_noexcept != concrete_sig.is_noexcept) {
 			return false;
 		}
 		if (!matchFunctionSignatureType(
@@ -443,6 +479,14 @@ struct TemplatePattern {
 			}
 			if (pattern_arg.member_pointer_kind != concrete_arg.member_pointer_kind) {
 				FLASH_LOG(Templates, Trace, "  FAILED: member pointer kind mismatch");
+				return false;
+			}
+			if (!matchMemberPointerClassName(
+					pattern_arg.member_class_name,
+					concrete_arg.member_class_name,
+					template_param_names,
+					param_substitutions)) {
+				FLASH_LOG(Templates, Trace, "  FAILED: member pointer class mismatch");
 				return false;
 			}
 
