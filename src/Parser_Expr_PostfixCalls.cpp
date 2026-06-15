@@ -484,8 +484,7 @@ void Parser::finalizePostfixCallExpression(
 	result = emplace_node<ExpressionNode>(
 		makeResolvedMemberCallExpr(*result, *func_ref, std::move(args), operator_token));
 	if (call_operator_resolution.state ==
-			ConcreteCallOperatorResolution::State::Resolved &&
-		func_ref != nullptr) {
+			ConcreteCallOperatorResolution::State::Resolved) {
 		attachResolvedMemberCallMetadata(
 			result->as<ExpressionNode>(),
 			current_template_definition_lookup_context_,
