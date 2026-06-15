@@ -3,6 +3,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 #include <limits>
 
@@ -326,6 +327,7 @@ void Parser::finalizePostfixCallExpression(
 		if (std::holds_alternative<MemberAccessNode>(expr)) {
 			const auto& member_access = std::get<MemberAccessNode>(expr);
 			bool is_function_pointer_call = false;
+			std::optional<TypeSpecifierNode> function_pointer_return_type_hint;
 			if (!member_function_context_stack_.empty()) {
 				const auto& member_ctx = member_function_context_stack_.back();
 				if (const TypeInfo* struct_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
@@ -334,6 +336,22 @@ void Parser::finalizePostfixCallExpression(
 						for (const auto& member : struct_info->members) {
 							if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
 								is_function_pointer_call = member.type_index.category() == TypeCategory::FunctionPointer;
+								if (is_function_pointer_call && member.function_signature.has_value()) {
+									TypeSpecifierNode function_pointer_type(
+										TypeCategory::FunctionPointer,
+										TypeQualifier::None,
+										64,
+										member_access.member_token(),
+										CVQualifier::None);
+									function_pointer_type.set_type_index(
+										member.type_index.withCategory(TypeCategory::FunctionPointer));
+									function_pointer_type.set_function_signature(
+										*member.function_signature);
+									function_pointer_return_type_hint =
+										FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+											function_pointer_type,
+											member_access.member_token());
+								}
 								break;
 							}
 						}
@@ -343,11 +361,18 @@ void Parser::finalizePostfixCallExpression(
 
 			if (is_function_pointer_call) {
 				Token member_token = member_access.member_token();
-				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_token, CVQualifier::None);
+				ASTNode temp_type = function_pointer_return_type_hint.has_value()
+					? emplace_node<TypeSpecifierNode>(*function_pointer_return_type_hint)
+					: emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, member_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_token);
 				[[maybe_unused]] auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 				result = emplace_node<ExpressionNode>(
 					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), member_token));
+				if (function_pointer_return_type_hint.has_value()) {
+					setCallParserReturnTypeHint(
+						result->as<ExpressionNode>(),
+						*function_pointer_return_type_hint);
+				}
 				return;
 			}
 		}
@@ -869,13 +894,62 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			}
 		}
 
+		std::optional<TypeSpecifierNode> member_call_return_type_hint;
+		bool is_function_pointer_member_call = false;
+		if (!known_member_func && !instantiated_func.has_value()) {
+			if (auto type_opt = get_expression_type(*result);
+				type_opt.has_value() && is_struct_type(type_opt->category())) {
+				const TypeInfo* type_info = tryGetTypeInfo(type_opt->type_index());
+				const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+				if (struct_info) {
+					StringHandle member_name_handle =
+						StringTable::getOrInternStringHandle(member_name_token.value());
+					if (std::optional<StructMember> member =
+							struct_info->findMemberRecursive(member_name_handle);
+						member.has_value() &&
+						member->memberType() == TypeCategory::FunctionPointer &&
+						member->function_signature.has_value()) {
+						is_function_pointer_member_call = true;
+						TypeSpecifierNode function_pointer_type(
+							TypeCategory::FunctionPointer,
+							TypeQualifier::None,
+							64,
+							member_name_token,
+							CVQualifier::None);
+						function_pointer_type.set_type_index(
+							member->type_index.withCategory(TypeCategory::FunctionPointer));
+						function_pointer_type.set_function_signature(
+							*member->function_signature);
+						member_call_return_type_hint =
+							FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+								function_pointer_type,
+								member_name_token);
+					}
+				}
+			}
+		}
+
 		FunctionDeclarationNode* func_ref_ptr = nullptr;
 		if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 			func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
 		} else if (known_member_func) {
 			func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 		} else {
-			auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_name_token, CVQualifier::None);
+			ASTNode temp_type;
+			if (member_call_return_type_hint.has_value()) {
+				temp_type = emplace_node<TypeSpecifierNode>(*member_call_return_type_hint);
+			} else {
+				TypeCategory placeholder_type = is_function_pointer_member_call
+					? TypeCategory::Auto
+					: TypeCategory::Int;
+				int placeholder_size_bits = is_function_pointer_member_call ? 0 : 32;
+				temp_type = emplace_node<TypeSpecifierNode>(
+					placeholder_type,
+					TypeQualifier::None,
+					placeholder_size_bits,
+					member_name_token,
+					CVQualifier::None);
+			}
 			auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
 			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 			func_ref_ptr = &func_ref;
@@ -883,6 +957,11 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 
 		result = emplace_node<ExpressionNode>(
 			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_name_token));
+		if (member_call_return_type_hint.has_value()) {
+			setCallParserReturnTypeHint(
+				result->as<ExpressionNode>(),
+				*member_call_return_type_hint);
+		}
 		if ((instantiated_func.has_value() &&
 			 instantiated_func->is<FunctionDeclarationNode>()) ||
 			known_member_func != nullptr) {

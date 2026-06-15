@@ -448,8 +448,12 @@ void Parser::appendFunctionCallArgType(const ASTNode& arg_node, std::vector<Type
 			if (const FunctionDeclarationNode* func_decl = inner.callee().function_declaration_or_null()) {
 				const ASTNode& ret_node = func_decl->decl_node().type_node();
 				if (ret_node.template is<TypeSpecifierNode>()) {
-					arg_type = ret_node.template as<TypeSpecifierNode>();
-					return;
+					const TypeSpecifierNode& return_type = ret_node.template as<TypeSpecifierNode>();
+					if (return_type.type() != TypeCategory::Auto &&
+						return_type.type() != TypeCategory::DeclTypeAuto) {
+						arg_type = return_type;
+						return;
+					}
 				}
 			}
 			if (inner.has_parser_return_type_hint()) {

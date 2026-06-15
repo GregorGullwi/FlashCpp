@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-15
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -171,6 +171,15 @@ the areas that were previously blocking standards-visible behavior:
   extension (for example `Runner<int>::Ops`), so alias/self-owner qualified
   calls remain on their existing paths instead of being eagerly collapsed onto
   unrelated concrete owner names
+- instantiated template class members now preserve function-pointer member
+  signatures through alias/template-argument recovery plus source
+  `StructTypeInfo` fallback, so indirect calls through concrete
+  function-pointer data members no longer lose the signature required for
+  IR-lowering return typing
+- postfix member-call placeholders for function-pointer data members now carry
+  the synthesized return type from the member signature instead of a fake
+  scalar stub, so overload resolution and chained postfix analysis no longer
+  misclassify calls like `pick(this->callback())` inside template bodies
 
 ## Architectural invariants to preserve
 
@@ -267,9 +276,11 @@ Remaining near-term scope:
   main concrete receiver-call builders plus template-parameter
   function-pointer call materialization are covered as well, and the explicit-
   qualified postfix placeholder member/operator builders are now covered too,
-  so the remaining work is in the smaller set of ordinary function-pointer /
-  member-function-pointer fast paths and any still-uncovered placeholder
-  materializers that return immediately without structured lookup metadata
+  and ordinary function-pointer member postfix placeholders now preserve the
+  real return shape, so the remaining work is in the narrower
+  member-function-pointer / pointer-to-member fast-path surface plus any
+  still-uncovered placeholder materializers that return immediately without
+  structured lookup metadata
 - the newly-covered qualified-owner split is intentionally sema-owned: the
   deferred-template resolver is now bypassed for non-template qualified calls
   whose left-hand side is a real type owner, and the old parser-side ordinary
@@ -321,13 +332,27 @@ Next direct-call target:
   ordinary-static-member qualified fallback, and the substitution-time
   qualified-call record rebuild, template-parameter function-pointer call
   preservation, and explicit-qualified postfix member/operator preservation,
-  the next highest-value target is the remaining ordinary function-pointer /
-  member-function-pointer fast-path surface; if any placeholder call builders
-  remain after that audit, document them explicitly and close them one by one
+  the next highest-value target is the remaining
+  member-function-pointer / pointer-to-member fast-path surface; if any
+  placeholder call builders remain after that audit, document them explicitly
+  and close them one by one
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
    that still block standards-conforming typed lookup.
+
+## Next steps
+
+1. Audit `.*` / `->*` member-function-pointer call materialization and preserve
+   the concrete return shape anywhere parser/materialization already knows the
+   pointed-to signature.
+2. Trace the remaining placeholder member-call builders that still synthesize
+   temporary `FunctionDeclarationNode` stubs, and replace fake scalar return
+   types with either precise synthesized return types or explicit parser
+   return-type hints.
+3. Leave replay/`StructTypeInfo` sync work in opportunistic mode unless a new
+   uncovered identity-loss failure appears; it is no longer the default next
+   slice.
 
 ## Validation guidance
 

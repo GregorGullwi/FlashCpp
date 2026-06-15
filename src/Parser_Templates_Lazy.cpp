@@ -1596,6 +1596,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			member_decl.bitfield_width,
 			resolveTemplateFunctionPointerSignature(
 				type_spec, substituted_type_index,
+				nullptr,
 				lazy_info->parent_template_params, lazy_info->parent_template_args),
 			member_decl.is_no_unique_address);
 	}

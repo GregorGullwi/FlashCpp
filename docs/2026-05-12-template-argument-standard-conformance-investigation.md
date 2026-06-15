@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-15
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -168,6 +168,15 @@ blocking areas:
   (for example `Runner<int>::Ops` from `Ops`), preventing alias/self-owner
   qualified calls from being eagerly collapsed onto unrelated concrete owner
   names while still closing the standards-visible collision above
+- instantiated template class members now preserve function-pointer member
+  signatures through alias/template-argument recovery plus source
+  `StructTypeInfo` fallback, closing the standards-visible gap where indirect
+  calls through concrete function-pointer data members lost their return
+  signature during materialization
+- postfix function-pointer member-call placeholders now synthesize the real
+  return type from the member signature instead of carrying a fake scalar
+  return, so overload resolution on calls like `pick(this->callback())`
+  follows the actual C++ type system
 
 ## Highest-value remaining standards gaps
 
@@ -246,9 +255,10 @@ Remaining near-term scope:
   address non-receiver paths are now covered too, and the main concrete
   receiver-call builders plus template-parameter function-pointer call
   materialization are covered as well, and the explicit-qualified postfix
-  member/operator placeholder builders are now covered too, so the remaining
-  work is in the smaller set of ordinary function-pointer /
-  member-function-pointer fast paths and any still-uncovered placeholder
+  member/operator placeholder builders are now covered too, and ordinary
+  function-pointer member postfix placeholders now preserve the real return
+  shape, so the remaining work is in the narrower member-function-pointer /
+  pointer-to-member fast-path surface plus any still-uncovered placeholder
   builders that return immediately without any structured lookup record
 - the just-fixed qualified-owner collision confirms the right ownership split:
   non-template qualified calls must first decide whether the left-hand side is
@@ -295,14 +305,26 @@ Next direct-call target:
   qualified/member, direct operator/declaration-address, and substitution-
   materialization paths plus template-parameter function-pointer call
   preservation and explicit-qualified postfix member/operator preservation,
-  the next target is the remaining ordinary function-pointer /
-  member-function-pointer fast-path surface; if any smaller placeholder
-  builders remain after that audit, document them explicitly and close them
-  one at a time
+  the next target is the remaining member-function-pointer /
+  pointer-to-member fast-path surface; if any smaller placeholder builders
+  remain after that audit, document them explicitly and close them one at a
+  time
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
    step 1.
+
+## Next steps
+
+1. Target `.*` / `->*` member-function-pointer calls next, especially cases
+   where the pointed-to return type must participate in overload ranking or
+   further postfix analysis.
+2. Continue shrinking placeholder-member-call construction by preferring
+   synthesized concrete return types or explicit parser return-type hints
+   wherever parser/materialization already has enough type evidence.
+3. Keep replay/identity work in reserve for concrete failures; the remaining
+   conformance pressure is now centered on the last parser compatibility
+   boundaries rather than on broad replay drift.
 
 ## Standards rules for follow-up work
 
