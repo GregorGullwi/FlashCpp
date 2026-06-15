@@ -1759,6 +1759,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							template_inst = try_instantiate_template_explicit(final_identifier.value(), *template_args, arg_types);
 						}
 						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							qualified_symbol = *template_inst;
 							decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
 							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template with explicit args: ", qualified_name);
 						}
@@ -1770,6 +1771,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
 							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+								qualified_symbol = *template_inst;
 								decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
 								FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
 							}

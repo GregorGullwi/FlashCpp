@@ -159,6 +159,11 @@ blocking areas:
   arguments, parser return-type hints, and dependent-qualified lookup records
   as separate metadata so later semantic resolution can replay the correct
   lookup instead of inheriting a parser-selected callee as final meaning
+- deferred namespace-qualified explicit-template calls now preserve exact
+  definition-bound replay metadata only when the visible function-template
+  candidate is unique and no exact specialization is registered for that same
+  qualified template name, so specialization-first lookup remains available
+  during later instantiation
 - the unqualified/current-owner explicit-member-template placeholder path in
   `Parser_Expr_PrimaryExpr.cpp` now preserves the same split for deferred
   class-scope member-template calls: it keeps a structured current-
@@ -311,6 +316,12 @@ Remaining near-term scope:
   parser-time return-type visibility from an unrelated
   `lookupAllTemplates(...)` result once the matching member-template owner is
   already known
+- the newly-covered generic namespace-qualified explicit-template path confirms
+  the same rule for specialization-aware lookup: preserving a unique parse-time
+  primary template declaration is only conforming when no exact specialization
+  is registered for that qualified template name. Otherwise deferred
+  instantiation must remain free to select the explicit specialization first,
+  as in `ns::sum<Args...>()` with `template<> sum<int>()`
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -365,7 +376,11 @@ Next direct-call target:
    unqualified/current-owner explicit-member-template placeholder path is now
    covered; it preserves structured current-instantiation owner metadata and
    member-template-derived parser return-type hints instead of deferring with
-   only `qualified_name`.
+   only `qualified_name`. The generic namespace-qualified explicit-template
+   placeholder path is now covered too, including the specialization-aware
+   rule that suppresses exact primary-template binding when a registered exact
+   specialization must stay visible; the next uncovered parser target is the
+   remaining postfix explicit-qualified member/operator materializer surface.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -401,9 +416,13 @@ For work in this area, rerun:
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_qualified_static_member_same_arity_decltype_ret0.cpp`
 - `test_template_current_member_explicit_template_decltype_ret0.cpp`
+- `test_template_disambiguation_pack_ret40.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
 - `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`
+- `test_template_qualified_namespace_explicit_definition_bound_ret0.cpp`
+- `test_template_global_qualified_namespace_explicit_definition_bound_ret0.cpp`
+- `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`

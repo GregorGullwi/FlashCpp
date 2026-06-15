@@ -2143,6 +2143,33 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					return std::nullopt;
 				}
 				if (have_complete_substituted_arg_types) {
+					if (call.has_definition_lookup_record() &&
+						call.definition_lookup_record()
+							->definition_bound_template_declaration != nullptr &&
+						call.has_qualified_name() &&
+						template_name == call.qualified_name()) {
+						std::vector<ASTNode> substituted_template_arg_nodes;
+						substituted_template_arg_nodes.reserve(
+							explicit_template_arg_nodes.size());
+						for (const auto& arg_node :
+							 explicit_template_arg_nodes) {
+							substituted_template_arg_nodes.push_back(
+								substitute(arg_node));
+						}
+						std::optional<ASTNode> instantiated =
+							parser_.resolveDefinitionBoundQualifiedTemplateCall(
+								*call.definition_lookup_record(),
+								template_name,
+								std::span<const ASTNode>(
+									substituted_template_arg_nodes.data(),
+									substituted_template_arg_nodes.size()),
+								substituted_args_nodes,
+								substituted_arg_types);
+						if (instantiated.has_value()) {
+							normalizePendingSemanticRoots();
+						}
+						return instantiated;
+					}
 					std::optional<ASTNode> instantiated = parser_.try_instantiate_template_explicit(
 						template_name,
 						substituted_template_args,

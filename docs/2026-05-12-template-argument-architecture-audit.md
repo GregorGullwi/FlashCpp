@@ -166,6 +166,11 @@ the areas that were previously blocking standards-visible behavior:
   template-argument AST, parser return-type hints, and dependent-qualified
   lookup records separately instead of collapsing semantic ownership onto a
   parser-selected callee
+- deferred namespace-qualified explicit-template direct calls now also preserve
+  definition-bound replay metadata when the visible template candidate is
+  unique, but that exact parse-time binding is intentionally suppressed when
+  the template name already has registered exact specializations so later
+  instantiation can still select the specialization-first C++20 path
 - qualified direct-call target resolution now distinguishes type owners from
   namespace qualifiers before consuming definition-bound compatibility data, so
   sema resolves nested current-instantiation owners structurally and no longer
@@ -323,6 +328,14 @@ Remaining near-term scope:
   `pick<int>(...)`-style member-template calls inside a current instantiation
   must preserve structured owner/member identity and may not borrow parser-time
   return-type visibility from an unrelated `lookupAllTemplates(...)` result
+- the generic namespace-qualified explicit-template placeholder/materializers
+  in `Parser_Expr_PrimaryExpr.cpp` are now on that split model too, including a
+  specialization-aware guard that only preserves exact parse-time template
+  identity when no exact specialization is registered for the same qualified
+  template name; the remaining work in this sub-area is therefore the other
+  qualified/member-template parser exits, especially postfix explicit-qualified
+  member/operator placeholder paths that still do not preserve the same
+  deferred lookup structure end-to-end
 - the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
@@ -385,6 +398,11 @@ Next direct-call target:
    `qualified_name` / `mangled_name` after owner resolution already succeeded,
    and move them onto the same deferred lookup + parser return-type-hint split
    now used by the covered ordinary-call paths.
+   Immediate next target: the remaining postfix explicit-qualified
+   member/operator placeholder/materializer exits in
+   `Parser_Expr_PostfixCalls.cpp` that still bypass
+   `FunctionCallDefinitionLookupRecord` or equivalent deferred lookup state
+   after owner resolution already succeeded.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -409,9 +427,13 @@ When changing this area, always rerun:
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_qualified_static_member_same_arity_decltype_ret0.cpp`
 - `test_template_current_member_explicit_template_decltype_ret0.cpp`
+- `test_template_disambiguation_pack_ret40.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
 - `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
 - `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`
+- `test_template_qualified_namespace_explicit_definition_bound_ret0.cpp`
+- `test_template_global_qualified_namespace_explicit_definition_bound_ret0.cpp`
+- `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`

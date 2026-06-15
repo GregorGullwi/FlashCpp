@@ -1129,6 +1129,7 @@ private:
 	size_t phase1_cutoff_file_idx_ = SIZE_MAX;
 	std::optional<Token> phase1_violation_token_;
 	const TemplateDefinitionLookupContext* current_template_definition_lookup_context_ = nullptr;
+	const void* preferred_definition_bound_template_declaration_ = nullptr;
 
 	// Add parsing depth counter to detect infinite loops
 	// This is incremented/decremented in critical parsing functions
@@ -1943,6 +1944,12 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		Token called_from_token);
 	std::optional<ASTNode> resolveDefinitionBoundOrdinaryCall(
 		const FunctionCallDefinitionLookupRecord& record,
+		std::span<const TypeSpecifierNode> arg_types);
+	std::optional<ASTNode> resolveDefinitionBoundQualifiedTemplateCall(
+		const FunctionCallDefinitionLookupRecord& record,
+		std::string_view qualified_name,
+		std::span<const ASTNode> template_argument_nodes,
+		const ChunkedVector<ASTNode>& arguments,
 		std::span<const TypeSpecifierNode> arg_types);
 	std::optional<ASTNode> resolveDeferredQualifiedTemplateCall(
 		std::string_view qualified_name,

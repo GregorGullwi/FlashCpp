@@ -2984,6 +2984,7 @@ struct CallLookupRecordShared {
 struct FunctionCallDefinitionLookupRecord : CallLookupRecordShared {
 	const FunctionDeclarationNode* resolved_function = nullptr;
 	StringHandle resolved_mangled_name{};
+	const void* definition_bound_template_declaration = nullptr;
 	bool ordinary_lookup_included = true;
 	bool argument_dependent_lookup_included = true;
 };

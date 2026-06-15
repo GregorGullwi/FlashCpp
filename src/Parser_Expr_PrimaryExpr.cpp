@@ -701,6 +701,26 @@ std::optional<ASTNode> Parser::resolveDefinitionBoundOrdinaryCall(
 	return *resolution.selected_overload;
 }
 
+std::optional<ASTNode> Parser::resolveDefinitionBoundQualifiedTemplateCall(
+	const FunctionCallDefinitionLookupRecord& record,
+	std::string_view qualified_name,
+	std::span<const ASTNode> template_argument_nodes,
+	const ChunkedVector<ASTNode>& arguments,
+	std::span<const TypeSpecifierNode> arg_types) {
+	ScopedDefinitionLookupContext ctx_scope(
+		current_template_definition_lookup_context_,
+		record.definition_context.is_valid() ? &record.definition_context : nullptr);
+	FlashCpp::ScopedState guard_preferred_definition_bound_template(
+		preferred_definition_bound_template_declaration_);
+	preferred_definition_bound_template_declaration_ =
+		record.definition_bound_template_declaration;
+	return resolveDeferredQualifiedTemplateCall(
+		qualified_name,
+		template_argument_nodes,
+		arguments,
+		arg_types);
+}
+
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeConcreteCallTemplateArguments(
 	std::span<const ASTNode> template_argument_nodes) {
 	InlineVector<TemplateTypeArg, 4> concrete_args;
@@ -3698,13 +3718,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return *err;
 			}
 
+			const bool has_explicit_template_args =
+				template_args.has_value() && !template_args->empty();
+			const bool has_dependent_explicit_template_args =
+				has_explicit_template_args &&
+				explicitTemplateArgsRequireDeferredInstantiation(*template_args);
+
 			// If not found (or explicit template arguments were provided) and we're not in extern "C",
 			// try template instantiation. The global-scope `::ns::func<T>(...)` path must support the
 			// same explicit-template parsing as the regular qualified-identifier path.
-			if (current_linkage_ != Linkage::C && !has_deferred_qualified_call_args) {
+			if (current_linkage_ != Linkage::C &&
+				!has_deferred_qualified_call_args &&
+				!has_dependent_explicit_template_args) {
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 
-				if (template_args.has_value() && !template_args->empty()) {
+				if (has_explicit_template_args) {
 					auto template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 					if (!template_inst.has_value()) {
 						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
@@ -3726,6 +3754,40 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 					}
 				}
+			}
+
+			bool keep_single_template_decl_for_dependent_call = false;
+			const void* definition_bound_template_declaration = nullptr;
+			if (has_dependent_explicit_template_args &&
+				identifierType.has_value() &&
+				identifierType->is<TemplateFunctionDeclarationNode>()) {
+				const std::vector<TemplateNameLookupCandidate> template_candidates =
+					lookupFunctionTemplateCandidatesForInstantiation(
+						buildQualifiedNameFromStrings(namespaces, qual_id.name()),
+						0);
+				keep_single_template_decl_for_dependent_call =
+					template_candidates.size() == 1 &&
+					!gTemplateRegistry.hasExactSpecializationsForName(
+						buildQualifiedNameFromStrings(namespaces, qual_id.name()));
+				if (keep_single_template_decl_for_dependent_call) {
+					definition_bound_template_declaration =
+						identifierType->raw_pointer();
+				}
+			}
+			if (has_dependent_explicit_template_args &&
+				(!identifierType.has_value() ||
+				 (identifierType->is<TemplateFunctionDeclarationNode>() &&
+				  !keep_single_template_decl_for_dependent_call))) {
+				auto placeholder_type = emplace_node<TypeSpecifierNode>(
+					TypeCategory::Auto,
+					TypeQualifier::None,
+					get_type_size_bits(TypeCategory::Auto),
+					qual_id.identifier_token(),
+					CVQualifier::None);
+				auto placeholder_decl = emplace_node<DeclarationNode>(
+					placeholder_type,
+					qual_id.identifier_token());
+				identifierType = placeholder_decl;
 			}
 
 			// If still not found, create a forward declaration
@@ -3750,7 +3812,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create function call node with the qualified identifier
 			auto function_call_node = emplace_node<ExpressionNode>(
 				makeCallExprFromNode(*identifierType, std::move(args), qual_id.identifier_token()));
-			if (template_args.has_value() && !template_args->empty()) {
+			if (has_explicit_template_args) {
 				if (template_arg_nodes.empty()) {
 					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
 				} else {
@@ -3780,6 +3842,45 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							false);
 					record.has_value()) {
 					setCallDefinitionLookupRecord(function_call_node.as<ExpressionNode>(), *record);
+				}
+			} else if (has_explicit_template_args) {
+				std::optional<TemplateDefinitionLookupContext>
+					deferred_definition_lookup_context;
+				if ((current_template_definition_lookup_context_ != nullptr &&
+					 current_template_definition_lookup_context_->is_valid()) ||
+					parsing_template_depth_ > 0 ||
+					hasActiveTemplateParameters()) {
+					StringHandle current_instantiation_name{};
+					if (!member_function_context_stack_.empty()) {
+						current_instantiation_name =
+							member_function_context_stack_.back().struct_name;
+					} else if (!struct_parsing_context_stack_.empty() &&
+							   !struct_parsing_context_stack_.back().struct_name.empty()) {
+						current_instantiation_name =
+							StringTable::getOrInternStringHandle(
+								struct_parsing_context_stack_.back().struct_name);
+					}
+					deferred_definition_lookup_context =
+						buildDefinitionLookupContextFromToken(
+							qual_id.identifier_token(),
+							current_instantiation_name);
+				}
+				const TemplateDefinitionLookupContext* definition_lookup_context =
+					deferred_definition_lookup_context.has_value()
+						? &*deferred_definition_lookup_context
+						: current_template_definition_lookup_context_;
+				if (std::optional<FunctionCallDefinitionLookupRecord> record =
+						makeDeferredFunctionCallDefinitionLookupRecord(
+							definition_lookup_context,
+							qual_id.identifier_token(),
+							true,
+							false);
+					record.has_value()) {
+					record->definition_bound_template_declaration =
+						definition_bound_template_declaration;
+					setCallDefinitionLookupRecord(
+						function_call_node.as<ExpressionNode>(),
+						*record);
 				}
 			}
 			result = function_call_node;
@@ -4699,16 +4800,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If not found OR if it's a template (not an instantiated function), try template instantiation
 				// Also try if explicit template arguments were provided (to handle overload resolution)
+				const bool has_any_explicit_template_args =
+					template_args.has_value() && !template_args->empty();
 				bool has_dependent_explicit_template_args = false;
 				if (((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) ||
-					 (template_args.has_value() && !template_args->empty())) &&
+					 has_any_explicit_template_args) &&
 					current_linkage_ != Linkage::C &&
 					!has_deferred_qualified_call_args) {
 					// Build qualified template name
 					std::string_view qualified_name = resolved_qualified_name;
 
 					// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
-					if (template_args.has_value() && !template_args->empty()) {
+					if (has_any_explicit_template_args) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Using explicit template arguments for function call to '{}'", qualified_name);
 
 						has_dependent_explicit_template_args =
@@ -4746,8 +4849,28 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// When explicit template arguments are dependent and instantiation failed,
 				// the call expression must use a dependent placeholder return type so that
 				// decltype(...) defers resolution to template instantiation time.
+				bool keep_single_template_decl_for_dependent_call = false;
+				const void* definition_bound_template_declaration = nullptr;
 				if (has_dependent_explicit_template_args &&
-					(!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>())) {
+					identifierType.has_value() &&
+					identifierType->is<TemplateFunctionDeclarationNode>()) {
+					const std::vector<TemplateNameLookupCandidate> template_candidates =
+						lookupFunctionTemplateCandidatesForInstantiation(
+							resolved_qualified_name,
+							0);
+					keep_single_template_decl_for_dependent_call =
+						template_candidates.size() == 1 &&
+						!gTemplateRegistry.hasExactSpecializationsForName(
+							resolved_qualified_name);
+					if (keep_single_template_decl_for_dependent_call) {
+						definition_bound_template_declaration =
+							identifierType->raw_pointer();
+					}
+				}
+				if (has_dependent_explicit_template_args &&
+					(!identifierType.has_value() ||
+					 (identifierType->is<TemplateFunctionDeclarationNode>() &&
+					  !keep_single_template_decl_for_dependent_call))) {
 					// Use Auto category to signal that the return type is dependent
 					TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None,
 						get_type_size_bits(TypeCategory::Auto), final_identifier, CVQualifier::None);
@@ -4782,12 +4905,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If explicit template arguments were provided, store them in the call expression
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
-				if (template_args.has_value() && !template_args->empty() && template_arg_nodes.empty()) {
+				if (has_any_explicit_template_args && template_arg_nodes.empty()) {
 					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
-				} else if (template_args.has_value() && !template_args->empty()) {
+				} else if (has_any_explicit_template_args) {
 					syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
 				}
-				bool has_explicit_template_args = template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty();
+				bool has_explicit_template_args = has_any_explicit_template_args && !template_arg_nodes.empty();
 				if (has_explicit_template_args) {
 					setCallTemplateArguments(result->as<ExpressionNode>(), std::move(template_arg_nodes));
 					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in call expression (path 1)");
@@ -4797,12 +4920,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				std::string_view qualified_name = resolved_qualified_name;
 				setCallQualifiedName(result->as<ExpressionNode>(), qualified_name);
 				FLASH_LOG(Parser, Debug, "Set qualified name on call expression: ", qualified_name);
-				if (has_dependent_explicit_template_args &&
-					!identifierType->is<FunctionDeclarationNode>()) {
-					setCallParserReturnTypeHint(
-						result->as<ExpressionNode>(),
-						decl_ptr->type_specifier_node());
-				}
 
 				// If the function has a pre-computed mangled name, set it on the call expression
 				if (identifierType->is<FunctionDeclarationNode>()) {
@@ -4821,6 +4938,45 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								false);
 						record.has_value()) {
 						setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
+				}
+			} else if (has_explicit_template_args) {
+					std::optional<TemplateDefinitionLookupContext>
+						deferred_definition_lookup_context;
+					if ((current_template_definition_lookup_context_ != nullptr &&
+						 current_template_definition_lookup_context_->is_valid()) ||
+						parsing_template_depth_ > 0 ||
+						hasActiveTemplateParameters()) {
+						StringHandle current_instantiation_name{};
+						if (!member_function_context_stack_.empty()) {
+							current_instantiation_name =
+								member_function_context_stack_.back().struct_name;
+						} else if (!struct_parsing_context_stack_.empty() &&
+								   !struct_parsing_context_stack_.back().struct_name.empty()) {
+							current_instantiation_name =
+								StringTable::getOrInternStringHandle(
+									struct_parsing_context_stack_.back().struct_name);
+						}
+						deferred_definition_lookup_context =
+							buildDefinitionLookupContextFromToken(
+								qual_id.identifier_token(),
+								current_instantiation_name);
+					}
+					const TemplateDefinitionLookupContext* definition_lookup_context =
+						deferred_definition_lookup_context.has_value()
+							? &*deferred_definition_lookup_context
+							: current_template_definition_lookup_context_;
+					if (std::optional<FunctionCallDefinitionLookupRecord> record =
+							makeDeferredFunctionCallDefinitionLookupRecord(
+								definition_lookup_context,
+								qual_id.identifier_token(),
+								true,
+								false);
+						record.has_value()) {
+						record->definition_bound_template_declaration =
+							definition_bound_template_declaration;
+						setCallDefinitionLookupRecord(
+							result->as<ExpressionNode>(),
+							*record);
 					}
 				}
 			} else {

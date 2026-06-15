@@ -3880,7 +3880,21 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	};
 
 	std::optional<size_t> preferred_candidate_index;
-	if (use_shape_preselection) {
+	if (preferred_definition_bound_template_declaration_ != nullptr) {
+		for (size_t i = 0; i < viable_candidates.size(); ++i) {
+			if (viable_candidates[i].template_func == nullptr) {
+				continue;
+			}
+			if (static_cast<const void*>(viable_candidates[i].template_func) ==
+				preferred_definition_bound_template_declaration_) {
+				preferred_candidate_index = i;
+				break;
+			}
+		}
+		if (!preferred_candidate_index.has_value()) {
+			return std::nullopt;
+		}
+	} else if (use_shape_preselection) {
 		std::vector<ASTNode> shape_overloads;
 		std::vector<size_t> shape_candidate_indices;
 		shape_overloads.reserve(viable_candidates.size());
