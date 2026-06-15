@@ -177,6 +177,15 @@ blocking areas:
   return type from the member signature instead of carrying a fake scalar
   return, so overload resolution on calls like `pick(this->callback())`
   follows the actual C++ type system
+- `.*` / `->*` member-function-pointer postfix calls now preserve the pointed-
+  to return shape and parser return-type hint through template-body
+  materialization instead of degrading to fake scalar placeholders
+- member-function-pointer template arguments now preserve declaring-class
+  identity through substitution/materialization, MSVC mangling now covers
+  member-function-pointer cv/ref/noexcept qualifiers plus ordinary
+  pointer-to-member declarator forms, and `_Is_memfunptr`-style partial
+  specializations now deduce the owner class instead of treating it as opaque
+  text
 
 ## Highest-value remaining standards gaps
 
@@ -256,10 +265,13 @@ Remaining near-term scope:
   receiver-call builders plus template-parameter function-pointer call
   materialization are covered as well, and the explicit-qualified postfix
   member/operator placeholder builders are now covered too, and ordinary
-  function-pointer member postfix placeholders now preserve the real return
-  shape, so the remaining work is in the narrower member-function-pointer /
-  pointer-to-member fast-path surface plus any still-uncovered placeholder
-  builders that return immediately without any structured lookup record
+  function-pointer member postfix placeholders plus the `.*` / `->*`
+  member-function-pointer fast paths now preserve the real return shape, so
+  the remaining work is no longer that whole pointer-to-member surface; it is
+  the smaller set of still-uncovered placeholder/materializer exits plus the
+  canonical `TypeCategory::MemberObjectPointer` carrier gap where the
+  underlying member type is not yet preserved strongly enough for every
+  ABI-sensitive consumer
 - the just-fixed qualified-owner collision confirms the right ownership split:
   non-template qualified calls must first decide whether the left-hand side is
   a type owner or a namespace qualifier, and only then may compatibility
@@ -304,11 +316,11 @@ Next direct-call target:
   after the now-covered typed qualified-member, string-literal UDL, postfix
   qualified/member, direct operator/declaration-address, and substitution-
   materialization paths plus template-parameter function-pointer call
-  preservation and explicit-qualified postfix member/operator preservation,
-  the next target is the remaining member-function-pointer /
-  pointer-to-member fast-path surface; if any smaller placeholder builders
-  remain after that audit, document them explicitly and close them one at a
-  time
+  preservation, the `.*` / `->*` member-function-pointer pass, and
+  explicit-qualified postfix member/operator preservation, the next targets
+  are the remaining qualified/member-template compatibility-only materializers
+  plus any smaller placeholder builders that still return immediately without
+  a structured lookup record
 
 2. Expand current-instantiation and unknown-specialization handling only where
    it unblocks concrete replay or typed-lookup failures still remaining after
@@ -316,15 +328,17 @@ Next direct-call target:
 
 ## Next steps
 
-1. Target `.*` / `->*` member-function-pointer calls next, especially cases
-   where the pointed-to return type must participate in overload ranking or
-   further postfix analysis.
-2. Continue shrinking placeholder-member-call construction by preferring
-   synthesized concrete return types or explicit parser return-type hints
-   wherever parser/materialization already has enough type evidence.
-3. Keep replay/identity work in reserve for concrete failures; the remaining
-   conformance pressure is now centered on the last parser compatibility
-   boundaries rather than on broad replay drift.
+1. Continue eliminating compatibility-only parser metadata in the remaining
+   qualified/member-template materializers that still stop at
+   `qualified_name` / `mangled_name` after owner resolution already succeeded.
+2. If another pointer-to-member issue appears, close the remaining canonical
+   `TypeCategory::MemberObjectPointer` carrier gap by preserving the
+   underlying member type explicitly instead of relying on declarator-shaped
+   `member_class + pointer_depth` forms in ABI-sensitive paths.
+3. Keep replay/identity and broader
+   current-instantiation/unknown-specialization work in reserve for concrete
+   failures; the remaining conformance pressure is now centered on the last
+   parser compatibility boundaries rather than on broad replay drift.
 
 ## Standards rules for follow-up work
 
@@ -414,10 +428,14 @@ For work in this area, rerun:
    preservation are
    `test_template_explicit_base_member_call_default_arg_ret0.cpp` and
    `test_template_explicit_base_operator_call_default_arg_ret0.cpp`.
-   The next concrete target in this slice is now the remaining ordinary
-   function-pointer / member-function-pointer fast-path surface, plus an audit
-   for any smaller placeholder builders that still stop at compatibility
-   metadata after that pass.
+   The member-function-pointer fast-path surface is now covered, including the
+   `.*` / `->*` postfix path, MSVC ABI mangling for member-function-pointer
+   qualifiers, and `_Is_memfunptr`-style owner-class deduction in partial
+   specializations. The next concrete target in this slice is therefore the
+   smaller set of qualified/member-template materializers and placeholder
+   builders that still stop at compatibility metadata after owner resolution
+   already succeeded, plus the remaining canonical member-object-pointer type
+   carrier gap if another ABI-sensitive failure reaches it.
    Long-term direction: replace these per-call-site parser repairs with one
    shared structured qualified-owner representation plus a single resolver used
    by both parser materialization and later sema fallback, so future

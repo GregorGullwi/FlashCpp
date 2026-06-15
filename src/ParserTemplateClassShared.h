@@ -194,6 +194,9 @@ inline void applyBoundTemplateArgMetadata(
 	substituted_type.set_reference_qualifier(collapseReferenceQualifiers(
 		arg->ref_qualifier,
 		substituted_type.reference_qualifier()));
+	if (!substituted_type.has_member_class() && arg->member_class_name.isValid()) {
+		substituted_type.set_member_class_name(arg->member_class_name);
+	}
 	if (!substituted_type.has_function_signature() && arg->function_signature.has_value()) {
 		substituted_type.set_function_signature(*arg->function_signature);
 	}

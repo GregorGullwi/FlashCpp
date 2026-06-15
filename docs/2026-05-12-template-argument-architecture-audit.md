@@ -180,6 +180,16 @@ the areas that were previously blocking standards-visible behavior:
   the synthesized return type from the member signature instead of a fake
   scalar stub, so overload resolution and chained postfix analysis no longer
   misclassify calls like `pick(this->callback())` inside template bodies
+- `.*` / `->*` member-function-pointer postfix calls now preserve the pointed-
+  to return shape and parser return-type hint through template-body
+  materialization, so overload ranking and chained postfix analysis no longer
+  collapse those calls onto fake scalar placeholders
+- member-function-pointer template arguments now preserve declaring-class
+  identity through substitution/materialization, MSVC mangling now covers
+  member-function-pointer cv/ref/noexcept qualifiers plus ordinary
+  pointer-to-member declarator forms, and the `_Is_memfunptr`-style partial-
+  specialization matcher now deduces the owner class instead of treating the
+  member-pointer owner as opaque text
 
 ## Architectural invariants to preserve
 
@@ -276,11 +286,13 @@ Remaining near-term scope:
   main concrete receiver-call builders plus template-parameter
   function-pointer call materialization are covered as well, and the explicit-
   qualified postfix placeholder member/operator builders are now covered too,
-  and ordinary function-pointer member postfix placeholders now preserve the
-  real return shape, so the remaining work is in the narrower
-  member-function-pointer / pointer-to-member fast-path surface plus any
-  still-uncovered placeholder materializers that return immediately without
-  structured lookup metadata
+  and ordinary function-pointer member postfix placeholders plus the
+  `.*` / `->*` member-function-pointer fast paths now preserve the real return
+  shape, so the remaining work is no longer that whole pointer-to-member
+  surface; it is the smaller set of still-uncovered placeholder/materializer
+  exits plus the canonical `TypeCategory::MemberObjectPointer` carrier gap
+  where the underlying member type is not yet preserved strongly enough for
+  every ABI-sensitive consumer
 - the newly-covered qualified-owner split is intentionally sema-owned: the
   deferred-template resolver is now bypassed for non-template qualified calls
   whose left-hand side is a real type owner, and the old parser-side ordinary
@@ -331,11 +343,11 @@ Next direct-call target:
   metadata preservation pass, the removal of the parser-owned
   ordinary-static-member qualified fallback, and the substitution-time
   qualified-call record rebuild, template-parameter function-pointer call
-  preservation, and explicit-qualified postfix member/operator preservation,
-  the next highest-value target is the remaining
-  member-function-pointer / pointer-to-member fast-path surface; if any
-  placeholder call builders remain after that audit, document them explicitly
-  and close them one by one
+  preservation, the `.*` / `->*` member-function-pointer pass, and
+  explicit-qualified postfix member/operator preservation, the next
+  highest-value targets are the remaining qualified/member-template
+  compatibility-only materializers plus any smaller placeholder call builders
+  that still return immediately without a structured lookup record
 
 2. Only after step 1 is stable, expand
    current-instantiation/unknown-specialization modeling for the concrete cases
@@ -343,16 +355,17 @@ Next direct-call target:
 
 ## Next steps
 
-1. Audit `.*` / `->*` member-function-pointer call materialization and preserve
-   the concrete return shape anywhere parser/materialization already knows the
-   pointed-to signature.
-2. Trace the remaining placeholder member-call builders that still synthesize
-   temporary `FunctionDeclarationNode` stubs, and replace fake scalar return
-   types with either precise synthesized return types or explicit parser
-   return-type hints.
-3. Leave replay/`StructTypeInfo` sync work in opportunistic mode unless a new
-   uncovered identity-loss failure appears; it is no longer the default next
-   slice.
+1. Finish the remaining parser/materialization sites that still preserve only
+   `qualified_name` / `mangled_name` after owner resolution already succeeded,
+   and move them onto the same deferred lookup + parser return-type-hint split
+   now used by the covered ordinary-call paths.
+2. If another pointer-to-member issue appears, close the remaining canonical
+   `TypeCategory::MemberObjectPointer` carrier gap by preserving the
+   underlying member type explicitly instead of relying on declarator-shaped
+   `member_class + pointer_depth` forms in ABI-sensitive paths.
+3. Leave replay/`StructTypeInfo` sync and broader
+   current-instantiation/unknown-specialization expansion in opportunistic mode
+   unless a concrete uncovered failure appears.
 
 ## Validation guidance
 
@@ -436,10 +449,14 @@ When changing this area, always rerun:
    member/operator builders are
    `test_template_explicit_base_member_call_default_arg_ret0.cpp` and
    `test_template_explicit_base_operator_call_default_arg_ret0.cpp`.
-   The next concrete target in this slice is now the remaining ordinary
-   function-pointer / member-function-pointer fast-path surface, plus an audit
-   for any smaller placeholder builders that still stop at compatibility
-   metadata after that pass.
+   The member-function-pointer fast-path surface is now covered, including the
+   `.*` / `->*` postfix path, MSVC ABI mangling for member-function-pointer
+   qualifiers, and `_Is_memfunptr`-style owner-class deduction in partial
+   specializations. The next concrete target in this slice is therefore the
+   smaller set of qualified/member-template materializers and placeholder
+   builders that still stop at compatibility metadata after owner resolution
+   already succeeded, plus the remaining canonical member-object-pointer type
+   carrier gap if another ABI-sensitive failure reaches it.
    Long-term direction: stop teaching individual parser call sites to recover
    owner identity from short qualified spellings. Instead, preserve a shared
    structured qualified-owner record on the AST and route both parser

@@ -205,6 +205,79 @@ inline void appendCVQualifier(auto& output, CVQualifier cv) {
 	}
 }
 
+template <typename OutputType>
+inline void appendMsvcReversedQualifiedName(
+	OutputType& output,
+	std::string_view qualified_name) {
+	if (qualified_name.empty()) {
+		return;
+	}
+
+	size_t component_end = qualified_name.size();
+	while (component_end > 0) {
+		size_t separator = qualified_name.rfind("::", component_end - 1);
+		size_t component_start = separator == std::string_view::npos
+									 ? 0
+									 : separator + 2;
+		output += qualified_name.substr(component_start, component_end - component_start);
+		if (separator == std::string_view::npos) {
+			break;
+		}
+		output += '@';
+		component_end = separator;
+	}
+}
+
+inline std::string_view getMsvcMemberPointerClassName(
+	const TypeSpecifierNode& type_node) {
+	if (type_node.has_member_class()) {
+		return StringTable::getStringView(type_node.member_class_name());
+	}
+	if (type_node.has_function_signature()) {
+		const FunctionSignature& sig = type_node.function_signature();
+		if (sig.class_name.has_value()) {
+			return *sig.class_name;
+		}
+	}
+	return {};
+}
+
+inline TypeIndex resolveTypeAliasIndex(TypeIndex idx);
+
+inline TypeSpecifierNode buildFunctionSignatureReturnTypeForMangling(
+	const FunctionSignature& sig) {
+	TypeSpecifierNode return_type(
+		resolveTypeAliasIndex(sig.return_type_index),
+		TypeQualifier::None,
+		0,
+		Token{},
+		CVQualifier::None);
+	return_type.set_reference_qualifier(sig.return_reference_qualifier);
+	return_type.add_pointer_levels(sig.return_pointer_depth);
+	return return_type;
+}
+
+template <typename OutputType>
+inline void appendMsvcMemberFunctionPointerQualifierCode(
+	OutputType& output,
+	const FunctionSignature& sig) {
+	output += 'E';
+	if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+		output += 'G';
+	} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+		output += 'H';
+	}
+	appendCVQualifier(
+		output,
+		sig.is_const && sig.is_volatile
+			? CVQualifier::ConstVolatile
+			: sig.is_const
+				? CVQualifier::Const
+				: sig.is_volatile
+					? CVQualifier::Volatile
+					: CVQualifier::None);
+}
+
 // Resolve a TypeIndex through any TypeAlias chain to get the underlying concrete TypeIndex.
 // Needed so that typedef'd types in FunctionSignature produce correct mangled names.
 inline TypeIndex resolveTypeAliasIndex(TypeIndex idx) {
@@ -246,6 +319,9 @@ inline TypeSpecifierNode normalizeTypeSpecifierForMangling(TypeSpecifierNode typ
 		}
 		if (!type_node.has_function_signature() && alias_info.function_signature.has_value()) {
 			type_node.set_function_signature(*alias_info.function_signature);
+		}
+		if (!type_node.has_member_class() && alias_info.member_class_name.has_value()) {
+			type_node.set_member_class_name(*alias_info.member_class_name);
 		}
 	}
 
@@ -420,6 +496,11 @@ template <typename OutputType>
 void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(type_node);
 	const TypeSpecifierNode& normalized = normalized_type;
+	const bool is_member_object_pointer_like =
+		normalized.has_member_class() &&
+		!normalized.has_function_signature() &&
+		(normalized.category() == TypeCategory::MemberObjectPointer ||
+		 normalized.pointer_depth() > 0);
 
 	// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
 	// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
@@ -437,7 +518,11 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	//   E = 64-bit (always E for x64)
 	//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
 	const auto& ptr_levels = normalized.pointer_levels();
-	for (size_t i = 0; i < ptr_levels.size(); ++i) {
+	const size_t ordinary_pointer_level_count =
+		is_member_object_pointer_like && !ptr_levels.empty()
+			? ptr_levels.size() - 1
+			: ptr_levels.size();
+	for (size_t i = 0; i < ordinary_pointer_level_count; ++i) {
 		const auto& ptr_level = ptr_levels[i];
 
 		// Pointer CV-qualifiers (on the pointer itself)
@@ -454,11 +539,34 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		// Pointee CV-qualifiers (on what the pointer points to)
 		// For the last pointer level, use the base type's CV-qualifier
 		// For intermediate levels, get CV from the next pointer level
-		CVQualifier pointee_cv = (i == ptr_levels.size() - 1)
+		CVQualifier pointee_cv = (i == ordinary_pointer_level_count - 1)
 									 ? normalized.cv_qualifier()
 									 : ptr_levels[i + 1].cv_qualifier;
 
 		appendCVQualifier(output, pointee_cv);
+	}
+
+	if (is_member_object_pointer_like) {
+		std::string_view class_name = getMsvcMemberPointerClassName(normalized);
+		if (class_name.empty()) {
+			throw InternalError("MSVC name mangling: member object pointer missing declaring class");
+		}
+
+		output += "PEQ";
+		appendMsvcReversedQualifiedName(output, class_name);
+		output += "@@";
+
+		TypeSpecifierNode member_type = normalized;
+		if (member_type.pointer_depth() > 0) {
+			member_type.limit_pointer_depth(member_type.pointer_depth() - 1);
+		}
+		member_type.set_reference_qualifier(ReferenceQualifier::None);
+		member_type.set_member_class_name(StringHandle{});
+		if (member_type.category() == TypeCategory::MemberObjectPointer) {
+			throw InternalError("MSVC name mangling: member object pointer missing underlying member type");
+		}
+		appendTypeCode(output, member_type);
+		return;
 	}
 
 	// Add base type code
@@ -546,10 +654,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		output += "P6A";
 		if (normalized.has_function_signature()) {
 			const auto& sig = normalized.function_signature();
-				// Use explicit constructor (not default + set_type) to prevent uninitialized
-				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
-			TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+			TypeSpecifierNode ret_spec = buildFunctionSignatureReturnTypeForMangling(sig);
 			appendTypeCode(output, ret_spec);
 			if (sig.parameter_type_indices.empty()) {
 				output += 'X';  // void parameter list
@@ -561,6 +666,51 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			}
 		} else {
 			throw InternalError("MSVC name mangling: FunctionPointer type missing function signature — cannot generate valid symbol");
+		}
+		output += "@Z";
+		break;
+	}
+	case TypeCategory::MemberFunctionPointer: {
+		std::string_view class_name = getMsvcMemberPointerClassName(normalized);
+		if (class_name.empty()) {
+			StringBuilder message;
+			message.append("MSVC name mangling: member function pointer missing declaring class; type=")
+				.append(normalized.getReadableString())
+				.append(", token=")
+				.append(normalized.token().value())
+				.append(", has_sig=")
+				.append(normalized.has_function_signature() ? "1" : "0")
+				.append(", has_member_class=")
+				.append(normalized.has_member_class() ? "1" : "0");
+			if (normalized.has_function_signature()) {
+				const FunctionSignature& sig = normalized.function_signature();
+				message.append(", sig.class_name=")
+					.append(sig.class_name.has_value() ? *sig.class_name : "<none>");
+			}
+			throw InternalError(std::string(message.commit()));
+		}
+		if (!normalized.has_function_signature()) {
+			throw InternalError("MSVC name mangling: MemberFunctionPointer type missing function signature — cannot generate valid symbol");
+		}
+
+		const FunctionSignature& sig = normalized.function_signature();
+		output += "P8";
+		appendMsvcReversedQualifiedName(output, class_name);
+		output += "@@";
+		appendMsvcMemberFunctionPointerQualifierCode(output, sig);
+
+		TypeSpecifierNode ret_spec = buildFunctionSignatureReturnTypeForMangling(sig);
+		appendTypeCode(output, ret_spec);
+		if (sig.parameter_type_indices.empty()) {
+			output += 'X';
+		} else {
+			for (const TypeIndex& pt : sig.parameter_type_indices) {
+				TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+				appendTypeCode(output, param_spec.adjusted_function_parameter_type());
+			}
+		}
+		if (sig.is_noexcept) {
+			output += "_E";
 		}
 		output += "@Z";
 		break;

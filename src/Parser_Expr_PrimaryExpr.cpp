@@ -357,7 +357,16 @@ void attachResolvedOrdinaryDirectCallMetadata(
 				ordinary_lookup_included,
 				argument_dependent_lookup_included);
 		record.has_value()) {
-		setCallDefinitionLookupRecord(call_expr, *record);
+			setCallDefinitionLookupRecord(call_expr, *record);
+	}
+
+	if (std::optional<TypeSpecifierNode> concrete_return_type =
+			FlashCpp::ParserFunctionTypeHelpers::
+				tryGetConcreteReturnTypeFromFunctionDeclaration(
+					func_decl,
+					callee_token);
+		concrete_return_type.has_value()) {
+		setCallParserReturnTypeHint(call_expr, *concrete_return_type);
 	}
 }
 
@@ -9410,6 +9419,45 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									bool resolved_as_struct_member = false;
 									bool defer_struct_member_template_instantiation = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
+										auto structHasMatchingMemberTemplate =
+											[&](const StructDeclarationNode* struct_node,
+												const StructTypeInfo* local_struct_info,
+												StringHandle member_name) {
+												auto matches_template_member = [&](const ASTNode& member_func_node) {
+													if (!member_func_node.is<TemplateFunctionDeclarationNode>()) {
+														return false;
+													}
+													const FunctionDeclarationNode& member_func_decl =
+														member_func_node
+															.as<TemplateFunctionDeclarationNode>()
+															.function_declaration()
+															.as<FunctionDeclarationNode>();
+													return member_func_decl.decl_node()
+															   .identifier_token()
+															   .handle() == member_name;
+												};
+
+												if (struct_node != nullptr) {
+													for (const auto& member_func_decl :
+														 struct_node->member_functions()) {
+														if (matches_template_member(
+																member_func_decl.function_declaration)) {
+															return true;
+														}
+													}
+												}
+												if (local_struct_info != nullptr) {
+													for (const auto& member_func :
+														 local_struct_info->member_functions) {
+														if (matches_template_member(
+																member_func.function_decl)) {
+															return true;
+														}
+													}
+												}
+												return false;
+											};
+
 										auto should_defer_current_struct_member_template_instantiation =
 											[&](std::string_view struct_name, TypeIndex struct_type_index) -> bool {
 											if (struct_name.empty()) {
@@ -9431,6 +9479,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												std::string_view struct_name =
 													StringTable::getStringView(member_ctx.struct_name);
 												if (!struct_name.empty()) {
+													if (!structHasMatchingMemberTemplate(
+															member_ctx.struct_node,
+															member_ctx.local_struct_info,
+															identifier_token.handle())) {
+														return std::nullopt;
+													}
 													if (should_defer_current_struct_member_template_instantiation(
 															struct_name,
 															member_ctx.struct_type_index)) {
@@ -9449,6 +9503,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (!struct_parsing_context_stack_.empty()) {
 												const auto& struct_ctx = struct_parsing_context_stack_.back();
 												if (!struct_ctx.struct_name.empty()) {
+													if (!structHasMatchingMemberTemplate(
+															struct_ctx.struct_node,
+															struct_ctx.local_struct_info,
+															identifier_token.handle())) {
+														return std::nullopt;
+													}
 													TypeIndex struct_type_index{};
 													if (auto scope_type_it = getTypesByNameMap().find(
 															StringTable::getOrInternStringHandle(struct_ctx.struct_name));

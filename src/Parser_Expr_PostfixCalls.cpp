@@ -377,6 +377,52 @@ void Parser::finalizePostfixCallExpression(
 			}
 		}
 
+		if (std::holds_alternative<PointerToMemberAccessNode>(expr)) {
+			const auto& member_pointer_access =
+				std::get<PointerToMemberAccessNode>(expr);
+			if (auto member_pointer_type_opt =
+					get_expression_type(member_pointer_access.member_pointer());
+				member_pointer_type_opt.has_value()) {
+				const TypeSpecifierNode& member_pointer_type =
+					*member_pointer_type_opt;
+				if (member_pointer_type.is_member_function_pointer() ||
+					member_pointer_type.has_function_signature()) {
+					std::optional<TypeSpecifierNode> member_function_return_type_hint =
+						FlashCpp::ParserFunctionTypeHelpers::tryGetReturnTypeFromFunctionType(
+							member_pointer_type,
+							member_pointer_access.operator_token());
+					ASTNode temp_type =
+						member_function_return_type_hint.has_value()
+							? emplace_node<TypeSpecifierNode>(
+								  *member_function_return_type_hint)
+							: emplace_node<TypeSpecifierNode>(
+								  TypeCategory::Auto,
+								  TypeQualifier::None,
+								  0,
+								  member_pointer_access.operator_token(),
+								  CVQualifier::None);
+					auto temp_decl = emplace_node<DeclarationNode>(
+						temp_type,
+						member_pointer_access.operator_token());
+					[[maybe_unused]] auto [func_node, func_ref] =
+						emplace_node_ref<FunctionDeclarationNode>(
+							temp_decl.as<DeclarationNode>());
+					result = emplace_node<ExpressionNode>(
+						makeResolvedMemberCallExpr(
+							*result,
+							func_ref,
+							std::move(args),
+							paren_token));
+					if (member_function_return_type_hint.has_value()) {
+						setCallParserReturnTypeHint(
+							result->as<ExpressionNode>(),
+							*member_function_return_type_hint);
+					}
+					return;
+				}
+			}
+		}
+
 		if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 			const auto& unary_op = std::get<UnaryOperatorNode>(expr);
 			if (unary_op.op() == "&" && unary_op.is_prefix()) {
