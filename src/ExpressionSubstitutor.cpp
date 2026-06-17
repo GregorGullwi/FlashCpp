@@ -2,6 +2,7 @@
 #include "CallNodeHelpers.h"
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
+#include "TemplateArgumentMaterialization.h"
 #include "AstTraversal.h"
 #include "Log.h"
 #include <charconv>
@@ -92,26 +93,6 @@ bool decodeTTPPlaceholderArg(std::string_view encoded_arg, TemplateTypeArg& deco
 	return true;
 }
 
-int computeTypeSizeInBits(TypeIndex type_index) {
-	int size_in_bits = get_type_size_bits(type_index.category());
-	if (size_in_bits != 0) {
-		return size_in_bits;
-	}
-
-	const TypeInfo* type_info = tryGetTypeInfo(type_index);
-	if (!type_info) {
-		return 0;
-	}
-
-	size_in_bits = type_info->sizeInBits().value;
-	if (size_in_bits != 0 || !type_info->isStruct()) {
-		return size_in_bits;
-	}
-
-	const StructTypeInfo* struct_info = type_info->getStructInfo();
-	return struct_info ? struct_info->sizeInBits().value : 0;
-}
-
 std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
 	std::span<const TemplateTypeArg> template_args,
 	const Token& source_token) {
@@ -120,50 +101,12 @@ std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
 
 	for (const TemplateTypeArg& arg : template_args) {
 		if (arg.is_dependent || arg.dependent_name.isValid()) {
-			Token dep_token(
-				Token::Type::Identifier,
-				arg.dependent_name.view(),
-				source_token.line(),
-				source_token.column(),
-				source_token.file_index());
-			ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-				TemplateParameterReferenceNode(arg.dependent_name, dep_token));
-			result.push_back(ASTNode(&dep_expr));
+			result.push_back(materializeDependentTemplateArgumentNode(arg, source_token));
 			continue;
 		}
 
 		if (arg.is_value) {
-			if (arg.typeEnum() == TypeCategory::Bool) {
-				Token bool_token(
-					Token::Type::Keyword,
-					arg.value != 0 ? "true"sv : "false"sv,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& bool_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					BoolLiteralNode(bool_token, arg.value != 0));
-				result.push_back(ASTNode(&bool_expr));
-			} else {
-				StringBuilder text_builder;
-				std::string_view literal_text = text_builder.append(arg.value).commit();
-				TypeCategory literal_type = arg.typeEnum() == TypeCategory::Invalid
-					? TypeCategory::Int
-					: arg.typeEnum();
-				Token literal_token(
-					Token::Type::Literal,
-					literal_text,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& literal_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					NumericLiteralNode(
-						literal_token,
-						static_cast<unsigned long long>(arg.value),
-						literal_type,
-						TypeQualifier::None,
-						get_type_size_bits(literal_type)));
-				result.push_back(ASTNode(&literal_expr));
-			}
+			result.push_back(materializeValueTemplateArgumentNode(arg, source_token));
 			continue;
 		}
 
@@ -175,7 +118,7 @@ std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
 			arg_type_index = TypeIndex{}.withCategory(arg.typeEnum());
 		}
 
-		int size_in_bits = computeTypeSizeInBits(arg_type_index);
+		int size_in_bits = computeTemplateArgumentTypeSizeBits(arg_type_index);
 		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
 			arg_type_index,
 			size_in_bits,
@@ -212,7 +155,7 @@ std::optional<std::string_view> tryResolveCanonicalTypeName(
 TypeSpecifierNode buildTerminalTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
 	return TypeSpecifierNode(
 		resolved_alias.type_index,
-		computeTypeSizeInBits(resolved_alias.type_index),
+		computeTemplateArgumentTypeSizeBits(resolved_alias.type_index),
 		token,
 		CVQualifier::None,
 		ReferenceQualifier::None);
@@ -586,7 +529,7 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 						if (bound_arg.type_index.is_valid()) {
 							parameter_type = TypeSpecifierNode(
 								bound_arg.type_index,
-								computeTypeSizeInBits(bound_arg.type_index),
+								computeTemplateArgumentTypeSizeBits(bound_arg.type_index),
 								param_token,
 								CVQualifier::None,
 								ReferenceQualifier::None);

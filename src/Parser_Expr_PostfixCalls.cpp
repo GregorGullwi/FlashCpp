@@ -4,127 +4,11 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
 #include <limits>
 
 namespace {
-std::string_view getPostfixTemplateArgTokenText(const TemplateTypeArg& arg) {
-	switch (arg.typeEnum()) {
-	case TypeCategory::Void: return "void";
-	case TypeCategory::Bool: return "bool";
-	case TypeCategory::Char: return "char";
-	case TypeCategory::UnsignedChar: return "unsigned char";
-	case TypeCategory::Short: return "short";
-	case TypeCategory::UnsignedShort: return "unsigned short";
-	case TypeCategory::Int: return "int";
-	case TypeCategory::UnsignedInt: return "unsigned int";
-	case TypeCategory::Long: return "long";
-	case TypeCategory::UnsignedLong: return "unsigned long";
-	case TypeCategory::LongLong: return "long long";
-	case TypeCategory::UnsignedLongLong: return "unsigned long long";
-	case TypeCategory::Float: return "float";
-	case TypeCategory::Double: return "double";
-	case TypeCategory::LongDouble: return "long double";
-	default: return {};
-	}
-}
-
-std::vector<ASTNode> materializePostfixTemplateArgumentNodes(
-	std::span<const TemplateTypeArg> template_args,
-	const Token& source_token) {
-	std::vector<ASTNode> result;
-	result.reserve(template_args.size());
-
-	for (const auto& arg : template_args) {
-		if (arg.is_dependent && arg.dependent_name.isValid()) {
-			Token dep_token(
-				Token::Type::Identifier,
-				arg.dependent_name.view(),
-				source_token.line(),
-				source_token.column(),
-				source_token.file_index());
-			ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-				TemplateParameterReferenceNode(arg.dependent_name, dep_token));
-			result.push_back(ASTNode(&dep_expr));
-			continue;
-		}
-
-		if (arg.is_value) {
-			if (arg.typeEnum() == TypeCategory::Bool) {
-				Token bool_token(
-					Token::Type::Keyword,
-					arg.value != 0 ? "true"sv : "false"sv,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& bool_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					BoolLiteralNode(bool_token, arg.value != 0));
-				result.push_back(ASTNode(&bool_expr));
-			} else {
-				StringBuilder text_builder;
-				std::string_view literal_text = text_builder.append(arg.value).commit();
-				TypeCategory literal_type = arg.typeEnum() == TypeCategory::Invalid
-					? TypeCategory::Int
-					: arg.typeEnum();
-				Token literal_token(
-					Token::Type::Literal,
-					literal_text,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& literal_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					NumericLiteralNode(
-						literal_token,
-						static_cast<unsigned long long>(arg.value),
-						literal_type,
-						TypeQualifier::None,
-						get_type_size_bits(literal_type)));
-				result.push_back(ASTNode(&literal_expr));
-			}
-			continue;
-		}
-
-		Token type_token = source_token;
-		TypeCategory type_category = arg.typeEnum();
-		if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-			std::string_view type_name = StringTable::getStringView(type_info->name());
-			if (!type_name.empty()) {
-				type_token = Token(
-					Token::Type::Identifier,
-					type_name,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-			}
-		} else if (std::string_view builtin_name = getPostfixTemplateArgTokenText(arg);
-				   !builtin_name.empty()) {
-			type_token = Token(
-				Token::Type::Keyword,
-				builtin_name,
-				source_token.line(),
-				source_token.column(),
-				source_token.file_index());
-		}
-
-		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.type_index.withCategory(type_category),
-			get_type_size_bits(type_category),
-			type_token,
-			arg.cv_qualifier,
-			arg.ref_qualifier);
-		type_node.set_pack_expansion(arg.is_pack);
-		for (size_t pointer_index = 0; pointer_index < arg.pointer_depth; ++pointer_index) {
-			CVQualifier pointer_cv = pointer_index < arg.pointer_cv_qualifiers.size()
-				? arg.pointer_cv_qualifiers[pointer_index]
-				: CVQualifier::None;
-			type_node.add_pointer_level(pointer_cv);
-		}
-		result.push_back(ASTNode(&type_node));
-	}
-
-	return result;
-}
-
 std::string_view buildQualifiedMemberCallName(
 	std::span<const StringHandle> owner_segments,
 	std::string_view member_name) {
@@ -1607,7 +1491,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 								member_template_args =
 									explicit_template_args.read_template_type_args();
 								member_template_arg_nodes =
-									materializePostfixTemplateArgumentNodes(
+									materializeTemplateArgumentNodes(
 										*member_template_args,
 										qualified_member_token);
 							}
@@ -1711,7 +1595,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 								member_template_args =
 									explicit_template_args.read_template_type_args();
 								member_template_arg_nodes =
-									materializePostfixTemplateArgumentNodes(
+									materializeTemplateArgumentNodes(
 										*member_template_args,
 										op_token);
 							}
