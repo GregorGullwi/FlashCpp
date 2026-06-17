@@ -2895,6 +2895,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// For other unary operators (+, -, !, ~, ++, --), return the operand type
 		return operand_type;
 	} else if (auto call_info_opt = CallInfo::tryFrom(expr)) {
+		if (const auto* call_expr = std::get_if<CallExprNode>(&expr);
+			call_expr != nullptr &&
+			(call_expr->has_dependent_qualified_lookup_record() ||
+			 call_expr->has_dependent_unqualified_lookup_record())) {
+			// A dependent call's return type is not fixed until instantiation.
+			// Using a parser hint here can freeze the first same-name overload
+			// seen during template parsing, which is wrong for decltype(...)
+			// and other dependent unevaluated contexts.
+			return std::nullopt;
+		}
 		const CallInfo& call_info = *call_info_opt;
 		const DeclarationNode& callee_decl = *call_info.declaration;
 		auto normalize_alias_return_type = [&](TypeSpecifierNode& type) {
