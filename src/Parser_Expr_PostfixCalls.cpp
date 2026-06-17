@@ -144,14 +144,6 @@ std::string_view buildQualifiedMemberCallName(
 	return builder.commit();
 }
 
-std::string_view buildQualifiedMemberCallName(
-	const StructTypeInfo& owner_struct,
-	std::string_view member_name) {
-	return buildQualifiedMemberCallName(
-		std::span<const StringHandle>(&owner_struct.name, 1),
-		member_name);
-}
-
 void attachResolvedPostfixDirectCallMetadata(
 	ExpressionNode& call_expr,
 	const TemplateDefinitionLookupContext* definition_context,
