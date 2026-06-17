@@ -322,6 +322,12 @@ Remaining near-term scope:
   is registered for that qualified template name. Otherwise deferred
   instantiation must remain free to select the explicit specialization first,
   as in `ns::sum<Args...>()` with `template<> sum<int>()`
+- the postfix explicit-qualified member/operator path now follows the same rule
+  for concrete owner-qualified member-template ids: `this->Base::template pick<int>()`
+  and `this->Base::template operator()<int>()` now parse and instantiate through
+  the base-qualified owner instead of failing before overload selection, and
+  unresolved placeholders preserve `qualified_name + template_arguments` so
+  substitution can recover that owner later
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -379,8 +385,11 @@ Next direct-call target:
    only `qualified_name`. The generic namespace-qualified explicit-template
    placeholder path is now covered too, including the specialization-aware
    rule that suppresses exact primary-template binding when a registered exact
-   specialization must stay visible; the next uncovered parser target is the
-   remaining postfix explicit-qualified member/operator materializer surface.
+   specialization must stay visible; the concrete postfix explicit-qualified
+   member/operator template-id path without owner template arguments is now
+   covered too. The next uncovered parser target is the owner-template-id
+   variant, where `this->Base<T>::template pick<int>()` still drops the
+   `Base<T>` structure before the `::template` continuation.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -423,6 +432,9 @@ For work in this area, rerun:
 - `test_template_qualified_namespace_explicit_definition_bound_ret0.cpp`
 - `test_template_global_qualified_namespace_explicit_definition_bound_ret0.cpp`
 - `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
+- `test_template_explicit_base_member_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_operator_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_owner_template_member_template_call_fail.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`

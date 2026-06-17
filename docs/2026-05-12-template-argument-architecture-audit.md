@@ -336,6 +336,13 @@ Remaining near-term scope:
   qualified/member-template parser exits, especially postfix explicit-qualified
   member/operator placeholder paths that still do not preserve the same
   deferred lookup structure end-to-end
+- postfix explicit-qualified member/operator call parsing in
+  `Parser_Expr_PostfixCalls.cpp` now also accepts explicit member-template ids
+  after a concrete owner qualifier such as `this->Base::template pick<int>()`
+  and `this->Base::template operator()<int>()`, routing the resolved owner
+  through the same member-template instantiation helper and preserving
+  `qualified_name + template_arguments` on unresolved placeholders so
+  substitution can recover the base-qualified owner later
 - the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
@@ -399,10 +406,13 @@ Next direct-call target:
    and move them onto the same deferred lookup + parser return-type-hint split
    now used by the covered ordinary-call paths.
    Immediate next target: the remaining postfix explicit-qualified
-   member/operator placeholder/materializer exits in
-   `Parser_Expr_PostfixCalls.cpp` that still bypass
-   `FunctionCallDefinitionLookupRecord` or equivalent deferred lookup state
-   after owner resolution already succeeded.
+   member/operator owner-template-id exits in `Parser_Expr_PostfixCalls.cpp`,
+   where the qualifier itself carries template arguments (for example
+   `this->Base<T>::template pick<int>()`). The concrete explicit member/operator
+   template-id path without owner template arguments is now covered; the
+   remaining gap is that postfix member access currently drops owner template-id
+   structure before the `::template` continuation and therefore still cannot
+   preserve a structured qualified-owner record there.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -434,6 +444,9 @@ When changing this area, always rerun:
 - `test_template_qualified_namespace_explicit_definition_bound_ret0.cpp`
 - `test_template_global_qualified_namespace_explicit_definition_bound_ret0.cpp`
 - `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
+- `test_template_explicit_base_member_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_operator_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_owner_template_member_template_call_fail.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`

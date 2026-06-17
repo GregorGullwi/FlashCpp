@@ -3761,14 +3761,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (has_dependent_explicit_template_args &&
 				identifierType.has_value() &&
 				identifierType->is<TemplateFunctionDeclarationNode>()) {
+				const std::string_view lookup_name =
+					buildQualifiedNameFromStrings(namespaces, qual_id.name());
 				const std::vector<TemplateNameLookupCandidate> template_candidates =
 					lookupFunctionTemplateCandidatesForInstantiation(
-						buildQualifiedNameFromStrings(namespaces, qual_id.name()),
+						lookup_name,
 						0);
 				keep_single_template_decl_for_dependent_call =
 					template_candidates.size() == 1 &&
 					!gTemplateRegistry.hasExactSpecializationsForName(
-						buildQualifiedNameFromStrings(namespaces, qual_id.name()));
+						lookup_name);
 				if (keep_single_template_decl_for_dependent_call) {
 					definition_bound_template_declaration =
 						identifierType->raw_pointer();
@@ -4938,8 +4940,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								false);
 						record.has_value()) {
 						setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
+					}
 				}
-			} else if (has_explicit_template_args) {
+				if (!identifierType->is<FunctionDeclarationNode>() &&
+					has_explicit_template_args) {
 					std::optional<TemplateDefinitionLookupContext>
 						deferred_definition_lookup_context;
 					if ((current_template_definition_lookup_context_ != nullptr &&
@@ -9630,12 +9634,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 														member_ctx.struct_node,
 														member_ctx.local_struct_info,
 														identifier_token.handle());
-												if (matching_decl != nullptr &&
-													!StringTable::getStringView(member_ctx.struct_name).empty()) {
-													return CurrentStructMemberTemplateContext{
-														StringTable::getStringView(member_ctx.struct_name),
-														member_ctx.struct_type_index,
-														matching_decl};
+												if (matching_decl != nullptr) {
+													const std::string_view struct_name =
+														StringTable::getStringView(member_ctx.struct_name);
+													if (!struct_name.empty()) {
+														return CurrentStructMemberTemplateContext{
+															struct_name,
+															member_ctx.struct_type_index,
+															matching_decl};
+													}
 												}
 											}
 
