@@ -1810,10 +1810,24 @@ ParseResult Parser::parse_type_specifier() {
 							restore_token_position(scope_pos);
 						}
 
-						if (peek() == "::"_tok) {
-							FLASH_LOG(Parser, Debug, "DBG alias instantiated_type return before trailing member for ", type_name);
-						}
 						if (instantiated_type_info == nullptr) {
+							if (auto builtin_type = get_builtin_type_info(resolved_instantiated_type_name);
+								builtin_type.has_value()) {
+								if (const TypeInfo* native_type_info =
+										tryGetTypeInfo(nativeTypeIndex(builtin_type->first));
+									native_type_info != nullptr) {
+									return buildTypeFromInfo(*native_type_info, type_name_token, true);
+								}
+							}
+							if (TypeCategory terminal_category =
+									TemplateRegistry::stringToType(resolved_instantiated_type_name);
+								terminal_category != TypeCategory::Invalid) {
+								if (const TypeInfo* native_type_info =
+										tryGetTypeInfo(nativeTypeIndex(terminal_category));
+									native_type_info != nullptr) {
+									return buildTypeFromInfo(*native_type_info, type_name_token, true);
+								}
+							}
 							return std::nullopt;
 						}
 						return buildTypeFromInfo(*instantiated_type_info, type_name_token, false);
@@ -3752,7 +3766,7 @@ ParseResult Parser::parse_decltype_specifier() {
 	// Consume 'decltype' or '__typeof__' keyword
 	Token decltype_token = advance();
 	std::string_view keyword = decltype_token.value();
-	auto makeDependentDecltypeType = [&](const Token& source_token) -> ASTNode {
+	auto makeDependentDecltypeType = [&](const Token& source_token, const ASTNode* deferred_expr = nullptr) -> ASTNode {
 		StringHandle dependent_name = StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append("__dependent_decltype_")
@@ -3763,6 +3777,9 @@ ParseResult Parser::parse_decltype_specifier() {
 		type_info.name_ = dependent_name;
 		type_info.is_incomplete_instantiation_ = true;
 		type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+		if (deferred_expr != nullptr) {
+			type_info.setDeferredDecltypeExpression(*deferred_expr);
+		}
 		getTypesByNameMap()[dependent_name] = &type_info;
 		return emplace_node<TypeSpecifierNode>(
 			type_info.type_index_.withCategory(TypeCategory::UserDefined),
@@ -3949,7 +3966,8 @@ ParseResult Parser::parse_decltype_specifier() {
 		// set parsing_template_depth_ > 0 but will have template parameter names.
 		if (decltype_source_mentions_active_template_param) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
-			return saved_position.success(makeDependentDecltypeType(decltype_token));
+			const ASTNode& deferred_decltype_expr = *expr_result.node();
+			return saved_position.success(makeDependentDecltypeType(decltype_token, &deferred_decltype_expr));
 		}
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}

@@ -1835,6 +1835,67 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	auto normalizePendingSemanticRoots = [&]() {
 		parser_.normalizePendingSemanticRoots();
 	};
+	auto resolveQualifiedOwnerOverload = [&](
+		std::string_view owner_name,
+		std::string_view member_name,
+		const ChunkedVector<ASTNode>& substituted_args) -> const FunctionDeclarationNode* {
+		if (owner_name.empty() || member_name.empty()) {
+			return nullptr;
+		}
+		std::vector<TypeSpecifierNode> substituted_arg_types;
+		if (!parser_.tryCollectFunctionCallArgTypes(substituted_args, substituted_arg_types)) {
+			return nullptr;
+		}
+
+		std::vector<ASTNode> candidates;
+		StringHandle owner_handle =
+			StringTable::getOrInternStringHandle(owner_name);
+		StringHandle member_handle =
+			StringTable::getOrInternStringHandle(member_name);
+		parser_.instantiateLazyClassToPhase(
+			owner_handle,
+			ClassInstantiationPhase::Full);
+		if (const TypeInfo* owner_type_info = findTypeByName(owner_handle);
+			owner_type_info != nullptr) {
+			if (const StructTypeInfo* struct_info = owner_type_info->getStructInfo()) {
+				for (const auto& member_func : struct_info->member_functions) {
+					if (member_func.getName() != member_handle ||
+						!member_func.function_decl.is<FunctionDeclarationNode>()) {
+						continue;
+					}
+					candidates.push_back(member_func.function_decl);
+				}
+			}
+		}
+		if (candidates.empty()) {
+			for (const ASTNode& candidate_node : gSymbolTable.lookup_all(member_name)) {
+				const FunctionDeclarationNode* candidate_func =
+					get_function_decl_node(candidate_node);
+				if (candidate_func == nullptr) {
+					continue;
+				}
+				const std::string_view parent_name =
+					candidate_func->parent_struct_name();
+				if (parent_name == owner_name ||
+					(!parent_name.empty() && parent_name.ends_with(owner_name))) {
+					candidates.push_back(candidate_node);
+				}
+			}
+		}
+		if (candidates.empty()) {
+			return nullptr;
+		}
+
+		OverloadResolutionResult resolution =
+			resolve_overload(candidates, substituted_arg_types);
+		if (resolution.has_match &&
+			!resolution.is_ambiguous &&
+			resolution.selected_overload != nullptr &&
+			resolution.selected_overload->is<FunctionDeclarationNode>()) {
+			return &resolution.selected_overload->as<FunctionDeclarationNode>();
+		}
+		return nullptr;
+	};
 	auto materializeSubstitutedUnresolvedCall = [&](ChunkedVector<ASTNode>&& substituted_args) -> ASTNode {
 		CallExprNode substituted_call(
 			call.callee(),
@@ -2521,17 +2582,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						ChunkedVector<ASTNode> substituted_args =
 							substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
-						const FunctionDeclarationNode* target_func = nullptr;
+						const FunctionDeclarationNode* target_func =
+							resolveQualifiedOwnerOverload(
+								resolved_owner_name,
+								resolved_member_name,
+								substituted_args);
 						std::string_view mutable_resolved_owner_name =
 							resolved_owner_name;
-						if (std::optional<ASTNode> instantiated_member =
+						if (target_func == nullptr) {
+							std::optional<ASTNode> instantiated_member =
 								parser_.instantiateLazyMemberForCanonicalOwner(
 									mutable_resolved_owner_name,
 									resolved_member_name,
 									std::span<const TemplateTypeArg>{});
-							instantiated_member.has_value() &&
-							instantiated_member->is<FunctionDeclarationNode>()) {
-							target_func = &instantiated_member->as<FunctionDeclarationNode>();
+							if (instantiated_member.has_value() &&
+								instantiated_member->is<FunctionDeclarationNode>()) {
+								target_func = &instantiated_member->as<FunctionDeclarationNode>();
+							}
 						}
 						if (target_func == nullptr) {
 							auto qualified_symbol =
@@ -2607,17 +2674,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			if (!materialized_owner_name.empty()) {
 					ChunkedVector<ASTNode> substituted_args =
 						substituteCallArgumentsPreservingPackExpansion(call.arguments());
-					const FunctionDeclarationNode* target_func = nullptr;
-
-					std::optional<ASTNode> instantiated_member =
-						parser_.instantiateLazyMemberForCanonicalOwner(
+					const FunctionDeclarationNode* target_func =
+						resolveQualifiedOwnerOverload(
 							materialized_owner_name,
 							member_name,
-							std::span<const TemplateTypeArg>{});
-					if (instantiated_member.has_value() &&
-						instantiated_member->is<FunctionDeclarationNode>()) {
-						target_func =
-							&instantiated_member->as<FunctionDeclarationNode>();
+							substituted_args);
+
+					if (target_func == nullptr) {
+						std::optional<ASTNode> instantiated_member =
+							parser_.instantiateLazyMemberForCanonicalOwner(
+								materialized_owner_name,
+								member_name,
+								std::span<const TemplateTypeArg>{});
+						if (instantiated_member.has_value() &&
+							instantiated_member->is<FunctionDeclarationNode>()) {
+							target_func =
+								&instantiated_member->as<FunctionDeclarationNode>();
+						}
 					}
 					parser_.instantiateLazyClassToPhase(
 						StringTable::getOrInternStringHandle(materialized_owner_name),
