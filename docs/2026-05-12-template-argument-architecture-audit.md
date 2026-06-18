@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-18
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -136,6 +136,13 @@ the areas that were previously blocking standards-visible behavior:
   dependent-qualified owner record even when `StructTypeInfo` is already
   present instead of dropping back to `qualified_name` plus a parser return-type
   hint alone
+- that same qualified static-owner helper now also distinguishes "no owner
+  candidates exist" from "owner candidates exist but parser-time overload
+  ranking still cannot pick a final target": concrete owner calls like
+  `allocator_traits<allocator<int>>::allocate(a, 10)` now keep the canonical
+  owner type plus deferred qualified-call metadata when parser-time ranking is
+  still inconclusive, instead of reintroducing a parser-selected fallback or
+  hard-rejecting the call before later semantic resolution can finish it
 - the unqualified/current-owner explicit-member-template placeholder path in
   `Parser_Expr_PrimaryExpr.cpp` now preserves that same split for deferred
   class-scope member-template calls: it keeps a structured current-
@@ -418,12 +425,22 @@ Next direct-call target:
    after owner resolution or deferred lookup shape is already known, and move
    them onto preserved `FunctionCallDefinitionLookupRecord` or explicit
    `DependentQualifiedNameRecord` state before removing the whole-call sema
-   synchronization hook.
+   synchronization hook. Keep
+   `test_member_template_func_in_specialization_ret0.cpp` in the focused
+   guard set here: it exercises the new "candidate-bearing concrete owner
+   calls must defer instead of hard-failing" rule in
+   `try_parse_member_template_function_call(...)`.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
    `member_class + pointer_depth` forms in ABI-sensitive paths.
-3. Leave replay/`StructTypeInfo` sync and broader
+3. Clean up the remaining parser diagnostic collapse around copy
+   initialization. This slice showed that inner qualified-call errors can
+   still surface as the generic "Failed to parse initializer expression" once
+   `parse_copy_initialization(...)` drops the nested `ParseResult`; that does
+   not block conformance, but it is the next diagnostics-quality follow-up in
+   this area.
+4. Leave replay/`StructTypeInfo` sync and broader
    current-instantiation/unknown-specialization expansion in opportunistic mode
    unless a concrete uncovered failure appears.
 
@@ -442,6 +459,7 @@ When changing this area, always rerun:
 - `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_qualified_static_member_same_arity_decltype_ret0.cpp`
+- `test_member_template_func_in_specialization_ret0.cpp`
 - `test_template_current_member_explicit_template_decltype_ret0.cpp`
 - `test_template_disambiguation_pack_ret40.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`

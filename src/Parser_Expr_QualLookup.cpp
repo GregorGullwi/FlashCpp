@@ -296,9 +296,9 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 		deduced_arg_types.push_back(*type_opt);
 	}
-	if (AliasTemplateMaterializationResult canonical_owner =
-			resolveCanonicalInstantiatedOwnerForLookup(instantiated_class_name);
-		!canonical_owner.instantiated_name.empty()) {
+	AliasTemplateMaterializationResult canonical_owner =
+		resolveCanonicalInstantiatedOwnerForLookup(instantiated_class_name);
+	if (!canonical_owner.instantiated_name.empty()) {
 		instantiated_class_name = canonical_owner.instantiated_name;
 	}
 	const bool has_dependent_template_args =
@@ -345,19 +345,31 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		!has_dependent_call_arg &&
 		deduced_arg_types.size() == args.size();
 	DefinitionPreferredMemberOverloadSet static_member_overloads;
+	bool has_template_member_candidates = false;
 	auto collectOwnerStaticMemberOverloads = [&]() {
 		if (!can_use_nontemplate_owner_lookup) {
 			return;
 		}
-		instantiateLazyClassToPhase(
-			owner_name_handle,
-			ClassInstantiationPhase::Full);
-		auto type_it = getTypesByNameMap().find(owner_name_handle);
-		if (type_it == getTypesByNameMap().end() ||
-			type_it->second == nullptr) {
+		const TypeInfo* owner_lookup_type_info =
+			canonical_owner.resolved_type_info;
+		if (owner_lookup_type_info == nullptr) {
+			auto type_it = getTypesByNameMap().find(owner_name_handle);
+			if (type_it != getTypesByNameMap().end()) {
+				owner_lookup_type_info = type_it->second;
+			}
+		}
+		if (owner_lookup_type_info == nullptr) {
 			return;
 		}
-		const StructTypeInfo* struct_info = type_it->second->getStructInfo();
+		instantiateLazyClassToPhase(
+			owner_lookup_type_info->name(),
+			ClassInstantiationPhase::Full);
+		const StructTypeInfo* struct_info =
+			owner_lookup_type_info->getStructInfo();
+		if (struct_info == nullptr) {
+			struct_info = tryGetStructTypeInfo(
+				owner_lookup_type_info->registeredTypeIndex());
+		}
 		if (struct_info == nullptr) {
 			return;
 		}
@@ -415,25 +427,31 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 
 		if (resolved_function == nullptr) {
-			if (static_member_overloads.first_definition != nullptr) {
-				parser_hint_function = static_member_overloads.first_definition;
-			} else if (static_member_overloads.first != nullptr) {
-				parser_hint_function = static_member_overloads.first;
+			parser_hint_function =
+				this->trySelectUnambiguousParserReturnTypeHint(
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
+			if (parser_hint_function == nullptr) {
+				parser_hint_function =
+					this->trySelectUnambiguousParserReturnTypeHint(
+						std::span<const ASTNode>(
+							static_member_overloads.all.data(),
+							static_member_overloads.all.size()));
 			}
 		}
 		if (parser_hint_function == nullptr &&
 			member_template_args.has_value()) {
 			if (const std::vector<ASTNode>* template_overloads =
 					gTemplateRegistry.lookupAllTemplates(qualified_name);
-				template_overloads != nullptr) {
-				for (const ASTNode& template_overload : *template_overloads) {
-					if (const FunctionDeclarationNode* template_function =
-							get_function_decl_node(template_overload);
-						template_function != nullptr) {
-						parser_hint_function = template_function;
-						break;
-					}
-				}
+				template_overloads != nullptr &&
+				!template_overloads->empty()) {
+				has_template_member_candidates = true;
+				parser_hint_function =
+					this->trySelectUnambiguousParserReturnTypeHint(
+						std::span<const ASTNode>(
+							template_overloads->data(),
+							template_overloads->size()));
 			}
 		}
 	}
@@ -447,9 +465,70 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			definition_match != nullptr) {
 			resolved_function = definition_match;
 			parser_hint_function = resolved_function;
-		} else if (static_member_overloads.first_definition != nullptr) {
-			parser_hint_function = static_member_overloads.first_definition;
+		} else if (parser_hint_function == nullptr) {
+			parser_hint_function =
+				this->trySelectUnambiguousParserReturnTypeHint(
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
 		}
+	}
+	const TypeInfo* owner_type_info = canonical_owner.resolved_type_info;
+	if (owner_type_info == nullptr) {
+		auto owner_type_it = getTypesByNameMap().find(owner_name_handle);
+		owner_type_info =
+			owner_type_it != getTypesByNameMap().end()
+			? owner_type_it->second
+			: nullptr;
+	}
+	const bool owner_is_dependent_instantiation =
+		owner_type_info != nullptr &&
+		owner_type_info->isTemplateInstantiation() &&
+		std::any_of(
+			owner_type_info->templateArgs().begin(),
+			owner_type_info->templateArgs().end(),
+			[](const TypeInfo::TemplateArgInfo& arg_info) {
+				return templateArgInfoContainsDependentPlaceholder(arg_info);
+			});
+	bool owner_is_current_instantiation_context = false;
+	if (!member_function_context_stack_.empty()) {
+		const auto& member_ctx = member_function_context_stack_.back();
+		if (owner_name_handle == member_ctx.struct_name) {
+			owner_is_current_instantiation_context = true;
+		} else if (const TypeInfo* current_type_info =
+					   tryGetTypeInfo(member_ctx.struct_type_index);
+				   current_type_info != nullptr) {
+			const StringHandle current_base_template_name =
+				current_type_info->baseTemplateName();
+			if (owner_name_handle == current_base_template_name) {
+				owner_is_current_instantiation_context = true;
+			} else {
+				const std::string_view qualified_base_template_name =
+					buildQualifiedNameFromHandle(
+						current_type_info->sourceNamespace(),
+						StringTable::getStringView(current_base_template_name));
+				if (!qualified_base_template_name.empty() &&
+					StringTable::getStringView(owner_name_handle) ==
+						qualified_base_template_name) {
+					owner_is_current_instantiation_context = true;
+				}
+			}
+		}
+	}
+	if (resolved_function == nullptr &&
+		static_member_overloads.all.empty() &&
+		!has_template_member_candidates &&
+		!has_deferred_template_call_args &&
+		!owner_is_dependent_instantiation &&
+		!owner_is_current_instantiation_context) {
+		return ParseResult::error(
+			std::string(
+				StringBuilder()
+					.append("No matching function for call to '")
+					.append(qualified_name)
+					.append("'")
+					.commit()),
+			member_token);
 	}
 
 	std::optional<ExpressionNode> call_expr;
@@ -481,18 +560,15 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			std::move(member_template_arg_nodes));
 	}
 	if (resolved_function == nullptr) {
-		auto owner_type_it = getTypesByNameMap().find(owner_name_handle);
-		if (owner_type_it != getTypesByNameMap().end() &&
-			owner_type_it->second != nullptr &&
-			owner_type_it->second->isTemplateInstantiation()) {
+		if (owner_is_dependent_instantiation) {
 			TypeInfo::DependentQualifiedNameRecord dependent_record;
 			dependent_record.owner_kind =
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
 			dependent_record.owner_name = owner_name_handle;
 			dependent_record.owner_type =
-				owner_type_it->second->registeredTypeIndex();
+				owner_type_info->registeredTypeIndex();
 			dependent_record.owner_template_arguments =
-				owner_type_it->second->templateArgs();
+				owner_type_info->templateArgs();
 			TypeInfo::DependentQualifiedNameRecord::Member member_record;
 			member_record.name = member_name_handle;
 			if (member_template_args.has_value()) {

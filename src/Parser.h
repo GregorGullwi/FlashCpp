@@ -3623,6 +3623,8 @@ private:	 // Resume private methods
 
 	// Lookup symbol with template parameter checking
 	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
+	const FunctionDeclarationNode* trySelectUnambiguousParserReturnTypeHint(
+		std::span<const ASTNode> overloads) const;
 
 	void filterPhase1OrdinaryFunctionOverloads(std::vector<ASTNode>& overloads) {
 		const TemplateDefinitionLookupContext* definition_context =

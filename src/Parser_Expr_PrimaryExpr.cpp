@@ -1364,6 +1364,32 @@ void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpe
 	}
 }
 
+const FunctionDeclarationNode* Parser::trySelectUnambiguousParserReturnTypeHint(
+	std::span<const ASTNode> overloads) const {
+	const FunctionDeclarationNode* hint_function = nullptr;
+	for (const ASTNode& overload : overloads) {
+		const FunctionDeclarationNode* candidate =
+			get_function_decl_node(overload);
+		if (candidate == nullptr) {
+			continue;
+		}
+		if (hint_function == nullptr) {
+			hint_function = candidate;
+			continue;
+		}
+		if (!types_equivalent(
+				hint_function->decl_node().type_specifier_node(),
+				candidate->decl_node().type_specifier_node())) {
+			return nullptr;
+		}
+		if (!hint_function->get_definition().has_value() &&
+			candidate->get_definition().has_value()) {
+			hint_function = candidate;
+		}
+	}
+	return hint_function;
+}
+
 bool Parser::tryCollectOrdinaryDirectCallArgTypes(
 	const ChunkedVector<ASTNode>& args,
 	std::vector<TypeSpecifierNode>* arg_types_out) {

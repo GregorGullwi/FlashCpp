@@ -2072,8 +2072,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				std::string_view class_scope = class_scope_builder.commit();
 				StringHandle class_name_handle =
 					StringTable::getOrInternStringHandle(class_scope);
+				const FunctionDeclarationNode* class_owner_return_hint = nullptr;
+				bool recognized_class_owner_qualification = false;
 				auto resolveQualifiedStaticMemberFromOwner =
 					[&]() -> const FunctionDeclarationNode* {
+						class_owner_return_hint = nullptr;
 						instantiateLazyClassToPhase(
 							class_name_handle,
 							ClassInstantiationPhase::Full);
@@ -2091,6 +2094,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						if (struct_info == nullptr) {
 							return nullptr;
 						}
+						recognized_class_owner_qualification = true;
 						DefinitionPreferredMemberOverloadSet candidate_set =
 							collectVisibleMemberFunctionOverloadNodes(
 								struct_info,
@@ -2134,10 +2138,19 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							resolved_match != nullptr) {
 							return resolved_match;
 						}
-						if (candidate_set.first_definition != nullptr) {
-							return candidate_set.first_definition;
+						class_owner_return_hint =
+							this->trySelectUnambiguousParserReturnTypeHint(
+								std::span<const ASTNode>(
+									candidate_set.definition_preferred.data(),
+									candidate_set.definition_preferred.size()));
+						if (class_owner_return_hint == nullptr) {
+							class_owner_return_hint =
+								this->trySelectUnambiguousParserReturnTypeHint(
+									std::span<const ASTNode>(
+										candidate_set.all.data(),
+										candidate_set.all.size()));
 						}
-						return candidate_set.first;
+						return nullptr;
 					};
 
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
@@ -2239,6 +2252,41 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							}
 						}
 					}
+				}
+
+				if (!decl_ptr && recognized_class_owner_qualification) {
+					auto placeholder_type = emplace_node<TypeSpecifierNode>(
+						TypeCategory::Int,
+						TypeQualifier::None,
+						32,
+						final_identifier,
+						CVQualifier::None);
+					ASTNode placeholder_decl =
+						emplace_node<DeclarationNode>(placeholder_type, final_identifier);
+					ASTNode function_call_node = emplace_node<ExpressionNode>(
+						makeDeferredOrdinaryDirectCallExpr(
+							placeholder_decl,
+							std::move(args),
+							final_identifier));
+					setCallQualifiedName(
+						function_call_node.as<ExpressionNode>(),
+						buildQualifiedNameFromStrings(
+							namespaces,
+							final_identifier.value()));
+					if (class_owner_return_hint != nullptr) {
+						setCallParserReturnTypeHint(
+							function_call_node.as<ExpressionNode>(),
+							class_owner_return_hint->decl_node().type_specifier_node());
+					}
+					if (template_args.has_value()) {
+						setCallTemplateArguments(
+							function_call_node.as<ExpressionNode>(),
+							materializeTemplateArgumentNodes(
+								*template_args,
+								final_identifier));
+					}
+					result = function_call_node;
+					continue;
 				}
 
 				if (!decl_ptr) {

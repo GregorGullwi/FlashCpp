@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-18
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -137,6 +137,12 @@ blocking areas:
   dependent-qualified owner record even when `StructTypeInfo` is already
   present instead of dropping back to `qualified_name` plus a parser return-type
   hint alone
+- that qualified static-owner path now also stays conservative at the right
+  semantic boundary: if a concrete owner already has visible static-member
+  candidates but parser-time overload ranking still cannot prove the final
+  target, the call now defers with canonical owner identity plus structured
+  qualified-call metadata instead of either reviving a parser-selected fallback
+  or hard-rejecting a call that later semantic resolution can still complete
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of recovering it afterward
@@ -399,7 +405,13 @@ Next direct-call target:
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
    `member_class + pointer_depth` forms in ABI-sensitive paths.
-3. Keep replay/identity and broader
+3. Improve parser diagnostics in the remaining copy-initialization path by
+   preserving nested expression or qualified-call failures instead of
+   collapsing them to the generic "Failed to parse initializer expression".
+   This is not the next conformance blocker, but the latest concrete-owner
+   qualified-call slice exposed it clearly enough that it should stay on the
+   list.
+4. Keep replay/identity and broader
    current-instantiation/unknown-specialization work in reserve for concrete
    failures; the remaining conformance pressure is now centered on the last
    parser compatibility boundaries rather than on broad replay drift.
@@ -429,6 +441,7 @@ For work in this area, rerun:
 - `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
 - `test_template_qualified_member_template_hides_base_overload_ret0.cpp`
 - `test_template_qualified_static_member_same_arity_decltype_ret0.cpp`
+- `test_member_template_func_in_specialization_ret0.cpp`
 - `test_template_current_member_explicit_template_decltype_ret0.cpp`
 - `test_template_disambiguation_pack_ret40.cpp`
 - `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
@@ -517,6 +530,9 @@ For work in this area, rerun:
    `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`,
    and
    `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`.
+   The focused guard for the concrete-owner "candidate-bearing but not yet
+   parser-resolved" rule is
+   `test_member_template_func_in_specialization_ret0.cpp`.
    The new focused guard for variable-template replay preserving the full
    nested owner chain into the eventual direct-call target is
    `test_var_template_replay_dependent_member_template_call_ret0.cpp`.

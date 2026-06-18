@@ -1713,6 +1713,26 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		ASTNode substituted_expr = substitutor.substitute(*deferred_decltype_expr);
 		auto type_spec_opt = get_expression_type(substituted_expr);
 		if (!type_spec_opt.has_value()) {
+			if (substituted_expr.is<ExpressionNode>() &&
+				std::holds_alternative<CallExprNode>(
+					substituted_expr.as<ExpressionNode>())) {
+				const CallExprNode& substituted_call =
+					std::get<CallExprNode>(
+						substituted_expr.as<ExpressionNode>());
+				if (substituted_call.has_qualified_name() &&
+					!substituted_call.has_dependent_unqualified_lookup_record() &&
+					!substituted_call.has_dependent_qualified_lookup_record() &&
+					!substituted_call.has_definition_lookup_record() &&
+					!substituted_call.has_parser_return_type_hint()) {
+					throw CompileError(
+						std::string(
+							StringBuilder()
+								.append("No matching function for call to '")
+								.append(substituted_call.qualified_name())
+								.append("'")
+								.commit()));
+				}
+			}
 			return false;
 		}
 
