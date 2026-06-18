@@ -291,37 +291,6 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 	return record;
 }
 
-std::optional<FunctionCallDefinitionLookupRecord> makeDeferredFunctionCallDefinitionLookupRecord(
-	const TemplateDefinitionLookupContext* definition_context,
-	const Token& callee_token,
-	bool ordinary_lookup_included,
-	bool argument_dependent_lookup_included) {
-	if (definition_context == nullptr ||
-		!definition_context->is_valid() ||
-		callee_token.type() != Token::Type::Identifier) {
-		return std::nullopt;
-	}
-
-	FunctionCallDefinitionLookupRecord record;
-	initializeCallLookupRecordCommon(record, definition_context, callee_token);
-	record.ordinary_lookup_included = ordinary_lookup_included;
-	record.argument_dependent_lookup_included = argument_dependent_lookup_included;
-	return record;
-}
-
-std::optional<std::string_view> makeQualifiedMemberCallNameOverride(
-	std::string_view owner_name,
-	std::string_view member_name) {
-	if (owner_name.empty()) {
-		return std::nullopt;
-	}
-	return StringBuilder()
-		.append(owner_name)
-		.append("::")
-		.append(member_name)
-		.commit();
-}
-
 void attachResolvedOrdinaryDirectCallMetadata(
 	ExpressionNode& call_expr,
 	const TemplateDefinitionLookupContext* definition_context,
@@ -338,14 +307,12 @@ void attachResolvedOrdinaryDirectCallMetadata(
 
 	if (qualified_name_override.has_value() && !qualified_name_override->empty()) {
 		setCallQualifiedName(call_expr, *qualified_name_override);
-	} else if (!func_decl.parent_struct_name().empty()) {
+	} else if (std::optional<std::string_view> member_qualified_name =
+				   tryBuildQualifiedCallNameOverride(func_decl);
+			   member_qualified_name.has_value()) {
 		setCallQualifiedName(
 			call_expr,
-			StringBuilder()
-				.append(func_decl.parent_struct_name())
-				.append("::")
-				.append(func_decl.decl_node().identifier_token().value())
-				.commit());
+			*member_qualified_name);
 	}
 
 	if (std::optional<FunctionCallDefinitionLookupRecord> record =
@@ -377,14 +344,12 @@ void attachDeferredOrdinaryDirectCallHints(
 	std::optional<std::string_view> qualified_name_override) {
 	if (qualified_name_override.has_value() && !qualified_name_override->empty()) {
 		setCallQualifiedName(call_expr, *qualified_name_override);
-	} else if (!func_decl.parent_struct_name().empty()) {
+	} else if (std::optional<std::string_view> member_qualified_name =
+				   tryBuildQualifiedCallNameOverride(func_decl);
+			   member_qualified_name.has_value()) {
 		setCallQualifiedName(
 			call_expr,
-			StringBuilder()
-				.append(func_decl.parent_struct_name())
-				.append("::")
-				.append(func_decl.decl_node().identifier_token().value())
-				.commit());
+			*member_qualified_name);
 	}
 	setCallParserReturnTypeHint(
 		call_expr,
@@ -433,7 +398,7 @@ void attachResolvedReceiverDirectCallMetadata(
 		func_decl,
 		true,
 		false,
-		makeQualifiedMemberCallNameOverride(
+		tryBuildQualifiedCallNameOverride(
 			qualified_owner,
 			func_decl.decl_node().identifier_token().value()));
 }
@@ -3785,7 +3750,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						? &*deferred_definition_lookup_context
 						: current_template_definition_lookup_context_;
 				if (std::optional<FunctionCallDefinitionLookupRecord> record =
-						makeDeferredFunctionCallDefinitionLookupRecord(
+						tryBuildDeferredFunctionCallDefinitionLookupRecord(
 							definition_lookup_context,
 							qual_id.identifier_token(),
 							true,
@@ -4883,7 +4848,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							? &*deferred_definition_lookup_context
 							: current_template_definition_lookup_context_;
 					if (std::optional<FunctionCallDefinitionLookupRecord> record =
-							makeDeferredFunctionCallDefinitionLookupRecord(
+							tryBuildDeferredFunctionCallDefinitionLookupRecord(
 								definition_lookup_context,
 								qual_id.identifier_token(),
 								true,
@@ -6622,7 +6587,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							setCallDependentUnqualifiedLookupRecord(result->as<ExpressionNode>(), *record);
 						}
 					} else if (std::optional<FunctionCallDefinitionLookupRecord> record =
-								   makeDeferredFunctionCallDefinitionLookupRecord(
+								   tryBuildDeferredFunctionCallDefinitionLookupRecord(
 									   current_template_definition_lookup_context_,
 									   identifier_token,
 									   true,
@@ -9337,7 +9302,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								qualified_owner = StringTable::getStringView(member_function_context_stack_.back().struct_name);
 							}
 							const std::optional<std::string_view> qualified_name_override =
-								makeQualifiedMemberCallNameOverride(
+								tryBuildQualifiedCallNameOverride(
 									qualified_owner,
 									func_decl.decl_node().identifier_token().value());
 							std::vector<TypeSpecifierNode> fast_path_arg_types;
@@ -9432,7 +9397,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											true,
 											*identifierType);
 									} else if (std::optional<FunctionCallDefinitionLookupRecord> record =
-												   makeDeferredFunctionCallDefinitionLookupRecord(
+												   tryBuildDeferredFunctionCallDefinitionLookupRecord(
 													   current_template_definition_lookup_context_,
 													   identifier_token,
 													   true,
@@ -9700,7 +9665,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													struct_parsing_context_stack_.back().struct_name;
 											}
 											qualified_name_override =
-												makeQualifiedMemberCallNameOverride(
+												tryBuildQualifiedCallNameOverride(
 													struct_name_for_qual,
 													identifier_token.value());
 										}

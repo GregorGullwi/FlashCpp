@@ -331,9 +331,13 @@ Remaining near-term scope:
 - the postfix explicit-qualified member/operator path now follows the same rule
   for concrete owner-qualified member-template ids: `this->Base::template pick<int>()`
   and `this->Base::template operator()<int>()` now parse and instantiate through
-  the base-qualified owner instead of failing before overload selection, and
-  unresolved placeholders preserve `qualified_name + template_arguments` so
-  substitution can recover that owner later
+  the base-qualified owner instead of failing before overload selection
+- the unresolved explicit-base member-template placeholder in that postfix path
+  is now structural as well: `this->Base::template pick<T>()` preserves the
+  recovered base owner as deferred qualified metadata, keeps the matched
+  member-template return type on the placeholder instead of a raw `auto` stub,
+  and substitution instantiates the concrete base-qualified member template
+  once `T` becomes concrete instead of rebinding by unqualified member name
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -494,7 +498,11 @@ For work in this area, rerun:
    focusing on the other qualified/member-template placeholder/materializer
    exits that still stop at compatibility metadata after owner resolution
    already succeeded, and then remove the whole-call sema synchronization hook
-   by pushing that work back to earlier semantic ownership.
+   by pushing that work back to earlier semantic ownership. This slice closes
+   the explicit-base postfix member-template placeholder; the most direct next
+   follow-up is the sibling postfix explicit-qualified operator-template
+   placeholder, which still needs the same owner-preserving deferred lookup
+   treatment.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by

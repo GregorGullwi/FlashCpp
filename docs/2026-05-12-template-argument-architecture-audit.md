@@ -347,9 +347,14 @@ Remaining near-term scope:
   `Parser_Expr_PostfixCalls.cpp` now also accepts explicit member-template ids
   after a concrete owner qualifier such as `this->Base::template pick<int>()`
   and `this->Base::template operator()<int>()`, routing the resolved owner
-  through the same member-template instantiation helper and preserving
-  `qualified_name + template_arguments` on unresolved placeholders so
-  substitution can recover the base-qualified owner later
+  through the same member-template instantiation helper
+- the explicit-base member-template placeholder half of that postfix path is
+  now on the structured side too: unresolved
+  `this->Base::template pick<T>()`-style calls preserve a recovered
+  base-owner `DependentQualifiedNameRecord`, carry the matched member-template
+  return type instead of a raw `auto` stub, and let substitution instantiate
+  the concrete base-qualified member template once `T` becomes concrete instead
+  of rebinding by bare member name
 - the previously uncovered `typeCode<Rest>()...`-style call-argument leak is
   now fixed at the parser/substitution boundary; future work here should keep
   pack-expansion ownership at that boundary instead of reintroducing
@@ -422,10 +427,11 @@ Next direct-call target:
    Immediate next target: audit the remaining qualified/member-template
    placeholder/materializer exits in `Parser_Expr_PrimaryExpr.cpp` and
    `Parser_Expr_PostfixCalls.cpp` that still stop at compatibility metadata
-   after owner resolution or deferred lookup shape is already known, and move
-   them onto preserved `FunctionCallDefinitionLookupRecord` or explicit
-   `DependentQualifiedNameRecord` state before removing the whole-call sema
-   synchronization hook. Keep
+   after owner resolution or deferred lookup shape is already known. After
+   this slice, the most direct uncovered neighbor is the postfix explicit-
+   qualified operator-template placeholder path, which still needs the same
+   owner-preserving deferred lookup treatment that now covers
+   `this->Base::template pick<T>()`. Keep
    `test_member_template_func_in_specialization_ret0.cpp` in the focused
    guard set here: it exercises the new "candidate-bearing concrete owner
    calls must defer instead of hard-failing" rule in
@@ -510,11 +516,15 @@ When changing this area, always rerun:
    dependent-qualified owner preservation for unresolved template-instantiation
    owners, and the current-owner explicit-member-template placeholder path in
    `Parser_Expr_PrimaryExpr.cpp` now preserves the same structured deferred
-   owner metadata with member-template-derived parser return-type hints.
-   The next concrete parser target is therefore the remaining
+   owner metadata with member-template-derived parser return-type hints. This
+   slice now does the same for the explicit-base postfix member-template
+   placeholder in `parse_member_postfix()`, including late substitution-time
+   owner-qualified instantiation once `T` becomes concrete. The next concrete
+   parser target is therefore the remaining
    qualified/member-template placeholder/materializer exits that still stamp
    only compatibility metadata after owner resolution or deferred lookup shape
-   is already known. Also
+   is already known, with the postfix explicit-qualified operator-template
+   placeholder as the most direct follow-up. Also
    clean up the remaining legacy parser sites that still
    hand-roll `expr...` handling (constructor/initializer parsing) so they share
    the same "expand only when a real function pack matched, otherwise preserve
