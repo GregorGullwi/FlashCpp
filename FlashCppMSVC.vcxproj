@@ -500,7 +500,6 @@
     <ClInclude Include="src\TemplateRegistry_Types.h" />
     <ClInclude Include="src\TemplateEnvironment.h" />
     <ClInclude Include="src\TemplateExpressionEquivalence.h" />
-    <ClInclude Include="src\TemplateArgumentMaterialization.h" />
     <ClInclude Include="src\TemplateTypes.h" />
     <ClInclude Include="src\Token.h" />
     <ClInclude Include="src\TokenKind.h" />

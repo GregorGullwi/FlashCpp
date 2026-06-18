@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
+#include "MemberFunctionLookupShared.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
@@ -1542,22 +1543,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			return nullptr;
 		}
 
-		std::vector<ASTNode> candidates;
-		for (const auto& member_func : owner_struct->member_functions) {
-			if (member_func.is_constructor || member_func.is_destructor) {
-				continue;
-			}
-			if (member_func.getName() != member_name_handle ||
-				!member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-			const FunctionDeclarationNode& candidate =
-				member_func.function_decl.as<FunctionDeclarationNode>();
-			if (candidate.failed_substitution()) {
-				continue;
-			}
-			candidates.push_back(member_func.function_decl);
-		}
+		DefinitionPreferredMemberOverloadSet candidate_set =
+			collectVisibleMemberFunctionOverloadNodes(
+				owner_struct,
+				member_name_handle,
+				true,
+				[](const StructMemberFunction& member_func,
+				   const FunctionDeclarationNode& candidate) {
+					return !member_func.is_constructor &&
+						!member_func.is_destructor &&
+						!candidate.failed_substitution();
+				});
+		std::span<const ASTNode> candidates(
+			candidate_set.all.data(),
+			candidate_set.all.size());
 		if (candidates.empty()) {
 			return nullptr;
 		}
@@ -2075,6 +2074,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					StringTable::getOrInternStringHandle(class_scope);
 				auto resolveQualifiedStaticMemberFromOwner =
 					[&]() -> const FunctionDeclarationNode* {
+						instantiateLazyClassToPhase(
+							class_name_handle,
+							ClassInstantiationPhase::Full);
 						auto class_type_it = getTypesByNameMap().find(class_name_handle);
 						if (class_type_it == getTypesByNameMap().end() ||
 							class_type_it->second == nullptr) {
@@ -2089,61 +2091,19 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						if (struct_info == nullptr) {
 							return nullptr;
 						}
-						std::vector<ASTNode> candidates;
-						std::vector<ASTNode> definition_candidates;
-						const FunctionDeclarationNode* first_candidate = nullptr;
-						const FunctionDeclarationNode* first_definition_candidate =
-							nullptr;
-						auto collect_candidates =
-							[&](const StructTypeInfo* current_struct,
-								const auto& self) -> void {
-								if (current_struct == nullptr) {
-									return;
-								}
-								for (const auto& member_func : current_struct->member_functions) {
-									if (member_func.getName() != final_identifier.handle() ||
-										!member_func.function_decl.is<FunctionDeclarationNode>()) {
-										continue;
-									}
-									const FunctionDeclarationNode& candidate =
-										member_func.function_decl.as<FunctionDeclarationNode>();
-									if (!candidate.is_static()) {
-										continue;
-									}
-									if (first_candidate == nullptr) {
-										first_candidate = &candidate;
-									}
-									const bool already_added =
-										std::any_of(
-											candidates.begin(),
-											candidates.end(),
-											[&](const ASTNode& existing_overload) {
-												const FunctionDeclarationNode* existing_function =
-													get_function_decl_node(existing_overload);
-												return existing_function == &candidate;
-											});
-									if (!already_added) {
-										candidates.push_back(member_func.function_decl);
-									}
-									if (candidate.get_definition().has_value()) {
-										if (first_definition_candidate == nullptr) {
-											first_definition_candidate = &candidate;
-										}
-										definition_candidates.push_back(
-											member_func.function_decl);
-									}
-								}
-								for (const auto& base_spec : current_struct->base_classes) {
-									if (const StructTypeInfo* base_struct =
-											tryGetStructTypeInfo(base_spec.type_index);
-										base_struct != nullptr) {
-										self(base_struct, self);
-									}
-								}
-							};
-						collect_candidates(struct_info, collect_candidates);
+						DefinitionPreferredMemberOverloadSet candidate_set =
+							collectVisibleMemberFunctionOverloadNodes(
+								struct_info,
+								final_identifier.handle(),
+								true,
+								[](const StructMemberFunction& member_func,
+								   const FunctionDeclarationNode& candidate) {
+									return !member_func.is_constructor &&
+										!member_func.is_destructor &&
+										candidate.is_static();
+								});
 						auto resolve_from_candidates =
-							[&](const std::vector<ASTNode>& overloads)
+							[&](std::span<const ASTNode> overloads)
 								-> const FunctionDeclarationNode* {
 								if (overloads.empty()) {
 									return nullptr;
@@ -2159,19 +2119,25 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 								return nullptr;
 							};
 						if (const FunctionDeclarationNode* definition_match =
-								resolve_from_candidates(definition_candidates);
+								resolve_from_candidates(
+									std::span<const ASTNode>(
+										candidate_set.definition_preferred.data(),
+										candidate_set.definition_preferred.size()));
 							definition_match != nullptr) {
 							return definition_match;
 						}
 						if (const FunctionDeclarationNode* resolved_match =
-								resolve_from_candidates(candidates);
+								resolve_from_candidates(
+									std::span<const ASTNode>(
+										candidate_set.all.data(),
+										candidate_set.all.size()));
 							resolved_match != nullptr) {
 							return resolved_match;
 						}
-						if (first_definition_candidate != nullptr) {
-							return first_definition_candidate;
+						if (candidate_set.first_definition != nullptr) {
+							return candidate_set.first_definition;
 						}
-						return first_candidate;
+						return candidate_set.first;
 					};
 
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;

@@ -136,9 +136,21 @@ inline std::vector<ASTNode> materializeTemplateArgumentNodes(
 			continue;
 		}
 
+		TypeIndex arg_type_index = arg.type_index;
+		if (!arg_type_index.is_valid()) {
+			if (arg.typeEnum() == TypeCategory::Invalid) {
+				continue;
+			}
+			arg_type_index = TypeIndex{}.withCategory(arg.typeEnum());
+		}
+		const TypeCategory arg_category =
+			arg.typeEnum() == TypeCategory::Invalid
+			? arg_type_index.category()
+			: arg.typeEnum();
+
 		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.type_index.withCategory(arg.typeEnum()),
-			get_type_size_bits(arg.typeEnum()),
+			arg_type_index.withCategory(arg_category),
+			computeTemplateArgumentTypeSizeBits(arg_type_index),
 			makeTemplateArgumentTypeToken(arg, source_token),
 			arg.cv_qualifier,
 			arg.ref_qualifier);

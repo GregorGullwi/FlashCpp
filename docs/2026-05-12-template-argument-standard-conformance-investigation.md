@@ -533,7 +533,12 @@ For work in this area, rerun:
    `test_alias_template_comprehensive_ret70.cpp`,
    `test_alias_two_pointers_ret30.cpp`, and
    `test_member_template_alias_ret250.cpp`. The full regular suite now passes
-   again via `pwsh ./tests/run_all_tests.ps1`. The next concrete target in this
+   again via `pwsh ./tests/run_all_tests.ps1`. As cleanup on top of that
+   functional fix, the branch now centralizes definition-preferred
+   qualified-owner member lookup in `MemberFunctionLookupShared.h`, reuses
+   `TemplateArgumentMaterialization.h` for the remaining qualified-id
+   template-argument materialization path, and removes the helper header from
+   the vcxproj lists. The next concrete target in this
    investigation therefore shifts to standards-conformance growth outside the
    green suite: the remaining expected-failure coverage
    (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any

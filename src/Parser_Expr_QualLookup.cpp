@@ -3,6 +3,7 @@
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
+#include "MemberFunctionLookupShared.h"
 #include <span>
 #include <unordered_set>
 #include "NameMangling.h"
@@ -343,14 +344,14 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	const bool have_complete_call_arg_types =
 		!has_dependent_call_arg &&
 		deduced_arg_types.size() == args.size();
-	std::vector<ASTNode> static_member_overloads;
-	std::vector<ASTNode> definition_static_member_overloads;
-	const FunctionDeclarationNode* first_static_name_match = nullptr;
-	const FunctionDeclarationNode* first_definition_static_name_match = nullptr;
+	DefinitionPreferredMemberOverloadSet static_member_overloads;
 	auto collectOwnerStaticMemberOverloads = [&]() {
 		if (!can_use_nontemplate_owner_lookup) {
 			return;
 		}
+		instantiateLazyClassToPhase(
+			owner_name_handle,
+			ClassInstantiationPhase::Full);
 		auto type_it = getTypesByNameMap().find(owner_name_handle);
 		if (type_it == getTypesByNameMap().end() ||
 			type_it->second == nullptr) {
@@ -360,58 +361,20 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		if (struct_info == nullptr) {
 			return;
 		}
-		auto collect_static_members =
-			[&](const StructTypeInfo* current_struct,
-				const auto& self) -> void {
-				if (current_struct == nullptr) {
-					return;
-				}
-				for (const auto& member_func : current_struct->member_functions) {
-					if (member_func.getName() != member_name_handle ||
-						!member_func.function_decl.is<FunctionDeclarationNode>()) {
-						continue;
-					}
-					const FunctionDeclarationNode& candidate =
-						member_func.function_decl.as<FunctionDeclarationNode>();
-					if (!candidate.is_static()) {
-						continue;
-					}
-					if (first_static_name_match == nullptr) {
-						first_static_name_match = &candidate;
-					}
-					const bool already_added =
-						std::any_of(
-							static_member_overloads.begin(),
-							static_member_overloads.end(),
-							[&](const ASTNode& existing_overload) {
-								const FunctionDeclarationNode* existing_function =
-									get_function_decl_node(existing_overload);
-								return existing_function == &candidate;
-							});
-					if (!already_added) {
-						static_member_overloads.push_back(
-							member_func.function_decl);
-					}
-					if (candidate.get_definition().has_value()) {
-						if (first_definition_static_name_match == nullptr) {
-							first_definition_static_name_match = &candidate;
-						}
-						definition_static_member_overloads.push_back(
-							member_func.function_decl);
-					}
-				}
-				for (const auto& base_spec : current_struct->base_classes) {
-					if (const StructTypeInfo* base_struct =
-							tryGetStructTypeInfo(base_spec.type_index);
-						base_struct != nullptr) {
-						self(base_struct, self);
-					}
-				}
-			};
-		collect_static_members(struct_info, collect_static_members);
+		static_member_overloads =
+			collectVisibleMemberFunctionOverloadNodes(
+				struct_info,
+				member_name_handle,
+				true,
+				[](const StructMemberFunction& member_func,
+				   const FunctionDeclarationNode& candidate) {
+					return !member_func.is_constructor &&
+						!member_func.is_destructor &&
+						candidate.is_static();
+				});
 	};
 	auto resolveStaticOwnerMemberOverload =
-		[&](const std::vector<ASTNode>& overloads) -> const FunctionDeclarationNode* {
+		[&](std::span<const ASTNode> overloads) -> const FunctionDeclarationNode* {
 		if (!have_complete_call_arg_types || overloads.empty()) {
 			return nullptr;
 		}
@@ -437,21 +400,25 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		// prefer real static-member overload selection on the instantiated owner.
 		if (const FunctionDeclarationNode* definition_match =
 				resolveStaticOwnerMemberOverload(
-					definition_static_member_overloads);
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
 			definition_match != nullptr) {
 			resolved_function = definition_match;
 		} else if (const FunctionDeclarationNode* resolved_match =
 				resolveStaticOwnerMemberOverload(
-					static_member_overloads);
+					std::span<const ASTNode>(
+						static_member_overloads.all.data(),
+						static_member_overloads.all.size()));
 			resolved_match != nullptr) {
 			resolved_function = resolved_match;
 		}
 
 		if (resolved_function == nullptr) {
-			if (first_definition_static_name_match != nullptr) {
-				parser_hint_function = first_definition_static_name_match;
-			} else if (first_static_name_match != nullptr) {
-				parser_hint_function = first_static_name_match;
+			if (static_member_overloads.first_definition != nullptr) {
+				parser_hint_function = static_member_overloads.first_definition;
+			} else if (static_member_overloads.first != nullptr) {
+				parser_hint_function = static_member_overloads.first;
 			}
 		}
 		if (parser_hint_function == nullptr &&
@@ -474,12 +441,14 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		!resolved_function->get_definition().has_value()) {
 		if (const FunctionDeclarationNode* definition_match =
 				resolveStaticOwnerMemberOverload(
-					definition_static_member_overloads);
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
 			definition_match != nullptr) {
 			resolved_function = definition_match;
 			parser_hint_function = resolved_function;
-		} else if (first_definition_static_name_match != nullptr) {
-			parser_hint_function = first_definition_static_name_match;
+		} else if (static_member_overloads.first_definition != nullptr) {
+			parser_hint_function = static_member_overloads.first_definition;
 		}
 	}
 

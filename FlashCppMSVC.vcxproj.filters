@@ -443,9 +443,6 @@
     <ClInclude Include="src\TemplateExpressionEquivalence.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\TemplateArgumentMaterialization.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="src\TemplateTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
