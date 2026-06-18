@@ -2063,18 +2063,119 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					}
 					return nullptr;
 				};
+				StringBuilder class_scope_builder;
+				for (size_t i = 0; i < namespaces.size(); ++i) {
+					if (i > 0) {
+						class_scope_builder.append("::");
+					}
+					class_scope_builder.append(std::string_view(namespaces[i]));
+				}
+				std::string_view class_scope = class_scope_builder.commit();
+				StringHandle class_name_handle =
+					StringTable::getOrInternStringHandle(class_scope);
+				auto resolveQualifiedStaticMemberFromOwner =
+					[&]() -> const FunctionDeclarationNode* {
+						auto class_type_it = getTypesByNameMap().find(class_name_handle);
+						if (class_type_it == getTypesByNameMap().end() ||
+							class_type_it->second == nullptr) {
+							return nullptr;
+						}
+						const StructTypeInfo* struct_info =
+							class_type_it->second->getStructInfo();
+						if (struct_info == nullptr) {
+							struct_info = tryGetStructTypeInfo(
+								class_type_it->second->registeredTypeIndex());
+						}
+						if (struct_info == nullptr) {
+							return nullptr;
+						}
+						std::vector<ASTNode> candidates;
+						std::vector<ASTNode> definition_candidates;
+						const FunctionDeclarationNode* first_candidate = nullptr;
+						const FunctionDeclarationNode* first_definition_candidate =
+							nullptr;
+						auto collect_candidates =
+							[&](const StructTypeInfo* current_struct,
+								const auto& self) -> void {
+								if (current_struct == nullptr) {
+									return;
+								}
+								for (const auto& member_func : current_struct->member_functions) {
+									if (member_func.getName() != final_identifier.handle() ||
+										!member_func.function_decl.is<FunctionDeclarationNode>()) {
+										continue;
+									}
+									const FunctionDeclarationNode& candidate =
+										member_func.function_decl.as<FunctionDeclarationNode>();
+									if (!candidate.is_static()) {
+										continue;
+									}
+									if (first_candidate == nullptr) {
+										first_candidate = &candidate;
+									}
+									const bool already_added =
+										std::any_of(
+											candidates.begin(),
+											candidates.end(),
+											[&](const ASTNode& existing_overload) {
+												const FunctionDeclarationNode* existing_function =
+													get_function_decl_node(existing_overload);
+												return existing_function == &candidate;
+											});
+									if (!already_added) {
+										candidates.push_back(member_func.function_decl);
+									}
+									if (candidate.get_definition().has_value()) {
+										if (first_definition_candidate == nullptr) {
+											first_definition_candidate = &candidate;
+										}
+										definition_candidates.push_back(
+											member_func.function_decl);
+									}
+								}
+								for (const auto& base_spec : current_struct->base_classes) {
+									if (const StructTypeInfo* base_struct =
+											tryGetStructTypeInfo(base_spec.type_index);
+										base_struct != nullptr) {
+										self(base_struct, self);
+									}
+								}
+							};
+						collect_candidates(struct_info, collect_candidates);
+						auto resolve_from_candidates =
+							[&](const std::vector<ASTNode>& overloads)
+								-> const FunctionDeclarationNode* {
+								if (overloads.empty()) {
+									return nullptr;
+								}
+								const OverloadResolutionResult overload_result =
+									resolve_overload(overloads, arg_types);
+								if (overload_result.has_match &&
+									!overload_result.is_ambiguous &&
+									overload_result.selected_overload != nullptr) {
+									return get_function_decl_node(
+										*overload_result.selected_overload);
+								}
+								return nullptr;
+							};
+						if (const FunctionDeclarationNode* definition_match =
+								resolve_from_candidates(definition_candidates);
+							definition_match != nullptr) {
+							return definition_match;
+						}
+						if (const FunctionDeclarationNode* resolved_match =
+								resolve_from_candidates(candidates);
+							resolved_match != nullptr) {
+							return resolved_match;
+						}
+						if (first_definition_candidate != nullptr) {
+							return first_definition_candidate;
+						}
+						return first_candidate;
+					};
 
 				const DeclarationNode* decl_ptr = qualified_symbol.has_value() ? getDeclarationNode(*qualified_symbol) : nullptr;
 				if (!decl_ptr) {
-					StringBuilder class_scope_builder;
-					for (size_t i = 0; i < namespaces.size(); ++i) {
-						if (i > 0) {
-							class_scope_builder.append("::");
-						}
-						class_scope_builder.append(std::string_view(namespaces[i]));
-					}
-					std::string_view class_scope = class_scope_builder.commit();
-					StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_scope);
 					const TypeInfo* class_type_info = lookupTypeInCurrentContext(class_name_handle);
 					if (class_type_info == nullptr) {
 						auto class_type_it = getTypesByNameMap().find(class_name_handle);
@@ -2099,13 +2200,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							struct_info = tryGetStructTypeInfo(class_type_info->registeredTypeIndex());
 						}
 						if (struct_info != nullptr) {
-							auto member_function_result =
-								struct_info->findMemberFunctionRecursive(final_identifier.handle());
-							if (const StructMemberFunction* member_function = member_function_result.first) {
-								if (member_function->function_decl.is<FunctionDeclarationNode>()) {
-									qualified_symbol = member_function->function_decl;
-									decl_ptr = &qualified_symbol->as<FunctionDeclarationNode>().decl_node();
-								}
+							if (const FunctionDeclarationNode* resolved_member =
+									resolveQualifiedStaticMemberFromOwner();
+								resolved_member != nullptr) {
+								qualified_symbol = ASTNode(resolved_member);
+								decl_ptr = &resolved_member->decl_node();
 							}
 						}
 					}
@@ -2113,15 +2212,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
 					if (!func_decl.is_materialized()) {
-						StringBuilder class_scope_builder;
-						for (size_t i = 0; i < namespaces.size(); ++i) {
-							if (i > 0) {
-								class_scope_builder.append("::");
-							}
-							class_scope_builder.append(std::string_view(namespaces[i]));
-						}
-						std::string_view class_scope = class_scope_builder.commit();
-						StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_scope);
 						auto class_type_it = getTypesByNameMap().find(class_name_handle);
 						if (class_type_it != getTypesByNameMap().end() && class_type_it->second->isTemplateInstantiation()) {
 							if (!instantiating_lazy_member_) {
@@ -2140,6 +2230,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 								}
 							}
 						}
+					}
+					if (const FunctionDeclarationNode* resolved_member =
+							resolveQualifiedStaticMemberFromOwner();
+						resolved_member != nullptr &&
+						(!func_decl.get_definition().has_value() ||
+						 resolved_member->get_definition().has_value())) {
+						qualified_symbol = ASTNode(resolved_member);
+						decl_ptr = &resolved_member->decl_node();
 					}
 				}
 

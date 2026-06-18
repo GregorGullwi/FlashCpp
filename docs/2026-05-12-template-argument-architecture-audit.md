@@ -535,14 +535,23 @@ When changing this area, always rerun:
    `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`,
    and
    `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`.
+   The focused guard for variable-template replay preserving the full nested
+   owner chain into the final direct-call target is
+   `test_var_template_replay_dependent_member_template_call_ret0.cpp`.
    The member-function-pointer fast-path surface is now covered, including the
    `.*` / `->*` postfix path, MSVC ABI mangling for member-function-pointer
    qualifiers, and `_Is_memfunptr`-style owner-class deduction in partial
    specializations. The next concrete target in this slice is therefore the
-   smaller set of qualified/member-template materializers and placeholder
-   builders that still stop at compatibility metadata after owner resolution
-   already succeeded, plus the remaining canonical member-object-pointer type
-   carrier gap if another ABI-sensitive failure reaches it.
+   smaller alias/materialization cluster still visible in the full suite:
+   `test_alias_template_pointer_modifiers_ret0.cpp` still fails to preserve
+   concrete pointer/cv metadata through dependent member-alias paths, and the
+   related alias regressions (`test_alias_const_ptr_ret42.cpp`,
+   `test_alias_ptrptr_ret42.cpp`,
+   `test_alias_template_comprehensive_ret70.cpp`,
+   `test_alias_two_pointers_ret30.cpp`, and
+   `test_member_template_alias_ret250.cpp`) still crash at runtime. After that,
+   re-check the remaining canonical member-object-pointer type carrier gap if
+   another ABI-sensitive failure reaches it.
    Long-term direction: stop teaching individual parser call sites to recover
    owner identity from short qualified spellings. Instead, preserve a shared
    structured qualified-owner record on the AST and route both parser
