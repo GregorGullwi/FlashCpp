@@ -128,16 +128,6 @@ void attachResolvedMemberCallMetadata(
 	std::span<const TypeSpecifierNode> arg_types,
 	bool has_deferred_template_call_args,
 	const FunctionDeclarationNode& func_decl) {
-	std::optional<std::string_view> qualified_name_override;
-	if (func_decl.is_member_function() &&
-		!func_decl.parent_struct_name().empty()) {
-		StringBuilder qualified_name_builder;
-		qualified_name_builder
-			.append(func_decl.parent_struct_name())
-			.append("::")
-			.append(func_decl.decl_node().identifier_token().value());
-		qualified_name_override = qualified_name_builder.commit();
-	}
 	attachResolvedPostfixDirectCallMetadata(
 		call_expr,
 		definition_context,
@@ -147,7 +137,9 @@ void attachResolvedMemberCallMetadata(
 		func_decl,
 		true,
 		false,
-		qualified_name_override);
+		func_decl.is_member_function()
+			? tryBuildQualifiedCallNameOverride(func_decl)
+			: std::nullopt);
 }
 
 const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_spec, bool allow_pointers) {

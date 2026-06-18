@@ -101,6 +101,27 @@ tryBuildDeferredFunctionCallDefinitionLookupRecord(
 	return record;
 }
 
+inline std::optional<std::string_view> tryBuildQualifiedCallNameOverride(
+	std::string_view owner_name,
+	std::string_view member_name) {
+	if (owner_name.empty() || member_name.empty()) {
+		return std::nullopt;
+	}
+
+	return StringBuilder()
+		.append(owner_name)
+		.append("::")
+		.append(member_name)
+		.commit();
+}
+
+inline std::optional<std::string_view> tryBuildQualifiedCallNameOverride(
+	const FunctionDeclarationNode& func_decl) {
+	return tryBuildQualifiedCallNameOverride(
+		func_decl.parent_struct_name(),
+		func_decl.decl_node().identifier_token().value());
+}
+
 struct CallInfo {
 	// Callee declaration (always present).
 	const DeclarationNode* declaration;

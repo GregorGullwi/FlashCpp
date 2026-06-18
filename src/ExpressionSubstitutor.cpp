@@ -1753,15 +1753,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		}
 		if (qualified_call_name.has_value() && !qualified_call_name->empty()) {
 			setCallQualifiedName(new_expr, *qualified_call_name);
-		} else if (infer_qualified_name_from_parent &&
-			!target_func.parent_struct_name().empty()) {
-			setCallQualifiedName(
-				new_expr,
-				StringBuilder()
-					.append(target_func.parent_struct_name())
-					.append("::")
-					.append(target_func.decl_node().identifier_token().value())
-					.commit());
+		} else if (infer_qualified_name_from_parent) {
+			if (std::optional<std::string_view> inferred_qualified_name =
+					tryBuildQualifiedCallNameOverride(target_func);
+				inferred_qualified_name.has_value()) {
+				setCallQualifiedName(new_expr, *inferred_qualified_name);
+			}
 		}
 		if (target_func.has_mangled_name()) {
 			setCallMangledName(new_expr, target_func.mangled_name());

@@ -291,19 +291,6 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 	return record;
 }
 
-std::optional<std::string_view> makeQualifiedMemberCallNameOverride(
-	std::string_view owner_name,
-	std::string_view member_name) {
-	if (owner_name.empty()) {
-		return std::nullopt;
-	}
-	return StringBuilder()
-		.append(owner_name)
-		.append("::")
-		.append(member_name)
-		.commit();
-}
-
 void attachResolvedOrdinaryDirectCallMetadata(
 	ExpressionNode& call_expr,
 	const TemplateDefinitionLookupContext* definition_context,
@@ -320,14 +307,12 @@ void attachResolvedOrdinaryDirectCallMetadata(
 
 	if (qualified_name_override.has_value() && !qualified_name_override->empty()) {
 		setCallQualifiedName(call_expr, *qualified_name_override);
-	} else if (!func_decl.parent_struct_name().empty()) {
+	} else if (std::optional<std::string_view> member_qualified_name =
+				   tryBuildQualifiedCallNameOverride(func_decl);
+			   member_qualified_name.has_value()) {
 		setCallQualifiedName(
 			call_expr,
-			StringBuilder()
-				.append(func_decl.parent_struct_name())
-				.append("::")
-				.append(func_decl.decl_node().identifier_token().value())
-				.commit());
+			*member_qualified_name);
 	}
 
 	if (std::optional<FunctionCallDefinitionLookupRecord> record =
@@ -359,14 +344,12 @@ void attachDeferredOrdinaryDirectCallHints(
 	std::optional<std::string_view> qualified_name_override) {
 	if (qualified_name_override.has_value() && !qualified_name_override->empty()) {
 		setCallQualifiedName(call_expr, *qualified_name_override);
-	} else if (!func_decl.parent_struct_name().empty()) {
+	} else if (std::optional<std::string_view> member_qualified_name =
+				   tryBuildQualifiedCallNameOverride(func_decl);
+			   member_qualified_name.has_value()) {
 		setCallQualifiedName(
 			call_expr,
-			StringBuilder()
-				.append(func_decl.parent_struct_name())
-				.append("::")
-				.append(func_decl.decl_node().identifier_token().value())
-				.commit());
+			*member_qualified_name);
 	}
 	setCallParserReturnTypeHint(
 		call_expr,
@@ -415,7 +398,7 @@ void attachResolvedReceiverDirectCallMetadata(
 		func_decl,
 		true,
 		false,
-		makeQualifiedMemberCallNameOverride(
+		tryBuildQualifiedCallNameOverride(
 			qualified_owner,
 			func_decl.decl_node().identifier_token().value()));
 }
@@ -9319,7 +9302,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								qualified_owner = StringTable::getStringView(member_function_context_stack_.back().struct_name);
 							}
 							const std::optional<std::string_view> qualified_name_override =
-								makeQualifiedMemberCallNameOverride(
+								tryBuildQualifiedCallNameOverride(
 									qualified_owner,
 									func_decl.decl_node().identifier_token().value());
 							std::vector<TypeSpecifierNode> fast_path_arg_types;
@@ -9682,7 +9665,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													struct_parsing_context_stack_.back().struct_name;
 											}
 											qualified_name_override =
-												makeQualifiedMemberCallNameOverride(
+												tryBuildQualifiedCallNameOverride(
 													struct_name_for_qual,
 													identifier_token.value());
 										}
