@@ -291,24 +291,6 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 	return record;
 }
 
-std::optional<FunctionCallDefinitionLookupRecord> makeDeferredFunctionCallDefinitionLookupRecord(
-	const TemplateDefinitionLookupContext* definition_context,
-	const Token& callee_token,
-	bool ordinary_lookup_included,
-	bool argument_dependent_lookup_included) {
-	if (definition_context == nullptr ||
-		!definition_context->is_valid() ||
-		callee_token.type() != Token::Type::Identifier) {
-		return std::nullopt;
-	}
-
-	FunctionCallDefinitionLookupRecord record;
-	initializeCallLookupRecordCommon(record, definition_context, callee_token);
-	record.ordinary_lookup_included = ordinary_lookup_included;
-	record.argument_dependent_lookup_included = argument_dependent_lookup_included;
-	return record;
-}
-
 std::optional<std::string_view> makeQualifiedMemberCallNameOverride(
 	std::string_view owner_name,
 	std::string_view member_name) {
@@ -3785,7 +3767,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						? &*deferred_definition_lookup_context
 						: current_template_definition_lookup_context_;
 				if (std::optional<FunctionCallDefinitionLookupRecord> record =
-						makeDeferredFunctionCallDefinitionLookupRecord(
+						tryBuildDeferredFunctionCallDefinitionLookupRecord(
 							definition_lookup_context,
 							qual_id.identifier_token(),
 							true,
@@ -4883,7 +4865,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							? &*deferred_definition_lookup_context
 							: current_template_definition_lookup_context_;
 					if (std::optional<FunctionCallDefinitionLookupRecord> record =
-							makeDeferredFunctionCallDefinitionLookupRecord(
+							tryBuildDeferredFunctionCallDefinitionLookupRecord(
 								definition_lookup_context,
 								qual_id.identifier_token(),
 								true,
@@ -6622,7 +6604,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							setCallDependentUnqualifiedLookupRecord(result->as<ExpressionNode>(), *record);
 						}
 					} else if (std::optional<FunctionCallDefinitionLookupRecord> record =
-								   makeDeferredFunctionCallDefinitionLookupRecord(
+								   tryBuildDeferredFunctionCallDefinitionLookupRecord(
 									   current_template_definition_lookup_context_,
 									   identifier_token,
 									   true,
@@ -9432,7 +9414,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											true,
 											*identifierType);
 									} else if (std::optional<FunctionCallDefinitionLookupRecord> record =
-												   makeDeferredFunctionCallDefinitionLookupRecord(
+												   tryBuildDeferredFunctionCallDefinitionLookupRecord(
 													   current_template_definition_lookup_context_,
 													   identifier_token,
 													   true,

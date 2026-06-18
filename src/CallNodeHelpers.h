@@ -80,6 +80,27 @@ inline std::optional<FunctionCallDefinitionLookupRecord> tryBuildFunctionCallDef
 	return record;
 }
 
+inline std::optional<FunctionCallDefinitionLookupRecord>
+tryBuildDeferredFunctionCallDefinitionLookupRecord(
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	bool ordinary_lookup_included,
+	bool argument_dependent_lookup_included) {
+	if (definition_context == nullptr ||
+		!definition_context->is_valid() ||
+		callee_token.type() != Token::Type::Identifier) {
+		return std::nullopt;
+	}
+
+	FunctionCallDefinitionLookupRecord record;
+	record.definition_context = *definition_context;
+	record.callee_name = callee_token.handle();
+	record.ordinary_lookup_included = ordinary_lookup_included;
+	record.argument_dependent_lookup_included =
+		argument_dependent_lookup_included;
+	return record;
+}
+
 struct CallInfo {
 	// Callee declaration (always present).
 	const DeclarationNode* declaration;
