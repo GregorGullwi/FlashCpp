@@ -490,31 +490,10 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			[](const TypeInfo::TemplateArgInfo& arg_info) {
 				return templateArgInfoContainsDependentPlaceholder(arg_info);
 			});
-	bool owner_is_current_instantiation_context = false;
-	if (!member_function_context_stack_.empty()) {
-		const auto& member_ctx = member_function_context_stack_.back();
-		if (owner_name_handle == member_ctx.struct_name) {
-			owner_is_current_instantiation_context = true;
-		} else if (const TypeInfo* current_type_info =
-					   tryGetTypeInfo(member_ctx.struct_type_index);
-				   current_type_info != nullptr) {
-			const StringHandle current_base_template_name =
-				current_type_info->baseTemplateName();
-			if (owner_name_handle == current_base_template_name) {
-				owner_is_current_instantiation_context = true;
-			} else {
-				const std::string_view qualified_base_template_name =
-					buildQualifiedNameFromHandle(
-						current_type_info->sourceNamespace(),
-						StringTable::getStringView(current_base_template_name));
-				if (!qualified_base_template_name.empty() &&
-					StringTable::getStringView(owner_name_handle) ==
-						qualified_base_template_name) {
-					owner_is_current_instantiation_context = true;
-				}
-			}
-		}
-	}
+	const bool owner_is_current_instantiation_context =
+		this->tryResolveQualifiedTypeOwnerFromCurrentContext(
+			instantiated_class_name)
+			.has_value();
 	if (resolved_function == nullptr &&
 		static_member_overloads.all.empty() &&
 		!has_template_member_candidates &&
