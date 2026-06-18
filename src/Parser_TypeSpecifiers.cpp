@@ -3984,8 +3984,13 @@ ParseResult Parser::parse_decltype_specifier() {
 		return ParseResult::error("Expected ')' after decltype expression", current_token_);
 	}
 
+	const std::optional<ASTNode> decltype_expr = expr_result.node();
+	if (!decltype_expr.has_value()) {
+		throw InternalError("decltype expression parse succeeded without an AST node");
+	}
+
 	// Deduce the type from the expression
-	auto type_spec_opt = get_expression_type(*expr_result.node());
+	auto type_spec_opt = get_expression_type(*decltype_expr);
 	if (!type_spec_opt.has_value()) {
 		// If we're in a template body/declaration and the expression is dependent,
 		// create a dependent type placeholder that will be resolved during instantiation.
@@ -3993,10 +3998,12 @@ ParseResult Parser::parse_decltype_specifier() {
 		// some template contexts (like member function templates in structs) might not
 		// set parsing_template_depth_ > 0 but will have template parameter names.
 		if (decltype_source_mentions_active_template_param ||
-			expressionRequiresDeferredDecltype(*expr_result.node())) {
+			expressionRequiresDeferredDecltype(*decltype_expr)) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
-			const ASTNode& deferred_decltype_expr = *expr_result.node();
-			return saved_position.success(makeDependentDecltypeType(decltype_token, &deferred_decltype_expr));
+			return saved_position.success(
+				makeDependentDecltypeType(
+					decltype_token,
+					&*decltype_expr));
 		}
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}
