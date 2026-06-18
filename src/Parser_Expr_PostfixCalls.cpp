@@ -9,6 +9,11 @@
 #include <limits>
 
 namespace {
+struct PostfixDependentMemberSegmentInfo {
+	StringHandle name;
+	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> template_args;
+};
+
 std::string_view buildQualifiedMemberCallName(
 	std::span<const StringHandle> owner_segments,
 	std::string_view member_name) {
@@ -26,6 +31,62 @@ std::string_view buildQualifiedMemberCallName(
 		builder.append(member_name);
 	}
 	return builder.commit();
+}
+
+bool postfixExplicitTemplateArgsRequireDeferredInstantiation(
+	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	return std::any_of(template_args.begin(), template_args.end(), [](const TemplateTypeArg& arg) {
+		return arg.is_pack || templateArgIsStructurallyDependent(arg);
+	});
+}
+
+TypeIndex lookupPostfixRecordedDependentOwnerType(StringHandle owner_handle) {
+	if (!owner_handle.isValid()) {
+		return {};
+	}
+	auto owner_it = getTypesByNameMap().find(owner_handle);
+	if (owner_it == getTypesByNameMap().end() || owner_it->second == nullptr) {
+		return {};
+	}
+	return owner_it->second->registeredTypeIndex();
+}
+
+TypeInfo::DependentQualifiedNameRecord makePostfixDependentQualifiedNameRecord(
+	StringHandle owner_name,
+	TypeIndex owner_type,
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
+	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	std::span<const PostfixDependentMemberSegmentInfo> member_segments) {
+	TypeInfo::DependentQualifiedNameRecord record;
+	record.owner_kind = owner_kind;
+	record.owner_name = owner_name;
+	record.owner_type = owner_type;
+	record.owner_template_arguments = std::move(owner_template_arguments);
+	record.names_current_instantiation =
+		owner_kind == TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation;
+	for (const PostfixDependentMemberSegmentInfo& segment_info : member_segments) {
+		TypeInfo::DependentQualifiedNameRecord::Member member;
+		member.name = segment_info.name;
+		member.has_template_keyword = segment_info.template_args.has_value();
+		if (segment_info.template_args.has_value()) {
+			member.template_arguments = *segment_info.template_args;
+			member.has_template_arguments = true;
+		}
+		record.member_chain.push_back(std::move(member));
+	}
+	return record;
+}
+
+std::string_view buildPostfixDependentQualifiedCallName(
+	std::string_view owner_name,
+	std::span<const PostfixDependentMemberSegmentInfo> member_segments) {
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(owner_name);
+	for (const PostfixDependentMemberSegmentInfo& member_segment : member_segments) {
+		qualified_name_builder.append("::");
+		qualified_name_builder.append(StringTable::getStringView(member_segment.name));
+	}
+	return qualified_name_builder.commit();
 }
 
 void attachResolvedPostfixDirectCallMetadata(
@@ -731,6 +792,214 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 	advance(); // consume member name
 
 	TemplateTypeArgParsingResult explicit_template_args = parse_explicit_template_arguments_as_result(TokenDestroyPattern::Restore);
+	if (explicit_template_args && peek() == "::"_tok) {
+		explicit_template_args.destroy_pattern_ = TokenDestroyPattern::Discard;
+		std::optional<InlineVector<TemplateTypeArg, 4>> owner_template_args =
+			explicit_template_args.read_template_type_args();
+		if (!owner_template_args.has_value()) {
+			return ParseResult::error(
+				"Expected template arguments for qualified owner template-id",
+				member_name_token);
+		}
+
+		advance(); // consume '::'
+		bool saw_template_keyword = false;
+		if (peek() == "template"_tok) {
+			advance();
+			saw_template_keyword = true;
+		}
+
+		Token qualified_member_token;
+		if (peek() == "operator"_tok) {
+			Token operator_keyword_token = peek_info();
+			advance(); // consume 'operator'
+			std::string_view operator_name;
+			if (auto err = parse_operator_name(operator_keyword_token, operator_name)) {
+				return std::move(*err);
+			}
+			qualified_member_token = Token(
+				Token::Type::Identifier,
+				operator_name,
+				operator_keyword_token.line(),
+				operator_keyword_token.column(),
+				operator_keyword_token.file_index());
+		} else if (peek().is_identifier()) {
+			qualified_member_token = peek_info();
+			advance(); // consume member name
+		} else {
+			return ParseResult::error("Expected identifier after '::'", current_token_);
+		}
+
+		std::optional<InlineVector<TemplateTypeArg, 4>> member_template_args;
+		std::vector<ASTNode> member_template_arg_nodes;
+		if (peek() == "<"_tok || saw_template_keyword) {
+			last_failed_template_arg_parse_handle_ = SIZE_MAX;
+			member_template_args =
+				parse_explicit_template_arguments(&member_template_arg_nodes);
+			if (saw_template_keyword && !member_template_args.has_value()) {
+				return ParseResult::error(
+					"Expected explicit template arguments after 'template'",
+					qualified_member_token);
+			}
+		}
+
+		if (peek() != "("_tok) {
+			return ParseResult::error(
+				"Expected '(' after qualified member template-id",
+				current_token_);
+		}
+		advance(); // consume '('
+
+		auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+			.handle_pack_expansion = true,
+			.collect_types = true,
+			.expand_simple_packs = false});
+		if (!args_result.success) {
+			return ParseResult::error(
+				args_result.error_message,
+				args_result.error_token.value_or(current_token_));
+		}
+		ChunkedVector<ASTNode> args = std::move(args_result.args);
+		std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
+		if (!consume(")"_tok)) {
+			return ParseResult::error(
+				"Expected ')' after qualified member function call",
+				current_token_);
+		}
+
+		const bool owner_args_dependent =
+			postfixExplicitTemplateArgsRequireDeferredInstantiation(
+				*owner_template_args);
+		if (owner_args_dependent) {
+			std::vector<PostfixDependentMemberSegmentInfo> member_segments;
+			PostfixDependentMemberSegmentInfo member_segment;
+			member_segment.name = qualified_member_token.handle().isValid()
+				? qualified_member_token.handle()
+				: StringTable::getOrInternStringHandle(qualified_member_token.value());
+			if (member_template_args.has_value()) {
+				member_segment.template_args =
+					toTemplateArgInfoList(*member_template_args);
+			}
+			member_segments.push_back(std::move(member_segment));
+
+			auto type_spec = emplace_node<TypeSpecifierNode>(
+				TypeIndex{}.withCategory(TypeCategory::Auto),
+				0,
+				qualified_member_token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			auto& member_decl =
+				emplace_node<DeclarationNode>(type_spec, qualified_member_token)
+					.as<DeclarationNode>();
+			std::string_view deferred_qualified_call_name =
+				buildPostfixDependentQualifiedCallName(
+					member_name_token.value(),
+					member_segments);
+			Token deferred_call_token(
+				Token::Type::Identifier,
+				deferred_qualified_call_name,
+				qualified_member_token.line(),
+				qualified_member_token.column(),
+				qualified_member_token.file_index());
+			result = emplace_node<ExpressionNode>(
+				makeDirectCallExpr(
+					member_decl,
+					std::move(args),
+					deferred_call_token));
+			setCallQualifiedName(
+				result->as<ExpressionNode>(),
+				deferred_qualified_call_name);
+			setCallDependentQualifiedLookupRecord(
+				result->as<ExpressionNode>(),
+				makePostfixDependentQualifiedNameRecord(
+					member_name_token.handle().isValid()
+						? member_name_token.handle()
+						: StringTable::getOrInternStringHandle(member_name_token.value()),
+					lookupPostfixRecordedDependentOwnerType(member_name_token.handle()),
+					TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization,
+					toTemplateArgInfoList(*owner_template_args),
+					member_segments));
+			if (!member_template_arg_nodes.empty()) {
+				setCallTemplateArguments(
+					result->as<ExpressionNode>(),
+					std::move(member_template_arg_nodes));
+			}
+			return ParseResult::success(*result);
+		}
+
+		AliasTemplateMaterializationResult materialized_owner =
+			resolveCanonicalInstantiatedOwnerForLookup(
+				member_name_token.value(),
+				std::span<const TemplateTypeArg>(
+					owner_template_args->data(),
+					owner_template_args->size()));
+		std::string_view qualified_owner_name =
+			materialized_owner.canonicalName();
+		std::optional<ASTNode> instantiated_func;
+		if (!qualified_owner_name.empty()) {
+			instantiated_func = tryInstantiateMemberFunctionTemplateCall(
+				qualified_owner_name,
+				qualified_member_token.value(),
+				member_template_args,
+				arg_types,
+				!args.empty(),
+				false);
+		}
+
+		if (instantiated_func.has_value() &&
+			instantiated_func->is<FunctionDeclarationNode>()) {
+			const auto& resolved_func =
+				instantiated_func->as<FunctionDeclarationNode>();
+			result = emplace_node<ExpressionNode>(
+				makeResolvedMemberCallExpr(
+					*result,
+					resolved_func,
+					std::move(args),
+					qualified_member_token));
+			attachResolvedMemberCallMetadata(
+				result->as<ExpressionNode>(),
+				current_template_definition_lookup_context_,
+				qualified_member_token,
+				arg_types,
+				false,
+				resolved_func);
+			return ParseResult::success(*result);
+		}
+
+		auto type_spec = emplace_node<TypeSpecifierNode>(
+			TypeIndex{}.withCategory(TypeCategory::Auto),
+			0,
+			qualified_member_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		auto& member_decl =
+			emplace_node<DeclarationNode>(type_spec, qualified_member_token)
+				.as<DeclarationNode>();
+		auto& func_decl_node =
+			emplace_node<FunctionDeclarationNode>(member_decl)
+				.as<FunctionDeclarationNode>();
+		result = emplace_node<ExpressionNode>(
+			makeResolvedMemberCallExpr(
+				*result,
+				func_decl_node,
+				std::move(args),
+				qualified_member_token));
+		if (!member_template_arg_nodes.empty()) {
+			setCallTemplateArguments(
+				result->as<ExpressionNode>(),
+				std::move(member_template_arg_nodes));
+		}
+		setCallQualifiedName(
+			result->as<ExpressionNode>(),
+			StringBuilder()
+				.append(qualified_owner_name.empty()
+					? member_name_token.value()
+					: qualified_owner_name)
+				.append("::")
+				.append(qualified_member_token.value())
+				.commit());
+		return ParseResult::success(*result);
+	}
 
 	if (peek() == "("_tok) {
 		explicit_template_args.destroy_pattern_ = TokenDestroyPattern::Discard;

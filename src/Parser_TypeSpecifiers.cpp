@@ -3950,6 +3950,29 @@ ParseResult Parser::parse_decltype_specifier() {
 	const bool decltype_source_mentions_active_template_param =
 		tokenRangeMentionsActiveTemplateParam(expr_start_pos);
 	discard_saved_token(expr_start_pos);
+	auto expressionRequiresDeferredDecltype =
+		[](const ASTNode& expr_node) -> bool {
+		if (!expr_node.is<ExpressionNode>()) {
+			return false;
+		}
+		const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+		return std::visit(
+			[](const auto& inner) -> bool {
+				using T = std::decay_t<decltype(inner)>;
+				if constexpr (std::is_same_v<T, CallExprNode>) {
+					return inner.has_dependent_unqualified_lookup_record() ||
+						inner.has_dependent_qualified_lookup_record() ||
+						inner.has_parser_return_type_hint() ||
+						inner.has_template_arguments();
+				} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+					return inner.hasDependentQualifiedName() ||
+						inner.has_template_arguments();
+				} else {
+					return false;
+				}
+			},
+			expr);
+	};
 
 	// Expect ')'
 	if (!consume(")"_tok)) {
@@ -3964,7 +3987,8 @@ ParseResult Parser::parse_decltype_specifier() {
 		// Check both parsing_template_depth_ > 0 and current_template_param_names_ since
 		// some template contexts (like member function templates in structs) might not
 		// set parsing_template_depth_ > 0 but will have template parameter names.
-		if (decltype_source_mentions_active_template_param) {
+		if (decltype_source_mentions_active_template_param ||
+			expressionRequiresDeferredDecltype(*expr_result.node())) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
 			const ASTNode& deferred_decltype_expr = *expr_result.node();
 			return saved_position.success(makeDependentDecltypeType(decltype_token, &deferred_decltype_expr));

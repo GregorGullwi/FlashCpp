@@ -405,14 +405,20 @@ Next direct-call target:
    `qualified_name` / `mangled_name` after owner resolution already succeeded,
    and move them onto the same deferred lookup + parser return-type-hint split
    now used by the covered ordinary-call paths.
-   Immediate next target: the remaining postfix explicit-qualified
-   member/operator owner-template-id exits in `Parser_Expr_PostfixCalls.cpp`,
-   where the qualifier itself carries template arguments (for example
-   `this->Base<T>::template pick<int>()`). The concrete explicit member/operator
-   template-id path without owner template arguments is now covered; the
-   remaining gap is that postfix member access currently drops owner template-id
-   structure before the `::template` continuation and therefore still cannot
-   preserve a structured qualified-owner record there.
+   The postfix explicit-qualified member/operator owner-template-id exits in
+   `Parser_Expr_PostfixCalls.cpp` are now covered too: `parse_member_postfix()`
+   consumes qualifiers like `this->Base<T>::template pick<int>()` and
+   `this->Base<T>::template operator()<int>()`, preserving dependent owner
+   template-id structure through the same structured deferred qualified-call
+   record used by the other qualified/member-template paths instead of dropping
+   the `Base<T>` template-id before the `::template` continuation.
+   Immediate next target: audit the remaining qualified/member-template
+   placeholder/materializer exits in `Parser_Expr_PrimaryExpr.cpp` and
+   `Parser_Expr_PostfixCalls.cpp` that still stop at compatibility metadata
+   after owner resolution or deferred lookup shape is already known, and move
+   them onto preserved `FunctionCallDefinitionLookupRecord` or explicit
+   `DependentQualifiedNameRecord` state before removing the whole-call sema
+   synchronization hook.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -446,7 +452,8 @@ When changing this area, always rerun:
 - `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
 - `test_template_explicit_base_member_template_call_default_arg_ret0.cpp`
 - `test_template_explicit_base_operator_template_call_default_arg_ret0.cpp`
-- `test_template_explicit_base_owner_template_member_template_call_fail.cpp`
+- `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -523,8 +530,11 @@ When changing this area, always rerun:
    `test_template_function_pointer_nttp_definition_bound_ret0.cpp`.
    The focused guards for the newly-covered explicit-qualified postfix
    member/operator builders are
-   `test_template_explicit_base_member_call_default_arg_ret0.cpp` and
-   `test_template_explicit_base_operator_call_default_arg_ret0.cpp`.
+   `test_template_explicit_base_member_call_default_arg_ret0.cpp`,
+   `test_template_explicit_base_operator_call_default_arg_ret0.cpp`,
+   `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`,
+   and
+   `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`.
    The member-function-pointer fast-path surface is now covered, including the
    `.*` / `->*` postfix path, MSVC ABI mangling for member-function-pointer
    qualifiers, and `_Is_memfunptr`-style owner-class deduction in partial

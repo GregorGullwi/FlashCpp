@@ -2,6 +2,7 @@
 #include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
 #include <span>
 #include <unordered_set>
 #include "NameMangling.h"
@@ -1940,6 +1941,43 @@ TypeIndex Parser::substitute_template_parameter(
 						 StringTable::getStringView(placeholder_info->name()), instantiated_name);
 		return true;
 	};
+	auto tryResolveDeferredDecltypePlaceholder = [&]() -> bool {
+		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
+		if (placeholder_info == nullptr ||
+			placeholder_info->deferredDecltypeExpression() == nullptr) {
+			return false;
+		}
+
+		TemplateInstantiationContext substitution_context =
+			buildTemplateInstantiationContext(
+				template_params,
+				template_args,
+				nullptr,
+				currentTemplateSubstitutionFailurePolicy());
+		ExpressionSubstitutor substitutor(substitution_context, *this);
+		ASTNode substituted_expr =
+			substitutor.substitute(*placeholder_info->deferredDecltypeExpression());
+		auto resolved_type_spec = get_expression_type(substituted_expr);
+		if (!resolved_type_spec.has_value()) {
+			return false;
+		}
+
+		if (const TypeInfo* resolved_type_info =
+				tryGetTypeInfo(resolved_type_spec->type_index());
+			resolved_type_info != nullptr) {
+			assignResolvedType(*resolved_type_info);
+			return true;
+		}
+
+		TypeIndex native_index = nativeTypeIndex(resolved_type_spec->type());
+		if (native_index.is_valid()) {
+			current_type = resolved_type_spec->type();
+			current_type_index =
+				native_index.withCategory(resolved_type_spec->type());
+			return true;
+		}
+		return false;
+	};
 
 	if (const TypeInfo* indexed_type_info = tryGetTypeInfo(current_type_index)) {
 		type_name = StringTable::getStringView(indexed_type_info->name());
@@ -1954,6 +1992,10 @@ TypeIndex Parser::substitute_template_parameter(
 	}
 
 	if (type_name.empty()) {
+		return current_type_index.withCategory(current_type);
+	}
+
+	if (tryResolveDeferredDecltypePlaceholder()) {
 		return current_type_index.withCategory(current_type);
 	}
 

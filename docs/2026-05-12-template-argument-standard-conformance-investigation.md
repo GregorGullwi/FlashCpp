@@ -387,9 +387,14 @@ Next direct-call target:
    rule that suppresses exact primary-template binding when a registered exact
    specialization must stay visible; the concrete postfix explicit-qualified
    member/operator template-id path without owner template arguments is now
-   covered too. The next uncovered parser target is the owner-template-id
-   variant, where `this->Base<T>::template pick<int>()` still drops the
-   `Base<T>` structure before the `::template` continuation.
+   covered too, and the postfix owner-template-id variant is covered as well:
+   `parse_member_postfix()` now preserves `Base<T>`-style owner template-ids
+   through the `::template` continuation for both member-template and
+   operator-template calls instead of dropping that structure before deferred
+   lookup. The next uncovered parser target is therefore narrower again:
+   the remaining qualified/member-template placeholder/materializer exits that
+   still stamp only compatibility metadata after owner resolution or deferred
+   lookup shape is already known.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -434,7 +439,8 @@ For work in this area, rerun:
 - `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
 - `test_template_explicit_base_member_template_call_default_arg_ret0.cpp`
 - `test_template_explicit_base_operator_template_call_default_arg_ret0.cpp`
-- `test_template_explicit_base_owner_template_member_template_call_fail.cpp`
+- `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
 - `test_template_dependent_unqualified_member_replay_ret0.cpp`
 - `test_template_dependent_unqualified_poi_adl_record_ret42.cpp`
@@ -506,8 +512,11 @@ For work in this area, rerun:
    `test_template_function_pointer_nttp_definition_bound_ret0.cpp`.
    The new focused guards for explicit-qualified postfix member/operator target
    preservation are
-   `test_template_explicit_base_member_call_default_arg_ret0.cpp` and
-   `test_template_explicit_base_operator_call_default_arg_ret0.cpp`.
+   `test_template_explicit_base_member_call_default_arg_ret0.cpp`,
+   `test_template_explicit_base_operator_call_default_arg_ret0.cpp`,
+   `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`,
+   and
+   `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`.
    The member-function-pointer fast-path surface is now covered, including the
    `.*` / `->*` postfix path, MSVC ABI mangling for member-function-pointer
    qualifiers, and `_Is_memfunptr`-style owner-class deduction in partial

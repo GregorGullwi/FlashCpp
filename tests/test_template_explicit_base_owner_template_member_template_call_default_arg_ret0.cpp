@@ -1,6 +1,3 @@
-// TODO(template-infra): currently fails while parsing `this->Base<T>::template ...`
-// because the postfix qualified-owner path drops owner template-ids before the
-// `::template` continuation is analyzed.
 template <class T>
 struct Base {
 	template <class U>
