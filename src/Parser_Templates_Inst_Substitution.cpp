@@ -1654,6 +1654,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 	std::string_view alias_template_name,
 	std::span<const TemplateTypeArg> template_args) {
 	AliasTemplateMaterializationResult result;
+	std::optional<TypeSpecifierNode> resolved_deferred_decltype_spec;
 	const TemplateAliasNode* alias_node = nullptr;
 	if (auto alias_entry = gTemplateRegistry.lookup_alias_template(alias_template_name);
 		alias_entry.has_value() && alias_entry->is<TemplateAliasNode>()) {
@@ -1682,6 +1683,81 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			   resolved_alias.function_signature.has_value() ||
 			   resolved_alias.member_class_name.has_value() ||
 			   !resolved_alias.array_dimensions.empty();
+	};
+	auto tryResolveDeferredDecltypeAliasTarget = [&]() -> bool {
+		if (alias_node == nullptr) {
+			return false;
+		}
+		const TypeInfo* target_type_info =
+			tryGetTypeInfo(alias_node->target_type_node().type_index());
+		if (target_type_info == nullptr) {
+			return false;
+		}
+		const ASTNode* deferred_decltype_expr =
+			target_type_info->deferredDecltypeExpression();
+		if (deferred_decltype_expr == nullptr) {
+			return false;
+		}
+
+		std::optional<TemplateEnvironment> outer_environment;
+		if (outer_binding != nullptr) {
+			outer_environment = buildTemplateEnvironment(*outer_binding);
+		}
+		TemplateInstantiationContext substitution_context =
+			buildTemplateInstantiationContext(
+				effective_template_params,
+				effective_template_args,
+				outer_environment.has_value() ? &*outer_environment : nullptr,
+				currentTemplateSubstitutionFailurePolicy());
+		ExpressionSubstitutor substitutor(substitution_context, *this);
+		ASTNode substituted_expr = substitutor.substitute(*deferred_decltype_expr);
+		auto type_spec_opt = get_expression_type(substituted_expr);
+		if (!type_spec_opt.has_value()) {
+			if (substituted_expr.is<ExpressionNode>() &&
+				std::holds_alternative<CallExprNode>(
+					substituted_expr.as<ExpressionNode>())) {
+				const CallExprNode& substituted_call =
+					std::get<CallExprNode>(
+						substituted_expr.as<ExpressionNode>());
+				if (substituted_call.has_qualified_name() &&
+					!substituted_call.has_dependent_unqualified_lookup_record() &&
+					!substituted_call.has_dependent_qualified_lookup_record() &&
+					!substituted_call.has_definition_lookup_record() &&
+					!substituted_call.has_parser_return_type_hint()) {
+					throw CompileError(
+						std::string(
+							StringBuilder()
+								.append("No matching function for call to '")
+								.append(substituted_call.qualified_name())
+								.append("'")
+								.commit()));
+				}
+			}
+			return false;
+		}
+
+		resolved_deferred_decltype_spec = *type_spec_opt;
+		const TypeSpecifierNode& resolved_type_spec =
+			*resolved_deferred_decltype_spec;
+		const TypeInfo* resolved_type_info =
+			tryGetTypeInfo(resolved_type_spec.type_index());
+		if (resolved_type_info == nullptr) {
+			TypeIndex native_index =
+				nativeTypeIndex(resolved_type_spec.type());
+			if (native_index.is_valid()) {
+				resolved_type_info =
+					tryGetTypeInfo(native_index.withCategory(
+						resolved_type_spec.type()));
+			}
+		}
+		if (resolved_type_info == nullptr) {
+			return false;
+		}
+
+		result.resolved_type_info = resolved_type_info;
+		result.instantiated_name =
+			StringTable::getStringView(resolved_type_info->name());
+		return true;
 	};
 	auto tryResolveDirectAliasTarget = [&]() -> bool {
 		if (alias_node == nullptr) {
@@ -1891,7 +1967,9 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 		// do not produce an instantiated helper type name; resolve them by
 		// rebinding the alias target parameter to the caller's concrete argument.
 		if (!tryResolveDirectAliasTarget()) {
-			(void)tryMaterializeTemplateAliasTarget();
+			if (!tryResolveDeferredDecltypeAliasTarget()) {
+				(void)tryMaterializeTemplateAliasTarget();
+			}
 		}
 		if (alias_node != nullptr &&
 			result.resolved_type_info == nullptr &&
@@ -1920,6 +1998,15 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 
 	result.resolved_type_info =
 		findTypeByName(StringTable::getOrInternStringHandle(result.instantiated_name));
+	if (result.resolved_type_info == nullptr &&
+		resolved_deferred_decltype_spec.has_value()) {
+		tryResolveDeferredDecltypeAliasTarget();
+	}
+	if (alias_node != nullptr &&
+		result.resolved_type_info != nullptr &&
+		!resolved_deferred_decltype_spec.has_value()) {
+		(void)tryResolveDeferredDecltypeAliasTarget();
+	}
 	if (alias_node != nullptr &&
 		!alias_node->is_deferred()) {
 		const TypeSpecifierNode& alias_target_type = alias_node->target_type_node();
@@ -2122,8 +2209,11 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 			alias_target_type_spec.pointer_depth() != 0 ||
 			alias_target_type_spec.has_function_signature() ||
 			alias_target_type_spec.is_array();
-		TypeSpecifierNode alias_registration_type_spec = alias_target_type_spec;
-		if (alias_target_preserves_surface) {
+		TypeSpecifierNode alias_registration_type_spec =
+			resolved_deferred_decltype_spec.value_or(alias_target_type_spec);
+		if (resolved_deferred_decltype_spec.has_value()) {
+			alias_registration_type_spec = *resolved_deferred_decltype_spec;
+		} else if (alias_target_preserves_surface) {
 			alias_registration_type_spec =
 				resolveTypeInfoToTypeSpec(
 					resolved_type_info,
@@ -3332,6 +3422,42 @@ std::string_view Parser::instantiate_and_register_base_template(
 			}
 
 			const TypeSpecifierNode& alias_target_type = alias_node.target_type_node();
+			if (const TypeInfo* alias_target_info =
+					tryGetTypeInfo(alias_target_type.type_index());
+				alias_target_info != nullptr &&
+				alias_target_info->deferredDecltypeExpression() != nullptr) {
+				const OuterTemplateBinding* outer =
+					gTemplateRegistry.getOuterTemplateBinding(base_class_name);
+				std::optional<TemplateEnvironment> outer_environment;
+				if (outer != nullptr) {
+					outer_environment = buildTemplateEnvironment(*outer);
+				}
+				TemplateInstantiationContext substitution_context =
+					buildTemplateInstantiationContext(
+						alias_node.template_parameters(),
+						template_args,
+						outer_environment.has_value() ? &*outer_environment : nullptr,
+						currentTemplateSubstitutionFailurePolicy());
+				ExpressionSubstitutor substitutor(substitution_context, *this);
+				ASTNode substituted_expr =
+					substitutor.substitute(*alias_target_info->deferredDecltypeExpression());
+				if (auto resolved_type = get_expression_type(substituted_expr);
+					resolved_type.has_value()) {
+					if (const TypeInfo* resolved_type_info =
+							tryGetTypeInfo(resolved_type->type_index());
+						resolved_type_info != nullptr) {
+						base_class_name =
+							StringTable::getStringView(resolved_type_info->name());
+						return base_class_name;
+					}
+					std::string_view builtin_name =
+						getTypeName(resolved_type->type());
+					if (!builtin_name.empty()) {
+						base_class_name = builtin_name;
+						return builtin_name;
+					}
+				}
+			}
 			if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_type.type_index());
 				alias_target_info != nullptr && alias_target_info->isTemplateInstantiation()) {
 				std::vector<TemplateTypeArg> concrete_target_args =

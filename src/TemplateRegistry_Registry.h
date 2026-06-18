@@ -765,6 +765,15 @@ public:
 		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
 	}
 
+	bool hasExactSpecializationsForName(std::string_view template_name) const {
+		for (const auto& entry : specializations_) {
+			if (entry.first.template_name == template_name) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Find a matching specialization pattern (StringHandle overload)
 	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name,
 													  std::span<const TemplateTypeArg> concrete_args) const {

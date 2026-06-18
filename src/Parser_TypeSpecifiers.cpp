@@ -1810,10 +1810,24 @@ ParseResult Parser::parse_type_specifier() {
 							restore_token_position(scope_pos);
 						}
 
-						if (peek() == "::"_tok) {
-							FLASH_LOG(Parser, Debug, "DBG alias instantiated_type return before trailing member for ", type_name);
-						}
 						if (instantiated_type_info == nullptr) {
+							if (auto builtin_type = get_builtin_type_info(resolved_instantiated_type_name);
+								builtin_type.has_value()) {
+								if (const TypeInfo* native_type_info =
+										tryGetTypeInfo(nativeTypeIndex(builtin_type->first));
+									native_type_info != nullptr) {
+									return buildTypeFromInfo(*native_type_info, type_name_token, true);
+								}
+							}
+							if (TypeCategory terminal_category =
+									TemplateRegistry::stringToType(resolved_instantiated_type_name);
+								terminal_category != TypeCategory::Invalid) {
+								if (const TypeInfo* native_type_info =
+										tryGetTypeInfo(nativeTypeIndex(terminal_category));
+									native_type_info != nullptr) {
+									return buildTypeFromInfo(*native_type_info, type_name_token, true);
+								}
+							}
 							return std::nullopt;
 						}
 						return buildTypeFromInfo(*instantiated_type_info, type_name_token, false);
@@ -1832,11 +1846,17 @@ ParseResult Parser::parse_type_specifier() {
 					};
 					const bool has_dependent_alias_args =
 						aliasTemplateArgsStillDependent(*template_args);
+					const std::optional<TemplateTypeArg> direct_rebound_alias_arg =
+						!has_dependent_alias_args
+							? tryRebindAliasTargetTemplateArg(alias_node, *template_args)
+							: std::nullopt;
 
 					// OPTION 1: Alias materialization for concrete arguments (preferred over
 					// placeholder fallback and string parsing). Deferred aliases are still
 					// handled via the same materialization entrypoint when arguments are concrete.
-					if (!has_dependent_alias_args) {
+					if (!has_dependent_alias_args &&
+						(alias_node.is_deferred() ||
+						 !direct_rebound_alias_arg.has_value())) {
 						FLASH_LOG(Parser, Debug, "Using alias materialization for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						// Route directly through the alias-specific materialization path
@@ -1899,15 +1919,14 @@ ParseResult Parser::parse_type_specifier() {
 					// Handle non-deferred aliases (e.g., template<typename T> using Ptr = T*)
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-					if (std::optional<TemplateTypeArg> rebound_arg =
-							tryRebindAliasTargetTemplateArg(alias_node, *template_args);
-						rebound_arg.has_value()) {
-						if (rebound_arg->is_value) {
+					if (direct_rebound_alias_arg.has_value()) {
+						const TemplateTypeArg& rebound_arg = *direct_rebound_alias_arg;
+						if (rebound_arg.is_value) {
 							FLASH_LOG(Parser, Error, "Non-type template arguments not supported in alias templates yet");
 							return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
 						}
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
-							*rebound_arg,
+							rebound_arg,
 							Token());
 					} else if (!has_dependent_alias_args) {
 						if (const TypeInfo* concrete_member_info =
@@ -3752,7 +3771,7 @@ ParseResult Parser::parse_decltype_specifier() {
 	// Consume 'decltype' or '__typeof__' keyword
 	Token decltype_token = advance();
 	std::string_view keyword = decltype_token.value();
-	auto makeDependentDecltypeType = [&](const Token& source_token) -> ASTNode {
+	auto makeDependentDecltypeType = [&](const Token& source_token, const ASTNode* deferred_expr = nullptr) -> ASTNode {
 		StringHandle dependent_name = StringTable::getOrInternStringHandle(
 			StringBuilder()
 				.append("__dependent_decltype_")
@@ -3763,6 +3782,9 @@ ParseResult Parser::parse_decltype_specifier() {
 		type_info.name_ = dependent_name;
 		type_info.is_incomplete_instantiation_ = true;
 		type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+		if (deferred_expr != nullptr) {
+			type_info.setDeferredDecltypeExpression(*deferred_expr);
+		}
 		getTypesByNameMap()[dependent_name] = &type_info;
 		return emplace_node<TypeSpecifierNode>(
 			type_info.type_index_.withCategory(TypeCategory::UserDefined),
@@ -3933,23 +3955,55 @@ ParseResult Parser::parse_decltype_specifier() {
 	const bool decltype_source_mentions_active_template_param =
 		tokenRangeMentionsActiveTemplateParam(expr_start_pos);
 	discard_saved_token(expr_start_pos);
+	auto expressionRequiresDeferredDecltype =
+		[](const ASTNode& expr_node) -> bool {
+		if (!expr_node.is<ExpressionNode>()) {
+			return false;
+		}
+		const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+		return std::visit(
+			[](const auto& inner) -> bool {
+				using T = std::decay_t<decltype(inner)>;
+				if constexpr (std::is_same_v<T, CallExprNode>) {
+					return inner.has_dependent_unqualified_lookup_record() ||
+						inner.has_dependent_qualified_lookup_record() ||
+						inner.has_parser_return_type_hint() ||
+						inner.has_template_arguments();
+				} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+					return inner.hasDependentQualifiedName() ||
+						inner.has_template_arguments();
+				} else {
+					return false;
+				}
+			},
+			expr);
+	};
 
 	// Expect ')'
 	if (!consume(")"_tok)) {
 		return ParseResult::error("Expected ')' after decltype expression", current_token_);
 	}
 
+	const std::optional<ASTNode> decltype_expr = expr_result.node();
+	if (!decltype_expr.has_value()) {
+		throw InternalError("decltype expression parse succeeded without an AST node");
+	}
+
 	// Deduce the type from the expression
-	auto type_spec_opt = get_expression_type(*expr_result.node());
+	auto type_spec_opt = get_expression_type(*decltype_expr);
 	if (!type_spec_opt.has_value()) {
 		// If we're in a template body/declaration and the expression is dependent,
 		// create a dependent type placeholder that will be resolved during instantiation.
 		// Check both parsing_template_depth_ > 0 and current_template_param_names_ since
 		// some template contexts (like member function templates in structs) might not
 		// set parsing_template_depth_ > 0 but will have template parameter names.
-		if (decltype_source_mentions_active_template_param) {
+		if (decltype_source_mentions_active_template_param ||
+			expressionRequiresDeferredDecltype(*decltype_expr)) {
 			FLASH_LOG(Templates, Debug, "Creating dependent type for decltype expression in template context");
-			return saved_position.success(makeDependentDecltypeType(decltype_token));
+			return saved_position.success(
+				makeDependentDecltypeType(
+					decltype_token,
+					&*decltype_expr));
 		}
 		return ParseResult::error("Could not deduce type from decltype expression", decltype_token);
 	}

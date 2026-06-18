@@ -1058,6 +1058,10 @@ struct TypeInfo {
 	// recover array/pointer/reference metadata by following the alias chain.
 	std::unique_ptr<TypeSpecifierNode> alias_type_spec_;
 
+	// Preserve dependent decltype operands so deferred alias/template
+	// materialization can re-evaluate them after substitution.
+	std::optional<ASTNode> deferred_decltype_expression_;
+
 	// For template instantiations: store metadata to avoid name parsing
 	// If base_template_ is valid, this type is a template instantiation
 	QualifiedIdentifier base_template_;	// e.g., {std, "vector"} for std::vector<int>
@@ -1288,6 +1292,9 @@ struct TypeInfo {
 	}
 	TypeIndex registeredTypeIndex() const { return registered_type_index_.is_valid() ? registered_type_index_ : type_index_; }
 	const TypeSpecifierNode* aliasTypeSpecifier() const { return alias_type_spec_.get(); }
+	const ASTNode* deferredDecltypeExpression() const {
+		return deferred_decltype_expression_.has_value() ? &*deferred_decltype_expression_ : nullptr;
+	}
 
 	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
 		base_template_ = base_template;
@@ -1296,6 +1303,8 @@ struct TypeInfo {
 
 	void clearAliasTypeSpecifier();
 	void setAliasTypeSpecifier(const TypeSpecifierNode& type_spec);
+	void clearDeferredDecltypeExpression();
+	void setDeferredDecltypeExpression(const ASTNode& expr);
 	void setDependentQualifiedName(DependentQualifiedNameRecord record) {
 		dependent_qualified_name_ = std::move(record);
 	}
@@ -1832,6 +1841,14 @@ inline void TypeInfo::clearAliasTypeSpecifier() {
 
 inline void TypeInfo::setAliasTypeSpecifier(const TypeSpecifierNode& type_spec) {
 	alias_type_spec_ = std::make_unique<TypeSpecifierNode>(type_spec);
+}
+
+inline void TypeInfo::clearDeferredDecltypeExpression() {
+	deferred_decltype_expression_.reset();
+}
+
+inline void TypeInfo::setDeferredDecltypeExpression(const ASTNode& expr) {
+	deferred_decltype_expression_ = expr;
 }
 
 struct ResolvedAliasTypeInfo {
@@ -2984,6 +3001,7 @@ struct CallLookupRecordShared {
 struct FunctionCallDefinitionLookupRecord : CallLookupRecordShared {
 	const FunctionDeclarationNode* resolved_function = nullptr;
 	StringHandle resolved_mangled_name{};
+	const void* definition_bound_template_declaration = nullptr;
 	bool ordinary_lookup_included = true;
 	bool argument_dependent_lookup_included = true;
 };

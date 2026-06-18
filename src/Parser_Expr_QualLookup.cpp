@@ -2,6 +2,8 @@
 #include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
+#include "MemberFunctionLookupShared.h"
 #include <span>
 #include <unordered_set>
 #include "NameMangling.h"
@@ -294,9 +296,9 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 		deduced_arg_types.push_back(*type_opt);
 	}
-	if (AliasTemplateMaterializationResult canonical_owner =
-			resolveCanonicalInstantiatedOwnerForLookup(instantiated_class_name);
-		!canonical_owner.instantiated_name.empty()) {
+	AliasTemplateMaterializationResult canonical_owner =
+		resolveCanonicalInstantiatedOwnerForLookup(instantiated_class_name);
+	if (!canonical_owner.instantiated_name.empty()) {
 		instantiated_class_name = canonical_owner.instantiated_name;
 	}
 	const bool has_dependent_template_args =
@@ -337,6 +339,67 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		StringTable::getOrInternStringHandle(instantiated_class_name);
 	const StringHandle member_name_handle =
 		StringTable::getOrInternStringHandle(member_name);
+	const bool can_use_nontemplate_owner_lookup =
+		!parsed_member_template_args;
+	const bool have_complete_call_arg_types =
+		!has_dependent_call_arg &&
+		deduced_arg_types.size() == args.size();
+	DefinitionPreferredMemberOverloadSet static_member_overloads;
+	bool has_template_member_candidates = false;
+	auto collectOwnerStaticMemberOverloads = [&]() {
+		if (!can_use_nontemplate_owner_lookup) {
+			return;
+		}
+		const TypeInfo* owner_lookup_type_info =
+			canonical_owner.resolved_type_info;
+		if (owner_lookup_type_info == nullptr) {
+			auto type_it = getTypesByNameMap().find(owner_name_handle);
+			if (type_it != getTypesByNameMap().end()) {
+				owner_lookup_type_info = type_it->second;
+			}
+		}
+		if (owner_lookup_type_info == nullptr) {
+			return;
+		}
+		instantiateLazyClassToPhase(
+			owner_lookup_type_info->name(),
+			ClassInstantiationPhase::Full);
+		const StructTypeInfo* struct_info =
+			owner_lookup_type_info->getStructInfo();
+		if (struct_info == nullptr) {
+			struct_info = tryGetStructTypeInfo(
+				owner_lookup_type_info->registeredTypeIndex());
+		}
+		if (struct_info == nullptr) {
+			return;
+		}
+		static_member_overloads =
+			collectVisibleMemberFunctionOverloadNodes(
+				struct_info,
+				member_name_handle,
+				true,
+				[](const StructMemberFunction& member_func,
+				   const FunctionDeclarationNode& candidate) {
+					return !member_func.is_constructor &&
+						!member_func.is_destructor &&
+						candidate.is_static();
+				});
+	};
+	auto resolveStaticOwnerMemberOverload =
+		[&](std::span<const ASTNode> overloads) -> const FunctionDeclarationNode* {
+		if (!have_complete_call_arg_types || overloads.empty()) {
+			return nullptr;
+		}
+		const OverloadResolutionResult overload_result =
+			resolve_overload(overloads, deduced_arg_types);
+		if (overload_result.has_match &&
+			!overload_result.is_ambiguous &&
+			overload_result.selected_overload != nullptr) {
+			return get_function_decl_node(*overload_result.selected_overload);
+		}
+		return nullptr;
+	};
+	collectOwnerStaticMemberOverloads();
 
 	// If we successfully instantiated the function, use its declaration
 	const FunctionDeclarationNode* resolved_function = nullptr;
@@ -346,45 +409,105 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		parser_hint_function = resolved_function;
 	} else {
 		// For non-template member functions (e.g. Template<T>::allocate()),
-		// resolve directly from the instantiated class before creating a fallback decl.
-		auto type_it = getTypesByNameMap().find(owner_name_handle);
-		if (type_it != getTypesByNameMap().end() && type_it->second) {
-			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-			if (struct_info) {
-				const FunctionDeclarationNode* first_name_match = nullptr;
-				size_t call_arg_count = args.size();
-				for (const auto& member_func : struct_info->member_functions) {
-					if (member_func.getName() == member_name_handle && member_func.function_decl.is<FunctionDeclarationNode>()) {
-						const FunctionDeclarationNode& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-						if (!first_name_match) {
-							first_name_match = &candidate;
-						}
-						if (candidate.parameter_nodes().size() == call_arg_count) {
-							resolved_function = &candidate;
-							break;
-						}
-					}
-				}
-				if (resolved_function == nullptr && first_name_match != nullptr) {
-					parser_hint_function = first_name_match;
-				}
+		// prefer real static-member overload selection on the instantiated owner.
+		if (const FunctionDeclarationNode* definition_match =
+				resolveStaticOwnerMemberOverload(
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
+			definition_match != nullptr) {
+			resolved_function = definition_match;
+		} else if (const FunctionDeclarationNode* resolved_match =
+				resolveStaticOwnerMemberOverload(
+					std::span<const ASTNode>(
+						static_member_overloads.all.data(),
+						static_member_overloads.all.size()));
+			resolved_match != nullptr) {
+			resolved_function = resolved_match;
+		}
+
+		if (resolved_function == nullptr) {
+			parser_hint_function =
+				this->trySelectUnambiguousParserReturnTypeHint(
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
+			if (parser_hint_function == nullptr) {
+				parser_hint_function =
+					this->trySelectUnambiguousParserReturnTypeHint(
+						std::span<const ASTNode>(
+							static_member_overloads.all.data(),
+							static_member_overloads.all.size()));
 			}
 		}
 		if (parser_hint_function == nullptr &&
 			member_template_args.has_value()) {
 			if (const std::vector<ASTNode>* template_overloads =
 					gTemplateRegistry.lookupAllTemplates(qualified_name);
-				template_overloads != nullptr) {
-				for (const ASTNode& template_overload : *template_overloads) {
-					if (const FunctionDeclarationNode* template_function =
-							get_function_decl_node(template_overload);
-						template_function != nullptr) {
-						parser_hint_function = template_function;
-						break;
-					}
-				}
+				template_overloads != nullptr &&
+				!template_overloads->empty()) {
+				has_template_member_candidates = true;
+				parser_hint_function =
+					this->trySelectUnambiguousParserReturnTypeHint(
+						std::span<const ASTNode>(
+							template_overloads->data(),
+							template_overloads->size()));
 			}
 		}
+	}
+	if (resolved_function != nullptr &&
+		!resolved_function->get_definition().has_value()) {
+		if (const FunctionDeclarationNode* definition_match =
+				resolveStaticOwnerMemberOverload(
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
+			definition_match != nullptr) {
+			resolved_function = definition_match;
+			parser_hint_function = resolved_function;
+		} else if (parser_hint_function == nullptr) {
+			parser_hint_function =
+				this->trySelectUnambiguousParserReturnTypeHint(
+					std::span<const ASTNode>(
+						static_member_overloads.definition_preferred.data(),
+						static_member_overloads.definition_preferred.size()));
+		}
+	}
+	const TypeInfo* owner_type_info = canonical_owner.resolved_type_info;
+	if (owner_type_info == nullptr) {
+		auto owner_type_it = getTypesByNameMap().find(owner_name_handle);
+		owner_type_info =
+			owner_type_it != getTypesByNameMap().end()
+			? owner_type_it->second
+			: nullptr;
+	}
+	const bool owner_is_dependent_instantiation =
+		owner_type_info != nullptr &&
+		owner_type_info->isTemplateInstantiation() &&
+		std::any_of(
+			owner_type_info->templateArgs().begin(),
+			owner_type_info->templateArgs().end(),
+			[](const TypeInfo::TemplateArgInfo& arg_info) {
+				return templateArgInfoContainsDependentPlaceholder(arg_info);
+			});
+	const bool owner_is_current_instantiation_context =
+		this->tryResolveQualifiedTypeOwnerFromCurrentContext(
+			instantiated_class_name)
+			.has_value();
+	if (resolved_function == nullptr &&
+		static_member_overloads.all.empty() &&
+		!has_template_member_candidates &&
+		!has_deferred_template_call_args &&
+		!owner_is_dependent_instantiation &&
+		!owner_is_current_instantiation_context) {
+		return ParseResult::error(
+			std::string(
+				StringBuilder()
+					.append("No matching function for call to '")
+					.append(qualified_name)
+					.append("'")
+					.commit()),
+			member_token);
 	}
 
 	std::optional<ExpressionNode> call_expr;
@@ -416,19 +539,15 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			std::move(member_template_arg_nodes));
 	}
 	if (resolved_function == nullptr) {
-		auto owner_type_it = getTypesByNameMap().find(owner_name_handle);
-		if (owner_type_it != getTypesByNameMap().end() &&
-			owner_type_it->second != nullptr &&
-			owner_type_it->second->isTemplateInstantiation() &&
-			owner_type_it->second->getStructInfo() == nullptr) {
+		if (owner_is_dependent_instantiation) {
 			TypeInfo::DependentQualifiedNameRecord dependent_record;
 			dependent_record.owner_kind =
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
 			dependent_record.owner_name = owner_name_handle;
 			dependent_record.owner_type =
-				owner_type_it->second->registeredTypeIndex();
+				owner_type_info->registeredTypeIndex();
 			dependent_record.owner_template_arguments =
-				owner_type_it->second->templateArgs();
+				owner_type_info->templateArgs();
 			TypeInfo::DependentQualifiedNameRecord::Member member_record;
 			member_record.name = member_name_handle;
 			if (member_template_args.has_value()) {
@@ -1890,6 +2009,43 @@ TypeIndex Parser::substitute_template_parameter(
 						 StringTable::getStringView(placeholder_info->name()), instantiated_name);
 		return true;
 	};
+	auto tryResolveDeferredDecltypePlaceholder = [&]() -> bool {
+		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
+		if (placeholder_info == nullptr ||
+			placeholder_info->deferredDecltypeExpression() == nullptr) {
+			return false;
+		}
+
+		TemplateInstantiationContext substitution_context =
+			buildTemplateInstantiationContext(
+				template_params,
+				template_args,
+				nullptr,
+				currentTemplateSubstitutionFailurePolicy());
+		ExpressionSubstitutor substitutor(substitution_context, *this);
+		ASTNode substituted_expr =
+			substitutor.substitute(*placeholder_info->deferredDecltypeExpression());
+		auto resolved_type_spec = get_expression_type(substituted_expr);
+		if (!resolved_type_spec.has_value()) {
+			return false;
+		}
+
+		if (const TypeInfo* resolved_type_info =
+				tryGetTypeInfo(resolved_type_spec->type_index());
+			resolved_type_info != nullptr) {
+			assignResolvedType(*resolved_type_info);
+			return true;
+		}
+
+		TypeIndex native_index = nativeTypeIndex(resolved_type_spec->type());
+		if (native_index.is_valid()) {
+			current_type = resolved_type_spec->type();
+			current_type_index =
+				native_index.withCategory(resolved_type_spec->type());
+			return true;
+		}
+		return false;
+	};
 
 	if (const TypeInfo* indexed_type_info = tryGetTypeInfo(current_type_index)) {
 		type_name = StringTable::getStringView(indexed_type_info->name());
@@ -1904,6 +2060,10 @@ TypeIndex Parser::substitute_template_parameter(
 	}
 
 	if (type_name.empty()) {
+		return current_type_index.withCategory(current_type);
+	}
+
+	if (tryResolveDeferredDecltypePlaceholder()) {
 		return current_type_index.withCategory(current_type);
 	}
 
@@ -2845,6 +3005,16 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		// For other unary operators (+, -, !, ~, ++, --), return the operand type
 		return operand_type;
 	} else if (auto call_info_opt = CallInfo::tryFrom(expr)) {
+		if (const auto* call_expr = std::get_if<CallExprNode>(&expr);
+			call_expr != nullptr &&
+			(call_expr->has_dependent_qualified_lookup_record() ||
+			 call_expr->has_dependent_unqualified_lookup_record())) {
+			// A dependent call's return type is not fixed until instantiation.
+			// Using a parser hint here can freeze the first same-name overload
+			// seen during template parsing, which is wrong for decltype(...)
+			// and other dependent unevaluated contexts.
+			return std::nullopt;
+		}
 		const CallInfo& call_info = *call_info_opt;
 		const DeclarationNode& callee_decl = *call_info.declaration;
 		auto normalize_alias_return_type = [&](TypeSpecifierNode& type) {

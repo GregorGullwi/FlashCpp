@@ -468,6 +468,7 @@ namespace {
 void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
 	alias_type_info.placeholder_kind_ = DependentPlaceholderKind::None;
 	alias_type_info.dependent_qualified_name_.reset();
+	alias_type_info.clearDeferredDecltypeExpression();
 	alias_type_info.base_template_ = QualifiedIdentifier{};
 	alias_type_info.template_args_.clear();
 	alias_type_info.instantiation_context_.reset();
@@ -477,6 +478,12 @@ void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
 void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& semantic_source_type_info) {
 	alias_type_info.placeholder_kind_ = semantic_source_type_info.placeholder_kind_;
 	alias_type_info.dependent_qualified_name_ = semantic_source_type_info.dependent_qualified_name_;
+	if (const ASTNode* deferred_decltype_expr = semantic_source_type_info.deferredDecltypeExpression();
+		deferred_decltype_expr != nullptr) {
+		alias_type_info.setDeferredDecltypeExpression(*deferred_decltype_expr);
+	} else {
+		alias_type_info.clearDeferredDecltypeExpression();
+	}
 	alias_type_info.base_template_ = semantic_source_type_info.base_template_;
 	alias_type_info.template_args_ = semantic_source_type_info.template_args_;
 	alias_type_info.is_incomplete_instantiation_ = semantic_source_type_info.is_incomplete_instantiation_;

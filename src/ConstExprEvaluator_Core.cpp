@@ -5060,43 +5060,11 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 	// Check if it's a FunctionDeclarationNode (regular function)
 	if (symbol_node.is<FunctionDeclarationNode>()) {
 		const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
-
-		if (std::optional<EvalResult> builtin_result =
-				try_evaluate_builtin_function_call(func_name, call_expr.arguments(), context)) {
-			return *builtin_result;
-		}
-
-		// For static storage duration, also try non-constexpr functions with simple bodies
-		// (static initializers can call any function whose body is available)
-		if (!func_decl.is_constexpr() && !func_decl.is_consteval() && context.storage_duration != ConstExpr::StorageDuration::Static) {
-			return EvalResult::error(
-				"Function in constant expression must be constexpr: " + std::string(func_name),
-				EvalErrorType::NotConstantExpression);
-		}
-
-		// Get the function body
-		const auto& definition = func_decl.get_definition();
-		if (!definition.has_value()) {
-			return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
-		}
-
-		// Evaluate arguments
-		const auto& arguments = call_expr.arguments();
-		const auto& parameters = func_decl.parameter_nodes();
-
-		const size_t parameter_count = parameters.size();
-		const size_t min_required = countMinRequiredArgs(func_decl);
-		if (arguments.size() < min_required || arguments.size() > parameter_count) {
-			return EvalResult::error("Function argument count mismatch in constant expression");
-		}
-
-		// Pass empty bindings for top-level function calls
-		std::unordered_map<std::string_view, EvalResult> empty_bindings;
-		return evaluate_function_call_with_template_context(
+		return evaluate_resolved_function_call(
 			func_decl,
-			arguments,
-			empty_bindings,
-			context);
+			call_expr.arguments(),
+			context,
+			nullptr);
 	}
 
 	// Check if it's a TemplateFunctionDeclarationNode (template function)

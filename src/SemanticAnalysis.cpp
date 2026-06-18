@@ -8046,6 +8046,10 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	};
 	const FunctionDeclarationNode* definition_lookup_record_target =
 		resolveDefinitionLookupRecordTarget();
+	const bool has_deferred_qualified_template_metadata =
+		!call_info.template_arguments.empty() ||
+		(call_info.dependent_qualified_lookup_record != nullptr &&
+		 call_info.dependent_qualified_lookup_record->has_value());
 	struct QualifiedLookupTarget {
 		NamespaceHandle namespace_handle;
 		std::string_view identifier;
@@ -8403,6 +8407,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		!call_info.has_receiver &&
 		(!call_info.qualified_name.isValid() ||
 		 qualified_name_targets_namespace) &&
+		!has_deferred_qualified_template_metadata &&
 		definition_lookup_record_target == nullptr &&
 		call_info.definition_lookup_record != nullptr &&
 		call_info.definition_lookup_record->has_value()) {
@@ -8486,10 +8491,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (!call_info.has_receiver &&
 		call_info.function_declaration == nullptr &&
 		call_info.qualified_name.isValid()) {
-		const bool has_deferred_qualified_template_metadata =
-			!call_info.template_arguments.empty() ||
-			(call_info.dependent_qualified_lookup_record != nullptr &&
-			 call_info.dependent_qualified_lookup_record->has_value());
 		if (qualified_name_targets_namespace ||
 			has_deferred_qualified_template_metadata) {
 			std::string_view qualified_name_for_resolution =
@@ -8516,13 +8517,28 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			}
 			InlineVector<TypeSpecifierNode, 6> qualified_template_arg_types;
 			if (tryCollectOverloadResolutionArgTypes(arguments, qualified_template_arg_types)) {
-				if (std::optional<ASTNode> resolved_target =
+				std::optional<ASTNode> resolved_target;
+				if (call_info.definition_lookup_record != nullptr &&
+					call_info.definition_lookup_record->has_value() &&
+					call_info.definition_lookup_record
+						->value()
+						.definition_bound_template_declaration != nullptr) {
+					resolved_target =
+						parser().resolveDefinitionBoundQualifiedTemplateCall(
+							call_info.definition_lookup_record->value(),
+							qualified_name_for_resolution,
+							call_info.template_arguments,
+							arguments,
+							qualified_template_arg_types);
+				} else {
+					resolved_target =
 						parser().resolveDeferredQualifiedTemplateCall(
 							qualified_name_for_resolution,
 							call_info.template_arguments,
 							arguments,
 							qualified_template_arg_types);
-					resolved_target.has_value()) {
+				}
+				if (resolved_target.has_value()) {
 					if (const FunctionDeclarationNode* resolved_function =
 						get_function_decl_node(*resolved_target);
 					resolved_function != nullptr) {

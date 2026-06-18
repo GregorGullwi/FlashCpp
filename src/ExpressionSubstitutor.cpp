@@ -1,7 +1,9 @@
 #include "ExpressionSubstitutor.h"
 #include "CallNodeHelpers.h"
+#include "MemberFunctionLookupShared.h"
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
+#include "TemplateArgumentMaterialization.h"
 #include "AstTraversal.h"
 #include "Log.h"
 #include <charconv>
@@ -92,102 +94,6 @@ bool decodeTTPPlaceholderArg(std::string_view encoded_arg, TemplateTypeArg& deco
 	return true;
 }
 
-int computeTypeSizeInBits(TypeIndex type_index) {
-	int size_in_bits = get_type_size_bits(type_index.category());
-	if (size_in_bits != 0) {
-		return size_in_bits;
-	}
-
-	const TypeInfo* type_info = tryGetTypeInfo(type_index);
-	if (!type_info) {
-		return 0;
-	}
-
-	size_in_bits = type_info->sizeInBits().value;
-	if (size_in_bits != 0 || !type_info->isStruct()) {
-		return size_in_bits;
-	}
-
-	const StructTypeInfo* struct_info = type_info->getStructInfo();
-	return struct_info ? struct_info->sizeInBits().value : 0;
-}
-
-std::vector<ASTNode> materializeTemplateArgumentNodesForQualifiedId(
-	std::span<const TemplateTypeArg> template_args,
-	const Token& source_token) {
-	std::vector<ASTNode> result;
-	result.reserve(template_args.size());
-
-	for (const TemplateTypeArg& arg : template_args) {
-		if (arg.is_dependent || arg.dependent_name.isValid()) {
-			Token dep_token(
-				Token::Type::Identifier,
-				arg.dependent_name.view(),
-				source_token.line(),
-				source_token.column(),
-				source_token.file_index());
-			ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-				TemplateParameterReferenceNode(arg.dependent_name, dep_token));
-			result.push_back(ASTNode(&dep_expr));
-			continue;
-		}
-
-		if (arg.is_value) {
-			if (arg.typeEnum() == TypeCategory::Bool) {
-				Token bool_token(
-					Token::Type::Keyword,
-					arg.value != 0 ? "true"sv : "false"sv,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& bool_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					BoolLiteralNode(bool_token, arg.value != 0));
-				result.push_back(ASTNode(&bool_expr));
-			} else {
-				StringBuilder text_builder;
-				std::string_view literal_text = text_builder.append(arg.value).commit();
-				TypeCategory literal_type = arg.typeEnum() == TypeCategory::Invalid
-					? TypeCategory::Int
-					: arg.typeEnum();
-				Token literal_token(
-					Token::Type::Literal,
-					literal_text,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& literal_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					NumericLiteralNode(
-						literal_token,
-						static_cast<unsigned long long>(arg.value),
-						literal_type,
-						TypeQualifier::None,
-						get_type_size_bits(literal_type)));
-				result.push_back(ASTNode(&literal_expr));
-			}
-			continue;
-		}
-
-		TypeIndex arg_type_index = arg.type_index;
-		if (!arg_type_index.is_valid()) {
-			if (arg.typeEnum() == TypeCategory::Invalid) {
-				continue;
-			}
-			arg_type_index = TypeIndex{}.withCategory(arg.typeEnum());
-		}
-
-		int size_in_bits = computeTypeSizeInBits(arg_type_index);
-		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg_type_index,
-			size_in_bits,
-			source_token,
-			CVQualifier::None,
-			ReferenceQualifier::None);
-		result.push_back(ASTNode(&type_node));
-	}
-
-	return result;
-}
-
 std::optional<std::string_view> tryResolveCanonicalTypeName(
 	const TypeSpecifierNode& type,
 	std::string_view type_name,
@@ -212,7 +118,7 @@ std::optional<std::string_view> tryResolveCanonicalTypeName(
 TypeSpecifierNode buildTerminalTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
 	return TypeSpecifierNode(
 		resolved_alias.type_index,
-		computeTypeSizeInBits(resolved_alias.type_index),
+		computeTemplateArgumentTypeSizeBits(resolved_alias.type_index),
 		token,
 		CVQualifier::None,
 		ReferenceQualifier::None);
@@ -586,7 +492,7 @@ void ExpressionSubstitutor::substituteCallArgumentPreservingPackExpansion(
 						if (bound_arg.type_index.is_valid()) {
 							parameter_type = TypeSpecifierNode(
 								bound_arg.type_index,
-								computeTypeSizeInBits(bound_arg.type_index),
+								computeTemplateArgumentTypeSizeBits(bound_arg.type_index),
 								param_token,
 								CVQualifier::None,
 								ReferenceQualifier::None);
@@ -1892,6 +1798,107 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 	auto normalizePendingSemanticRoots = [&]() {
 		parser_.normalizePendingSemanticRoots();
 	};
+	auto resolveUniqueFunctionOverload = [&](
+		std::span<const ASTNode> candidates,
+		std::span<const TypeSpecifierNode> substituted_arg_types) -> const FunctionDeclarationNode* {
+		if (candidates.empty()) {
+			return nullptr;
+		}
+		OverloadResolutionResult resolution =
+			resolve_overload(candidates, substituted_arg_types);
+		if (resolution.has_match &&
+			!resolution.is_ambiguous &&
+			resolution.selected_overload != nullptr &&
+			resolution.selected_overload->is<FunctionDeclarationNode>()) {
+			return &resolution.selected_overload->as<FunctionDeclarationNode>();
+		}
+		return nullptr;
+	};
+	auto appendOwnerMemberCandidates = [&](
+		std::string_view owner_name,
+		std::string_view member_name,
+		InlineVector<ASTNode, 8>& candidates,
+		InlineVector<ASTNode, 8>& definition_candidates) {
+		if (owner_name.empty() || member_name.empty()) {
+			return;
+		}
+		StringHandle owner_handle =
+			StringTable::getOrInternStringHandle(owner_name);
+		StringHandle member_handle =
+			StringTable::getOrInternStringHandle(member_name);
+		parser_.instantiateLazyClassToPhase(
+			owner_handle,
+			ClassInstantiationPhase::Full);
+		if (const TypeInfo* owner_type_info = findTypeByName(owner_handle);
+			owner_type_info != nullptr) {
+			if (const StructTypeInfo* struct_info = owner_type_info->getStructInfo()) {
+				DefinitionPreferredMemberOverloadSet owner_overloads =
+					collectVisibleMemberFunctionOverloadNodes(
+						struct_info,
+						member_handle,
+						true,
+						[](const StructMemberFunction& member_func,
+						   const FunctionDeclarationNode&) {
+							return !member_func.is_constructor &&
+								!member_func.is_destructor;
+						});
+				candidates = std::move(owner_overloads.all);
+				definition_candidates =
+					std::move(owner_overloads.definition_preferred);
+			}
+		}
+		if (!candidates.empty()) {
+			return;
+		}
+		for (const ASTNode& candidate_node : gSymbolTable.lookup_all(member_name)) {
+			const FunctionDeclarationNode* candidate_func =
+				get_function_decl_node(candidate_node);
+			if (candidate_func == nullptr) {
+				continue;
+			}
+			const std::string_view parent_name =
+				candidate_func->parent_struct_name();
+			if (parent_name == owner_name ||
+				(!parent_name.empty() && parent_name.ends_with(owner_name))) {
+				appendUniqueOverloadNode(candidates, candidate_node);
+				if (candidate_func->get_definition().has_value()) {
+					appendUniqueOverloadNode(
+						definition_candidates,
+						candidate_node);
+				}
+			}
+		}
+	};
+	auto resolveQualifiedOwnerOverload = [&](
+		std::string_view owner_name,
+		std::string_view member_name,
+		const ChunkedVector<ASTNode>& substituted_args) -> const FunctionDeclarationNode* {
+		if (owner_name.empty() || member_name.empty()) {
+			return nullptr;
+		}
+		std::vector<TypeSpecifierNode> substituted_arg_types;
+		if (!parser_.tryCollectFunctionCallArgTypes(substituted_args, substituted_arg_types)) {
+			return nullptr;
+		}
+
+		InlineVector<ASTNode, 8> candidates;
+		InlineVector<ASTNode, 8> definition_candidates;
+		appendOwnerMemberCandidates(
+			owner_name,
+			member_name,
+			candidates,
+			definition_candidates);
+		if (const FunctionDeclarationNode* definition_target =
+				resolveUniqueFunctionOverload(
+					definition_candidates,
+					substituted_arg_types);
+			definition_target != nullptr) {
+			return definition_target;
+		}
+		return resolveUniqueFunctionOverload(
+			candidates,
+			substituted_arg_types);
+	};
 	auto materializeSubstitutedUnresolvedCall = [&](ChunkedVector<ASTNode>&& substituted_args) -> ASTNode {
 		CallExprNode substituted_call(
 			call.callee(),
@@ -2143,6 +2150,33 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					return std::nullopt;
 				}
 				if (have_complete_substituted_arg_types) {
+					if (call.has_definition_lookup_record() &&
+						call.definition_lookup_record()
+							->definition_bound_template_declaration != nullptr &&
+						call.has_qualified_name() &&
+						template_name == call.qualified_name()) {
+						std::vector<ASTNode> substituted_template_arg_nodes;
+						substituted_template_arg_nodes.reserve(
+							explicit_template_arg_nodes.size());
+						for (const auto& arg_node :
+							 explicit_template_arg_nodes) {
+							substituted_template_arg_nodes.push_back(
+								substitute(arg_node));
+						}
+						std::optional<ASTNode> instantiated =
+							parser_.resolveDefinitionBoundQualifiedTemplateCall(
+								*call.definition_lookup_record(),
+								template_name,
+								std::span<const ASTNode>(
+									substituted_template_arg_nodes.data(),
+									substituted_template_arg_nodes.size()),
+								substituted_args_nodes,
+								substituted_arg_types);
+						if (instantiated.has_value()) {
+							normalizePendingSemanticRoots();
+						}
+						return instantiated;
+					}
 					std::optional<ASTNode> instantiated = parser_.try_instantiate_template_explicit(
 						template_name,
 						substituted_template_args,
@@ -2551,17 +2585,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						ChunkedVector<ASTNode> substituted_args =
 							substituteCallArgumentsPreservingPackExpansion(call.arguments());
 
-						const FunctionDeclarationNode* target_func = nullptr;
+						const FunctionDeclarationNode* target_func =
+							resolveQualifiedOwnerOverload(
+								resolved_owner_name,
+								resolved_member_name,
+								substituted_args);
 						std::string_view mutable_resolved_owner_name =
 							resolved_owner_name;
-						if (std::optional<ASTNode> instantiated_member =
+						if (target_func == nullptr) {
+							std::optional<ASTNode> instantiated_member =
 								parser_.instantiateLazyMemberForCanonicalOwner(
 									mutable_resolved_owner_name,
 									resolved_member_name,
 									std::span<const TemplateTypeArg>{});
-							instantiated_member.has_value() &&
-							instantiated_member->is<FunctionDeclarationNode>()) {
-							target_func = &instantiated_member->as<FunctionDeclarationNode>();
+							if (instantiated_member.has_value() &&
+								instantiated_member->is<FunctionDeclarationNode>()) {
+								target_func = &instantiated_member->as<FunctionDeclarationNode>();
+							}
 						}
 						if (target_func == nullptr) {
 							auto qualified_symbol =
@@ -2571,6 +2611,17 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							if (qualified_symbol.has_value()) {
 								target_func = get_function_decl_node(*qualified_symbol);
 							}
+						}
+						if (const FunctionDeclarationNode* resolved_target =
+								resolveQualifiedOwnerOverload(
+									resolved_owner_name,
+									resolved_member_name,
+									substituted_args);
+							resolved_target != nullptr &&
+							(target_func == nullptr ||
+							 (!target_func->get_definition().has_value() &&
+							  resolved_target->get_definition().has_value()))) {
+							target_func = resolved_target;
 						}
 						if (target_func != nullptr) {
 							Token called_from_token(
@@ -2637,17 +2688,23 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			if (!materialized_owner_name.empty()) {
 					ChunkedVector<ASTNode> substituted_args =
 						substituteCallArgumentsPreservingPackExpansion(call.arguments());
-					const FunctionDeclarationNode* target_func = nullptr;
-
-					std::optional<ASTNode> instantiated_member =
-						parser_.instantiateLazyMemberForCanonicalOwner(
+					const FunctionDeclarationNode* target_func =
+						resolveQualifiedOwnerOverload(
 							materialized_owner_name,
 							member_name,
-							std::span<const TemplateTypeArg>{});
-					if (instantiated_member.has_value() &&
-						instantiated_member->is<FunctionDeclarationNode>()) {
-						target_func =
-							&instantiated_member->as<FunctionDeclarationNode>();
+							substituted_args);
+
+					if (target_func == nullptr) {
+						std::optional<ASTNode> instantiated_member =
+							parser_.instantiateLazyMemberForCanonicalOwner(
+								materialized_owner_name,
+								member_name,
+								std::span<const TemplateTypeArg>{});
+						if (instantiated_member.has_value() &&
+							instantiated_member->is<FunctionDeclarationNode>()) {
+							target_func =
+								&instantiated_member->as<FunctionDeclarationNode>();
+						}
 					}
 					parser_.instantiateLazyClassToPhase(
 						StringTable::getOrInternStringHandle(materialized_owner_name),
@@ -2694,9 +2751,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							}
 						}
 					}
-					if (target_func == nullptr &&
-						!materialized_record_owner_name.empty() &&
-						materialized_owner_name != materialized_record_owner_name) {
+					if (!materialized_record_owner_name.empty() &&
+						materialized_owner_name != materialized_record_owner_name &&
+						(target_func == nullptr ||
+						 !target_func->get_definition().has_value())) {
 						std::string_view qualified_owner_name =
 							StringBuilder()
 								.append(materialized_record_owner_name)
@@ -2705,17 +2763,44 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								.commit();
 						std::string_view mutable_qualified_owner_name =
 							qualified_owner_name;
-						if (std::optional<ASTNode> qualified_instantiated_member =
+						if (const FunctionDeclarationNode* qualified_target =
+								resolveQualifiedOwnerOverload(
+									qualified_owner_name,
+									member_name,
+									substituted_args);
+							qualified_target != nullptr &&
+							(target_func == nullptr ||
+							 (!target_func->get_definition().has_value() &&
+							  qualified_target->get_definition().has_value()))) {
+							target_func = qualified_target;
+							materialized_owner_name = qualified_owner_name;
+						} else if (std::optional<ASTNode> qualified_instantiated_member =
 								parser_.instantiateLazyMemberForCanonicalOwner(
 									mutable_qualified_owner_name,
 									member_name,
 									std::span<const TemplateTypeArg>{});
 							qualified_instantiated_member.has_value() &&
 							qualified_instantiated_member->is<FunctionDeclarationNode>()) {
-							target_func =
-								&qualified_instantiated_member->as<FunctionDeclarationNode>();
-							materialized_owner_name = mutable_qualified_owner_name;
+							const FunctionDeclarationNode& instantiated_qualified_target =
+								qualified_instantiated_member->as<FunctionDeclarationNode>();
+							if (target_func == nullptr ||
+								(!target_func->get_definition().has_value() &&
+								 instantiated_qualified_target.get_definition().has_value())) {
+								target_func = &instantiated_qualified_target;
+								materialized_owner_name = mutable_qualified_owner_name;
+							}
 						}
+					}
+					if (const FunctionDeclarationNode* resolved_target =
+							resolveQualifiedOwnerOverload(
+								materialized_owner_name,
+								member_name,
+								substituted_args);
+						resolved_target != nullptr &&
+						(target_func == nullptr ||
+						 (!target_func->get_definition().has_value() &&
+						  resolved_target->get_definition().has_value()))) {
+						target_func = resolved_target;
 					}
 
 					if (target_func != nullptr) {
@@ -2809,6 +2894,17 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							}
 						}
 					}
+				}
+				if (const FunctionDeclarationNode* resolved_target =
+						resolveQualifiedOwnerOverload(
+							instantiated_name,
+							member_name,
+							substituted_args);
+					resolved_target != nullptr &&
+					(target_func == nullptr ||
+					 (!target_func->get_definition().has_value() &&
+					  resolved_target->get_definition().has_value()))) {
+					target_func = resolved_target;
 				}
 
 				if (target_func == nullptr) {
@@ -3253,7 +3349,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					return ASTNode(&deferred_expr);
 				}
 				std::vector<ASTNode> explicit_template_arg_nodes =
-					materializeTemplateArgumentNodesForQualifiedId(
+					materializeTemplateArgumentNodes(
 						std::span<const TemplateTypeArg>(
 							final_member_args.data(),
 							final_member_args.size()),

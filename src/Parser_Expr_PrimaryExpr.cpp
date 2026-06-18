@@ -7,6 +7,7 @@
 #include "Parser_FunctionTypeHelpers.h"
 #include "ParserTemplateClassShared.h"
 #include "StringLiteralTokenUtils.h"
+#include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
 
 #include <algorithm>
@@ -701,6 +702,26 @@ std::optional<ASTNode> Parser::resolveDefinitionBoundOrdinaryCall(
 	return *resolution.selected_overload;
 }
 
+std::optional<ASTNode> Parser::resolveDefinitionBoundQualifiedTemplateCall(
+	const FunctionCallDefinitionLookupRecord& record,
+	std::string_view qualified_name,
+	std::span<const ASTNode> template_argument_nodes,
+	const ChunkedVector<ASTNode>& arguments,
+	std::span<const TypeSpecifierNode> arg_types) {
+	ScopedDefinitionLookupContext ctx_scope(
+		current_template_definition_lookup_context_,
+		record.definition_context.is_valid() ? &record.definition_context : nullptr);
+	FlashCpp::ScopedState guard_preferred_definition_bound_template(
+		preferred_definition_bound_template_declaration_);
+	preferred_definition_bound_template_declaration_ =
+		record.definition_bound_template_declaration;
+	return resolveDeferredQualifiedTemplateCall(
+		qualified_name,
+		template_argument_nodes,
+		arguments,
+		arg_types);
+}
+
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::materializeConcreteCallTemplateArguments(
 	std::span<const ASTNode> template_argument_nodes) {
 	InlineVector<TemplateTypeArg, 4> concrete_args;
@@ -1343,6 +1364,32 @@ void Parser::applyIdentifierArgumentArrayBounds(const ASTNode& arg_node, TypeSpe
 	}
 }
 
+const FunctionDeclarationNode* Parser::trySelectUnambiguousParserReturnTypeHint(
+	std::span<const ASTNode> overloads) const {
+	const FunctionDeclarationNode* hint_function = nullptr;
+	for (const ASTNode& overload : overloads) {
+		const FunctionDeclarationNode* candidate =
+			get_function_decl_node(overload);
+		if (candidate == nullptr) {
+			continue;
+		}
+		if (hint_function == nullptr) {
+			hint_function = candidate;
+			continue;
+		}
+		if (!types_equivalent(
+				hint_function->decl_node().type_specifier_node(),
+				candidate->decl_node().type_specifier_node())) {
+			return nullptr;
+		}
+		if (!hint_function->get_definition().has_value() &&
+			candidate->get_definition().has_value()) {
+			hint_function = candidate;
+		}
+	}
+	return hint_function;
+}
+
 bool Parser::tryCollectOrdinaryDirectCallArgTypes(
 	const ChunkedVector<ASTNode>& args,
 	std::vector<TypeSpecifierNode>* arg_types_out) {
@@ -1442,120 +1489,6 @@ ExpressionNode Parser::makeDeferredOrdinaryDirectCallExpr(
 }
 
 namespace {
-std::string_view getTemplateArgTokenText(const TemplateTypeArg& arg) {
-	switch (arg.typeEnum()) {
-	case TypeCategory::Void: return "void";
-	case TypeCategory::Bool: return "bool";
-	case TypeCategory::Char: return "char";
-	case TypeCategory::UnsignedChar: return "unsigned char";
-	case TypeCategory::Short: return "short";
-	case TypeCategory::UnsignedShort: return "unsigned short";
-	case TypeCategory::Int: return "int";
-	case TypeCategory::UnsignedInt: return "unsigned int";
-	case TypeCategory::Long: return "long";
-	case TypeCategory::UnsignedLong: return "unsigned long";
-	case TypeCategory::LongLong: return "long long";
-	case TypeCategory::UnsignedLongLong: return "unsigned long long";
-	case TypeCategory::Float: return "float";
-	case TypeCategory::Double: return "double";
-	case TypeCategory::LongDouble: return "long double";
-	default: return {};
-	}
-}
-
-std::vector<ASTNode> materializeTemplateArgumentNodes(
-	std::span<const TemplateTypeArg> template_args,
-	const Token& source_token) {
-	std::vector<ASTNode> result;
-	result.reserve(template_args.size());
-
-	for (const auto& arg : template_args) {
-		if (arg.is_dependent && arg.dependent_name.isValid()) {
-			Token dep_token(
-				Token::Type::Identifier,
-				arg.dependent_name.view(),
-				source_token.line(),
-				source_token.column(),
-				source_token.file_index());
-			ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-				TemplateParameterReferenceNode(arg.dependent_name, dep_token));
-			result.push_back(ASTNode(&dep_expr));
-			continue;
-		}
-
-		if (arg.is_value) {
-			if (arg.typeEnum() == TypeCategory::Bool) {
-				Token bool_token(
-					Token::Type::Keyword,
-					arg.value != 0 ? "true"sv : "false"sv,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& bool_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					BoolLiteralNode(bool_token, arg.value != 0));
-				result.push_back(ASTNode(&bool_expr));
-			} else {
-				StringBuilder text_builder;
-				std::string_view literal_text = text_builder.append(arg.value).commit();
-				TypeCategory literal_type = arg.typeEnum() == TypeCategory::Invalid ? TypeCategory::Int : arg.typeEnum();
-				Token literal_token(
-					Token::Type::Literal,
-					literal_text,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-				ExpressionNode& literal_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-					NumericLiteralNode(
-						literal_token,
-						static_cast<unsigned long long>(arg.value),
-						literal_type,
-						TypeQualifier::None,
-						get_type_size_bits(literal_type)));
-				result.push_back(ASTNode(&literal_expr));
-			}
-			continue;
-		}
-
-		Token type_token = source_token;
-		TypeCategory type_category = arg.typeEnum();
-		if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-			std::string_view type_name = StringTable::getStringView(type_info->name());
-			if (!type_name.empty()) {
-				type_token = Token(
-					Token::Type::Identifier,
-					type_name,
-					source_token.line(),
-					source_token.column(),
-					source_token.file_index());
-			}
-		} else if (std::string_view builtin_name = getTemplateArgTokenText(arg); !builtin_name.empty()) {
-			type_token = Token(
-				Token::Type::Keyword,
-				builtin_name,
-				source_token.line(),
-				source_token.column(),
-				source_token.file_index());
-		}
-
-		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.type_index.withCategory(type_category),
-			get_type_size_bits(type_category),
-			type_token,
-			arg.cv_qualifier,
-			arg.ref_qualifier);
-		type_node.set_pack_expansion(arg.is_pack);
-		for (size_t pointer_index = 0; pointer_index < arg.pointer_depth; ++pointer_index) {
-			CVQualifier pointer_cv = pointer_index < arg.pointer_cv_qualifiers.size()
-				? arg.pointer_cv_qualifiers[pointer_index]
-				: CVQualifier::None;
-			type_node.add_pointer_level(pointer_cv);
-		}
-		result.push_back(ASTNode(&type_node));
-	}
-
-	return result;
-}
-
 bool astNodeHasDeferredTemplateDependency(
 	const ASTNode& node,
 	const InlineVector<StringHandle, 4>& current_template_param_names);
@@ -3698,13 +3631,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return *err;
 			}
 
+			const bool has_explicit_template_args =
+				template_args.has_value() && !template_args->empty();
+			const bool has_dependent_explicit_template_args =
+				has_explicit_template_args &&
+				explicitTemplateArgsRequireDeferredInstantiation(*template_args);
+
 			// If not found (or explicit template arguments were provided) and we're not in extern "C",
 			// try template instantiation. The global-scope `::ns::func<T>(...)` path must support the
 			// same explicit-template parsing as the regular qualified-identifier path.
-			if (current_linkage_ != Linkage::C && !has_deferred_qualified_call_args) {
+			if (current_linkage_ != Linkage::C &&
+				!has_deferred_qualified_call_args &&
+				!has_dependent_explicit_template_args) {
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
 
-				if (template_args.has_value() && !template_args->empty()) {
+				if (has_explicit_template_args) {
 					auto template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 					if (!template_inst.has_value()) {
 						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
@@ -3726,6 +3667,42 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 					}
 				}
+			}
+
+			bool keep_single_template_decl_for_dependent_call = false;
+			const void* definition_bound_template_declaration = nullptr;
+			if (has_dependent_explicit_template_args &&
+				identifierType.has_value() &&
+				identifierType->is<TemplateFunctionDeclarationNode>()) {
+				const std::string_view lookup_name =
+					buildQualifiedNameFromStrings(namespaces, qual_id.name());
+				const std::vector<TemplateNameLookupCandidate> template_candidates =
+					lookupFunctionTemplateCandidatesForInstantiation(
+						lookup_name,
+						0);
+				keep_single_template_decl_for_dependent_call =
+					template_candidates.size() == 1 &&
+					!gTemplateRegistry.hasExactSpecializationsForName(
+						lookup_name);
+				if (keep_single_template_decl_for_dependent_call) {
+					definition_bound_template_declaration =
+						identifierType->raw_pointer();
+				}
+			}
+			if (has_dependent_explicit_template_args &&
+				(!identifierType.has_value() ||
+				 (identifierType->is<TemplateFunctionDeclarationNode>() &&
+				  !keep_single_template_decl_for_dependent_call))) {
+				auto placeholder_type = emplace_node<TypeSpecifierNode>(
+					TypeCategory::Auto,
+					TypeQualifier::None,
+					get_type_size_bits(TypeCategory::Auto),
+					qual_id.identifier_token(),
+					CVQualifier::None);
+				auto placeholder_decl = emplace_node<DeclarationNode>(
+					placeholder_type,
+					qual_id.identifier_token());
+				identifierType = placeholder_decl;
 			}
 
 			// If still not found, create a forward declaration
@@ -3750,7 +3727,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create function call node with the qualified identifier
 			auto function_call_node = emplace_node<ExpressionNode>(
 				makeCallExprFromNode(*identifierType, std::move(args), qual_id.identifier_token()));
-			if (template_args.has_value() && !template_args->empty()) {
+			if (has_explicit_template_args) {
 				if (template_arg_nodes.empty()) {
 					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
 				} else {
@@ -3780,6 +3757,45 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							false);
 					record.has_value()) {
 					setCallDefinitionLookupRecord(function_call_node.as<ExpressionNode>(), *record);
+				}
+			} else if (has_explicit_template_args) {
+				std::optional<TemplateDefinitionLookupContext>
+					deferred_definition_lookup_context;
+				if ((current_template_definition_lookup_context_ != nullptr &&
+					 current_template_definition_lookup_context_->is_valid()) ||
+					parsing_template_depth_ > 0 ||
+					hasActiveTemplateParameters()) {
+					StringHandle current_instantiation_name{};
+					if (!member_function_context_stack_.empty()) {
+						current_instantiation_name =
+							member_function_context_stack_.back().struct_name;
+					} else if (!struct_parsing_context_stack_.empty() &&
+							   !struct_parsing_context_stack_.back().struct_name.empty()) {
+						current_instantiation_name =
+							StringTable::getOrInternStringHandle(
+								struct_parsing_context_stack_.back().struct_name);
+					}
+					deferred_definition_lookup_context =
+						buildDefinitionLookupContextFromToken(
+							qual_id.identifier_token(),
+							current_instantiation_name);
+				}
+				const TemplateDefinitionLookupContext* definition_lookup_context =
+					deferred_definition_lookup_context.has_value()
+						? &*deferred_definition_lookup_context
+						: current_template_definition_lookup_context_;
+				if (std::optional<FunctionCallDefinitionLookupRecord> record =
+						makeDeferredFunctionCallDefinitionLookupRecord(
+							definition_lookup_context,
+							qual_id.identifier_token(),
+							true,
+							false);
+					record.has_value()) {
+					record->definition_bound_template_declaration =
+						definition_bound_template_declaration;
+					setCallDefinitionLookupRecord(
+						function_call_node.as<ExpressionNode>(),
+						*record);
 				}
 			}
 			result = function_call_node;
@@ -4699,16 +4715,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If not found OR if it's a template (not an instantiated function), try template instantiation
 				// Also try if explicit template arguments were provided (to handle overload resolution)
+				const bool has_any_explicit_template_args =
+					template_args.has_value() && !template_args->empty();
 				bool has_dependent_explicit_template_args = false;
 				if (((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) ||
-					 (template_args.has_value() && !template_args->empty())) &&
+					 has_any_explicit_template_args) &&
 					current_linkage_ != Linkage::C &&
 					!has_deferred_qualified_call_args) {
 					// Build qualified template name
 					std::string_view qualified_name = resolved_qualified_name;
 
 					// Phase 1 C++20: If we have explicit template arguments, use them instead of deducing
-					if (template_args.has_value() && !template_args->empty()) {
+					if (has_any_explicit_template_args) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Using explicit template arguments for function call to '{}'", qualified_name);
 
 						has_dependent_explicit_template_args =
@@ -4746,8 +4764,28 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// When explicit template arguments are dependent and instantiation failed,
 				// the call expression must use a dependent placeholder return type so that
 				// decltype(...) defers resolution to template instantiation time.
+				bool keep_single_template_decl_for_dependent_call = false;
+				const void* definition_bound_template_declaration = nullptr;
 				if (has_dependent_explicit_template_args &&
-					(!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>())) {
+					identifierType.has_value() &&
+					identifierType->is<TemplateFunctionDeclarationNode>()) {
+					const std::vector<TemplateNameLookupCandidate> template_candidates =
+						lookupFunctionTemplateCandidatesForInstantiation(
+							resolved_qualified_name,
+							0);
+					keep_single_template_decl_for_dependent_call =
+						template_candidates.size() == 1 &&
+						!gTemplateRegistry.hasExactSpecializationsForName(
+							resolved_qualified_name);
+					if (keep_single_template_decl_for_dependent_call) {
+						definition_bound_template_declaration =
+							identifierType->raw_pointer();
+					}
+				}
+				if (has_dependent_explicit_template_args &&
+					(!identifierType.has_value() ||
+					 (identifierType->is<TemplateFunctionDeclarationNode>() &&
+					  !keep_single_template_decl_for_dependent_call))) {
 					// Use Auto category to signal that the return type is dependent
 					TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None,
 						get_type_size_bits(TypeCategory::Auto), final_identifier, CVQualifier::None);
@@ -4782,12 +4820,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If explicit template arguments were provided, store them in the call expression
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
-				if (template_args.has_value() && !template_args->empty() && template_arg_nodes.empty()) {
+				if (has_any_explicit_template_args && template_arg_nodes.empty()) {
 					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
-				} else if (template_args.has_value() && !template_args->empty()) {
+				} else if (has_any_explicit_template_args) {
 					syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
 				}
-				bool has_explicit_template_args = template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty();
+				bool has_explicit_template_args = has_any_explicit_template_args && !template_arg_nodes.empty();
 				if (has_explicit_template_args) {
 					setCallTemplateArguments(result->as<ExpressionNode>(), std::move(template_arg_nodes));
 					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in call expression (path 1)");
@@ -4797,12 +4835,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				std::string_view qualified_name = resolved_qualified_name;
 				setCallQualifiedName(result->as<ExpressionNode>(), qualified_name);
 				FLASH_LOG(Parser, Debug, "Set qualified name on call expression: ", qualified_name);
-				if (has_dependent_explicit_template_args &&
-					!identifierType->is<FunctionDeclarationNode>()) {
-					setCallParserReturnTypeHint(
-						result->as<ExpressionNode>(),
-						decl_ptr->type_specifier_node());
-				}
 
 				// If the function has a pre-computed mangled name, set it on the call expression
 				if (identifierType->is<FunctionDeclarationNode>()) {
@@ -4821,6 +4853,47 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								false);
 						record.has_value()) {
 						setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
+					}
+				}
+				if (!identifierType->is<FunctionDeclarationNode>() &&
+					has_explicit_template_args) {
+					std::optional<TemplateDefinitionLookupContext>
+						deferred_definition_lookup_context;
+					if ((current_template_definition_lookup_context_ != nullptr &&
+						 current_template_definition_lookup_context_->is_valid()) ||
+						parsing_template_depth_ > 0 ||
+						hasActiveTemplateParameters()) {
+						StringHandle current_instantiation_name{};
+						if (!member_function_context_stack_.empty()) {
+							current_instantiation_name =
+								member_function_context_stack_.back().struct_name;
+						} else if (!struct_parsing_context_stack_.empty() &&
+								   !struct_parsing_context_stack_.back().struct_name.empty()) {
+							current_instantiation_name =
+								StringTable::getOrInternStringHandle(
+									struct_parsing_context_stack_.back().struct_name);
+						}
+						deferred_definition_lookup_context =
+							buildDefinitionLookupContextFromToken(
+								qual_id.identifier_token(),
+								current_instantiation_name);
+					}
+					const TemplateDefinitionLookupContext* definition_lookup_context =
+						deferred_definition_lookup_context.has_value()
+							? &*deferred_definition_lookup_context
+							: current_template_definition_lookup_context_;
+					if (std::optional<FunctionCallDefinitionLookupRecord> record =
+							makeDeferredFunctionCallDefinitionLookupRecord(
+								definition_lookup_context,
+								qual_id.identifier_token(),
+								true,
+								false);
+						record.has_value()) {
+						record->definition_bound_template_declaration =
+							definition_bound_template_declaration;
+						setCallDefinitionLookupRecord(
+							result->as<ExpressionNode>(),
+							*record);
 					}
 				}
 			} else {
@@ -9414,50 +9487,144 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 									}
 
+									struct CurrentStructMemberTemplateContext {
+										std::string_view struct_name;
+										TypeIndex struct_type_index;
+										const FunctionDeclarationNode* member_template_decl;
+									};
+
+									auto findMatchingMemberTemplateDecl =
+										[&](const StructDeclarationNode* struct_node,
+											const StructTypeInfo* local_struct_info,
+											StringHandle member_name) -> const FunctionDeclarationNode* {
+											auto matches_template_member = [&](const ASTNode& member_func_node) -> const FunctionDeclarationNode* {
+												if (!member_func_node.is<TemplateFunctionDeclarationNode>()) {
+													return nullptr;
+												}
+												const FunctionDeclarationNode& member_func_decl =
+													member_func_node
+														.as<TemplateFunctionDeclarationNode>()
+														.function_declaration()
+														.as<FunctionDeclarationNode>();
+												return member_func_decl.decl_node()
+															   .identifier_token()
+															   .handle() == member_name
+													? &member_func_decl
+													: nullptr;
+											};
+
+											if (struct_node != nullptr) {
+												for (const auto& member_func_decl :
+													 struct_node->member_functions()) {
+													if (const FunctionDeclarationNode* matching_decl =
+															matches_template_member(
+																member_func_decl.function_declaration);
+														matching_decl != nullptr) {
+														return matching_decl;
+													}
+												}
+											}
+											if (local_struct_info != nullptr) {
+												for (const auto& member_func :
+													 local_struct_info->member_functions) {
+													if (const FunctionDeclarationNode* matching_decl =
+															matches_template_member(
+																member_func.function_decl);
+														matching_decl != nullptr) {
+														return matching_decl;
+													}
+												}
+											}
+											return nullptr;
+										};
+
+									auto findCurrentStructMemberTemplateContext =
+										[&]() -> std::optional<CurrentStructMemberTemplateContext> {
+											if (!member_function_context_stack_.empty()) {
+												const auto& member_ctx = member_function_context_stack_.back();
+												const FunctionDeclarationNode* matching_decl =
+													findMatchingMemberTemplateDecl(
+														member_ctx.struct_node,
+														member_ctx.local_struct_info,
+														identifier_token.handle());
+												if (matching_decl != nullptr) {
+													const std::string_view struct_name =
+														StringTable::getStringView(member_ctx.struct_name);
+													if (!struct_name.empty()) {
+														return CurrentStructMemberTemplateContext{
+															struct_name,
+															member_ctx.struct_type_index,
+															matching_decl};
+													}
+												}
+											}
+
+											if (!struct_parsing_context_stack_.empty()) {
+												const auto& struct_ctx = struct_parsing_context_stack_.back();
+												const FunctionDeclarationNode* matching_decl =
+													findMatchingMemberTemplateDecl(
+														struct_ctx.struct_node,
+														struct_ctx.local_struct_info,
+														identifier_token.handle());
+												if (matching_decl != nullptr &&
+													!struct_ctx.struct_name.empty()) {
+													TypeIndex struct_type_index{};
+													if (auto scope_type_it = getTypesByNameMap().find(
+															StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+														scope_type_it != getTypesByNameMap().end()) {
+														struct_type_index = scope_type_it->second->type_index_;
+													}
+													return CurrentStructMemberTemplateContext{
+														struct_ctx.struct_name,
+														struct_type_index,
+														matching_decl};
+												}
+											}
+
+											return std::nullopt;
+										};
+
+									const std::optional<CurrentStructMemberTemplateContext>
+										current_struct_member_template_context =
+											findCurrentStructMemberTemplateContext();
+									auto buildCurrentStructMemberTemplateDeferredRecord =
+										[&]() -> std::optional<
+											TypeInfo::DependentQualifiedNameRecord> {
+											if (!current_struct_member_template_context.has_value()) {
+												return std::nullopt;
+											}
+											ExpressionDependentMemberSegmentInfo member_segment;
+											member_segment.name = identifier_token.handle();
+											member_segment.template_args =
+												toTemplateArgInfoList(
+													*effective_template_args);
+											const std::array<
+												ExpressionDependentMemberSegmentInfo,
+												1> member_segments{
+												member_segment};
+											return makeExpressionDependentQualifiedNameRecord(
+												StringTable::getOrInternStringHandle(
+													current_struct_member_template_context
+														->struct_name),
+												current_struct_member_template_context
+													->struct_type_index,
+												TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation,
+												{},
+												std::span<
+													const ExpressionDependentMemberSegmentInfo>(
+													member_segments.data(),
+													member_segments.size()));
+										};
+									const std::optional<
+										TypeInfo::DependentQualifiedNameRecord>
+										current_struct_member_template_deferred_record =
+											buildCurrentStructMemberTemplateDeferredRecord();
+
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
 									bool resolved_as_struct_member = false;
 									bool defer_struct_member_template_instantiation = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
-										auto structHasMatchingMemberTemplate =
-											[&](const StructDeclarationNode* struct_node,
-												const StructTypeInfo* local_struct_info,
-												StringHandle member_name) {
-												auto matches_template_member = [&](const ASTNode& member_func_node) {
-													if (!member_func_node.is<TemplateFunctionDeclarationNode>()) {
-														return false;
-													}
-													const FunctionDeclarationNode& member_func_decl =
-														member_func_node
-															.as<TemplateFunctionDeclarationNode>()
-															.function_declaration()
-															.as<FunctionDeclarationNode>();
-													return member_func_decl.decl_node()
-															   .identifier_token()
-															   .handle() == member_name;
-												};
-
-												if (struct_node != nullptr) {
-													for (const auto& member_func_decl :
-														 struct_node->member_functions()) {
-														if (matches_template_member(
-																member_func_decl.function_declaration)) {
-															return true;
-														}
-													}
-												}
-												if (local_struct_info != nullptr) {
-													for (const auto& member_func :
-														 local_struct_info->member_functions) {
-														if (matches_template_member(
-																member_func.function_decl)) {
-															return true;
-														}
-													}
-												}
-												return false;
-											};
-
 										auto should_defer_current_struct_member_template_instantiation =
 											[&](std::string_view struct_name, TypeIndex struct_type_index) -> bool {
 											if (struct_name.empty()) {
@@ -9473,66 +9640,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											return isTemplateBodyWithActiveParameters();
 										};
 
-										auto try_instantiate_current_struct_member_template = [&]() -> std::optional<ASTNode> {
-											if (!member_function_context_stack_.empty()) {
-												const auto& member_ctx = member_function_context_stack_.back();
-												std::string_view struct_name =
-													StringTable::getStringView(member_ctx.struct_name);
-												if (!struct_name.empty()) {
-													if (!structHasMatchingMemberTemplate(
-															member_ctx.struct_node,
-															member_ctx.local_struct_info,
-															identifier_token.handle())) {
-														return std::nullopt;
-													}
-													if (should_defer_current_struct_member_template_instantiation(
-															struct_name,
-															member_ctx.struct_type_index)) {
-														defer_struct_member_template_instantiation = true;
-														return std::nullopt;
-													}
-													if (auto member_inst = try_instantiate_member_function_template_explicit(
-															struct_name,
-															identifier_token.value(),
-															*effective_template_args)) {
-														return member_inst;
-													}
-												}
-											}
-
-											if (!struct_parsing_context_stack_.empty()) {
-												const auto& struct_ctx = struct_parsing_context_stack_.back();
-												if (!struct_ctx.struct_name.empty()) {
-													if (!structHasMatchingMemberTemplate(
-															struct_ctx.struct_node,
-															struct_ctx.local_struct_info,
-															identifier_token.handle())) {
-														return std::nullopt;
-													}
-													TypeIndex struct_type_index{};
-													if (auto scope_type_it = getTypesByNameMap().find(
-															StringTable::getOrInternStringHandle(struct_ctx.struct_name));
-														scope_type_it != getTypesByNameMap().end()) {
-														struct_type_index = scope_type_it->second->type_index_;
-													}
-													if (should_defer_current_struct_member_template_instantiation(
-															struct_ctx.struct_name,
-															struct_type_index)) {
-														defer_struct_member_template_instantiation = true;
-														return std::nullopt;
-													}
-													return try_instantiate_member_function_template_explicit(
-														struct_ctx.struct_name,
+										if (current_struct_member_template_context.has_value()) {
+											const CurrentStructMemberTemplateContext& member_template_context =
+												*current_struct_member_template_context;
+											if (should_defer_current_struct_member_template_instantiation(
+													member_template_context.struct_name,
+													member_template_context.struct_type_index)) {
+												defer_struct_member_template_instantiation = true;
+											} else {
+												instantiated_func =
+													try_instantiate_member_function_template_explicit(
+														member_template_context.struct_name,
 														identifier_token.value(),
 														*effective_template_args);
-												}
 											}
-
-											return std::nullopt;
-										};
-
-										instantiated_func = try_instantiate_current_struct_member_template();
-										resolved_as_struct_member = instantiated_func.has_value();
+										}
+										resolved_as_struct_member =
+											instantiated_func.has_value();
 										if (!resolved_as_struct_member && !defer_struct_member_template_instantiation) {
 											instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
 										}
@@ -9611,7 +9735,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 										// Create a placeholder declaration for the dependent function call
 										TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
-										if (const std::vector<ASTNode>* template_overloads = gTemplateRegistry.lookupAllTemplates(identifier_token.value())) {
+										if (current_struct_member_template_context.has_value()) {
+											placeholder_type =
+												current_struct_member_template_context
+													->member_template_decl
+													->decl_node()
+													.type_specifier_node();
+										} else if (const std::vector<ASTNode>* template_overloads = gTemplateRegistry.lookupAllTemplates(identifier_token.value())) {
 											for (const ASTNode& template_overload : *template_overloads) {
 												const FunctionDeclarationNode* function_decl = get_function_decl_node(template_overload);
 												if (!function_decl) {
@@ -9640,24 +9770,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (!explicit_template_arg_nodes.empty()) {
 											setCallTemplateArguments(result->as<ExpressionNode>(), std::move(explicit_template_arg_nodes));
 										}
-										if (defer_struct_member_template_instantiation) {
-											std::string_view struct_name_for_qual;
-											if (!member_function_context_stack_.empty()) {
-												struct_name_for_qual =
-													StringTable::getStringView(member_function_context_stack_.back().struct_name);
-											} else if (!struct_parsing_context_stack_.empty()) {
-												struct_name_for_qual =
-													struct_parsing_context_stack_.back().struct_name;
-											}
-											if (!struct_name_for_qual.empty()) {
-												setCallQualifiedName(
-													result->as<ExpressionNode>(),
-													StringBuilder()
-														.append(struct_name_for_qual)
-														.append("::")
-														.append(identifier_token.value())
-														.commit());
-											}
+										if (current_struct_member_template_context.has_value()) {
+											setCallQualifiedName(
+												result->as<ExpressionNode>(),
+												StringBuilder()
+													.append(
+														current_struct_member_template_context
+															->struct_name)
+													.append("::")
+													.append(identifier_token.value())
+													.commit());
+										}
+										if (current_struct_member_template_deferred_record
+												.has_value()) {
+											setCallDependentQualifiedLookupRecord(
+												result->as<ExpressionNode>(),
+												*current_struct_member_template_deferred_record);
 										}
 									} else {
 										return ParseResult::error("No matching template for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
