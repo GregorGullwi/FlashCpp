@@ -523,17 +523,22 @@ For work in this area, rerun:
    The member-function-pointer fast-path surface is now covered, including the
    `.*` / `->*` postfix path, MSVC ABI mangling for member-function-pointer
    qualifiers, and `_Is_memfunptr`-style owner-class deduction in partial
-   specializations. The next concrete target in this slice is therefore the
-   remaining alias/materialization cluster still exposed by the full suite:
-   `test_alias_template_pointer_modifiers_ret0.cpp` still loses concrete
-   pointer/cv metadata through dependent member-alias substitution, and the
-   related alias regressions (`test_alias_const_ptr_ret42.cpp`,
+   specializations. The remaining alias/materialization cluster from this slice
+   is now fixed too: direct non-deferred alias rebinding is again preferred for
+   simple aliases, which preserves concrete pointer/cv/ref surface modifiers
+   through plain and member alias templates. Focused guards:
+   `test_alias_template_pointer_modifiers_ret0.cpp`,
+   `test_alias_const_ptr_ret42.cpp`,
    `test_alias_ptrptr_ret42.cpp`,
    `test_alias_template_comprehensive_ret70.cpp`,
    `test_alias_two_pointers_ret30.cpp`, and
-   `test_member_template_alias_ret250.cpp`) still crash at runtime. After that,
-   re-check the canonical member-object-pointer type carrier gap if another
-   ABI-sensitive failure reaches it.
+   `test_member_template_alias_ret250.cpp`. The full regular suite now passes
+   again via `pwsh ./tests/run_all_tests.ps1`. The next concrete target in this
+   investigation therefore shifts to standards-conformance growth outside the
+   green suite: the remaining expected-failure coverage
+   (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any
+   future canonical member-object-pointer carrier gap if another ABI-sensitive
+   failure exposes it.
    Long-term direction: replace these per-call-site parser repairs with one
    shared structured qualified-owner representation plus a single resolver used
    by both parser materialization and later sema fallback, so future

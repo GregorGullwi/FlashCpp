@@ -541,17 +541,23 @@ When changing this area, always rerun:
    The member-function-pointer fast-path surface is now covered, including the
    `.*` / `->*` postfix path, MSVC ABI mangling for member-function-pointer
    qualifiers, and `_Is_memfunptr`-style owner-class deduction in partial
-   specializations. The next concrete target in this slice is therefore the
-   smaller alias/materialization cluster still visible in the full suite:
-   `test_alias_template_pointer_modifiers_ret0.cpp` still fails to preserve
-   concrete pointer/cv metadata through dependent member-alias paths, and the
-   related alias regressions (`test_alias_const_ptr_ret42.cpp`,
+   specializations. The alias/materialization cluster that had still been
+   visible in the full suite is now fixed as well: direct non-deferred alias
+   rebinding once again wins over the lossy alias-materialization path for
+   simple aliases, so pointer/cv/ref surface modifiers survive through
+   `identity_t<T>`, `T*`, and member-alias forms. Focused guards:
+   `test_alias_template_pointer_modifiers_ret0.cpp`,
+   `test_alias_const_ptr_ret42.cpp`,
    `test_alias_ptrptr_ret42.cpp`,
    `test_alias_template_comprehensive_ret70.cpp`,
    `test_alias_two_pointers_ret30.cpp`, and
-   `test_member_template_alias_ret250.cpp`) still crash at runtime. After that,
-   re-check the remaining canonical member-object-pointer type carrier gap if
-   another ABI-sensitive failure reaches it.
+   `test_member_template_alias_ret250.cpp`. `pwsh ./tests/run_all_tests.ps1`
+   now passes again for the full regular suite. The next concrete target in
+   this audit therefore moves back to standards-conformance expansion outside
+   the passing core suite: the remaining expected-failure coverage
+   (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any
+   follow-on canonical member-object-pointer carrier gap if a new ABI-sensitive
+   regression reaches it.
    Long-term direction: stop teaching individual parser call sites to recover
    owner identity from short qualified spellings. Instead, preserve a shared
    structured qualified-owner record on the AST and route both parser

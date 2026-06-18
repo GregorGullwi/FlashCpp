@@ -1846,11 +1846,17 @@ ParseResult Parser::parse_type_specifier() {
 					};
 					const bool has_dependent_alias_args =
 						aliasTemplateArgsStillDependent(*template_args);
+					const std::optional<TemplateTypeArg> direct_rebound_alias_arg =
+						!has_dependent_alias_args
+							? tryRebindAliasTargetTemplateArg(alias_node, *template_args)
+							: std::nullopt;
 
 					// OPTION 1: Alias materialization for concrete arguments (preferred over
 					// placeholder fallback and string parsing). Deferred aliases are still
 					// handled via the same materialization entrypoint when arguments are concrete.
-					if (!has_dependent_alias_args) {
+					if (!has_dependent_alias_args &&
+						(alias_node.is_deferred() ||
+						 !direct_rebound_alias_arg.has_value())) {
 						FLASH_LOG(Parser, Debug, "Using alias materialization for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						// Route directly through the alias-specific materialization path
@@ -1913,15 +1919,14 @@ ParseResult Parser::parse_type_specifier() {
 					// Handle non-deferred aliases (e.g., template<typename T> using Ptr = T*)
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
-					if (std::optional<TemplateTypeArg> rebound_arg =
-							tryRebindAliasTargetTemplateArg(alias_node, *template_args);
-						rebound_arg.has_value()) {
-						if (rebound_arg->is_value) {
+					if (direct_rebound_alias_arg.has_value()) {
+						const TemplateTypeArg& rebound_arg = *direct_rebound_alias_arg;
+						if (rebound_arg.is_value) {
 							FLASH_LOG(Parser, Error, "Non-type template arguments not supported in alias templates yet");
 							return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
 						}
 						instantiated_type = makeTypeSpecifierFromTemplateTypeArg(
-							*rebound_arg,
+							rebound_arg,
 							Token());
 					} else if (!has_dependent_alias_args) {
 						if (const TypeInfo* concrete_member_info =
