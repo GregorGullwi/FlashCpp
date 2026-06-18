@@ -1814,61 +1814,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		}
 		return nullptr;
 	};
-	auto appendOwnerMemberCandidates = [&](
-		std::string_view owner_name,
-		std::string_view member_name,
-		InlineVector<ASTNode, 8>& candidates,
-		InlineVector<ASTNode, 8>& definition_candidates) {
-		if (owner_name.empty() || member_name.empty()) {
-			return;
-		}
-		StringHandle owner_handle =
-			StringTable::getOrInternStringHandle(owner_name);
-		StringHandle member_handle =
-			StringTable::getOrInternStringHandle(member_name);
-		parser_.instantiateLazyClassToPhase(
-			owner_handle,
-			ClassInstantiationPhase::Full);
-		if (const TypeInfo* owner_type_info = findTypeByName(owner_handle);
-			owner_type_info != nullptr) {
-			if (const StructTypeInfo* struct_info = owner_type_info->getStructInfo()) {
-				DefinitionPreferredMemberOverloadSet owner_overloads =
-					collectVisibleMemberFunctionOverloadNodes(
-						struct_info,
-						member_handle,
-						true,
-						[](const StructMemberFunction& member_func,
-						   const FunctionDeclarationNode&) {
-							return !member_func.is_constructor &&
-								!member_func.is_destructor;
-						});
-				candidates = std::move(owner_overloads.all);
-				definition_candidates =
-					std::move(owner_overloads.definition_preferred);
-			}
-		}
-		if (!candidates.empty()) {
-			return;
-		}
-		for (const ASTNode& candidate_node : gSymbolTable.lookup_all(member_name)) {
-			const FunctionDeclarationNode* candidate_func =
-				get_function_decl_node(candidate_node);
-			if (candidate_func == nullptr) {
-				continue;
-			}
-			const std::string_view parent_name =
-				candidate_func->parent_struct_name();
-			if (parent_name == owner_name ||
-				(!parent_name.empty() && parent_name.ends_with(owner_name))) {
-				appendUniqueOverloadNode(candidates, candidate_node);
-				if (candidate_func->get_definition().has_value()) {
-					appendUniqueOverloadNode(
-						definition_candidates,
-						candidate_node);
-				}
-			}
-		}
-	};
 	auto resolveQualifiedOwnerOverload = [&](
 		std::string_view owner_name,
 		std::string_view member_name,
@@ -1881,22 +1826,29 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			return nullptr;
 		}
 
-		InlineVector<ASTNode, 8> candidates;
-		InlineVector<ASTNode, 8> definition_candidates;
-		appendOwnerMemberCandidates(
+		DefinitionPreferredMemberOverloadSet owner_overloads =
+			collectOwnerNamedMemberFunctionOverloads(
 			owner_name,
 			member_name,
-			candidates,
-			definition_candidates);
+			[this](StringHandle owner_handle) {
+				parser_.instantiateLazyClassToPhase(
+					owner_handle,
+					ClassInstantiationPhase::Full);
+			},
+			[](const StructMemberFunction& member_func,
+			   const FunctionDeclarationNode&) {
+				return !member_func.is_constructor &&
+					!member_func.is_destructor;
+			});
 		if (const FunctionDeclarationNode* definition_target =
 				resolveUniqueFunctionOverload(
-					definition_candidates,
+					owner_overloads.definition_preferred,
 					substituted_arg_types);
 			definition_target != nullptr) {
 			return definition_target;
 		}
 		return resolveUniqueFunctionOverload(
-			candidates,
+			owner_overloads.all,
 			substituted_arg_types);
 	};
 	auto materializeSubstitutedUnresolvedCall = [&](ChunkedVector<ASTNode>&& substituted_args) -> ASTNode {
@@ -2942,64 +2894,6 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 
 	if ((call.callee().is_member() || call.callee().is_static_member()) &&
 		call.called_from().kind().is_identifier()) {
-		auto appendOwnerMemberCandidates = [&](
-			std::string_view owner_name,
-			std::string_view member_name,
-			InlineVector<ASTNode, 8>& candidates,
-			InlineVector<ASTNode, 8>& definition_candidates) {
-			if (owner_name.empty() || member_name.empty()) {
-				return;
-			}
-			StringHandle owner_handle =
-				StringTable::getOrInternStringHandle(owner_name);
-			StringHandle member_handle =
-				StringTable::getOrInternStringHandle(member_name);
-			parser_.instantiateLazyClassToPhase(
-				owner_handle,
-				ClassInstantiationPhase::Full);
-			if (const TypeInfo* owner_type_info = findTypeByName(owner_handle);
-				owner_type_info != nullptr) {
-				if (const StructTypeInfo* struct_info =
-						owner_type_info->getStructInfo()) {
-					DefinitionPreferredMemberOverloadSet owner_overloads =
-						collectVisibleMemberFunctionOverloadNodes(
-							struct_info,
-							member_handle,
-							true,
-							[](const StructMemberFunction& member_func,
-							   const FunctionDeclarationNode&) {
-								return !member_func.is_constructor &&
-									!member_func.is_destructor;
-							});
-					candidates = std::move(owner_overloads.all);
-					definition_candidates =
-						std::move(owner_overloads.definition_preferred);
-				}
-			}
-			if (!candidates.empty()) {
-				return;
-			}
-			for (const ASTNode& candidate_node :
-				 gSymbolTable.lookup_all(member_name)) {
-				const FunctionDeclarationNode* candidate_func =
-					get_function_decl_node(candidate_node);
-				if (candidate_func == nullptr) {
-					continue;
-				}
-				const std::string_view parent_name =
-					candidate_func->parent_struct_name();
-				if (parent_name == owner_name ||
-					(!parent_name.empty() &&
-					 parent_name.ends_with(owner_name))) {
-					appendUniqueOverloadNode(candidates, candidate_node);
-					if (candidate_func->get_definition().has_value()) {
-						appendUniqueOverloadNode(
-							definition_candidates,
-							candidate_node);
-					}
-				}
-			}
-		};
 		auto resolveUniqueFunctionOverload = [&](
 			std::span<const ASTNode> candidates) -> const FunctionDeclarationNode* {
 			if (candidates.empty()) {
@@ -3098,26 +2992,33 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 						}
 					}
 				}
-				InlineVector<ASTNode, 8> candidates;
-				InlineVector<ASTNode, 8> definition_candidates;
-				appendOwnerMemberCandidates(
+				DefinitionPreferredMemberOverloadSet owner_overloads =
+					collectOwnerNamedMemberFunctionOverloads(
 					materialized_owner_name,
 					member_name,
-					candidates,
-					definition_candidates);
+					[this](StringHandle owner_handle) {
+						parser_.instantiateLazyClassToPhase(
+							owner_handle,
+							ClassInstantiationPhase::Full);
+					},
+					[](const StructMemberFunction& member_func,
+					   const FunctionDeclarationNode&) {
+						return !member_func.is_constructor &&
+							!member_func.is_destructor;
+					});
 				const FunctionDeclarationNode* target_func = nullptr;
 				if (const FunctionDeclarationNode* definition_target =
 						resolveUniqueFunctionOverload(
 							std::span<const ASTNode>(
-								definition_candidates.data(),
-								definition_candidates.size()));
+								owner_overloads.definition_preferred.data(),
+								owner_overloads.definition_preferred.size()));
 					definition_target != nullptr) {
 					target_func = definition_target;
 				} else {
 					target_func = resolveUniqueFunctionOverload(
 						std::span<const ASTNode>(
-							candidates.data(),
-							candidates.size()));
+							owner_overloads.all.data(),
+							owner_overloads.all.size()));
 				}
 				std::string_view mutable_owner_name =
 					materialized_owner_name;

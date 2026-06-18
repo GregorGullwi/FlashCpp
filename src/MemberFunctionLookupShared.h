@@ -131,6 +131,68 @@ DefinitionPreferredMemberOverloadSet collectVisibleMemberFunctionOverloadNodes(
 	return result;
 }
 
+template <typename InstantiateOwnerFn, typename AcceptFn>
+DefinitionPreferredMemberOverloadSet collectOwnerNamedMemberFunctionOverloads(
+	std::string_view owner_name,
+	std::string_view member_name,
+	InstantiateOwnerFn&& instantiate_owner,
+	AcceptFn&& accept_candidate) {
+	DefinitionPreferredMemberOverloadSet result;
+	if (owner_name.empty() || member_name.empty()) {
+		return result;
+	}
+
+	const StringHandle owner_handle =
+		StringTable::getOrInternStringHandle(owner_name);
+	const StringHandle member_handle =
+		StringTable::getOrInternStringHandle(member_name);
+	instantiate_owner(owner_handle);
+
+	if (const TypeInfo* owner_type_info = findTypeByName(owner_handle);
+		owner_type_info != nullptr) {
+		if (const StructTypeInfo* struct_info = owner_type_info->getStructInfo()) {
+			result = collectVisibleMemberFunctionOverloadNodes(
+				struct_info,
+				member_handle,
+				true,
+				std::forward<AcceptFn>(accept_candidate));
+		}
+	}
+	if (!result.all.empty()) {
+		return result;
+	}
+
+	for (const ASTNode& candidate_node : gSymbolTable.lookup_all(member_name)) {
+		const FunctionDeclarationNode* candidate_func =
+			get_function_decl_node(candidate_node);
+		if (candidate_func == nullptr) {
+			continue;
+		}
+
+		const std::string_view parent_name =
+			candidate_func->parent_struct_name();
+		if (parent_name != owner_name &&
+			(parent_name.empty() || !parent_name.ends_with(owner_name))) {
+			continue;
+		}
+
+		if (result.first == nullptr) {
+			result.first = candidate_func;
+		}
+		appendUniqueOverloadNode(result.all, candidate_node);
+		if (candidate_func->get_definition().has_value()) {
+			if (result.first_definition == nullptr) {
+				result.first_definition = candidate_func;
+			}
+			appendUniqueOverloadNode(
+				result.definition_preferred,
+				candidate_node);
+		}
+	}
+
+	return result;
+}
+
 template <typename AcceptFn>
 ConstAwareMemberCandidateSet collectConstAwareVisibleMemberFunctionCandidates(
 	const StructTypeInfo* root_struct_info,
