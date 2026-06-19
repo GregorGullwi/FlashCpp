@@ -7,11 +7,21 @@ struct Base {
 };
 
 template <class T>
+struct IsExactLong {
+	static constexpr int value = 0;
+};
+
+template <>
+struct IsExactLong<long> {
+	static constexpr int value = 1;
+};
+
+template <class T>
 struct Holder : Base<T> {
 	using PickType = decltype(Base<T>::template pick<T>());
 
 	static int run() {
-		return sizeof(PickType) == sizeof(long) ? 0 : 1;
+		return IsExactLong<PickType>::value ? 0 : 1;
 	}
 };
 
