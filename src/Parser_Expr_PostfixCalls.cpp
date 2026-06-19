@@ -2412,11 +2412,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 										class_scope,
 										final_identifier.value(),
 										std::span<const TemplateTypeArg>{});
-								if (const FunctionDeclarationNode* func_decl =
+								if (const FunctionDeclarationNode* instantiated_func_decl =
 										get_function_decl_node(instantiated_func);
-									func_decl != nullptr) {
-									qualified_symbol = ASTNode(func_decl);
-									decl_ptr = &func_decl->decl_node();
+									instantiated_func_decl != nullptr) {
+									qualified_symbol = ASTNode(instantiated_func_decl);
+									decl_ptr = &instantiated_func_decl->decl_node();
 								}
 							}
 						}
