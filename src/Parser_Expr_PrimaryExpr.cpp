@@ -5553,12 +5553,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Trying function template instantiation for '{}' with {} args",
 									 qualified_template_name, template_args->size());
 					auto func_template_inst = try_instantiate_template_explicit(qualified_template_name, *template_args);
-					if (func_template_inst.has_value()) {
-						if (const FunctionDeclarationNode* func_decl =
-								get_function_decl_node(*func_template_inst);
-							func_decl != nullptr) {
-							identifierType = ASTNode(func_decl);
-						}
+					if (const FunctionDeclarationNode* func_decl =
+							get_function_decl_node(func_template_inst);
+						func_decl != nullptr) {
+						identifierType = ASTNode(func_decl);
 						FLASH_LOG(Templates, Debug, "Successfully instantiated function template with explicit arguments");
 					}
 				}

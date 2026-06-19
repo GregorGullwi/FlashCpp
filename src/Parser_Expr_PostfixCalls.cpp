@@ -1583,6 +1583,60 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 		return matched_candidate;
 	};
+	auto tryResolveCanonicalQualifiedOwnerName =
+		[&](const ASTNode& object_expr,
+			std::span<const StringHandle> owner_segments)
+			-> std::optional<std::string_view> {
+			if (owner_segments.empty()) {
+				return std::nullopt;
+			}
+
+			if (owner_segments.front().isValid()) {
+				const std::string_view root_owner_name =
+					StringTable::getStringView(owner_segments.front());
+				if (std::optional<AliasTemplateMaterializationResult>
+						resolved_current_owner =
+							tryResolveQualifiedTypeOwnerFromCurrentContext(
+								root_owner_name);
+					resolved_current_owner.has_value() &&
+					!resolved_current_owner->canonicalName().empty()) {
+					if (owner_segments.size() == 1) {
+						return resolved_current_owner->canonicalName();
+					}
+
+					std::vector<QualifiedTypeMemberAccess> owner_chain;
+					owner_chain.reserve(owner_segments.size() - 1);
+					for (size_t owner_index = 1;
+						 owner_index < owner_segments.size();
+						 ++owner_index) {
+						QualifiedTypeMemberAccess member_access;
+						member_access.member_name = owner_segments[owner_index];
+						owner_chain.push_back(std::move(member_access));
+					}
+
+					if (const TypeInfo* resolved_owner =
+							resolveBaseClassMemberTypeChain(
+								resolved_current_owner->canonicalName(),
+								std::span<const QualifiedTypeMemberAccess>(
+									owner_chain.data(),
+									owner_chain.size()));
+						resolved_owner != nullptr) {
+						return StringTable::getStringView(
+							resolved_owner->name());
+					}
+				}
+			}
+
+			if (const StructTypeInfo* owner_struct =
+					tryResolveQualifiedOwnerStruct(
+						object_expr,
+						owner_segments);
+				owner_struct != nullptr) {
+				return StringTable::getStringView(owner_struct->name);
+			}
+
+			return std::nullopt;
+		};
 	auto tryInstantiateQualifiedMemberTemplateCall =
 		[&](const ASTNode& object_expr,
 			std::span<const StringHandle> owner_segments,
@@ -1591,32 +1645,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			std::span<const TypeSpecifierNode> arg_types,
 			bool has_call_args,
 			bool has_dependent_call_args) -> std::optional<ASTNode> {
-			const StructTypeInfo* owner_struct =
-				tryResolveQualifiedOwnerStruct(object_expr, owner_segments);
-			if (!owner_struct) {
+			if (explicit_template_args.has_value() &&
+				postfixExplicitTemplateArgsRequireDeferredInstantiation(
+					*explicit_template_args)) {
 				return std::nullopt;
 			}
-			std::string_view owner_name_for_lookup =
-				StringTable::getStringView(owner_struct->name);
-			if (owner_segments.size() == 1 &&
-				owner_segments.front().isValid()) {
-				const std::string_view owner_segment_name =
-					StringTable::getStringView(owner_segments.front());
-				if (owner_name_for_lookup == owner_segment_name &&
-					!owner_segment_name.empty()) {
-					if (std::optional<AliasTemplateMaterializationResult>
-							resolved_current_owner =
-								tryResolveQualifiedTypeOwnerFromCurrentContext(
-									owner_segment_name);
-						resolved_current_owner.has_value() &&
-						!resolved_current_owner->canonicalName().empty()) {
-						owner_name_for_lookup =
-							resolved_current_owner->canonicalName();
-					}
-				}
+			std::optional<std::string_view> canonical_owner_name =
+				tryResolveCanonicalQualifiedOwnerName(
+					object_expr,
+					owner_segments);
+			if (!canonical_owner_name.has_value()) {
+				return std::nullopt;
 			}
 			return tryInstantiateMemberFunctionTemplateCall(
-				owner_name_for_lookup,
+				*canonical_owner_name,
 				member_name,
 				explicit_template_args,
 				arg_types,
@@ -1634,6 +1676,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				buildQualifiedMemberCallName(
 					owner_segments,
 					member_token.value());
+			std::string_view qualified_member_template_lookup_name =
+				qualified_member_call_name;
 			const FunctionDeclarationNode*
 				qualified_member_template_return_hint = nullptr;
 			std::optional<AliasTemplateMaterializationResult>
@@ -1650,12 +1694,30 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							.append("::")
 							.append(member_token.value())
 							.commit();
+					qualified_member_template_lookup_name =
+						StringBuilder()
+							.append(resolved_current_owner->canonicalName())
+							.append("::")
+							.append(member_token.value())
+							.commit();
 				}
+			}
+			if (std::optional<std::string_view> canonical_owner_name =
+					tryResolveCanonicalQualifiedOwnerName(
+						object_expr,
+						owner_segments);
+				canonical_owner_name.has_value()) {
+				qualified_member_template_lookup_name =
+					StringBuilder()
+						.append(*canonical_owner_name)
+						.append("::")
+						.append(member_token.value())
+						.commit();
 			}
 			const std::vector<TemplateNameLookupCandidate>
 				template_candidates =
 					lookupFunctionTemplateCandidatesForInstantiation(
-						qualified_member_call_name,
+						qualified_member_template_lookup_name,
 						0);
 			std::vector<ASTNode> template_candidate_nodes;
 			template_candidate_nodes.reserve(template_candidates.size());
@@ -1949,7 +2011,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							if (instantiated_func.has_value() &&
 								instantiated_func->is<FunctionDeclarationNode>()) {
 								resolved_func =
-									&instantiated_func->as<FunctionDeclarationNode>();
+									&instantiated_func
+										 ->as<FunctionDeclarationNode>();
 							} else if (!member_template_args.has_value()) {
 								resolved_func =
 									tryResolveQualifiedMemberFunctionCall(
@@ -2071,7 +2134,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							if (instantiated_func.has_value() &&
 								instantiated_func->is<FunctionDeclarationNode>()) {
 								resolved_func =
-									&instantiated_func->as<FunctionDeclarationNode>();
+									&instantiated_func
+										 ->as<FunctionDeclarationNode>();
 							} else if (!member_template_args.has_value()) {
 								resolved_func =
 									tryResolveQualifiedMemberFunctionCall(
