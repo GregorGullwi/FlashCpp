@@ -8433,7 +8433,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		parser_selected_static_target != nullptr) {
 		return parser_selected_static_target;
 	}
-
 	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
 	const FunctionDeclarationNode* func_decl = op_call_query.hasValue() ? op_call_query.function : nullptr;
 	if (!func_decl && op_call_query.state == ResolvedFunctionQueryResult::State::NotYetAnalyzed) {

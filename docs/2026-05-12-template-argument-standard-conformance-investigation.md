@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-19
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -84,6 +84,15 @@ blocking areas:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list instead of carrying only `mangled_name`
+- ordinary direct calls to concrete template-origin functions now also
+  preserve `FunctionCallDefinitionLookupRecord` even when the call appears in
+  a non-template body, so sema-normalized wrapper calls no longer need a
+  parser-target compatibility path once the parser already knows the concrete
+  instantiated function
+- the remaining covered qualified/direct template-instantiation builders now
+  also adopt concrete function results through the same wrapper-aware helper,
+  so preserving structured call metadata no longer depends on whether a parser
+  branch received a bare `FunctionDeclarationNode` or a wrapped template node
 - untyped ordinary direct-call fallback exits no longer need a parser-selected
   callee to keep parse-time typing alive: they now carry an explicit parser
   return-type hint on the call node plus either a deferred
@@ -267,6 +276,14 @@ Latest progress:
 - the highest-traffic non-dependent ordinary direct-call branches now preserve
   `FunctionCallDefinitionLookupRecord` directly, including unqualified
   overload-resolution in template bodies and namespace-qualified direct calls
+- concrete template-origin ordinary direct calls in non-template bodies now
+  preserve that same structured lookup record too, so sema can keep hard
+  ownership of normalized direct-call target selection instead of accepting a
+  parser-selected compatibility fallback for wrapper-style calls
+- the covered qualified/direct template-instantiation branches now also share
+  a common concrete-function adoption rule, shrinking the remaining
+  branch-specific drift where wrapper instantiations could still erase
+  sema-owned call metadata before normalization
 
 Why this matters:
 
@@ -338,6 +355,20 @@ Remaining near-term scope:
   member-template return type on the placeholder instead of a raw `auto` stub,
   and substitution instantiates the concrete base-qualified member template
   once `T` becomes concrete instead of rebinding by unqualified member name
+- the next standards-facing cleanup in this bucket should be to route the
+  remaining ordinary template-instantiation call builders through the same
+  concrete-template direct-call record helper, then tighten the normalized
+  sema invariant so direct-call ownership always comes from structured lookup
+  records when parser-time resolution already succeeded; after the newly-
+  covered ordinary qualified/direct builders, the next likely targets are the
+  remaining member/callable-object template-instantiation exits that still
+  special-case bare `FunctionDeclarationNode` results
+- the sibling postfix explicit-qualified operator-template placeholder is now
+  structural too: short-owner `holder.Base::template operator()<int>()`
+  spellings canonicalize the nested owner before instantiation, preserve the
+  deferred qualified-owner record when parsing must remain deferred, and keep
+  the matched operator-template return type instead of letting a global
+  same-spelled owner satisfy the parse
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -401,10 +432,15 @@ Next direct-call target:
    `parse_member_postfix()` now preserves `Base<T>`-style owner template-ids
    through the `::template` continuation for both member-template and
    operator-template calls instead of dropping that structure before deferred
-   lookup. The next uncovered parser target is therefore narrower again:
-   the remaining qualified/member-template placeholder/materializer exits that
-   still stamp only compatibility metadata after owner resolution or deferred
-   lookup shape is already known.
+   lookup. The short-owner postfix explicit-qualified operator-template
+   placeholder is now covered too: nested `Base::template operator()<int>()`
+   spellings canonicalize the owner before instantiation and preserve the same
+   deferred qualified-owner metadata plus parser return-type hints when
+   parsing must stay deferred. The next uncovered parser target is therefore
+   narrower again: the remaining qualified/member-template
+   placeholder/materializer exits that still stamp only compatibility metadata
+   after owner resolution or deferred lookup shape is already known, followed
+   by the remaining whole-call sema synchronization hook.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -456,6 +492,8 @@ For work in this area, rerun:
 - `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
 - `test_template_explicit_base_member_template_call_default_arg_ret0.cpp`
 - `test_template_explicit_base_operator_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_operator_template_decltype_ret0.cpp`
+- `test_template_explicit_base_operator_template_nested_owner_collision_ret0.cpp`
 - `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`
 - `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
@@ -499,10 +537,12 @@ For work in this area, rerun:
    exits that still stop at compatibility metadata after owner resolution
    already succeeded, and then remove the whole-call sema synchronization hook
    by pushing that work back to earlier semantic ownership. This slice closes
-   the explicit-base postfix member-template placeholder; the most direct next
-   follow-up is the sibling postfix explicit-qualified operator-template
-   placeholder, which still needs the same owner-preserving deferred lookup
-   treatment.
+   the explicit-base postfix member-template placeholder and the sibling
+   postfix explicit-qualified operator-template placeholder: short nested-owner
+   `Base::template operator()<int>()` spellings no longer instantiate against
+   a global same-spelled owner during trailing `decltype(...)` parsing, and
+   deferred cases preserve the same structured owner metadata plus parser
+   return-type hints as the member-template branch.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by
@@ -535,6 +575,8 @@ For work in this area, rerun:
    preservation are
    `test_template_explicit_base_member_call_default_arg_ret0.cpp`,
    `test_template_explicit_base_operator_call_default_arg_ret0.cpp`,
+   `test_template_explicit_base_operator_template_decltype_ret0.cpp`,
+   `test_template_explicit_base_operator_template_nested_owner_collision_ret0.cpp`,
    `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`,
    and
    `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`.
