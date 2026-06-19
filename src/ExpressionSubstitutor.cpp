@@ -2196,9 +2196,89 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				}
 				return false;
 			};
+			auto tryInstantiateExplicitQualifiedMemberTemplateFromRecord =
+				[&]() -> std::optional<ASTNode> {
+				if (!call.has_dependent_qualified_lookup_record()) {
+					return std::nullopt;
+				}
+				const TypeInfo::DependentQualifiedNameRecord& dependent_record =
+					*call.dependent_qualified_lookup_record();
+				if (dependent_record.member_chain.empty()) {
+					return std::nullopt;
+				}
+				const TypeInfo::DependentQualifiedNameRecord::Member&
+					final_member_record =
+						dependent_record.member_chain.back();
+				if (!final_member_record.has_template_arguments) {
+					return std::nullopt;
+				}
+				InlineVector<TemplateTypeArg, 4> member_template_args =
+					materializeDependentRecordTemplateArgs(
+						final_member_record.template_arguments,
+						kInitialDependentMemberTypeResolutionDepth);
+				if (templateArgsStillDependent(member_template_args)) {
+					return std::nullopt;
+				}
+				const bool prefer_current_owner_type_name =
+					dependent_record.owner_kind ==
+					TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+						CurrentInstantiation;
+				const std::string_view recorded_owner_name =
+					StringTable::getStringView(dependent_record.owner_name);
+				Parser::AliasTemplateMaterializationResult materialized_owner =
+					materializeDependentQualifiedRecordOwner(
+						dependent_record,
+						kInitialDependentMemberTypeResolutionDepth,
+						prefer_current_owner_type_name);
+				std::string_view materialized_owner_name =
+					materialized_owner.canonicalName();
+				if (!materialized_owner_name.empty() &&
+					dependent_record.member_chain.size() > 1) {
+					MaterializedQualifiedLookupOwner prefix_owner =
+						materializeDependentQualifiedMemberPrefixOwner(
+							StringTable::getOrInternStringHandle(
+								materialized_owner_name),
+							recorded_owner_name,
+							std::span<
+								const TypeInfo::DependentQualifiedNameRecord::Member>(
+								dependent_record.member_chain.data(),
+								dependent_record.member_chain.size() - 1),
+							kInitialDependentMemberTypeResolutionDepth);
+					materialized_owner_name =
+						prefix_owner.owner_name.isValid()
+							? StringTable::getStringView(
+								  prefix_owner.owner_name)
+							: std::string_view{};
+				}
+				if (materialized_owner_name.empty()) {
+					return std::nullopt;
+				}
+				const std::string_view member_name =
+					StringTable::getStringView(final_member_record.name);
+				if (member_name.empty()) {
+					return std::nullopt;
+				}
+				std::optional<ASTNode> instantiated =
+					parser_.try_instantiate_member_function_template_explicit(
+						materialized_owner_name,
+						member_name,
+						std::span<const TemplateTypeArg>(
+							member_template_args.data(),
+							member_template_args.size()));
+				if (instantiated.has_value()) {
+					normalizePendingSemanticRoots();
+				}
+				return instantiated;
+			};
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
-			if (!qualified_name.empty()) {
+			if (call.has_dependent_qualified_lookup_record()) {
+				instantiated_template =
+					tryInstantiateExplicitQualifiedMemberTemplateFromRecord();
+			}
+			if (!instantiated_template.has_value() &&
+				!call.has_dependent_qualified_lookup_record() &&
+				!qualified_name.empty()) {
 				if (size_t scope_pos = qualified_name.rfind("::"); scope_pos != std::string_view::npos) {
 					std::string_view owner_name = qualified_name.substr(0, scope_pos);
 					std::string_view member_name = qualified_name.substr(scope_pos + 2);
@@ -2255,6 +2335,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						}
 					}
 				}
+			}
+			if (!instantiated_template.has_value() && !qualified_name.empty()) {
 				if (!instantiated_template.has_value()) {
 					instantiated_template = tryInstantiateExplicitFunctionTemplate(qualified_name);
 				}

@@ -450,10 +450,11 @@ Next direct-call target:
 
 ## Next steps
 
-1. Finish the remaining parser/materialization sites that still preserve only
-   `qualified_name` / `mangled_name` after owner resolution already succeeded,
-   and move them onto the same deferred lookup + parser return-type-hint split
-   now used by the covered ordinary-call paths.
+1. Finish the remaining legacy resolved-call sites that still hand-roll
+   qualified/member metadata or parser return-type hints after owner resolution
+   already succeeded, now that the compatibility-only
+   placeholder/materializer exits in `Parser_Expr_PostfixCalls.cpp` are
+   covered.
    The postfix explicit-qualified member/operator owner-template-id exits in
    `Parser_Expr_PostfixCalls.cpp` are now covered too: `parse_member_postfix()`
    consumes qualifiers like `this->Base<T>::template pick<int>()` and
@@ -468,12 +469,10 @@ Next direct-call target:
    parser return-type hints when parsing must stay deferred, which closes the
    nested-owner collision that had still allowed a global same-spelled `Base`
    to win during trailing `decltype(...)` parsing.
-   Immediate next target: audit the remaining qualified/member-template
-   placeholder/materializer exits in `Parser_Expr_PrimaryExpr.cpp` and
-   `Parser_Expr_PostfixCalls.cpp` that still stop at compatibility metadata
-   after owner resolution or deferred lookup shape is already known, then use
-   those preserved records to delete the remaining whole-call sema
-   synchronization hook. Keep
+   Immediate next target: audit the remaining legacy resolved-call builders in
+   `Parser_Expr_PrimaryExpr.cpp` / `Parser_Expr_PostfixCalls.cpp` that still do
+   not share the same sema-owned metadata attachment path, then revisit the
+   last unrelated static-member whole-call sema synchronization leg. Keep
    `test_member_template_func_in_specialization_ret0.cpp` in the focused
    guard set here: it exercises the new "candidate-bearing concrete owner
    calls must defer instead of hard-failing" rule in
@@ -569,15 +568,21 @@ When changing this area, always rerun:
    instantiate against a global same-spelled owner during trailing
    `decltype(...)` parsing, and deferred cases preserve the same structured
    owner metadata plus parser return-type hints as the member-template branch.
-   The next concrete parser target is therefore the remaining
-   qualified/member-template placeholder/materializer exits that still stamp
-   only compatibility metadata after owner resolution or deferred lookup shape
-   is already known, plus the last whole-call sema synchronization hook that
-   still compensates for those compatibility boundaries. Also
-   clean up the remaining legacy parser sites that still
-   hand-roll `expr...` handling (constructor/initializer parsing) so they share
-   the same "expand only when a real function pack matched, otherwise preserve
-   the pack node" rule now enforced in ordinary call parsing.
+   This follow-up closes the remaining targeted postfix/current
+   qualified/member-template compatibility-only exits in
+   `Parser_Expr_PostfixCalls.cpp`: the explicit owner-template-id
+   member-template placeholder now keeps a structured deferred qualified-owner
+   record even after owner canonicalization succeeds, and the recognized
+   qualified static-owner placeholder now preserves the same owner record plus
+   any unambiguous parser return-type hint instead of stopping at
+   `qualified_name`. `ExpressionSubstitutor.cpp` now consumes that preserved
+   owner record first when materializing explicit qualified member-template
+   calls, so late substitution no longer re-splits `qualified_name` text to
+   recover owner meaning. The whole-call sema synchronization hook could only
+   be narrowed part-way: the `has_qualified_name` compatibility branch is gone,
+   but the unrelated static-member direct-call branch still has to remain for
+   `test_template_current_member_static_hides_base_enum_conversion_ret0.cpp`
+   and `test_template_current_member_static_hides_base_overload_ret0.cpp`.
    The nested-owner explicit member-template collision is now fixed at the
    parser source and guarded by
    `test_template_qualified_member_template_nested_owner_collision_ret0.cpp`
