@@ -59,6 +59,14 @@ bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<Templat
 	});
 }
 
+const FunctionDeclarationNode* tryGetConcreteInstantiatedFunction(
+	const std::optional<ASTNode>& instantiated_node) {
+	if (!instantiated_node.has_value()) {
+		return nullptr;
+	}
+	return get_function_decl_node(*instantiated_node);
+}
+
 bool isNestedOwnerExtension(
 	std::string_view owner_name,
 	std::string_view resolved_owner_name) {
@@ -3623,8 +3631,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (!template_inst.has_value()) {
 						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
 					}
-					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-						identifierType = *template_inst;
+					if (const FunctionDeclarationNode* func_decl =
+							tryGetConcreteInstantiatedFunction(template_inst);
+						func_decl != nullptr) {
+						identifierType = ASTNode(func_decl);
 						FLASH_LOG(Parser, Debug, "Successfully instantiated explicit qualified template: ", qualified_name);
 					}
 				}
@@ -3634,8 +3644,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Try to instantiate the qualified template function
 					if (!arg_types.empty()) {
 						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
-						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-							identifierType = *template_inst;
+						if (const FunctionDeclarationNode* func_decl =
+								tryGetConcreteInstantiatedFunction(template_inst);
+							func_decl != nullptr) {
+							identifierType = ASTNode(func_decl);
 							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
 						}
 					}
@@ -4711,8 +4723,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
 							}
 
-							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-								identifierType = *template_inst;
+							if (const FunctionDeclarationNode* func_decl =
+									tryGetConcreteInstantiatedFunction(template_inst);
+								func_decl != nullptr) {
+								identifierType = ASTNode(func_decl);
 								FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated function template '{}' with explicit arguments", qualified_name);
 							}
 						}
@@ -4727,8 +4741,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// Try to instantiate the qualified template function
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
-							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-								identifierType = *template_inst;
+							if (const FunctionDeclarationNode* func_decl =
+									tryGetConcreteInstantiatedFunction(template_inst);
+								func_decl != nullptr) {
+								identifierType = ASTNode(func_decl);
 							}
 						}
 					}
@@ -5658,16 +5674,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						FLASH_LOG_FORMAT(Templates, Debug, "Instantiating function template '{}' with {} explicit template arguments",
 										 qualified_name, template_args->size());
 						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
-						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-							identifierType = *template_inst;
+						if (const FunctionDeclarationNode* func_decl =
+								tryGetConcreteInstantiatedFunction(template_inst);
+							func_decl != nullptr) {
+							identifierType = ASTNode(func_decl);
 							FLASH_LOG(Templates, Debug, "Successfully instantiated function template with explicit arguments");
 						}
 					} else {
 						// Try to instantiate the qualified template function using argument deduction
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
-							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-								identifierType = *template_inst;
+							if (const FunctionDeclarationNode* func_decl =
+									tryGetConcreteInstantiatedFunction(template_inst);
+								func_decl != nullptr) {
+								identifierType = ASTNode(func_decl);
 							} else {
 							}
 						} else {

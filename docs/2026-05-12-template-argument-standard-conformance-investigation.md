@@ -89,6 +89,10 @@ blocking areas:
   a non-template body, so sema-normalized wrapper calls no longer need a
   parser-target compatibility path once the parser already knows the concrete
   instantiated function
+- the remaining covered qualified/direct template-instantiation builders now
+  also adopt concrete function results through the same wrapper-aware helper,
+  so preserving structured call metadata no longer depends on whether a parser
+  branch received a bare `FunctionDeclarationNode` or a wrapped template node
 - untyped ordinary direct-call fallback exits no longer need a parser-selected
   callee to keep parse-time typing alive: they now carry an explicit parser
   return-type hint on the call node plus either a deferred
@@ -276,6 +280,10 @@ Latest progress:
   preserve that same structured lookup record too, so sema can keep hard
   ownership of normalized direct-call target selection instead of accepting a
   parser-selected compatibility fallback for wrapper-style calls
+- the covered qualified/direct template-instantiation branches now also share
+  a common concrete-function adoption rule, shrinking the remaining
+  branch-specific drift where wrapper instantiations could still erase
+  sema-owned call metadata before normalization
 
 Why this matters:
 
@@ -351,7 +359,10 @@ Remaining near-term scope:
   remaining ordinary template-instantiation call builders through the same
   concrete-template direct-call record helper, then tighten the normalized
   sema invariant so direct-call ownership always comes from structured lookup
-  records when parser-time resolution already succeeded
+  records when parser-time resolution already succeeded; after the newly-
+  covered ordinary qualified/direct builders, the next likely targets are the
+  remaining member/callable-object template-instantiation exits that still
+  special-case bare `FunctionDeclarationNode` results
 - the sibling postfix explicit-qualified operator-template placeholder is now
   structural too: short-owner `holder.Base::template operator()<int>()`
   spellings canonicalize the nested owner before instantiation, preserve the

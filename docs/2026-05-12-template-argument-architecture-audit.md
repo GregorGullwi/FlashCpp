@@ -86,6 +86,11 @@ the areas that were previously blocking standards-visible behavior:
   definition context, so sema-normalized wrapper calls like
   `callBase(holder)` stay on sema-owned resolved-call metadata instead of
   reviving parser-selected call targets late
+- the remaining covered qualified/direct template-instantiation builders now
+  also normalize wrapper-vs-direct instantiation results through the same
+  concrete-function adoption rule, so structured call metadata no longer
+  depends on whether a parser branch received `FunctionDeclarationNode`
+  directly or inside a `TemplateFunctionDeclarationNode`
 - the remaining untyped ordinary direct-call fallback exits no longer keep a
   parser-selected callee as the call's semantic identity just to preserve
   parse-time typing; they now carry an explicit parser return-type hint plus
@@ -297,6 +302,10 @@ Latest progress:
   preserve that same structured lookup record too, rather than requiring a
   sema-side parser-target compatibility escape hatch once the parser already
   knows the concrete instantiated `FunctionDeclarationNode`
+- the covered qualified/direct template-instantiation branches now also reuse a
+  shared concrete-function adoption helper, shrinking the remaining branch-
+  specific drift where wrapper instantiations could silently drop back to
+  weaker call metadata
 
 Desired end state:
 
@@ -375,6 +384,10 @@ Remaining near-term scope:
   goes through the same `FunctionCallDefinitionLookupRecord` helper, then
   tighten the normalized-body invariant so sema no longer needs bare parser
   callee identity where a structured lookup record could have been preserved
+  earlier; after the newly-covered ordinary qualified/direct builders, the
+  next likely targets are the remaining member/callable-object
+  template-instantiation exits that still special-case bare
+  `FunctionDeclarationNode` results
   before template instantiation, preserve the deferred qualified-owner record
   when parsing must stay deferred, and keep the matched operator-template
   return type on the placeholder instead of falling back to global
