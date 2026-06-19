@@ -338,6 +338,12 @@ Remaining near-term scope:
   member-template return type on the placeholder instead of a raw `auto` stub,
   and substitution instantiates the concrete base-qualified member template
   once `T` becomes concrete instead of rebinding by unqualified member name
+- the sibling postfix explicit-qualified operator-template placeholder is now
+  structural too: short-owner `holder.Base::template operator()<int>()`
+  spellings canonicalize the nested owner before instantiation, preserve the
+  deferred qualified-owner record when parsing must remain deferred, and keep
+  the matched operator-template return type instead of letting a global
+  same-spelled owner satisfy the parse
 - the newly fixed explicit-template-argument pack-expansion leak confirms the
   right layer for this class of problem: preserve the parser-only pack node
   until substitution instead of teaching deeper sema/template-argument logic to
@@ -401,10 +407,15 @@ Next direct-call target:
    `parse_member_postfix()` now preserves `Base<T>`-style owner template-ids
    through the `::template` continuation for both member-template and
    operator-template calls instead of dropping that structure before deferred
-   lookup. The next uncovered parser target is therefore narrower again:
-   the remaining qualified/member-template placeholder/materializer exits that
-   still stamp only compatibility metadata after owner resolution or deferred
-   lookup shape is already known.
+   lookup. The short-owner postfix explicit-qualified operator-template
+   placeholder is now covered too: nested `Base::template operator()<int>()`
+   spellings canonicalize the owner before instantiation and preserve the same
+   deferred qualified-owner metadata plus parser return-type hints when
+   parsing must stay deferred. The next uncovered parser target is therefore
+   narrower again: the remaining qualified/member-template
+   placeholder/materializer exits that still stamp only compatibility metadata
+   after owner resolution or deferred lookup shape is already known, followed
+   by the remaining whole-call sema synchronization hook.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -456,6 +467,8 @@ For work in this area, rerun:
 - `test_template_qualified_namespace_explicit_runtime_definition_bound_ret0.cpp`
 - `test_template_explicit_base_member_template_call_default_arg_ret0.cpp`
 - `test_template_explicit_base_operator_template_call_default_arg_ret0.cpp`
+- `test_template_explicit_base_operator_template_decltype_ret0.cpp`
+- `test_template_explicit_base_operator_template_nested_owner_collision_ret0.cpp`
 - `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`
 - `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`
 - `test_template_dependent_unqualified_mangled_recovery_ret0.cpp`
@@ -499,10 +512,12 @@ For work in this area, rerun:
    exits that still stop at compatibility metadata after owner resolution
    already succeeded, and then remove the whole-call sema synchronization hook
    by pushing that work back to earlier semantic ownership. This slice closes
-   the explicit-base postfix member-template placeholder; the most direct next
-   follow-up is the sibling postfix explicit-qualified operator-template
-   placeholder, which still needs the same owner-preserving deferred lookup
-   treatment.
+   the explicit-base postfix member-template placeholder and the sibling
+   postfix explicit-qualified operator-template placeholder: short nested-owner
+   `Base::template operator()<int>()` spellings no longer instantiate against
+   a global same-spelled owner during trailing `decltype(...)` parsing, and
+   deferred cases preserve the same structured owner metadata plus parser
+   return-type hints as the member-template branch.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by
@@ -535,6 +550,8 @@ For work in this area, rerun:
    preservation are
    `test_template_explicit_base_member_call_default_arg_ret0.cpp`,
    `test_template_explicit_base_operator_call_default_arg_ret0.cpp`,
+   `test_template_explicit_base_operator_template_decltype_ret0.cpp`,
+   `test_template_explicit_base_operator_template_nested_owner_collision_ret0.cpp`,
    `test_template_explicit_base_owner_template_member_template_call_default_arg_ret0.cpp`,
    and
    `test_template_explicit_base_owner_template_operator_template_call_default_arg_ret0.cpp`.
