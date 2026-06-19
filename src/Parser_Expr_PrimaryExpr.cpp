@@ -59,14 +59,6 @@ bool explicitTemplateArgsRequireDeferredInstantiation(const InlineVector<Templat
 	});
 }
 
-const FunctionDeclarationNode* tryGetConcreteInstantiatedFunction(
-	const std::optional<ASTNode>& instantiated_node) {
-	if (!instantiated_node.has_value()) {
-		return nullptr;
-	}
-	return get_function_decl_node(*instantiated_node);
-}
-
 bool isNestedOwnerExtension(
 	std::string_view owner_name,
 	std::string_view resolved_owner_name) {
@@ -218,39 +210,6 @@ std::string_view buildDependentQualifiedCallName(
 	return qualified_name_builder.commit();
 }
 
-bool isEligibleDefinitionLookupCall(
-	const TemplateDefinitionLookupContext* definition_context,
-	const Token& callee_token,
-	std::span<const TypeSpecifierNode> arg_types,
-	bool has_deferred_template_call_args,
-	const ASTNode& resolved_decl) {
-	if (has_deferred_template_call_args ||
-		callee_token.type() != Token::Type::Identifier ||
-		!resolved_decl.is<FunctionDeclarationNode>()) {
-		return false;
-	}
-	const FunctionDeclarationNode& func_decl =
-		resolved_decl.as<FunctionDeclarationNode>();
-	const bool has_definition_context =
-		definition_context != nullptr &&
-		definition_context->is_valid();
-	if (!has_definition_context &&
-		!isConcreteTemplateOriginDirectCallTarget(func_decl)) {
-		return false;
-	}
-	for (const TypeSpecifierNode& arg_type : arg_types) {
-		if (arg_type.category() == TypeCategory::Auto ||
-			arg_type.category() == TypeCategory::Template) {
-			return false;
-		}
-		if (!arg_type.type_index().is_valid() &&
-			!is_builtin_type(arg_type.category())) {
-			return false;
-		}
-	}
-	return true;
-}
-
 template <typename LookupRecordT>
 void initializeCallLookupRecordCommon(
 	LookupRecordT& record,
@@ -274,37 +233,6 @@ void setDefinitionBoundFunction(
 			StringTable::getOrInternStringHandle(
 				definition_bound_function->mangled_name());
 	}
-}
-
-std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLookupRecord(
-	const TemplateDefinitionLookupContext* definition_context,
-	const Token& callee_token,
-	std::span<const TypeSpecifierNode> arg_types,
-	bool has_deferred_template_call_args,
-	const ASTNode& resolved_decl,
-	bool ordinary_lookup_included,
-	bool argument_dependent_lookup_included) {
-	if (!isEligibleDefinitionLookupCall(
-			definition_context,
-			callee_token,
-			arg_types,
-			has_deferred_template_call_args,
-			resolved_decl)) {
-		return std::nullopt;
-	}
-
-	const FunctionDeclarationNode& func_decl =
-		resolved_decl.as<FunctionDeclarationNode>();
-	FunctionCallDefinitionLookupRecord record;
-	initializeCallLookupRecordCommon(record, definition_context, callee_token);
-	record.resolved_function = &func_decl;
-	if (func_decl.has_mangled_name()) {
-		record.resolved_mangled_name =
-			StringTable::getOrInternStringHandle(func_decl.mangled_name());
-	}
-	record.ordinary_lookup_included = ordinary_lookup_included;
-	record.argument_dependent_lookup_included = argument_dependent_lookup_included;
-	return record;
 }
 
 void attachResolvedOrdinaryDirectCallMetadata(
@@ -332,12 +260,12 @@ void attachResolvedOrdinaryDirectCallMetadata(
 	}
 
 	if (std::optional<FunctionCallDefinitionLookupRecord> record =
-			makeFunctionCallDefinitionLookupRecord(
+			tryBuildFunctionCallDefinitionLookupRecord(
 				definition_context,
 				callee_token,
 				arg_types,
 				has_deferred_template_call_args,
-				ASTNode(&func_decl),
+				func_decl,
 				ordinary_lookup_included,
 				argument_dependent_lookup_included);
 		record.has_value()) {
@@ -3632,7 +3560,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args, arg_types);
 					}
 					if (const FunctionDeclarationNode* func_decl =
-							tryGetConcreteInstantiatedFunction(template_inst);
+							get_function_decl_node(template_inst);
 						func_decl != nullptr) {
 						identifierType = ASTNode(func_decl);
 						FLASH_LOG(Parser, Debug, "Successfully instantiated explicit qualified template: ", qualified_name);
@@ -3645,7 +3573,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (!arg_types.empty()) {
 						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
 						if (const FunctionDeclarationNode* func_decl =
-								tryGetConcreteInstantiatedFunction(template_inst);
+								get_function_decl_node(template_inst);
 							func_decl != nullptr) {
 							identifierType = ASTNode(func_decl);
 							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
@@ -3732,12 +3660,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					FLASH_LOG(Parser, Debug, "Set mangled name on qualified call expression: {}", func_decl.mangled_name());
 				}
 				if (std::optional<FunctionCallDefinitionLookupRecord> record =
-						makeFunctionCallDefinitionLookupRecord(
+						tryBuildFunctionCallDefinitionLookupRecord(
 							current_template_definition_lookup_context_,
 							qual_id.identifier_token(),
 							arg_types,
 							has_deferred_qualified_call_args,
-							*identifierType,
+							func_decl,
 							true,
 							false);
 					record.has_value()) {
@@ -4724,7 +4652,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 
 							if (const FunctionDeclarationNode* func_decl =
-									tryGetConcreteInstantiatedFunction(template_inst);
+									get_function_decl_node(template_inst);
 								func_decl != nullptr) {
 								identifierType = ASTNode(func_decl);
 								FLASH_LOG_FORMAT(Parser, Debug, "Successfully instantiated function template '{}' with explicit arguments", qualified_name);
@@ -4742,7 +4670,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
 							if (const FunctionDeclarationNode* func_decl =
-									tryGetConcreteInstantiatedFunction(template_inst);
+									get_function_decl_node(template_inst);
 								func_decl != nullptr) {
 								identifierType = ASTNode(func_decl);
 							}
@@ -4832,12 +4760,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 					}
 					if (std::optional<FunctionCallDefinitionLookupRecord> record =
-							makeFunctionCallDefinitionLookupRecord(
+							tryBuildFunctionCallDefinitionLookupRecord(
 								current_template_definition_lookup_context_,
 								qual_id.identifier_token(),
 								arg_types,
 								has_deferred_qualified_call_args,
-								*identifierType,
+								func_decl,
 								true,
 								false);
 						record.has_value()) {
@@ -5675,7 +5603,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										 qualified_name, template_args->size());
 						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args, arg_types);
 						if (const FunctionDeclarationNode* func_decl =
-								tryGetConcreteInstantiatedFunction(template_inst);
+								get_function_decl_node(template_inst);
 							func_decl != nullptr) {
 							identifierType = ASTNode(func_decl);
 							FLASH_LOG(Templates, Debug, "Successfully instantiated function template with explicit arguments");
@@ -5685,7 +5613,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
 							if (const FunctionDeclarationNode* func_decl =
-									tryGetConcreteInstantiatedFunction(template_inst);
+									get_function_decl_node(template_inst);
 								func_decl != nullptr) {
 								identifierType = ASTNode(func_decl);
 							} else {

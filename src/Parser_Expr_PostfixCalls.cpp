@@ -1256,11 +1256,13 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 			}
 		}
 
-		FunctionDeclarationNode* func_ref_ptr = nullptr;
-		if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-			func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+		const FunctionDeclarationNode* instantiated_func_decl =
+			get_function_decl_node(instantiated_func);
+		const FunctionDeclarationNode* func_ref_ptr = nullptr;
+		if (instantiated_func_decl != nullptr) {
+			func_ref_ptr = instantiated_func_decl;
 		} else if (known_member_func) {
-			func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
+			func_ref_ptr = known_member_func;
 		} else {
 			ASTNode temp_type;
 			if (member_call_return_type_hint.has_value()) {
@@ -1289,8 +1291,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				result->as<ExpressionNode>(),
 				*member_call_return_type_hint);
 		}
-		if ((instantiated_func.has_value() &&
-			 instantiated_func->is<FunctionDeclarationNode>()) ||
+		if (instantiated_func_decl != nullptr ||
 			known_member_func != nullptr) {
 			attachResolvedMemberCallMetadata(
 				result->as<ExpressionNode>(),
@@ -2411,9 +2412,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 										class_scope,
 										final_identifier.value(),
 										std::span<const TemplateTypeArg>{});
-								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-									qualified_symbol = instantiated_func;
-									decl_ptr = &instantiated_func->as<FunctionDeclarationNode>().decl_node();
+								if (const FunctionDeclarationNode* func_decl =
+										get_function_decl_node(instantiated_func);
+									func_decl != nullptr) {
+									qualified_symbol = ASTNode(func_decl);
+									decl_ptr = &func_decl->decl_node();
 								}
 							}
 						}
@@ -2441,9 +2444,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							// Also try without namespace prefix
 							template_inst = try_instantiate_template_explicit(final_identifier.value(), *template_args, arg_types);
 						}
-						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-							qualified_symbol = *template_inst;
-							decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
+						if (const FunctionDeclarationNode* func_decl =
+								get_function_decl_node(template_inst);
+							func_decl != nullptr) {
+							qualified_symbol = ASTNode(func_decl);
+							decl_ptr = &func_decl->decl_node();
 							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template with explicit args: ", qualified_name);
 						}
 					}
@@ -2453,9 +2458,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						// Try to instantiate the qualified template function
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
-							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
-								qualified_symbol = *template_inst;
-								decl_ptr = &template_inst->as<FunctionDeclarationNode>().decl_node();
+							if (const FunctionDeclarationNode* func_decl =
+									get_function_decl_node(template_inst);
+								func_decl != nullptr) {
+								qualified_symbol = ASTNode(func_decl);
+								decl_ptr = &func_decl->decl_node();
 								FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
 							}
 						}

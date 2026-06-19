@@ -147,6 +147,14 @@ inline const FunctionDeclarationNode* get_function_decl_node(const ASTNode& node
 	return nullptr;
 }
 
+inline const FunctionDeclarationNode* get_function_decl_node(
+	const std::optional<ASTNode>& node) {
+	if (!node.has_value()) {
+		return nullptr;
+	}
+	return get_function_decl_node(*node);
+}
+
 /// Non-const version of get_function_decl_node
 inline FunctionDeclarationNode* get_function_decl_node_mut(ASTNode& node) {
 	if (node.is<FunctionDeclarationNode>()) {
