@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-19
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -81,6 +81,11 @@ the areas that were previously blocking standards-visible behavior:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list, instead of carrying only `mangled_name`
+- ordinary direct calls to concrete template-origin functions now also
+  preserve `FunctionCallDefinitionLookupRecord` even outside a valid template
+  definition context, so sema-normalized wrapper calls like
+  `callBase(holder)` stay on sema-owned resolved-call metadata instead of
+  reviving parser-selected call targets late
 - the remaining untyped ordinary direct-call fallback exits no longer keep a
   parser-selected callee as the call's semantic identity just to preserve
   parse-time typing; they now carry an explicit parser return-type hint plus
@@ -288,6 +293,10 @@ Latest progress:
   `FunctionCallDefinitionLookupRecord` instead of only stamping
   `mangled_name`, including unqualified overload-resolution paths in template
   bodies and namespace-qualified direct-call materialization
+- concrete template-origin ordinary direct calls in non-template bodies now
+  preserve that same structured lookup record too, rather than requiring a
+  sema-side parser-target compatibility escape hatch once the parser already
+  knows the concrete instantiated `FunctionDeclarationNode`
 
 Desired end state:
 
@@ -358,6 +367,14 @@ Remaining near-term scope:
 - the sibling postfix explicit-qualified operator-template placeholder is now
   on that same structured path as well: short-owner
   `holder.Base::template operator()<int>()` calls canonicalize the nested owner
+  metadata before substitution instantiates the concrete base-qualified
+  operator template
+- the next direct-call ownership cleanup should stay on this side of the
+  parser/sema boundary: consolidate the remaining ordinary template-
+  instantiation call builders so every concrete template-origin direct call
+  goes through the same `FunctionCallDefinitionLookupRecord` helper, then
+  tighten the normalized-body invariant so sema no longer needs bare parser
+  callee identity where a structured lookup record could have been preserved
   before template instantiation, preserve the deferred qualified-owner record
   when parsing must stay deferred, and keep the matched operator-template
   return type on the placeholder instead of falling back to global

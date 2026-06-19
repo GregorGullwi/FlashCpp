@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-19
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -84,6 +84,11 @@ blocking areas:
 - string-literal user-defined literal calls now preserve
   `FunctionCallDefinitionLookupRecord` using the synthesized literal-operator
   name and argument list instead of carrying only `mangled_name`
+- ordinary direct calls to concrete template-origin functions now also
+  preserve `FunctionCallDefinitionLookupRecord` even when the call appears in
+  a non-template body, so sema-normalized wrapper calls no longer need a
+  parser-target compatibility path once the parser already knows the concrete
+  instantiated function
 - untyped ordinary direct-call fallback exits no longer need a parser-selected
   callee to keep parse-time typing alive: they now carry an explicit parser
   return-type hint on the call node plus either a deferred
@@ -267,6 +272,10 @@ Latest progress:
 - the highest-traffic non-dependent ordinary direct-call branches now preserve
   `FunctionCallDefinitionLookupRecord` directly, including unqualified
   overload-resolution in template bodies and namespace-qualified direct calls
+- concrete template-origin ordinary direct calls in non-template bodies now
+  preserve that same structured lookup record too, so sema can keep hard
+  ownership of normalized direct-call target selection instead of accepting a
+  parser-selected compatibility fallback for wrapper-style calls
 
 Why this matters:
 
@@ -338,6 +347,11 @@ Remaining near-term scope:
   member-template return type on the placeholder instead of a raw `auto` stub,
   and substitution instantiates the concrete base-qualified member template
   once `T` becomes concrete instead of rebinding by unqualified member name
+- the next standards-facing cleanup in this bucket should be to route the
+  remaining ordinary template-instantiation call builders through the same
+  concrete-template direct-call record helper, then tighten the normalized
+  sema invariant so direct-call ownership always comes from structured lookup
+  records when parser-time resolution already succeeded
 - the sibling postfix explicit-qualified operator-template placeholder is now
   structural too: short-owner `holder.Base::template operator()<int>()`
   spellings canonicalize the nested owner before instantiation, preserve the

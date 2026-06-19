@@ -27,13 +27,10 @@ inline const FunctionDeclarationNode* getParserStoredDirectCallTarget(const Call
 }
 
 inline bool canBuildFunctionCallDefinitionLookupRecord(
-	const TemplateDefinitionLookupContext* definition_context,
 	const Token& callee_token,
 	std::span<const TypeSpecifierNode> arg_types,
 	bool has_deferred_template_call_args) {
-	if (definition_context == nullptr ||
-		!definition_context->is_valid() ||
-		has_deferred_template_call_args ||
+	if (has_deferred_template_call_args ||
 		callee_token.type() != Token::Type::Identifier) {
 		return false;
 	}
@@ -50,6 +47,13 @@ inline bool canBuildFunctionCallDefinitionLookupRecord(
 	return true;
 }
 
+inline bool isConcreteTemplateOriginDirectCallTarget(
+	const FunctionDeclarationNode& func_decl) {
+	return func_decl.has_template_declaration_position() &&
+		!func_decl.is_template_pattern() &&
+		func_decl.has_mangled_name();
+}
+
 inline std::optional<FunctionCallDefinitionLookupRecord> tryBuildFunctionCallDefinitionLookupRecord(
 	const TemplateDefinitionLookupContext* definition_context,
 	const Token& callee_token,
@@ -59,15 +63,23 @@ inline std::optional<FunctionCallDefinitionLookupRecord> tryBuildFunctionCallDef
 	bool ordinary_lookup_included,
 	bool argument_dependent_lookup_included) {
 	if (!canBuildFunctionCallDefinitionLookupRecord(
-			definition_context,
 			callee_token,
 			arg_types,
 			has_deferred_template_call_args)) {
 		return std::nullopt;
 	}
+	const bool has_definition_context =
+		definition_context != nullptr &&
+		definition_context->is_valid();
+	if (!has_definition_context &&
+		!isConcreteTemplateOriginDirectCallTarget(func_decl)) {
+		return std::nullopt;
+	}
 
 	FunctionCallDefinitionLookupRecord record;
-	record.definition_context = *definition_context;
+	if (has_definition_context) {
+		record.definition_context = *definition_context;
+	}
 	record.callee_name = callee_token.handle();
 	record.resolved_function = &func_decl;
 	if (func_decl.has_mangled_name()) {
@@ -318,7 +330,7 @@ inline ExpressionNode makeCallExprFromNode(const ASTNode& callee_node, ChunkedVe
 	if (callee_node.is<TemplateFunctionDeclarationNode>()) {
 		const ASTNode& function_decl = callee_node.as<TemplateFunctionDeclarationNode>().function_declaration();
 		if (function_decl.is<FunctionDeclarationNode>()) {
-			return makeDirectCallExpr(function_decl.as<FunctionDeclarationNode>().decl_node(), std::move(arguments), called_from_token);
+			return makeResolvedCallExpr(function_decl.as<FunctionDeclarationNode>(), std::move(arguments), called_from_token);
 		}
 		throw InternalError("TemplateFunctionDeclarationNode call target is missing FunctionDeclarationNode");
 	}

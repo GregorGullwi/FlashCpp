@@ -216,11 +216,18 @@ bool isEligibleDefinitionLookupCall(
 	std::span<const TypeSpecifierNode> arg_types,
 	bool has_deferred_template_call_args,
 	const ASTNode& resolved_decl) {
-	if (definition_context == nullptr ||
-		!definition_context->is_valid() ||
-		has_deferred_template_call_args ||
+	if (has_deferred_template_call_args ||
 		callee_token.type() != Token::Type::Identifier ||
 		!resolved_decl.is<FunctionDeclarationNode>()) {
+		return false;
+	}
+	const FunctionDeclarationNode& func_decl =
+		resolved_decl.as<FunctionDeclarationNode>();
+	const bool has_definition_context =
+		definition_context != nullptr &&
+		definition_context->is_valid();
+	if (!has_definition_context &&
+		!isConcreteTemplateOriginDirectCallTarget(func_decl)) {
 		return false;
 	}
 	for (const TypeSpecifierNode& arg_type : arg_types) {
@@ -278,7 +285,8 @@ std::optional<FunctionCallDefinitionLookupRecord> makeFunctionCallDefinitionLook
 		return std::nullopt;
 	}
 
-	const FunctionDeclarationNode& func_decl = resolved_decl.as<FunctionDeclarationNode>();
+	const FunctionDeclarationNode& func_decl =
+		resolved_decl.as<FunctionDeclarationNode>();
 	FunctionCallDefinitionLookupRecord record;
 	initializeCallLookupRecordCommon(record, definition_context, callee_token);
 	record.resolved_function = &func_decl;
@@ -5601,8 +5609,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Trying function template instantiation for '{}' with {} args",
 									 qualified_template_name, template_args->size());
 					auto func_template_inst = try_instantiate_template_explicit(qualified_template_name, *template_args);
-					if (func_template_inst.has_value() && func_template_inst->is<FunctionDeclarationNode>()) {
-						identifierType = *func_template_inst;
+					if (func_template_inst.has_value()) {
+						if (const FunctionDeclarationNode* func_decl =
+								get_function_decl_node(*func_template_inst);
+							func_decl != nullptr) {
+							identifierType = ASTNode(func_decl);
+						}
 						FLASH_LOG(Templates, Debug, "Successfully instantiated function template with explicit arguments");
 					}
 				}
@@ -6092,17 +6104,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
 			}
 
-			if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
-				const auto& func = template_func_inst->as<FunctionDeclarationNode>();
+			const FunctionDeclarationNode* template_func_decl =
+				template_func_inst.has_value()
+					? get_function_decl_node(*template_func_inst)
+					: nullptr;
+			if (template_func_decl != nullptr) {
 				auto function_call_node = emplace_node<ExpressionNode>(
-					makeResolvedCallExpr(func, std::move(args), identifier_token));
+					makeResolvedCallExpr(*template_func_decl, std::move(args), identifier_token));
 				attachResolvedOrdinaryDirectCallMetadata(
 					function_call_node.as<ExpressionNode>(),
 					current_template_definition_lookup_context_,
 					identifier_token,
 					arg_types,
 					false,
-					func,
+					*template_func_decl,
 					true,
 					true);
 
@@ -6613,20 +6628,55 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				auto make_call_result = [&](const ASTNode& resolved_decl) -> ParseResult {
-					const DeclarationNode* decl_ptr = getDeclarationNode(resolved_decl);
+					std::optional<ASTNode> materialized_resolved_decl;
+					const ASTNode* call_target = &resolved_decl;
+					if (resolved_decl.is<TemplateFunctionDeclarationNode>()) {
+						if (current_linkage_ != Linkage::C) {
+							materialized_resolved_decl =
+								try_instantiate_template(
+									identifier_token.value(),
+									arg_types);
+							if (!materialized_resolved_decl.has_value()) {
+								materialized_resolved_decl =
+									tryInstantiateAdlTemplateCandidates(
+										identifier_token.handle(),
+										true,
+										arg_types,
+										all_overloads);
+							}
+						}
+						if (!materialized_resolved_decl.has_value()) {
+							return ParseResult::error(
+								"No matching function for call to '" +
+									std::string(identifier_token.value()) + "\'",
+								identifier_token);
+						}
+						call_target = &*materialized_resolved_decl;
+						if (const FunctionDeclarationNode* func_decl =
+								get_function_decl_node(*call_target);
+							func_decl != nullptr) {
+							if (auto err = appendMissingDefaultArguments(*func_decl);
+								err.has_value()) {
+								return *err;
+							}
+						}
+					}
+
+					const DeclarationNode* decl_ptr = getDeclarationNode(*call_target);
 					if (!decl_ptr) {
 						return ParseResult::error("Invalid function declaration", identifier_token);
 					}
-					result = emplace_node<ExpressionNode>(makeCallExprFromNode(resolved_decl, std::move(args_ref), identifier_token));
-					if (resolved_decl.is<FunctionDeclarationNode>()) {
-						const FunctionDeclarationNode& func_decl = resolved_decl.as<FunctionDeclarationNode>();
+					result = emplace_node<ExpressionNode>(makeCallExprFromNode(*call_target, std::move(args_ref), identifier_token));
+					if (const FunctionDeclarationNode* func_decl =
+							get_function_decl_node(*call_target);
+						func_decl != nullptr) {
 						attachResolvedOrdinaryDirectCallMetadata(
 							result->as<ExpressionNode>(),
 							current_template_definition_lookup_context_,
 							identifier_token,
 							arg_types,
 							has_deferred_template_call_args,
-							func_decl,
+							*func_decl,
 							true,
 							argumentDependentLookupIncludedRuntime);
 					}
@@ -6636,7 +6686,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						has_deferred_template_call_args,
 						current_template_definition_lookup_context_,
 						argumentDependentLookupIncluded,
-						resolved_decl);
+						*call_target);
 					return ParseResult::success(*result);
 				};
 
@@ -6682,8 +6732,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
 						}
-						if (instantiated_func->is<FunctionDeclarationNode>()) {
-							if (auto err = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); err.has_value()) {
+						if (const FunctionDeclarationNode* func_decl =
+								get_function_decl_node(*instantiated_func);
+							func_decl != nullptr) {
+							if (auto err = appendMissingDefaultArguments(*func_decl); err.has_value()) {
 								return *err;
 							}
 						}
@@ -6758,8 +6810,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							}
 							return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "\'", identifier_token);
 						}
-						if (instantiated_func->is<FunctionDeclarationNode>()) {
-							if (auto err = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); err.has_value()) {
+						if (const FunctionDeclarationNode* func_decl =
+								get_function_decl_node(*instantiated_func);
+							func_decl != nullptr) {
+							if (auto err = appendMissingDefaultArguments(*func_decl); err.has_value()) {
 								return *err;
 							}
 						}
@@ -6908,17 +6962,20 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						create_unresolved_call_decl_if_deferred();
 					}
 
-					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
-						const auto& func = template_func_inst->as<FunctionDeclarationNode>();
+					const FunctionDeclarationNode* template_func_decl =
+						template_func_inst.has_value()
+							? get_function_decl_node(*template_func_inst)
+							: nullptr;
+					if (template_func_decl != nullptr) {
 						auto function_call_node = emplace_node<ExpressionNode>(
-							makeResolvedCallExpr(func, std::move(args), identifier_token));
+							makeResolvedCallExpr(*template_func_decl, std::move(args), identifier_token));
 						attachResolvedOrdinaryDirectCallMetadata(
 							function_call_node.as<ExpressionNode>(),
 							current_template_definition_lookup_context_,
 							identifier_token,
 							arg_types,
 							false,
-							func,
+							*template_func_decl,
 							true,
 							true);
 						result = function_call_node;
@@ -9635,8 +9692,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											}
 											return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
 										}
-										if (instantiated_func->is<FunctionDeclarationNode>()) {
-											if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
+										if (const FunctionDeclarationNode* func_decl =
+												get_function_decl_node(*instantiated_func);
+											func_decl != nullptr) {
+											if (auto default_args_error = appendMissingDefaultArguments(*func_decl); default_args_error.has_value()) {
 												return *default_args_error;
 											}
 										}
@@ -9670,15 +9729,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													identifier_token.value());
 										}
 
-										if (instantiated_func->is<FunctionDeclarationNode>()) {
-											const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+										if (const FunctionDeclarationNode* func_decl =
+												get_function_decl_node(*instantiated_func);
+											func_decl != nullptr) {
 											attachResolvedOrdinaryDirectCallMetadata(
 												result->as<ExpressionNode>(),
 												current_template_definition_lookup_context_,
 												identifier_token,
 												arg_types,
 												false,
-												func_decl,
+												*func_decl,
 												true,
 												true,
 												qualified_name_override);
@@ -9803,8 +9863,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												}
 												return ParseResult::error("Call to deleted function '" + std::string(identifier_token.value()) + "'", identifier_token);
 											}
-											if (instantiated_func->is<FunctionDeclarationNode>()) {
-												if (auto default_args_error = appendMissingDefaultArguments(instantiated_func->as<FunctionDeclarationNode>()); default_args_error.has_value()) {
+											if (const FunctionDeclarationNode* func_decl =
+													get_function_decl_node(*instantiated_func);
+												func_decl != nullptr) {
+												if (auto default_args_error = appendMissingDefaultArguments(*func_decl); default_args_error.has_value()) {
 													return *default_args_error;
 												}
 											}
@@ -9815,15 +9877,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											}
 											result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 
-											if (instantiated_func->is<FunctionDeclarationNode>()) {
-												const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+											if (const FunctionDeclarationNode* func_decl =
+													get_function_decl_node(*instantiated_func);
+												func_decl != nullptr) {
 												attachResolvedOrdinaryDirectCallMetadata(
 													result->as<ExpressionNode>(),
 													current_template_definition_lookup_context_,
 													identifier_token,
 													arg_types,
 													false,
-													func_decl,
+													*func_decl,
 													true,
 													true);
 											}
@@ -9898,15 +9961,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												}
 												result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 
-												if (instantiated_func->is<FunctionDeclarationNode>()) {
-													const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
+												if (const FunctionDeclarationNode* func_decl =
+														get_function_decl_node(*instantiated_func);
+													func_decl != nullptr) {
 													attachResolvedOrdinaryDirectCallMetadata(
 														result->as<ExpressionNode>(),
 														current_template_definition_lookup_context_,
 														identifier_token,
 														arg_types,
 														false,
-														func_decl,
+														*func_decl,
 														true,
 														true);
 												}
@@ -9937,32 +10001,66 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											}
 										} else {
 											// Get the selected overload
-											const DeclarationNode* decl_ptr = getDeclarationNode(*resolution_result.selected_overload);
+											std::optional<ASTNode> materialized_selected_overload;
+											const ASTNode* selected_overload =
+												resolution_result.selected_overload;
+											if (selected_overload->is<TemplateFunctionDeclarationNode>()) {
+												if (current_linkage_ != Linkage::C) {
+													materialized_selected_overload =
+														try_instantiate_template(
+															identifier_token.value(),
+															arg_types);
+													if (!materialized_selected_overload.has_value()) {
+														materialized_selected_overload =
+															tryInstantiateAdlTemplateCandidates(
+																identifier_token.handle(),
+																true,
+																arg_types,
+																all_overloads);
+													}
+												}
+												if (!materialized_selected_overload.has_value()) {
+													return ParseResult::error(
+														"No matching function for call to '" +
+															std::string(identifier_token.value()) + "'",
+														identifier_token);
+												}
+												selected_overload =
+													&*materialized_selected_overload;
+											}
+											const DeclarationNode* decl_ptr =
+												getDeclarationNode(*selected_overload);
 											if (!decl_ptr) {
 												return ParseResult::error("Invalid function declaration", identifier_token);
 											}
 
 											// Fill in default arguments for missing parameters
-											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
-												const auto& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
-												if (auto err = appendMissingDefaultArguments(func_decl); err.has_value()) {
+											if (const FunctionDeclarationNode* func_decl =
+													get_function_decl_node(*selected_overload);
+												func_decl != nullptr) {
+												if (auto err = appendMissingDefaultArguments(*func_decl); err.has_value()) {
 													return *err;
 												}
 											}
 
-											result = emplace_node<ExpressionNode>(makeCallExprFromNode(*resolution_result.selected_overload, std::move(args), identifier_token));
+											result = emplace_node<ExpressionNode>(
+												makeCallExprFromNode(
+													*selected_overload,
+													std::move(args),
+													identifier_token));
 
 											// If the function has a pre-computed mangled name, set it on the call expression
 											// This is important for functions in namespaces accessed via using directives
-											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
-												const FunctionDeclarationNode& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
+											if (const FunctionDeclarationNode* func_decl =
+													get_function_decl_node(*selected_overload);
+												func_decl != nullptr) {
 												attachResolvedOrdinaryDirectCallMetadata(
 													result->as<ExpressionNode>(),
 													current_template_definition_lookup_context_,
 													identifier_token,
 													arg_types,
 													has_deferred_call_args,
-													func_decl,
+													*func_decl,
 													true,
 													true);
 											}
@@ -9972,7 +10070,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												has_deferred_call_args,
 												current_template_definition_lookup_context_,
 												true,
-												*resolution_result.selected_overload);
+												*selected_overload);
 										}
 									}
 								}
