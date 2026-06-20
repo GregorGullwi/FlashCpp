@@ -4429,14 +4429,29 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 
 		std::optional<ASTNode> reparsed_initializer;
 		if (peek() == "="_tok) {
-			reparsed_initializer = parse_copy_initialization(
+			ParseResult init_result = parse_copy_initialization(
 				declaration_for_reparse,
 				type_spec);
+			if (!init_result.is_error()) {
+				reparsed_initializer = init_result.node();
+			} else {
+				FLASH_LOG(Templates, Debug,
+					"Replay parse failed for variable template initializer ",
+					declaration_for_reparse.identifier_token().value(), ": ",
+					init_result.error_message(),
+					" - falling back to AST substitution");
+			}
 		} else if (peek() == "{"_tok) {
 			ParseResult init_result = parse_brace_initializer(type_spec);
 			if (!init_result.is_error() &&
 				init_result.node().has_value()) {
 				reparsed_initializer = *init_result.node();
+			} else if (init_result.is_error()) {
+				FLASH_LOG(Templates, Debug,
+					"Replay brace-init parse failed for variable template initializer ",
+					declaration_for_reparse.identifier_token().value(), ": ",
+					init_result.error_message(),
+					" - falling back to AST substitution");
 			}
 		}
 

@@ -443,20 +443,23 @@ Next direct-call target:
    placeholder now both preserve structured deferred qualified-owner metadata,
    and `ExpressionSubstitutor.cpp` now materializes explicit qualified
    member-template calls from that record instead of re-splitting
-   `qualified_name` text. The whole-call sema synchronization hook could only
-   be narrowed part-way: the `has_qualified_name` compatibility branch is gone,
-   but the unrelated static-member direct-call branch still has to remain for
-   the current-member static hiding regressions.
+   `qualified_name` text. The whole-call sema synchronization hook is now
+   closed fully for this slice: the qualified compatibility branch is gone,
+   and the unrelated static-member direct-call fallback in
+   `resolveCallArgAnnotationTarget(...)` is removed as well because the
+   current-member static hiding regressions still resolve correctly through the
+   preserved definition-bound call metadata.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
    `member_class + pointer_depth` forms in ABI-sensitive paths.
-3. Improve parser diagnostics in the remaining copy-initialization path by
-   preserving nested expression or qualified-call failures instead of
-   collapsing them to the generic "Failed to parse initializer expression".
-   This is not the next conformance blocker, but the latest concrete-owner
-   qualified-call slice exposed it clearly enough that it should stay on the
-   list.
+3. The parser-diagnostics follow-up exposed by this area is now covered too:
+   `parse_copy_initialization(...)` and `parse_direct_initialization(...)`
+   both preserve nested expression / qualified-call failures instead of
+   collapsing them to generic wrapper errors, and the dedicated `_fail`
+   anchors `test_copy_init_nested_qualified_call_error_fail.cpp` and
+   `test_direct_init_nested_qualified_call_error_fail.cpp` now keep that
+   behavior pinned.
 4. Keep replay/identity and broader
    current-instantiation/unknown-specialization work in reserve for concrete
    failures; the remaining conformance pressure is now centered on the last
@@ -552,11 +555,12 @@ For work in this area, rerun:
    explicit-function-id paths now use the same helper-based
    definition-record preservation and parser return-type hints as the ordinary
    direct-call path instead of stopping at compatibility `qualified_name` /
-   `mangled_name` metadata. The next concrete step is now just the last
-   unrelated static-member whole-call sema synchronization leg, with
-   `Parser_Expr_PostfixCalls.cpp` and `ExpressionSubstitutor.cpp` remaining in
-   audit mode only for regressions that expose a still-unstructured
-   qualified/member-template materializer.
+   `mangled_name` metadata. That last unrelated static-member whole-call sema
+   synchronization leg is now closed too, so the remaining work in this area
+   is no longer another in-slice compatibility cleanup. Keep
+   `Parser_Expr_PostfixCalls.cpp`, `ExpressionSubstitutor.cpp`, and the
+   direct-call sema path in audit mode only for regressions that expose a
+   still-unstructured qualified/member-template materializer.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by

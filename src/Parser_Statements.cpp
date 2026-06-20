@@ -1204,8 +1204,11 @@ ParseResult Parser::parse_variable_declaration() {
 	// Check for direct initialization with parentheses: Type var(args)
 	if (peek() == "("_tok) {
 		auto init_result = parse_direct_initialization();
-		if (init_result.has_value()) {
-			first_init_expr = init_result;
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		if (init_result.node().has_value()) {
+			first_init_expr = init_result.node();
 			// After closing ), skip any trailing specifiers (this might be a function forward declaration)
 			// e.g., void func() noexcept; or void func() const;
 			FlashCpp::MemberQualifiers member_quals;
@@ -1217,8 +1220,11 @@ ParseResult Parser::parse_variable_declaration() {
 	// Check for copy initialization: TypeCategory var = expr or TypeCategory var = {args}
 	else if (peek() == "="_tok) {
 		auto init_result = parse_copy_initialization(first_decl, type_specifier);
-		if (init_result.has_value()) {
-			first_init_expr = init_result;
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		if (init_result.node().has_value()) {
+			first_init_expr = init_result.node();
 		} else {
 			return ParseResult::error("Failed to parse initializer expression", current_token_);
 		}
@@ -1314,8 +1320,11 @@ ParseResult Parser::parse_variable_declaration() {
 			} else if (peek() == "("_tok) {
 				// Constructor-style initialization for comma-separated declaration: Type var1, var2(args)
 				auto init_result = parse_direct_initialization();
-				if (init_result.has_value()) {
-					init_expr = init_result;
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				if (init_result.node().has_value()) {
+					init_expr = init_result.node();
 				} else {
 					return ParseResult::error("Failed to parse direct initialization", current_token_);
 				}
@@ -1353,12 +1362,12 @@ ParseResult Parser::parse_variable_declaration() {
 }
 
 // Phase 3 Consolidation: Parse direct initialization with parentheses: Type var(args)
-// Returns the initializer node (InitializerListNode) or std::nullopt if not at '('
+// Returns the initializer node (InitializerListNode) or an error if nested parsing fails.
 // Assumes we're positioned at '(' when called
-std::optional<ASTNode> Parser::parse_direct_initialization() {
+ParseResult Parser::parse_direct_initialization() {
 	// Must be at '('
 	if (peek() != "("_tok) {
-		return std::nullopt;
+		return ParseResult{};
 	}
 
 	advance(); // consume '('
@@ -1377,8 +1386,7 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 
 		ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
-			// Return nullopt on error - caller should handle
-			return std::nullopt;
+			return arg_result;
 		}
 
 		if (auto arg_node = arg_result.node()) {
@@ -1430,11 +1438,10 @@ std::optional<ASTNode> Parser::parse_direct_initialization() {
 	}
 
 	if (!consume(")"_tok)) {
-		// Return nullopt on error - caller should handle
-		return std::nullopt;
+		return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 	}
 
-	return init_list_node;
+	return ParseResult::success(init_list_node);
 }
 
 void Parser::prepareArrayTypeForBraceInitializer(const DeclarationNode& decl_node, TypeSpecifierNode& type_specifier) {
@@ -1575,10 +1582,10 @@ void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_no
 // Phase 3 Consolidation: Parse copy initialization: TypeCategory var = expr or TypeCategory var = {args}
 // Returns the initializer expression/list node or std::nullopt if not at '='
 // Also handles auto type deduction and array size inference
-std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier) {
+ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier) {
 	// Must be at '='
 	if (peek() != "="_tok) {
-		return std::nullopt;
+		return ParseResult{};
 	}
 
 	advance(); // consume '='
@@ -1590,19 +1597,19 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 		// Parse brace initializer list
 		ParseResult init_list_result = parse_brace_initializer(type_specifier);
 		if (init_list_result.is_error()) {
-			return std::nullopt;
+			return init_list_result;
 		}
 
 		auto initializer = init_list_result.node();
 
 		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
 
-		return initializer;
+		return init_list_result;
 	} else {
 		// Regular expression initializer
 		ParseResult init_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_expr_result.is_error()) {
-			return std::nullopt;
+			return init_expr_result;
 		}
 		auto initializer = init_expr_result.node();
 
@@ -1661,7 +1668,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 					type_specifier.set_cv_qualifier(original_cv_qual);
 				}
 				FLASH_LOG(Parser, Debug, "Deduced auto lambda+ type: FunctionPointer size=64");
-				return initializer;
+				return init_expr_result;
 			}
 
 			// Get the full type specifier from the initializer expression
@@ -1675,7 +1682,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				ExpressionTypeDeductionResult deduction_result = deduce_type_from_expression(*initializer);
 				if (deduction_result.status == ExpressionTypeDeductionStatus::StillDependent) {
 					FLASH_LOG(Parser, Debug, "Deferred auto variable type deduction for dependent initializer");
-					return initializer;
+					return init_expr_result;
 				}
 				if (deduction_result.status != ExpressionTypeDeductionStatus::Deduced) {
 					throw CompileError(std::string(StringBuilder()
@@ -1715,7 +1722,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 		}
 
 		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
-		return initializer;
+		return init_expr_result;
 	}
 }
 

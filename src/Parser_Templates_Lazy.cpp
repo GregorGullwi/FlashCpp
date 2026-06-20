@@ -1078,7 +1078,17 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 		if (peek() == "="_tok) {
 			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: reparsing from '=' position");
-			substituted_initializer = parse_copy_initialization(decl, type_spec);
+			ParseResult init_result = parse_copy_initialization(decl, type_spec);
+			if (!init_result.is_error()) {
+				substituted_initializer = init_result.node();
+			} else {
+				FLASH_LOG(Templates, Debug,
+					"try_reparse_lazy_static_initializer: parse_copy_initialization failed for ",
+					decl.identifier_token().value(), ": ",
+					init_result.error_message(),
+					" - falling back to stored initializer AST");
+				substituted_initializer.reset();
+			}
 			FLASH_LOG(Templates, Debug, "try_reparse_lazy_static_initializer: parse_copy_initialization result has_value=",
 					  substituted_initializer.has_value());
 		} else if (peek() == "{"_tok) {
@@ -1086,6 +1096,11 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (!init_result.is_error()) {
 				substituted_initializer = init_result.node();
 			} else {
+				FLASH_LOG(Templates, Debug,
+					"try_reparse_lazy_static_initializer: brace initializer parse failed for ",
+					decl.identifier_token().value(), ": ",
+					init_result.error_message(),
+					" - falling back to stored initializer AST");
 				substituted_initializer.reset();
 			}
 		} else {

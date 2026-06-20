@@ -475,11 +475,15 @@ Next direct-call target:
    `qualified_name` / `mangled_name` compatibility metadata once the matched
    declaration shape is already known, and they now preserve the same
    definition-bound direct-call record plus parser return-type hints as the
-   shared ordinary-call helper path. The remaining next step in this area is
-   therefore narrower: keep `Parser_Expr_PostfixCalls.cpp` in audit mode for
-   any newly-exposed qualified/member-template builder drift, but the only
-   concrete targeted code still left is the unrelated static-member whole-call
-   sema synchronization leg. Keep
+   shared ordinary-call helper path. The last unrelated static-member
+   whole-call sema synchronization leg is now closed too:
+   `resolveCallArgAnnotationTarget(...)` no longer needs the
+   parser-selected static direct-call fallback, and the current-member static
+   hiding regressions still pass through the preserved definition-bound call
+   metadata alone. Keep `Parser_Expr_PostfixCalls.cpp`,
+   `ExpressionSubstitutor.cpp`, and this sema area in audit mode for any
+   newly-exposed qualified/member-template builder drift, but there is no
+   remaining targeted work left inside this slice. Keep
    `test_member_template_func_in_specialization_ret0.cpp` in the focused guard
    set here: it exercises the new "candidate-bearing concrete owner calls must
    defer instead of hard-failing" rule in
@@ -488,12 +492,13 @@ Next direct-call target:
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
    `member_class + pointer_depth` forms in ABI-sensitive paths.
-3. Clean up the remaining parser diagnostic collapse around copy
-   initialization. This slice showed that inner qualified-call errors can
-   still surface as the generic "Failed to parse initializer expression" once
-   `parse_copy_initialization(...)` drops the nested `ParseResult`; that does
-   not block conformance, but it is the next diagnostics-quality follow-up in
-   this area.
+3. The initializer-diagnostics follow-up that this slice exposed is now
+   covered too: both `parse_copy_initialization(...)` and
+   `parse_direct_initialization(...)` preserve nested parse failures instead of
+   collapsing them to generic wrapper errors, and the dedicated `_fail`
+   anchors `test_copy_init_nested_qualified_call_error_fail.cpp` and
+   `test_direct_init_nested_qualified_call_error_fail.cpp` now keep that
+   behavior pinned.
 4. Leave replay/`StructTypeInfo` sync and broader
    current-instantiation/unknown-specialization expansion in opportunistic mode
    unless a concrete uncovered failure appears.

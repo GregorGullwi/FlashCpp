@@ -1879,10 +1879,13 @@ ParseResult Parser::parse_static_member_block(
 		// Pop context after parsing
 		member_function_context_stack_.pop_back();
 
-		if (!init_result.has_value()) {
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		if (!init_result.node().has_value()) {
 			return ParseResult::error("Failed to parse initializer expression", current_token_);
 		}
-		init_expr_opt = *init_result;
+		init_expr_opt = *init_result.node();
 	} else if (peek() == "{"_tok) {
 		// Brace initialization: static constexpr int x{42};
 		initializer_position = save_token_position();

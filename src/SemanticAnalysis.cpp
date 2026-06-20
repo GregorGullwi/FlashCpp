@@ -8279,32 +8279,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 		return call_info.function_declaration;
 	};
-	auto fallbackToParserSelectedStaticDirectTarget =
-		[&]() -> const FunctionDeclarationNode* {
-			if (call_info.is_indirect ||
-				call_info.has_receiver ||
-				call_info.function_declaration == nullptr ||
-				call_info.function_declaration->parent_struct_name().empty() ||
-				!call_info.function_declaration->is_static()) {
-				return nullptr;
-			}
-			if (call_info.qualified_name.isValid()) {
-				// Qualified static calls need sema-owned owner resolution so nested
-				// current-instantiation owners cannot be stolen by broader parser-time
-				// matches such as unrelated global templates with the same name.
-				return nullptr;
-			}
-			if (call_info.definition_lookup_record != nullptr &&
-				call_info.definition_lookup_record->has_value()) {
-				return call_info.function_declaration;
-			}
-			return nullptr;
-		};
 	// Resolution order:
-	// 1. receiver-member direct lookup
-	// 2. callable operator / local callable resolution
-	// 3. non-receiver compatibility metadata (mangled / definition-bound / POI)
-	// 4. fresh overload lookup + ranking
+	// 1. receiver-member direct lookup, including receiver-side parser-selected fallback
+	// 2. non-receiver definition-bound direct-call recovery
+	// 3. callable operator / local callable resolution
+	// 4. dependent-unqualified POI / definition-bound recovery
+	// 5. qualified deferred template resolution
+	// 6. mangled-name compatibility fallback
+	// 7. fresh overload lookup + ranking
 	if (call_info.is_indirect) {
 		return nullptr;
 	}
@@ -8425,11 +8407,6 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 				}
 			}
 		}
-	}
-	if (const FunctionDeclarationNode* parser_selected_static_target =
-			fallbackToParserSelectedStaticDirectTarget();
-		parser_selected_static_target != nullptr) {
-		return parser_selected_static_target;
 	}
 	ResolvedFunctionQueryResult op_call_query = getResolvedOpCallQuery(call_key);
 	const FunctionDeclarationNode* func_decl = op_call_query.hasValue() ? op_call_query.function : nullptr;
