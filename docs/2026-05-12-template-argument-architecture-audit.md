@@ -118,11 +118,12 @@ the areas that were previously blocking standards-visible behavior:
   already hold a concrete `FunctionDeclarationNode`, instead of stopping at
   copied `qualified_name`/`mangled_name` compatibility data in those parser
   materializers
-- direct operator function-id calls in `Parser_Expr_PrimaryExpr.cpp` and the
-  postfix declaration-address fast path in `Parser_Expr_PostfixCalls.cpp` now
-  preserve structured non-receiver call metadata as well, so late sema no
-  longer has to rediscover their definition-bound target from a parser-
-  selected callee alone
+- direct operator function-id calls in `Parser_Expr_PrimaryExpr.cpp`, including
+  the namespace-qualified `N::operator...(args)` helper plus the global-
+  qualified `::operator...(args)` entry path, and the postfix declaration-
+  address fast path in `Parser_Expr_PostfixCalls.cpp` now preserve structured
+  non-receiver call metadata as well, so late sema no longer has to rediscover
+  their definition-bound target from a parser-selected callee alone
 - the remaining concrete receiver-call builders now preserve the same shared
   metadata too: postfix `operator()` finalization plus the implicit-`this`,
   member-operator, and callable-object `operator()` builders in
@@ -479,7 +480,15 @@ Next direct-call target:
    `qualified_name` / `mangled_name` compatibility metadata once the matched
    declaration shape is already known, and they now preserve the same
    definition-bound direct-call record plus parser return-type hints as the
-   shared ordinary-call helper path. The last unrelated static-member
+   shared ordinary-call helper path. The namespace-qualified operator
+   function-id helper and the leading global-qualified `::operator...` parser
+   entry now follow that same resolved/deferred qualified-call metadata model
+   too, with
+   `test_template_namespace_qualified_operator_definition_bound_ret0.cpp`
+   and
+   `test_template_global_qualified_operator_definition_bound_ret0.cpp`
+   keeping the direct definition-bound paths pinned. The last unrelated
+   static-member
    whole-call sema synchronization leg is now closed too:
    `resolveCallArgAnnotationTarget(...)` no longer needs the
    parser-selected static direct-call fallback, and the current-member static

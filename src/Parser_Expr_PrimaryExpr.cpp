@@ -2240,14 +2240,121 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, st
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after operator call arguments", current_token_);
 		}
-		auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), SizeInBits{0}, op_token, CVQualifier::None, ReferenceQualifier::None);
-		auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
-		auto func_call = makeDirectCallExpr(op_decl, std::move(args_result.args), op_token);
-		if (!namespaces.empty()) {
-			std::string_view qualified_name = buildQualifiedNameFromHandle(ns_handle, op_name);
-			setCallQualifiedName(func_call, qualified_name);
+		const std::string_view qualified_name =
+			buildQualifiedNameFromStrings(namespaces, op_name);
+		std::vector<TypeSpecifierNode> arg_types;
+		const bool has_arg_types =
+			tryCollectOrdinaryDirectCallArgTypes(
+				args_result.args,
+				&arg_types);
+		const bool has_deferred_qualified_call_args =
+			argsHaveDeferredTemplateDependency(
+				args_result.args,
+				currentTemplateParamNames()) ||
+			argTypesAreDeferredTemplateDependent(
+				arg_types,
+				currentTemplateParamNames());
+
+		std::optional<ASTNode> identifierType;
+		if (ns_handle.isValid() &&
+			has_arg_types) {
+			QualifiedIdentifierNode qual_id(ns_handle, op_token);
+			if (std::optional<ParseResult> qualified_lookup_result =
+					tryQualifiedPhase1Lookup(
+						qual_id,
+						qualified_name,
+						std::nullopt,
+						has_deferred_qualified_call_args,
+						arg_types,
+						identifierType);
+				qualified_lookup_result.has_value()) {
+				return *qualified_lookup_result;
+			}
+			if (!identifierType.has_value()) {
+				if (std::optional<ASTNode> instantiated_template =
+						try_instantiate_template(
+							qualified_name,
+							arg_types);
+					instantiated_template.has_value()) {
+					identifierType = *instantiated_template;
+				}
+			}
 		}
-		auto result = emplace_node<ExpressionNode>(std::move(func_call));
+
+		std::optional<ExpressionNode> result_expr;
+		if (identifierType.has_value()) {
+			result_expr = makeCallExprFromNode(
+				*identifierType,
+				std::move(args_result.args),
+				op_token);
+			if (identifierType->is<FunctionDeclarationNode>()) {
+				const FunctionDeclarationNode& func_decl =
+					identifierType->as<FunctionDeclarationNode>();
+				attachResolvedQualifiedDirectCallMetadata(
+					*result_expr,
+					current_template_definition_lookup_context_,
+					op_token,
+					arg_types,
+					has_deferred_qualified_call_args,
+					func_decl,
+					qualified_name);
+			} else if (!qualified_name.empty()) {
+				setCallQualifiedName(*result_expr, qualified_name);
+			}
+		} else {
+			auto type_spec = emplace_node<TypeSpecifierNode>(
+				TypeIndex{}.withCategory(TypeCategory::Auto),
+				SizeInBits{0},
+				op_token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			auto& op_decl =
+				emplace_node<DeclarationNode>(type_spec, op_token)
+					.as<DeclarationNode>();
+			result_expr =
+				makeDirectCallExpr(
+					op_decl,
+					std::move(args_result.args),
+					op_token);
+			if (!qualified_name.empty()) {
+				if (ns_handle.isValid() &&
+					((current_template_definition_lookup_context_ != nullptr &&
+					  current_template_definition_lookup_context_->is_valid()) ||
+					 parsing_template_depth_ > 0 ||
+					 hasActiveTemplateParameters())) {
+					std::optional<TemplateDefinitionLookupContext>
+						deferred_definition_lookup_context;
+					StringHandle current_instantiation_name{};
+					if (!member_function_context_stack_.empty()) {
+						current_instantiation_name =
+							member_function_context_stack_.back().struct_name;
+					} else if (!struct_parsing_context_stack_.empty() &&
+							   !struct_parsing_context_stack_.back().struct_name.empty()) {
+						current_instantiation_name =
+							StringTable::getOrInternStringHandle(
+								struct_parsing_context_stack_.back().struct_name);
+					}
+					deferred_definition_lookup_context =
+						buildDefinitionLookupContextFromToken(
+							op_token,
+							current_instantiation_name);
+					const TemplateDefinitionLookupContext* definition_lookup_context =
+						deferred_definition_lookup_context.has_value()
+							? &*deferred_definition_lookup_context
+							: current_template_definition_lookup_context_;
+					attachDeferredQualifiedDirectCallMetadata(
+						*result_expr,
+						definition_lookup_context,
+						op_token,
+						qualified_name,
+						nullptr);
+				} else {
+					setCallQualifiedName(*result_expr, qualified_name);
+				}
+			}
+		}
+
+		auto result = emplace_node<ExpressionNode>(std::move(*result_expr));
 		return ParseResult::success(result);
 	}
 	// Not a call — return the operator name as a (qualified) identifier
@@ -3478,10 +3585,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			Token operator_token = current_token_;
 			advance(); // consume 'operator'
 
-			// Expect 'new' or 'delete'
-			if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Keyword ||
-				(current_token_.value() != "new" && current_token_.value() != "delete")) {
-				return ParseResult::error("Expected 'new' or 'delete' after '::operator'", current_token_);
+			if (!(current_token_.type() == Token::Type::Keyword &&
+				  (current_token_.value() == "new" ||
+				   current_token_.value() == "delete"))) {
+				std::vector<StringType<32>> namespaces;
+				return parse_qualified_operator_call(
+					operator_token,
+					std::span<const StringType<32>>(namespaces));
 			}
 
 			StringBuilder op_name_sb;

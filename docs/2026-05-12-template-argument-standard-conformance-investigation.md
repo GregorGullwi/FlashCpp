@@ -118,11 +118,12 @@ blocking areas:
   they already hold a concrete `FunctionDeclarationNode`, instead of stopping
   at copied `qualified_name`/`mangled_name` compatibility metadata in those
   parser materializers
-- direct operator function-id calls in `Parser_Expr_PrimaryExpr.cpp` and the
-  postfix declaration-address fast path in `Parser_Expr_PostfixCalls.cpp` now
-  preserve structured non-receiver call metadata too, so late sema no longer
-  has to rediscover their definition-bound target from a parser-selected
-  callee alone
+- direct operator function-id calls in `Parser_Expr_PrimaryExpr.cpp`, including
+  the namespace-qualified `N::operator...(args)` helper plus the global-
+  qualified `::operator...(args)` entry path, and the postfix declaration-
+  address fast path in `Parser_Expr_PostfixCalls.cpp` now preserve structured
+  non-receiver call metadata too, so late sema no longer has to rediscover
+  their definition-bound target from a parser-selected callee alone
 - the main concrete receiver-call builders now preserve shared metadata too:
   postfix `operator()` finalization plus the implicit-`this`, member-operator,
   and callable-object `operator()` builders in `Parser_Expr_PrimaryExpr.cpp`
@@ -559,9 +560,16 @@ For work in this area, rerun:
    explicit-function-id paths now use the same helper-based
    definition-record preservation and parser return-type hints as the ordinary
    direct-call path instead of stopping at compatibility `qualified_name` /
-   `mangled_name` metadata. That last unrelated static-member whole-call sema
-   synchronization leg is now closed too, so the remaining work in this area
-   is no longer another in-slice compatibility cleanup. Keep
+   `mangled_name` metadata. The namespace-qualified operator function-id
+   helper and the leading global-qualified `::operator...` parser entry now
+   follow that same resolved/deferred qualified-call metadata model too, with
+   `test_template_namespace_qualified_operator_definition_bound_ret0.cpp`
+   and
+   `test_template_global_qualified_operator_definition_bound_ret0.cpp`
+   guarding the direct definition-bound paths. That last unrelated static-
+   member whole-call sema synchronization leg is now closed too, so the
+   remaining work in this area is no longer another in-slice compatibility
+   cleanup. Keep
    `Parser_Expr_PostfixCalls.cpp`, `ExpressionSubstitutor.cpp`, and the
    direct-call sema path in audit mode only for regressions that expose a
    still-unstructured qualified/member-template materializer.
