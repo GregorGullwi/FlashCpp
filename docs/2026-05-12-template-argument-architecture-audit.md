@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-20
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -159,6 +159,12 @@ the areas that were previously blocking standards-visible behavior:
   instantiation `DependentQualifiedNameRecord`, and parser return-type hints
   now come from the matched current-owner member-template declaration instead
   of whichever unrelated same-name global template was encountered first
+- the remaining dependent owner-template/member-template placeholder builders
+  in `Parser_Expr_PrimaryExpr.cpp` now route through one shared deferred
+  qualified-call helper as well, preserving the structured dependent-qualified
+  record, exact template-argument AST, and any unambiguous exact qualified
+  member-template return-type hint instead of hand-rolling four separate
+  compatibility-only exits
 - primary-template out-of-line constructor replay now synchronizes the
   `StructTypeInfo` constructor copy through preserved source-member identity
   when that identity is already known, instead of always rescanning
@@ -450,11 +456,9 @@ Next direct-call target:
 
 ## Next steps
 
-1. Finish the remaining legacy resolved-call sites that still hand-roll
-   qualified/member metadata or parser return-type hints after owner resolution
-   already succeeded, now that the compatibility-only
-   placeholder/materializer exits in `Parser_Expr_PostfixCalls.cpp` are
-   covered.
+1. Keep the parser/materializer side narrow and shift the next audit to the
+   remaining consumer paths now that the lingering dependent qualified-call
+   placeholder builders in `Parser_Expr_PrimaryExpr.cpp` are covered too.
    The postfix explicit-qualified member/operator owner-template-id exits in
    `Parser_Expr_PostfixCalls.cpp` are now covered too: `parse_member_postfix()`
    consumes qualifiers like `this->Base<T>::template pick<int>()` and
@@ -480,14 +484,19 @@ Next direct-call target:
    `resolveCallArgAnnotationTarget(...)` no longer needs the
    parser-selected static direct-call fallback, and the current-member static
    hiding regressions still pass through the preserved definition-bound call
-   metadata alone. Keep `Parser_Expr_PostfixCalls.cpp`,
-   `ExpressionSubstitutor.cpp`, and this sema area in audit mode for any
-   newly-exposed qualified/member-template builder drift, but there is no
-   remaining targeted work left inside this slice. Keep
-   `test_member_template_func_in_specialization_ret0.cpp` in the focused guard
-   set here: it exercises the new "candidate-bearing concrete owner calls must
-   defer instead of hard-failing" rule in
-   `try_parse_member_template_function_call(...)`.
+   metadata alone. `Parser_Expr_PrimaryExpr.cpp` now also shares one helper for
+   its remaining deferred owner-template/member-template call builders, so
+   those placeholder exits no longer diverge on whether they preserve the
+   structured deferred qualified record, template-argument AST, or exact
+   qualified member-template return-type hint. The next concrete audit target
+   is therefore the consumer side: verify `ExpressionSubstitutor.cpp`,
+   constexpr, and the remaining sema-qualified-call consumers do not still
+   re-split `qualified_name` text or assume missing parser return-type hints in
+   the covered owner-template/member-template flows. Keep
+   `test_member_template_func_in_specialization_ret0.cpp`,
+   `test_template_explicit_base_owner_template_member_template_decltype_ret0.cpp`,
+   and `test_template_qualified_owner_member_template_postfix_decltype_ret0.cpp`
+   in the focused guard set here.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped

@@ -210,6 +210,29 @@ std::string_view buildDependentQualifiedCallName(
 	return qualified_name_builder.commit();
 }
 
+std::string_view buildDependentQualifiedLookupName(
+	std::string_view owner_name,
+	std::span<const ExpressionDependentMemberSegmentInfo> member_segments) {
+	StringBuilder qualified_name_builder;
+	qualified_name_builder.append(owner_name);
+	for (const ExpressionDependentMemberSegmentInfo& member_segment : member_segments) {
+		qualified_name_builder.append("::");
+		qualified_name_builder.append(StringTable::getStringView(member_segment.name));
+	}
+	return qualified_name_builder.commit();
+}
+
+const std::vector<ASTNode>* lookupDeferredQualifiedMemberTemplateOverloads(
+	std::string_view owner_name,
+	std::span<const ExpressionDependentMemberSegmentInfo> member_segments) {
+	if (owner_name.empty() || member_segments.empty()) {
+		return nullptr;
+	}
+	const std::string_view qualified_lookup_name =
+		buildDependentQualifiedLookupName(owner_name, member_segments);
+	return gTemplateRegistry.lookupAllTemplates(qualified_lookup_name);
+}
+
 template <typename LookupRecordT>
 void initializeCallLookupRecordCommon(
 	LookupRecordT& record,
@@ -1435,6 +1458,42 @@ ExpressionNode Parser::makeDeferredOrdinaryDirectCallExpr(
 
 	throw InternalError(
 		"Unsupported call target node type in makeDeferredOrdinaryDirectCallExpr");
+}
+
+ExpressionNode Parser::makeDeferredDependentQualifiedCallExpr(
+	std::string_view qualified_call_name,
+	const Token& called_from_token,
+	ChunkedVector<ASTNode>&& arguments,
+	const TypeInfo::DependentQualifiedNameRecord& dependent_record,
+	std::vector<ASTNode>&& template_argument_nodes,
+	const TypeSpecifierNode* parser_return_type_hint) {
+	auto type_node = emplace_node<TypeSpecifierNode>(
+		TypeIndex{}.withCategory(TypeCategory::Auto),
+		0,
+		called_from_token,
+		CVQualifier::None,
+		ReferenceQualifier::None);
+	auto placeholder_decl =
+		emplace_node<DeclarationNode>(type_node, called_from_token);
+	Token deferred_call_token(
+		Token::Type::Identifier,
+		qualified_call_name,
+		called_from_token.line(),
+		called_from_token.column(),
+		called_from_token.file_index());
+	ExpressionNode call_expr = makeDirectCallExpr(
+		placeholder_decl.as<DeclarationNode>(),
+		std::move(arguments),
+		deferred_call_token);
+	setCallQualifiedName(call_expr, qualified_call_name);
+	setCallDependentQualifiedLookupRecord(call_expr, dependent_record);
+	if (!template_argument_nodes.empty()) {
+		setCallTemplateArguments(call_expr, std::move(template_argument_nodes));
+	}
+	if (parser_return_type_hint != nullptr) {
+		setCallParserReturnTypeHint(call_expr, *parser_return_type_hint);
+	}
+	return call_expr;
 }
 
 namespace {
@@ -7266,44 +7325,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											toTemplateArgInfoList(*explicit_template_args),
 											dependent_member_segments));
 									if (has_deferred_member_call) {
-										auto type_node = emplace_node<TypeSpecifierNode>(
-											TypeIndex{}.withCategory(TypeCategory::Auto),
-											0,
-											deferred_member_call_token,
-											CVQualifier::None,
-											ReferenceQualifier::None);
-										auto placeholder_decl =
-											emplace_node<DeclarationNode>(
-												type_node,
-												deferred_member_call_token);
 										std::string_view deferred_qualified_call_name =
 											buildDependentQualifiedCallName(
 												StringTable::getStringView(dependent_owner_handle),
 												dependent_member_segments);
-										Token deferred_call_token(
-											Token::Type::Identifier,
-											deferred_qualified_call_name,
-											deferred_member_call_token.line(),
-											deferred_member_call_token.column(),
-											deferred_member_call_token.file_index());
-										result = emplace_node<ExpressionNode>(
-											makeDirectCallExpr(
-												placeholder_decl.as<DeclarationNode>(),
-												std::move(deferred_member_call_args),
-												deferred_call_token));
-										setCallQualifiedName(
-											result->as<ExpressionNode>(),
-											deferred_qualified_call_name);
+										const std::vector<ASTNode>* deferred_template_overloads =
+											lookupDeferredQualifiedMemberTemplateOverloads(
+												StringTable::getStringView(
+													dependent_owner_handle),
+												dependent_member_segments);
+										const FunctionDeclarationNode* parser_return_hint_decl =
+											(deferred_template_overloads != nullptr &&
+											 !deferred_template_overloads->empty())
+												? this->trySelectUnambiguousParserReturnTypeHint(
+													std::span<const ASTNode>(
+														deferred_template_overloads->data(),
+														deferred_template_overloads->size()))
+												: nullptr;
 										if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
 												dependent_qual_id.dependentQualifiedName()) {
-											setCallDependentQualifiedLookupRecord(
-												result->as<ExpressionNode>(),
-												*dependent_record);
-										}
-										if (!deferred_member_call_template_arg_nodes.empty()) {
-											setCallTemplateArguments(
-												result->as<ExpressionNode>(),
-												std::move(deferred_member_call_template_arg_nodes));
+											result = emplace_node<ExpressionNode>(
+												makeDeferredDependentQualifiedCallExpr(
+													deferred_qualified_call_name,
+													deferred_member_call_token,
+													std::move(deferred_member_call_args),
+													*dependent_record,
+													std::move(
+														deferred_member_call_template_arg_nodes),
+													parser_return_hint_decl != nullptr
+														? &parser_return_hint_decl
+															 ->decl_node()
+															 .type_specifier_node()
+														: nullptr));
 										}
 									} else {
 										if (!terminal_member_template_arg_nodes.empty()) {
@@ -7424,44 +7477,37 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											toTemplateArgInfoList(*explicit_template_args),
 											deferred_member_segments));
 									if (has_deferred_member_call) {
-										auto type_node = emplace_node<TypeSpecifierNode>(
-											TypeIndex{}.withCategory(TypeCategory::Auto),
-											0,
-											deferred_member_call_token,
-											CVQualifier::None,
-											ReferenceQualifier::None);
-										auto placeholder_decl =
-											emplace_node<DeclarationNode>(
-												type_node,
-												deferred_member_call_token);
 										std::string_view deferred_qualified_call_name =
 											buildDependentQualifiedCallName(
 												instantiated_name,
 												deferred_member_segments);
-										Token deferred_call_token(
-											Token::Type::Identifier,
-											deferred_qualified_call_name,
-											deferred_member_call_token.line(),
-											deferred_member_call_token.column(),
-											deferred_member_call_token.file_index());
-										result = emplace_node<ExpressionNode>(
-											makeDirectCallExpr(
-												placeholder_decl.as<DeclarationNode>(),
-												std::move(deferred_member_call_args),
-												deferred_call_token));
-										setCallQualifiedName(
-											result->as<ExpressionNode>(),
-											deferred_qualified_call_name);
+										const std::vector<ASTNode>* deferred_template_overloads =
+											lookupDeferredQualifiedMemberTemplateOverloads(
+												instantiated_name,
+												deferred_member_segments);
+										const FunctionDeclarationNode* parser_return_hint_decl =
+											(deferred_template_overloads != nullptr &&
+											 !deferred_template_overloads->empty())
+												? this->trySelectUnambiguousParserReturnTypeHint(
+													std::span<const ASTNode>(
+														deferred_template_overloads->data(),
+														deferred_template_overloads->size()))
+												: nullptr;
 										if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
 												dependent_qual_id.dependentQualifiedName()) {
-											setCallDependentQualifiedLookupRecord(
-												result->as<ExpressionNode>(),
-												*dependent_record);
-										}
-										if (!deferred_member_call_template_arg_nodes.empty()) {
-											setCallTemplateArguments(
-												result->as<ExpressionNode>(),
-												std::move(deferred_member_call_template_arg_nodes));
+											result = emplace_node<ExpressionNode>(
+												makeDeferredDependentQualifiedCallExpr(
+													deferred_qualified_call_name,
+													deferred_member_call_token,
+													std::move(deferred_member_call_args),
+													*dependent_record,
+													std::move(
+														deferred_member_call_template_arg_nodes),
+													parser_return_hint_decl != nullptr
+														? &parser_return_hint_decl
+															 ->decl_node()
+															 .type_specifier_node()
+														: nullptr));
 										}
 									} else {
 										if (!terminal_member_template_arg_nodes.empty()) {
@@ -8498,44 +8544,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									toTemplateArgInfoList(*explicit_template_args),
 									dependent_member_segments));
 							if (has_deferred_member_call) {
-								auto type_node = emplace_node<TypeSpecifierNode>(
-									TypeIndex{}.withCategory(TypeCategory::Auto),
-									0,
-									deferred_member_call_token,
-									CVQualifier::None,
-									ReferenceQualifier::None);
-								auto placeholder_decl =
-									emplace_node<DeclarationNode>(
-										type_node,
-										deferred_member_call_token);
 								std::string_view deferred_qualified_call_name =
 									buildDependentQualifiedCallName(
 										StringTable::getStringView(dependent_owner_handle),
 										dependent_member_segments);
-								Token deferred_call_token(
-									Token::Type::Identifier,
-									deferred_qualified_call_name,
-									deferred_member_call_token.line(),
-									deferred_member_call_token.column(),
-									deferred_member_call_token.file_index());
-								result = emplace_node<ExpressionNode>(
-									makeDirectCallExpr(
-										placeholder_decl.as<DeclarationNode>(),
-										std::move(deferred_member_call_args),
-										deferred_call_token));
-								setCallQualifiedName(
-									result->as<ExpressionNode>(),
-									deferred_qualified_call_name);
+								const std::vector<ASTNode>* deferred_template_overloads =
+									lookupDeferredQualifiedMemberTemplateOverloads(
+										StringTable::getStringView(
+											dependent_owner_handle),
+										dependent_member_segments);
+								const FunctionDeclarationNode* parser_return_hint_decl =
+									(deferred_template_overloads != nullptr &&
+									 !deferred_template_overloads->empty())
+										? this->trySelectUnambiguousParserReturnTypeHint(
+											std::span<const ASTNode>(
+												deferred_template_overloads->data(),
+												deferred_template_overloads->size()))
+										: nullptr;
 								if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
 										dependent_qual_id.dependentQualifiedName()) {
-									setCallDependentQualifiedLookupRecord(
-										result->as<ExpressionNode>(),
-										*dependent_record);
-								}
-								if (!deferred_member_call_template_arg_nodes.empty()) {
-									setCallTemplateArguments(
-										result->as<ExpressionNode>(),
-										std::move(deferred_member_call_template_arg_nodes));
+									result = emplace_node<ExpressionNode>(
+										makeDeferredDependentQualifiedCallExpr(
+											deferred_qualified_call_name,
+											deferred_member_call_token,
+											std::move(deferred_member_call_args),
+											*dependent_record,
+											std::move(
+												deferred_member_call_template_arg_nodes),
+											parser_return_hint_decl != nullptr
+												? &parser_return_hint_decl
+													 ->decl_node()
+													 .type_specifier_node()
+												: nullptr));
 								}
 							} else {
 								if (!terminal_member_template_arg_nodes.empty()) {
@@ -8654,44 +8694,37 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									toTemplateArgInfoList(*explicit_template_args),
 									deferred_member_segments));
 							if (has_deferred_member_call) {
-								auto type_node = emplace_node<TypeSpecifierNode>(
-									TypeIndex{}.withCategory(TypeCategory::Auto),
-									0,
-									deferred_member_call_token,
-									CVQualifier::None,
-									ReferenceQualifier::None);
-								auto placeholder_decl =
-									emplace_node<DeclarationNode>(
-										type_node,
-										deferred_member_call_token);
 								std::string_view deferred_qualified_call_name =
 									buildDependentQualifiedCallName(
 										instantiated_class_name,
 										deferred_member_segments);
-								Token deferred_call_token(
-									Token::Type::Identifier,
-									deferred_qualified_call_name,
-									deferred_member_call_token.line(),
-									deferred_member_call_token.column(),
-									deferred_member_call_token.file_index());
-								result = emplace_node<ExpressionNode>(
-									makeDirectCallExpr(
-										placeholder_decl.as<DeclarationNode>(),
-										std::move(deferred_member_call_args),
-										deferred_call_token));
-								setCallQualifiedName(
-									result->as<ExpressionNode>(),
-									deferred_qualified_call_name);
+								const std::vector<ASTNode>* deferred_template_overloads =
+									lookupDeferredQualifiedMemberTemplateOverloads(
+										instantiated_class_name,
+										deferred_member_segments);
+								const FunctionDeclarationNode* parser_return_hint_decl =
+									(deferred_template_overloads != nullptr &&
+									 !deferred_template_overloads->empty())
+										? this->trySelectUnambiguousParserReturnTypeHint(
+											std::span<const ASTNode>(
+												deferred_template_overloads->data(),
+												deferred_template_overloads->size()))
+										: nullptr;
 								if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
 										dependent_qual_id.dependentQualifiedName()) {
-									setCallDependentQualifiedLookupRecord(
-										result->as<ExpressionNode>(),
-										*dependent_record);
-								}
-								if (!deferred_member_call_template_arg_nodes.empty()) {
-									setCallTemplateArguments(
-										result->as<ExpressionNode>(),
-										std::move(deferred_member_call_template_arg_nodes));
+									result = emplace_node<ExpressionNode>(
+										makeDeferredDependentQualifiedCallExpr(
+											deferred_qualified_call_name,
+											deferred_member_call_token,
+											std::move(deferred_member_call_args),
+											*dependent_record,
+											std::move(
+												deferred_member_call_template_arg_nodes),
+											parser_return_hint_decl != nullptr
+												? &parser_return_hint_decl
+													 ->decl_node()
+													 .type_specifier_node()
+												: nullptr));
 								}
 							} else {
 								if (!terminal_member_template_arg_nodes.empty()) {
