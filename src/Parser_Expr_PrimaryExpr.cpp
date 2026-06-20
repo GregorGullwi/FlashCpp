@@ -1464,7 +1464,7 @@ ExpressionNode Parser::makeDeferredDependentQualifiedCallExpr(
 	std::string_view qualified_call_name,
 	const Token& called_from_token,
 	ChunkedVector<ASTNode>&& arguments,
-	const TypeInfo::DependentQualifiedNameRecord& dependent_record,
+	const TypeInfo::DependentQualifiedNameRecord* dependent_record,
 	std::vector<ASTNode>&& template_argument_nodes,
 	const TypeSpecifierNode* parser_return_type_hint) {
 	auto type_node = emplace_node<TypeSpecifierNode>(
@@ -1486,7 +1486,9 @@ ExpressionNode Parser::makeDeferredDependentQualifiedCallExpr(
 		std::move(arguments),
 		deferred_call_token);
 	setCallQualifiedName(call_expr, qualified_call_name);
-	setCallDependentQualifiedLookupRecord(call_expr, dependent_record);
+	if (dependent_record != nullptr) {
+		setCallDependentQualifiedLookupRecord(call_expr, *dependent_record);
+	}
 	if (!template_argument_nodes.empty()) {
 		setCallTemplateArguments(call_expr, std::move(template_argument_nodes));
 	}
@@ -7342,22 +7344,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 														deferred_template_overloads->data(),
 														deferred_template_overloads->size()))
 												: nullptr;
-										if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-												dependent_qual_id.dependentQualifiedName()) {
-											result = emplace_node<ExpressionNode>(
-												makeDeferredDependentQualifiedCallExpr(
-													deferred_qualified_call_name,
-													deferred_member_call_token,
-													std::move(deferred_member_call_args),
-													*dependent_record,
-													std::move(
-														deferred_member_call_template_arg_nodes),
-													parser_return_hint_decl != nullptr
-														? &parser_return_hint_decl
-															 ->decl_node()
-															 .type_specifier_node()
-														: nullptr));
-										}
+										result = emplace_node<ExpressionNode>(
+											makeDeferredDependentQualifiedCallExpr(
+												deferred_qualified_call_name,
+												deferred_member_call_token,
+												std::move(deferred_member_call_args),
+												dependent_qual_id.dependentQualifiedName(),
+												std::move(
+													deferred_member_call_template_arg_nodes),
+												parser_return_hint_decl != nullptr
+													? &parser_return_hint_decl
+														 ->decl_node()
+														 .type_specifier_node()
+													: nullptr));
 									} else {
 										if (!terminal_member_template_arg_nodes.empty()) {
 											dependent_qual_id.set_template_arguments(
@@ -7493,22 +7492,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 														deferred_template_overloads->data(),
 														deferred_template_overloads->size()))
 												: nullptr;
-										if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-												dependent_qual_id.dependentQualifiedName()) {
-											result = emplace_node<ExpressionNode>(
-												makeDeferredDependentQualifiedCallExpr(
-													deferred_qualified_call_name,
-													deferred_member_call_token,
-													std::move(deferred_member_call_args),
-													*dependent_record,
-													std::move(
-														deferred_member_call_template_arg_nodes),
-													parser_return_hint_decl != nullptr
-														? &parser_return_hint_decl
-															 ->decl_node()
-															 .type_specifier_node()
-														: nullptr));
-										}
+										result = emplace_node<ExpressionNode>(
+											makeDeferredDependentQualifiedCallExpr(
+												deferred_qualified_call_name,
+												deferred_member_call_token,
+												std::move(deferred_member_call_args),
+												dependent_qual_id.dependentQualifiedName(),
+												std::move(
+													deferred_member_call_template_arg_nodes),
+												parser_return_hint_decl != nullptr
+													? &parser_return_hint_decl
+														 ->decl_node()
+														 .type_specifier_node()
+													: nullptr));
 									} else {
 										if (!terminal_member_template_arg_nodes.empty()) {
 											dependent_qual_id.set_template_arguments(
@@ -8561,22 +8557,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												deferred_template_overloads->data(),
 												deferred_template_overloads->size()))
 										: nullptr;
-								if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-										dependent_qual_id.dependentQualifiedName()) {
-									result = emplace_node<ExpressionNode>(
-										makeDeferredDependentQualifiedCallExpr(
-											deferred_qualified_call_name,
-											deferred_member_call_token,
-											std::move(deferred_member_call_args),
-											*dependent_record,
-											std::move(
-												deferred_member_call_template_arg_nodes),
-											parser_return_hint_decl != nullptr
-												? &parser_return_hint_decl
-													 ->decl_node()
-													 .type_specifier_node()
-												: nullptr));
-								}
+								result = emplace_node<ExpressionNode>(
+									makeDeferredDependentQualifiedCallExpr(
+										deferred_qualified_call_name,
+										deferred_member_call_token,
+										std::move(deferred_member_call_args),
+										dependent_qual_id.dependentQualifiedName(),
+										std::move(
+											deferred_member_call_template_arg_nodes),
+										parser_return_hint_decl != nullptr
+											? &parser_return_hint_decl
+												 ->decl_node()
+												 .type_specifier_node()
+											: nullptr));
 							} else {
 								if (!terminal_member_template_arg_nodes.empty()) {
 									dependent_qual_id.set_template_arguments(
@@ -8710,22 +8703,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												deferred_template_overloads->data(),
 												deferred_template_overloads->size()))
 										: nullptr;
-								if (const TypeInfo::DependentQualifiedNameRecord* dependent_record =
-										dependent_qual_id.dependentQualifiedName()) {
-									result = emplace_node<ExpressionNode>(
-										makeDeferredDependentQualifiedCallExpr(
-											deferred_qualified_call_name,
-											deferred_member_call_token,
-											std::move(deferred_member_call_args),
-											*dependent_record,
-											std::move(
-												deferred_member_call_template_arg_nodes),
-											parser_return_hint_decl != nullptr
-												? &parser_return_hint_decl
-													 ->decl_node()
-													 .type_specifier_node()
-												: nullptr));
-								}
+								result = emplace_node<ExpressionNode>(
+									makeDeferredDependentQualifiedCallExpr(
+										deferred_qualified_call_name,
+										deferred_member_call_token,
+										std::move(deferred_member_call_args),
+										dependent_qual_id.dependentQualifiedName(),
+										std::move(
+											deferred_member_call_template_arg_nodes),
+										parser_return_hint_decl != nullptr
+											? &parser_return_hint_decl
+												 ->decl_node()
+												 .type_specifier_node()
+											: nullptr));
 							} else {
 								if (!terminal_member_template_arg_nodes.empty()) {
 									dependent_qual_id.set_template_arguments(

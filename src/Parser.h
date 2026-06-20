@@ -1946,7 +1946,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::string_view qualified_call_name,
 		const Token& called_from_token,
 		ChunkedVector<ASTNode>&& arguments,
-		const TypeInfo::DependentQualifiedNameRecord& dependent_record,
+		const TypeInfo::DependentQualifiedNameRecord* dependent_record,
 		std::vector<ASTNode>&& template_argument_nodes,
 		const TypeSpecifierNode* parser_return_type_hint);
 	std::optional<ASTNode> resolveDefinitionBoundOrdinaryCall(
