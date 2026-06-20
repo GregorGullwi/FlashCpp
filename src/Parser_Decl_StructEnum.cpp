@@ -1775,10 +1775,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Pop context after parsing
 				member_function_context_stack_.pop_back();
 
-				if (!init_result.has_value()) {
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				if (!init_result.node().has_value()) {
 					return ParseResult::error("Failed to parse initializer expression", current_token_);
 				}
-				init_expr_opt = *init_result;
+				init_expr_opt = *init_result.node();
 			} else if (peek() == "{"_tok) {
 				// Brace initialization: static constexpr int x{42};
 				// Save position for lazy re-parse as well.

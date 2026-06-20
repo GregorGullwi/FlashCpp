@@ -1217,8 +1217,11 @@ ParseResult Parser::parse_variable_declaration() {
 	// Check for copy initialization: TypeCategory var = expr or TypeCategory var = {args}
 	else if (peek() == "="_tok) {
 		auto init_result = parse_copy_initialization(first_decl, type_specifier);
-		if (init_result.has_value()) {
-			first_init_expr = init_result;
+		if (init_result.is_error()) {
+			return init_result;
+		}
+		if (init_result.node().has_value()) {
+			first_init_expr = init_result.node();
 		} else {
 			return ParseResult::error("Failed to parse initializer expression", current_token_);
 		}
@@ -1575,10 +1578,10 @@ void Parser::inferUnsizedArraySizeFromInitializer(const DeclarationNode& decl_no
 // Phase 3 Consolidation: Parse copy initialization: TypeCategory var = expr or TypeCategory var = {args}
 // Returns the initializer expression/list node or std::nullopt if not at '='
 // Also handles auto type deduction and array size inference
-std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier) {
+ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier) {
 	// Must be at '='
 	if (peek() != "="_tok) {
-		return std::nullopt;
+		return ParseResult{};
 	}
 
 	advance(); // consume '='
@@ -1590,19 +1593,19 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 		// Parse brace initializer list
 		ParseResult init_list_result = parse_brace_initializer(type_specifier);
 		if (init_list_result.is_error()) {
-			return std::nullopt;
+			return init_list_result;
 		}
 
 		auto initializer = init_list_result.node();
 
 		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
 
-		return initializer;
+		return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
 	} else {
 		// Regular expression initializer
 		ParseResult init_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_expr_result.is_error()) {
-			return std::nullopt;
+			return init_expr_result;
 		}
 		auto initializer = init_expr_result.node();
 
@@ -1661,7 +1664,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 					type_specifier.set_cv_qualifier(original_cv_qual);
 				}
 				FLASH_LOG(Parser, Debug, "Deduced auto lambda+ type: FunctionPointer size=64");
-				return initializer;
+				return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
 			}
 
 			// Get the full type specifier from the initializer expression
@@ -1675,7 +1678,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				ExpressionTypeDeductionResult deduction_result = deduce_type_from_expression(*initializer);
 				if (deduction_result.status == ExpressionTypeDeductionStatus::StillDependent) {
 					FLASH_LOG(Parser, Debug, "Deferred auto variable type deduction for dependent initializer");
-					return initializer;
+					return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
 				}
 				if (deduction_result.status != ExpressionTypeDeductionStatus::Deduced) {
 					throw CompileError(std::string(StringBuilder()
@@ -1715,7 +1718,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 		}
 
 		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
-		return initializer;
+		return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
 	}
 }
 

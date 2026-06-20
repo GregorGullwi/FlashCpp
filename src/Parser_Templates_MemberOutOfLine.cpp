@@ -581,9 +581,11 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			definition_lookup_context.is_valid()
 				? &definition_lookup_context
 				: current_template_definition_lookup_context_);
-		std::optional<ASTNode> initializer = parse_copy_initialization(
+		ParseResult init_result = parse_copy_initialization(
 			declaration_ref,
 			declaration_ref.type_specifier_node());
+		std::optional<ASTNode> initializer =
+			!init_result.is_error() ? init_result.node() : std::nullopt;
 		if (!initializer.has_value()) {
 			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");
 			return std::nullopt;

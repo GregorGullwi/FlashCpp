@@ -3062,9 +3062,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 							std::optional<ASTNode> reparsed_initializer;
 							if (peek() == "="_tok) {
-								reparsed_initializer = parse_copy_initialization(
+								ParseResult init_result = parse_copy_initialization(
 									declaration_copy,
 									type_spec);
+								if (!init_result.is_error()) {
+									reparsed_initializer = init_result.node();
+								}
 							} else if (peek() == "{"_tok) {
 								ParseResult init_result = parse_brace_initializer(type_spec);
 								if (!init_result.is_error() &&
@@ -7402,9 +7405,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		std::optional<ASTNode> reparsed_initializer;
 		if (peek() == "="_tok) {
-			reparsed_initializer = parse_copy_initialization(
+			ParseResult init_result = parse_copy_initialization(
 				declaration_copy_ref,
 				type_spec);
+			if (!init_result.is_error()) {
+				reparsed_initializer = init_result.node();
+			}
 		} else if (peek() == "{"_tok) {
 			ParseResult init_result = parse_brace_initializer(type_spec);
 			if (!init_result.is_error() && init_result.node().has_value()) {
@@ -11867,9 +11873,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				std::optional<ASTNode> reparsed_initializer;
 				if (peek() == "="_tok) {
-					reparsed_initializer = parse_copy_initialization(
+					ParseResult init_result = parse_copy_initialization(
 						declaration_copy_ref,
 						type_spec);
+					if (!init_result.is_error()) {
+						reparsed_initializer = init_result.node();
+					}
 				} else if (peek() == "{"_tok) {
 					ParseResult init_parse_result = parse_brace_initializer(type_spec);
 					if (!init_parse_result.is_error() && init_parse_result.node().has_value()) {

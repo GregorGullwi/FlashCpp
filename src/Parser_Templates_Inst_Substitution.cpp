@@ -4429,9 +4429,12 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(
 
 		std::optional<ASTNode> reparsed_initializer;
 		if (peek() == "="_tok) {
-			reparsed_initializer = parse_copy_initialization(
+			ParseResult init_result = parse_copy_initialization(
 				declaration_for_reparse,
 				type_spec);
+			if (!init_result.is_error()) {
+				reparsed_initializer = init_result.node();
+			}
 		} else if (peek() == "{"_tok) {
 			ParseResult init_result = parse_brace_initializer(type_spec);
 			if (!init_result.is_error() &&

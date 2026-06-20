@@ -415,7 +415,10 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			push_static_member_parse_context();
 			auto init_result = parse_copy_initialization(decl_node, type_spec);
 			pop_static_member_parse_context();
-			if (!init_result.has_value()) {
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (!init_result.node().has_value()) {
 				FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable '",
 						  class_name.view(), "::", function_name_token.value(), "'");
 				return ParseResult::error(ParserError::UnexpectedToken, function_name_token);
@@ -427,7 +430,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				return ParseResult::error(ParserError::UnexpectedToken, peek_info());
 			}
 
-			return finalize_static_member_init(static_member, *init_result, decl_node, function_name_token, saved_position);
+			return finalize_static_member_init(static_member, init_result.node(), decl_node, function_name_token, saved_position);
 		}
 
 		// Create a new declaration node with the function name
@@ -965,8 +968,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// Phase 3 Consolidation: Use shared copy initialization helper for = and = {} forms
 		if (peek() == "="_tok) {
 			auto init_result = parse_copy_initialization(registered_decl, type_specifier);
-			if (init_result.has_value()) {
-				initializer = init_result;
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (init_result.node().has_value()) {
+				initializer = init_result.node();
 			} else {
 				return ParseResult::error("Failed to parse initializer expression", current_token_);
 			}
@@ -1147,8 +1153,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				std::optional<ASTNode> next_initializer;
 				if (peek() == "="_tok) {
 					auto init_result = parse_copy_initialization(next_decl, next_type_spec);
-					if (init_result.has_value()) {
-						next_initializer = init_result;
+					if (init_result.is_error()) {
+						return init_result;
+					}
+					if (init_result.node().has_value()) {
+						next_initializer = init_result.node();
 					} else {
 						return ParseResult::error("Failed to parse initializer expression", current_token_);
 					}
