@@ -87,19 +87,17 @@ makeSingleSegmentPostfixDependentQualifiedNameRecord(
 	StringHandle member_name,
 	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>>
 		member_template_arguments) {
-	std::vector<PostfixDependentMemberSegmentInfo> member_segments;
 	PostfixDependentMemberSegmentInfo member_segment;
 	member_segment.name = member_name;
 	member_segment.template_args = std::move(member_template_arguments);
-	member_segments.push_back(std::move(member_segment));
 	return makePostfixDependentQualifiedNameRecord(
 		owner_name,
 		owner_type,
 		owner_kind,
 		std::move(owner_template_arguments),
 		std::span<const PostfixDependentMemberSegmentInfo>(
-			member_segments.data(),
-			member_segments.size()));
+			&member_segment,
+			1));
 }
 
 std::string_view buildPostfixDependentQualifiedCallName(
