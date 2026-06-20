@@ -546,10 +546,17 @@ For work in this area, rerun:
    remaining compatibility-only explicit owner-qualified placeholder exits in
    `Parser_Expr_PostfixCalls.cpp`, and `ExpressionSubstitutor.cpp` now consumes
    those preserved owner records first instead of rebuilding meaning from
-   `qualified_name` text. The next concrete step is therefore the remaining
-   legacy resolved-call builders that still hand-roll qualified/member metadata
-   or parser return-type hints, plus the last unrelated static-member
-   whole-call sema synchronization leg.
+   `qualified_name` text. That direct-call follow-up is now closed for the
+   remaining targeted non-receiver qualified builders in
+   `Parser_Expr_PrimaryExpr.cpp`: the global-qualified and namespace-qualified
+   explicit-function-id paths now use the same helper-based
+   definition-record preservation and parser return-type hints as the ordinary
+   direct-call path instead of stopping at compatibility `qualified_name` /
+   `mangled_name` metadata. The next concrete step is now just the last
+   unrelated static-member whole-call sema synchronization leg, with
+   `Parser_Expr_PostfixCalls.cpp` and `ExpressionSubstitutor.cpp` remaining in
+   audit mode only for regressions that expose a still-unstructured
+   qualified/member-template materializer.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by

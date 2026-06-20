@@ -321,6 +321,46 @@ void attachResolvedOrdinaryDirectCallMetadata(
 		std::nullopt);
 }
 
+void attachResolvedQualifiedDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::span<const TypeSpecifierNode> arg_types,
+	bool has_deferred_template_call_args,
+	const FunctionDeclarationNode& func_decl,
+	std::string_view qualified_name) {
+	attachResolvedOrdinaryDirectCallMetadata(
+		call_expr,
+		definition_context,
+		callee_token,
+		arg_types,
+		has_deferred_template_call_args,
+		func_decl,
+		true,
+		false,
+		qualified_name);
+}
+
+void attachDeferredQualifiedDirectCallMetadata(
+	ExpressionNode& call_expr,
+	const TemplateDefinitionLookupContext* definition_context,
+	const Token& callee_token,
+	std::string_view qualified_name,
+	const void* definition_bound_template_declaration) {
+	setCallQualifiedName(call_expr, qualified_name);
+	if (std::optional<FunctionCallDefinitionLookupRecord> record =
+			tryBuildDeferredFunctionCallDefinitionLookupRecord(
+				definition_context,
+				callee_token,
+				true,
+				false);
+		record.has_value()) {
+		record->definition_bound_template_declaration =
+			definition_bound_template_declaration;
+		setCallDefinitionLookupRecord(call_expr, *record);
+	}
+}
+
 void attachResolvedReceiverDirectCallMetadata(
 	ExpressionNode& call_expr,
 	const TemplateDefinitionLookupContext* definition_context,
@@ -3650,26 +3690,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					setCallTemplateArguments(function_call_node.as<ExpressionNode>(), std::move(template_arg_nodes));
 				}
 			}
-			setCallQualifiedName(function_call_node.as<ExpressionNode>(), buildQualifiedNameFromStrings(namespaces, qual_id.name()));
+			const std::string_view qualified_name =
+				buildQualifiedNameFromStrings(namespaces, qual_id.name());
 			// If the function has a pre-computed mangled name, set it on the call expression
 			if (identifierType->is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 				FLASH_LOG(Parser, Debug, "Qualified function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
+				attachResolvedQualifiedDirectCallMetadata(
+					function_call_node.as<ExpressionNode>(),
+					current_template_definition_lookup_context_,
+					qual_id.identifier_token(),
+					arg_types,
+					has_deferred_qualified_call_args,
+					func_decl,
+					qualified_name);
 				if (func_decl.has_mangled_name()) {
-					setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
 					FLASH_LOG(Parser, Debug, "Set mangled name on qualified call expression: {}", func_decl.mangled_name());
-				}
-				if (std::optional<FunctionCallDefinitionLookupRecord> record =
-						tryBuildFunctionCallDefinitionLookupRecord(
-							current_template_definition_lookup_context_,
-							qual_id.identifier_token(),
-							arg_types,
-							has_deferred_qualified_call_args,
-							func_decl,
-							true,
-							false);
-					record.has_value()) {
-					setCallDefinitionLookupRecord(function_call_node.as<ExpressionNode>(), *record);
 				}
 			} else if (has_explicit_template_args) {
 				std::optional<TemplateDefinitionLookupContext>
@@ -3697,19 +3733,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					deferred_definition_lookup_context.has_value()
 						? &*deferred_definition_lookup_context
 						: current_template_definition_lookup_context_;
-				if (std::optional<FunctionCallDefinitionLookupRecord> record =
-						tryBuildDeferredFunctionCallDefinitionLookupRecord(
-							definition_lookup_context,
-							qual_id.identifier_token(),
-							true,
-							false);
-					record.has_value()) {
-					record->definition_bound_template_declaration =
-						definition_bound_template_declaration;
-					setCallDefinitionLookupRecord(
-						function_call_node.as<ExpressionNode>(),
-						*record);
-				}
+				attachDeferredQualifiedDirectCallMetadata(
+					function_call_node.as<ExpressionNode>(),
+					definition_lookup_context,
+					qual_id.identifier_token(),
+					qualified_name,
+					definition_bound_template_declaration);
+			} else {
+				setCallQualifiedName(
+					function_call_node.as<ExpressionNode>(),
+					qualified_name);
 			}
 			result = function_call_node;
 		} else {
@@ -4750,27 +4783,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// Store the qualified source name for template lookup during constexpr evaluation
 				std::string_view qualified_name = resolved_qualified_name;
-				setCallQualifiedName(result->as<ExpressionNode>(), qualified_name);
-				FLASH_LOG(Parser, Debug, "Set qualified name on call expression: ", qualified_name);
-
-				// If the function has a pre-computed mangled name, set it on the call expression
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
-					if (func_decl.has_mangled_name()) {
-						setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
-					}
-					if (std::optional<FunctionCallDefinitionLookupRecord> record =
-							tryBuildFunctionCallDefinitionLookupRecord(
-								current_template_definition_lookup_context_,
-								qual_id.identifier_token(),
-								arg_types,
-								has_deferred_qualified_call_args,
-								func_decl,
-								true,
-								false);
-						record.has_value()) {
-						setCallDefinitionLookupRecord(result->as<ExpressionNode>(), *record);
-					}
+					attachResolvedQualifiedDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						current_template_definition_lookup_context_,
+						qual_id.identifier_token(),
+						arg_types,
+						has_deferred_qualified_call_args,
+						func_decl,
+						qualified_name);
+				} else {
+					setCallQualifiedName(result->as<ExpressionNode>(), qualified_name);
 				}
 				if (!identifierType->is<FunctionDeclarationNode>() &&
 					has_explicit_template_args) {
@@ -4799,19 +4823,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						deferred_definition_lookup_context.has_value()
 							? &*deferred_definition_lookup_context
 							: current_template_definition_lookup_context_;
-					if (std::optional<FunctionCallDefinitionLookupRecord> record =
-							tryBuildDeferredFunctionCallDefinitionLookupRecord(
-								definition_lookup_context,
-								qual_id.identifier_token(),
-								true,
-								false);
-						record.has_value()) {
-						record->definition_bound_template_declaration =
-							definition_bound_template_declaration;
-						setCallDefinitionLookupRecord(
-							result->as<ExpressionNode>(),
-							*record);
-					}
+					attachDeferredQualifiedDirectCallMetadata(
+						result->as<ExpressionNode>(),
+						definition_lookup_context,
+						qual_id.identifier_token(),
+						qualified_name,
+						definition_bound_template_declaration);
 				}
 			} else {
 				// Just a qualified identifier reference

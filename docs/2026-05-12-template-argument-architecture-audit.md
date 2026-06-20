@@ -469,13 +469,20 @@ Next direct-call target:
    parser return-type hints when parsing must stay deferred, which closes the
    nested-owner collision that had still allowed a global same-spelled `Base`
    to win during trailing `decltype(...)` parsing.
-   Immediate next target: audit the remaining legacy resolved-call builders in
-   `Parser_Expr_PrimaryExpr.cpp` / `Parser_Expr_PostfixCalls.cpp` that still do
-   not share the same sema-owned metadata attachment path, then revisit the
-   last unrelated static-member whole-call sema synchronization leg. Keep
-   `test_member_template_func_in_specialization_ret0.cpp` in the focused
-   guard set here: it exercises the new "candidate-bearing concrete owner
-   calls must defer instead of hard-failing" rule in
+   That follow-up is now closed for the remaining targeted qualified direct-call
+   builders in `Parser_Expr_PrimaryExpr.cpp`: the global-qualified and
+   namespace-qualified explicit-function-id exits no longer stop at
+   `qualified_name` / `mangled_name` compatibility metadata once the matched
+   declaration shape is already known, and they now preserve the same
+   definition-bound direct-call record plus parser return-type hints as the
+   shared ordinary-call helper path. The remaining next step in this area is
+   therefore narrower: keep `Parser_Expr_PostfixCalls.cpp` in audit mode for
+   any newly-exposed qualified/member-template builder drift, but the only
+   concrete targeted code still left is the unrelated static-member whole-call
+   sema synchronization leg. Keep
+   `test_member_template_func_in_specialization_ret0.cpp` in the focused guard
+   set here: it exercises the new "candidate-bearing concrete owner calls must
+   defer instead of hard-failing" rule in
    `try_parse_member_template_function_call(...)`.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
