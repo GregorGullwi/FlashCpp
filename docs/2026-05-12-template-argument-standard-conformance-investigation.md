@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-19
+**Last updated:** 2026-06-20
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -185,6 +185,12 @@ blocking areas:
   instantiation `DependentQualifiedNameRecord`, and parser return-type hints
   now come from the matched current-owner member-template declaration instead
   of whichever unrelated same-name global template happened to be found first
+- the remaining dependent owner-template/member-template placeholder builders
+  in `Parser_Expr_PrimaryExpr.cpp` now also share one deferred qualified-call
+  materializer, so they preserve the structured dependent-qualified record,
+  exact template-argument AST, and any unambiguous exact qualified
+  member-template return-type hint instead of diverging across four separate
+  compatibility-only exits
 - sema now distinguishes real type owners from namespace qualifiers before it
   consumes definition-bound compatibility metadata for qualified direct calls,
   which fixes current-instantiation nested-owner cases like
@@ -413,42 +419,40 @@ Next direct-call target:
 
 ## Next steps
 
-1. Continue eliminating compatibility-only parser metadata in the remaining
-   qualified/member-template materializers that still stop at
-   `qualified_name` / `mangled_name` after owner resolution already succeeded.
-   Immediate next target: audit the remaining qualified/member-template
-   placeholder/materializer exits in `Parser_Expr_PrimaryExpr.cpp` and
-   `Parser_Expr_PostfixCalls.cpp` that still stop at compatibility metadata
-   even after owner resolution or deferred lookup shape is already known. The
-   unqualified/current-owner explicit-member-template placeholder path is now
-   covered; it preserves structured current-instantiation owner metadata and
-   member-template-derived parser return-type hints instead of deferring with
-   only `qualified_name`. The generic namespace-qualified explicit-template
-   placeholder path is now covered too, including the specialization-aware
-   rule that suppresses exact primary-template binding when a registered exact
-   specialization must stay visible; the concrete postfix explicit-qualified
-   member/operator template-id path without owner template arguments is now
-   covered too, and the postfix owner-template-id variant is covered as well:
-   `parse_member_postfix()` now preserves `Base<T>`-style owner template-ids
-   through the `::template` continuation for both member-template and
-   operator-template calls instead of dropping that structure before deferred
-   lookup. The short-owner postfix explicit-qualified operator-template
-   placeholder is now covered too: nested `Base::template operator()<int>()`
-   spellings canonicalize the owner before instantiation and preserve the same
-   deferred qualified-owner metadata plus parser return-type hints when
-   parsing must stay deferred. This follow-up closes the remaining targeted
-   qualified/member-template compatibility-only placeholder/materializer exits
-   in `Parser_Expr_PostfixCalls.cpp`: the explicit owner-template-id
-   member-template placeholder and the recognized qualified static-owner
-   placeholder now both preserve structured deferred qualified-owner metadata,
-   and `ExpressionSubstitutor.cpp` now materializes explicit qualified
-   member-template calls from that record instead of re-splitting
-   `qualified_name` text. The whole-call sema synchronization hook is now
-   closed fully for this slice: the qualified compatibility branch is gone,
-   and the unrelated static-member direct-call fallback in
-   `resolveCallArgAnnotationTarget(...)` is removed as well because the
-   current-member static hiding regressions still resolve correctly through the
-   preserved definition-bound call metadata.
+1. Keep the parser/materialization side narrowed and move the next audit to
+   the consumer paths now that the remaining targeted
+   owner-template/member-template placeholder builders in
+   `Parser_Expr_PrimaryExpr.cpp` are covered too. The unqualified/current-owner
+   explicit-member-template placeholder path is now covered; it preserves
+   structured current-instantiation owner metadata and member-template-derived
+   parser return-type hints instead of deferring with only `qualified_name`.
+   The generic namespace-qualified explicit-template placeholder path is now
+   covered too, including the specialization-aware rule that suppresses exact
+   primary-template binding when a registered exact specialization must stay
+   visible; the concrete postfix explicit-qualified member/operator template-id
+   path without owner template arguments is now covered too, and the postfix
+   owner-template-id variant is covered as well: `parse_member_postfix()` now
+   preserves `Base<T>`-style owner template-ids through the `::template`
+   continuation for both member-template and operator-template calls instead
+   of dropping that structure before deferred lookup. The short-owner postfix
+   explicit-qualified operator-template placeholder is now covered too: nested
+   `Base::template operator()<int>()` spellings canonicalize the owner before
+   instantiation and preserve the same deferred qualified-owner metadata plus
+   parser return-type hints when parsing must stay deferred. The remaining
+   targeted deferred owner-template/member-template call builders in
+   `Parser_Expr_PrimaryExpr.cpp` now share the same structured deferred-call
+   helper too, so they no longer diverge on whether they preserve the
+   dependent-qualified record, template-argument AST, or exact qualified
+   member-template return-type hint. The next concrete audit target is
+   therefore `ExpressionSubstitutor.cpp`, constexpr, and the remaining
+   sema-qualified-call consumers: verify those paths consume the structured
+   deferred qualified metadata directly instead of re-splitting
+   `qualified_name` text or assuming the old missing-hint behavior. The
+   whole-call sema synchronization hook is now closed fully for this slice:
+   the qualified compatibility branch is gone, and the unrelated static-member
+   direct-call fallback in `resolveCallArgAnnotationTarget(...)` is removed as
+   well because the current-member static hiding regressions still resolve
+   correctly through the preserved definition-bound call metadata.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
