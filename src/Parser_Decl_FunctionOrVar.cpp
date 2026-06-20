@@ -1019,8 +1019,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					ConstructorCallNode(type_node_copy, std::move(arguments), paren_token));
 			} else {
 				auto init_result = parse_direct_initialization();
-				if (init_result.has_value()) {
-					initializer = init_result;
+				if (init_result.is_error()) {
+					return init_result;
+				}
+				if (init_result.node().has_value()) {
+					initializer = init_result.node();
 				} else {
 					return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 				}
@@ -1164,8 +1167,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				} else if (peek() == "("_tok) {
 					// Direct initialization for comma-separated declaration: Type var1, var2(args)
 					auto init_result = parse_direct_initialization();
-					if (init_result.has_value()) {
-						next_initializer = init_result;
+					if (init_result.is_error()) {
+						return init_result;
+					}
+					if (init_result.node().has_value()) {
+						next_initializer = init_result.node();
 					} else {
 						return ParseResult::error("Expected ')' after direct initialization arguments", current_token_);
 					}

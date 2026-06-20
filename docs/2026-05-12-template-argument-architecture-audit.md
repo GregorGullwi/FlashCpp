@@ -492,12 +492,13 @@ Next direct-call target:
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
    `member_class + pointer_depth` forms in ABI-sensitive paths.
-3. Clean up the remaining parser diagnostic collapse around copy
-   initialization. This slice showed that inner qualified-call errors can
-   still surface as the generic "Failed to parse initializer expression" once
-   `parse_copy_initialization(...)` drops the nested `ParseResult`; that does
-   not block conformance, but it is the next diagnostics-quality follow-up in
-   this area.
+3. The initializer-diagnostics follow-up that this slice exposed is now
+   covered too: both `parse_copy_initialization(...)` and
+   `parse_direct_initialization(...)` preserve nested parse failures instead of
+   collapsing them to generic wrapper errors, and the dedicated `_fail`
+   anchors `test_copy_init_nested_qualified_call_error_fail.cpp` and
+   `test_direct_init_nested_qualified_call_error_fail.cpp` now keep that
+   behavior pinned.
 4. Leave replay/`StructTypeInfo` sync and broader
    current-instantiation/unknown-specialization expansion in opportunistic mode
    unless a concrete uncovered failure appears.
