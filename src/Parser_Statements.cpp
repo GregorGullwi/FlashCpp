@@ -1604,7 +1604,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 
 		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
 
-		return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
+		return init_list_result;
 	} else {
 		// Regular expression initializer
 		ParseResult init_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -1668,7 +1668,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 					type_specifier.set_cv_qualifier(original_cv_qual);
 				}
 				FLASH_LOG(Parser, Debug, "Deduced auto lambda+ type: FunctionPointer size=64");
-				return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
+				return init_expr_result;
 			}
 
 			// Get the full type specifier from the initializer expression
@@ -1682,7 +1682,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 				ExpressionTypeDeductionResult deduction_result = deduce_type_from_expression(*initializer);
 				if (deduction_result.status == ExpressionTypeDeductionStatus::StillDependent) {
 					FLASH_LOG(Parser, Debug, "Deferred auto variable type deduction for dependent initializer");
-					return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
+					return init_expr_result;
 				}
 				if (deduction_result.status != ExpressionTypeDeductionStatus::Deduced) {
 					throw CompileError(std::string(StringBuilder()
@@ -1722,7 +1722,7 @@ ParseResult Parser::parse_copy_initialization(DeclarationNode& decl_node, TypeSp
 		}
 
 		inferUnsizedArraySizeFromInitializer(decl_node, type_specifier, initializer);
-		return initializer.has_value() ? ParseResult(*initializer) : ParseResult{};
+		return init_expr_result;
 	}
 }
 

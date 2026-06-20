@@ -3067,12 +3067,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									type_spec);
 								if (!init_result.is_error()) {
 									reparsed_initializer = init_result.node();
+								} else {
+									FLASH_LOG(Templates, Debug,
+										"Replay parse failed for static member initializer ",
+										declaration_copy.identifier_token().value(), ": ",
+										init_result.error_message(),
+										" - falling back to AST substitution");
 								}
 							} else if (peek() == "{"_tok) {
 								ParseResult init_result = parse_brace_initializer(type_spec);
 								if (!init_result.is_error() &&
 									init_result.node().has_value()) {
 									reparsed_initializer = *init_result.node();
+								} else if (init_result.is_error()) {
+									FLASH_LOG(Templates, Debug,
+										"Replay brace-init parse failed for static member initializer ",
+										declaration_copy.identifier_token().value(), ": ",
+										init_result.error_message(),
+										" - falling back to AST substitution");
 								}
 							}
 
@@ -7410,11 +7422,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				type_spec);
 			if (!init_result.is_error()) {
 				reparsed_initializer = init_result.node();
+			} else {
+				FLASH_LOG(Templates, Debug,
+					"Replay parse failed for class static initializer ",
+					declaration_copy_ref.identifier_token().value(), ": ",
+					init_result.error_message(),
+					" - falling back to AST substitution");
 			}
 		} else if (peek() == "{"_tok) {
 			ParseResult init_result = parse_brace_initializer(type_spec);
 			if (!init_result.is_error() && init_result.node().has_value()) {
 				reparsed_initializer = *init_result.node();
+			} else if (init_result.is_error()) {
+				FLASH_LOG(Templates, Debug,
+					"Replay brace-init parse failed for class static initializer ",
+					declaration_copy_ref.identifier_token().value(), ": ",
+					init_result.error_message(),
+					" - falling back to AST substitution");
 			}
 		} else {
 			return std::nullopt;
@@ -11878,11 +11902,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						type_spec);
 					if (!init_result.is_error()) {
 						reparsed_initializer = init_result.node();
+					} else {
+						FLASH_LOG(Templates, Debug,
+							"Replay parse failed for out-of-line static member initializer ",
+							declaration_copy_ref.identifier_token().value(), ": ",
+							init_result.error_message(),
+							" - falling back to AST substitution");
 					}
 				} else if (peek() == "{"_tok) {
 					ParseResult init_parse_result = parse_brace_initializer(type_spec);
 					if (!init_parse_result.is_error() && init_parse_result.node().has_value()) {
 						reparsed_initializer = *init_parse_result.node();
+					} else if (init_parse_result.is_error()) {
+						FLASH_LOG(Templates, Debug,
+							"Replay brace-init parse failed for out-of-line static member initializer ",
+							declaration_copy_ref.identifier_token().value(), ": ",
+							init_parse_result.error_message(),
+							" - falling back to AST substitution");
 					}
 				}
 

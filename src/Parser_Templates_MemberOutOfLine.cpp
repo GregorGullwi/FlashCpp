@@ -584,10 +584,18 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 		ParseResult init_result = parse_copy_initialization(
 			declaration_ref,
 			declaration_ref.type_specifier_node());
-		std::optional<ASTNode> initializer =
-			!init_result.is_error() ? init_result.node() : std::nullopt;
+		if (init_result.is_error()) {
+			FLASH_LOG(Parser, Error,
+				"Failed to parse initializer for static member variable ",
+				qualified_class_name, "::", function_name_token.value(), ": ",
+				init_result.error_message());
+			return std::nullopt;
+		}
+		std::optional<ASTNode> initializer = init_result.node();
 		if (!initializer.has_value()) {
-			FLASH_LOG(Parser, Error, "Failed to parse initializer for static member variable");
+			FLASH_LOG(Parser, Error,
+				"Failed to materialize initializer AST for static member variable ",
+				qualified_class_name, "::", function_name_token.value());
 			return std::nullopt;
 		}
 
