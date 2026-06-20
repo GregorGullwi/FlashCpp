@@ -4197,12 +4197,10 @@ void SemanticAnalysis::ensureCallArgConversionsAnnotated(
 	}
 	const bool has_definition_bound_metadata =
 		call_node.has_definition_lookup_record();
-	const bool has_qualified_name = call_node.has_qualified_name();
 	const bool is_static_member_direct_call =
 		!parser_target->parent_struct_name().empty() &&
 		parser_target->is_static();
 	if (!has_definition_bound_metadata &&
-		!has_qualified_name &&
 		!is_static_member_direct_call) {
 		return;
 	}

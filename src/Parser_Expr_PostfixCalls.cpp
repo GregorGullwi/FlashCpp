@@ -78,6 +78,28 @@ TypeInfo::DependentQualifiedNameRecord makePostfixDependentQualifiedNameRecord(
 	return record;
 }
 
+TypeInfo::DependentQualifiedNameRecord
+makeSingleSegmentPostfixDependentQualifiedNameRecord(
+	StringHandle owner_name,
+	TypeIndex owner_type,
+	TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind,
+	InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments,
+	StringHandle member_name,
+	std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>>
+		member_template_arguments) {
+	PostfixDependentMemberSegmentInfo member_segment;
+	member_segment.name = member_name;
+	member_segment.template_args = std::move(member_template_arguments);
+	return makePostfixDependentQualifiedNameRecord(
+		owner_name,
+		owner_type,
+		owner_kind,
+		std::move(owner_template_arguments),
+		std::span<const PostfixDependentMemberSegmentInfo>(
+			&member_segment,
+			1));
+}
+
 std::string_view buildPostfixDependentQualifiedCallName(
 	std::string_view owner_name,
 	std::span<const PostfixDependentMemberSegmentInfo> member_segments) {
@@ -118,6 +140,14 @@ void attachResolvedPostfixDirectCallMetadata(
 				argument_dependent_lookup_included);
 		record.has_value()) {
 		setCallDefinitionLookupRecord(call_expr, *record);
+	}
+	if (std::optional<TypeSpecifierNode> concrete_return_type =
+			FlashCpp::ParserFunctionTypeHelpers::
+				tryGetConcreteReturnTypeFromFunctionDeclaration(
+					func_decl,
+					callee_token);
+		concrete_return_type.has_value()) {
+		setCallParserReturnTypeHint(call_expr, *concrete_return_type);
 	}
 }
 
@@ -982,15 +1012,50 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 				result->as<ExpressionNode>(),
 				std::move(member_template_arg_nodes));
 		}
-		setCallQualifiedName(
-			result->as<ExpressionNode>(),
+		const StringHandle qualified_owner_handle =
+			materialized_owner.canonicalNameHandle();
+		const std::string_view deferred_qualified_call_name =
 			StringBuilder()
 				.append(qualified_owner_name.empty()
 					? member_name_token.value()
 					: qualified_owner_name)
 				.append("::")
 				.append(qualified_member_token.value())
-				.commit());
+				.commit();
+		setCallQualifiedName(
+			result->as<ExpressionNode>(),
+			deferred_qualified_call_name);
+		if (qualified_owner_handle.isValid()) {
+			TypeIndex owner_type =
+				lookupPostfixRecordedDependentOwnerType(
+					qualified_owner_handle);
+			InlineVector<TypeInfo::TemplateArgInfo, 4>
+				owner_template_arguments;
+			if (materialized_owner.resolved_type_info != nullptr) {
+				owner_type =
+					materialized_owner.resolved_type_info
+						->registeredTypeIndex();
+				owner_template_arguments =
+					materialized_owner.resolved_type_info
+						->templateArgs();
+			}
+			setCallDependentQualifiedLookupRecord(
+				result->as<ExpressionNode>(),
+				makeSingleSegmentPostfixDependentQualifiedNameRecord(
+					qualified_owner_handle,
+					owner_type,
+					TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+						DependentInstantiation,
+					std::move(owner_template_arguments),
+					qualified_member_token.handle().isValid()
+						? qualified_member_token.handle()
+						: StringTable::getOrInternStringHandle(
+								qualified_member_token.value()),
+					member_template_args.has_value()
+						? std::make_optional(
+							  toTemplateArgInfoList(*member_template_args))
+						: std::nullopt));
+		}
 		return ParseResult::success(*result);
 	}
 
@@ -2552,6 +2617,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						buildQualifiedNameFromStrings(
 							namespaces,
 							final_identifier.value()));
+					setCallDependentQualifiedLookupRecord(
+						function_call_node.as<ExpressionNode>(),
+						makeSingleSegmentPostfixDependentQualifiedNameRecord(
+							class_name_handle,
+							lookupPostfixRecordedDependentOwnerType(
+								class_name_handle),
+							TypeInfo::DependentQualifiedNameRecord::OwnerKind::
+								UnknownSpecialization,
+							{},
+							final_identifier.handle(),
+							template_args.has_value()
+								? std::make_optional(
+									  toTemplateArgInfoList(*template_args))
+								: std::nullopt));
 					if (class_owner_return_hint != nullptr) {
 						setCallParserReturnTypeHint(
 							function_call_node.as<ExpressionNode>(),

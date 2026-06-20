@@ -436,11 +436,17 @@ Next direct-call target:
    placeholder is now covered too: nested `Base::template operator()<int>()`
    spellings canonicalize the owner before instantiation and preserve the same
    deferred qualified-owner metadata plus parser return-type hints when
-   parsing must stay deferred. The next uncovered parser target is therefore
-   narrower again: the remaining qualified/member-template
-   placeholder/materializer exits that still stamp only compatibility metadata
-   after owner resolution or deferred lookup shape is already known, followed
-   by the remaining whole-call sema synchronization hook.
+   parsing must stay deferred. This follow-up closes the remaining targeted
+   qualified/member-template compatibility-only placeholder/materializer exits
+   in `Parser_Expr_PostfixCalls.cpp`: the explicit owner-template-id
+   member-template placeholder and the recognized qualified static-owner
+   placeholder now both preserve structured deferred qualified-owner metadata,
+   and `ExpressionSubstitutor.cpp` now materializes explicit qualified
+   member-template calls from that record instead of re-splitting
+   `qualified_name` text. The whole-call sema synchronization hook could only
+   be narrowed part-way: the `has_qualified_name` compatibility branch is gone,
+   but the unrelated static-member direct-call branch still has to remain for
+   the current-member static hiding regressions.
 2. If another pointer-to-member issue appears, close the remaining canonical
    `TypeCategory::MemberObjectPointer` carrier gap by preserving the
    underlying member type explicitly instead of relying on declarator-shaped
@@ -530,19 +536,27 @@ For work in this area, rerun:
    placeholder path in `Parser_Expr_PrimaryExpr.cpp` is now on that model too:
    it preserves a structured current-instantiation owner record and sources its
    parser return-type hint from the matched member-template declaration instead
-   of an unrelated global template. The next concrete step is therefore to
-   finish moving the remaining parser materializers onto preserved
-   `FunctionCallDefinitionLookupRecord` or explicit deferred lookup records,
-   focusing on the other qualified/member-template placeholder/materializer
-   exits that still stop at compatibility metadata after owner resolution
-   already succeeded, and then remove the whole-call sema synchronization hook
-   by pushing that work back to earlier semantic ownership. This slice closes
+   of an unrelated global template. This slice closes
    the explicit-base postfix member-template placeholder and the sibling
    postfix explicit-qualified operator-template placeholder: short nested-owner
    `Base::template operator()<int>()` spellings no longer instantiate against
    a global same-spelled owner during trailing `decltype(...)` parsing, and
    deferred cases preserve the same structured owner metadata plus parser
-   return-type hints as the member-template branch.
+   return-type hints as the member-template branch. It also closes the
+   remaining compatibility-only explicit owner-qualified placeholder exits in
+   `Parser_Expr_PostfixCalls.cpp`, and `ExpressionSubstitutor.cpp` now consumes
+   those preserved owner records first instead of rebuilding meaning from
+   `qualified_name` text. That direct-call follow-up is now closed for the
+   remaining targeted non-receiver qualified builders in
+   `Parser_Expr_PrimaryExpr.cpp`: the global-qualified and namespace-qualified
+   explicit-function-id paths now use the same helper-based
+   definition-record preservation and parser return-type hints as the ordinary
+   direct-call path instead of stopping at compatibility `qualified_name` /
+   `mangled_name` metadata. The next concrete step is now just the last
+   unrelated static-member whole-call sema synchronization leg, with
+   `Parser_Expr_PostfixCalls.cpp` and `ExpressionSubstitutor.cpp` remaining in
+   audit mode only for regressions that expose a still-unstructured
+   qualified/member-template materializer.
    Immediate focused follow-up under that item:
    the nested-owner explicit member-template instantiation bug is now fixed and
    guarded by
