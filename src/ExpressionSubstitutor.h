@@ -166,7 +166,8 @@ private:
 	Parser::AliasTemplateMaterializationResult materializeDependentQualifiedRecordOwner(
 		const TypeInfo::DependentQualifiedNameRecord& dependent_name,
 		int depth,
-		bool prefer_current_owner_type_name);
+		bool prefer_current_owner_type_name,
+		bool allow_current_context_dependent_owner_materialization);
 	MaterializedQualifiedLookupOwner materializeDependentQualifiedMemberPrefixOwner(
 		StringHandle owner_name,
 		std::string_view recorded_owner_name,

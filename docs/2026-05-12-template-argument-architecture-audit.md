@@ -118,11 +118,12 @@ the areas that were previously blocking standards-visible behavior:
   already hold a concrete `FunctionDeclarationNode`, instead of stopping at
   copied `qualified_name`/`mangled_name` compatibility data in those parser
   materializers
-- direct operator function-id calls in `Parser_Expr_PrimaryExpr.cpp` and the
-  postfix declaration-address fast path in `Parser_Expr_PostfixCalls.cpp` now
-  preserve structured non-receiver call metadata as well, so late sema no
-  longer has to rediscover their definition-bound target from a parser-
-  selected callee alone
+- direct operator function-id calls in `Parser_Expr_PrimaryExpr.cpp`, including
+  the namespace-qualified `N::operator...(args)` helper plus the global-
+  qualified `::operator...(args)` entry path, and the postfix declaration-
+  address fast path in `Parser_Expr_PostfixCalls.cpp` now preserve structured
+  non-receiver call metadata as well, so late sema no longer has to rediscover
+  their definition-bound target from a parser-selected callee alone
 - the remaining concrete receiver-call builders now preserve the same shared
   metadata too: postfix `operator()` finalization plus the implicit-`this`,
   member-operator, and callable-object `operator()` builders in
@@ -479,7 +480,15 @@ Next direct-call target:
    `qualified_name` / `mangled_name` compatibility metadata once the matched
    declaration shape is already known, and they now preserve the same
    definition-bound direct-call record plus parser return-type hints as the
-   shared ordinary-call helper path. The last unrelated static-member
+   shared ordinary-call helper path. The namespace-qualified operator
+   function-id helper and the leading global-qualified `::operator...` parser
+   entry now follow that same resolved/deferred qualified-call metadata model
+   too, with
+   `test_template_namespace_qualified_operator_definition_bound_ret0.cpp`
+   and
+   `test_template_global_qualified_operator_definition_bound_ret0.cpp`
+   keeping the direct definition-bound paths pinned. The last unrelated
+   static-member
    whole-call sema synchronization leg is now closed too:
    `resolveCallArgAnnotationTarget(...)` no longer needs the
    parser-selected static direct-call fallback, and the current-member static
@@ -663,8 +672,18 @@ When changing this area, always rerun:
    bespoke qualified-id template-argument materializer in favor of
    `TemplateArgumentMaterialization.h`, and keeps that helper header out of the
    vcxproj lists. The next concrete target in
-   this audit therefore moves back to standards-conformance expansion outside
-   the passing core suite: the remaining expected-failure coverage
+   this audit is now a larger architectural extraction before more
+   standards-conformance expansion: introduce one shared structured
+   `ResolvedQualifiedOwner`-style layer plus a single qualified-owner resolver
+   that separates owner resolution, owner materialization, and alias
+   normalization instead of letting parser helpers, substitution, and sema each
+   canonicalize owner meaning independently. That resolver should consume the
+   preserved `DependentQualifiedNameRecord`, carry current-instantiation vs
+   nested-owner context explicitly, and hand the same resolved owner object to
+   ordinary member lookup and explicit member-template lookup so we stop
+   rebuilding owner identity from placeholder or base-template spellings. After
+   that extraction lands, the next standards-conformance target moves back
+   outside the passing core suite: the remaining expected-failure coverage
    (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any
    follow-on canonical member-object-pointer carrier gap if a new ABI-sensitive
    regression reaches it.
