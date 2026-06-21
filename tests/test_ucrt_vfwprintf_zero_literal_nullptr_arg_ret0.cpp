@@ -41,9 +41,24 @@ int pick(_locale_t) {
 	return 2;
 }
 
+int pickNullptr(int) {
+	return 3;
+}
+
+int pickNullptr(decltype(nullptr)) {
+	return 4;
+}
+
+int onlyNullptr(decltype(nullptr)) {
+	return 5;
+}
+
 int main() {
 	va_list args = 0;
 	if (vfwprintf(0, 0, args) != 0) return 1;
 	if (pick(0) != 1) return 2;
+	if (pickNullptr(0) != 3) return 3;
+	if (pickNullptr(nullptr) != 4) return 4;
+	if (onlyNullptr(0) != 5) return 5;
 	return 0;
 }

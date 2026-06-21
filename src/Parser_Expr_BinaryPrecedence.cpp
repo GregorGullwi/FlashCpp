@@ -1561,6 +1561,12 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	}
 }
 
+void Parser::consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec) {
+	type_spec.add_cv_qualifier(parse_cv_qualifiers());
+	skip_noop_gnu_qualifiers();
+	consume_pointer_ref_modifiers(type_spec);
+}
+
 // Consume pointer/reference modifiers after conversion operator target type
 // Handles: operator _Tp&(), operator _Tp*(), operator _Tp&&()
 void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type) {

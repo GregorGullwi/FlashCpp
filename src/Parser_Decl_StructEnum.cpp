@@ -199,6 +199,17 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const {
 	const OverloadableOperator operator_kind =
 		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
+	if (is_member &&
+		func_decl.is_static() &&
+		operator_kind != OverloadableOperator::None &&
+		operator_kind != OverloadableOperator::Call &&
+		operator_kind != OverloadableOperator::Subscript) {
+		return ParseResult::error(std::string(StringBuilder()
+			.append(func_decl.decl_node().identifier_token().value())
+			.append(" must be a non-static member function")
+			.commit()),
+			func_decl.decl_node().identifier_token());
+	}
 	const bool treat_static_operator_as_member =
 		func_decl.is_static() &&
 		(operator_kind == OverloadableOperator::Call ||

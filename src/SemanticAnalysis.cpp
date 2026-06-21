@@ -7774,9 +7774,13 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 	std::optional<TypeSpecifierNode> arg_binding_type;
 	CanonicalTypeId arg_type_id{};
+	CanonicalTypeId original_arg_type_id{};
+	const bool null_pointer_constant_to_nullptr =
+		isIntegerLiteralZeroNullptrTypeOverloadConversion(&arg, param_type);
 	if (std::optional<TypeSpecifierNode> resolved_arg_binding_type =
 			buildOverloadResolutionArgType(arg, &arg_type_id);
 		resolved_arg_binding_type.has_value()) {
+		original_arg_type_id = arg_type_id;
 		arg_binding_type =
 			normalizeArgumentTypeForNullPointerConstantConversion(
 				*resolved_arg_binding_type,
@@ -7794,6 +7798,19 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 	// by inferResolvedSymbolType for identifier-based arrays.
 	const bool arg_is_array = arg_type_id && !type_context_.get(arg_type_id).array_dimensions.empty();
 	if (arg_type_id && !arg_is_array && canonical_types_match(arg_type_id, param_type_id)) {
+		if (null_pointer_constant_to_nullptr &&
+			original_arg_type_id &&
+			original_arg_type_id != param_type_id) {
+			SemanticSlot slot =
+				getSlot(getExpressionKey(arg)).value_or(SemanticSlot{});
+			slot.type_id = param_type_id;
+			slot.cast_info_index = allocateNonUserDefinedCastInfo(
+				original_arg_type_id,
+				param_type_id,
+				StandardConversionKind::PointerConversion);
+			slot.value_category = ValueCategory::PRValue;
+			setSlot(getExpressionKey(arg), slot);
+		}
 		return;
 	}
 

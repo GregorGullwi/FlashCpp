@@ -1033,6 +1033,10 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 
 inline bool isIntegerLiteralZeroNullPointerConstant(const ASTNode& arg_node);
 inline bool parameterSupportsNullPointerConstantOverloadConversion(const TypeSpecifierNode& parameter_type);
+inline bool isNullptrTypeParameterForNullPointerConstantOverloadConversion(const TypeSpecifierNode& parameter_type);
+inline bool isIntegerLiteralZeroNullptrTypeOverloadConversion(
+	const ASTNode* argument_node,
+	const TypeSpecifierNode& parameter_type);
 inline TypeSpecifierNode normalizeArgumentTypeForNullPointerConstantConversion(
 	const TypeSpecifierNode& argument_type,
 	const TypeSpecifierNode& parameter_type,
@@ -1047,6 +1051,9 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 			argument_type,
 			parameter_type,
 			argument_node);
+	if (isIntegerLiteralZeroNullptrTypeOverloadConversion(argument_node, parameter_type)) {
+		return {ConversionRank::Conversion, &parameter_type, true};
+	}
 
 	const ConversionPlan conversion = buildConversionPlan(effective_argument_type, parameter_type);
 	return {conversion.rank, &parameter_type, conversion.is_valid};
@@ -1141,7 +1148,21 @@ inline bool parameterSupportsNullPointerConstantOverloadConversion(const TypeSpe
 	return parameter_type.is_pointer() ||
 		   parameter_type.is_function_pointer() ||
 		   parameter_type.is_member_function_pointer() ||
-		   parameter_type.is_member_object_pointer();
+		   parameter_type.is_member_object_pointer() ||
+		   isNullptrTypeParameterForNullPointerConstantOverloadConversion(parameter_type);
+}
+
+inline bool isNullptrTypeParameterForNullPointerConstantOverloadConversion(const TypeSpecifierNode& parameter_type) {
+	return parameter_type.category() == TypeCategory::Nullptr ||
+		   resolve_type_alias(parameter_type.type_index()) == TypeCategory::Nullptr;
+}
+
+inline bool isIntegerLiteralZeroNullptrTypeOverloadConversion(
+	const ASTNode* argument_node,
+	const TypeSpecifierNode& parameter_type) {
+	return argument_node != nullptr &&
+		   isIntegerLiteralZeroNullPointerConstant(*argument_node) &&
+		   isNullptrTypeParameterForNullPointerConstantOverloadConversion(parameter_type);
 }
 
 inline TypeSpecifierNode normalizeArgumentTypeForNullPointerConstantConversion(
