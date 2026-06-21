@@ -672,8 +672,18 @@ When changing this area, always rerun:
    bespoke qualified-id template-argument materializer in favor of
    `TemplateArgumentMaterialization.h`, and keeps that helper header out of the
    vcxproj lists. The next concrete target in
-   this audit therefore moves back to standards-conformance expansion outside
-   the passing core suite: the remaining expected-failure coverage
+   this audit is now a larger architectural extraction before more
+   standards-conformance expansion: introduce one shared structured
+   `ResolvedQualifiedOwner`-style layer plus a single qualified-owner resolver
+   that separates owner resolution, owner materialization, and alias
+   normalization instead of letting parser helpers, substitution, and sema each
+   canonicalize owner meaning independently. That resolver should consume the
+   preserved `DependentQualifiedNameRecord`, carry current-instantiation vs
+   nested-owner context explicitly, and hand the same resolved owner object to
+   ordinary member lookup and explicit member-template lookup so we stop
+   rebuilding owner identity from placeholder or base-template spellings. After
+   that extraction lands, the next standards-conformance target moves back
+   outside the passing core suite: the remaining expected-failure coverage
    (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any
    follow-on canonical member-object-pointer carrier gap if a new ABI-sensitive
    regression reaches it.

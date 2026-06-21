@@ -1054,7 +1054,8 @@ Parser::AliasTemplateMaterializationResult
 ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 	const TypeInfo::DependentQualifiedNameRecord& dependent_name,
 	int depth,
-	bool prefer_current_owner_type_name) {
+	bool prefer_current_owner_type_name,
+	bool allow_current_context_dependent_owner_materialization) {
 	Parser::AliasTemplateMaterializationResult materialized_owner;
 	std::string_view owner_name =
 		StringTable::getStringView(dependent_name.owner_name);
@@ -1069,11 +1070,130 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 				StringTable::getStringView(owner_type_info->name());
 		}
 	};
+	auto try_materialize_current_context_owner =
+		[&](std::span<const TemplateTypeArg> owner_args) -> bool {
+			auto try_owner_name =
+				[&](std::string_view candidate_owner_name) -> bool {
+					if (candidate_owner_name.empty()) {
+						return false;
+					}
+					if (std::optional<Parser::AliasTemplateMaterializationResult>
+							current_context_owner =
+								parser_.tryResolveQualifiedTypeOwnerFromCurrentContext(
+									candidate_owner_name);
+						current_context_owner.has_value()) {
+						if (current_context_owner->resolved_type_info != nullptr) {
+							materialized_owner =
+								parser_.materializeCanonicalOwnerTypeForLookup(
+									*current_context_owner->resolved_type_info,
+									owner_args);
+						} else if (!current_context_owner->instantiated_name.empty()) {
+							materialized_owner =
+								parser_.resolveCanonicalInstantiatedOwnerForLookup(
+									current_context_owner->instantiated_name,
+									owner_args);
+						}
+						if (!materialized_owner.instantiated_name.empty() ||
+							materialized_owner.resolved_type_info != nullptr) {
+							return true;
+						}
+					}
+					return false;
+				};
+			if (std::string_view base_template_name =
+					extractBaseTemplateName(owner_name);
+				!base_template_name.empty()) {
+				if (current_owner_type_name_.isValid()) {
+					std::string_view current_owner_name =
+						StringTable::getStringView(current_owner_type_name_);
+					std::string_view current_owner_pattern_name;
+					if (std::optional<StringHandle> owner_pattern_handle =
+							gTemplateRegistry.get_instantiation_pattern(
+								current_owner_type_name_);
+						owner_pattern_handle.has_value()) {
+						current_owner_pattern_name =
+							StringTable::getStringView(*owner_pattern_handle);
+					} else {
+						current_owner_pattern_name =
+							extractBaseTemplateName(current_owner_name);
+					}
 
+					auto try_prefixed_owner_name =
+						[&](std::string_view owner_prefix) -> bool {
+							if (owner_prefix.empty()) {
+								return false;
+							}
+							materialized_owner =
+								parser_.materializeTemplateInstantiationForLookup(
+									StringBuilder()
+										.append(owner_prefix)
+										.append("::")
+										.append(base_template_name)
+										.commit(),
+									owner_args);
+							return !materialized_owner.instantiated_name.empty() ||
+								materialized_owner.resolved_type_info != nullptr;
+						};
+
+					if (try_prefixed_owner_name(current_owner_pattern_name)) {
+						return true;
+					}
+					if (!current_owner_name.empty() &&
+						current_owner_name != current_owner_pattern_name &&
+						try_prefixed_owner_name(current_owner_name)) {
+						return true;
+					}
+				}
+				if (base_template_name != owner_name &&
+					try_owner_name(base_template_name)) {
+					return true;
+				}
+			}
+			if (try_owner_name(owner_name)) {
+				return true;
+			}
+			return false;
+		};
+	auto owner_refers_to_current_owner_type =
+		[&]() -> bool {
+			if (!current_owner_type_name_.isValid()) {
+				return false;
+			}
+			std::string_view current_owner_name =
+				StringTable::getStringView(current_owner_type_name_);
+			if (owner_name.empty() || owner_name == current_owner_name) {
+				return true;
+			}
+
+			const TypeInfo* current_owner_type_info =
+				findTypeByName(current_owner_type_name_);
+			if (current_owner_type_info == nullptr) {
+				return false;
+			}
+
+			const std::string_view current_base_template_name =
+				StringTable::getStringView(
+					current_owner_type_info->baseTemplateName());
+			if (!current_base_template_name.empty() &&
+				(owner_name == current_base_template_name ||
+				 extractBaseTemplateName(owner_name) ==
+					 current_base_template_name)) {
+				return true;
+			}
+
+			StringHandle qualified_base_template_handle =
+				gNamespaceRegistry.buildQualifiedIdentifier(
+					current_owner_type_info->sourceNamespace(),
+					current_owner_type_info->baseTemplateName());
+			const std::string_view qualified_base_template_name =
+				StringTable::getStringView(qualified_base_template_handle);
+			return !qualified_base_template_name.empty() &&
+				owner_name == qualified_base_template_name;
+		};
 	switch (dependent_name.owner_kind) {
 	case TypeInfo::DependentQualifiedNameRecord::OwnerKind::CurrentInstantiation:
 		if (prefer_current_owner_type_name &&
-			current_owner_type_name_.isValid()) {
+			owner_refers_to_current_owner_type()) {
 			materialized_owner.instantiated_name =
 				StringTable::getStringView(current_owner_type_name_);
 			materialized_owner.resolved_type_info =
@@ -1086,6 +1206,12 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 					dependent_name.owner_template_arguments,
 					depth);
 			if (!templateArgsStillDependent(owner_args)) {
+				if (try_materialize_current_context_owner(
+						std::span<const TemplateTypeArg>(
+							owner_args.data(),
+							owner_args.size()))) {
+					break;
+				}
 				materialized_owner =
 					parser_.resolveCanonicalInstantiatedOwnerForLookup(
 						owner_name,
@@ -1142,6 +1268,13 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 			break;
 		}
 		if (templateArgsStillDependent(owner_args)) {
+			break;
+		}
+		if (allow_current_context_dependent_owner_materialization &&
+			try_materialize_current_context_owner(
+				std::span<const TemplateTypeArg>(
+					owner_args.data(),
+					owner_args.size()))) {
 			break;
 		}
 		if (auto owner_template_subst_it = param_map_.find(owner_name);
@@ -1421,7 +1554,8 @@ ExpressionSubstitutor::lookupMaterializedDependentMember(const TypeInfo& type_in
 			materializeDependentQualifiedRecordOwner(
 				*dependent_name,
 				depth,
-				/*prefer_current_owner_type_name=*/true);
+				/*prefer_current_owner_type_name=*/true,
+				/*allow_current_context_dependent_owner_materialization=*/false);
 		std::string_view materialized_owner_name =
 			materialized_owner.canonicalName();
 		FLASH_LOG(Templates, Debug, "lookupMaterializedDependentMember owner ",
@@ -2209,13 +2343,22 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				const TypeInfo::DependentQualifiedNameRecord::Member&
 					final_member_record =
 						dependent_record.member_chain.back();
-				if (!final_member_record.has_template_arguments) {
+				InlineVector<TemplateTypeArg, 4> member_template_args;
+				if (final_member_record.has_template_arguments) {
+					member_template_args =
+						materializeDependentRecordTemplateArgs(
+							final_member_record.template_arguments,
+							kInitialDependentMemberTypeResolutionDepth);
+				} else if (!substituted_template_args.empty()) {
+					member_template_args.reserve(
+						substituted_template_args.size());
+					for (const TemplateTypeArg& arg :
+						 substituted_template_args) {
+						member_template_args.push_back(arg);
+					}
+				} else {
 					return std::nullopt;
 				}
-				InlineVector<TemplateTypeArg, 4> member_template_args =
-					materializeDependentRecordTemplateArgs(
-						final_member_record.template_arguments,
-						kInitialDependentMemberTypeResolutionDepth);
 				if (templateArgsStillDependent(member_template_args)) {
 					return std::nullopt;
 				}
@@ -2229,7 +2372,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					materializeDependentQualifiedRecordOwner(
 						dependent_record,
 						kInitialDependentMemberTypeResolutionDepth,
-						prefer_current_owner_type_name);
+						prefer_current_owner_type_name,
+						/*allow_current_context_dependent_owner_materialization=*/true);
 				std::string_view materialized_owner_name =
 					materialized_owner.canonicalName();
 				if (!materialized_owner_name.empty() &&
@@ -2690,7 +2834,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			materializeDependentQualifiedRecordOwner(
 				dependent_record,
 				kInitialDependentMemberTypeResolutionDepth,
-				/*prefer_current_owner_type_name=*/false);
+				/*prefer_current_owner_type_name=*/false,
+				/*allow_current_context_dependent_owner_materialization=*/false);
 		std::string_view materialized_owner_name =
 			materialized_owner.canonicalName();
 
@@ -3008,7 +3153,8 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 					materializeDependentQualifiedRecordOwner(
 						dependent_record,
 						kInitialDependentMemberTypeResolutionDepth,
-						true);
+						true,
+						/*allow_current_context_dependent_owner_materialization=*/false);
 				std::string_view materialized_owner_name =
 					materialized_owner.canonicalName();
 				if (materialized_owner_name.empty()) {
@@ -3466,7 +3612,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			materializeDependentQualifiedRecordOwner(
 				*dependent_name,
 				kInitialDependentMemberTypeResolutionDepth,
-				/*prefer_current_owner_type_name=*/true);
+				/*prefer_current_owner_type_name=*/true,
+				/*allow_current_context_dependent_owner_materialization=*/false);
 		std::string_view materialized_owner_name =
 			materialized_owner.canonicalName();
 
