@@ -201,6 +201,49 @@ const TypeInfo* tryResolveConcreteStructOwnerType(const TypeSpecifierNode& type_
 }
 } // namespace
 
+bool Parser::concreteOwnerHasMemberFunctionTemplate(
+	const TypeInfo& type_info,
+	StringHandle member_name_handle) {
+	const StructTypeInfo* struct_info = type_info.getStructInfo();
+	if (struct_info == nullptr) {
+		return false;
+	}
+
+	std::unordered_set<const StructTypeInfo*> visited;
+	auto has_visible_member_template = [&](const StructTypeInfo* current_struct, const auto& self) -> bool {
+		if (current_struct == nullptr ||
+			!visited.insert(current_struct).second) {
+			return false;
+		}
+
+		bool has_local_member_with_name = false;
+		bool has_local_member_template = false;
+		for (const auto& member_func : current_struct->member_functions) {
+			if (member_func.getName() != member_name_handle) {
+				continue;
+			}
+			has_local_member_with_name = true;
+			if (member_func.function_decl.is<TemplateFunctionDeclarationNode>()) {
+				has_local_member_template = true;
+			}
+		}
+		if (has_local_member_with_name) {
+			return has_local_member_template;
+		}
+
+		for (const auto& base_spec : current_struct->base_classes) {
+			if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_spec.type_index);
+				base_struct != nullptr &&
+				self(base_struct, self)) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	return has_visible_member_template(struct_info, has_visible_member_template);
+}
+
 // Helper: resolve object type from expression and try to instantiate member function template.
 // Uses get_expression_type() to handle any expression (identifiers, function calls, member access, etc.).
 // Returns the instantiated function node if successful, nullopt otherwise.
@@ -224,6 +267,10 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 		}
 	}
 	auto struct_name = StringTable::getStringView(type_info->name());
+	if (const StructTypeInfo* struct_info = type_info->getStructInfo();
+		struct_info != nullptr) {
+		struct_name = StringTable::getStringView(struct_info->name);
+	}
 	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 	if (explicit_template_args.has_value()) {
 		// Propagate call argument types so overload resolution can reject mismatched
@@ -326,6 +373,10 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	const StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info)
 		return {};
+	const bool has_call_operator_template =
+		concreteOwnerHasMemberFunctionTemplate(
+			*type_info,
+			StringTable::getOrInternStringHandle("operator()"sv));
 
 	std::vector<ASTNode> call_candidates;
 	std::unordered_set<const StructTypeInfo*> visited;
@@ -358,8 +409,24 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 		}
 	};
 	collect_visible_call_operators(struct_info, collect_visible_call_operators);
-
 	if (call_candidates.empty()) {
+		if (all_arg_types_known && has_call_operator_template) {
+			if (std::optional<ASTNode> instantiated_operator = tryResolveMemberFunctionTemplate(
+					object_expr,
+					"operator()"sv,
+					std::nullopt,
+					arg_types);
+				instantiated_operator.has_value() &&
+				instantiated_operator->is<FunctionDeclarationNode>()) {
+				return {
+					ConcreteCallOperatorResolution::State::Resolved,
+					&instantiated_operator->as<FunctionDeclarationNode>()
+				};
+			}
+		}
+		if (has_call_operator_template) {
+			return {};
+		}
 		return {ConcreteCallOperatorResolution::State::NoViableMatch, nullptr};
 	}
 
@@ -1190,32 +1257,13 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 		if (object_struct_name.has_value() &&
 			isHardUseLikeInstantiationMode() &&
 			!known_member_func && !instantiated_func.has_value()) {
-			auto checkHasMemberTemplate = [&]() {
-				auto hasFunctionTemplateForOwner = [&](StringHandle owner_name_handle) {
-					TemplateNameLookupResult lookup_result = gTemplateRegistry.lookupTemplateName(
-						buildMemberFunctionTemplateLookupRequest(
-							owner_name_handle,
-							member_name_token.handle(),
-							false));
-					return lookup_result.hasFunctionTemplate();
-				};
-
-				const StringHandle owner_name_handle =
-					StringTable::getOrInternStringHandle(*object_struct_name);
-				if (hasFunctionTemplateForOwner(owner_name_handle)) {
-					return true;
-				}
-
-				std::string_view base_name = extractBaseTemplateName(*object_struct_name);
-				if (base_name.empty()) {
-					return false;
-				}
-
-				return hasFunctionTemplateForOwner(
-					StringTable::getOrInternStringHandle(base_name));
-			};
-
-			if (checkHasMemberTemplate()) {
+			if (const TypeInfo* object_type_info =
+					findTypeByName(
+						StringTable::getOrInternStringHandle(*object_struct_name));
+				object_type_info != nullptr &&
+				concreteOwnerHasMemberFunctionTemplate(
+					*object_type_info,
+					member_name_token.handle())) {
 				return ParseResult::error(
 					"No matching member function for call to '" + std::string(member_name_token.value()) + "'",
 					member_name_token);

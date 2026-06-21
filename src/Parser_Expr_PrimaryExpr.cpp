@@ -4775,6 +4775,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// Check if followed by '(' for function call
 			if (current_token_.value() == "(") {
+				Token open_paren_token = current_token_;
 				advance(); // consume '('
 
 				// Parse function arguments using unified helper (expand simple packs for qualified calls)
@@ -4846,6 +4847,22 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
 						return ParseResult::success(*result);
 					}
+				}
+
+				if (!template_args.has_value() &&
+					identifierType.has_value() &&
+					!identifierType->is<FunctionDeclarationNode>() &&
+					!identifierType->is<TemplateFunctionDeclarationNode>()) {
+					result = emplace_node<ExpressionNode>(
+						QualifiedIdentifierNode(
+							qual_id.namespace_handle(),
+							qual_id.identifier_token()));
+					finalizePostfixCallExpression(
+						result,
+						open_paren_token,
+						std::move(args),
+						std::move(arg_types));
+					return ParseResult::success(*result);
 				}
 
 				if (auto err = tryQualifiedPhase1Lookup(qual_id,
@@ -9315,98 +9332,55 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				if (has_operator_call) {
 					// Create a member function call: object.operator()(args)
 					auto object_expr = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
-
-					// Find the operator() function declaration in the struct
-					const DeclarationNode* decl = get_decl_from_symbol(*identifierType);
-					if (!decl) {
-						return ParseResult::error("Invalid declaration for operator() call", identifier_token);
-					}
-					const auto& type_node = decl->type_specifier_node();
-					TypeIndex type_index = type_node.type_index();
-					const TypeInfo& type_info = getTypeInfo(type_index);
-					if (!type_info.struct_info_) {
-						return ParseResult::error("operator() not found in struct", identifier_token);
-					}
-
-					// Find the best operator() overload using type-based overload resolution.
-					// Falls back to arity-only selection when argument types cannot be determined.
-					const FunctionDeclarationNode* operator_call_func = nullptr;
-					bool op_explicitly_ambiguous = false;
 					std::vector<TypeSpecifierNode> op_arg_types;
-					bool all_op_types_known = true;
 					for (const auto& arg : args) {
 						auto arg_type = get_expression_type(arg);
 						if (arg_type.has_value()) {
 							op_arg_types.push_back(*arg_type);
-						} else {
-							all_op_types_known = false;
-							break;
 						}
 					}
-
-					// Build candidate list for resolve_overload.
-					std::vector<ASTNode> op_candidates;
-					for (const auto& member_func : type_info.struct_info_->member_functions) {
-						if (member_func.operator_kind == OverloadableOperator::Call &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
-							op_candidates.push_back(member_func.function_decl);
-						}
+					const bool all_op_types_known = op_arg_types.size() == args.size();
+					const ConcreteCallOperatorResolution call_operator_resolution =
+						tryResolveConcreteCallOperator(
+							object_expr,
+							op_arg_types,
+							args.size(),
+							all_op_types_known);
+					const FunctionDeclarationNode* operator_call_func =
+						call_operator_resolution.function;
+					if (call_operator_resolution.state ==
+						ConcreteCallOperatorResolution::State::Ambiguous) {
+						return ParseResult::error(
+							"call to overloaded operator() is ambiguous",
+							identifier_token);
 					}
-
-					if (!op_candidates.empty()) {
-						// Try type-based overload resolution first.
-						if (all_op_types_known) {
-							auto op_result = resolve_overload_with_argument_nodes(op_candidates, op_arg_types, args);
-							if (op_result.has_match && !op_result.is_ambiguous) {
-								operator_call_func = &op_result.selected_overload->as<FunctionDeclarationNode>();
-							}
-							if (op_result.is_ambiguous) {
-								op_explicitly_ambiguous = true;
-							}
-						}
-
-						if (!operator_call_func && !op_explicitly_ambiguous) {
-							// Fall back to arity-only heuristic when type inference fails
-							// or when resolve_overload found no match (e.g. template/generic
-							// lambda operator()). When resolve_overload explicitly reported
-							// ambiguity, the call is ill-formed.
-							const FunctionDeclarationNode* sole_op_candidate = nullptr;
-							size_t op_candidate_count = 0;
-							for (const auto& candidate_node : op_candidates) {
-								const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
-								++op_candidate_count;
-								if (!sole_op_candidate)
-									sole_op_candidate = &candidate;
-								if (candidate.parameter_nodes().size() == args.size()) {
-									operator_call_func = &candidate;
-									break;
-								}
-							}
-							if (!operator_call_func && op_candidate_count == 1)
-								operator_call_func = sole_op_candidate;
-						}
+					if (call_operator_resolution.state ==
+						ConcreteCallOperatorResolution::State::NoViableMatch) {
+						return ParseResult::error(
+							"operator() not found in struct",
+							identifier_token);
 					}
-
-					if (!operator_call_func && !op_explicitly_ambiguous && all_op_types_known) {
-						if (auto instantiated_operator = try_instantiate_member_function_template(
-								StringTable::getStringView(type_info.struct_info_->name),
-								"operator()"sv,
-								op_arg_types);
-							instantiated_operator.has_value() && instantiated_operator->is<FunctionDeclarationNode>()) {
-							operator_call_func = &instantiated_operator->as<FunctionDeclarationNode>();
-						}
-					}
-
-					if (!operator_call_func) {
-						const char* err_msg = op_explicitly_ambiguous
-												  ? "call to overloaded operator() is ambiguous"
-												  : "operator() not found in struct";
-						return ParseResult::error(err_msg, identifier_token);
+					if (operator_call_func == nullptr) {
+						auto temp_type = emplace_node<TypeSpecifierNode>(
+							TypeCategory::Int,
+							TypeQualifier::None,
+							32,
+							identifier_token,
+							CVQualifier::None);
+						auto temp_decl = emplace_node<DeclarationNode>(
+							temp_type,
+							identifier_token);
+						operator_call_func =
+							&emplace_node<FunctionDeclarationNode>(
+								 temp_decl.as<DeclarationNode>())
+								 .as<FunctionDeclarationNode>();
 					}
 
 					Token operator_token(Token::Type::Identifier, "operator()"sv, identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 					result = emplace_node<ExpressionNode>(makeResolvedMemberCallExpr(object_expr, *operator_call_func, std::move(args), operator_token));
-					if (all_op_types_known) {
+					if (call_operator_resolution.state ==
+							ConcreteCallOperatorResolution::State::Resolved &&
+						all_op_types_known) {
 						attachResolvedReceiverDirectCallMetadata(
 							result->as<ExpressionNode>(),
 							current_template_definition_lookup_context_,
@@ -9414,7 +9388,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							op_arg_types,
 							false,
 							*operator_call_func,
-							StringTable::getStringView(type_info.struct_info_->name));
+							{});
 					}
 				}
 				// For template parameter constructor calls, create ConstructorCallNode

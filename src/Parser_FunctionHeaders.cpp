@@ -60,6 +60,9 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		}
 
 		// Parse parameter type and name
+		FlashCpp::ScopedState parameter_type_id_guard(
+			parsing_parameter_declaration_type_id_);
+		parsing_parameter_declaration_type_id_ = true;
 		ParseResult type_and_name_result = parse_type_and_name();
 		if (type_and_name_result.is_error()) {
 			return type_and_name_result;

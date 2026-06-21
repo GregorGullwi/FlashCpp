@@ -2869,6 +2869,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				}
 			}
 
+			// Skip C++11 attributes between struct/class and name (e.g., [[deprecated]])
+			skip_cpp_attributes();
+
 			// Parse class name
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected class name", current_token_);
