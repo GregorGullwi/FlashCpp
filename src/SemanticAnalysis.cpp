@@ -7697,6 +7697,8 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 			*arg_binding_type_opt,
 			param_type,
 			&arg);
+	const bool null_pointer_constant_to_nullptr =
+		isIntegerLiteralZeroNullptrTypeOverloadConversion(&arg, param_type);
 	TypeSpecifierNode param_value_type = param_type;
 	param_value_type.set_reference_qualifier(ReferenceQualifier::None);
 	TypeSpecifierNode arg_value_type = arg_binding_type;
@@ -7746,7 +7748,14 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	}
 
 	info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::MaterializesTemporary;
-	if (value_plan.kind != StandardConversionKind::None) {
+	if (null_pointer_constant_to_nullptr &&
+		inferred_arg_type_id &&
+		inferred_arg_type_id != param_value_type_id) {
+		info.pre_bind_cast_info_index = allocateNonUserDefinedCastInfo(
+			inferred_arg_type_id,
+			param_value_type_id,
+			StandardConversionKind::PointerConversion);
+	} else if (value_plan.kind != StandardConversionKind::None) {
 		info.pre_bind_cast_info_index = allocateNonUserDefinedCastInfo(
 			arg_value_type_id,
 			param_value_type_id,
