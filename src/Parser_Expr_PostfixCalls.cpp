@@ -364,7 +364,8 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	}
 
 	if (all_arg_types_known) {
-		const OverloadResolutionResult op_result = resolve_overload(call_candidates, arg_types);
+		const OverloadResolutionResult op_result =
+			resolve_overload_with_argument_nodes(call_candidates, arg_types, std::span<const ASTNode>{});
 		if (op_result.has_match && !op_result.is_ambiguous && op_result.selected_overload != nullptr) {
 			return {
 				ConcreteCallOperatorResolution::State::Resolved,
@@ -1620,7 +1621,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		}
 
 		if (arg_types.size() == argument_count) {
-			auto overload_result = resolve_overload(candidates, arg_types);
+			auto overload_result =
+				resolve_overload_with_argument_nodes(candidates, arg_types, std::span<const ASTNode>{});
 			if (overload_result.has_match &&
 				!overload_result.is_ambiguous &&
 				overload_result.selected_overload != nullptr &&
@@ -2451,7 +2453,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 									return nullptr;
 								}
 								const OverloadResolutionResult overload_result =
-									resolve_overload(overloads, arg_types);
+									resolve_overload_with_argument_nodes(overloads, arg_types, std::span<const ASTNode>{});
 								if (overload_result.has_match &&
 									!overload_result.is_ambiguous &&
 									overload_result.selected_overload != nullptr) {

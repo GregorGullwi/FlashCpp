@@ -1561,6 +1561,12 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 	}
 }
 
+void Parser::consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec) {
+	type_spec.add_cv_qualifier(parse_cv_qualifiers());
+	skip_noop_gnu_qualifiers();
+	consume_pointer_ref_modifiers(type_spec);
+}
+
 // Consume pointer/reference modifiers after conversion operator target type
 // Handles: operator _Tp&(), operator _Tp*(), operator _Tp&&()
 void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type) {
@@ -1638,7 +1644,13 @@ bool Parser::parse_static_member_function(
 	DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
 
 	// Parse function declaration with parameters
-	auto func_result = parse_function_declaration(decl_node);
+	FlashCpp::StorageSpecifiers storage_specs;
+	storage_specs.storage_class = StorageClass::Static;
+	auto func_result = parse_function_declaration_with_storage_specs(
+		decl_node,
+		CallingConvention::Default,
+		true,
+		storage_specs);
 	if (func_result.is_error()) {
 		type_and_name_result = func_result;
 		return true;

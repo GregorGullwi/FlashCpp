@@ -990,7 +990,10 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			}
 		}
 		if (shape_overloads.size() > 1) {
-			auto resolution = resolve_overload(shape_overloads, arg_types);
+			auto resolution = resolve_overload_with_argument_nodes(
+				shape_overloads,
+				arg_types,
+				std::span<const ASTNode>{});
 			if (resolution.has_match &&
 				!resolution.is_ambiguous &&
 				resolution.selected_overload != nullptr) {

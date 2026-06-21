@@ -199,7 +199,23 @@ ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_
 ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const {
 	const OverloadableOperator operator_kind =
 		overloadableOperatorFromFunctionName(func_decl.decl_node().identifier_token().value());
-	if (!is_member && mustBeMemberOperator(operator_kind)) {
+	if (is_member &&
+		func_decl.is_static() &&
+		operator_kind != OverloadableOperator::None &&
+		operator_kind != OverloadableOperator::Call &&
+		operator_kind != OverloadableOperator::Subscript) {
+		return ParseResult::error(std::string(StringBuilder()
+			.append(func_decl.decl_node().identifier_token().value())
+			.append(" must be a non-static member function")
+			.commit()),
+			func_decl.decl_node().identifier_token());
+	}
+	const bool treat_static_operator_as_member =
+		func_decl.is_static() &&
+		(operator_kind == OverloadableOperator::Call ||
+		 operator_kind == OverloadableOperator::Subscript);
+	const bool effective_is_member = is_member || treat_static_operator_as_member;
+	if (!effective_is_member && mustBeMemberOperator(operator_kind)) {
 		return ParseResult::error(std::string(StringBuilder()
 			.append(func_decl.decl_node().identifier_token().value())
 			.append(" must be a non-static member function")
@@ -259,11 +275,11 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 	const bool valid = [&]() {
 		switch (arity_kind) {
 			case OrdinaryOperatorArityKind::UnaryOnly:
-				return is_member ? param_count == 0 : param_count == 1;
+				return effective_is_member ? param_count == 0 : param_count == 1;
 			case OrdinaryOperatorArityKind::BinaryOnly:
-				return is_member ? param_count == 1 : param_count == 2;
+				return effective_is_member ? param_count == 1 : param_count == 2;
 			case OrdinaryOperatorArityKind::UnaryOrBinary:
-				return is_member ? (param_count == 0 || param_count == 1)
+				return effective_is_member ? (param_count == 0 || param_count == 1)
 								 : (param_count == 1 || param_count == 2);
 			case OrdinaryOperatorArityKind::Skip:
 				return true;
@@ -272,7 +288,7 @@ ParseResult Parser::validateOperatorSignature(const FunctionDeclarationNode& fun
 	}();
 	if (!valid) {
 		const std::string message = std::string(StringBuilder()
-			.append(is_member ? "member " : "non-member ")
+			.append(effective_is_member ? "member " : "non-member ")
 			.append(func_decl.decl_node().identifier_token().value())
 			.append(" has invalid parameter count for its operator form")
 			.commit());

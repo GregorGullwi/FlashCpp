@@ -1936,7 +1936,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			return nullptr;
 		}
 		OverloadResolutionResult resolution =
-			resolve_overload(candidates, substituted_arg_types);
+			resolve_overload_with_argument_nodes(candidates, substituted_arg_types, std::span<const ASTNode>{});
 		if (resolution.has_match &&
 			!resolution.is_ambiguous &&
 			resolution.selected_overload != nullptr &&
@@ -3130,7 +3130,7 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 				return nullptr;
 			}
 			OverloadResolutionResult resolution =
-				resolve_overload(candidates, substituted_arg_types);
+				resolve_overload_with_argument_nodes(candidates, substituted_arg_types, std::span<const ASTNode>{});
 			if (resolution.has_match &&
 				!resolution.is_ambiguous &&
 				resolution.selected_overload != nullptr &&

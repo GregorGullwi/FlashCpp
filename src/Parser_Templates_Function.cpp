@@ -89,7 +89,13 @@ ParseResult Parser::parse_template_function_declaration_body(
 
 		// Parse function declaration with parameters
 		const bool is_member = !struct_parsing_context_stack_.empty();
-		auto func_result = parse_function_declaration(decl_node, CallingConvention::Default, is_member);
+		FlashCpp::StorageSpecifiers storage_specs;
+		storage_specs.storage_class = specs.storage_class;
+		auto func_result = parse_function_declaration_with_storage_specs(
+			decl_node,
+			CallingConvention::Default,
+			is_member,
+			storage_specs);
 		if (func_result.is_error()) {
 			return func_result;
 		}

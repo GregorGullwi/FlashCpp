@@ -458,6 +458,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Parse inline struct: typedef struct { ... } Alias; or typedef struct Name { ... } Alias;
 			bool is_class = peek() == "class"_tok;
 			advance(); // consume 'struct' or 'class'
+			parse_declspec_attributes();
 
 			// Check if there's a struct name or if it's anonymous
 			std::string_view struct_name_view;
@@ -1113,6 +1114,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		is_inline_union = (peek() == "union"_tok);
 		SaveHandle next_pos = save_token_position();
 		advance(); // consume 'struct', 'class', or 'union'
+		parse_declspec_attributes();
 
 		// Check if next token is '{' (anonymous struct/union) or identifier followed by '{'
 		if (peek() == "{"_tok) {

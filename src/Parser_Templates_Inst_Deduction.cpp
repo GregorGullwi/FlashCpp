@@ -3961,7 +3961,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		if (shape_overloads.size() == 1) {
 			preferred_candidate_index = shape_candidate_indices[0];
 		} else if (shape_overloads.size() > 1) {
-			auto resolution = resolve_overload(shape_overloads, *current_explicit_call_arg_types_);
+			auto resolution = resolve_overload_with_argument_nodes(
+				shape_overloads,
+				*current_explicit_call_arg_types_,
+				std::span<const ASTNode>{});
 			if (resolution.has_match &&
 				!resolution.is_ambiguous &&
 				resolution.selected_overload != nullptr) {
@@ -4162,7 +4165,10 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		}
 
 		if (shape_overloads.size() > 1) {
-			auto resolution = resolve_overload(shape_overloads, arg_types);
+			auto resolution = resolve_overload_with_argument_nodes(
+				shape_overloads,
+				arg_types,
+				std::span<const ASTNode>{});
 			if (resolution.has_match &&
 				!resolution.is_ambiguous &&
 				resolution.selected_overload != nullptr) {

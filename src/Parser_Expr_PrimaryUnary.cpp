@@ -130,7 +130,7 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 
 	// Parse pointer/reference declarators: *, **, &, && (ptr-operator in C++20 grammar)
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-	consume_pointer_ref_modifiers(type_spec);
+	consume_cast_type_id_postfix_modifiers(type_spec);
 
 	// Handle member object pointer type: T ClassName::*
 	// e.g., static_cast<int S::*>(nullptr)
@@ -360,8 +360,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		if (!type_result.is_error() && type_result.node().has_value()) {
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 
-			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
-			consume_pointer_ref_modifiers(type_spec);
+			consume_cast_type_id_postfix_modifiers(type_spec);
 
 			// Check if followed by ')'
 			if (consume(")"_tok)) {

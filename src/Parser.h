@@ -1579,6 +1579,7 @@ private:
 	ParseResult parse_declaration_or_function_definition();
 	ParseResult parse_out_of_line_constructor_or_destructor(std::string_view class_name, bool is_destructor, const FlashCpp::DeclarationSpecifiers& specs);	// NEW: Parse out-of-line constructor/destructor
 	ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default, bool is_member = false);
+	ParseResult parse_function_declaration_with_storage_specs(DeclarationNode& declaration_node, CallingConvention calling_convention, bool is_member, const FlashCpp::StorageSpecifiers& storage_specs);
 	ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);	// Phase 1: Unified parameter list parsing
 	FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
 	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, std::span<const TypeSpecifierNode> arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
@@ -3473,6 +3474,7 @@ private:	 // Resume private methods
 	bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
 	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
 	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
+	void consume_cast_type_id_postfix_modifiers(TypeSpecifierNode& type_spec); // Consume postfix cv-qualifiers and trailing ptr/ref modifiers in a cast type-id
 	// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
 	// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
 	// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
