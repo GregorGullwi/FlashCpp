@@ -5869,12 +5869,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		template_args_info);
 	if (shouldCommitTemplateInstantiationArtifacts() &&
 		template_name.find("::") != std::string_view::npos) {
-		StringHandle template_name_handle =
+		StringHandle qualified_template_name_handle =
 			StringTable::getOrInternStringHandle(template_name);
 		gTemplateRegistry.register_instantiation_pattern(
 			instantiated_name,
-			template_name_handle,
-			template_name_handle);
+			qualified_template_name_handle,
+			qualified_template_name_handle);
 	}
 
 	// Populate type-owned instantiation context so that codegen and constexpr
