@@ -111,7 +111,8 @@ const FunctionDeclarationNode* tryResolveUniqueOverloadByArgTypes(
 		return nullptr;
 	}
 
-	const OverloadResolutionResult result = resolve_overload(overload_set, arg_types);
+	const OverloadResolutionResult result =
+		resolve_overload_with_argument_nodes(overload_set, arg_types, std::span<const ASTNode>{});
 	if (result.is_ambiguous) {
 		if (is_ambiguous_out != nullptr) {
 			*is_ambiguous_out = true;
@@ -2210,8 +2211,10 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		auto adl_begin = symbols_.lookup_adl("begin", adl_arg_types);
 		auto adl_end = symbols_.lookup_adl("end", adl_arg_types);
 		if (!adl_begin.empty() && !adl_end.empty()) {
-			auto begin_res = resolve_overload(adl_begin, adl_arg_types);
-			auto end_res = resolve_overload(adl_end, adl_arg_types);
+			auto begin_res =
+				resolve_overload_with_argument_nodes(adl_begin, adl_arg_types, std::span<const ASTNode>{});
+			auto end_res =
+				resolve_overload_with_argument_nodes(adl_end, adl_arg_types, std::span<const ASTNode>{});
 			if (begin_res.has_match && !begin_res.is_ambiguous &&
 				end_res.has_match && !end_res.is_ambiguous &&
 				begin_res.selected_overload->is<FunctionDeclarationNode>() &&
@@ -7689,7 +7692,11 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	if (!arg_binding_type_opt.has_value())
 		return std::nullopt;
 
-	const TypeSpecifierNode& arg_binding_type = *arg_binding_type_opt;
+	const TypeSpecifierNode arg_binding_type =
+		normalizeArgumentTypeForNullPointerConstantConversion(
+			*arg_binding_type_opt,
+			param_type,
+			&arg);
 	TypeSpecifierNode param_value_type = param_type;
 	param_value_type.set_reference_qualifier(ReferenceQualifier::None);
 	TypeSpecifierNode arg_value_type = arg_binding_type;
@@ -7770,7 +7777,11 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 	if (std::optional<TypeSpecifierNode> resolved_arg_binding_type =
 			buildOverloadResolutionArgType(arg, &arg_type_id);
 		resolved_arg_binding_type.has_value()) {
-		arg_binding_type = *resolved_arg_binding_type;
+		arg_binding_type =
+			normalizeArgumentTypeForNullPointerConstantConversion(
+				*resolved_arg_binding_type,
+				param_type,
+				&arg);
 		TypeSpecifierNode arg_value_type = *arg_binding_type;
 		arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
 		if (const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type)) {
@@ -7954,7 +7965,11 @@ void SemanticAnalysis::ensureResolvedCallArgConversionsComplete(
 		if (!arg_binding_type.has_value()) {
 			continue;
 		}
-		TypeSpecifierNode arg_value_type = *arg_binding_type;
+		TypeSpecifierNode arg_value_type =
+			normalizeArgumentTypeForNullPointerConstantConversion(
+				*arg_binding_type,
+				param_type,
+				&arg);
 		arg_value_type.set_reference_qualifier(ReferenceQualifier::None);
 		const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type);
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
@@ -8616,7 +8631,8 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	if (arg_types_collected) {
-		const OverloadResolutionResult result = resolve_overload(overloads, arg_types);
+		const OverloadResolutionResult result =
+			resolve_overload_with_argument_nodes(overloads, arg_types, arguments);
 		if (result.has_match && !result.is_ambiguous && result.selected_overload != nullptr) {
 			if (const FunctionDeclarationNode* resolved_candidate =
 					getCallTargetFunctionCandidate(*result.selected_overload)) {

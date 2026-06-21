@@ -82,7 +82,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::resolveConstexprMemberCall
 			}
 
 			const OverloadResolutionResult overload_result =
-				resolve_overload(overloads, arg_types);
+				resolve_overload_with_argument_nodes(overloads, arg_types, std::span<const ASTNode>{});
 			if (overload_result.is_ambiguous) {
 				if (ambiguous_out != nullptr) {
 					*ambiguous_out = true;

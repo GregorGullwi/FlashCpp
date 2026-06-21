@@ -1031,10 +1031,24 @@ inline TypeConversionResult can_convert_type(const TypeSpecifierNode& from, cons
 	return buildConversionPlan(from, to).toResult();
 }
 
+inline bool isIntegerLiteralZeroNullPointerConstant(const ASTNode& arg_node);
+inline bool parameterSupportsNullPointerConstantOverloadConversion(const TypeSpecifierNode& parameter_type);
+inline TypeSpecifierNode normalizeArgumentTypeForNullPointerConstantConversion(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& parameter_type,
+	const ASTNode* argument_node = nullptr);
+
 inline ArgumentConversionInfo buildArgumentConversionInfo(
 	const TypeSpecifierNode& argument_type,
-	const TypeSpecifierNode& parameter_type) {
-	const ConversionPlan conversion = buildConversionPlan(argument_type, parameter_type);
+	const TypeSpecifierNode& parameter_type,
+	const ASTNode* argument_node = nullptr) {
+	const TypeSpecifierNode effective_argument_type =
+		normalizeArgumentTypeForNullPointerConstantConversion(
+			argument_type,
+			parameter_type,
+			argument_node);
+
+	const ConversionPlan conversion = buildConversionPlan(effective_argument_type, parameter_type);
 	return {conversion.rank, &parameter_type, conversion.is_valid};
 }
 
@@ -1102,6 +1116,47 @@ inline bool is_lvalue_expression_for_overload_resolution(const ASTNode& arg_node
 		}
 	},
 					  arg_expr);
+}
+
+inline bool isIntegerLiteralZeroNullPointerConstant(const ASTNode& arg_node) {
+	if (!arg_node.is<ExpressionNode>()) {
+		return false;
+	}
+
+	const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+	const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr);
+	if (numeric_literal == nullptr || !isIntegralType(numeric_literal->type())) {
+		return false;
+	}
+
+	const NumericLiteralValue literal_value = numeric_literal->value();
+	if (const auto* integer_value = std::get_if<unsigned long long>(&literal_value)) {
+		return *integer_value == 0;
+	}
+
+	return false;
+}
+
+inline bool parameterSupportsNullPointerConstantOverloadConversion(const TypeSpecifierNode& parameter_type) {
+	return parameter_type.is_pointer() ||
+		   parameter_type.is_function_pointer() ||
+		   parameter_type.is_member_function_pointer() ||
+		   parameter_type.is_member_object_pointer();
+}
+
+inline TypeSpecifierNode normalizeArgumentTypeForNullPointerConstantConversion(
+	const TypeSpecifierNode& argument_type,
+	const TypeSpecifierNode& parameter_type,
+	const ASTNode* argument_node) {
+	TypeSpecifierNode effective_argument_type = argument_type;
+	if (argument_node != nullptr &&
+		parameterSupportsNullPointerConstantOverloadConversion(parameter_type) &&
+		isIntegerLiteralZeroNullPointerConstant(*argument_node)) {
+		effective_argument_type.set_type_index(nativeTypeIndex(TypeCategory::Nullptr));
+		effective_argument_type.set_size_in_bits(get_type_size_bits(TypeCategory::Nullptr));
+		effective_argument_type.set_reference_qualifier(ReferenceQualifier::None);
+	}
+	return effective_argument_type;
 }
 
 inline void adjust_argument_type_for_overload_resolution(const ASTNode& arg_node, TypeSpecifierNode& arg_type) {
@@ -1415,11 +1470,22 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 
 // countMinRequiredArgs is defined in SymbolTable.h (included above)
 
+inline const ASTNode* getOverloadArgumentNodeOrNull(std::span<const ASTNode> argument_nodes, size_t index) {
+	return index < argument_nodes.size() ? &argument_nodes[index] : nullptr;
+}
+
+template <typename ArgumentNodeContainer>
+inline const ASTNode* getOverloadArgumentNodeOrNull(const ArgumentNodeContainer& argument_nodes, size_t index) {
+	return index < argument_nodes.size() ? &argument_nodes[index] : nullptr;
+}
+
 // Perform overload resolution for a function call
 // Returns the best matching overload, or nullptr if no match or ambiguous
-inline OverloadResolutionResult resolve_overload(
+template <typename ArgumentNodeContainer>
+inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 	std::span<const ASTNode> overloads,
-	std::span<const TypeSpecifierNode> argument_types) {
+	std::span<const TypeSpecifierNode> argument_types,
+	const ArgumentNodeContainer& argument_nodes) {
 	if (overloads.empty()) {
 		return OverloadResolutionResult::no_match();
 	}
@@ -1469,8 +1535,10 @@ inline OverloadResolutionResult resolve_overload(
 		for (size_t i = 0; i < params_to_check; ++i) {
 			const auto& param_type = parameters[i].as<DeclarationNode>().type_specifier_node();
 			const auto& arg_type = argument_types[i];
+			const ASTNode* arg_node = getOverloadArgumentNodeOrNull(argument_nodes, i);
 
-			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(arg_type, param_type);
+			const ArgumentConversionInfo conversion =
+				buildArgumentConversionInfo(arg_type, param_type, arg_node);
 			if (!conversion.is_valid) {
 				all_convertible = false;
 				break;
@@ -1528,7 +1596,9 @@ inline OverloadResolutionResult resolve_overload(
 					bool prev_valid = true;
 					for (size_t k = 0; k < prev_params_to_check; ++k) {
 						const auto& pt = prev_params[k].as<DeclarationNode>().type_specifier_node();
-						const ArgumentConversionInfo conv = buildArgumentConversionInfo(argument_types[k], pt);
+						const ASTNode* arg_node = getOverloadArgumentNodeOrNull(argument_nodes, k);
+						const ArgumentConversionInfo conv =
+							buildArgumentConversionInfo(argument_types[k], pt, arg_node);
 						if (!conv.is_valid) {
 							prev_valid = false;
 							break;
@@ -2403,7 +2473,10 @@ inline OverloadResolutionResult resolve_overload_cached(
 	}
 
 	// Cache miss - perform full overload resolution
-	auto result = resolve_overload(overloads, argument_types);
+	auto result = resolve_overload_with_argument_nodes(
+		overloads,
+		argument_types,
+		std::span<const ASTNode>{});
 
 	// Cache the result
 	cache[key] = result;

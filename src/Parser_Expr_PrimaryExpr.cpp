@@ -607,7 +607,7 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 	}
 
 	if (!all_overloads.empty()) {
-		OverloadResolutionResult resolution = resolve_overload(all_overloads, arg_types);
+		OverloadResolutionResult resolution = resolve_overload_with_argument_nodes(all_overloads, arg_types, arguments);
 		if (resolution.is_ambiguous) {
 			return std::nullopt;
 		}
@@ -665,7 +665,8 @@ std::optional<ASTNode> Parser::resolveDefinitionBoundOrdinaryCall(
 		return std::nullopt;
 	}
 
-	OverloadResolutionResult resolution = resolve_overload(all_overloads, arg_types);
+	OverloadResolutionResult resolution =
+		resolve_overload_with_argument_nodes(all_overloads, arg_types, std::span<const ASTNode>{});
 	if (resolution.is_ambiguous ||
 		!resolution.has_match ||
 		resolution.selected_overload == nullptr) {
@@ -856,7 +857,7 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 		filterPhase1OrdinaryFunctionOverloads(qualified_overloads);
 		if (!qualified_overloads.empty()) {
 			OverloadResolutionResult resolution =
-				resolve_overload(qualified_overloads, arg_types);
+				resolve_overload_with_argument_nodes(qualified_overloads, arg_types, std::span<const ASTNode>{});
 			if (resolution.is_ambiguous) {
 				return ParseResult::error(
 					"Ambiguous call to qualified function '" +
@@ -882,7 +883,7 @@ std::optional<ParseResult> Parser::tryQualifiedPhase1Lookup(
 				const std::vector<ASTNode> all_qualified_overloads =
 					gSymbolTable.lookup_qualified_all(qual_id.namespace_handle(), qual_id.nameHandle());
 				OverloadResolutionResult resolution =
-					resolve_overload(all_qualified_overloads, arg_types);
+					resolve_overload_with_argument_nodes(all_qualified_overloads, arg_types, std::span<const ASTNode>{});
 				if (!resolution.is_ambiguous && resolution.has_match &&
 					resolution.selected_overload != nullptr) {
 					identifierType = *resolution.selected_overload;
@@ -6310,7 +6311,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return overload.is<TemplateFunctionDeclarationNode>();
 						}),
 					all_overloads.end());
-				auto resolution = resolve_overload(all_overloads, arg_types);
+				auto resolution = resolve_overload_with_argument_nodes(all_overloads, arg_types, args);
 				if (resolution.has_match && !resolution.is_ambiguous) {
 					result = emplace_node<ExpressionNode>(
 						makeCallExprFromNode(*resolution.selected_overload, std::move(args), identifier_token));
@@ -6936,7 +6937,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return make_call_result(*identifierType);
 				}
 
-				auto resolution = resolve_overload(all_overloads, arg_types);
+				auto resolution = resolve_overload_with_argument_nodes(all_overloads, arg_types, args_ref);
 				FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution.has_match, ", is_ambiguous=", resolution.is_ambiguous);
 
 				if (resolution.is_ambiguous) {
@@ -9355,7 +9356,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (!op_candidates.empty()) {
 						// Try type-based overload resolution first.
 						if (all_op_types_known) {
-							auto op_result = resolve_overload(op_candidates, op_arg_types);
+							auto op_result = resolve_overload_with_argument_nodes(op_candidates, op_arg_types, args);
 							if (op_result.has_match && !op_result.is_ambiguous) {
 								operator_call_func = &op_result.selected_overload->as<FunctionDeclarationNode>();
 							}
@@ -10067,7 +10068,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 									} else {
 										// Have overloads - do overload resolution
-										auto resolution_result = resolve_overload(all_overloads, arg_types);
+										auto resolution_result = resolve_overload_with_argument_nodes(all_overloads, arg_types, args);
 
 										FLASH_LOG(Parser, Debug, "Overload resolution result: has_match=", resolution_result.has_match, ", is_ambiguous=", resolution_result.is_ambiguous);
 

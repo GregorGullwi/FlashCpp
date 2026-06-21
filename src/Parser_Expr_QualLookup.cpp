@@ -391,7 +391,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			return nullptr;
 		}
 		const OverloadResolutionResult overload_result =
-			resolve_overload(overloads, deduced_arg_types);
+			resolve_overload_with_argument_nodes(overloads, deduced_arg_types, std::span<const ASTNode>{});
 		if (overload_result.has_match &&
 			!overload_result.is_ambiguous &&
 			overload_result.selected_overload != nullptr) {
