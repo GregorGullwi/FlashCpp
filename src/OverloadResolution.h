@@ -1052,7 +1052,10 @@ inline ArgumentConversionInfo buildArgumentConversionInfo(
 			parameter_type,
 			argument_node);
 	if (isIntegerLiteralZeroNullptrTypeOverloadConversion(argument_node, parameter_type)) {
-		return {ConversionRank::Conversion, &parameter_type, true};
+		const ConversionPlan conversion = buildConversionPlan(effective_argument_type, parameter_type);
+		return {conversion.is_valid ? ConversionRank::Conversion : ConversionRank::NoMatch,
+				&parameter_type,
+				conversion.is_valid};
 	}
 
 	const ConversionPlan conversion = buildConversionPlan(effective_argument_type, parameter_type);

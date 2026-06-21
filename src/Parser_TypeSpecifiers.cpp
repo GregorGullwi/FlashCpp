@@ -411,12 +411,14 @@ ParseResult Parser::parse_type_specifier() {
 		return parse_decltype_specifier();
 	}
 
-	// Check for __underlying_type(T) which returns the underlying type of an enum
-	// This is a type-returning intrinsic used in <type_traits>:
-	//   using type = __underlying_type(_Tp);
-	// Note: __underlying_type is an identifier, not a keyword — string compare is required
-	if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
-		peek_info().value() == "__underlying_type") {
+	auto applyLeadingCvToParsedType = [](ParseResult result, CVQualifier leading_cv) -> ParseResult {
+		if (!result.is_error() && result.node().has_value() && leading_cv != CVQualifier::None) {
+			result.node()->as<TypeSpecifierNode>().add_cv_qualifier(leading_cv);
+		}
+		return result;
+	};
+
+	auto parseUnderlyingTypeSpecifier = [&]() -> ParseResult {
 		Token underlying_token = peek_info();
 		advance(); // consume '__underlying_type'
 
@@ -509,6 +511,15 @@ ParseResult Parser::parse_type_specifier() {
 		}
 
 		return ParseResult::error("__underlying_type requires an enumeration type", underlying_token);
+	};
+
+	// Check for __underlying_type(T) which returns the underlying type of an enum
+	// This is a type-returning intrinsic used in <type_traits>:
+	//   using type = __underlying_type(_Tp);
+	// Note: __underlying_type is an identifier, not a keyword — string compare is required
+	if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
+		peek_info().value() == "__underlying_type") {
+		return parseUnderlyingTypeSpecifier();
 	}
 
 	// Check for typename keyword (used in template-dependent contexts)
@@ -580,6 +591,17 @@ ParseResult Parser::parse_type_specifier() {
 		} else {
 			parsing_qualifiers = false;
 		}
+	}
+
+	// Leading cv-qualifiers also apply to intrinsic type specifiers such as
+	// `const decltype(expr)` and `const __underlying_type(E)`.
+	if (peek() == "decltype"_tok ||
+		(!peek().is_eof() && (peek_info().value() == "__typeof__" || peek_info().value() == "__typeof"))) {
+		return applyLeadingCvToParsedType(parse_decltype_specifier(), cv_qualifier);
+	}
+	if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
+		peek_info().value() == "__underlying_type") {
+		return applyLeadingCvToParsedType(parseUnderlyingTypeSpecifier(), cv_qualifier);
 	}
 
 	// Check for typename keyword AFTER cv-qualifiers

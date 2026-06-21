@@ -8,6 +8,7 @@ struct FILE;
 struct __crt_locale_pointers;
 
 using _locale_t = __crt_locale_pointers*;
+using Null = decltype(nullptr);
 
 int __stdio_common_vfwprintf(
 	unsigned long long options,
@@ -53,6 +54,14 @@ int onlyNullptr(decltype(nullptr)) {
 	return 5;
 }
 
+int bindNullConstRef(const Null& value) {
+	return value == nullptr ? 6 : 0;
+}
+
+int bindNullRRef(Null&& value) {
+	return value == nullptr ? 7 : 0;
+}
+
 int main() {
 	va_list args = 0;
 	if (vfwprintf(0, 0, args) != 0) return 1;
@@ -60,5 +69,7 @@ int main() {
 	if (pickNullptr(0) != 3) return 3;
 	if (pickNullptr(nullptr) != 4) return 4;
 	if (onlyNullptr(0) != 5) return 5;
+	if (bindNullConstRef(0) != 6) return 6;
+	if (bindNullRRef(0) != 7) return 7;
 	return 0;
 }
