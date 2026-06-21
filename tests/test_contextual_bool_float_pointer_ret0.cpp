@@ -11,34 +11,73 @@
 int main() {
 	float f = 0.0f;
 	float* fp = &f;		// non-null pointer to a zero float
-	float* fn = nullptr;	 // null pointer
+	float* fn = nullptr; // null pointer
 
 	double d = 0.0;
-	double* dp = &d;		 // non-null pointer to a zero double
+	double* dp = &d;	 // non-null pointer to a zero double
 	double* dn = nullptr; // null pointer
 
-	int result = 0;
-
- // Non-null float pointer: truthy (even though *fp == 0.0f).
-	if (fp) {
-		result += 1;
+	// Non-null float pointer: truthy (even though *fp == 0.0f).
+	if (!fp) {
+		return 1;
 	}
 
- // Null float pointer: falsy.
+	// Null float pointer: falsy.
 	if (fn) {
-		result += 100;  // should NOT execute
+		return 2;
 	}
 
- // Non-null double pointer: truthy (even though *dp == 0.0).
-	if (dp) {
-		result += 10;
+	// Non-null double pointer: truthy (even though *dp == 0.0).
+	if (!dp) {
+		return 3;
 	}
 
- // Null double pointer: falsy.
+	// Null double pointer: falsy.
 	if (dn) {
-		result += 100;  // should NOT execute
+		return 4;
 	}
 
- // Expected: result == 11 (1 + 10)
-	return result - 11;
+	// Logical operators and ternary must observe the normalized bool result of
+	// contextual conversion, not reinterpret the raw pointer bits as bool8.
+	if (!(fp && dp)) {
+		return 5;
+	}
+
+	if (fp && fn) {
+		return 6;
+	}
+
+	if (!(fp || fn)) {
+		return 7;
+	}
+
+	if (fn || dn) {
+		return 8;
+	}
+
+	if (!!fn) {
+		return 9;
+	}
+
+	if (!fp) {
+		return 10;
+	}
+
+	if ((fp ? 1 : 0) != 1) {
+		return 11;
+	}
+
+	if ((fn ? 1 : 0) != 0) {
+		return 12;
+	}
+
+	if ((dn ? 1 : 0) != 0) {
+		return 13;
+	}
+
+	if ((dp ? 1 : 0) != 1) {
+		return 14;
+	}
+
+	return 0;
 }

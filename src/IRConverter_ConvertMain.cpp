@@ -1045,6 +1045,12 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		ctx.operand_type = TypeCategory::UnsignedLongLong;
 		ctx.operand_size_in_bits = 64;
 	}
+	// Operand loads below must follow the coerced runtime representation, not
+	// the original semantic base type. This matters for pointer-like values
+	// whose semantic category may be Float/Double but whose IR representation is
+	// still a 64-bit address.
+	operand_type = ctx.operand_type;
+	operand_size = ctx.operand_size_in_bits;
 	if (!isIrIntegerType(ctx.result_value.effectiveIrType()) && !isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 		auto type_name = getTypeName(ctx.result_value.typeEnum());
 		std::string type_desc = type_name.empty() ? std::string("type_id=") + std::to_string(static_cast<int>(ctx.result_value.typeEnum())) : std::string(type_name);

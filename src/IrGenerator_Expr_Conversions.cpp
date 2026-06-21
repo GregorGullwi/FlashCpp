@@ -2563,18 +2563,48 @@ TypeCategory AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
 }
 
 ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token) {
-	// C++20 [conv.bool]: convert condition to bool for control-flow statements.
+	// C++20 [conv.bool]: contextual conversion to bool yields an actual bool
+	// prvalue, not a full-width integer/pointer value that only happens to work
+	// in branch instructions.
 	//
-	// Integer types: the backend's TEST instruction already implements the
-	// correct "nonzero → true, zero → false" semantics.  No conversion needed.
+	// Integer/pointer/enum-like values: emit != 0 so all consumers see a
+	// normalized bool8 result.
 	//
-	// Floating-point types: we emit a FloatNotEqual comparison against 0.0.
+	// Floating-point types: emit FloatNotEqual against 0.0.
 	// This correctly handles:
 	//   - -0.0: UCOMISD/UCOMISS treats -0.0 == +0.0, so SETNE → 0 (false). ✓
 	//   - Fractional values (e.g. 0.5): 0.5 != 0.0 → SETNE → 1 (true). ✓
 	//   - NaN: unordered comparison → PF=1, SETNE → 1 (truthy per C++20). ✓
 	// The previous FloatToInt (cvttsd2si) truncation was wrong because it
 	// mapped fractional values like 0.5 to integer 0 (false).
+	if (condition.pointer_depth.value == 0 && condition.typeEnum() == TypeCategory::Bool) {
+		return condition;
+	}
+
+	auto emitNonZeroBoolTest = [&](ExprResult cond) -> ExprResult {
+		const bool use_integer_pointer_rep =
+			cond.pointer_depth.is_pointer() ||
+			cond.effectiveIrType() == IrType::FunctionPointer ||
+			cond.effectiveIrType() == IrType::MemberFunctionPointer ||
+			cond.effectiveIrType() == IrType::MemberObjectPointer ||
+			cond.effectiveIrType() == IrType::Nullptr;
+
+		TypedValue lhs = use_integer_pointer_rep
+			? makeTypedValue(TypeCategory::UnsignedLongLong, cond.size_in_bits, toIrValue(cond.value))
+			: toTypedValue(cond);
+		TypedValue rhs = use_integer_pointer_rep
+			? makeTypedValue(TypeCategory::UnsignedLongLong, cond.size_in_bits, 0ULL)
+			: makeTypedValue(cond.typeEnum(), cond.size_in_bits, 0ULL);
+
+		TempVar result_var = var_counter.next();
+		BinaryOp bin_op{
+			.lhs = lhs,
+			.rhs = rhs,
+			.result = result_var,
+		};
+		ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), source_token));
+		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	};
 
 	auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
 		// Materialize a 0.0 constant with the same float type as the condition.
@@ -2606,12 +2636,12 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 			if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.category())) {
 				return emitFloatNonZeroTest(condition);
 			}
-			// Enum/pointer → bool (Phase 9): backend TEST already implements
-			// correct zero/null → false, non-zero/non-null → true semantics.
-			// Consume the annotation without emitting extra code.
+			// Enum/integer/pointer/void* → bool: normalize to an actual bool8 value
+			// so logical operators and other consumers do not reinterpret a
+			// full-width scalar as an already-materialized bool.
 			if (cast_info.cast_kind == StandardConversionKind::BooleanConversion ||
 				cast_info.cast_kind == StandardConversionKind::PointerConversion) {
-				return condition;
+				return emitNonZeroBoolTest(condition);
 			}
 				// Phase 23: Struct → bool via user-defined operator bool().
 				// Sema annotates as UserDefined; call emitConversionOperatorCall.
@@ -2637,12 +2667,16 @@ ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const AST
 		}
 	}
 	// 2. Fallback: floating-point conditions need explicit conversion because
-	//    the backend's TEST instruction operates on integer bit patterns and
-	//    would mishandle -0.0, which has nonzero bits but is semantically false.
+	//    bool conversion is based on numeric comparison with 0.0, not raw bits.
 	//    Guard: pointer types (even float*/double*) are integer-width addresses
-	//    and must use TEST, not FloatNotEqual.
+	//    and must use != 0, not FloatNotEqual.
 	if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.typeEnum())) {
 		return emitFloatNonZeroTest(condition);
+	}
+	// Integer, enum, pointer-like, and other scalar truthiness cases normalize
+	// through != 0 so every contextual-bool consumer receives bool8.
+	if (condition.category() != TypeCategory::Struct) {
+		return emitNonZeroBoolTest(condition);
 	}
 	// Note 2026-04-29: the codegen-side struct → bool conversion-operator fallback
 	// previously located here was probed across the full 2243-test corpus with a
