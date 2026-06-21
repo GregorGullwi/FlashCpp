@@ -1753,6 +1753,7 @@ private:
 		std::span<const TemplateParameterNode> target_template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args,
 		const std::vector<ASTNode>* argument_syntax_nodes);
+	bool looksLikeDependentMemberTemplateWithoutKeyword();
 	StringHandle extractDependentMemberProbeFromCurrentTemplateArg();
 	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
 	ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)

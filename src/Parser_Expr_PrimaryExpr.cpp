@@ -2366,6 +2366,30 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, st
 	return ParseResult::success(result);
 }
 
+bool Parser::looksLikeDependentMemberTemplateWithoutKeyword() {
+	if (peek() != "<"_tok) {
+		return false;
+	}
+
+	SaveHandle missing_template_kw_start = save_token_position();
+	const SaveHandle saved_failed_handle =
+		last_failed_template_arg_parse_handle_;
+	auto saved_pending_args = pending_explicit_template_args_;
+
+	last_failed_template_arg_parse_handle_ = SIZE_MAX;
+	std::vector<ASTNode> missing_template_arg_nodes;
+	auto missing_template_args =
+		parse_explicit_template_arguments(&missing_template_arg_nodes);
+	const bool looks_like_dependent_member_template =
+		missing_template_args.has_value() &&
+		(peek() == "("_tok || peek() == "::"_tok);
+
+	restore_token_position(missing_template_kw_start);
+	last_failed_template_arg_parse_handle_ = saved_failed_handle;
+	pending_explicit_template_args_ = std::move(saved_pending_args);
+	return looks_like_dependent_member_template;
+}
+
 Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwnerForLookup(
 	std::string_view primary_template_name,
 	std::string_view fallback_template_name,
@@ -3588,10 +3612,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (!(current_token_.type() == Token::Type::Keyword &&
 				  (current_token_.value() == "new" ||
 				   current_token_.value() == "delete"))) {
-				std::vector<StringType<32>> namespaces;
 				return parse_qualified_operator_call(
 					operator_token,
-					std::span<const StringType<32>>(namespaces));
+					std::span<const StringType<32>>{});
 			}
 
 			StringBuilder op_name_sb;
@@ -7368,25 +7391,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										advance(); // consume member name
 										std::vector<ASTNode> member_template_arg_nodes;
 										if (!has_template_keyword &&
-											peek() == "<"_tok) {
-											SaveHandle missing_template_kw_start =
-												save_token_position();
-											last_failed_template_arg_parse_handle_ = SIZE_MAX;
-											std::vector<ASTNode> missing_template_arg_nodes;
-											auto missing_template_args =
-												parse_explicit_template_arguments(
-													&missing_template_arg_nodes);
-											const bool looks_like_dependent_member_template =
-												missing_template_args.has_value() &&
-												(peek() == "("_tok ||
-												 peek() == "::"_tok);
-											restore_token_position(
-												missing_template_kw_start);
-											if (looks_like_dependent_member_template) {
-												return ParseResult::error(
-													"Missing 'template' before dependent qualified member template name",
-													final_identifier);
-											}
+											looksLikeDependentMemberTemplateWithoutKeyword()) {
+											return ParseResult::error(
+												"Missing 'template' before dependent qualified member template name",
+												final_identifier);
 										}
 										if ((has_template_keyword ||
 											 materialized_owner_names_current_instantiation) &&
@@ -7536,28 +7544,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									advance(); // consume member name
 									std::vector<ASTNode> member_template_arg_nodes;
 									if (!has_template_keyword &&
-										peek() == "<"_tok) {
-										SaveHandle missing_template_kw_start =
-											save_token_position();
-										last_failed_template_arg_parse_handle_ = SIZE_MAX;
-										std::vector<ASTNode> missing_template_arg_nodes;
-										auto missing_template_args =
-											parse_explicit_template_arguments(
-												&missing_template_arg_nodes);
-										const bool looks_like_dependent_member_template =
-											missing_template_args.has_value() &&
-											(peek() == "("_tok ||
-											 peek() == "::"_tok);
+										looksLikeDependentMemberTemplateWithoutKeyword()) {
 										restore_token_position(
-											missing_template_kw_start);
-										if (looks_like_dependent_member_template) {
-											restore_token_position(
-												deferred_member_chain_start);
-											pending_explicit_template_args_.reset();
-											return ParseResult::error(
-												"Missing 'template' before dependent qualified member template name",
-												deferred_final_identifier);
-										}
+											deferred_member_chain_start);
+										pending_explicit_template_args_.reset();
+										return ParseResult::error(
+											"Missing 'template' before dependent qualified member template name",
+											deferred_final_identifier);
 									}
 									if ((has_template_keyword ||
 										 materialized_owner_names_current_instantiation) &&
@@ -8626,25 +8619,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								advance(); // consume member name
 								std::vector<ASTNode> member_template_arg_nodes;
 								if (!has_template_keyword &&
-									peek() == "<"_tok) {
-									SaveHandle missing_template_kw_start =
-										save_token_position();
-									last_failed_template_arg_parse_handle_ = SIZE_MAX;
-									std::vector<ASTNode> missing_template_arg_nodes;
-									auto missing_template_args =
-										parse_explicit_template_arguments(
-											&missing_template_arg_nodes);
-									const bool looks_like_dependent_member_template =
-										missing_template_args.has_value() &&
-										(peek() == "("_tok ||
-										 peek() == "::"_tok);
-									restore_token_position(
-										missing_template_kw_start);
-									if (looks_like_dependent_member_template) {
-										return ParseResult::error(
-											"Missing 'template' before dependent qualified member template name",
-											final_identifier);
-									}
+									looksLikeDependentMemberTemplateWithoutKeyword()) {
+									return ParseResult::error(
+										"Missing 'template' before dependent qualified member template name",
+										final_identifier);
 								}
 								if ((has_template_keyword ||
 									 materialized_owner_names_current_instantiation) &&
@@ -8792,28 +8770,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							advance(); // consume member name
 							std::vector<ASTNode> member_template_arg_nodes;
 							if (!has_template_keyword &&
-								peek() == "<"_tok) {
-								SaveHandle missing_template_kw_start =
-									save_token_position();
-								last_failed_template_arg_parse_handle_ = SIZE_MAX;
-								std::vector<ASTNode> missing_template_arg_nodes;
-								auto missing_template_args =
-									parse_explicit_template_arguments(
-										&missing_template_arg_nodes);
-								const bool looks_like_dependent_member_template =
-									missing_template_args.has_value() &&
-									(peek() == "("_tok ||
-									 peek() == "::"_tok);
+								looksLikeDependentMemberTemplateWithoutKeyword()) {
 								restore_token_position(
-									missing_template_kw_start);
-								if (looks_like_dependent_member_template) {
-									restore_token_position(
-										deferred_member_chain_start);
-									pending_explicit_template_args_.reset();
-									return ParseResult::error(
-										"Missing 'template' before dependent qualified member template name",
-										deferred_final_identifier);
-								}
+									deferred_member_chain_start);
+								pending_explicit_template_args_.reset();
+								return ParseResult::error(
+									"Missing 'template' before dependent qualified member template name",
+									deferred_final_identifier);
 							}
 							if ((has_template_keyword ||
 								 materialized_owner_names_current_instantiation) &&
