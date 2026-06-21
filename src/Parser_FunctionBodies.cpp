@@ -690,6 +690,19 @@ void Parser::compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bo
 }
 
 ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention, bool is_member) {
+	const FlashCpp::StorageSpecifiers storage_specs{};
+	return parse_function_declaration_with_storage_specs(
+		declaration_node,
+		calling_convention,
+		is_member,
+		storage_specs);
+}
+
+ParseResult Parser::parse_function_declaration_with_storage_specs(
+	DeclarationNode& declaration_node,
+	CallingConvention calling_convention,
+	bool is_member,
+	const FlashCpp::StorageSpecifiers& storage_specs) {
 	// Create the function declaration first
 	auto [func_node, func_ref] =
 		create_node_ref<FunctionDeclarationNode>(declaration_node);
@@ -717,6 +730,9 @@ ParseResult Parser::parse_function_declaration(DeclarationNode& declaration_node
 		func_ref.add_parameter_node(param);
 	}
 	func_ref.set_is_variadic(params.is_variadic);
+	if (storage_specs.is_static()) {
+		func_ref.set_is_static(true);
+	}
 	if (auto signature_result = validateOperatorSignature(func_ref, is_member);
 		signature_result.is_error()) {
 		return signature_result;
