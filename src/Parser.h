@@ -1135,6 +1135,7 @@ private:
 	// This is incremented/decremented in critical parsing functions
 	size_t parsing_depth_ = 0;
 	bool parsing_alias_type_id_ = false;
+	bool parsing_parameter_declaration_type_id_ = false;
 	static constexpr size_t MAX_PARSING_DEPTH = 500;	 // Reasonable limit for nested parsing
 	std::vector<std::string_view> template_param_names_;	 // Template parameter names in current scope
 
@@ -3395,6 +3396,9 @@ private:	 // Resume private methods
 		const FunctionDeclarationNode* function = nullptr;
 	};
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
+	bool concreteOwnerHasMemberFunctionTemplate(
+		const TypeInfo& type_info,
+		StringHandle member_name_handle);
 	ConcreteCallOperatorResolution tryResolveConcreteCallOperator(
 		const std::optional<ASTNode>& object_expr,
 		std::span<const TypeSpecifierNode> arg_types,

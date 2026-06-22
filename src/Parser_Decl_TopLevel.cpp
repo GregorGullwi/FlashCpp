@@ -474,6 +474,7 @@ ParseResult Parser::parse_namespace() {
 	if (!consume("namespace"_tok)) {
 		return ParseResult::error("Expected 'namespace' keyword", peek_info());
 	}
+	skip_cpp_attributes();
 
 	// Check if this is an anonymous namespace (namespace { ... })
 	std::string_view namespace_name = "";

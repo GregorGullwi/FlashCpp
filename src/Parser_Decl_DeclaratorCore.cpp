@@ -175,9 +175,9 @@ ParseResult Parser::parse_type_and_name() {
 			restore_token_position(saved_pos);
 			;
 		} else if (!peek().is_eof() && (peek() == "&"_tok || peek() == "&&"_tok)) {
-			// This is a reference to array pattern: T (&arr)[N] or T (&&arr)[N]
-			// Also handles unnamed variant: T (&)[N] (used in function parameters)
-			// Pattern: type (&identifier)[array_size] or type (&&identifier)[array_size]
+			// This is a reference-to-array or reference-to-function pattern:
+			// T (&arr)[N], T (&&arr)[N], T (&fn)(Args...), or T (&&fn)(Args...)
+			// Also handles unnamed variants used in parameter declarations.
 			bool is_rvalue_ref = (peek() == "&&"_tok);
 			advance(); // consume '&' or '&&'
 
@@ -197,11 +197,8 @@ ParseResult Parser::parse_type_and_name() {
 			} else {
 				advance(); // consume ')'
 
-				// Expect array size: '[' size ']'
-				if (peek() != "["_tok) {
-					// Not a reference-to-array pattern, restore and continue
-					restore_token_position(saved_pos);
-				} else {
+				// Reference-to-array: T (&name)[N]
+				if (peek() == "["_tok) {
 					advance(); // consume '['
 
 					// Parse array size expression
@@ -245,6 +242,68 @@ ParseResult Parser::parse_type_and_name() {
 							return ParseResult::success(decl_node);
 						}
 					}
+				}
+				// Reference-to-function: T (&name)(Args...)
+				else if (peek() == "("_tok) {
+					advance(); // consume '('
+
+					std::vector<TypeIndex> param_types;
+					bool is_variadic = false;
+					auto param_result =
+						parse_function_pointer_parameter_types(param_types, is_variadic);
+					if (param_result.is_error()) {
+						restore_token_position(saved_pos);
+					} else if (!consume(")"_tok)) {
+						restore_token_position(saved_pos);
+					} else {
+						bool is_noexcept = false;
+						if (peek() == "noexcept"_tok) {
+							advance(); // consume 'noexcept'
+							is_noexcept = parse_noexcept_value();
+						}
+
+						FunctionSignature signature;
+						signature.return_type_index = type_spec.type_index();
+						signature.return_pointer_depth =
+							static_cast<int>(type_spec.pointer_depth());
+						signature.return_reference_qualifier =
+							type_spec.reference_qualifier();
+						signature.parameter_type_indices = std::move(param_types);
+						signature.linkage = Linkage::None;
+						signature.calling_convention = last_calling_convention_;
+						signature.is_variadic = is_variadic;
+						signature.is_noexcept = is_noexcept;
+
+						type_spec.set_function_signature(signature);
+						type_spec.set_reference_qualifier(
+							is_rvalue_ref
+								? ReferenceQualifier::RValueReference
+								: ReferenceQualifier::LValueReference);
+
+						if (!has_name) {
+							ref_identifier = Token(
+								Token::Type::Identifier,
+								""sv,
+								type_spec.token().line(),
+								type_spec.token().column(),
+								type_spec.token().file_index());
+						}
+
+						auto decl_node = emplace_node<DeclarationNode>(
+							emplace_node<TypeSpecifierNode>(type_spec),
+							ref_identifier);
+
+						if (custom_alignment.has_value()) {
+							decl_node.as<DeclarationNode>().set_custom_alignment(
+								custom_alignment.value());
+						}
+
+						discard_saved_token(saved_pos);
+						return ParseResult::success(decl_node);
+					}
+				} else {
+					// Not a valid reference declarator pattern, restore and continue
+					restore_token_position(saved_pos);
 				}
 			}
 		} else if (peek().is_identifier()) {

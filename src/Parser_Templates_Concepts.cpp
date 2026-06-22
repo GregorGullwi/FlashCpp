@@ -81,150 +81,33 @@ ParseResult Parser::parse_requires_expression() {
 	// or no parameters: requires { ... }
 	std::vector<ASTNode> parameters;
 	if (peek() == "("_tok) {
-		advance(); // consume '('
-
-		// Parse parameter list (similar to function parameters)
-		// For now, we'll accept a simple parameter list
-		// Full implementation would parse: Type name, Type name, ...
-		while (peek() != ")"_tok) {
-			// Parse type
-			auto type_result = parse_type_specifier();
-			if (type_result.is_error()) {
-				return type_result;
-			}
-
-			// Parse pointer/reference modifiers after the type
-			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-
-			// Check for parenthesized declarator: type(&name)(params) or type(*name)(params)
-			// This is used for function pointer/reference parameters
-			if (peek() == "("_tok) {
-				advance(); // consume '('
-
-				// Expect & or * for function reference/pointer
-				if (peek() == "&"_tok) {
-					advance(); // consume '&'
-					type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);	// lvalue reference
-				} else if (peek() == "*"_tok) {
-					advance(); // consume '*'
-					type_spec.add_pointer_level(CVQualifier::None);
-				} else {
-					return ParseResult::error("Expected '&' or '*' in function declarator", current_token_);
-				}
-
-				// Parse parameter name
-				if (!peek().is_identifier()) {
-					return ParseResult::error("Expected identifier in function declarator", current_token_);
-				}
-				Token param_name = peek_info();
-				advance();
-
-				// Expect closing ')'
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after function declarator name", current_token_);
-				}
-
-				// Parse function parameter list: (params)
-				if (!consume("("_tok)) {
-					return ParseResult::error("Expected '(' for function parameter list", current_token_);
-				}
-
-				// Skip function parameters (we don't need them for requires expressions)
-				int paren_depth = 1;
-				while (paren_depth > 0 && !peek().is_eof()) {
-					if (peek() == "("_tok) {
-						paren_depth++;
-					} else if (peek() == ")"_tok) {
-						paren_depth--;
-					}
-					if (paren_depth > 0)
-						advance();
-				}
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after function parameter list", current_token_);
-				}
-
-				// Create a declaration node for the parameter
-				auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
-				parameters.push_back(decl_node);
-
-				// Add parameter to the scope so it can be used in the requires body
-				gSymbolTable.insert(param_name.value(), decl_node);
-
-				// Check for comma (more parameters) or end
-				if (peek() == ","_tok) {
-					advance(); // consume ','
-				}
-
-				continue; // Skip the rest of the loop for this parameter
-			}
-
-			// Parse cv-qualifiers (const, volatile)
-			CVQualifier cv = parse_cv_qualifiers();
-			type_spec.add_cv_qualifier(cv);
-
-			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
-			consume_pointer_ref_modifiers(type_spec);
-
-			// Check for ellipsis (parameter pack): type... name
-			bool is_parameter_pack = false;
-			if (peek() == "..."_tok) {
-				advance(); // consume '...'
-				is_parameter_pack = true;
-				// Next must be parameter name
-				if (!peek().is_identifier()) {
-					return ParseResult::error("Expected parameter name after '...' in requires expression", current_token_);
-				}
-			}
-
-			// Parse parameter name
-			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected parameter name in requires expression", current_token_);
-			}
-			Token param_name = peek_info();
-			advance();
-
-			// Check if this is a function reference/pointer: type(&name)(params) or type(*name)(params)
-			// After the parameter name, if we see '(', it's a function declarator
-			if (peek() == "("_tok) {
-				// Pattern: void(&f)(T) means f is a reference to function taking T
-				advance(); // consume '('
-
-				// Parse the function parameter list (simplified - just skip to ')')
-				// We don't need the full parameter info for requires expressions
-				int paren_depth = 1;
-				while (paren_depth > 0 && !peek().is_eof()) {
-					if (peek() == "("_tok) {
-						paren_depth++;
-					} else if (peek() == ")"_tok) {
-						paren_depth--;
-					}
-					if (paren_depth > 0)
-						advance();
-				}
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after function declarator parameter list", current_token_);
-				}
-			}
-
-			// Create a declaration node for the parameter
-			auto decl_node = emplace_node<DeclarationNode>(*type_result.node(), param_name);
-			decl_node.as<DeclarationNode>().set_parameter_pack(is_parameter_pack);
-			parameters.push_back(decl_node);
-
-			// Add parameter to the scope so it can be used in the requires body
-			gSymbolTable.insert(param_name.value(), decl_node);
-
-			// Check for comma (more parameters) or end
-			if (peek() == ","_tok) {
-				advance(); // consume ','
-			}
+		FlashCpp::ParsedParameterList parsed_params;
+		ParseResult params_result = parse_parameter_list(parsed_params, CallingConvention::Default);
+		if (params_result.is_error()) {
+			return params_result;
 		}
 
-		if (!consume(")"_tok)) {
-			return ParseResult::error("Expected ')' after requires expression parameters", current_token_);
+		if (parsed_params.is_variadic) {
+			return ParseResult::error("Requires expression parameters cannot be variadic", requires_token);
+		}
+
+		for (const auto& param : parsed_params.parameters) {
+			if (!param.is<DeclarationNode>()) {
+				return ParseResult::error("Expected declaration in requires expression parameter list", requires_token);
+			}
+
+			const auto& decl = param.as<DeclarationNode>();
+			if (decl.has_default_value()) {
+				Token diagnostic_token = !decl.identifier_token().value().empty()
+					? decl.identifier_token()
+					: requires_token;
+				return ParseResult::error("Requires expression parameters cannot have default arguments", diagnostic_token);
+			}
+
+			parameters.push_back(param);
+			if (!decl.identifier_token().value().empty()) {
+				gSymbolTable.insert(decl.identifier_token().value(), param);
+			}
 		}
 	}
 
