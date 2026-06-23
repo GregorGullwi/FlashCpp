@@ -302,7 +302,38 @@ ParseResult Parser::parse_template_parameter() {
 
 			// Expect identifier (parameter name)
 			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected identifier after concept constraint", current_token_);
+				auto param_node = emplace_node<TemplateParameterNode>(StringHandle(), concept_token);
+				param_node.as<TemplateParameterNode>().set_concept_constraint(potential_concept);
+				if (!concept_template_args.empty()) {
+					param_node.as<TemplateParameterNode>().set_concept_args(
+						std::move(concept_template_args));
+				}
+				if (is_variadic) {
+					param_node.as<TemplateParameterNode>().set_variadic(true);
+				}
+				if (!is_variadic && peek() == "="_tok) {
+					advance(); // consume '='
+
+					SaveHandle default_pos = save_token_position();
+					ScopedParserInstantiationContext guard_instantiation_mode(
+						*this,
+						TemplateInstantiationMode::ShapeOnly,
+						StringHandle{});
+					auto default_type_result = parse_type_specifier();
+					if (default_type_result.is_error()) {
+						discard_saved_token(default_pos);
+						return default_type_result;
+					}
+					discard_saved_token(default_pos);
+					if (!default_type_result.node().has_value()) {
+						return ParseResult::error(
+							"Expected default argument after '=' in template parameter",
+							current_token_);
+					}
+					param_node.as<TemplateParameterNode>().set_default_value(
+						*default_type_result.node());
+				}
+				return saved_position.success(param_node);
 			}
 
 			Token param_name_token = peek_info();
