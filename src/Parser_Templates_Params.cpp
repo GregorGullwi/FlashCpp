@@ -1271,6 +1271,16 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		return TypeCategory::Int;
 	};
 
+	auto currentTargetTemplateParam = [&]() -> const TemplateParameterNode* {
+		return currentExplicitTemplateArgumentTargetParam(template_args.size());
+	};
+
+	auto currentArgRejectsValueLikeParsing = [&]() {
+		const TemplateParameterNode* target_param = currentTargetTemplateParam();
+		return target_param != nullptr &&
+			   target_param->kind() != TemplateParameterKind::NonType;
+	};
+
 	auto hasConcreteSubstitutionForName = [&](StringHandle name) {
 		if (!name.isValid()) {
 			return false;
@@ -1595,7 +1605,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				}
 
 				auto [simple_identifier_kind, prebuilt_arg] = classifySimpleTemplateArgName(identifier_handle);
-				if (simple_identifier_kind == SimpleTemplateArgKind::ValueLike) {
+				if (simple_identifier_kind == SimpleTemplateArgKind::ValueLike &&
+					!currentArgRejectsValueLikeParsing()) {
 					// Use the concrete arg returned by the classify call (avoids a second loop over
 					// template_param_substitutions_). Fall back to a dependent-value placeholder when
 					// no concrete substitution was found yet (deferred template-body parse context).
@@ -1635,8 +1646,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		// like T::value || my_or<Rest...>::value
 		// Precedence 2 allows all binary operators except comma (precedence 1)
 		// The TemplateTypeArg context ensures we stop at '>' and ',' delimiters
-		auto expr_result = parse_expression(2, ExpressionContext::TemplateTypeArg);
-		if (!expr_result.is_error() && expr_result.node().has_value()) {
+		if (!currentArgRejectsValueLikeParsing()) {
+			auto expr_result = parse_expression(2, ExpressionContext::TemplateTypeArg);
+			if (!expr_result.is_error() && expr_result.node().has_value()) {
 			// Successfully parsed an expression - check if it's a boolean or numeric literal
 			const ExpressionNode& expr = expr_result.node()->as<ExpressionNode>();
 
@@ -1912,7 +1924,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 						}
 					}
 
-					if (!is_concrete_qualified_type && (peek() == ">"_tok || peek() == ","_tok || peek() == "..."_tok)) {
+					if (!is_concrete_qualified_type &&
+						!currentArgRejectsValueLikeParsing() &&
+						(peek() == ">"_tok || peek() == ","_tok || peek() == "..."_tok)) {
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						auto makeDependentCompileTimeArg = [&](StringHandle dependent_name, std::optional<ASTNode> dep_expr) {
@@ -2277,7 +2291,8 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								std::holds_alternative<CallExprNode>(expr) ||
 								std::holds_alternative<ConstructorCallNode>(expr) ||
 								simple_identifier_kind == SimpleTemplateArgKind::ValueLike;
-							if (is_value_like_dependent_expr) {
+							if (is_value_like_dependent_expr &&
+								!currentArgRejectsValueLikeParsing()) {
 								// Store the original AST expression for dependent NTTP expressions
 								// so it can be re-evaluated during template instantiation
 								std::optional<ASTNode> stored_expr = std::nullopt;
@@ -2306,9 +2321,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									dependentExpressionValueCategory(expr),
 									0,
 									std::move(stored_expr));
-							} else {
+							} else if (!is_value_like_dependent_expr) {
 								dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
 								dependent_arg.is_value = false;	// This is a TYPE parameter, not a value
+							} else {
+								goto try_type_template_argument_parse;
 							}
 							dependent_arg.is_dependent = true;
 
@@ -2405,10 +2422,12 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 				}  // End of else block for !is_array_subscript
 			}
 
-			// Expression is not a numeric literal or evaluable constant - fall through to type parsing
+				// Expression is not a numeric literal or evaluable constant - fall through to type parsing
+			}
 		}
 
 		// Expression parsing failed or wasn't a numeric literal - try parsing a type
+try_type_template_argument_parse:
 		restore_token_position(arg_saved_pos);
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
@@ -3702,6 +3721,7 @@ StringHandle Parser::extractDependentMemberProbeFromCurrentTemplateArg() {
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
 	std::span<const TemplateParameterNode> target_template_params,
 	std::vector<ASTNode>* out_type_nodes) {
+	ScopedExplicitTemplateArgumentTargetParams target_param_guard(*this, target_template_params);
 	auto parsed_args = parse_explicit_template_arguments(out_type_nodes);
 	if (parsed_args.has_value()) {
 		classifyExplicitTemplateArgumentsAgainstParameters(
@@ -3715,6 +3735,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
 	std::span<const TemplateParameterNode> target_template_params,
 	InlineVector<ASTNode, 4>* out_type_nodes) {
+	ScopedExplicitTemplateArgumentTargetParams target_param_guard(*this, target_template_params);
 	if (out_type_nodes == nullptr) {
 		auto parsed_args = parse_explicit_template_arguments();
 		if (parsed_args.has_value()) {
