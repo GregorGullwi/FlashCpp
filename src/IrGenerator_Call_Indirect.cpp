@@ -1409,7 +1409,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 							// Evaluate the constraint with the template arguments
 							auto constraint_result = evaluateConstraint(
-								requires_clause.constraint_expr(), type_args, eval_param_names);
+								requires_clause.constraint_expr(),
+								type_args,
+								eval_param_names,
+								&parser_,
+								template_func.template_parameters());
 
 							if (!constraint_result.satisfied) {
 								// Constraint not satisfied - report detailed error

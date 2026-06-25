@@ -4261,7 +4261,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						auto constraint_result = evaluateConstraint(
 							concept_node.constraint_expr(),
 							*template_args,
-							concept_param_names
+							concept_param_names,
+							this,
+							concept_node.template_params()
 						);
 
 						// Create a BoolLiteralNode with the result
@@ -7290,6 +7292,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						explicit_template_args = parse_explicit_template_arguments(
 							variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters(),
 							&explicit_template_arg_nodes);
+					} else if (auto concept_opt = gConceptRegistry.lookupConcept(identifier_token.value());
+							   concept_opt.has_value() &&
+							   concept_opt->is<ConceptDeclarationNode>()) {
+						explicit_template_args = parse_explicit_template_arguments(
+							concept_opt->as<ConceptDeclarationNode>().template_params(),
+							&explicit_template_arg_nodes);
 					} else {
 						explicit_template_args = parse_explicit_template_arguments();
 					}
@@ -8130,7 +8138,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								auto constraint_result = evaluateConstraint(
 									concept_node.constraint_expr(),
 									*explicit_template_args,
-									concept_param_names
+									concept_param_names,
+									this,
+									concept_node.template_params()
 								);
 
 								// Create a BoolLiteralNode with the result
@@ -8536,6 +8546,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						variable_template_opt->is<TemplateVariableDeclarationNode>()) {
 						return parse_explicit_template_arguments(
 							variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					}
+					if (auto concept_opt = gConceptRegistry.lookupConcept(identifier_token.value());
+						concept_opt.has_value() &&
+						concept_opt->is<ConceptDeclarationNode>()) {
+						return parse_explicit_template_arguments(
+							concept_opt->as<ConceptDeclarationNode>().template_params(),
 							&explicit_template_arg_nodes);
 					}
 					return parse_explicit_template_arguments(&explicit_template_arg_nodes);

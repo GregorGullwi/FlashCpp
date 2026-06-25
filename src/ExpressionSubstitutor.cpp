@@ -1959,7 +1959,7 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 	}
 
 	const ConstraintEvaluationResult constraint_result =
-		evaluateConstraint(concept_opt->as<ConceptDeclarationNode>(), *concrete_args);
+		evaluateConstraint(concept_opt->as<ConceptDeclarationNode>(), *concrete_args, &parser_);
 	const Token bool_token(
 		Token::Type::Keyword,
 		constraint_result.satisfied ? "true"sv : "false"sv,

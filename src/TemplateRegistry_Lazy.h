@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cstdint>
 
+class Parser;
+
 // Strip namespace prefix from a class name handle (e.g., "ns::Foo$hash" -> "Foo$hash").
 // Used by lazy registries so lookups match regardless of qualification.
 static StringHandle normalizeClassName(StringHandle handle) {
@@ -1359,6 +1361,13 @@ struct ConstraintEvaluationResult {
 	}
 };
 
+ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
+	const RequiresExpressionNode& requires_expr,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const InlineVector<std::string_view, 4>& template_param_names,
+	Parser* parser,
+	std::span<const TemplateParameterNode> template_params);
+
 // isIntegralType and isFloatingPointType moved to AstNodeTypes_TypeSystem.h
 
 // Helper function to evaluate type traits like std::is_integral_v<T>
@@ -1994,12 +2003,15 @@ inline std::optional<long long> evaluateConstraintExpression(
 // Evaluates constraints and provides detailed error messages when they fail
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ConceptDeclarationNode& concept_node,
-	const InlineVector<TemplateTypeArg, 4>& template_args);
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	Parser* parser = nullptr);
 
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ASTNode& constraint_expr,
 	const InlineVector<TemplateTypeArg, 4>& template_args,
-	const InlineVector<std::string_view, 4>& template_param_names = {}) {
+	const InlineVector<std::string_view, 4>& template_param_names = {},
+	Parser* parser = nullptr,
+	std::span<const TemplateParameterNode> template_params = {}) {
 
 	FLASH_LOG(Templates, Debug, "evaluateConstraint: constraint type=", constraint_expr.type_name(), ", template_args.size()=", template_args.size());
 	for (size_t i = 0; i < template_param_names.size(); ++i) {
@@ -2017,7 +2029,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		return std::visit([&](const auto& inner) -> ConstraintEvaluationResult {
 			// Create an ASTNode wrapper around the inner node
 			ASTNode inner_ast_node(&inner);
-			return evaluateConstraint(inner_ast_node, template_args, template_param_names);
+			return evaluateConstraint(inner_ast_node, template_args, template_param_names, parser, template_params);
 		},
 						  expr_variant);
 	}
@@ -2097,7 +2109,12 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 		// Concept found - evaluate its constraint expression with the template arguments
 		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
-		return evaluateConstraint(concept_node.constraint_expr(), template_args, template_param_names);
+		return evaluateConstraint(
+			concept_node.constraint_expr(),
+			template_args,
+			template_param_names,
+			parser,
+			concept_node.template_params());
 	}
 
 	// For member access nodes (e.g., std::is_integral_v<T>)
@@ -2204,7 +2221,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		}
 
 		// Evaluate the concept's constraint with the resolved arguments
-		return evaluateConstraint(concept_node, concept_args);
+		return evaluateConstraint(concept_node, concept_args, parser);
 	}
 
 	// For binary operators (&&, ||)
@@ -2214,12 +2231,12 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 		if (op == "&&") {
 			// Conjunction - both must be satisfied
-			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names);
+			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names, parser, template_params);
 			if (!left_result.satisfied) {
 				return left_result;	// Return first failure
 			}
 
-			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names);
+			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names, parser, template_params);
 			if (!right_result.satisfied) {
 				return right_result;
 			}
@@ -2227,12 +2244,12 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			return ConstraintEvaluationResult::success();
 		} else if (op == "||") {
 			// Disjunction - at least one must be satisfied
-			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names);
+			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names, parser, template_params);
 			if (left_result.satisfied) {
 				return ConstraintEvaluationResult::success();
 			}
 
-			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names);
+			auto right_result = evaluateConstraint(binop.get_rhs(), template_args, template_param_names, parser, template_params);
 			if (right_result.satisfied) {
 				return ConstraintEvaluationResult::success();
 			}
@@ -2297,7 +2314,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	if (constraint_expr.is<UnaryOperatorNode>()) {
 		const auto& unop = constraint_expr.as<UnaryOperatorNode>();
 		if (unop.op() == "!") {
-			auto operand_result = evaluateConstraint(unop.get_operand(), template_args, template_param_names);
+			auto operand_result = evaluateConstraint(unop.get_operand(), template_args, template_param_names, parser, template_params);
 			if (operand_result.satisfied) {
 				return ConstraintEvaluationResult::failure(
 					"constraint not satisfied: negated constraint is true",
@@ -2310,98 +2327,12 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 	// For requires expressions: requires { expr; ... } or requires(params) { expr; ... }
 	if (constraint_expr.is<RequiresExpressionNode>()) {
-		const auto& requires_expr = constraint_expr.as<RequiresExpressionNode>();
-		// Evaluate each requirement in the requires expression
-		// For now, we check if each requirement is a valid expression
-		// This is a simplified check - full implementation would need to verify
-		// that the expressions are well-formed with the substituted template arguments
-		for (const auto& requirement : requires_expr.requirements()) {
-			// Check different types of requirements
-			if (requirement.is<CompoundRequirementNode>()) {
-				// Compound requirement: { expression } -> Type
-				// For now, assume satisfied - full implementation would check
-				// that the expression is valid and the return type matches
-				continue;
-			}
-			// Check for false literal (from SFINAE recovery when expression parsing failed)
-			if (requirement.is<BoolLiteralNode>()) {
-				if (!requirement.as<BoolLiteralNode>().value()) {
-					return ConstraintEvaluationResult::failure(
-						"requirement not satisfied: expression is ill-formed",
-						"false",
-						"the expression is not valid for the substituted types");
-				}
-				continue;
-			}
-			if (requirement.is<RequiresClauseNode>()) {
-				// Nested requirement: requires constraint
-				const auto& nested_req = requirement.as<RequiresClauseNode>();
-				auto nested_result = evaluateConstraint(nested_req.constraint_expr(), template_args, template_param_names);
-				if (!nested_result.satisfied) {
-					return nested_result;
-				}
-				continue;
-			}
-			// Simple requirement: expression must be valid
-			// For binary operator expressions like a + b, we need to check if the operation is valid for the type
-			if (requirement.is<ExpressionNode>()) {
-				const ExpressionNode& expr = requirement.as<ExpressionNode>();
-				// Check if this is a false literal (SFINAE recovery created this when wrapped in ExpressionNode)
-				if (std::holds_alternative<BoolLiteralNode>(expr)) {
-					const BoolLiteralNode& bool_lit = std::get<BoolLiteralNode>(expr);
-					if (!bool_lit.value()) {
-						return ConstraintEvaluationResult::failure(
-							"requirement not satisfied: expression is not valid for the given types",
-							"false",
-							"the expression is ill-formed for the substituted types");
-					}
-					continue;
-				}
-				// Check if this is a function call to a constrained template function
-				if (std::holds_alternative<CallExprNode>(expr)) {
-					const CallExprNode& call = std::get<CallExprNode>(expr);
-					std::string_view called_name = call.called_from().value();
-					// Look up if this function is a template with a requires clause
-					const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(called_name);
-					if (all_templates) {
-						for (const auto& tmpl : *all_templates) {
-							if (tmpl.is<TemplateFunctionDeclarationNode>()) {
-								const auto& tfdn = tmpl.as<TemplateFunctionDeclarationNode>();
-								if (tfdn.has_requires_clause()) {
-									// Build the called function's own template parameter names
-									// and map outer template args to them via positional matching
-									InlineVector<std::string_view, 4> callee_param_names;
-									for (const auto& param_node : tfdn.template_parameters()) {
-										callee_param_names.push_back(param_node.name());
-									}
-									// Evaluate using the callee's param names with the outer args
-									// (positional: concept's T maps to callee's T by position)
-									auto req_result = evaluateConstraint(
-										tfdn.requires_clause()->as<RequiresClauseNode>().constraint_expr(),
-										template_args, callee_param_names);
-									if (!req_result.satisfied) {
-										return ConstraintEvaluationResult::failure(
-											"requirement not satisfied: constrained function call failed",
-											std::string(called_name),
-											"check the constraint on the called function");
-									}
-								}
-							}
-						}
-					}
-				}
-				// The expression parsing succeeded, so it's syntactically valid
-				continue;
-			}
-			if (requirement.is<BinaryOperatorNode>()) {
-				// Binary operation like a + b
-				// For now, assume satisfied - full implementation would check
-				// if the types support the operation
-				continue;
-			}
-		}
-		// All requirements satisfied
-		return ConstraintEvaluationResult::success();
+		return evaluateRequiresExpressionConstraint(
+			constraint_expr.as<RequiresExpressionNode>(),
+			template_args,
+			template_param_names,
+			parser,
+			template_params);
 	}
 
 	// For TypeTraitExprNode (e.g., __is_same(T, int), __is_integral(T))
@@ -2509,7 +2440,8 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 inline ConstraintEvaluationResult evaluateConstraint(
 	const ConceptDeclarationNode& concept_node,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	Parser* parser) {
 	InlineVector<std::string_view, 4> derived_param_names;
 	derived_param_names.reserve(concept_node.template_params().size());
 	for (const TemplateParameterNode& concept_param : concept_node.template_params()) {
@@ -2518,5 +2450,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 	return evaluateConstraint(
 		concept_node.constraint_expr(),
 		template_args,
-		derived_param_names);
+		derived_param_names,
+		parser,
+		concept_node.template_params());
 }
