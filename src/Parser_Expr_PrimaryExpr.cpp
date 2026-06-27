@@ -5230,6 +5230,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				!class_scope_decltype_without_implicit_object;
 			resolved_member_function_from_context = current_struct_lookup.found_any;
 			if (class_scope_decltype_without_implicit_object &&
+				current_struct_lookup.found_non_static &&
 				identifierType.has_value() &&
 				identifierType->is<FunctionDeclarationNode>() &&
 				!identifierType->as<FunctionDeclarationNode>().is_static()) {
@@ -8581,7 +8582,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (is_regular_var) {
 					// It's definitely a variable, don't try template args
-					should_try_template_args = false;
+					should_try_template_args =
+						gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value() ||
+						gTemplateRegistry.lookup_alias_template(identifier_token.value()).has_value() ||
+						gTemplateRegistry.lookupVariableTemplate(identifier_token.value()).has_value() ||
+						gConceptRegistry.hasConcept(identifier_token.value());
 				}
 				// For all other cases (templates, functions, unknown), try template args
 			}

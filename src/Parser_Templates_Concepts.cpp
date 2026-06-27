@@ -342,15 +342,23 @@ ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 			if (expr_node.is<ExpressionNode>()) {
 				const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 				if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
-					if (call_expr->has_dependent_qualified_lookup_record() ||
-						call_expr->has_dependent_unqualified_lookup_record()) {
+					if (call_expr->has_dependent_qualified_lookup_record()) {
+						return false;
+					}
+					if (call_expr->has_dependent_unqualified_lookup_record() &&
+						call_expr->dependent_unqualified_lookup_record()
+							->point_of_instantiation_function == nullptr) {
 						return false;
 					}
 					if (call_expr->call_kind() != CalleeKind::IndirectCall) {
-						const ResolvedFunctionQueryResult direct_call_query =
-							parser->semanticAnalysis().getResolvedDirectCallQuery(call_expr);
-						if (direct_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
-							return false;
+						if (call_expr->callee().has_function_declaration()) {
+							return true;
+						} else {
+							const ResolvedFunctionQueryResult direct_call_query =
+								parser->semanticAnalysis().getResolvedDirectCallQuery(call_expr);
+							if (direct_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
+								return false;
+							}
 						}
 					}
 				}
