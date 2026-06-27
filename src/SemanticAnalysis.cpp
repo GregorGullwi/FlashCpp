@@ -4419,6 +4419,12 @@ TypeSpecifierQueryResult SemanticAnalysis::getExpressionTypeQuery(const ASTNode&
 	return {TypeSpecifierQueryResult::State::Available, type};
 }
 
+TypeSpecifierQueryResult SemanticAnalysis::analyzeExpressionTypeQuery(const ASTNode& node) {
+	SemanticContext ctx;
+	normalizeExpression(node, ctx);
+	return getExpressionTypeQuery(node);
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::getTernaryResultType(const TernaryOperatorNode& ternary_node) const {
 	auto it = ternary_result_types_.find(&ternary_node);
 	if (it == ternary_result_types_.end()) {

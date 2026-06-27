@@ -498,8 +498,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					// If it's a variable, don't try template argument parsing
 					if (symbol_type && (symbol_type->is<VariableDeclarationNode>() ||
 										symbol_type->is<DeclarationNode>())) {
-						// This is a regular variable, treat < as comparison
-						could_be_template_name = false;
+						could_be_template_name =
+							gTemplateRegistry.lookupTemplate(ident_name).has_value() ||
+							gTemplateRegistry.lookup_alias_template(ident_name).has_value() ||
+							gTemplateRegistry.lookupVariableTemplate(ident_name).has_value() ||
+							gConceptRegistry.hasConcept(ident_name);
 					} else {
 						// Not a known variable, could be a template
 						could_be_template_name = true;
@@ -689,6 +692,81 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						return makeBinaryLoopStallError();
 					}
 					continue;
+				}
+
+				if (peek() == "("_tok && result.node()->is<ExpressionNode>()) {
+					const ExpressionNode& callee_expr = result.node()->as<ExpressionNode>();
+					if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&callee_expr)) {
+						Token callee_token = identifier_ptr->identifier_token();
+						advance(); // consume '('
+
+						auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+							.handle_pack_expansion = true,
+							.collect_types = true,
+							.expand_simple_packs = true,
+							.callee_name = callee_token.value()});
+						if (!args_result.success) {
+							return ParseResult::error(
+								args_result.error_message,
+								args_result.error_token.value_or(current_token_));
+						}
+						if (!consume(")"_tok)) {
+							return ParseResult::error(
+								"Expected ')' after function call arguments",
+								current_token_);
+						}
+
+						const InlineVector<TemplateTypeArg, 4>& explicit_args =
+							template_args.read_template_type_args();
+						std::optional<ASTNode> instantiated_func =
+							try_instantiate_template_explicit(
+								callee_token.value(),
+								explicit_args,
+								args_result.arg_types);
+						if (!instantiated_func.has_value()) {
+							NamespaceHandle current_namespace =
+								gSymbolTable.get_current_namespace_handle();
+							if (!current_namespace.isGlobal()) {
+								StringHandle qualified_handle =
+									gNamespaceRegistry.buildQualifiedIdentifier(
+										current_namespace,
+										callee_token.handle());
+								instantiated_func =
+									try_instantiate_template_explicit(
+										StringTable::getStringView(qualified_handle),
+										explicit_args,
+										args_result.arg_types);
+							}
+						}
+
+						if (instantiated_func.has_value()) {
+							result = ParseResult::success(
+								emplace_node<ExpressionNode>(
+									makeCallExprFromNode(
+										*instantiated_func,
+										std::move(args_result.args),
+										callee_token)));
+						} else {
+							auto type_node = emplace_node<TypeSpecifierNode>(
+								TypeCategory::Auto,
+								TypeQualifier::None,
+								get_type_size_bits(TypeCategory::Auto),
+								callee_token,
+								CVQualifier::None);
+							auto placeholder_decl =
+								emplace_node<DeclarationNode>(type_node, callee_token);
+							result = ParseResult::success(
+								emplace_node<ExpressionNode>(
+									makeDirectCallExpr(
+										placeholder_decl.as<DeclarationNode>(),
+										std::move(args_result.args),
+										callee_token)));
+						}
+						if (isParserAtSameToken(loop_start_token, peek_info())) {
+							return makeBinaryLoopStallError();
+						}
+						continue;
+					}
 				}
 
 				// Template arguments were parsed but followed by '(' instead of '::'.

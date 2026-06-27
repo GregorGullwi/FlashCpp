@@ -519,6 +519,40 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 	return false;
 }
 
+inline bool isDirectCtorTemplateParameterMatch(
+	const StructMemberFunction& mf,
+	const TypeSpecifierNode& param_spec) {
+	if (!mf.function_decl.is<ConstructorDeclarationNode>()) {
+		return false;
+	}
+
+	const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
+	if (!ctor_decl.has_template_parameters()) {
+		return false;
+	}
+
+	const TypeCategory param_category = param_spec.category();
+	if (param_category != TypeCategory::Template &&
+		param_category != TypeCategory::TypeAlias &&
+		param_category != TypeCategory::UserDefined &&
+		!isPlaceholderAutoType(param_category)) {
+		return false;
+	}
+
+	const StringHandle param_name = param_spec.token().handle();
+	if (!param_name.isValid()) {
+		return false;
+	}
+
+	for (const auto& template_param : ctor_decl.template_parameters()) {
+		if (template_param.nameHandle() == param_name) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, const TypeSpecifierNode& source_type) {
 	if (!target_idx.is_valid()) {
 		return false;
@@ -554,6 +588,14 @@ inline bool hasImplicitConvertingConstructorForArgument(TypeIndex target_idx, co
 				return true;
 			}
 			continue;
+		}
+		if (isDirectCtorTemplateParameterMatch(mf, param_spec)) {
+			// Constructor templates like `template<class T> _Literal_zero(T)` do
+			// not have a concrete first-parameter type to resolve here. Matching
+			// the ctor's own template parameter name keeps the viability check
+			// narrow while still allowing the later template-deduction path to
+			// instantiate the concrete conversion when needed.
+			return true;
 		}
 		if (param_spec.category() == TypeCategory::Struct) {
 			if (!source_type.type_index().is_valid() || !param_spec.type_index().is_valid()) {

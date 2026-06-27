@@ -947,15 +947,19 @@ private:
 class RequiresExpressionNode {
 public:
 	explicit RequiresExpressionNode(
+		std::vector<ASTNode> parameters,
 		std::vector<ASTNode> requirements,
 		Token requires_token = Token())
-		: requirements_(std::move(requirements)),
+		: parameters_(std::move(parameters)),
+		  requirements_(std::move(requirements)),
 		  requires_token_(requires_token) {}
 
+	std::span<const ASTNode> parameter_nodes() const { return parameters_; }
 	std::span<const ASTNode> requirements() const { return requirements_; }
 	const Token& requires_token() const { return requires_token_; }
 
 private:
+	std::vector<ASTNode> parameters_;
 	std::vector<ASTNode> requirements_;	// List of requirement expressions
 	Token requires_token_;			   // For error reporting
 };
