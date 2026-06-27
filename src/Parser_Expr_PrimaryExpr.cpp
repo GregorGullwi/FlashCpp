@@ -6349,9 +6349,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-			// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
+			const bool has_dependent_call_args =
+				argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+				argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+
+			// Try to instantiate the template function (skip in extern "C" contexts - C has no templates).
+			// Dependent calls are resolved at the point of instantiation; attempting overload
+			// resolution here can emit false diagnostics for overloads that are not viable yet.
 			std::optional<ASTNode> template_func_inst;
-			if (current_linkage_ != Linkage::C) {
+			if (current_linkage_ != Linkage::C && !has_dependent_call_args) {
 				template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
 			}
 
@@ -6375,9 +6381,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				const bool has_dependent_call_args =
-					argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 				if (has_dependent_call_args) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
