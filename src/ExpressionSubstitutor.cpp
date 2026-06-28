@@ -1835,7 +1835,7 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 	if (!concept_opt.has_value() && call.has_qualified_name()) {
 		concept_opt = gConceptRegistry.lookupConcept(call.called_from().value());
 	}
-	if (!concept_opt.has_value() || !call.has_template_arguments()) {
+	if (!concept_opt.has_value() || !concept_opt->is<ConceptDeclarationNode>() || !call.has_template_arguments()) {
 		return std::nullopt;
 	}
 

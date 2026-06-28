@@ -314,17 +314,14 @@ ParseResult Parser::parse_template_parameter() {
 				if (!is_variadic && peek() == "="_tok) {
 					advance(); // consume '='
 
-					SaveHandle default_pos = save_token_position();
 					ScopedParserInstantiationContext guard_instantiation_mode(
 						*this,
 						TemplateInstantiationMode::ShapeOnly,
 						StringHandle{});
 					auto default_type_result = parse_type_specifier();
 					if (default_type_result.is_error()) {
-						discard_saved_token(default_pos);
 						return default_type_result;
 					}
-					discard_saved_token(default_pos);
 					if (!default_type_result.node().has_value()) {
 						return ParseResult::error(
 							"Expected default argument after '=' in template parameter",

@@ -489,6 +489,12 @@ class Parser {
 	friend class SemanticAnalysis;
 	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
 	friend struct DeferredBaseReplayContextScope;
+	friend ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
+		const RequiresExpressionNode& requires_expr,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		const InlineVector<std::string_view, 4>& template_param_names,
+		Parser* parser,
+		std::span<const TemplateParameterNode> template_params);
 	template <typename ParserLike, typename ParamContainer, typename ArgContainer>
 	friend TypeIndex resolveDependentMemberTemplateSubstitutionArtifacts(
 		ParserLike& parser,

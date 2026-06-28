@@ -330,6 +330,11 @@ ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 	const InlineVector<std::string_view, 4>& template_param_names,
 	Parser* parser,
 	std::span<const TemplateParameterNode> template_params) {
+	std::optional<Parser::ScopedParserInstantiationContext> requires_probe;
+	if (parser != nullptr) {
+		requires_probe.emplace(*parser, Parser::TemplateInstantiationMode::SoftProbe, StringHandle{});
+	}
+
 	auto isValidRequirementExpression = [&](const ASTNode& expr_node) {
 		if (parser == nullptr) {
 			return false;
@@ -458,38 +463,6 @@ ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 					"requirement not satisfied: expression is not valid for the given types",
 					"simple requirement",
 					"the expression is ill-formed for the substituted types");
-			}
-			if (std::holds_alternative<CallExprNode>(expr)) {
-				const CallExprNode& call = std::get<CallExprNode>(expr);
-				std::string_view called_name = call.called_from().value();
-				const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(called_name);
-				if (all_templates != nullptr) {
-					for (const ASTNode& tmpl : *all_templates) {
-						if (!tmpl.is<TemplateFunctionDeclarationNode>()) {
-							continue;
-						}
-						const auto& tfdn = tmpl.as<TemplateFunctionDeclarationNode>();
-						if (!tfdn.has_requires_clause()) {
-							continue;
-						}
-						InlineVector<std::string_view, 4> callee_param_names;
-						for (const auto& param_node : tfdn.template_parameters()) {
-							callee_param_names.push_back(param_node.name());
-						}
-						auto req_result = evaluateConstraint(
-							tfdn.requires_clause()->as<RequiresClauseNode>().constraint_expr(),
-							template_args,
-							callee_param_names,
-							parser,
-							tfdn.template_parameters());
-						if (!req_result.satisfied) {
-							return ConstraintEvaluationResult::failure(
-								"requirement not satisfied: constrained function call failed",
-								std::string(called_name),
-								"check the constraint on the called function");
-						}
-					}
-				}
 			}
 			continue;
 		}
