@@ -1131,6 +1131,7 @@ ParseResult Parser::parse_type_specifier() {
 	} else if (peek().is_identifier()) {
 		// Handle user-defined type (struct, class, or other user-defined types)
 		// Build qualified name using StringBuilder for efficiency
+		SaveHandle type_name_start_pos = save_token_position();
 		StringBuilder type_name_builder;
 		type_name_builder.append(peek_info().value());
 		Token type_name_token = peek_info(); // Save the token before consuming it
@@ -2090,7 +2091,8 @@ ParseResult Parser::parse_type_specifier() {
 				};
 				if (lookup_variable_template_for_type_name().has_value()) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Rejecting variable template '{}' as a type-specifier", type_name);
-					return ParseResult::error("Variable template is not a type", type_name_token);
+					restore_token_position(type_name_start_pos);
+					return ParseResult::null();
 				}
 
 				// Check if this is a template parameter being used with template arguments (e.g., Container<T>)

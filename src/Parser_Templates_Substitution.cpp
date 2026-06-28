@@ -1115,6 +1115,10 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 
 				for (const ASTNode& pack_value : pack_values) {
+					if ((op == "&&" && !folded_value) ||
+						(op == "||" && folded_value)) {
+						break;
+					}
 					if (!appendConstantOperand(pack_value)) {
 						return std::nullopt;
 					}
