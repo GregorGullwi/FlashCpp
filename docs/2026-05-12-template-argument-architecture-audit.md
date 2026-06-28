@@ -692,6 +692,17 @@ When changing this area, always rerun:
    structured qualified-owner record on the AST and route both parser
    materialization and sema fallback through one owner/type-owner-vs-namespace
    resolver so this pattern does not repeat in more qualified-call subpaths.
+   Follow-up for the standard-header frontier: builtin type template arguments
+   are now canonicalized through `TemplateArgumentMaterialization.h` instead of
+   ad hoc `get_type_name` / empty-token reconstruction. Expression-form
+   template arguments in constexpr variable-template calls, raw
+   `TypeSpecifierNode` substitution, and parser-side type-parameter expression
+   replacement all use the shared token/type-argument helpers. This fixes the
+   MSVC `<type_traits>` `is_integral_v` shape where `wchar_t`, `char8_t`,
+   `char16_t`, and `char32_t` were previously reconstructed as an `unknown`
+   identifier inside an `is_same_v<T, U>` fold. Guard:
+   `test_variable_template_fold_remove_cv_builtin_list_ret0.cpp`; focused
+   validation also covers `std/test_std_type_traits.cpp`.
 
 2. Only then spend complexity on current-instantiation /
    unknown-specialization expansion, and only for concrete typed-lookup or

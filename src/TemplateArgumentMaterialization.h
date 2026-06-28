@@ -2,12 +2,16 @@
 
 #include "Parser.h"
 
-inline std::string_view getTemplateArgumentBuiltinTokenText(const TemplateTypeArg& arg) {
-	switch (arg.typeEnum()) {
+inline std::string_view getTemplateArgumentBuiltinTokenText(TypeCategory category) {
+	switch (category) {
 	case TypeCategory::Void: return "void";
 	case TypeCategory::Bool: return "bool";
 	case TypeCategory::Char: return "char";
 	case TypeCategory::UnsignedChar: return "unsigned char";
+	case TypeCategory::WChar: return "wchar_t";
+	case TypeCategory::Char8: return "char8_t";
+	case TypeCategory::Char16: return "char16_t";
+	case TypeCategory::Char32: return "char32_t";
 	case TypeCategory::Short: return "short";
 	case TypeCategory::UnsignedShort: return "unsigned short";
 	case TypeCategory::Int: return "int";
@@ -21,6 +25,10 @@ inline std::string_view getTemplateArgumentBuiltinTokenText(const TemplateTypeAr
 	case TypeCategory::LongDouble: return "long double";
 	default: return {};
 	}
+}
+
+inline std::string_view getTemplateArgumentBuiltinTokenText(const TemplateTypeArg& arg) {
+	return getTemplateArgumentBuiltinTokenText(arg.typeEnum());
 }
 
 inline TypeCategory getTemplateArgumentBuiltinCategoryFromTokenText(std::string_view type_name) {
@@ -60,6 +68,85 @@ inline TypeCategory getTemplateArgumentBuiltinCategoryFromTokenText(std::string_
 	if (type_name == "double") return TypeCategory::Double;
 	if (type_name == "long double") return TypeCategory::LongDouble;
 	return TypeCategory::Invalid;
+}
+
+inline std::optional<TemplateTypeArg> materializeTemplateTypeArgumentFromName(
+	std::string_view type_name) {
+	if (type_name.empty()) {
+		return std::nullopt;
+	}
+
+	if (TypeCategory builtin_category =
+			getTemplateArgumentBuiltinCategoryFromTokenText(type_name);
+		builtin_category != TypeCategory::Invalid) {
+		return TemplateTypeArg::makeType(nativeTypeIndex(builtin_category));
+	}
+
+	StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name);
+	if (const TypeInfo* type_info = findTypeByName(type_name_handle)) {
+		return TemplateTypeArg::makeType(
+			type_info->registeredTypeIndex().withCategory(
+				type_info->typeEnum()));
+	}
+
+	return std::nullopt;
+}
+
+inline std::optional<TemplateTypeArg> materializeTemplateTypeArgumentFromExpression(
+	const ExpressionNode& expr) {
+	if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+		return materializeTemplateTypeArgumentFromName(identifier->name());
+	}
+	if (const auto* qualified_identifier =
+			std::get_if<QualifiedIdentifierNode>(&expr)) {
+		if (std::optional<TemplateTypeArg> qualified_arg =
+				materializeTemplateTypeArgumentFromName(
+					qualified_identifier->full_name())) {
+			return qualified_arg;
+		}
+		return materializeTemplateTypeArgumentFromName(
+			qualified_identifier->name());
+	}
+	return std::nullopt;
+}
+
+inline std::optional<TypeSpecifierNode> makeCanonicalBuiltinTypeSpecifier(
+	const TypeSpecifierNode& type) {
+	TypeCategory category = type.type_index().is_valid()
+		? type.type_index().category()
+		: type.category();
+	std::string_view builtin_name = getTemplateArgumentBuiltinTokenText(category);
+	if (builtin_name.empty()) {
+		return std::nullopt;
+	}
+
+	Token canonical_token(
+		Token::Type::Keyword,
+		builtin_name,
+		type.token().line(),
+		type.token().column(),
+		type.token().file_index());
+	TypeSpecifierNode builtin_spec(
+		nativeTypeIndex(category),
+		type.size_in_bits() != 0 ? type.size_in_bits() : get_type_size_bits(category),
+		canonical_token,
+		type.cv_qualifier(),
+		type.reference_qualifier());
+	for (const PointerLevel& pointer_level : type.pointer_levels()) {
+		builtin_spec.add_pointer_level(pointer_level.cv_qualifier);
+	}
+	if (type.is_pack_expansion()) {
+		builtin_spec.set_pack_expansion(true);
+	}
+	if (type.is_array()) {
+		for (size_t dim : type.array_dimensions()) {
+			builtin_spec.add_array_dimension(dim);
+		}
+	}
+	if (type.has_function_signature()) {
+		builtin_spec.set_function_signature(type.function_signature());
+	}
+	return builtin_spec;
 }
 
 inline ASTNode materializeDependentTemplateArgumentNode(
@@ -115,6 +202,16 @@ inline ASTNode materializeValueTemplateArgumentNode(
 inline Token makeTemplateArgumentTypeToken(
 	const TemplateTypeArg& arg,
 	const Token& source_token) {
+	if (std::string_view builtin_name = getTemplateArgumentBuiltinTokenText(arg);
+		!builtin_name.empty()) {
+		return Token(
+			Token::Type::Keyword,
+			builtin_name,
+			source_token.line(),
+			source_token.column(),
+			source_token.file_index());
+	}
+
 	if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
 		std::string_view type_name = StringTable::getStringView(type_info->name());
 		if (!type_name.empty()) {
@@ -125,14 +222,6 @@ inline Token makeTemplateArgumentTypeToken(
 				source_token.column(),
 				source_token.file_index());
 		}
-	} else if (std::string_view builtin_name = getTemplateArgumentBuiltinTokenText(arg);
-			   !builtin_name.empty()) {
-		return Token(
-			Token::Type::Keyword,
-			builtin_name,
-			source_token.line(),
-			source_token.column(),
-			source_token.file_index());
 	}
 
 	return source_token;

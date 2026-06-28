@@ -5,6 +5,7 @@
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -539,9 +540,9 @@ ASTNode Parser::substituteTemplateParameters(
 						return;
 
 					if (arg.isTypeArgument()) {
-						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()),
-										 tparam_ref.token().line(), tparam_ref.token().column(),
-										 tparam_ref.token().file_index());
+						Token type_token = makeTemplateArgumentTypeToken(
+							arg,
+							tparam_ref.token());
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_template_param_ref = true;
 					} else if (arg.is_value) {
@@ -636,7 +637,9 @@ ASTNode Parser::substituteTemplateParameters(
 					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value)
 						return;
 					if (arg.isTypeArgument()) {
-						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()), 0, 0, 0);
+						Token type_token = makeTemplateArgumentTypeToken(
+							arg,
+							id_node.identifier_token());
 						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
 						substituted_identifier = true;
 					} else if (arg.is_value) {
@@ -1082,6 +1085,52 @@ ASTNode Parser::substituteTemplateParameters(
 			if (pack_values.empty()) {
 				FLASH_LOG(Templates, Warning, "Fold expression pack is empty");
 				return node;
+			}
+
+			auto tryReduceConstexprLogicalFold = [&]() -> std::optional<ASTNode> {
+				std::string_view op = fold.op();
+				if (op != "&&" && op != "||") {
+					return std::nullopt;
+				}
+
+				bool folded_value = (op == "&&");
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+				auto appendConstantOperand = [&](const ASTNode& operand) -> bool {
+					auto eval_result = ConstExpr::Evaluator::evaluate(operand, eval_ctx);
+					if (!eval_result.success()) {
+						return false;
+					}
+					bool operand_value = eval_result.as_bool();
+					folded_value = op == "&&"
+						? (folded_value && operand_value)
+						: (folded_value || operand_value);
+					return true;
+				};
+
+				if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
+					ASTNode init = substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
+					if (!appendConstantOperand(init)) {
+						return std::nullopt;
+					}
+				}
+
+				for (const ASTNode& pack_value : pack_values) {
+					if (!appendConstantOperand(pack_value)) {
+						return std::nullopt;
+					}
+				}
+
+				Token bool_token(
+					Token::Type::Keyword,
+					folded_value ? "true"sv : "false"sv,
+					fold.get_token().line(),
+					fold.get_token().column(),
+					fold.get_token().file_index());
+				return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, folded_value));
+			};
+
+			if (std::optional<ASTNode> folded_logical = tryReduceConstexprLogicalFold()) {
+				return *folded_logical;
 			}
 
 			// Expand the fold expression based on type and direction

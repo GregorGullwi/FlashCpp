@@ -7,6 +7,7 @@
 #include "CallNodeHelpers.h"
 #include "SemanticAnalysis.h"
 #include "StringLiteralTokenUtils.h"
+#include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
 
 namespace ConstExpr {
@@ -4600,6 +4601,12 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 			}
 			template_args.push_back(std::move(template_arg));
 		} else if (arg_node.is<ExpressionNode>()) {
+			const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+			if (std::optional<TemplateTypeArg> type_arg =
+					materializeTemplateTypeArgumentFromExpression(arg_expr)) {
+				template_args.push_back(*type_arg);
+				continue;
+			}
 			EvalResult arg_val = evaluate(arg_node, context);
 			if (!arg_val.success()) {
 				return EvalResult::error("Failed to evaluate non-type template argument: " + arg_val.error_message);
