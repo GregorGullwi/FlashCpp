@@ -10,6 +10,35 @@
 
 #include <numeric>
 
+static void logTemplateRequiresClauseFailure(
+	bool emit_parser_error,
+	std::string_view template_name,
+	const ConstraintEvaluationResult& constraint_result,
+	std::string_view args_str) {
+	if (emit_parser_error) {
+		FLASH_LOG(Parser, Error, "constraint not satisfied for template function '", template_name, "'");
+		FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+		if (!constraint_result.failed_requirement.empty()) {
+			FLASH_LOG(Parser, Error, "  failed requirement: ", constraint_result.failed_requirement);
+		}
+		if (!constraint_result.suggestion.empty()) {
+			FLASH_LOG(Parser, Error, "  suggestion: ", constraint_result.suggestion);
+		}
+		FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
+		return;
+	}
+
+	FLASH_LOG(Templates, Debug, "constraint not satisfied for template function '", template_name, "'");
+	FLASH_LOG(Templates, Debug, "  ", constraint_result.error_message);
+	if (!constraint_result.failed_requirement.empty()) {
+		FLASH_LOG(Templates, Debug, "  failed requirement: ", constraint_result.failed_requirement);
+	}
+	if (!constraint_result.suggestion.empty()) {
+		FLASH_LOG(Templates, Debug, "  suggestion: ", constraint_result.suggestion);
+	}
+	FLASH_LOG(Templates, Debug, "  template arguments: ", args_str);
+}
+
 template <typename ParamContainer>
 static bool defaultExpressionReferencesTemplateParams(
 	const ASTNode& expr,
@@ -3637,7 +3666,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			// Evaluate the constraint with the template arguments
 			auto constraint_result = evaluateConstraint(
-				requires_clause.constraint_expr(), constraint_eval_args, eval_param_names);
+				requires_clause.constraint_expr(),
+				constraint_eval_args,
+				eval_param_names,
+				this,
+				template_params);
 
 			FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 
@@ -3650,15 +3683,11 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					args_str += constraint_eval_args[j].toString();
 				}
 
-				FLASH_LOG(Parser, Error, "constraint not satisfied for template function '", template_name, "'");
-				FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
-				if (!constraint_result.failed_requirement.empty()) {
-					FLASH_LOG(Parser, Error, "  failed requirement: ", constraint_result.failed_requirement);
-				}
-				if (!constraint_result.suggestion.empty()) {
-					FLASH_LOG(Parser, Error, "  suggestion: ", constraint_result.suggestion);
-				}
-				FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
+				logTemplateRequiresClauseFailure(
+					!isTemplateInstantiationFailureProbeMode(),
+					template_name,
+					constraint_result,
+					args_str);
 
 				// Don't create instantiation - constraint failed, try next overload
 				continue;
@@ -3685,7 +3714,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					InlineVector<TemplateTypeArg, 4> concept_args;
 					concept_args.push_back(concept_arg);
 					auto constraint_result = evaluateConstraint(
-						concept_node, concept_args);
+						concept_node,
+						concept_args,
+						this);
 					if (!constraint_result.satisfied) {
 						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
@@ -4202,7 +4233,12 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 							InlineVector<std::string_view, 4> param_names;
 							for (const auto& tp : winner_template_params)
 								param_names.push_back(tp.name());
-							auto cr = evaluateConstraint(rc.constraint_expr(), winner.template_args, param_names);
+							auto cr = evaluateConstraint(
+								rc.constraint_expr(),
+								winner.template_args,
+								param_names,
+								this,
+								winner_template_params);
 							if (!cr.satisfied) {
 								failTemplateInstantiation(
 									StringBuilder()
@@ -4231,7 +4267,7 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 									concept_arg.ref_qualifier = ReferenceQualifier::None;
 									InlineVector<TemplateTypeArg, 4> concept_args;
 									concept_args.push_back(concept_arg);
-									auto cr = evaluateConstraint(concept_node, concept_args);
+									auto cr = evaluateConstraint(concept_node, concept_args, this);
 									if (!cr.satisfied) {
 										concept_failed = true;
 									}
@@ -4832,7 +4868,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		// Evaluate the constraint with the template arguments
 		auto constraint_result = evaluateConstraint(
-			requires_clause.constraint_expr(), template_args, eval_param_names);
+			requires_clause.constraint_expr(),
+			template_args,
+			eval_param_names,
+			this,
+			template_params);
 
 		FLASH_LOG(Templates, Debug, "  Constraint evaluation result: satisfied=", constraint_result.satisfied);
 
@@ -4846,15 +4886,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				args_str += template_args[i].toString();
 			}
 
-			FLASH_LOG(Parser, Error, "constraint not satisfied for template function '", template_name, "'");
-			FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
-			if (!constraint_result.failed_requirement.empty()) {
-				FLASH_LOG(Parser, Error, "  failed requirement: ", constraint_result.failed_requirement);
-			}
-			if (!constraint_result.suggestion.empty()) {
-				FLASH_LOG(Parser, Error, "  suggestion: ", constraint_result.suggestion);
-			}
-			FLASH_LOG(Parser, Error, "  template arguments: ", args_str);
+			logTemplateRequiresClauseFailure(
+				!isTemplateInstantiationFailureProbeMode(),
+				template_name,
+				constraint_result,
+				args_str);
 
 			// Don't create instantiation - constraint failed.
 			// Memoize under a per-overload key so repeat SFINAE probes for the
@@ -4892,10 +4928,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				InlineVector<TemplateTypeArg, 4> concept_args;
 				concept_args.push_back(concept_arg);
 				auto constraint_result = evaluateConstraint(
-					concept_node, concept_args);
+					concept_node,
+					concept_args,
+					this);
 				if (!constraint_result.satisfied) {
-					FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
-					FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+					if (isTemplateInstantiationFailureProbeMode()) {
+						FLASH_LOG(Templates, Debug, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
+						FLASH_LOG(Templates, Debug, "  ", constraint_result.error_message);
+					} else {
+						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
+						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
+					}
 					concept_failed = true;
 				}
 			});

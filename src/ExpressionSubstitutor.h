@@ -184,6 +184,7 @@ private:
 	const TypeInfo* resolveCurrentOwnerQualifiedNamespaceMember(
 		StringHandle member_name_handle);
 	const TypeInfo* resolveDependentMemberType(const TypeInfo& type_info, int depth);
+	std::optional<ASTNode> tryEvaluateConcreteConceptCall(const CallExprNode& call) const;
 	void rebuildEnvironmentFromCurrentBindings();
 
 // Substitution context

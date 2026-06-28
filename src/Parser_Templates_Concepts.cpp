@@ -317,10 +317,167 @@ ParseResult Parser::parse_requires_expression() {
 
 	// Create RequiresExpressionNode
 	auto requires_expr_node = emplace_node<RequiresExpressionNode>(
+		std::move(parameters),
 		std::move(requirements),
 		requires_token);
 
 	return saved_position.success(requires_expr_node);
+}
+
+ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
+	const RequiresExpressionNode& requires_expr,
+	const InlineVector<TemplateTypeArg, 4>& template_args,
+	const InlineVector<std::string_view, 4>& template_param_names,
+	Parser* parser,
+	std::span<const TemplateParameterNode> template_params) {
+	std::optional<Parser::ScopedParserInstantiationContext> requires_probe;
+	if (parser != nullptr) {
+		requires_probe.emplace(*parser, Parser::TemplateInstantiationMode::SoftProbe, StringHandle{});
+	}
+
+	auto isValidRequirementExpression = [&](const ASTNode& expr_node) {
+		if (parser == nullptr) {
+			return false;
+		}
+
+		try {
+			TypeSpecifierQueryResult type_query =
+				parser->semanticAnalysis().analyzeExpressionTypeQuery(expr_node);
+
+			if (expr_node.is<ExpressionNode>()) {
+				const ExpressionNode& expr = expr_node.as<ExpressionNode>();
+				if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+					if (call_expr->has_dependent_qualified_lookup_record()) {
+						return false;
+					}
+					if (call_expr->has_dependent_unqualified_lookup_record() &&
+						call_expr->dependent_unqualified_lookup_record()
+							->point_of_instantiation_function == nullptr) {
+						return false;
+					}
+					if (call_expr->call_kind() != CalleeKind::IndirectCall) {
+						if (call_expr->has_receiver()) {
+							const ResolvedFunctionQueryResult direct_call_query =
+								parser->semanticAnalysis().getResolvedDirectCallQuery(call_expr);
+							if (direct_call_query.hasValue()) {
+								return true;
+							}
+							const ResolvedFunctionQueryResult op_call_query =
+								parser->semanticAnalysis().getResolvedOpCallQuery(call_expr);
+							if (op_call_query.hasValue()) {
+								return true;
+							}
+							if (direct_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent ||
+								op_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
+								return false;
+							}
+						} else if (call_expr->callee().has_function_declaration()) {
+							return true;
+						} else if (const ResolvedFunctionQueryResult direct_call_query =
+									   parser->semanticAnalysis().getResolvedDirectCallQuery(call_expr);
+								   direct_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
+							return false;
+						}
+					}
+				}
+			}
+
+			return type_query.hasValue();
+		} catch (const CompileError&) {
+			return false;
+		}
+	};
+
+	gSymbolTable.enter_scope(ScopeType::Block);
+	ScopeGuard requires_scope_guard([&]() { gSymbolTable.exit_scope(); });
+
+	if (parser != nullptr) {
+		for (const ASTNode& param_node : requires_expr.parameter_nodes()) {
+			ASTNode substituted_param = template_params.empty()
+				? param_node
+				: parser->substituteTemplateParameters(param_node, template_params, template_args);
+			if (!substituted_param.is<DeclarationNode>()) {
+				return ConstraintEvaluationResult::failure(
+					"constraint not satisfied: requires parameter could not be materialized",
+					"requires parameter",
+					"preserve the requires parameter declaration through substitution");
+			}
+			const auto& decl = substituted_param.as<DeclarationNode>();
+			if (!decl.identifier_token().value().empty()) {
+				gSymbolTable.insert(decl.identifier_token().value(), substituted_param);
+			}
+		}
+	} else if (!requires_expr.parameter_nodes().empty()) {
+		return ConstraintEvaluationResult::failure(
+			"constraint not satisfied: requires expression parameters need parser context",
+			"requires parameter",
+			"evaluate this concept from parser/template-instantiation context");
+	}
+
+	for (const ASTNode& requirement : requires_expr.requirements()) {
+		ASTNode substituted_requirement = requirement;
+		if (parser != nullptr && !template_params.empty()) {
+			substituted_requirement =
+				parser->substituteTemplateParameters(requirement, template_params, template_args);
+		}
+
+		if (substituted_requirement.is<CompoundRequirementNode>()) {
+			continue;
+		}
+		if (substituted_requirement.is<BoolLiteralNode>()) {
+			if (!substituted_requirement.as<BoolLiteralNode>().value()) {
+				return ConstraintEvaluationResult::failure(
+					"requirement not satisfied: expression is ill-formed",
+					"false",
+					"the expression is not valid for the substituted types");
+			}
+			continue;
+		}
+		if (substituted_requirement.is<RequiresClauseNode>()) {
+			const auto& nested_req = substituted_requirement.as<RequiresClauseNode>();
+			auto nested_result = evaluateConstraint(
+				nested_req.constraint_expr(),
+				template_args,
+				template_param_names,
+				parser,
+				template_params);
+			if (!nested_result.satisfied) {
+				return nested_result;
+			}
+			continue;
+		}
+		if (substituted_requirement.is<ExpressionNode>()) {
+			const ExpressionNode& expr = substituted_requirement.as<ExpressionNode>();
+			if (std::holds_alternative<BoolLiteralNode>(expr)) {
+				const BoolLiteralNode& bool_lit = std::get<BoolLiteralNode>(expr);
+				if (!bool_lit.value()) {
+					return ConstraintEvaluationResult::failure(
+						"requirement not satisfied: expression is not valid for the given types",
+						"false",
+						"the expression is ill-formed for the substituted types");
+				}
+				continue;
+			}
+			if (!isValidRequirementExpression(substituted_requirement)) {
+				return ConstraintEvaluationResult::failure(
+					"requirement not satisfied: expression is not valid for the given types",
+					"simple requirement",
+					"the expression is ill-formed for the substituted types");
+			}
+			continue;
+		}
+		if (substituted_requirement.is<BinaryOperatorNode>()) {
+			if (!isValidRequirementExpression(substituted_requirement)) {
+				return ConstraintEvaluationResult::failure(
+					"requirement not satisfied: binary expression is not valid for the given types",
+					"binary requirement",
+					"the operation is ill-formed for the substituted types");
+			}
+			continue;
+		}
+	}
+
+	return ConstraintEvaluationResult::success();
 }
 
 // Parse template parameter list: typename T, int N, ...

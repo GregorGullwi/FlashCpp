@@ -1827,6 +1827,149 @@ const TypeInfo* ExpressionSubstitutor::resolveDependentMemberTypeForSubstitution
 	return resolveDependentMemberType(type_info, kInitialDependentMemberTypeResolutionDepth);
 }
 
+std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(const CallExprNode& call) const {
+	const std::string_view concept_name = call.has_qualified_name()
+		? call.qualified_name()
+		: call.called_from().value();
+	auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
+	if (!concept_opt.has_value() && call.has_qualified_name()) {
+		concept_opt = gConceptRegistry.lookupConcept(call.called_from().value());
+	}
+	if (!concept_opt.has_value() || !concept_opt->is<ConceptDeclarationNode>() || !call.has_template_arguments()) {
+		return std::nullopt;
+	}
+
+	const auto try_materialize_bound_template_arg = [&](const ASTNode& template_arg)
+		-> std::optional<std::vector<ASTNode>> {
+		if (template_arg.is<TypeSpecifierNode>()) {
+			return std::vector<ASTNode>{template_arg};
+		}
+		if (!template_arg.is<ExpressionNode>()) {
+			return std::nullopt;
+		}
+
+		const ExpressionNode& expr = template_arg.as<ExpressionNode>();
+		std::string_view param_name;
+		Token source_token = call.called_from();
+		auto try_materialize_concrete_type = [&](std::string_view type_name, const Token& type_token)
+			-> std::optional<std::vector<ASTNode>> {
+			if (!type_name.empty()) {
+				if (const TypeInfo* type_info =
+						findTypeByName(StringTable::getOrInternStringHandle(type_name));
+					type_info != nullptr) {
+					TypeSpecifierNode type_spec = makeTypeSpecifierFromTemplateTypeArg(
+						TemplateTypeArg::makeType(
+							type_info->registeredTypeIndex().withCategory(
+								type_info->typeEnum())),
+						type_token);
+					return std::vector<ASTNode>{
+						ASTNode::emplace_node<TypeSpecifierNode>(std::move(type_spec))};
+				}
+
+				if (auto builtin_type = parser_.get_builtin_type_info(type_name)) {
+					TypeSpecifierNode type_spec = makeTypeSpecifierFromTemplateTypeArg(
+						TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)),
+						type_token);
+					return std::vector<ASTNode>{
+						ASTNode::emplace_node<TypeSpecifierNode>(std::move(type_spec))};
+				}
+			}
+			return std::nullopt;
+		};
+		if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
+			param_name = identifier->name();
+			source_token = identifier->identifier_token();
+			if (std::optional<std::vector<ASTNode>> concrete_type =
+					try_materialize_concrete_type(param_name, source_token);
+				concrete_type.has_value()) {
+				return concrete_type;
+			}
+		} else if (const auto* qualified = std::get_if<QualifiedIdentifierNode>(&expr)) {
+			source_token = qualified->identifier_token();
+			if (std::optional<std::vector<ASTNode>> concrete_type =
+					try_materialize_concrete_type(
+						qualified->full_name(),
+						source_token);
+				concrete_type.has_value()) {
+				return concrete_type;
+			}
+			if (std::optional<std::vector<ASTNode>> concrete_type =
+					try_materialize_concrete_type(
+						qualified->name(),
+						source_token);
+				concrete_type.has_value()) {
+				return concrete_type;
+			}
+			return std::nullopt;
+		} else if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&expr)) {
+			param_name = tparam_ref->param_name().view();
+			source_token = tparam_ref->token();
+		} else {
+			return std::nullopt;
+		}
+
+		auto scalar_it = param_map_.find(param_name);
+		if (scalar_it != param_map_.end()) {
+			const TemplateTypeArg bound_arg = scalar_it->second;
+			return materializeTemplateArgumentNodes(
+				std::span<const TemplateTypeArg>(&bound_arg, 1),
+				source_token);
+		}
+
+		auto pack_it = pack_map_.find(StringTable::getOrInternStringHandle(param_name));
+		if (pack_it != pack_map_.end()) {
+			return materializeTemplateArgumentNodes(
+				std::span<const TemplateTypeArg>(pack_it->second.data(), pack_it->second.size()),
+				source_token);
+		}
+
+		return std::nullopt;
+	};
+
+	std::optional<InlineVector<TemplateTypeArg, 4>> concrete_args =
+		parser_.materializeConcreteCallTemplateArguments(call.template_arguments());
+	if (!concrete_args.has_value()) {
+		std::vector<ASTNode> rebound_template_args;
+		rebound_template_args.reserve(call.template_arguments().size());
+		bool rebound_any_template_arg = false;
+
+		for (const ASTNode& template_arg : call.template_arguments()) {
+			if (std::optional<std::vector<ASTNode>> rebound_nodes =
+					try_materialize_bound_template_arg(template_arg);
+				rebound_nodes.has_value()) {
+				rebound_any_template_arg = true;
+				rebound_template_args.insert(
+					rebound_template_args.end(),
+					rebound_nodes->begin(),
+					rebound_nodes->end());
+				continue;
+			}
+
+			rebound_template_args.push_back(template_arg);
+		}
+
+		if (!rebound_any_template_arg) {
+			return std::nullopt;
+		}
+
+		concrete_args = parser_.materializeConcreteCallTemplateArguments(rebound_template_args);
+		if (!concrete_args.has_value()) {
+			return std::nullopt;
+		}
+	}
+
+	const ConstraintEvaluationResult constraint_result =
+		evaluateConstraint(concept_opt->as<ConceptDeclarationNode>(), *concrete_args, &parser_);
+	const Token bool_token(
+		Token::Type::Keyword,
+		constraint_result.satisfied ? "true"sv : "false"sv,
+		call.called_from().line(),
+		call.called_from().column(),
+		call.called_from().file_index());
+	return ASTNode::emplace_node<ExpressionNode>(
+		BoolLiteralNode(bool_token, constraint_result.satisfied));
+}
+
 ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing function call");
 	FLASH_LOG(Templates, Debug, "  has_mangled_name: ", call.has_mangled_name());
@@ -1999,6 +2142,25 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		return ASTNode(&new_expr);
 	};
 	std::vector<ASTNode> explicit_template_arg_nodes;
+
+	if (call.has_template_arguments()) {
+		CallExprNode substituted_concept_call(
+			call.callee(),
+			ChunkedVector<ASTNode>{},
+			call.called_from());
+		copyCallMetadataWithTransformedTemplateArguments(
+			substituted_concept_call,
+			call,
+			[this](const ASTNode& template_arg) {
+				return substitute(template_arg);
+			},
+			CallMetadataCopyOptions{});
+		if (std::optional<ASTNode> concept_result =
+				tryEvaluateConcreteConceptCall(substituted_concept_call);
+			concept_result.has_value()) {
+			return *concept_result;
+		}
+	}
 
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
 	if (call.has_template_arguments()) {

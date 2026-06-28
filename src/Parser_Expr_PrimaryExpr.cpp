@@ -4261,7 +4261,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						auto constraint_result = evaluateConstraint(
 							concept_node.constraint_expr(),
 							*template_args,
-							concept_param_names
+							concept_param_names,
+							this,
+							concept_node.template_params()
 						);
 
 						// Create a BoolLiteralNode with the result
@@ -5072,98 +5074,169 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						 !peek().is_eof() ? peek_info().value() : "N/A",
 						 member_function_context_stack_.size());
 
-		// BUGFIX: Check if we're in a member function context and this identifier is a member function
-		// This handles the case where register_member_functions_in_scope already added the function to the symbol table
-		// so identifierType is set, but we still need to detect it as a member function call with implicit 'this'
-		// Declare this flag here so it's visible throughout the rest of the function
-		bool found_member_function_in_context = false;
-		bool resolved_member_function_from_context = false;
-		if (!member_function_context_stack_.empty() && identifierType.has_value() &&
-			identifierType->is<FunctionDeclarationNode>() && peek() == "("_tok) {
-			const auto& mf_ctx = member_function_context_stack_.back();
-			const StructDeclarationNode* struct_node = mf_ctx.struct_node;
-			if (struct_node) {
-				// Check if this function is a member function of the current struct
-				for (const auto& member_func : struct_node->member_functions()) {
-					if (member_func.function_declaration.is<FunctionDeclarationNode>()) {
-						const auto& func_decl = member_func.function_declaration.as<FunctionDeclarationNode>();
-						if (func_decl.decl_node().identifier_token().value() == identifier_token.value()) {
-							gSymbolTable.insert(identifier_token.value(), member_func.function_declaration);
-							identifierType = member_func.function_declaration;
-							found_member_function_in_context = !func_decl.is_static();
-							resolved_member_function_from_context = true;
-							FLASH_LOG_FORMAT(Parser, Debug,
-											 "EARLY CHECK: Detected {} member function call '{}' in current context",
-											 func_decl.is_static() ? "static" : "non-static",
-											 identifier_token.value());
+		struct CurrentStructFunctionLookupResult {
+			bool found_any = false;
+			bool found_non_static = false;
+		};
+
+		auto registerCurrentStructFunctionOverloadsForContext =
+			[&](const StructDeclarationNode* struct_node,
+				const StructTypeInfo* struct_info,
+				std::string_view log_context) -> CurrentStructFunctionLookupResult {
+			CurrentStructFunctionLookupResult lookup_result;
+
+			auto registerFunctionDecl = [&](const ASTNode& function_decl) {
+				if (!function_decl.is<FunctionDeclarationNode>()) {
+					return false;
+				}
+				const auto& func_decl = function_decl.as<FunctionDeclarationNode>();
+				if (func_decl.decl_node().identifier_token().handle() != identifier_token.handle()) {
+					return false;
+				}
+				gSymbolTable.insert(identifier_token.value(), function_decl);
+				identifierType = function_decl;
+				lookup_result.found_any = true;
+				lookup_result.found_non_static |= !func_decl.is_static();
+				FLASH_LOG_FORMAT(Parser, Debug,
+								 "Resolved {} member function '{}' from {}",
+								 func_decl.is_static() ? "static" : "non-static",
+								 identifier_token.value(),
+								 log_context);
+				return true;
+			};
+
+			auto registerCurrentStructDecls = [&](const StructDeclarationNode* current_struct_node) {
+				bool found_in_current_struct = false;
+				if (current_struct_node == nullptr) {
+					return false;
+				}
+				for (const auto& member_func : current_struct_node->member_functions()) {
+					found_in_current_struct |= registerFunctionDecl(member_func.function_declaration);
+				}
+				return found_in_current_struct;
+			};
+
+			auto registerCurrentStructInfoDecls = [&](const StructTypeInfo* current_struct_info) {
+				bool found_in_current_struct = false;
+				if (current_struct_info == nullptr) {
+					return false;
+				}
+				for (const auto& member_func : current_struct_info->member_functions) {
+					found_in_current_struct |= registerFunctionDecl(member_func.function_decl);
+				}
+				return found_in_current_struct;
+			};
+
+			bool found_in_current_struct = registerCurrentStructDecls(struct_node);
+			if (!found_in_current_struct) {
+				found_in_current_struct = registerCurrentStructInfoDecls(struct_info);
+			}
+			if (found_in_current_struct || struct_info == nullptr) {
+				return lookup_result;
+			}
+
+			std::vector<TypeIndex> base_classes_to_search;
+			base_classes_to_search.reserve(struct_info->base_classes.size());
+			for (const auto& base : struct_info->base_classes) {
+				base_classes_to_search.push_back(base.type_index);
+			}
+
+			for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+				TypeIndex base_idx = base_classes_to_search[i];
+				const TypeInfo* base_type_info = tryGetTypeInfo(base_idx);
+				if (!base_type_info) {
+					continue;
+				}
+
+				const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+				if (!base_struct_info) {
+					continue;
+				}
+
+				for (const auto& member_func : base_struct_info->member_functions) {
+					registerFunctionDecl(member_func.function_decl);
+				}
+
+				for (const auto& nested_base : base_struct_info->base_classes) {
+					bool already_in_list = false;
+					for (TypeIndex existing : base_classes_to_search) {
+						if (existing == nested_base.type_index) {
+							already_in_list = true;
 							break;
 						}
 					}
-				}
-
-				// If not found in current struct, search in base classes
-				if (!found_member_function_in_context) {
-					// Get the struct's base classes and search recursively
-					TypeIndex struct_type_index = mf_ctx.struct_type_index;
-					if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
-						const StructTypeInfo* struct_info = type_info->getStructInfo();
-						if (struct_info) {
-							// Collect base classes to search (breadth-first to handle multiple inheritance)
-							std::vector<TypeIndex> base_classes_to_search;
-							for (const auto& base : struct_info->base_classes) {
-								base_classes_to_search.push_back(base.type_index);
-							}
-
-							// Search through base classes
-							for (size_t i = 0; i < base_classes_to_search.size() && !found_member_function_in_context; ++i) {
-								TypeIndex base_idx = base_classes_to_search[i];
-								const TypeInfo* base_type_info = tryGetTypeInfo(base_idx);
-								if (!base_type_info)
-									continue;
-
-								const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-								if (!base_struct_info)
-									continue;
-
-								// Check member functions in this base class
-								// StructMemberFunction has function_decl which is an ASTNode
-								for (const auto& member_func : base_struct_info->member_functions) {
-									if (member_func.getName() == identifier_token.handle()) {
-										// Found matching member function in base class
-										if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-											const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-											// Update identifierType to point to the base class function
-											gSymbolTable.insert(identifier_token.value(), member_func.function_decl);
-											identifierType = member_func.function_decl;
-											found_member_function_in_context = !func_decl.is_static();
-											resolved_member_function_from_context = true;
-											FLASH_LOG_FORMAT(Parser, Debug,
-															 "EARLY CHECK: Detected {} base class member function call '{}'",
-															 func_decl.is_static() ? "static" : "non-static",
-															 identifier_token.value());
-											break;
-										}
-									}
-								}
-
-								// Add this base's base classes to search list (for multi-level inheritance)
-								for (const auto& nested_base : base_struct_info->base_classes) {
-									// Avoid duplicates (relevant for diamond inheritance)
-									bool already_in_list = false;
-									for (TypeIndex existing : base_classes_to_search) {
-										if (existing == nested_base.type_index) {
-											already_in_list = true;
-											break;
-										}
-									}
-									if (!already_in_list) {
-										base_classes_to_search.push_back(nested_base.type_index);
-									}
-								}
-							}
-						}
+					if (!already_in_list) {
+						base_classes_to_search.push_back(nested_base.type_index);
 					}
 				}
+			}
+
+			return lookup_result;
+		};
+
+		auto registerCurrentStructFunctionOverloads = [&]() -> CurrentStructFunctionLookupResult {
+			if (!member_function_context_stack_.empty()) {
+				const auto& member_ctx = member_function_context_stack_.back();
+				const StructTypeInfo* struct_info = member_ctx.local_struct_info;
+				if (struct_info == nullptr) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
+						struct_info = type_info->getStructInfo();
+					}
+				}
+
+				CurrentStructFunctionLookupResult lookup_result =
+					registerCurrentStructFunctionOverloadsForContext(
+						member_ctx.struct_node,
+						struct_info,
+						"member function context");
+				if (lookup_result.found_any) {
+					return lookup_result;
+				}
+			}
+
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				const StructTypeInfo* struct_info = struct_ctx.local_struct_info;
+				if (struct_info == nullptr && !struct_ctx.struct_name.empty()) {
+					auto struct_it = getTypesByNameMap().find(
+						StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+					if (struct_it != getTypesByNameMap().end()) {
+						struct_info = struct_it->second->getStructInfo();
+					}
+				}
+				return registerCurrentStructFunctionOverloadsForContext(
+					struct_ctx.struct_node,
+					struct_info,
+					"struct parsing context");
+			}
+
+			return {};
+		};
+
+		// BUGFIX: Check if we're in member-function or class-body parsing context and this identifier is a member function.
+		// This handles both member bodies and expressions inside the class body such as using-alias decltype(...) probes.
+		// Declare these flags here so they're visible throughout the rest of the function.
+		bool found_member_function_in_context = false;
+		bool resolved_member_function_from_context = false;
+		if (peek() == "("_tok &&
+			(!identifierType.has_value() || identifierType->is<FunctionDeclarationNode>())) {
+			CurrentStructFunctionLookupResult current_struct_lookup =
+				registerCurrentStructFunctionOverloads();
+			const bool class_scope_decltype_without_implicit_object =
+				member_function_context_stack_.empty() &&
+				context == ExpressionContext::Decltype;
+			found_member_function_in_context =
+				current_struct_lookup.found_non_static &&
+				!class_scope_decltype_without_implicit_object;
+			resolved_member_function_from_context = current_struct_lookup.found_any;
+			if (class_scope_decltype_without_implicit_object &&
+				current_struct_lookup.found_non_static &&
+				identifierType.has_value() &&
+				identifierType->is<FunctionDeclarationNode>() &&
+				!identifierType->as<FunctionDeclarationNode>().is_static()) {
+				return ParseResult::error(
+					"Call of non-static member function requires an object",
+					identifier_token);
 			}
 		}
 
@@ -5233,7 +5306,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							member_arg_types,
 							currentTemplateParamNames()),
 					func_decl,
-					StringTable::getStringView(member_function_context_stack_.back().struct_name));
+					!member_function_context_stack_.empty()
+						? StringTable::getStringView(member_function_context_stack_.back().struct_name)
+						: (!struct_parsing_context_stack_.empty()
+							? std::string_view(struct_parsing_context_stack_.back().struct_name)
+							: std::string_view{}));
 			}
 
 			FLASH_LOG_FORMAT(Parser, Debug, "Created CallExprNode for implicit this-call '{}'", identifier_token.value());
@@ -6273,9 +6350,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-			// Try to instantiate the template function (skip in extern "C" contexts - C has no templates)
+			const bool has_dependent_call_args =
+				argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+				argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
+
+			// Try to instantiate the template function (skip in extern "C" contexts - C has no templates).
+			// Dependent calls are resolved at the point of instantiation; attempting overload
+			// resolution here can emit false diagnostics for overloads that are not viable yet.
 			std::optional<ASTNode> template_func_inst;
-			if (current_linkage_ != Linkage::C) {
+			if (current_linkage_ != Linkage::C && !has_dependent_call_args) {
 				template_func_inst = try_instantiate_template(identifier_token.value(), arg_types);
 			}
 
@@ -6299,9 +6382,6 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
-				const bool has_dependent_call_args =
-					argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-					argTypesAreDeferredTemplateDependent(arg_types, currentTemplateParamNames());
 				if (has_dependent_call_args) {
 					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
@@ -7290,6 +7370,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						explicit_template_args = parse_explicit_template_arguments(
 							variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters(),
 							&explicit_template_arg_nodes);
+					} else if (auto concept_opt = gConceptRegistry.lookupConcept(identifier_token.value());
+							   concept_opt.has_value() &&
+							   concept_opt->is<ConceptDeclarationNode>()) {
+						explicit_template_args = parse_explicit_template_arguments(
+							concept_opt->as<ConceptDeclarationNode>().template_params(),
+							&explicit_template_arg_nodes);
 					} else {
 						explicit_template_args = parse_explicit_template_arguments();
 					}
@@ -8130,7 +8216,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								auto constraint_result = evaluateConstraint(
 									concept_node.constraint_expr(),
 									*explicit_template_args,
-									concept_param_names
+									concept_param_names,
+									this,
+									concept_node.template_params()
 								);
 
 								// Create a BoolLiteralNode with the result
@@ -8494,7 +8582,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (is_regular_var) {
 					// It's definitely a variable, don't try template args
-					should_try_template_args = false;
+					should_try_template_args =
+						gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value() ||
+						gTemplateRegistry.lookup_alias_template(identifier_token.value()).has_value() ||
+						gTemplateRegistry.lookupVariableTemplate(identifier_token.value()).has_value() ||
+						gConceptRegistry.hasConcept(identifier_token.value());
 				}
 				// For all other cases (templates, functions, unknown), try template args
 			}
@@ -8536,6 +8628,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						variable_template_opt->is<TemplateVariableDeclarationNode>()) {
 						return parse_explicit_template_arguments(
 							variable_template_opt->as<TemplateVariableDeclarationNode>().template_parameters(),
+							&explicit_template_arg_nodes);
+					}
+					if (auto concept_opt = gConceptRegistry.lookupConcept(identifier_token.value());
+						concept_opt.has_value() &&
+						concept_opt->is<ConceptDeclarationNode>()) {
+						return parse_explicit_template_arguments(
+							concept_opt->as<ConceptDeclarationNode>().template_params(),
 							&explicit_template_arg_nodes);
 					}
 					return parse_explicit_template_arguments(&explicit_template_arg_nodes);

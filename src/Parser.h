@@ -489,6 +489,12 @@ class Parser {
 	friend class SemanticAnalysis;
 	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
 	friend struct DeferredBaseReplayContextScope;
+	friend ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
+		const RequiresExpressionNode& requires_expr,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		const InlineVector<std::string_view, 4>& template_param_names,
+		Parser* parser,
+		std::span<const TemplateParameterNode> template_params);
 	template <typename ParserLike, typename ParamContainer, typename ArgContainer>
 	friend TypeIndex resolveDependentMemberTemplateSubstitutionArtifacts(
 		ParserLike& parser,
@@ -1345,6 +1351,30 @@ private:
 
 	// Track last failed template argument parse handle to prevent infinite loops
 	SaveHandle last_failed_template_arg_parse_handle_ = SIZE_MAX;
+
+	std::span<const TemplateParameterNode> current_explicit_template_arg_target_params_{};
+
+	class ScopedExplicitTemplateArgumentTargetParams {
+	public:
+		ScopedExplicitTemplateArgumentTargetParams(
+			Parser& parser,
+			std::span<const TemplateParameterNode> target_params)
+			: parser_(parser),
+			  previous_target_params_(parser.current_explicit_template_arg_target_params_) {
+			parser_.current_explicit_template_arg_target_params_ = target_params;
+		}
+
+		~ScopedExplicitTemplateArgumentTargetParams() {
+			parser_.current_explicit_template_arg_target_params_ = previous_target_params_;
+		}
+
+		ScopedExplicitTemplateArgumentTargetParams(const ScopedExplicitTemplateArgumentTargetParams&) = delete;
+		ScopedExplicitTemplateArgumentTargetParams& operator=(const ScopedExplicitTemplateArgumentTargetParams&) = delete;
+
+	private:
+		Parser& parser_;
+		std::span<const TemplateParameterNode> previous_target_params_;
+	};
 
 	// Track functions currently undergoing auto return type deduction to prevent infinite recursion
 	std::unordered_set<const FunctionDeclarationNode*> functions_being_deduced_;
@@ -3742,6 +3772,20 @@ private:	 // Resume private methods
 
 	std::optional<TemplateParameterKind> currentTemplateParamKind(StringHandle param_name) const {
 		return current_template_params_.kindOf(param_name);
+	}
+
+	const TemplateParameterNode* currentExplicitTemplateArgumentTargetParam(size_t arg_index) const {
+		if (current_explicit_template_arg_target_params_.empty()) {
+			return nullptr;
+		}
+		if (arg_index < current_explicit_template_arg_target_params_.size()) {
+			return &current_explicit_template_arg_target_params_[arg_index];
+		}
+		const TemplateParameterNode& last_param = current_explicit_template_arg_target_params_.back();
+		if (last_param.is_variadic()) {
+			return &last_param;
+		}
+		return nullptr;
 	}
 
 	std::optional<TypeCategory> currentTemplateParamNonTypeCategory(StringHandle param_name) const {
