@@ -351,14 +351,27 @@ ConstraintEvaluationResult evaluateRequiresExpressionConstraint(
 						return false;
 					}
 					if (call_expr->call_kind() != CalleeKind::IndirectCall) {
-						if (call_expr->callee().has_function_declaration()) {
-							return true;
-						} else {
+						if (call_expr->has_receiver()) {
 							const ResolvedFunctionQueryResult direct_call_query =
 								parser->semanticAnalysis().getResolvedDirectCallQuery(call_expr);
-							if (direct_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
+							if (direct_call_query.hasValue()) {
+								return true;
+							}
+							const ResolvedFunctionQueryResult op_call_query =
+								parser->semanticAnalysis().getResolvedOpCallQuery(call_expr);
+							if (op_call_query.hasValue()) {
+								return true;
+							}
+							if (direct_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent ||
+								op_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
 								return false;
 							}
+						} else if (call_expr->callee().has_function_declaration()) {
+							return true;
+						} else if (const ResolvedFunctionQueryResult direct_call_query =
+									   parser->semanticAnalysis().getResolvedDirectCallQuery(call_expr);
+								   direct_call_query.state == ResolvedFunctionQueryResult::State::AnalyzedAbsent) {
+							return false;
 						}
 					}
 				}

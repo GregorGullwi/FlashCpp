@@ -1,11 +1,12 @@
-#include <concepts>
+template <class T>
+concept LocalIntegral = __is_integral(T);
 
-template <std::integral = int>
+template <LocalIntegral = int>
 struct box {
 	static constexpr int value = 7;
 };
 
-template <std::integral>
+template <LocalIntegral>
 struct tag {
 	static constexpr int value = 4;
 };
