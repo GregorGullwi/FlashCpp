@@ -23,6 +23,45 @@ inline std::string_view getTemplateArgumentBuiltinTokenText(const TemplateTypeAr
 	}
 }
 
+inline TypeCategory getTemplateArgumentBuiltinCategoryFromTokenText(std::string_view type_name) {
+	if (type_name == "void") return TypeCategory::Void;
+	if (type_name == "bool") return TypeCategory::Bool;
+	if (type_name == "char") return TypeCategory::Char;
+	if (type_name == "signed char") return TypeCategory::Char;
+	if (type_name == "unsigned char") return TypeCategory::UnsignedChar;
+	if (type_name == "wchar_t") return TypeCategory::WChar;
+	if (type_name == "char8_t") return TypeCategory::Char8;
+	if (type_name == "char16_t") return TypeCategory::Char16;
+	if (type_name == "char32_t") return TypeCategory::Char32;
+	if (type_name == "short") return TypeCategory::Short;
+	if (type_name == "short int") return TypeCategory::Short;
+	if (type_name == "signed short") return TypeCategory::Short;
+	if (type_name == "signed short int") return TypeCategory::Short;
+	if (type_name == "unsigned short") return TypeCategory::UnsignedShort;
+	if (type_name == "unsigned short int") return TypeCategory::UnsignedShort;
+	if (type_name == "int") return TypeCategory::Int;
+	if (type_name == "signed") return TypeCategory::Int;
+	if (type_name == "signed int") return TypeCategory::Int;
+	if (type_name == "unsigned") return TypeCategory::UnsignedInt;
+	if (type_name == "unsigned int") return TypeCategory::UnsignedInt;
+	if (type_name == "long") return TypeCategory::Long;
+	if (type_name == "long int") return TypeCategory::Long;
+	if (type_name == "signed long") return TypeCategory::Long;
+	if (type_name == "signed long int") return TypeCategory::Long;
+	if (type_name == "unsigned long") return TypeCategory::UnsignedLong;
+	if (type_name == "unsigned long int") return TypeCategory::UnsignedLong;
+	if (type_name == "long long") return TypeCategory::LongLong;
+	if (type_name == "long long int") return TypeCategory::LongLong;
+	if (type_name == "signed long long") return TypeCategory::LongLong;
+	if (type_name == "signed long long int") return TypeCategory::LongLong;
+	if (type_name == "unsigned long long") return TypeCategory::UnsignedLongLong;
+	if (type_name == "unsigned long long int") return TypeCategory::UnsignedLongLong;
+	if (type_name == "float") return TypeCategory::Float;
+	if (type_name == "double") return TypeCategory::Double;
+	if (type_name == "long double") return TypeCategory::LongDouble;
+	return TypeCategory::Invalid;
+}
+
 inline ASTNode materializeDependentTemplateArgumentNode(
 	const TemplateTypeArg& arg,
 	const Token& source_token) {

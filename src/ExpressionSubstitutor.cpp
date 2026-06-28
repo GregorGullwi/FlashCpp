@@ -1866,9 +1866,11 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 						ASTNode::emplace_node<TypeSpecifierNode>(std::move(type_spec))};
 				}
 
-				if (auto builtin_type = parser_.get_builtin_type_info(type_name)) {
+				if (TypeCategory builtin_category =
+						getTemplateArgumentBuiltinCategoryFromTokenText(type_name);
+					builtin_category != TypeCategory::Invalid) {
 					TypeSpecifierNode type_spec = makeTypeSpecifierFromTemplateTypeArg(
-						TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)),
+						TemplateTypeArg::makeType(nativeTypeIndex(builtin_category)),
 						type_token);
 					return std::vector<ASTNode>{
 						ASTNode::emplace_node<TypeSpecifierNode>(std::move(type_spec))};
@@ -2326,9 +2328,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								substituted_template_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
 								continue;
 							}
-							if (auto builtin_type = parser_.get_builtin_type_info(identifier->name())) {
+							if (TypeCategory builtin_category =
+									getTemplateArgumentBuiltinCategoryFromTokenText(identifier->name());
+								builtin_category != TypeCategory::Invalid) {
 								substituted_template_args.push_back(
-									TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)));
+									TemplateTypeArg::makeType(nativeTypeIndex(builtin_category)));
 								continue;
 							}
 							FLASH_LOG(Templates, Debug, "    Substituted identifier template argument is not a known type: ", identifier->name());
@@ -4531,9 +4535,11 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	if (!token_type_name.empty()) {
 		FLASH_LOG(Templates, Debug, "  Type candidate for template substitution: ", token_type_name);
 
-		if (auto builtin_type = parser_.get_builtin_type_info(token_type_name); builtin_type.has_value()) {
+		if (TypeCategory builtin_category =
+				getTemplateArgumentBuiltinCategoryFromTokenText(token_type_name);
+			builtin_category != TypeCategory::Invalid) {
 			TypeSpecifierNode builtin_spec(
-				nativeTypeIndex(builtin_type->first),
+				nativeTypeIndex(builtin_category),
 				type.size_in_bits(),
 				type.token(),
 				type.cv_qualifier(),
@@ -4937,9 +4943,11 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
 						expanded_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
 						continue;
 					}
-					if (auto builtin_type = parser_.get_builtin_type_info(identifier->name())) {
+					if (TypeCategory builtin_category =
+							getTemplateArgumentBuiltinCategoryFromTokenText(identifier->name());
+						builtin_category != TypeCategory::Invalid) {
 						expanded_args.push_back(
-							TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)));
+							TemplateTypeArg::makeType(nativeTypeIndex(builtin_category)));
 						continue;
 					}
 				}
