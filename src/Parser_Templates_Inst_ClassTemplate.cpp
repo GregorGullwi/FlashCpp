@@ -6501,6 +6501,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							val_arg.is_pack = arg_info.is_pack;
 							return val_arg;
 						};
+						struct DeferredBaseConstantValue {
+							int64_t value = 0;
+							TypeCategory type = TypeCategory::Int;
+							TypeIndex type_index{};
+						};
+						auto tryEvaluateDeferredBaseConstant =
+							[&](const ASTNode& node) -> std::optional<DeferredBaseConstantValue> {
+							if (auto value = try_evaluate_constant_expression(node)) {
+								return DeferredBaseConstantValue{
+									value->value,
+									value->type,
+									value->type_index};
+							}
+							ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+							auto eval_result = ConstExpr::Evaluator::evaluate(node, eval_ctx);
+							if (!eval_result.success()) {
+								return std::nullopt;
+							}
+							TypeCategory result_type = TypeCategory::Int;
+							TypeIndex result_type_index{};
+							if (eval_result.exact_type.has_value()) {
+								result_type = eval_result.exact_type->category();
+								result_type_index = eval_result.exact_type->type_index();
+							} else if (std::holds_alternative<bool>(eval_result.value)) {
+								result_type = TypeCategory::Bool;
+							} else if (eval_result.is_uint()) {
+								result_type = TypeCategory::UnsignedLongLong;
+							}
+							return DeferredBaseConstantValue{
+								eval_result.as_int(),
+								result_type,
+								result_type_index};
+						};
 
 						// Special handling for TypeTraitExprNode - need to substitute template parameters
 						if (std::holds_alternative<TypeTraitExprNode>(expr)) {
@@ -6719,7 +6752,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								if (var_template_node.has_value() && var_template_node->is<VariableDeclarationNode>()) {
 									const VariableDeclarationNode& var_decl = var_template_node->as<VariableDeclarationNode>();
 									if (var_decl.initializer().has_value()) {
-										if (auto value = try_evaluate_constant_expression(*var_decl.initializer())) {
+										if (auto value = tryEvaluateDeferredBaseConstant(*var_decl.initializer())) {
 											FLASH_LOG_FORMAT(Templates, Debug, "Evaluated variable template '{}' to value {}",
 															 func_name, value->value);
 											resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
@@ -6731,7 +6764,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 							ExpressionSubstitutor substitutor(subst_map, *this, template_param_order);
 							ASTNode substituted_node = substitutor.substitute(arg_info.node);
-							if (auto value = try_evaluate_constant_expression(substituted_node)) {
+							if (auto value = tryEvaluateDeferredBaseConstant(substituted_node)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted deferred base call to value {}", value->value);
 								resolved_args.push_back(makeEvaluatedDeferredBaseValueArg(*value));
 								continue;

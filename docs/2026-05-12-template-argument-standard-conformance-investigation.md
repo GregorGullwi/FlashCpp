@@ -654,6 +654,16 @@ For work in this area, rerun:
    by both parser materialization and later sema fallback, so future
    qualified/member-template paths do not regress by rebuilding owner meaning
    from short spellings.
+   Standard-header follow-up: the builtin type template-argument surface is now
+   canonicalized in `TemplateArgumentMaterialization.h`. Parser substitution,
+   expression substitution, and constexpr variable-template evaluation all
+   share the same builtin spelling/category conversion instead of rebuilding
+   concrete type arguments from local strings or empty tokens. This is required
+   by the C++20 distinct fundamental character types and unblocks the
+   `is_any_of_v<remove_cv_t<T>, ...>` boolean fold used by MSVC
+   `<type_traits>` for `is_integral_v`. New guard:
+   `test_variable_template_fold_remove_cv_builtin_list_ret0.cpp`; focused std
+   validation: `std/test_std_type_traits.cpp`.
    In parallel with that audit, finish deleting the remaining legacy
    parser-side `expr...` loops that still duplicate pack-expansion behavior
    instead of routing through the shared helper and the new "preserve when not

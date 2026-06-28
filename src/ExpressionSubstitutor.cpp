@@ -409,6 +409,13 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteIdentifier(expr.as<IdentifierNode>());
 	} else if (expr.is<QualifiedIdentifierNode>()) {
 		return substituteQualifiedIdentifier(expr.as<QualifiedIdentifierNode>());
+	} else if (expr.is<TypeSpecifierNode>()) {
+		TypeSpecifierNode substituted_type =
+			substituteInType(expr.as<TypeSpecifierNode>());
+		TypeSpecifierNode& stored_type =
+			gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+				std::move(substituted_type));
+		return ASTNode(&stored_type);
 	} else if (expr.is<MemberAccessNode>()) {
 		return substituteMemberAccess(expr.as<MemberAccessNode>());
 	} else if (expr.is<SizeofExprNode>()) {
@@ -1866,9 +1873,11 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 						ASTNode::emplace_node<TypeSpecifierNode>(std::move(type_spec))};
 				}
 
-				if (auto builtin_type = parser_.get_builtin_type_info(type_name)) {
+				if (TypeCategory builtin_category =
+						getTemplateArgumentBuiltinCategoryFromTokenText(type_name);
+					builtin_category != TypeCategory::Invalid) {
 					TypeSpecifierNode type_spec = makeTypeSpecifierFromTemplateTypeArg(
-						TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)),
+						TemplateTypeArg::makeType(nativeTypeIndex(builtin_category)),
 						type_token);
 					return std::vector<ASTNode>{
 						ASTNode::emplace_node<TypeSpecifierNode>(std::move(type_spec))};
@@ -2326,9 +2335,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								substituted_template_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
 								continue;
 							}
-							if (auto builtin_type = parser_.get_builtin_type_info(identifier->name())) {
+							if (TypeCategory builtin_category =
+									getTemplateArgumentBuiltinCategoryFromTokenText(identifier->name());
+								builtin_category != TypeCategory::Invalid) {
 								substituted_template_args.push_back(
-									TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)));
+									TemplateTypeArg::makeType(nativeTypeIndex(builtin_category)));
 								continue;
 							}
 							FLASH_LOG(Templates, Debug, "    Substituted identifier template argument is not a known type: ", identifier->name());
@@ -3619,23 +3630,14 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		}
 
 		// Handle type template parameters
-		// Create a TypeSpecifierNode from the template argument
-		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.type_index.withCategory(arg.typeEnum()),
-			64,	// Default size, will be adjusted by type system
-			Token{},
-			arg.cv_qualifier,
-			ReferenceQualifier::None);
-
-		// Add pointer levels if needed
-		for (size_t i = 0; i < arg.pointer_depth; ++i) {
-			new_type.add_pointer_level();
-		}
-
-		// Set reference qualifiers
-		new_type.set_reference_qualifier(arg.ref_qualifier);
-
-		return ASTNode(&new_type);
+		Token substituted_token = makeTemplateArgumentTypeToken(
+			arg,
+			id.identifier_token());
+		TypeSpecifierNode new_type =
+			makeTypeSpecifierFromTemplateTypeArg(arg, substituted_token);
+		TypeSpecifierNode& stored_type =
+			gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(std::move(new_type));
+		return ASTNode(&stored_type);
 	}
 
 	// Not a template parameter, return as-is (wrapped in ExpressionNode so the
@@ -4520,6 +4522,11 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 		}
 	}
 
+	if (std::optional<TypeSpecifierNode> canonical_builtin =
+			makeCanonicalBuiltinTypeSpecifier(type)) {
+		return *canonical_builtin;
+	}
+
 	// First, check whether this type spelling names a template parameter that needs substitution.
 	std::string_view token_type_name = type.token().value();
 	if (token_type_name.empty()) {
@@ -4531,9 +4538,11 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	if (!token_type_name.empty()) {
 		FLASH_LOG(Templates, Debug, "  Type candidate for template substitution: ", token_type_name);
 
-		if (auto builtin_type = parser_.get_builtin_type_info(token_type_name); builtin_type.has_value()) {
+		if (TypeCategory builtin_category =
+				getTemplateArgumentBuiltinCategoryFromTokenText(token_type_name);
+			builtin_category != TypeCategory::Invalid) {
 			TypeSpecifierNode builtin_spec(
-				nativeTypeIndex(builtin_type->first),
+				nativeTypeIndex(builtin_category),
 				type.size_in_bits(),
 				type.token(),
 				type.cv_qualifier(),
@@ -4937,9 +4946,11 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
 						expanded_args.push_back(TemplateTypeArg::makeType(type_info->type_index_));
 						continue;
 					}
-					if (auto builtin_type = parser_.get_builtin_type_info(identifier->name())) {
+					if (TypeCategory builtin_category =
+							getTemplateArgumentBuiltinCategoryFromTokenText(identifier->name());
+						builtin_category != TypeCategory::Invalid) {
 						expanded_args.push_back(
-							TemplateTypeArg::makeType(nativeTypeIndex(builtin_type->first)));
+							TemplateTypeArg::makeType(nativeTypeIndex(builtin_category)));
 						continue;
 					}
 				}
