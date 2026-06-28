@@ -2076,6 +2076,23 @@ ParseResult Parser::parse_type_specifier() {
 					}
 				}
 
+				auto lookup_variable_template_for_type_name = [&]() -> std::optional<ASTNode> {
+					auto var_template_check = gTemplateRegistry.lookupVariableTemplate(type_name);
+					if (!var_template_check.has_value()) {
+						NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+						if (!current_namespace.isGlobal()) {
+							StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
+							StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, type_handle);
+							var_template_check = gTemplateRegistry.lookupVariableTemplate(StringTable::getStringView(qualified_handle));
+						}
+					}
+					return var_template_check;
+				};
+				if (lookup_variable_template_for_type_name().has_value()) {
+					FLASH_LOG_FORMAT(Templates, Debug, "Rejecting variable template '{}' as a type-specifier", type_name);
+					return ParseResult::error("Variable template is not a type", type_name_token);
+				}
+
 				// Check if this is a template parameter being used with template arguments (e.g., Container<T>)
 				// When parsing a template body, if the type name is a template parameter (type or template template param),
 				// we should NOT try to instantiate it - it's a dependent type that will be resolved during instantiation
@@ -2261,37 +2278,13 @@ ParseResult Parser::parse_type_specifier() {
 					}
 				}
 
-				// Check if this is a variable template (like is_reference_v<T>) - if so, don't try to
-				// instantiate as a class template. Variable templates are expressions, not types.
-				// First try unqualified, then try namespace-qualified lookup
-				auto var_template_check = gTemplateRegistry.lookupVariableTemplate(type_name);
-				if (!var_template_check.has_value()) {
-					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
-					if (!current_namespace.isGlobal()) {
-						StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, type_handle);
-						var_template_check = gTemplateRegistry.lookupVariableTemplate(StringTable::getStringView(qualified_handle));
-					}
-				}
-				if (var_template_check.has_value()) {
-					// This is a variable template, not a class template
-					// In a type context, this is an error - return a failure so caller can handle
-					FLASH_LOG_FORMAT(Templates, Debug, "Skipping class template instantiation for variable template '{}'", type_name);
-					// Don't call try_instantiate_class_template - just continue to look up the type
-					// The variable template instantiation should happen in expression context, not type context
-				}
-
-				const bool is_class_template = !var_template_check.has_value();
 				std::optional<ASTNode> instantiated_class;
-				if (is_class_template) {
-					// Only try class template instantiation if this is NOT a variable template
 #if WITH_PARSER_RUNTIME_STATS
-					if (runtime_stats_enabled_) {
-						++runtime_stats_.type_specifier_triggered_template_instantiations;
-					}
-#endif
-					instantiated_class = try_instantiate_class_template(type_name, *template_args);
+				if (runtime_stats_enabled_) {
+					++runtime_stats_.type_specifier_triggered_template_instantiations;
 				}
+#endif
+				instantiated_class = try_instantiate_class_template(type_name, *template_args);
 
 				// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
 				if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
@@ -2347,7 +2340,7 @@ ParseResult Parser::parse_type_specifier() {
 				// If filling defaults changed the template-id, instantiate that completed spelling too
 				// so nested aliases like enable_if<true>::type can be looked up via the normalized
 				// specialization (enable_if<true, void>).
-				if (is_class_template && filled_template_args.size() != template_args->size()) {
+				if (filled_template_args.size() != template_args->size()) {
 #if WITH_PARSER_RUNTIME_STATS
 					if (runtime_stats_enabled_) {
 						++runtime_stats_.type_specifier_triggered_template_instantiations;
