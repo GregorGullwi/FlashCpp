@@ -1132,6 +1132,9 @@ ParseResult Parser::parse_type_specifier() {
 		// Handle user-defined type (struct, class, or other user-defined types)
 		// Build qualified name using StringBuilder for efficiency
 		SaveHandle type_name_start_pos = save_token_position();
+		ScopeGuard type_name_start_guard([&]() {
+			discard_saved_token(type_name_start_pos);
+		});
 		StringBuilder type_name_builder;
 		type_name_builder.append(peek_info().value());
 		Token type_name_token = peek_info(); // Save the token before consuming it
