@@ -1711,7 +1711,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					StringTable::getStringView(owner_segments.front());
 				ResolvedQualifiedOwner resolved_root_owner =
 					resolveQualifiedOwnerForLookup(root_owner_name);
-				if (!resolved_root_owner.lookup_name.empty()) {
+				if (resolved_root_owner.resolved_from_current_context) {
 					if (owner_segments.size() == 1) {
 						return resolved_root_owner.lookup_name;
 					}
@@ -1797,7 +1797,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				resolved_root_owner =
 					resolveQualifiedOwnerForLookup(
 						StringTable::getStringView(owner_segments.front()));
-				if (!resolved_root_owner.lookup_name.empty()) {
+				if (resolved_root_owner.resolved_from_current_context) {
 					qualified_member_call_name =
 						StringBuilder()
 							.append(resolved_root_owner.lookup_name)

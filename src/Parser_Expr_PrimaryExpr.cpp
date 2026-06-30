@@ -770,9 +770,13 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 		const std::string_view member_name = qualified_name.substr(scope_sep + 2);
 		ResolvedQualifiedOwner resolved_owner =
 			resolveQualifiedOwnerForLookup(owner_name);
-		owner_name = resolved_owner.lookup_name;
+		if (!resolved_owner.resolved_from_current_context ||
+			resolved_owner.resolved_as_nested_owner_extension) {
+			owner_name = resolved_owner.lookup_name;
+		}
 
-		StringHandle owner_name_handle = resolved_owner.lookupNameHandle();
+		StringHandle owner_name_handle =
+			StringTable::getOrInternStringHandle(owner_name);
 		instantiateLazyClassToPhase(
 			owner_name_handle,
 			ClassInstantiationPhase::Full);
@@ -1231,14 +1235,18 @@ Parser::ResolvedQualifiedOwner Parser::resolveQualifiedOwnerForLookup(
 			tryResolveQualifiedTypeOwnerFromCurrentContext(owner_name);
 		current_owner.has_value()) {
 		result.resolved_from_current_context = true;
+		if (std::string_view current_owner_name =
+				current_owner->canonicalName();
+			!current_owner_name.empty()) {
+			result.lookup_name = current_owner_name;
+		}
+		result.type_info = current_owner->resolved_type_info;
 		const bool nested_owner_extension =
 			isNestedOwnerExtension(owner_name, current_owner->instantiated_name);
 		if (nested_owner_extension) {
-			result.lookup_name = current_owner->instantiated_name;
-			result.type_info = current_owner->resolved_type_info;
 			result.resolved_as_nested_owner_extension = true;
-			return result;
 		}
+		return result;
 	}
 
 	AliasTemplateMaterializationResult canonical_owner =
