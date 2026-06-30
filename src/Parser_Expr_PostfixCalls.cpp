@@ -1709,14 +1709,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			if (owner_segments.front().isValid()) {
 				const std::string_view root_owner_name =
 					StringTable::getStringView(owner_segments.front());
-				if (std::optional<AliasTemplateMaterializationResult>
-						resolved_current_owner =
-							tryResolveQualifiedTypeOwnerFromCurrentContext(
-								root_owner_name);
-					resolved_current_owner.has_value() &&
-					!resolved_current_owner->canonicalName().empty()) {
+				ResolvedQualifiedOwner resolved_root_owner =
+					resolveQualifiedOwnerForLookup(root_owner_name);
+				if (resolved_root_owner.resolved_from_current_context) {
 					if (owner_segments.size() == 1) {
-						return resolved_current_owner->canonicalName();
+						return resolved_root_owner.lookup_name;
 					}
 
 					std::vector<QualifiedTypeMemberAccess> owner_chain;
@@ -1731,7 +1728,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 					if (const TypeInfo* resolved_owner =
 							resolveBaseClassMemberTypeChain(
-								resolved_current_owner->canonicalName(),
+								resolved_root_owner.lookup_name,
 								std::span<const QualifiedTypeMemberAccess>(
 									owner_chain.data(),
 									owner_chain.size()));
@@ -1795,23 +1792,21 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				qualified_member_call_name;
 			const FunctionDeclarationNode*
 				qualified_member_template_return_hint = nullptr;
-			std::optional<AliasTemplateMaterializationResult>
-				resolved_current_owner;
+			ResolvedQualifiedOwner resolved_root_owner;
 			if (owner_segments.size() == 1) {
-				resolved_current_owner =
-					tryResolveQualifiedTypeOwnerFromCurrentContext(
+				resolved_root_owner =
+					resolveQualifiedOwnerForLookup(
 						StringTable::getStringView(owner_segments.front()));
-				if (resolved_current_owner.has_value() &&
-					!resolved_current_owner->canonicalName().empty()) {
+				if (resolved_root_owner.resolved_from_current_context) {
 					qualified_member_call_name =
 						StringBuilder()
-							.append(resolved_current_owner->canonicalName())
+							.append(resolved_root_owner.lookup_name)
 							.append("::")
 							.append(member_token.value())
 							.commit();
 					qualified_member_template_lookup_name =
 						StringBuilder()
-							.append(resolved_current_owner->canonicalName())
+							.append(resolved_root_owner.lookup_name)
 							.append("::")
 							.append(member_token.value())
 							.commit();
@@ -1893,14 +1888,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			StringHandle current_owner_handle{};
 			TypeIndex current_owner_type_index{};
 			bool current_owner_is_valid = false;
-			if (resolved_current_owner.has_value() &&
-				resolved_current_owner->canonicalNameHandle().isValid()) {
-				current_owner_handle =
-					resolved_current_owner->canonicalNameHandle();
-				if (resolved_current_owner->resolved_type_info != nullptr) {
+			if (resolved_root_owner.resolved_from_current_context &&
+				resolved_root_owner.lookupNameHandle().isValid()) {
+				current_owner_handle = resolved_root_owner.lookupNameHandle();
+				if (resolved_root_owner.type_info != nullptr) {
 					current_owner_type_index =
-						resolved_current_owner->resolved_type_info
-							->registeredTypeIndex();
+						resolved_root_owner.type_info->registeredTypeIndex();
 				}
 				current_owner_is_valid = true;
 			} else if (!member_function_context_stack_.empty()) {
@@ -1918,7 +1911,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			if (current_owner_is_valid) {
 				std::vector<PostfixDependentMemberSegmentInfo>
 					member_segments;
-				if (!resolved_current_owner.has_value()) {
+				if (!resolved_root_owner.resolved_from_current_context) {
 					member_segments.reserve(owner_segments.size() + 1);
 					for (StringHandle owner_segment : owner_segments) {
 						PostfixDependentMemberSegmentInfo member_segment;
@@ -1936,18 +1929,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					toTemplateArgInfoList(member_template_args);
 				member_segments.push_back(std::move(final_member_segment));
 				TypeInfo::DependentQualifiedNameRecord::OwnerKind owner_kind =
-					resolved_current_owner.has_value()
+					resolved_root_owner.resolved_from_current_context
 						? TypeInfo::DependentQualifiedNameRecord::OwnerKind::
 							  DependentInstantiation
 						: TypeInfo::DependentQualifiedNameRecord::OwnerKind::
 							  CurrentInstantiation;
 				InlineVector<TypeInfo::TemplateArgInfo, 4>
 					owner_template_arguments;
-				if (resolved_current_owner.has_value() &&
-					resolved_current_owner->resolved_type_info != nullptr) {
+				if (resolved_root_owner.resolved_from_current_context &&
+					resolved_root_owner.type_info != nullptr) {
 					owner_template_arguments =
-						resolved_current_owner->resolved_type_info
-							->templateArgs();
+						resolved_root_owner.type_info->templateArgs();
 				}
 				setCallDependentQualifiedLookupRecord(
 					deferred_call.as<ExpressionNode>(),

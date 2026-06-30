@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-30
 
 This document is a planning aid for the remaining template-infrastructure work.
 It should describe the current architectural baseline, the highest-value
@@ -233,6 +233,12 @@ the areas that were previously blocking standards-visible behavior:
   pointer-to-member declarator forms, and the `_Is_memfunptr`-style partial-
   specialization matcher now deduces the owner class instead of treating the
   member-pointer owner as opaque text
+- qualified-owner parser lookup now has the first shared
+  `ResolvedQualifiedOwner` carrier and resolver entrypoint. The deferred
+  qualified-call resolver, qualified member-template parser path, and postfix
+  explicit-qualified member-template placeholder path now consume that carrier
+  for current-instantiation classification and nested-owner canonicalization
+  instead of open-coding the owner split separately.
 
 ## Architectural invariants to preserve
 
@@ -672,18 +678,19 @@ When changing this area, always rerun:
    bespoke qualified-id template-argument materializer in favor of
    `TemplateArgumentMaterialization.h`, and keeps that helper header out of the
    vcxproj lists. The next concrete target in
-   this audit is now a larger architectural extraction before more
-   standards-conformance expansion: introduce one shared structured
-   `ResolvedQualifiedOwner`-style layer plus a single qualified-owner resolver
-   that separates owner resolution, owner materialization, and alias
-   normalization instead of letting parser helpers, substitution, and sema each
-   canonicalize owner meaning independently. That resolver should consume the
-   preserved `DependentQualifiedNameRecord`, carry current-instantiation vs
-   nested-owner context explicitly, and hand the same resolved owner object to
-   ordinary member lookup and explicit member-template lookup so we stop
-   rebuilding owner identity from placeholder or base-template spellings. After
-   that extraction lands, the next standards-conformance target moves back
-   outside the passing core suite: the remaining expected-failure coverage
+   this audit is to continue adopting the new `ResolvedQualifiedOwner` layer
+   rather than creating more per-call-site owner repairs. The first parser
+   resolver now separates the requested spelling, lookup spelling, resolved
+   `TypeInfo`, current-context classification, and nested-owner-extension
+   rewrite decision for deferred qualified-call and postfix explicit-qualified
+   member-template lookup. Next, extend that carrier to consume preserved
+   `DependentQualifiedNameRecord` owner-template
+   arguments and member-prefix chains, then route `ExpressionSubstitutor.cpp`,
+   constexpr qualified member access, and the remaining sema qualified-call
+   fallback through the same resolved-owner result. After those consumers stop
+   independently canonicalizing owner meaning from placeholder or base-template
+   spellings, the next standards-conformance target moves back outside the
+   passing core suite: the remaining expected-failure coverage
    (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any
    follow-on canonical member-object-pointer carrier gap if a new ABI-sensitive
    regression reaches it.

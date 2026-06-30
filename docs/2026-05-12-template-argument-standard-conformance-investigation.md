@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-20
+**Last updated:** 2026-06-30
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. It should describe the intended semantic model, the
@@ -227,6 +227,12 @@ blocking areas:
   pointer-to-member declarator forms, and `_Is_memfunptr`-style partial
   specializations now deduce the owner class instead of treating it as opaque
   text
+- qualified-owner parser lookup now has the first shared
+  `ResolvedQualifiedOwner` carrier and resolver entrypoint. The deferred
+  qualified-call resolver, qualified member-template parser path, and postfix
+  explicit-qualified member-template placeholder path consume it for current-
+  instantiation classification and nested-owner canonicalization, keeping that
+  standards-sensitive owner split out of per-call-site string reconstruction.
 
 ## Highest-value remaining standards gaps
 
@@ -635,17 +641,20 @@ For work in this area, rerun:
    `TemplateArgumentMaterialization.h` for the remaining qualified-id
    template-argument materialization path, and removes the helper header from
    the vcxproj lists. The next concrete target in this
-   investigation is now an architectural cleanup before more
-   standards-conformance growth: extract a shared structured qualified-owner
-   resolver (`ResolvedQualifiedOwner`-style carrier plus one resolver
-   entrypoint) that keeps current-instantiation, nested-owner,
-   dependent-instantiation, owner template arguments, and alias-normalization
-   decisions in one place. The explicit member-template path, ordinary
-   qualified-member path, and later sema fallback should all consume that same
-   resolved-owner result instead of re-canonicalizing owner meaning from
-   `baseTemplateName()`, instantiation patterns, or placeholder spellings. Once
-   that layer exists, the next standards-conformance target shifts back outside
-   the green suite: the remaining expected-failure coverage
+   investigation is now adoption of the new shared structured qualified-owner
+   resolver before more standards-conformance growth. The first
+   `ResolvedQualifiedOwner` entrypoint keeps requested spelling, lookup
+   spelling, current-instantiation classification, nested-owner-extension
+   rewriting, and resolved `TypeInfo` together for the parser deferred-call
+   and postfix explicit-qualified member-template paths. Extend that result to
+   consume `DependentQualifiedNameRecord`
+   owner-template arguments and member-prefix chains, then make the explicit
+   member-template path, ordinary qualified-member path, constexpr member
+   access, and later sema fallback consume the same resolved-owner object
+   instead of re-canonicalizing owner meaning from `baseTemplateName()`,
+   instantiation patterns, or placeholder spellings. Once those consumers are
+   on the shared layer, the next standards-conformance target shifts back
+   outside the green suite: the remaining expected-failure coverage
    (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any
    future canonical member-object-pointer carrier gap if another ABI-sensitive
    failure exposes it.
