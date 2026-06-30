@@ -768,28 +768,17 @@ std::optional<ASTNode> Parser::resolveDeferredQualifiedTemplateCall(
 	if (scope_sep != std::string_view::npos) {
 		std::string_view owner_name = qualified_name.substr(0, scope_sep);
 		const std::string_view member_name = qualified_name.substr(scope_sep + 2);
-		const TypeInfo* resolved_owner_type_info = nullptr;
-		if (std::optional<AliasTemplateMaterializationResult> current_owner =
-				tryResolveQualifiedTypeOwnerFromCurrentContext(owner_name);
-			current_owner.has_value() &&
-			isNestedOwnerExtension(owner_name, current_owner->instantiated_name)) {
-			owner_name = current_owner->instantiated_name;
-			resolved_owner_type_info = current_owner->resolved_type_info;
-		} else if (AliasTemplateMaterializationResult canonical_owner =
-					   resolveCanonicalInstantiatedOwnerForLookup(owner_name);
-				   !canonical_owner.instantiated_name.empty()) {
-			owner_name = canonical_owner.instantiated_name;
-			resolved_owner_type_info = canonical_owner.resolved_type_info;
-		}
+		ResolvedQualifiedOwner resolved_owner =
+			resolveQualifiedOwnerForLookup(owner_name);
+		owner_name = resolved_owner.lookup_name;
 
-		StringHandle owner_name_handle =
-			StringTable::getOrInternStringHandle(owner_name);
+		StringHandle owner_name_handle = resolved_owner.lookupNameHandle();
 		instantiateLazyClassToPhase(
 			owner_name_handle,
 			ClassInstantiationPhase::Full);
 		const TypeInfo* owner_type_info =
-			resolved_owner_type_info != nullptr
-				? resolved_owner_type_info
+			resolved_owner.type_info != nullptr
+				? resolved_owner.type_info
 				: findTypeByName(owner_name_handle);
 		FLASH_LOG_FORMAT(
 			Templates,
@@ -1227,6 +1216,45 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveQual
 	}
 
 	return std::nullopt;
+}
+
+Parser::ResolvedQualifiedOwner Parser::resolveQualifiedOwnerForLookup(
+	std::string_view owner_name) {
+	ResolvedQualifiedOwner result;
+	result.requested_name = owner_name;
+	result.lookup_name = owner_name;
+	if (owner_name.empty()) {
+		return result;
+	}
+
+	if (std::optional<AliasTemplateMaterializationResult> current_owner =
+			tryResolveQualifiedTypeOwnerFromCurrentContext(owner_name);
+		current_owner.has_value()) {
+		result.resolved_from_current_context = true;
+		const bool nested_owner_extension =
+			isNestedOwnerExtension(owner_name, current_owner->instantiated_name);
+		if (nested_owner_extension) {
+			result.lookup_name = current_owner->instantiated_name;
+			result.type_info = current_owner->resolved_type_info;
+			result.resolved_as_nested_owner_extension = true;
+			return result;
+		}
+	}
+
+	AliasTemplateMaterializationResult canonical_owner =
+		resolveCanonicalInstantiatedOwnerForLookup(owner_name);
+	if (!canonical_owner.instantiated_name.empty()) {
+		result.lookup_name = canonical_owner.instantiated_name;
+		result.type_info = canonical_owner.resolved_type_info;
+		return result;
+	}
+
+	if (const TypeInfo* owner_type_info =
+			findTypeByName(StringTable::getOrInternStringHandle(owner_name));
+		owner_type_info != nullptr) {
+		result.type_info = owner_type_info;
+	}
+	return result;
 }
 
 // Helper to build an interned placeholder name for TTP instantiation.

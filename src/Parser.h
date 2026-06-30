@@ -2980,6 +2980,24 @@ private:
 				: std::string_view{};
 		}
 	};
+	struct ResolvedQualifiedOwner {
+		std::string_view requested_name{};
+		std::string_view lookup_name{};
+		const TypeInfo* type_info = nullptr;
+		bool resolved_from_current_context = false;
+		bool resolved_as_nested_owner_extension = false;
+
+		StringHandle lookupNameHandle() const {
+			if (type_info != nullptr &&
+				type_info->name().isValid()) {
+				return type_info->name();
+			}
+			if (!lookup_name.empty()) {
+				return StringTable::getOrInternStringHandle(lookup_name);
+			}
+			return StringHandle{};
+		}
+	};
 	std::string_view get_instantiated_class_name(std::string_view template_name, std::span<const TemplateTypeArg> template_args);	 // NEW: Get mangled name for instantiated class
 	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, std::span<const TemplateTypeArg> template_args);  // Helper: Instantiate base class template and add to AST
 	AliasTemplateMaterializationResult materializeTemplateInstantiationForLookup(
@@ -3012,6 +3030,8 @@ private:
 		std::string_view fallback_template_name,
 		std::span<const TemplateTypeArg> template_args);
 	std::optional<AliasTemplateMaterializationResult> tryResolveQualifiedTypeOwnerFromCurrentContext(
+		std::string_view owner_name);
+	ResolvedQualifiedOwner resolveQualifiedOwnerForLookup(
 		std::string_view owner_name);
 	ParseResult parseMaterializedTemplateFunctionalCast(
 		const AliasTemplateMaterializationResult& materialized_owner,

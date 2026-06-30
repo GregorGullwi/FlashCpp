@@ -491,9 +491,8 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 				return templateArgInfoContainsDependentPlaceholder(arg_info);
 			});
 	const bool owner_is_current_instantiation_context =
-		this->tryResolveQualifiedTypeOwnerFromCurrentContext(
-			instantiated_class_name)
-			.has_value();
+		this->resolveQualifiedOwnerForLookup(instantiated_class_name)
+			.resolved_from_current_context;
 	if (resolved_function == nullptr &&
 		static_member_overloads.all.empty() &&
 		!has_template_member_candidates &&
