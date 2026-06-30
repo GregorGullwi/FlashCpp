@@ -235,9 +235,10 @@ the areas that were previously blocking standards-visible behavior:
   member-pointer owner as opaque text
 - qualified-owner parser lookup now has the first shared
   `ResolvedQualifiedOwner` carrier and resolver entrypoint. The deferred
-  qualified-call resolver and the qualified member-template parser path now
-  consume that carrier for current-instantiation classification and nested-
-  owner canonicalization instead of open-coding the owner split separately.
+  qualified-call resolver, qualified member-template parser path, and postfix
+  explicit-qualified member-template placeholder path now consume that carrier
+  for current-instantiation classification and nested-owner canonicalization
+  instead of open-coding the owner split separately.
 
 ## Architectural invariants to preserve
 
@@ -681,8 +682,9 @@ When changing this area, always rerun:
    rather than creating more per-call-site owner repairs. The first parser
    resolver now separates the requested spelling, lookup spelling, resolved
    `TypeInfo`, current-context classification, and nested-owner-extension
-   rewrite decision for deferred qualified-call lookup. Next, extend that
-   carrier to consume preserved `DependentQualifiedNameRecord` owner-template
+   rewrite decision for deferred qualified-call and postfix explicit-qualified
+   member-template lookup. Next, extend that carrier to consume preserved
+   `DependentQualifiedNameRecord` owner-template
    arguments and member-prefix chains, then route `ExpressionSubstitutor.cpp`,
    constexpr qualified member access, and the remaining sema qualified-call
    fallback through the same resolved-owner result. After those consumers stop

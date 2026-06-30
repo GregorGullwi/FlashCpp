@@ -229,10 +229,10 @@ blocking areas:
   text
 - qualified-owner parser lookup now has the first shared
   `ResolvedQualifiedOwner` carrier and resolver entrypoint. The deferred
-  qualified-call resolver and qualified member-template parser path consume it
-  for current-instantiation classification and nested-owner canonicalization,
-  keeping that standards-sensitive owner split out of per-call-site string
-  reconstruction.
+  qualified-call resolver, qualified member-template parser path, and postfix
+  explicit-qualified member-template placeholder path consume it for current-
+  instantiation classification and nested-owner canonicalization, keeping that
+  standards-sensitive owner split out of per-call-site string reconstruction.
 
 ## Highest-value remaining standards gaps
 
@@ -646,7 +646,8 @@ For work in this area, rerun:
    `ResolvedQualifiedOwner` entrypoint keeps requested spelling, lookup
    spelling, current-instantiation classification, nested-owner-extension
    rewriting, and resolved `TypeInfo` together for the parser deferred-call
-   path. Extend that result to consume `DependentQualifiedNameRecord`
+   and postfix explicit-qualified member-template paths. Extend that result to
+   consume `DependentQualifiedNameRecord`
    owner-template arguments and member-prefix chains, then make the explicit
    member-template path, ordinary qualified-member path, constexpr member
    access, and later sema fallback consume the same resolved-owner object
