@@ -319,6 +319,17 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 				}
 				if (dependent_record->owner_name.isValid()) {
+					if (context.parser != nullptr) {
+						Parser::ResolvedQualifiedOwner resolved_owner =
+							context.parser->resolveQualifiedOwnerForLookup(
+								StringTable::getStringView(
+									dependent_record->owner_name));
+						if (resolved_owner.resolved_from_current_context &&
+							resolved_owner.lookupNameHandle().isValid()) {
+							return materializeOwnerMemberChainPrefix(
+								resolved_owner.lookupNameHandle());
+						}
+					}
 					return materializeOwnerMemberChainPrefix(dependent_record->owner_name);
 				}
 				if (context.struct_info != nullptr && context.struct_info->name.isValid()) {

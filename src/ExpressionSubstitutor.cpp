@@ -1084,20 +1084,19 @@ ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(
 					if (candidate_owner_name.empty()) {
 						return false;
 					}
-					if (std::optional<Parser::AliasTemplateMaterializationResult>
-							current_context_owner =
-								parser_.tryResolveQualifiedTypeOwnerFromCurrentContext(
-									candidate_owner_name);
-						current_context_owner.has_value()) {
-						if (current_context_owner->resolved_type_info != nullptr) {
+					Parser::ResolvedQualifiedOwner current_context_owner =
+						parser_.resolveQualifiedOwnerForLookup(
+							candidate_owner_name);
+					if (current_context_owner.resolved_from_current_context) {
+						if (current_context_owner.type_info != nullptr) {
 							materialized_owner =
 								parser_.materializeCanonicalOwnerTypeForLookup(
-									*current_context_owner->resolved_type_info,
+									*current_context_owner.type_info,
 									owner_args);
-						} else if (!current_context_owner->instantiated_name.empty()) {
+						} else if (!current_context_owner.lookup_name.empty()) {
 							materialized_owner =
 								parser_.resolveCanonicalInstantiatedOwnerForLookup(
-									current_context_owner->instantiated_name,
+									current_context_owner.lookup_name,
 									owner_args);
 						}
 						if (!materialized_owner.instantiated_name.empty() ||

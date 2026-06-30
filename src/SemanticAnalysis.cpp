@@ -8167,6 +8167,27 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			}
 		}
 
+		Parser::ResolvedQualifiedOwner resolved_owner =
+			parser().resolveQualifiedOwnerForLookup(owner_name);
+		if (resolved_owner.type_info != nullptr) {
+			if (const TypeInfo* resolved_struct_owner =
+					tryResolveStructOwnerTypeInfo(resolved_owner.type_info);
+				resolved_struct_owner != nullptr) {
+				return resolved_struct_owner;
+			}
+		}
+		if (!resolved_owner.lookup_name.empty() &&
+			resolved_owner.lookup_name != owner_name) {
+			if (const TypeInfo* resolved_lookup_owner =
+					tryResolveStructOwnerTypeInfo(
+						findTypeByName(
+							StringTable::getOrInternStringHandle(
+								resolved_owner.lookup_name)));
+				resolved_lookup_owner != nullptr) {
+				return resolved_lookup_owner;
+			}
+		}
+
 		auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
 			auto it = getTypesByNameMap().find(handle);
 			return it != getTypesByNameMap().end() ? it->second : nullptr;

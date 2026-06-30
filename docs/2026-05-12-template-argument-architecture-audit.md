@@ -239,6 +239,16 @@ the areas that were previously blocking standards-visible behavior:
   explicit-qualified member-template placeholder path now consume that carrier
   for current-instantiation classification and nested-owner canonicalization
   instead of open-coding the owner split separately.
+- `ExpressionSubstitutor::materializeDependentQualifiedRecordOwner(...)` now
+  also uses the shared `ResolvedQualifiedOwner` current-context classification
+  before materializing a dependent qualified owner, instead of calling the
+  older current-context owner helper and redoing the same canonicalization
+  branch locally.
+- constexpr qualified member access and sema qualified-call target recovery
+  now also consult the shared resolved-owner result before falling back to
+  their consumer-specific dependent-record prefix-chain and overload recovery
+  logic, so the parser, substitution, constexpr, and sema entry points all
+  share the same current-instantiation owner classification.
 
 ## Architectural invariants to preserve
 
@@ -683,14 +693,14 @@ When changing this area, always rerun:
    resolver now separates the requested spelling, lookup spelling, resolved
    `TypeInfo`, current-context classification, and nested-owner-extension
    rewrite decision for deferred qualified-call and postfix explicit-qualified
-   member-template lookup. Next, extend that carrier to consume preserved
-   `DependentQualifiedNameRecord` owner-template
-   arguments and member-prefix chains, then route `ExpressionSubstitutor.cpp`,
-   constexpr qualified member access, and the remaining sema qualified-call
-   fallback through the same resolved-owner result. After those consumers stop
-   independently canonicalizing owner meaning from placeholder or base-template
-   spellings, the next standards-conformance target moves back outside the
-   passing core suite: the remaining expected-failure coverage
+   member-template lookup, and the substitutor, constexpr, and sema consumer
+   entry points now consume that current-instantiation owner classification as
+   well. The remaining owner work is no longer another direct consumer
+   migration; it is a deeper extraction only if future failures require moving
+   `DependentQualifiedNameRecord` owner-template argument rebinding and
+   member-prefix chain materialization into a shared helper. Until such a
+   concrete failure appears, the next standards-conformance target moves back
+   outside the passing core suite: the remaining expected-failure coverage
    (`test_cstddef.cpp`, `test_cstdio_puts.cpp`, `test_cstdlib.cpp`) and any
    follow-on canonical member-object-pointer carrier gap if a new ABI-sensitive
    regression reaches it.

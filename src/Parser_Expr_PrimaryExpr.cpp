@@ -4848,16 +4848,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						parsed_qualified_name.substr(0, parsed_scope_sep);
 					const std::string_view member_name =
 						parsed_qualified_name.substr(parsed_scope_sep + 2);
-					if (std::optional<AliasTemplateMaterializationResult> resolved_owner =
-							tryResolveQualifiedTypeOwnerFromCurrentContext(
-								owner_name);
-						resolved_owner.has_value() &&
-						isNestedOwnerExtension(
-							owner_name,
-							resolved_owner->instantiated_name)) {
+					ResolvedQualifiedOwner resolved_owner =
+						resolveQualifiedOwnerForLookup(owner_name);
+					if (resolved_owner.resolved_as_nested_owner_extension) {
 						resolved_qualified_name =
 							StringBuilder()
-								.append(resolved_owner->instantiated_name)
+								.append(resolved_owner.lookup_name)
 								.append("::")
 								.append(member_name)
 								.commit();
