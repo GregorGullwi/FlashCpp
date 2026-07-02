@@ -407,7 +407,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	if (!current_namespace_stack_.empty()) {
 		is_in_std_namespace = (current_namespace_stack_[0] == "std");
 	}
-	func_decl_op.is_inline = node.is_member_function() || is_in_std_namespace;
+	func_decl_op.is_inline = node.is_inline() || node.is_member_function() || is_in_std_namespace;
 
 	// Use pre-computed mangled name from AST node if available (Phase 6 migration)
 	// Fall back to generating it here if not (for backward compatibility during migration)

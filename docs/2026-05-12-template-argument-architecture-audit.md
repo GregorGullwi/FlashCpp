@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-30
+**Last updated:** 2026-07-02
 
 This document is a planning aid for the remaining template-infrastructure work.
 It is intentionally forward-looking: keep it focused on the current baseline,
@@ -37,6 +37,11 @@ identity-preserving behavior:
 - builtin type template arguments are canonicalized through
   `TemplateArgumentMaterialization.h`, covering the MSVC `<type_traits>`
   `is_integral_v` fundamental-character-type fold shape
+- ordinary function declarations now preserve the C++ `inline` specifier through
+  parser copies and IR metadata; COFF emission gives C-linkage inline
+  definitions local/static symbol storage so UCRT wrapper definitions do not
+  collide with CRT library symbols while C++ inline header helpers remain
+  emitted
 
 ## Architectural invariants
 
@@ -55,21 +60,29 @@ Follow-up work should preserve these rules:
 
 ## Remaining architectural gaps
 
-### 1. Standard-header frontier
+### 1. Standard-header tracking cleanup
 
-The green core suite is no longer blocked by the qualified-owner/direct-call
-metadata work. The next high-value target is the remaining standard-header
-expected-failure frontier:
+The previously listed standard-header frontier is green on the current Windows
+baseline:
 
 - `tests/std/test_cstddef.cpp`
 - `tests/std/test_cstdio_puts.cpp`
 - `tests/std/test_cstdlib.cpp`
 
-Start by running each focused test and identifying the first compiler failure.
-Use the actual failure to decide whether the next slice belongs in
-preprocessing, namespace/header modeling, template argument materialization,
-constexpr evaluation, or semantic lookup. Do not assume the next failure is in
-qualified-owner infrastructure.
+The concrete blocker was `<cstdio>` link failure from strong definitions of
+MSVC UCRT C-linkage inline wrappers such as `vsnprintf`, `snprintf`, and
+`sprintf_s`. The parser now preserves ordinary `inline` metadata and codegen
+emits C-linkage inline definitions as local COFF symbols rather than public
+external definitions. Keep C++ inline header helpers emitted;
+`std/test_std_type_traits.cpp` depends on that for helpers such as
+`std::_Fnv1a_append_bytes`.
+
+The next high-value cleanup is to remove any remaining expected-failure
+classification for these three tests in the test harness or CI metadata, then
+use the next live standard-header failure as the driver. Do not assume it is in
+template-owner infrastructure; trace whether it belongs in preprocessing,
+namespace/header modeling, template argument materialization, constexpr
+evaluation, semantic lookup, or object/linkage emission.
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -107,13 +120,15 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Start with the standard-header frontier:
-   `test_cstddef.cpp`, `test_cstdio_puts.cpp`, then `test_cstdlib.cpp`.
-2. For the first concrete failure, trace the real layer responsible before
+1. Promote `test_cstddef.cpp`, `test_cstdio_puts.cpp`, and `test_cstdlib.cpp`
+   out of expected-failure tracking wherever the runner/CI records that status.
+2. Run the std-header subset again and identify the next concrete failing
+   header or harness mismatch.
+3. For the first concrete failure, trace the real layer responsible before
    editing.
-3. Add a focused regression that captures the standards-visible behavior outside
+4. Add a focused regression that captures the standards-visible behavior outside
    the std-header test when practical.
-4. Keep docs updates last and update this section with the next concrete
+5. Keep docs updates last and update this section with the next concrete
    frontier after validation.
 
 ## Validation guidance

@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-06-30
+**Last updated:** 2026-07-02
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. Keep it focused on the intended semantic model, active
@@ -45,23 +45,33 @@ The core suite now covers several formerly blocking standards-visible areas:
   identity through substitution/materialization and MSVC mangling
 - builtin type template arguments canonicalized for the MSVC `<type_traits>`
   `is_integral_v` fundamental character type fold
+- ordinary `inline` function metadata preserved through parser copies and IR,
+  with COFF C-linkage inline definitions emitted as local/static symbols to
+  avoid duplicate CRT definitions while preserving emitted C++ inline helpers
 
 ## Remaining standards gaps
 
-### 1. Standard-header failures
+### 1. Standard-header tracking and next failure discovery
 
-The next conformance work should be driven by the remaining expected-failure
-standard-header tests:
+The formerly active expected-failure standard-header tests now compile, link,
+and run on the current Windows baseline:
 
 - `tests/std/test_cstddef.cpp`
 - `tests/std/test_cstdio_puts.cpp`
 - `tests/std/test_cstdlib.cpp`
 
-Treat these as the active frontier. Run them individually, capture the first
-failure, and trace the standard rule involved before editing. Likely failure
+`test_cstdio_puts.cpp` exposed the relevant rule: C++ inline definitions in
+headers must not be emitted as ordinary strong external definitions when a CRT
+library also provides the C-linkage symbol. FlashCpp's current targeted behavior
+is to retain and emit C++ inline header helpers when needed, while giving
+C-linkage inline definitions local COFF symbol storage.
+
+The next standards-facing task is test-tracking cleanup plus discovery: remove
+the stale expected-failure classification for these three tests, run the std
+subset again, and let the next concrete failure choose the layer. Likely future
 areas may include preprocessing/header modeling, builtin declarations, namespace
-lookup, constexpr evaluation, or remaining template argument materialization
-gaps. Do not preselect the layer.
+lookup, constexpr evaluation, template argument materialization, or object/link
+semantics. Do not preselect the layer.
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -93,12 +103,13 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Fix the next concrete standard-header failure, starting with
-   `test_cstddef.cpp`.
-2. Add a focused non-std regression for the exposed rule when practical.
-3. Only extract deeper dependent-qualified owner materialization if that failure
+1. Remove stale expected-failure tracking for `test_cstddef.cpp`,
+   `test_cstdio_puts.cpp`, and `test_cstdlib.cpp`.
+2. Fix the next concrete standard-header failure exposed after that cleanup.
+3. Add a focused non-std regression for the exposed rule when practical.
+4. Only extract deeper dependent-qualified owner materialization if that failure
    proves the current consumer-specific prefix-chain handling is the blocker.
-4. Keep replay identity and member-object-pointer work opportunistic unless a
+5. Keep replay identity and member-object-pointer work opportunistic unless a
    concrete regression points there.
 
 ## Standards rules for follow-up work

@@ -106,7 +106,8 @@ public:
 	 * @brief Add a function symbol to the symbol table
 	 */
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset,
-							 [[maybe_unused]] uint32_t stack_space, [[maybe_unused]] Linkage linkage = Linkage::None) {
+							 [[maybe_unused]] uint32_t stack_space, [[maybe_unused]] Linkage linkage = Linkage::None,
+							 bool is_inline = false) {
 		if (g_enable_debug_output) {
 			std::cerr << "Adding function symbol: " << mangled_name
 					  << " at offset " << section_offset << std::endl;
@@ -125,7 +126,6 @@ public:
 
 		// Determine symbol binding based on whether the function is inline
 		// Inline functions need STB_WEAK so the linker can discard duplicates
-		bool is_inline = false;
 		auto it = function_signatures_.find(mangled_name);
 		if (it != function_signatures_.end()) {
 			is_inline = it->second.is_inline;

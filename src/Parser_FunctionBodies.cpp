@@ -566,6 +566,7 @@ void Parser::copy_function_properties(FunctionDeclarationNode& dest, const Funct
 	dest.set_is_variadic(src.is_variadic());
 	dest.set_is_deleted(src.is_deleted());
 	dest.set_is_static(src.is_static());
+	dest.set_is_inline(src.is_inline());
 	dest.set_is_const_member_function(src.is_const_member_function());
 	dest.set_is_volatile_member_function(src.is_volatile_member_function());
 	dest.set_is_implicit(src.is_implicit());
@@ -732,6 +733,9 @@ ParseResult Parser::parse_function_declaration_with_storage_specs(
 	func_ref.set_is_variadic(params.is_variadic);
 	if (storage_specs.is_static()) {
 		func_ref.set_is_static(true);
+	}
+	if (storage_specs.is_inline) {
+		func_ref.set_is_inline(true);
 	}
 	if (auto signature_result = validateOperatorSignature(func_ref, is_member);
 		signature_result.is_error()) {

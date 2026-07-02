@@ -1094,6 +1094,7 @@ ParseResult Parser::create_function_from_header(
 	// Set constexpr/consteval
 	func_ref.set_is_constexpr(header.storage.is_constexpr());
 	func_ref.set_is_consteval(header.storage.is_consteval());
+	func_ref.set_is_inline(header.storage.is_inline);
 
 	return func_node;
 }

@@ -7502,7 +7502,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	current_function_prologue_offset_ = 0;
 
 	uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage);
+	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage, is_inline);
 	functionSymbols[std::string(func_name)] = func_offset;
 
 		// Track function for debug information
