@@ -7502,7 +7502,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	current_function_prologue_offset_ = 0;
 
 	uint32_t func_offset = static_cast<uint32_t>(textSectionData.size());
-	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage);
+	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage, is_inline);
 	functionSymbols[std::string(func_name)] = func_offset;
 
 		// Track function for debug information
@@ -17093,7 +17093,7 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
 	uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
 
 		// Add function symbol (extern "C" linkage - no name mangling)
-	writer.add_function_symbol("__dynamic_cast_check", function_offset, 0, Linkage::C);
+	writer.add_function_symbol("__dynamic_cast_check", function_offset, 0, Linkage::C, /* is_inline */ false);
 	writer.update_function_length("__dynamic_cast_check", function_length);
 }
 
@@ -17138,7 +17138,7 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_throw_function() {
 	uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
 
 		// Add function symbol (extern "C" linkage - no name mangling)
-	writer.add_function_symbol("__dynamic_cast_throw_bad_cast", function_offset, 0, Linkage::C);
+	writer.add_function_symbol("__dynamic_cast_throw_bad_cast", function_offset, 0, Linkage::C, /* is_inline */ false);
 	writer.update_function_length("__dynamic_cast_throw_bad_cast", function_length);
 }
 

@@ -91,6 +91,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		const bool is_member = !struct_parsing_context_stack_.empty();
 		FlashCpp::StorageSpecifiers storage_specs;
 		storage_specs.storage_class = specs.storage_class;
+		storage_specs.is_inline = specs.is_inline;
 		auto func_result = parse_function_declaration_with_storage_specs(
 			decl_node,
 			CallingConvention::Default,
@@ -114,6 +115,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	func_decl.set_is_constexpr(is_constexpr);
 	func_decl.set_is_consteval(is_consteval);
 	func_decl.set_is_constinit(is_constinit);
+	func_decl.set_is_inline(specs.is_inline);
 	// Static storage class: needed for static member function templates so that
 	// codegen omits the implicit 'this' parameter and the call site doesn't pass one.
 	if (specs.storage_class == StorageClass::Static) {

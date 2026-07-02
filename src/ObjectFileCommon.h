@@ -133,7 +133,7 @@ concept FileWriter = requires(T writer,
 							  std::span<const UnwindMapEntryInfo> unwind_map,
 							  std::span<const SehTryBlockInfo> seh_try_blocks) {
 		// Core function management
-	writer.add_function_symbol(name, offset, size, linkage);
+	writer.add_function_symbol(name, offset, size, linkage, /* is_inline */ false);
 	writer.finalize_current_function();
 	writer.finalize_debug_info();
 

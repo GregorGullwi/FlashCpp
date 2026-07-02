@@ -28,13 +28,13 @@ void ObjectFileWriter::addFunctionSignature([[maybe_unused]] std::string_view na
 	function_signatures_[std::string(mangled_name)] = sig;
 }
 
-void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage) {
+void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage, bool is_inline) {
 	if (g_enable_debug_output)
 		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
 	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 	auto symbol_func = coffi_.add_symbol(mangled_name);
 	symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
-	symbol_func->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+	symbol_func->set_storage_class(is_inline && linkage == Linkage::C ? IMAGE_SYM_CLASS_STATIC : IMAGE_SYM_CLASS_EXTERNAL);
 	symbol_func->set_section_number(section_text->get_index() + 1);
 	symbol_func->set_value(section_offset);
 

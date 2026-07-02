@@ -106,7 +106,8 @@ public:
 	 * @brief Add a function symbol to the symbol table
 	 */
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset,
-							 [[maybe_unused]] uint32_t stack_space, [[maybe_unused]] Linkage linkage = Linkage::None) {
+							 [[maybe_unused]] uint32_t stack_space, [[maybe_unused]] Linkage linkage,
+							 bool is_inline) {
 		if (g_enable_debug_output) {
 			std::cerr << "Adding function symbol: " << mangled_name
 					  << " at offset " << section_offset << std::endl;
@@ -125,10 +126,9 @@ public:
 
 		// Determine symbol binding based on whether the function is inline
 		// Inline functions need STB_WEAK so the linker can discard duplicates
-		bool is_inline = false;
 		auto it = function_signatures_.find(mangled_name);
 		if (it != function_signatures_.end()) {
-			is_inline = it->second.is_inline;
+			is_inline = is_inline || it->second.is_inline;
 		}
 
 		// Add function symbol
@@ -364,9 +364,9 @@ public:
 	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage = Linkage::None, bool is_variadic = false);
 
 	// --- Method declarations (ElfFileWriter_FuncSig.cpp) ---
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline);
 	std::string_view addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
-	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
+	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, std::span<const TypeSpecifierNode> parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline);
 	void add_source_file(const std::string& filename);
 	void set_current_function_for_debug(const std::string& name, uint32_t file_id);
 	void add_line_mapping(uint32_t code_offset, uint32_t line_number);

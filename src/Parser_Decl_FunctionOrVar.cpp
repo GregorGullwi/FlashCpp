@@ -673,6 +673,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			func_node.set_is_constexpr(is_constexpr);
 			func_node.set_is_constinit(is_constinit);
 			func_node.set_is_consteval(is_consteval);
+			func_node.set_is_inline(is_inline);
 		}
 
 		// Continue with function-specific logic

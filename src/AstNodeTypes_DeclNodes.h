@@ -2873,6 +2873,11 @@ public:
 	void set_is_static(bool is_static) { is_static_ = is_static; }
 	bool is_static() const { return is_static_; }
 
+	// C++ inline specifier support. This is distinct from inline_always,
+	// which is an IR/codegen-only forced inlining marker.
+	void set_is_inline(bool is_inline) { is_inline_ = is_inline; }
+	bool is_inline() const { return is_inline_; }
+
 	// Const/volatile member function qualifiers (Itanium 'K'/'V' / MSVC QEBA/QECA)
 	void set_is_const_member_function(bool v) { is_const_member_function_ = v; }
 	bool is_const_member_function() const { return is_const_member_function_; }
@@ -2967,6 +2972,7 @@ private:
 	bool is_deleted_ = false;  // True if function is declared = delete
 	bool is_template_pattern_ = false;  // True for uninstantiated template pattern function nodes
 	bool is_static_ = false;	 // True if function is a static member function (no 'this' pointer)
+	bool is_inline_ = false;	 // True if function was declared with the C++ inline specifier
 	bool is_const_member_function_ = false;	// True if this function is a const member function (K qualifier)
 	bool is_volatile_member_function_ = false;  // True if this function is a volatile member function (V qualifier)
 	bool inline_always_ = false;	 // True if function should always be inlined (e.g., template pure expressions)
