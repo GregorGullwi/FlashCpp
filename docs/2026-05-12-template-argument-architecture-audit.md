@@ -77,12 +77,16 @@ external definitions. Keep C++ inline header helpers emitted;
 `std/test_std_type_traits.cpp` depends on that for helpers such as
 `std::_Fnv1a_append_bytes`.
 
-The next high-value cleanup is to remove any remaining expected-failure
-classification for these three tests in the test harness or CI metadata, then
-use the next live standard-header failure as the driver. Do not assume it is in
-template-owner infrastructure; trace whether it belongs in preprocessing,
-namespace/header modeling, template argument materialization, constexpr
-evaluation, semantic lookup, or object/linkage emission.
+This is a targeted COFF fix, not complete inline linkage architecture. Proper
+cross-translation-unit COFF inline semantics should move inline definitions into
+deduplicatable per-function COMDAT/weak-external sections once the object writer
+can split the current monolithic `.text` section by function.
+
+The next high-value cleanup is to use the next live standard-header failure as
+the driver. Do not assume it is in template-owner infrastructure; trace whether
+it belongs in preprocessing, namespace/header modeling, template argument
+materialization, constexpr evaluation, semantic lookup, or object/linkage
+emission.
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 

@@ -66,11 +66,15 @@ library also provides the C-linkage symbol. FlashCpp's current targeted behavior
 is to retain and emit C++ inline header helpers when needed, while giving
 C-linkage inline definitions local COFF symbol storage.
 
-The next standards-facing task is test-tracking cleanup plus discovery: remove
-the stale expected-failure classification for these three tests, run the std
-subset again, and let the next concrete failure choose the layer. Likely future
-areas may include preprocessing/header modeling, builtin declarations, namespace
-lookup, constexpr evaluation, template argument materialization, or object/link
+This is enough for the current Windows standard-header frontier, but it is not
+the final C++20 linkage model. A later object-writer slice should replace the
+local-symbol workaround with per-function COFF COMDAT/weak-external emission so
+inline definitions deduplicate correctly across translation units.
+
+The next standards-facing task is discovery: run the std subset again and let
+the next concrete failure choose the layer. Likely future areas may include
+preprocessing/header modeling, builtin declarations, namespace lookup,
+constexpr evaluation, template argument materialization, or object/link
 semantics. Do not preselect the layer.
 
 ### 2. Deeper dependent-qualified owner materialization
