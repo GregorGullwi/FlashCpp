@@ -222,27 +222,42 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					param_type_spec,
 					param_type_index);
 
+				const TemplateTypeArg* direct_template_arg =
+					findTemplateArgByName(
+						param_type_spec.token().value(),
+						lazy_info.template_params,
+						lazy_info.template_args);
 				TypeSpecifierNode substituted_param_type(
 					param_type_index.category(),
 					param_type_spec.qualifier(),
 					get_type_size_bits(param_type_index.category()),
 					param_decl.identifier_token(),
-					param_type_spec.cv_qualifier());
+					direct_template_arg != nullptr
+						? direct_template_arg->cv_qualifier
+						: param_type_spec.cv_qualifier());
 				substituted_param_type.set_type_index(param_type_index);
-				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
-					substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+				if (direct_template_arg != nullptr) {
+					for (CVQualifier ptr_cv : direct_template_arg->pointer_cv_qualifiers) {
+						substituted_param_type.add_pointer_level(ptr_cv);
+					}
+				} else {
+					for (const auto& ptr_level : param_type_spec.pointer_levels()) {
+						substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
+					}
 				}
-				substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+				substituted_param_type.set_reference_qualifier(
+					direct_template_arg != nullptr
+						? direct_template_arg->ref_qualifier
+						: param_type_spec.reference_qualifier());
 				if (param_type_spec.has_function_signature()) {
 					substituted_param_type.set_function_signature(param_type_spec.function_signature());
 				} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
 						   param_type_index.category() == TypeCategory::MemberFunctionPointer) {
 					// The original param_type_spec is a dependent placeholder (e.g. "F")
 					// that has no function_signature.  Look up the concrete TemplateTypeArg.
-					if (const auto* arg = findTemplateArgByName(param_type_spec.token().value(),
-																lazy_info.template_params, lazy_info.template_args)) {
-						if (arg->function_signature.has_value())
-							substituted_param_type.set_function_signature(*arg->function_signature);
+					if (direct_template_arg != nullptr) {
+						if (direct_template_arg->function_signature.has_value())
+							substituted_param_type.set_function_signature(*direct_template_arg->function_signature);
 					}
 				}
 				normalizeSubstitutedTypeSpec(substituted_param_type);
@@ -282,47 +297,52 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				lazy_info.identity.instantiated_owner_name);
 		};
 
-		for (const auto& init : ctor_decl.member_initializers()) {
-			new_ctor_ref.add_member_initializer(init.member_name, substituteInitExpr(init.initializer_expr));
-		}
-		// Helper: substitute a single initializer argument, expanding PackExpansionExprNode
-		// into multiple arguments when present.  Mirrors the eager path's substituteInitArg.
-		auto substituteInitArg = [&](const ASTNode& arg, std::vector<ASTNode>& out) {
-			if (arg.is<ExpressionNode>()) {
-				const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
-				if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
-					ChunkedVector<ASTNode> expanded;
-					if (expandPackExpansionArgs(*pack_exp, lazy_info.template_params, converted_template_args, expanded)) {
-						for (size_t ei = 0; ei < expanded.size(); ++ei) {
-							out.push_back(expanded[ei]);
+		{
+			FlashCpp::SymbolTableScope ctor_initializer_scope(ScopeType::Function);
+			register_parameters_in_scope(new_ctor_ref.parameter_nodes());
+
+			for (const auto& init : ctor_decl.member_initializers()) {
+				new_ctor_ref.add_member_initializer(init.member_name, substituteInitExpr(init.initializer_expr));
+			}
+			// Helper: substitute a single initializer argument, expanding PackExpansionExprNode
+			// into multiple arguments when present.  Mirrors the eager path's substituteInitArg.
+			auto substituteInitArg = [&](const ASTNode& arg, std::vector<ASTNode>& out) {
+				if (arg.is<ExpressionNode>()) {
+					const ExpressionNode& arg_expr = arg.as<ExpressionNode>();
+					if (const auto* pack_exp = std::get_if<PackExpansionExprNode>(&arg_expr)) {
+						ChunkedVector<ASTNode> expanded;
+						if (expandPackExpansionArgs(*pack_exp, lazy_info.template_params, converted_template_args, expanded)) {
+							for (size_t ei = 0; ei < expanded.size(); ++ei) {
+								out.push_back(expanded[ei]);
+							}
+							return;
 						}
-						return;
 					}
 				}
-			}
-			out.push_back(substituteInitExpr(arg));
-		};
+				out.push_back(substituteInitExpr(arg));
+			};
 
-		for (const auto& init : ctor_decl.base_initializers()) {
-			std::vector<ASTNode> substituted_args;
-			substituted_args.reserve(init.arguments.size());
-			for (const auto& arg : init.arguments) {
-				substituteInitArg(arg, substituted_args);
+			for (const auto& init : ctor_decl.base_initializers()) {
+				std::vector<ASTNode> substituted_args;
+				substituted_args.reserve(init.arguments.size());
+				for (const auto& arg : init.arguments) {
+					substituteInitArg(arg, substituted_args);
+				}
+				new_ctor_ref.add_base_initializer(
+					resolveBaseInitializerNameForTemplateArgs(
+						init.getBaseClassName(),
+						lazy_info.template_params,
+						converted_template_args),
+					std::move(substituted_args));
 			}
-			new_ctor_ref.add_base_initializer(
-				resolveBaseInitializerNameForTemplateArgs(
-					init.getBaseClassName(),
-					lazy_info.template_params,
-					converted_template_args),
-				std::move(substituted_args));
-		}
-		if (ctor_decl.delegating_initializer().has_value()) {
-			std::vector<ASTNode> substituted_del_args;
-			substituted_del_args.reserve(ctor_decl.delegating_initializer()->arguments.size());
-			for (const auto& arg : ctor_decl.delegating_initializer()->arguments) {
-				substituteInitArg(arg, substituted_del_args);
+			if (ctor_decl.delegating_initializer().has_value()) {
+				std::vector<ASTNode> substituted_del_args;
+				substituted_del_args.reserve(ctor_decl.delegating_initializer()->arguments.size());
+				for (const auto& arg : ctor_decl.delegating_initializer()->arguments) {
+					substituteInitArg(arg, substituted_del_args);
+				}
+				new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 			}
-			new_ctor_ref.set_delegating_initializer(std::move(substituted_del_args));
 		}
 		new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 		new_ctor_ref.set_is_explicitly_defaulted(ctor_decl.is_explicitly_defaulted());
