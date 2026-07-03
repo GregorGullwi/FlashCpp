@@ -2063,6 +2063,25 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 	const auto& template_params = template_func.template_parameters();
 	const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+	if (materialize_body) {
+		const bool has_dependent_template_arg =
+			std::ranges::any_of(template_args, [](const TemplateTypeArg& arg) {
+				if (arg.is_dependent ||
+					arg.dependent_name.isValid() ||
+					arg.dependent_expr.has_value()) {
+					return true;
+				}
+				if (!arg.is_value && arg.type_index.is_valid()) {
+					if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+						return arg_type_info->isDependentPlaceholder();
+					}
+				}
+				return false;
+			});
+		if (has_dependent_template_arg) {
+			materialize_body = false;
+		}
+	}
 	const StringHandle current_owner_type_name = StringTable::getOrInternStringHandle(struct_name);
 	const OuterTemplateBinding* outer_binding =
 		gTemplateRegistry.getOuterTemplateBinding(requested_qualified_name.view());
