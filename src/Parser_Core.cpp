@@ -1984,11 +1984,16 @@ void Parser::register_builtin_functions() {
 	const ASTNode short_type = make_builtin_type(TypeCategory::Short, CVQualifier::None, 0);
 	const ASTNode char_type = make_builtin_type(TypeCategory::Char, CVQualifier::None, 0);
 	const ASTNode long_long_ptr = make_builtin_type(TypeCategory::LongLong, CVQualifier::None, 1);
+	const ASTNode unsigned_long_long_ptr = make_builtin_type(TypeCategory::UnsignedLongLong, CVQualifier::None, 1);
 	const ASTNode unsigned_char_type = make_builtin_type(TypeCategory::UnsignedChar, CVQualifier::None, 0);
 	register_extern_c_builtin("_ReadWriteBarrier", void_type, {});
 	register_extern_c_builtin("_mm_pause", void_type, {});
 	register_extern_c_builtin("_Memory_barrier", void_type, {});
 	register_extern_c_builtin("_Memory_load_acquire_barrier", void_type, {});
+	register_extern_c_builtin("_addcarry_u64", unsigned_char_type, {unsigned_char_type, unsigned_long_long_type, unsigned_long_long_type, unsigned_long_long_ptr});
+	register_extern_c_builtin("_subborrow_u64", unsigned_char_type, {unsigned_char_type, unsigned_long_long_type, unsigned_long_long_type, unsigned_long_long_ptr});
+	register_extern_c_builtin("_umul128", unsigned_long_long_type, {unsigned_long_long_type, unsigned_long_long_type, unsigned_long_long_ptr});
+	register_extern_c_builtin("_udiv128", unsigned_long_long_type, {unsigned_long_long_type, unsigned_long_long_type, unsigned_long_long_type, unsigned_long_long_ptr});
 	register_extern_c_builtin("_InterlockedIncrement", long_type, {volatile_long_ptr});
 	register_extern_c_builtin("_InterlockedExchange", long_type, {volatile_long_ptr, long_type});
 	register_extern_c_builtin("_InterlockedCompareExchange128", unsigned_char_type, {volatile_long_long_ptr, long_long_type, long_long_type, long_long_ptr});
