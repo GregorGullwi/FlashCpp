@@ -2396,18 +2396,20 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 	[[maybe_unused]] const TypeInfo* outer_type_info = tryGetTypeInfo(type_spec.type_index());
 	[[maybe_unused]] const StructTypeInfo* outer_struct_info = getStructInfoIfPlainObject(type_spec);
 
+	auto makeBoolTraitResult = [&](bool value) {
+		return makeExprResult(
+			nativeTypeIndex(TypeCategory::Bool),
+			SizeInBits{8},
+			IrOperand{static_cast<unsigned long long>(value ? 1ULL : 0ULL)},
+			PointerDepth{},
+			ValueStorage::ContainsData);
+	};
+
 	if (traitNode.kind() == TypeTraitKind::IsAssignable ||
 		traitNode.kind() == TypeTraitKind::IsTriviallyAssignable ||
 		traitNode.kind() == TypeTraitKind::IsNothrowAssignable) {
 		TypeTraitResult eval_result = evaluateTypeTrait(traitNode);
-		if (eval_result.success) {
-			return makeExprResult(
-				nativeTypeIndex(TypeCategory::Bool),
-				SizeInBits{8},
-				IrOperand{static_cast<unsigned long long>(eval_result.value ? 1ULL : 0ULL)},
-				PointerDepth{},
-				ValueStorage::ContainsData);
-		}
+		return makeBoolTraitResult(eval_result.success && eval_result.value);
 	}
 
 	// Handle binary traits that require a second type argument
@@ -2916,120 +2918,6 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 					} else {
 						// No matching ctor found — not constructible, so not nothrow constructible
 						result = false;
-					}
-				}
-			}
-		}
-		break;
-
-	case TypeTraitKind::IsAssignable:
-		// __is_assignable(To, From) - Check if From can be assigned to To
-		if (traitNode.has_second_type()) {
-			const ASTNode& from_node = traitNode.second_type_node();
-			if (from_node.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
-
-				// For scalar types, check type compatibility
-				if (isScalarType(type_category, is_reference, pointer_depth)) {
-					// Scalars are assignable from compatible types
-					result = isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth());
-				}
-				// Class types: check for assignment operator
-				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-					if (struct_info && !struct_info->is_union) {
-						// If has copy/move assignment or no user-defined, assume assignable
-						result = struct_info->hasCopyAssignmentOperator() ||
-								 struct_info->hasMoveAssignmentOperator() ||
-								 !struct_info->hasUserDefinedConstructor();
-					}
-				}
-			}
-		}
-		break;
-
-	case TypeTraitKind::IsTriviallyAssignable:
-		// __is_trivially_assignable(To, From) - Check if From can be trivially assigned to To
-		if (traitNode.has_second_type()) {
-			const ASTNode& from_node = traitNode.second_type_node();
-			if (from_node.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
-
-				// Scalar types are trivially assignable
-				if (isScalarType(type_category, is_reference, pointer_depth) &&
-					isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
-					result = true;
-				}
-				// Class types: no virtual, no user-defined assignment
-				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
-					if (struct_info && !struct_info->is_union) {
-						result = !struct_info->has_vtable &&
-								 !struct_info->hasCopyAssignmentOperator() &&
-								 !struct_info->hasMoveAssignmentOperator();
-					}
-				}
-			}
-		}
-		break;
-
-	case TypeTraitKind::IsNothrowAssignable:
-		// __is_nothrow_assignable(To, From) - Check if From can be assigned without throwing
-		if (traitNode.has_second_type()) {
-			const ASTNode& from_node = traitNode.second_type_node();
-			if (from_node.is<TypeSpecifierNode>()) {
-				const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
-
-				// Scalar types don't throw on assignment
-				if (isScalarType(type_category, is_reference, pointer_depth) &&
-					isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
-					result = true;
-				}
-				// Class types: implicitly-generated assignment ops are noexcept;
-				// user-defined ops are noexcept only if marked noexcept
-				// Note: For assignability, the first type is typically T& (lvalue reference),
-				// so we check the underlying struct type regardless of reference qualifier
-				else if (type_category == TypeCategory::Struct && pointer_depth == 0 &&
-						 type_spec.type_index().is_valid()) {
-					if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-						if (!struct_info->is_union) {
-							bool has_user_assign = struct_info->hasCopyAssignmentOperator() ||
-												   struct_info->hasMoveAssignmentOperator();
-							if (!has_user_assign) {
-								// Implicitly-generated assignment ops are noexcept
-								result = !struct_info->has_vtable;
-							} else {
-								// Find the assignment operator selected by From type and check its noexcept
-								const StructMemberFunction* selected_op = nullptr;
-								for (const auto& mf : struct_info->member_functions) {
-									if (!isAssignOperator(mf.operator_kind))
-										continue;
-									const auto* func_node = get_function_decl_node(mf.function_decl);
-									if (!func_node)
-										continue;
-									if (func_node->is_implicit())
-										continue;
-									const auto& params = func_node->parameter_nodes();
-									if (params.size() != 1 || !params[0].is<DeclarationNode>())
-										continue;
-									const auto& param_type = params[0].as<DeclarationNode>().type_specifier_node();
-									// Match: same base type, (for structs) same type_index, and same reference qualifier
-									if (param_type.type() != from_spec.type())
-										continue;
-									if (param_type.category() == TypeCategory::Struct &&
-										param_type.type_index() != from_spec.type_index())
-										continue;
-									if (param_type.reference_qualifier() != from_spec.reference_qualifier())
-										continue;
-									selected_op = &mf;
-									break;
-								}
-								// Audit 2026-04-27: the prior "first non-implicit
-								// operator=" fallback here was probed across the
-								// full 2239-test corpus with a hard-fail guard and
-								// never hit. The exact-match `operator=` lookup above
-								// is sufficient for `__is_nothrow_assignable`.
-								result = selected_op ? selected_op->is_noexcept : false;
-							}
-						}
 					}
 				}
 			}

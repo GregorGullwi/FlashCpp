@@ -1484,6 +1484,12 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 		op.function_name = StringTable::getOrInternStringHandle(identifierNode.name());
 		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), Token()));
+		setTempVarMetadata(
+			func_addr_var,
+			TempVarMetadata::makeAddressOnly(
+				nativeTypeIndex(TypeCategory::FunctionPointer),
+				SizeInBits{64},
+				ValueCategory::PRValue));
 
 			// Return the function address as a pointer (64 bits).
 			// The TempVar holds the address of the function → ContainsAddress so that

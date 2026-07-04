@@ -4,6 +4,17 @@
 #include "LambdaHelpers.h"
 #include "SemanticAnalysis.h"
 
+namespace {
+void markAddressOnlyResult(TempVar result_var, TypeIndex value_type_index, SizeInBits value_size_bits) {
+	setTempVarMetadata(
+		result_var,
+		TempVarMetadata::makeAddressOnly(
+			value_type_index,
+			value_size_bits,
+			ValueCategory::PRValue));
+}
+}
+
 ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
 		// Pointer values are always 64-bit addresses on x64. Numeric type conversion
 		// must never change their size (e.g. truncate 64→32). Only update the type
@@ -846,6 +857,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			compute_addr_op.result_size_bits = addr_components->final_size_bits;
 
 			ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
+			markAddressOnlyResult(result_var, addr_components->final_type_index, SizeInBits{addr_components->final_size_bits});
 
 				// Return pointer to result (64-bit pointer)
 				// IMPORTANT: Use the actual type_index, not nativeTypeIndex, for struct types.

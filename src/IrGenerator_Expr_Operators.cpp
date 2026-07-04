@@ -40,6 +40,13 @@ bool shouldPreferMoveAssignment(const ExprResult& rhs_expr_result) {
 	return false;
 }
 
+bool resultHoldsAddressOnlyValue(const ExprResult& result) {
+	if (const auto* temp_var = std::get_if<TempVar>(&result.value)) {
+		return getTempVarMetadata(*temp_var).holds_address_only;
+	}
+	return false;
+}
+
 bool matchesPatternQualifiedName(StringHandle instantiated_name, StringHandle pattern_name) {
 	if (!instantiated_name.isValid() || !pattern_name.isValid()) {
 		return false;
@@ -125,6 +132,41 @@ std::optional<bool> getSameTypeAssignmentKind(const StructTypeInfo& struct_info,
 	return std::nullopt;
 }
 } // namespace
+
+ExprResult AstToIr::materializeAddressResultForValueContext(
+	const ExprResult& result,
+	TypeIndex target_type_index,
+	TypeCategory target_category,
+	SizeInBits target_size,
+	PointerDepth target_pointer_depth,
+	ReferenceQualifier target_reference_qualifier,
+	const Token& token) {
+	if (result.storage != ValueStorage::ContainsAddress ||
+		resultHoldsAddressOnlyValue(result) ||
+		target_reference_qualifier != ReferenceQualifier::None ||
+		target_category == TypeCategory::Struct) {
+		return result;
+	}
+
+	const int loaded_size = target_pointer_depth.value > 0
+		? 64
+		: target_size.value;
+	TempVar loaded_value = emitDereference(
+		target_category,
+		64,
+		1,
+		toIrValue(result.value),
+		token);
+	TypeIndex materialized_type_index = target_type_index.is_valid()
+		? target_type_index.withCategory(target_category)
+		: TypeIndex{0, target_category};
+	return makeExprResult(
+		materialized_type_index,
+		SizeInBits{loaded_size},
+		IrOperand{loaded_value},
+		target_pointer_depth,
+		ValueStorage::ContainsData);
+}
 
 AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const IdentifierNode& identifier) {
 	GlobalStaticBindingInfo info;
@@ -5583,17 +5625,19 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		value_tv.setType(pointee_type);
 		value_tv.ir_type = toIrType(pointee_type);
 		value_tv.size_in_bits = SizeInBits{static_cast<int>(pointee_size_bits)};
-		IrValue rhs_value = toIrValue(rhs_operands.value);
-		if (rhs_operands.storage == ValueStorage::ContainsAddress &&
-			rhs_operands.category() != TypeCategory::Struct) {
-			rhs_value = emitDereference(
+		const int pointee_pointer_depth = lhs_operands.pointer_depth.value > 0
+			? lhs_operands.pointer_depth.value - 1
+			: 0;
+		ExprResult materialized_rhs =
+			materializeAddressResultForValueContext(
+				rhs_operands,
+				lhs_operands.type_index,
 				pointee_type,
-				64,
-				1,
-				rhs_value,
+				SizeInBits{static_cast<int>(pointee_size_bits)},
+				PointerDepth{pointee_pointer_depth},
+				ReferenceQualifier::None,
 				token);
-		}
-		value_tv.value = rhs_value;
+		value_tv.value = toIrValue(materialized_rhs.value);
 		applyArrayDecayForPointerStore(value_tv);
 
 		// Emit the store using helper
