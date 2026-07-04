@@ -8,6 +8,14 @@ appears to be a default-constructed `ConstructorDeclarationNode` whose `InlineVe
 data pointer is never initialized — the Sharded build's different TU arrangement
 happens to zero the memory. See `Parser_Templates_Inst_MemberFunc.cpp:1394`.
 
+## Dependent template pointer argument `sizeof` mismatch
+`tests/test_dependent_template_pointer_arg_ret0.cpp` returns 16 instead of 0.
+The `WrongOuterIntPointerTag` bit is set, meaning `Outer<int>::getPointerTag()`
+(which returns `Wrapper<T*>::tag` = `sizeof(int*)`) produces an incorrect value.
+The `T*` dependent template argument is not being correctly resolved when used
+in a `sizeof` inside a member function of a class template. This is a pre-existing
+issue unrelated to the lazy member body deferral fix.
+
 ## Missing ambiguity diagnostics in overload resolution
 Some overload sets that are ill-formed in standard C++20 due to ambiguity are not
 consistently diagnosed as compile errors yet.
