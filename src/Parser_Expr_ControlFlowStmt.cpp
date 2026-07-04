@@ -1543,10 +1543,10 @@ ParseResult Parser::parse_if_statement() {
 	// Skip C++20 [[likely]]/[[unlikely]] attributes on if branches
 	skip_cpp_attributes();
 
-	// For if constexpr during template body re-parsing with parameter packs,
-	// evaluate the condition at compile time and skip the dead branch
-	// (which may contain ill-formed code like unexpanded parameter packs)
-	if (is_constexpr && has_parameter_packs_ && condition.node().has_value()) {
+	// For if constexpr, evaluate the condition at parse time when possible and
+	// skip the dead branch. The discarded branch may be ill-formed for the
+	// selected specialization.
+	if (is_constexpr && condition.node().has_value()) {
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		auto eval_result = ConstExpr::Evaluator::evaluate(*condition.node(), eval_ctx);
 		if (eval_result.success()) {

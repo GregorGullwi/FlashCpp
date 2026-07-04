@@ -1067,6 +1067,9 @@ inline ReferenceQualifier collapseReferenceQualifiers(
 }
 
 inline int computeTemplateTypeArgSizeBits(const TemplateTypeArg& arg) {
+	if (arg.pointer_depth > 0 || arg.ref_qualifier != ReferenceQualifier::None) {
+		return 64;
+	}
 	if (is_struct_type(arg.category())) {
 		if (arg.type_index.is_valid()) {
 			const ResolvedAliasTypeInfo resolved_arg = resolveAliasTypeInfo(arg.type_index);
@@ -1082,7 +1085,11 @@ inline int computeTemplateTypeArgSizeBits(const TemplateTypeArg& arg) {
 		}
 		return 0;
 	}
-	return get_type_size_bits(arg.category());
+	int base_size = get_type_size_bits(arg.category());
+	if (arg.pointer_depth > 0) {
+		return 64;
+	}
+	return base_size;
 }
 
 inline uint8_t checkedPointerDepthToUint8(size_t pointer_depth) {

@@ -1965,6 +1965,9 @@ std::optional<ASTNode> ExpressionSubstitutor::tryEvaluateConcreteConceptCall(con
 			return std::nullopt;
 		}
 	}
+	if (templateArgsStillDependent(*concrete_args)) {
+		return std::nullopt;
+	}
 
 	const ConstraintEvaluationResult constraint_result =
 		evaluateConstraint(concept_opt->as<ConceptDeclarationNode>(), *concrete_args, &parser_);

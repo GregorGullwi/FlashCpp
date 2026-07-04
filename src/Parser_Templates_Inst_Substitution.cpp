@@ -3699,10 +3699,17 @@ ASTNode Parser::substitute_template_params_in_expression(
 	StringHandle substitution_owner) {
 	auto makeSubstitutedTypeNode =
 		[&](const TemplateTypeArg& arg, const Token& token) {
+		// Pointers are always 64 bits on x64 regardless of the pointee type.
+		// Using get_type_size_bits(arg.category()) alone would give the base
+		// type size (e.g. 32 for int) instead of the pointer size (64) when
+		// the template argument carries pointer modifiers (e.g. T* where T=int).
+		int size_bits = arg.pointer_depth > 0
+			? 64
+			: get_type_size_bits(arg.category());
 		TypeSpecifierNode new_type(
 			arg.typeEnum(),
 			TypeQualifier::None,
-			get_type_size_bits(arg.category()),
+			size_bits,
 			token,
 			arg.cv_qualifier);
 		new_type.set_type_index(arg.type_index);
@@ -4013,10 +4020,14 @@ ASTNode Parser::substitute_template_params_in_expression(
 
 				// Create a new type node with the substituted type
 				const TemplateTypeArg& arg = it->second;
+				// Pointers are always 64 bits on x64 regardless of the pointee type.
+				int size_bits = arg.pointer_depth > 0
+					? 64
+					: get_type_size_bits(arg.category());
 				TypeSpecifierNode new_type(
 					arg.typeEnum(),
 					TypeQualifier::None,
-					get_type_size_bits(arg.category()),
+					size_bits,
 					unop.get_token(), CVQualifier::None);
 				// Apply cv-qualifiers, references, and pointers from template argument
 				new_type.set_reference_qualifier(arg.ref_qualifier);

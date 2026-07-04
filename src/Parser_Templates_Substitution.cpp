@@ -1377,37 +1377,41 @@ ASTNode Parser::substituteTemplateParameters(
 				if (type_or_expr.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 
-					// Check if this is a user-defined or struct type that matches a template parameter
-					if ((is_struct_type(type_spec.category()))) {
-						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-							std::string_view type_name = StringTable::getStringView(type_info->name());
-							bool substituted_sizeof_type = false;
-							std::optional<ASTNode> substituted_sizeof_node;
+					// Try to find a matching template parameter and evaluate sizeof directly.
+					// This handles both struct types (matched by name) and non-struct dependent
+					// types (matched by type_index) where the template arg carries pointer_depth.
+					if (type_spec.type_index().is_valid()) {
+						bool substituted_sizeof_type = false;
+						std::optional<ASTNode> substituted_sizeof_node;
+						forEachNonPackTemplateParamArgBinding(
+							template_params,
+							template_args,
+							[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
+								if (substituted_sizeof_type || !arg.isTypeArgument())
+									return;
+								// Match by name (struct types) or by type_index (dependent types)
+								const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+								if (type_info == nullptr)
+									return;
+								std::string_view type_name = StringTable::getStringView(type_info->name());
+								if (tparam.name() != type_name && type_info->type_index_ != arg.type_index)
+									return;
 
-							forEachNonPackTemplateParamArgBinding(
-								template_params,
-								template_args,
-								[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
-									if (substituted_sizeof_type || tparam.name() != type_name || !arg.isTypeArgument())
-										return;
-
-									size_t type_size = getSubstitutedTemplateArgumentSizeInBytes(arg);
-									if (type_size == 0) {
-										return;
-									}
-									StringBuilder size_builder;
-									std::string_view size_str = size_builder.append(type_size).commit();
-									Token literal_token(Token::Type::Literal, size_str,
-														sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(),
-														sizeof_expr.sizeof_token().file_index());
-									substituted_sizeof_node = emplace_node<ExpressionNode>(
-										NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size),
-														   TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
-									substituted_sizeof_type = true;
-								});
-							if (substituted_sizeof_type)
-								return *substituted_sizeof_node;
-						}
+								size_t type_size = getSubstitutedTemplateArgumentSizeInBytes(arg);
+								if (type_size == 0)
+									return;
+								StringBuilder size_builder;
+								std::string_view size_str = size_builder.append(type_size).commit();
+								Token literal_token(Token::Type::Literal, size_str,
+													sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(),
+													sizeof_expr.sizeof_token().file_index());
+								substituted_sizeof_node = emplace_node<ExpressionNode>(
+									NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size),
+													   TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
+								substituted_sizeof_type = true;
+							});
+						if (substituted_sizeof_type)
+							return *substituted_sizeof_node;
 					}
 
 					// Otherwise, recursively substitute the type node
@@ -1594,6 +1598,8 @@ ASTNode Parser::substituteTemplateParameters(
 
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
+		FLASH_LOG(Templates, Debug, "  substituteTemplateParameters TypeSpecifierNode: cat=", static_cast<int>(type_spec.category()),
+			" token='", type_spec.token().value(), "' pointer_depth=", static_cast<int>(type_spec.pointer_depth()));
 		const auto makeTypeSpecifierFromTemplateArg = [&](const TemplateTypeArg& arg) -> ASTNode {
 			Token substituted_token = type_spec.token();
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
@@ -1686,12 +1692,14 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 		}
 
-		// Check if this is a user-defined type that matches a template parameter
+		// Check if this is a user-defined type that matches a template parameter,
+		// or a dependent placeholder type (built-in category with placeholder type_index).
 		if (type_spec.category() == TypeCategory::UserDefined ||
 			type_spec.category() == TypeCategory::Struct ||
 			type_spec.category() == TypeCategory::TypeAlias ||
 			type_spec.category() == TypeCategory::Template ||
-			type_spec.category() == TypeCategory::Auto) {
+			type_spec.category() == TypeCategory::Auto ||
+			typeSpecStillUsesDependentPlaceholder(type_spec)) {
 			const TemplateTypeArg* matched_direct_template_arg = nullptr;
 			bool exact_template_param_substituted = false;
 			std::optional<ASTNode> exact_template_param_node;
