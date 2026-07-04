@@ -2377,21 +2377,11 @@ ExprResult AstToIr::generateBuiltinIncDec(
 // Returns true if the expression is guaranteed not to throw, false otherwise
 bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	auto isFunctionDeclNoexcept = [&](const FunctionDeclarationNode& func_decl) -> bool {
-		if (!func_decl.is_noexcept()) {
-			return false;
-		}
-
-		if (!func_decl.has_noexcept_expression()) {
-			return true;
-		}
-
 		ConstExpr::EvaluationContext ctx = makeEvalContext(symbol_table);
 		if (global_symbol_table_) {
 			ctx.global_symbols = global_symbol_table_;
 		}
-
-		auto eval_result = ConstExpr::Evaluator::evaluate(*func_decl.noexcept_expression(), ctx);
-		return eval_result.success() && eval_result.as_bool();
+		return ConstExpr::Evaluator::is_function_decl_noexcept(func_decl, ctx);
 	};
 
 	// Literals are always noexcept
@@ -2448,6 +2438,40 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	}
 
 	if (const auto call_info = CallInfo::tryFrom(expr)) {
+		auto lookupFunctionByMangledName = [&](StringHandle mangled_name) -> const FunctionDeclarationNode* {
+			if (!mangled_name.isValid()) {
+				return nullptr;
+			}
+			if (std::optional<ASTNode> symbol = symbol_table.lookup(mangled_name);
+				symbol.has_value()) {
+				return get_function_decl_node(*symbol);
+			}
+			if (global_symbol_table_ != nullptr) {
+				if (std::optional<ASTNode> symbol = global_symbol_table_->lookup(mangled_name);
+					symbol.has_value()) {
+					return get_function_decl_node(*symbol);
+				}
+			}
+			return nullptr;
+		};
+		if (call_info->definition_lookup_record != nullptr &&
+			call_info->definition_lookup_record->has_value()) {
+			const FunctionCallDefinitionLookupRecord& record =
+				call_info->definition_lookup_record->value();
+			if (record.resolved_function != nullptr) {
+				return isFunctionDeclNoexcept(*record.resolved_function);
+			}
+			if (const FunctionDeclarationNode* resolved_function =
+					lookupFunctionByMangledName(record.resolved_mangled_name);
+				resolved_function != nullptr) {
+				return isFunctionDeclNoexcept(*resolved_function);
+			}
+		}
+		if (const FunctionDeclarationNode* resolved_function =
+				lookupFunctionByMangledName(call_info->mangled_name);
+			resolved_function != nullptr) {
+			return isFunctionDeclNoexcept(*resolved_function);
+		}
 		if (const FunctionDeclarationNode* func_decl = call_info->function_declaration) {
 			return isFunctionDeclNoexcept(*func_decl);
 		}

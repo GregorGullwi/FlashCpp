@@ -1,4 +1,5 @@
 #include <limits>
+#include <ranges>
 #include <unordered_set>
 
 #include "Parser.h"
@@ -2209,17 +2210,13 @@ EvalResult Evaluator::evaluate_throw_expression(const ThrowExpressionNode& throw
 }
 
 bool Evaluator::is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context) {
-	if (!func_decl.is_noexcept()) {
-		return false;
-	}
-
 	if (!func_decl.has_noexcept_expression()) {
-		return true;
+		return func_decl.is_noexcept();
 	}
 
 	auto eval_result = evaluate(*func_decl.noexcept_expression(), context);
 	if (!eval_result.success()) {
-		return false;
+		return func_decl.is_noexcept();
 	}
 
 	return eval_result.as_bool();
@@ -2394,8 +2391,270 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 	}
 
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
-		if (const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null()) {
+		auto trySelectFunctionTemplateSpecialization = [&]() -> const FunctionDeclarationNode* {
+			if (context.sema == nullptr || context.parser == nullptr) {
+				return nullptr;
+			}
+			auto tryBuildNoexceptCallArgType = [&](const ASTNode& argument) -> std::optional<TypeSpecifierNode> {
+				if (!argument.is<ExpressionNode>()) {
+					return std::nullopt;
+				}
+				const ExpressionNode& argument_expr = argument.as<ExpressionNode>();
+				if (const auto* cast = std::get_if<StaticCastNode>(&argument_expr)) {
+					return cast->target_type();
+				}
+				if (const auto* identifier = std::get_if<IdentifierNode>(&argument_expr)) {
+					if (context.symbols == nullptr) {
+						return std::nullopt;
+					}
+					std::optional<ASTNode> symbol = context.symbols->lookup(identifier->name());
+					if (!symbol.has_value()) {
+						return std::nullopt;
+					}
+					const DeclarationNode* declaration = get_decl_from_symbol(*symbol);
+					if (declaration == nullptr) {
+						return std::nullopt;
+					}
+					TypeSpecifierNode type = declaration->type_specifier_node();
+					if (!type.is_reference()) {
+						type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+					}
+					return type;
+				}
+				return std::nullopt;
+			};
+			InlineVector<TypeSpecifierNode, 6> arg_types;
+			for (const ASTNode& argument : call_expr->arguments()) {
+				std::optional<TypeSpecifierNode> arg_type =
+					context.sema->getOverloadResolutionArgType(argument);
+				if (!arg_type.has_value()) {
+					arg_type = tryBuildNoexceptCallArgType(argument);
+				}
+				if (!arg_type.has_value()) {
+					return nullptr;
+				}
+				arg_types.push_back(*arg_type);
+			}
+			if (call_expr->has_qualified_name()) {
+				if (std::optional<ASTNode> instantiated =
+						context.parser->try_instantiate_template(
+							call_expr->qualified_name(),
+							arg_types);
+					instantiated.has_value()) {
+					if (const FunctionDeclarationNode* function_decl =
+							get_function_decl_node(*instantiated);
+						function_decl != nullptr) {
+						return function_decl;
+					}
+				}
+			}
+			const std::string_view callee_name =
+				call_expr->callee().declaration().identifier_token().value();
+			if (callee_name.empty()) {
+				return nullptr;
+			}
+			if (std::optional<ASTNode> instantiated =
+					context.parser->try_instantiate_template(
+						callee_name,
+						arg_types);
+				instantiated.has_value()) {
+				return get_function_decl_node(*instantiated);
+			}
+			return nullptr;
+		};
+		auto tryEvaluateInstantiatedExceptionSpecification = [&]() -> std::optional<bool> {
+			if (context.parser == nullptr) {
+				return std::nullopt;
+			}
+			auto lookup_template = [&]() -> std::optional<ASTNode> {
+				if (call_expr->has_qualified_name()) {
+					if (std::optional<ASTNode> templ =
+							gTemplateRegistry.lookupTemplate(call_expr->qualified_name());
+						templ.has_value()) {
+						return templ;
+					}
+				}
+				const std::string_view callee_name =
+					call_expr->callee().declaration().identifier_token().value();
+				if (callee_name.empty()) {
+					return std::nullopt;
+				}
+				return gTemplateRegistry.lookupTemplate(callee_name);
+			};
+			std::optional<ASTNode> template_node = lookup_template();
+			const TemplateFunctionDeclarationNode* template_func = nullptr;
+			const FunctionDeclarationNode* func_decl_ptr = nullptr;
+			InlineVector<TemplateParameterNode, 4> inferred_template_params;
+			if (template_node.has_value() &&
+				template_node->is<TemplateFunctionDeclarationNode>()) {
+				template_func = &template_node->as<TemplateFunctionDeclarationNode>();
+				func_decl_ptr = &template_func->function_decl_node();
+			} else if (const FunctionDeclarationNode* parser_target =
+					call_expr->callee().function_declaration_or_null();
+				parser_target != nullptr) {
+				func_decl_ptr = parser_target;
+				for (const ASTNode& param_node : parser_target->parameter_nodes()) {
+					if (!param_node.is<DeclarationNode>()) {
+						continue;
+					}
+					const TypeSpecifierNode& param_type =
+						param_node.as<DeclarationNode>().type_specifier_node();
+					StringHandle param_type_name = param_type.token().handle();
+					if (!param_type_name.isValid()) {
+						continue;
+					}
+					const bool already_added = std::ranges::any_of(
+						inferred_template_params,
+						[param_type_name](const TemplateParameterNode& existing) {
+							return existing.nameHandle() == param_type_name;
+						});
+					if (already_added) {
+						continue;
+					}
+					Token param_token(
+						Token::Type::Identifier,
+						StringTable::getStringView(param_type_name),
+						param_type.token().line(),
+						param_type.token().column(),
+						param_type.token().file_index());
+					inferred_template_params.push_back(
+						TemplateParameterNode(param_type_name, param_token));
+				}
+			}
+			if (func_decl_ptr == nullptr) {
+				return std::nullopt;
+			}
+			const FunctionDeclarationNode& func_decl = *func_decl_ptr;
+			const std::span<const TemplateParameterNode> template_params =
+				template_func != nullptr
+					? std::span<const TemplateParameterNode>(
+						template_func->template_parameters().data(),
+						template_func->template_parameters().size())
+					: std::span<const TemplateParameterNode>(
+						inferred_template_params.data(),
+						inferred_template_params.size());
+			if (!func_decl.has_noexcept_expression() ||
+				func_decl.parameter_nodes().size() != call_expr->arguments().size()) {
+				return std::nullopt;
+			}
+			InlineVector<TemplateTypeArg, 4> deduced_args;
+			deduced_args.resize(template_params.size());
+			std::vector<bool> deduced(template_params.size(), false);
+			for (size_t arg_index = 0; arg_index < call_expr->arguments().size(); ++arg_index) {
+				const ASTNode& param_node = func_decl.parameter_nodes()[arg_index];
+				if (!param_node.is<DeclarationNode>()) {
+					continue;
+				}
+				const TypeSpecifierNode& param_type =
+					param_node.as<DeclarationNode>().type_specifier_node();
+				StringHandle param_type_name = param_type.token().handle();
+				if (!param_type_name.isValid()) {
+					continue;
+				}
+				size_t template_param_index = SIZE_MAX;
+				for (size_t i = 0; i < template_params.size(); ++i) {
+					if (template_params[i].nameHandle() == param_type_name) {
+						template_param_index = i;
+						break;
+					}
+				}
+				if (template_param_index == SIZE_MAX) {
+					continue;
+				}
+				std::optional<TypeSpecifierNode> arg_type;
+				if (context.sema != nullptr) {
+					arg_type = context.sema->getOverloadResolutionArgType(call_expr->arguments()[arg_index]);
+				}
+				if (!arg_type.has_value()) {
+					const ASTNode& argument = call_expr->arguments()[arg_index];
+					if (argument.is<ExpressionNode>()) {
+						const ExpressionNode& argument_expr = argument.as<ExpressionNode>();
+						if (const auto* cast = std::get_if<StaticCastNode>(&argument_expr)) {
+							arg_type = cast->target_type();
+						} else if (const auto* identifier = std::get_if<IdentifierNode>(&argument_expr)) {
+							if (context.symbols != nullptr) {
+								std::optional<ASTNode> symbol = context.symbols->lookup(identifier->name());
+								if (symbol.has_value()) {
+									if (const DeclarationNode* declaration = get_decl_from_symbol(*symbol)) {
+										TypeSpecifierNode type = declaration->type_specifier_node();
+										if (!type.is_reference()) {
+											type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+										}
+										arg_type = type;
+									}
+								}
+							}
+						}
+					}
+				}
+				if (!arg_type.has_value()) {
+					return std::nullopt;
+				}
+				TypeSpecifierNode deduced_type = *arg_type;
+				if (param_type.is_reference()) {
+					deduced_type.set_reference_qualifier(ReferenceQualifier::None);
+				}
+				deduced_args[template_param_index] = TemplateTypeArg(deduced_type);
+				deduced[template_param_index] = true;
+			}
+			if (std::ranges::any_of(deduced, [](bool value) { return !value; })) {
+				return std::nullopt;
+			}
+			ASTNode substituted_noexcept = context.parser->substituteTemplateParameters(
+				*func_decl.noexcept_expression(),
+				template_params,
+				std::span<const TemplateTypeArg>(deduced_args.data(), deduced_args.size()));
+			auto eval_result = evaluate(substituted_noexcept, context);
+			if (!eval_result.success()) {
+				return std::nullopt;
+			}
+			return eval_result.as_bool();
+		};
+		if (std::optional<bool> template_noexcept =
+				tryEvaluateInstantiatedExceptionSpecification();
+			template_noexcept.has_value()) {
+			return *template_noexcept;
+		}
+		if (const FunctionDeclarationNode* function_decl =
+				trySelectFunctionTemplateSpecialization();
+			function_decl != nullptr) {
 			return is_function_decl_noexcept(*function_decl, context);
+		}
+		if (const FunctionDeclarationNode* function_decl = getParserStoredDirectCallTarget(*call_expr)) {
+			return is_function_decl_noexcept(*function_decl, context);
+		}
+		if (call_expr->has_definition_lookup_record()) {
+			const FunctionCallDefinitionLookupRecord& record =
+				call_expr->definition_lookup_record().value();
+			if (record.resolved_function != nullptr) {
+				return is_function_decl_noexcept(*record.resolved_function, context);
+			}
+			if (context.sema != nullptr && context.parser != nullptr) {
+				InlineVector<TypeSpecifierNode, 6> arg_types;
+				bool collected_arg_types = true;
+				for (const ASTNode& argument : call_expr->arguments()) {
+					std::optional<TypeSpecifierNode> arg_type =
+						context.sema->getOverloadResolutionArgType(argument);
+					if (!arg_type.has_value()) {
+						collected_arg_types = false;
+						break;
+					}
+					arg_types.push_back(*arg_type);
+				}
+				if (collected_arg_types) {
+					if (std::optional<ASTNode> resolved_target =
+							context.parser->resolveDefinitionBoundOrdinaryCall(
+								record,
+								arg_types);
+						resolved_target.has_value()) {
+						if (const FunctionDeclarationNode* function_decl =
+								get_function_decl_node(*resolved_target);
+							function_decl != nullptr) {
+							return is_function_decl_noexcept(*function_decl, context);
+						}
+					}
+				}
+			}
 		}
 		const FunctionDeclarationNode* function_decl = resolve_function_call_decl(*call_expr, context);
 		return function_decl && is_function_decl_noexcept(*function_decl, context);

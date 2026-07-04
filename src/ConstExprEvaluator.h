@@ -579,6 +579,7 @@ public:
 	static EvalResult evaluate_member_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
+	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
 	static std::optional<TypeSpecifierNode> tryQueryExpressionType(
 		const ASTNode& expr,
 		EvaluationContext& context);
@@ -820,7 +821,6 @@ private:
 	static EvalResult evaluate_identifier(const IdentifierNode& identifier, EvaluationContext& context);
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
 	static bool is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context);
-	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
 
 	static const FunctionDeclarationNode* resolve_function_call_decl(const CallExprNode& call_expr, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
