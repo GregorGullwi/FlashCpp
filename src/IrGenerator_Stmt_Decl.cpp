@@ -1349,12 +1349,33 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	std::optional<TypedValue> initializer_typed_value;
 	std::optional<ExprResult> cached_copy_init_expr_result;
 	auto appendExprResultToOperands = [&](const ExprResult& result) {
-		initializer_typed_value = toTypedValue(result);
+		ExprResult appended_result = result;
+		if (result.storage == ValueStorage::ContainsAddress &&
+			!type_node.is_reference() &&
+			!type_node.is_rvalue_reference() &&
+			type_node.category() != TypeCategory::Struct) {
+			const int loaded_size = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
+			TempVar loaded_value = emitDereference(
+				type_node.type(),
+				64,
+				1,
+				toIrValue(result.value),
+				decl.identifier_token());
+			appended_result = makeExprResult(
+				type_node.type_index().is_valid()
+					? type_node.type_index().withCategory(type_node.type())
+					: TypeIndex{0, type_node.type()},
+				SizeInBits{loaded_size},
+				IrOperand{loaded_value},
+				PointerDepth{static_cast<int>(type_node.pointer_depth())},
+				ValueStorage::ContainsData);
+		}
+		initializer_typed_value = toTypedValue(appended_result);
 		operands.reserve(operands.size() + 4);
-		operands.emplace_back(result.typeEnum());
-		operands.emplace_back(result.size_in_bits.value);
-		operands.emplace_back(result.value);
-		operands.emplace_back(static_cast<int>(result.storage));
+		operands.emplace_back(appended_result.typeEnum());
+		operands.emplace_back(appended_result.size_in_bits.value);
+		operands.emplace_back(appended_result.value);
+		operands.emplace_back(static_cast<int>(appended_result.storage));
 	};
 	operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size

@@ -1822,9 +1822,12 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 	case TypeTraitKind::IsConstructible:
 	case TypeTraitKind::IsTriviallyConstructible:
 	case TypeTraitKind::IsNothrowConstructible:
+	case TypeTraitKind::IsAssignable:
+	case TypeTraitKind::IsTriviallyAssignable:
+	case TypeTraitKind::IsNothrowAssignable:
 		{
 			// Delegate to the variadic evaluateTypeTrait overload so additional type arguments
-			// (the constructor argument types) are taken into account.
+			// (the constructor argument types) and binary assignment operands are taken into account.
 			TypeTraitResult trait_result = evaluateTypeTrait(trait_expr);
 			if (trait_result.success) {
 				return EvalResult::from_bool(trait_result.value);

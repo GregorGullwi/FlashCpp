@@ -5583,7 +5583,17 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		value_tv.setType(pointee_type);
 		value_tv.ir_type = toIrType(pointee_type);
 		value_tv.size_in_bits = SizeInBits{static_cast<int>(pointee_size_bits)};
-		value_tv.value = toIrValue(rhs_operands.value);
+		IrValue rhs_value = toIrValue(rhs_operands.value);
+		if (rhs_operands.storage == ValueStorage::ContainsAddress &&
+			rhs_operands.category() != TypeCategory::Struct) {
+			rhs_value = emitDereference(
+				pointee_type,
+				64,
+				1,
+				rhs_value,
+				token);
+		}
+		value_tv.value = rhs_value;
 		applyArrayDecayForPointerStore(value_tv);
 
 		// Emit the store using helper

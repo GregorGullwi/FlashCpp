@@ -52,6 +52,7 @@ public:
 						old_function.parameter_nodes().size() != new_function.parameter_nodes().size()) {
 						continue;
 					}
+					mergeFunctionDefaultTemplateArgs(entry, template_node);
 					entry = template_node;
 					return;
 				}
@@ -81,6 +82,22 @@ public:
 			auto& def_p = def_params[i];
 			if (fwd_p.has_default() && !def_p.has_default()) {
 				def_p.set_default_value(fwd_p.default_value());
+			}
+		}
+	}
+
+	static void mergeFunctionDefaultTemplateArgs(const ASTNode& fwd_decl, ASTNode& full_def) {
+		const auto& fwd_params = fwd_decl.as<TemplateFunctionDeclarationNode>().template_parameters();
+		auto& def_params = full_def.as<TemplateFunctionDeclarationNode>().template_parameters();
+		size_t count = std::min(fwd_params.size(), def_params.size());
+		for (size_t i = 0; i < count; ++i) {
+			const auto& fwd_p = fwd_params[i];
+			auto& def_p = def_params[i];
+			if (fwd_p.has_default() && !def_p.has_default()) {
+				def_p.set_default_value(fwd_p.default_value());
+				if (fwd_p.has_default_value_position()) {
+					def_p.set_default_value_position(fwd_p.default_value_position());
+				}
 			}
 		}
 	}

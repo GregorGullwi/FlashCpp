@@ -88,6 +88,12 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 	if (resolved_alias.type_index.is_valid()) {
 		normalized_category = resolved_alias.typeEnum();
 		normalized_type_index = resolved_alias.type_index.withCategory(normalized_category);
+	} else if (normalized_type_index.is_valid() &&
+			   normalized_category == TypeCategory::Invalid) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(normalized_type_index)) {
+			normalized_category = type_info->typeEnum();
+			normalized_type_index = normalized_type_index.withCategory(normalized_category);
+		}
 	} else if (!normalized_type_index.is_valid()) {
 		normalized_type_index = nativeTypeIndex(normalized_category);
 	} else if (normalized_type_index.category() == TypeCategory::Invalid &&
@@ -832,6 +838,49 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				return can_convert_type(arg, target).is_valid;
 			};
 
+		if (trait_expr.kind() == TypeTraitKind::IsAssignable ||
+			trait_expr.kind() == TypeTraitKind::IsTriviallyAssignable ||
+			trait_expr.kind() == TypeTraitKind::IsNothrowAssignable) {
+			if (!type_spec.is_lvalue_reference() || additional_types.size() != 1) {
+				return TypeTraitResult::success_false();
+			}
+			TypeSpecifierNode assigned_type = type_spec;
+			assigned_type.set_reference_qualifier(ReferenceQualifier::None);
+			const TypeSpecifierNode& source_type = additional_types.front();
+			const bool scalar_assignment =
+				TypeTraitEval::isScalarType(
+					assigned_type.category(),
+					false,
+					assigned_type.pointer_depth()) &&
+				(areSameTypeTraitOperands(assigned_type, source_type) ||
+				 can_convert_type(source_type, assigned_type).is_valid);
+			if (scalar_assignment) {
+				return TypeTraitResult::success_true();
+			}
+			const StructTypeInfo* assigned_struct =
+				structInfoFromTypeIndex(assigned_type.type_index());
+			if (!assigned_struct ||
+				assigned_type.pointer_depth() != 0 ||
+				!areSameTypeTraitOperands(assigned_type, source_type)) {
+				return TypeTraitResult::success_false();
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsAssignable) {
+				return assigned_struct->findCopyAssignmentOperator(true) ||
+					assigned_struct->findMoveAssignmentOperator(true) ||
+					(!assigned_struct->isCopyAssignmentDeleted() &&
+					 !assigned_struct->isMoveAssignmentDeleted())
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			return (!assigned_struct->has_vtable &&
+					!assigned_struct->hasCopyAssignmentOperator() &&
+					!assigned_struct->hasMoveAssignmentOperator() &&
+					!assigned_struct->isCopyAssignmentDeleted() &&
+					!assigned_struct->isMoveAssignmentDeleted())
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+
 		// Reference targets are never default-constructible and only support a single source type.
 		// Use sema-level implicit conversion rules for reference binding compatibility.
 		if (type_spec.is_reference()) {
@@ -896,6 +945,48 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			return areSameTypeTraitOperands(type_spec, second_type_spec)
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
+		case TypeTraitKind::IsAssignable:
+		case TypeTraitKind::IsTriviallyAssignable:
+		case TypeTraitKind::IsNothrowAssignable: {
+			if (!type_spec.is_lvalue_reference()) {
+				return TypeTraitResult::success_false();
+			}
+			TypeSpecifierNode assigned_type = type_spec;
+			assigned_type.set_reference_qualifier(ReferenceQualifier::None);
+			const bool scalar_assignment =
+				TypeTraitEval::isScalarType(
+					assigned_type.category(),
+					false,
+					assigned_type.pointer_depth()) &&
+				(areSameTypeTraitOperands(assigned_type, second_type_spec) ||
+				 can_convert_type(second_type_spec, assigned_type).is_valid);
+			if (scalar_assignment) {
+				return TypeTraitResult::success_true();
+			}
+			const StructTypeInfo* assigned_struct =
+				structInfoFromTypeIndex(assigned_type.type_index());
+			if (!assigned_struct || assigned_type.pointer_depth() != 0) {
+				return TypeTraitResult::success_false();
+			}
+			if (!areSameTypeTraitOperands(assigned_type, second_type_spec)) {
+				return TypeTraitResult::success_false();
+			}
+			if (trait_expr.kind() == TypeTraitKind::IsAssignable) {
+				return assigned_struct->findCopyAssignmentOperator(true) ||
+					assigned_struct->findMoveAssignmentOperator(true) ||
+					(!assigned_struct->isCopyAssignmentDeleted() &&
+					 !assigned_struct->isMoveAssignmentDeleted())
+					? TypeTraitResult::success_true()
+					: TypeTraitResult::success_false();
+			}
+			return (!assigned_struct->has_vtable &&
+					!assigned_struct->hasCopyAssignmentOperator() &&
+					!assigned_struct->hasMoveAssignmentOperator() &&
+					!assigned_struct->isCopyAssignmentDeleted() &&
+					!assigned_struct->isMoveAssignmentDeleted())
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
 		default:
 			return TypeTraitResult::failure();
 		}

@@ -2396,6 +2396,20 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 	[[maybe_unused]] const TypeInfo* outer_type_info = tryGetTypeInfo(type_spec.type_index());
 	[[maybe_unused]] const StructTypeInfo* outer_struct_info = getStructInfoIfPlainObject(type_spec);
 
+	if (traitNode.kind() == TypeTraitKind::IsAssignable ||
+		traitNode.kind() == TypeTraitKind::IsTriviallyAssignable ||
+		traitNode.kind() == TypeTraitKind::IsNothrowAssignable) {
+		TypeTraitResult eval_result = evaluateTypeTrait(traitNode);
+		if (eval_result.success) {
+			return makeExprResult(
+				nativeTypeIndex(TypeCategory::Bool),
+				SizeInBits{8},
+				IrOperand{static_cast<unsigned long long>(eval_result.value ? 1ULL : 0ULL)},
+				PointerDepth{},
+				ValueStorage::ContainsData);
+		}
+	}
+
 	// Handle binary traits that require a second type argument
 	switch (traitNode.kind()) {
 	case TypeTraitKind::IsBaseOf:
