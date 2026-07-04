@@ -154,7 +154,7 @@ ExprResult AstToIr::materializeAddressResultForValueContext(
 	TempVar loaded_value = emitDereference(
 		target_category,
 		64,
-		1,
+		target_pointer_depth.value + 1,
 		toIrValue(result.value),
 		token);
 	TypeIndex materialized_type_index = target_type_index.is_valid()

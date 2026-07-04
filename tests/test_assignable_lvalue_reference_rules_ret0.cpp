@@ -11,7 +11,7 @@ int main() {
 		return 3;
 	if (__is_assignable(int&&, int))
 		return 4;
-	if (__is_assignable(Value, Value))
+	if (!__is_assignable(Value, Value))
 		return 5;
 	if (!__is_assignable(Value&, const Value&))
 		return 6;

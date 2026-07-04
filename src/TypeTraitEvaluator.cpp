@@ -810,9 +810,6 @@ static TypeTraitResult evaluateAssignableTrait(
 	if (scalar_assignment) {
 		return TypeTraitResult::success_true();
 	}
-	if (!target_type.is_reference()) {
-		return TypeTraitResult::success_false();
-	}
 
 	TypeSpecifierNode source_object_type = source_type;
 	source_object_type.set_reference_qualifier(ReferenceQualifier::None);
@@ -835,29 +832,73 @@ static TypeTraitResult evaluateAssignableTrait(
 				parameter_type.type_index() != source_type.type_index()) {
 				return false;
 			}
-			if (parameter_type.reference_qualifier() != source_type.reference_qualifier()) {
+			if (parameter_type.reference_qualifier() == source_type.reference_qualifier()) {
+				return parameter_type.cv_qualifier() == source_type.cv_qualifier();
+			}
+			if (parameter_type.is_lvalue_reference()) {
+				if (parameter_type.is_const()) {
+					return true;
+				}
+				return source_type.is_lvalue_reference() && !source_type.is_const();
+			}
+			if (parameter_type.is_rvalue_reference()) {
+				return !source_type.is_lvalue_reference() &&
+					(!parameter_type.is_const() || source_type.is_const());
+			}
+			return false;
+		};
+	auto assignmentParameterExactlyMatchesSource =
+		[&source_type](const TypeSpecifierNode& parameter_type) {
+			if (parameter_type.type() != source_type.type()) {
 				return false;
 			}
-			return parameter_type.cv_qualifier() == source_type.cv_qualifier();
+			if (parameter_type.category() == TypeCategory::Struct &&
+				parameter_type.type_index() != source_type.type_index()) {
+				return false;
+			}
+			ReferenceQualifier source_reference_qualifier = source_type.reference_qualifier();
+			if (source_reference_qualifier == ReferenceQualifier::None) {
+				source_reference_qualifier = ReferenceQualifier::RValueReference;
+			}
+			return parameter_type.reference_qualifier() == source_reference_qualifier &&
+				parameter_type.cv_qualifier() == source_type.cv_qualifier();
 		};
 	auto findSelectedAssignmentOperator = [&]() -> const StructMemberFunction* {
+		auto isAssignmentCandidate = [](const StructMemberFunction& member_function) {
+			return isAssignOperator(member_function.operator_kind) &&
+				get_function_decl_node(member_function.function_decl) != nullptr;
+		};
+		auto parameterMatches = [&](const StructMemberFunction& member_function, bool require_exact) {
+			if (!isAssignmentCandidate(member_function)) {
+				return false;
+			}
+			const FunctionDeclarationNode* function_node =
+				get_function_decl_node(member_function.function_decl);
+			if (function_node->is_implicit()) {
+				return false;
+			}
+			const auto& params = function_node->parameter_nodes();
+			if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
+				return false;
+			}
+			const TypeSpecifierNode& parameter_type =
+				params[0].as<DeclarationNode>().type_specifier_node();
+			return require_exact
+				? assignmentParameterExactlyMatchesSource(parameter_type)
+				: assignmentParameterMatchesSource(parameter_type);
+		};
 		auto selected = std::ranges::find_if(
 			assigned_struct->member_functions,
 			[&](const StructMemberFunction& member_function) {
-				if (!isAssignOperator(member_function.operator_kind)) {
-					return false;
-				}
-				const FunctionDeclarationNode* function_node =
-					get_function_decl_node(member_function.function_decl);
-				if (!function_node || function_node->is_implicit()) {
-					return false;
-				}
-				const auto& params = function_node->parameter_nodes();
-				if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
-					return false;
-				}
-				return assignmentParameterMatchesSource(
-					params[0].as<DeclarationNode>().type_specifier_node());
+				return parameterMatches(member_function, true);
+			});
+		if (selected != assigned_struct->member_functions.end()) {
+			return &*selected;
+		}
+		selected = std::ranges::find_if(
+			assigned_struct->member_functions,
+			[&](const StructMemberFunction& member_function) {
+				return parameterMatches(member_function, false);
 			});
 		return selected == assigned_struct->member_functions.end()
 			? nullptr
