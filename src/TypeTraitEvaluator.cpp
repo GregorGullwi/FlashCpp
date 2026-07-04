@@ -793,9 +793,14 @@ static TypeTraitResult evaluateAssignableTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& target_type,
 	const TypeSpecifierNode& source_type) {
+	if (target_type.is_const()) {
+		return TypeTraitResult::success_false();
+	}
+
 	TypeSpecifierNode assigned_type = target_type;
 	assigned_type.set_reference_qualifier(ReferenceQualifier::None);
 	const bool scalar_assignment =
+		target_type.is_lvalue_reference() &&
 		TypeTraitEval::isScalarType(
 			assigned_type.category(),
 			false,
@@ -805,7 +810,7 @@ static TypeTraitResult evaluateAssignableTrait(
 	if (scalar_assignment) {
 		return TypeTraitResult::success_true();
 	}
-	if (!target_type.is_lvalue_reference()) {
+	if (!target_type.is_reference()) {
 		return TypeTraitResult::success_false();
 	}
 

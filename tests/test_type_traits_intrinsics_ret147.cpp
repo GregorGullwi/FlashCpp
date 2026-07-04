@@ -237,12 +237,12 @@ int test_is_constructible() {
 // Test __is_assignable(To, From)
 int test_is_assignable() {
 	int result = 0;
-	// Scalars are assignable
-	if (__is_assignable(int, int))
+	// Assignment requires a modifiable lvalue target.
+	if (__is_assignable(int&, int))
 		result += 1;
-	if (__is_assignable(double, double))
+	if (__is_assignable(double&, double))
 		result += 2;
-	if (__is_assignable(int, double))
+	if (__is_assignable(int&, double))
 		result += 4;
 
 	return result;  // Expected: 7
