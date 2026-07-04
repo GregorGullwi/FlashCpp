@@ -1450,26 +1450,15 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 	while (!peek().is_eof()) {
 		auto token = peek_info();
 
-		// Handle cv-qualifiers
-		if (token.type() == Token::Type::Keyword &&
-			(token.value() == "const" || token.value() == "volatile")) {
-			if (token.value() == "const")
-				out_quals.cv_qualifier |= CVQualifier::Const;
-			else
-				out_quals.cv_qualifier |= CVQualifier::Volatile;
-			advance();
+		CVQualifier cv = parse_cv_qualifiers();
+		if (cv != CVQualifier::None) {
+			out_quals.cv_qualifier |= cv;
 			continue;
 		}
 
-		// Handle ref-qualifiers (& and &&)
-		if (peek() == "&"_tok) {
-			out_quals.ref_qualifier = ReferenceQualifier::LValueReference;
-			advance();
-			continue;
-		}
-		if (peek() == "&&"_tok) {
-			out_quals.ref_qualifier = ReferenceQualifier::RValueReference;
-			advance();
+		ReferenceQualifier ref = parse_reference_qualifier();
+		if (ref != ReferenceQualifier::None) {
+			out_quals.ref_qualifier = ref;
 			continue;
 		}
 
@@ -1483,15 +1472,7 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 		if (token.type() == Token::Type::Keyword && token.value() == "throw") {
 			advance(); // consume 'throw'
 			if (peek() == "("_tok) {
-				advance(); // consume '('
-				int paren_depth = 1;
-				while (!peek().is_eof() && paren_depth > 0) {
-					if (peek() == "("_tok)
-						paren_depth++;
-					else if (peek() == ")"_tok)
-						paren_depth--;
-					advance();
-				}
+				skip_balanced_parens();
 			}
 			continue;
 		}
@@ -1602,14 +1583,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		SaveHandle cv_check = save_token_position();
 		bool found_ref = false;
 		CVQualifier trailing_cv = CVQualifier::None;
-		while (peek() == "const"_tok || peek() == "volatile"_tok) {
-			if (peek() == "const"_tok) {
-				trailing_cv |= CVQualifier::Const;
-			} else {
-				trailing_cv |= CVQualifier::Volatile;
-			}
-			advance();
-		}
+		trailing_cv = parse_cv_qualifiers();
 		// Skip __restrict / __restrict__ that may appear between CV-qualifiers and & / &&
 		while (!peek().is_eof() && peek().is_identifier()) {
 			std::string_view tok = peek_info().value();
@@ -1630,12 +1604,9 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		}
 	}
 	skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ before reference qualifiers
-	if (peek() == "&&"_tok) {
-		advance();
-		type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);
-	} else if (peek() == "&"_tok) {
-		advance();
-		type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	ReferenceQualifier ref = parse_reference_qualifier();
+	if (ref != ReferenceQualifier::None) {
+		type_spec.set_reference_qualifier(ref);
 	}
 }
 

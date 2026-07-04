@@ -2913,6 +2913,65 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
+	if (func_decl.has_noexcept_expression()) {
+		ASTNode substituted_noexcept = substituteTemplateParameters(
+			*func_decl.noexcept_expression(),
+			template_params,
+			inline_template_args,
+			current_owner_type_name);
+		if (func_decl.has_outer_template_bindings()) {
+			InlineVector<StringHandle, 4> outer_param_names;
+			InlineVector<TypeInfo::TemplateArgInfo, 4> outer_arg_infos;
+			outer_param_names = func_decl.outer_template_param_names();
+			outer_arg_infos = func_decl.outer_template_args();
+			InlineVector<TemplateParameterNode, 4> typed_outer_params;
+			typed_outer_params.reserve(outer_param_names.size());
+			InlineVector<TemplateTypeArg, 4> outer_args;
+			outer_args.reserve(outer_arg_infos.size());
+			for (size_t i = 0; i < outer_param_names.size() && i < outer_arg_infos.size(); ++i) {
+				Token outer_token(Token::Type::Identifier, StringTable::getStringView(outer_param_names[i]), 0, 0, 0);
+				TemplateParameterNode outer_param(outer_param_names[i], outer_token);
+				typed_outer_params.push_back(outer_param);
+				outer_args.push_back(toTemplateTypeArg(outer_arg_infos[i]));
+			}
+			substituted_noexcept = substituteTemplateParameters(
+				substituted_noexcept,
+				typed_outer_params,
+				outer_args,
+				current_owner_type_name);
+		}
+		if (outer_binding != nullptr) {
+			InlineVector<TemplateParameterNode, 4> typed_outer_params;
+			typed_outer_params.reserve(outer_binding->param_names.size());
+			InlineVector<TemplateTypeArg, 4> outer_args;
+			outer_args.reserve(outer_binding->param_args.size());
+			for (size_t i = 0;
+				 i < outer_binding->param_names.size() &&
+				 i < outer_binding->param_args.size();
+				 ++i) {
+				Token outer_token(
+					Token::Type::Identifier,
+					StringTable::getStringView(outer_binding->param_names[i]),
+					0,
+					0,
+					0);
+				typed_outer_params.push_back(
+					TemplateParameterNode(outer_binding->param_names[i], outer_token));
+				outer_args.push_back(outer_binding->param_args[i]);
+			}
+			substituted_noexcept = substituteTemplateParameters(
+				substituted_noexcept,
+				typed_outer_params,
+				outer_args,
+				current_owner_type_name);
+		}
+		new_func_ref.set_noexcept_expression(substituted_noexcept);
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+		auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, eval_ctx);
+		if (eval.success()) {
+			new_func_ref.set_noexcept(eval.as_bool());
+		}
+	}
 
 	auto orig_body = func_decl.get_definition();
 	if (!materialize_body) {

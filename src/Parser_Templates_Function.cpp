@@ -126,7 +126,51 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type
 	// Example: template<typename T> auto func(T x) const noexcept -> decltype(x + 1)
 	FlashCpp::MemberQualifiers member_quals;
-	skip_function_trailing_specifiers(member_quals);
+	member_quals = FlashCpp::MemberQualifiers{};
+	while (!peek().is_eof()) {
+		CVQualifier cv = parse_cv_qualifiers();
+		if (cv != CVQualifier::None) {
+			member_quals.cv_qualifier |= cv;
+			continue;
+		}
+
+		ReferenceQualifier ref = parse_reference_qualifier();
+		if (ref != ReferenceQualifier::None) {
+			member_quals.ref_qualifier = ref;
+			continue;
+		}
+
+		if (peek() == "noexcept"_tok) {
+			advance();
+			func_decl.set_noexcept(true);
+			if (peek() == "("_tok) {
+				SaveHandle noexcept_expr_pos = save_token_position();
+				advance();
+				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
+				register_parameters_in_scope(func_decl.parameter_nodes());
+				ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (!expr_result.is_error() && expr_result.node().has_value() && peek() == ")"_tok) {
+					func_decl.set_noexcept_expression(*expr_result.node());
+					advance();
+					discard_saved_token(noexcept_expr_pos);
+				} else {
+					restore_token_position(noexcept_expr_pos);
+					skip_balanced_parens();
+				}
+			}
+			continue;
+		}
+		if (peek() == "throw"_tok) {
+			advance();
+			if (peek() == "("_tok) {
+				skip_balanced_parens();
+			}
+			continue;
+		}
+		break;
+	}
+	func_decl.set_is_const_member_function(member_quals.is_const());
+	func_decl.set_is_volatile_member_function(member_quals.is_volatile());
 
 	// Note: trailing requires clause is parsed below (line ~5030) and stored
 	// on the TemplateFunctionDeclarationNode for constraint checking during instantiation.
@@ -1438,6 +1482,15 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 		FLASH_LOG_FORMAT(Templates, Debug, "Type trait evaluation result: {}", eval_result.value);
 		return makeConstantValueFromCategory(eval_result.value ? 1 : 0, TypeCategory::Bool);
+	}
+
+	if (std::holds_alternative<NoexceptExprNode>(expr)) {
+		auto ctx = makeConstExprContext();
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, ctx);
+		if (eval_result.success()) {
+			return makeConstantValueFromCategory(eval_result.as_bool() ? 1 : 0, TypeCategory::Bool);
+		}
+		return std::nullopt;
 	}
 
 	// Handle ternary operator expressions (e.g., (5 < 0) ? -1 : 1)

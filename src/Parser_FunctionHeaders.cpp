@@ -626,27 +626,15 @@ ParseResult Parser::parse_function_trailing_specifiers(
 	while (!peek().is_eof()) {
 		const Token& token = peek_info();
 
-		// Parse CV qualifiers (const, volatile)
-		if (token.kind() == "const"_tok) {
-			out_quals.cv_qualifier |= CVQualifier::Const;
-			advance();
-			continue;
-		}
-		if (token.kind() == "volatile"_tok) {
-			out_quals.cv_qualifier |= CVQualifier::Volatile;
-			advance();
+		CVQualifier cv = parse_cv_qualifiers();
+		if (cv != CVQualifier::None) {
+			out_quals.cv_qualifier |= cv;
 			continue;
 		}
 
-		// Parse ref qualifiers (& and &&)
-		if (token.kind() == "&"_tok) {
-			advance();
-			out_quals.ref_qualifier = ReferenceQualifier::LValueReference;
-			continue;
-		}
-		if (token.kind() == "&&"_tok) {
-			advance();
-			out_quals.ref_qualifier = ReferenceQualifier::RValueReference;
+		ReferenceQualifier ref = parse_reference_qualifier();
+		if (ref != ReferenceQualifier::None) {
+			out_quals.ref_qualifier = ref;
 			continue;
 		}
 
@@ -675,9 +663,9 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				} else {
 					// Header-only standard library code frequently uses heavyweight
 					// noexcept expressions that the front-end does not need to model
-					// precisely. Fall back to syntactic skipping so the declaration
-					// still parses.  Default to potentially-throwing (noexcept(false))
-					// because the safe assumption when we cannot evaluate the
+					// precisely. Recover by syntactically skipping the expression so
+					// the declaration still parses. Default to potentially-throwing
+					// (noexcept(false)) because the standard rule when we cannot use the
 					// expression is that the function may throw.
 					out_specs.is_noexcept = false;
 					restore_token_position(noexcept_expr_pos);
@@ -691,15 +679,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 		if (token.kind() == "throw"_tok) {
 			advance(); // consume 'throw'
 			if (peek() == "("_tok) {
-				advance(); // consume '('
-				int paren_depth = 1;
-				while (!peek().is_eof() && paren_depth > 0) {
-					if (peek() == "("_tok)
-						paren_depth++;
-					else if (peek() == ")"_tok)
-						paren_depth--;
-					advance();
-				}
+				skip_balanced_parens();
 			}
 			continue;
 		}

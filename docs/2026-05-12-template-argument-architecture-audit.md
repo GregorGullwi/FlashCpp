@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-02
+**Last updated:** 2026-07-04
 
 This document is a planning aid for the remaining template-infrastructure work.
 It is intentionally forward-looking: keep it focused on the current baseline,
@@ -42,6 +42,12 @@ identity-preserving behavior:
   definitions local/static symbol storage so UCRT wrapper definitions do not
   collide with CRT library symbols while C++ inline header helpers remain
   emitted
+- function-template redeclarations merge default template arguments into later
+  definitions, and function-template `noexcept(expr)` metadata is preserved
+  through the shared constexpr evaluator for the covered std-header probes
+- parser trailing-specifier handling now routes cv/ref qualifiers through
+  `parse_cv_qualifiers()` and `parse_reference_qualifier()` in the common
+  function-header, skip, and template-function paths
 
 ## Architectural invariants
 
@@ -62,12 +68,16 @@ Follow-up work should preserve these rules:
 
 ### 1. Standard-header tracking cleanup
 
-The previously listed standard-header frontier is green on the current Windows
+The previously listed Windows std-header frontier is green on the current
 baseline:
 
 - `tests/std/test_cstddef.cpp`
 - `tests/std/test_cstdio_puts.cpp`
 - `tests/std/test_cstdlib.cpp`
+
+The active std-header frontier is now:
+
+- `tests/std/test_std_ranges.cpp`
 
 The concrete blocker was `<cstdio>` link failure from strong definitions of
 MSVC UCRT C-linkage inline wrappers such as `vsnprintf`, `snprintf`, and
@@ -87,6 +97,16 @@ the driver. Do not assume it is in template-owner infrastructure; trace whether
 it belongs in preprocessing, namespace/header modeling, template argument
 materialization, constexpr evaluation, semantic lookup, or object/linkage
 emission.
+
+For `std/test_std_ranges.cpp`, the current failure is a dependent overload path:
+`std::swap` reports all overloads failed, and the underlying diagnostic is a
+premature concrete scoped-enum `byte <<` check while a constrained
+`std::byte` operator still has a dependent `_IntType` argument. The next slice
+should make the function-template instantiation path preserve that dependency
+through defaulted `enable_if_t`/NTTP arguments and avoid body normalization until
+the selected specialization is non-dependent. Do not weaken the scoped-enum
+operator diagnostic; `tests/test_scoped_enum_builtin_shift_fail.cpp` is the
+guard that the diagnostic remains correct for non-dependent invalid code.
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -124,14 +144,17 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Promote `test_cstddef.cpp`, `test_cstdio_puts.cpp`, and `test_cstdlib.cpp`
-   out of expected-failure tracking wherever the runner/CI records that status.
-2. Run the std-header subset again and identify the next concrete failing
-   header or harness mismatch.
-3. For the first concrete failure, trace the real layer responsible before
-   editing.
-4. Add a focused regression that captures the standards-visible behavior outside
-   the std-header test when practical.
+1. Fix the `std/test_std_ranges.cpp` dependent `std::swap` / `std::byte`
+   operator path by preserving dependency through constrained defaulted
+   template arguments and delaying body checks for still-dependent function
+   specializations.
+2. Add a focused non-std regression that reproduces a constrained function
+   template body calling another constrained operator with a dependent argument,
+   plus a `_fail.cpp` guard for the non-dependent scoped-enum shift diagnostic.
+3. Re-run the std-header subset and identify the next concrete failing header
+   or harness mismatch.
+4. Promote stale expected-failure tracking only after the corresponding harness
+   entry is proven green.
 5. Keep docs updates last and update this section with the next concrete
    frontier after validation.
 
@@ -150,7 +173,11 @@ small guard set relevant to the touched layer. Common guards:
 - `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
 - `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`
 - `test_template_disambiguation_pack_ret40.cpp`
+- `test_mock_std_byte_noexcept_probe_ret0.cpp`
+- `test_mock_std_byte_ops_traits_ret0.cpp`
+- `test_scoped_enum_builtin_shift_fail.cpp`
 - `std/test_std_type_traits.cpp`
+- `std/test_std_ranges.cpp`
 
 Before closing a slice, run:
 
