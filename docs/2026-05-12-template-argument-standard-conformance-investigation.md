@@ -86,15 +86,22 @@ preprocessing/header modeling, builtin declarations, namespace lookup,
 constexpr evaluation, template argument materialization, or object/link
 semantics. Do not preselect the layer.
 
-For `std/test_std_ranges.cpp`, the current failing path is no longer discovery:
-`std::swap` overload resolution reaches a constrained `std::byte` operator with
-a still-dependent `_IntType`, then the body is checked as if the shift were a
-concrete scoped-enum builtin expression. C++20 two-phase semantics require that
-still-dependent body expression to remain dependent until the selected function
-template specialization has concrete arguments. The fix should preserve
-dependency through defaulted `enable_if_t`/non-type template arguments and gate
-late body normalization on that dependency. It must not weaken the valid
-non-dependent diagnostic for builtin shifts on scoped enums.
+For `std/test_std_ranges.cpp`, the constrained `std::byte` operator blocker is
+now cleared. The instantiated `operator<<=` body can carry a parser-time
+`NoMatch` for `byte << int`; sema now retries binary operator-template lookup
+after concrete operand types are known, so the visible `operator<<` template is
+selected instead of treating the expression as an invalid builtin scoped-enum
+shift. The non-dependent invalid scoped-enum diagnostic remains covered by
+`tests/test_scoped_enum_builtin_shift_fail.cpp`.
+
+The active standards-facing failure has advanced to MSVC `<tuple>`:
+
+- `include\tuple:28:79: Expected '>' after variable template specialization pattern`
+
+The next fix should reduce that declaration shape and repair the parser layer
+that handles variable-template specialization patterns. Likely suspects are
+partial-specialization template-id parsing, pack handling, or a missing MSVC
+header pattern, but the reduced test should choose the layer.
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -126,10 +133,12 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Fix `std/test_std_ranges.cpp` by preserving dependent constrained function
-   template calls through `std::swap` and `std::byte` operator instantiation.
-2. Add a focused non-std regression for the exposed two-phase dependency rule,
-   plus a `_fail.cpp` guard for non-dependent invalid scoped-enum shifts.
+1. Reduce and fix the new `std/test_std_ranges.cpp` `<tuple>` variable-template
+   specialization pattern parser failure.
+2. Keep the cleared `std::byte` constrained-operator path guarded with
+   `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
+   `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
+   `tests/test_scoped_enum_builtin_shift_fail.cpp`.
 3. Remove stale expected-failure tracking for `test_cstddef.cpp`,
    `test_cstdio_puts.cpp`, and `test_cstdlib.cpp` where the harness still
    records it.
@@ -167,6 +176,7 @@ Common adjacent guards:
 - `test_template_disambiguation_pack_ret40.cpp`
 - `test_mock_std_byte_noexcept_probe_ret0.cpp`
 - `test_mock_std_byte_ops_traits_ret0.cpp`
+- `test_scoped_enum_shift_assign_operator_template_ret0.cpp`
 - `test_scoped_enum_builtin_shift_fail.cpp`
 - `std/test_std_type_traits.cpp`
 - `std/test_std_ranges.cpp`

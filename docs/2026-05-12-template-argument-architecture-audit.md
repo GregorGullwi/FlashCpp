@@ -98,15 +98,23 @@ it belongs in preprocessing, namespace/header modeling, template argument
 materialization, constexpr evaluation, semantic lookup, or object/linkage
 emission.
 
-For `std/test_std_ranges.cpp`, the current failure is a dependent overload path:
-`std::swap` reports all overloads failed, and the underlying diagnostic is a
-premature concrete scoped-enum `byte <<` check while a constrained
-`std::byte` operator still has a dependent `_IntType` argument. The next slice
-should make the function-template instantiation path preserve that dependency
-through defaulted `enable_if_t`/NTTP arguments and avoid body normalization until
-the selected specialization is non-dependent. Do not weaken the scoped-enum
-operator diagnostic; `tests/test_scoped_enum_builtin_shift_fail.cpp` is the
-guard that the diagnostic remains correct for non-dependent invalid code.
+For `std/test_std_ranges.cpp`, the previous dependent overload path is now
+cleared: the stale parser `NoMatch` for constrained `std::byte` `operator<<` is
+repaired during sema once the instantiated `operator<<=` body has concrete
+`byte` and `int` operand types. The scoped-enum diagnostic remains guarded for
+invalid non-dependent builtin shifts, and
+`tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp` covers the
+late operator-template retry.
+
+The current `std/test_std_ranges.cpp` frontier has advanced to a parser error in
+MSVC `<tuple>`:
+
+- `include\tuple:28:79: Expected '>' after variable template specialization pattern`
+
+The next slice should inspect that declaration shape directly and decide whether
+the fix belongs in variable-template partial-specialization parsing, pack
+handling, nested template-id parsing, or MSVC header modeling. Do not fold this
+into the operator-overload path unless a reduced repro proves a shared cause.
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -144,19 +152,18 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Fix the `std/test_std_ranges.cpp` dependent `std::swap` / `std::byte`
-   operator path by preserving dependency through constrained defaulted
-   template arguments and delaying body checks for still-dependent function
-   specializations.
-2. Add a focused non-std regression that reproduces a constrained function
-   template body calling another constrained operator with a dependent argument,
-   plus a `_fail.cpp` guard for the non-dependent scoped-enum shift diagnostic.
-3. Re-run the std-header subset and identify the next concrete failing header
-   or harness mismatch.
-4. Promote stale expected-failure tracking only after the corresponding harness
+1. Reduce the new `std/test_std_ranges.cpp` `<tuple>` failure at line 28 into a
+   focused parser test for the variable-template specialization pattern shape.
+2. Fix the responsible parser layer without weakening existing template-id,
+   pack, or partial-specialization diagnostics.
+3. Keep `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
+   `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
+   `tests/test_scoped_enum_builtin_shift_fail.cpp` in the guard set so the
+   cleared `std::byte` operator path does not regress.
+4. Re-run `std/test_std_ranges.cpp` after the parser fix and let the next
+   concrete failure choose the following layer.
+5. Promote stale expected-failure tracking only after the corresponding harness
    entry is proven green.
-5. Keep docs updates last and update this section with the next concrete
-   frontier after validation.
 
 ## Validation guidance
 
@@ -175,6 +182,7 @@ small guard set relevant to the touched layer. Common guards:
 - `test_template_disambiguation_pack_ret40.cpp`
 - `test_mock_std_byte_noexcept_probe_ret0.cpp`
 - `test_mock_std_byte_ops_traits_ret0.cpp`
+- `test_scoped_enum_shift_assign_operator_template_ret0.cpp`
 - `test_scoped_enum_builtin_shift_fail.cpp`
 - `std/test_std_type_traits.cpp`
 - `std/test_std_ranges.cpp`

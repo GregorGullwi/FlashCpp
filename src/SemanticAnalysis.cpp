@@ -29,6 +29,11 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload);
 
+bool isTemplateDerivedFreeFunction(const FunctionDeclarationNode* func_decl) {
+	return func_decl != nullptr &&
+		(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
+}
+
 bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candidate, size_t argument_count) {
 	const size_t min_required = countMinRequiredArgs(candidate);
 	const size_t max_accepted = candidate.is_variadic()
@@ -6324,7 +6329,87 @@ static std::string getScopedEnumName(const CanonicalTypeDesc& desc) {
 	return "scoped enum";
 }
 
-void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op,
+bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
+	BinaryOperatorNode& bin_op,
+	const CanonicalTypeDesc& lhs_desc,
+	const CanonicalTypeDesc& rhs_desc) {
+	if (bin_op.has_recorded_operator_overload_resolution()) {
+		if (bin_op.has_resolved_operator_overload()) {
+			return true;
+		}
+		if (bin_op.has_ambiguous_operator_overload()) {
+			return false;
+		}
+	}
+
+	const OverloadableOperator op_kind = bin_op.operator_kind();
+	if (!isOverloadableBinaryOperator(op_kind)) {
+		return false;
+	}
+
+	TypeSpecifierNode lhs_type_spec = materializeTypeSpecifier(lhs_desc);
+	TypeSpecifierNode rhs_type_spec = materializeTypeSpecifier(rhs_desc);
+	if (!isConcreteBinaryOperatorOperandType(lhs_type_spec) ||
+		!isConcreteBinaryOperatorOperandType(rhs_type_spec) ||
+		(!isUserDefinedBinaryOperatorOperandType(lhs_type_spec) &&
+		 !isUserDefinedBinaryOperatorOperandType(rhs_type_spec))) {
+		return false;
+	}
+
+	OperatorOverloadResult overload_result = op_kind == OverloadableOperator::Assign
+		? findBinaryOperatorOverload(lhs_type_spec, rhs_type_spec, op_kind)
+		: findBinaryOperatorOverloadWithFreeFunction(
+			lhs_type_spec,
+			rhs_type_spec,
+			op_kind,
+			gSymbolTable);
+	if (op_kind != OverloadableOperator::Assign && parser_ != nullptr) {
+		if (const FunctionDeclarationNode* instantiated_overload =
+				parser_->tryInstantiateOperatorTemplateForBinary(
+					bin_op.op(),
+					lhs_type_spec,
+					rhs_type_spec);
+			instantiated_overload != nullptr &&
+			(!overload_result.has_match ||
+			 overload_result.is_ambiguous ||
+			 (overload_result.is_free_function &&
+			  isTemplateDerivedFreeFunction(overload_result.free_function_overload)))) {
+			overload_result = OperatorOverloadResult(instantiated_overload);
+		}
+	}
+
+	bool equality_rewrite_negate = false;
+	if (!overload_result.has_match && !overload_result.is_ambiguous &&
+		op_kind == OverloadableOperator::NotEqual) {
+		OperatorOverloadResult eq_overload = findBinaryOperatorOverloadWithFreeFunction(
+			lhs_type_spec,
+			rhs_type_spec,
+			OverloadableOperator::Equal,
+			gSymbolTable);
+		if (eq_overload.has_match && !eq_overload.is_ambiguous) {
+			overload_result = eq_overload;
+			equality_rewrite_negate = true;
+		}
+	}
+
+	if (overload_result.is_ambiguous) {
+		bin_op.set_ambiguous_operator_overload();
+		return false;
+	}
+	if (!overload_result.has_match) {
+		bin_op.set_no_match_operator_overload();
+		return false;
+	}
+	if (overload_result.is_free_function) {
+		bin_op.set_resolved_free_function_operator_overload(overload_result.free_function_overload);
+	} else {
+		bin_op.set_resolved_member_operator_overload(overload_result.member_overload);
+	}
+	bin_op.set_recorded_equality_rewrite_negate(equality_rewrite_negate);
+	return true;
+}
+
+void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(BinaryOperatorNode& bin_op,
 														CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
 	if (bin_op.has_resolved_operator_overload())
 		return;
@@ -6338,6 +6423,20 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
+
+	// C++20 two-phase semantics [temp.dep]/1: if either operand type is still
+	// type-dependent (contains a dependent placeholder from an unresolved
+	// template parameter), the binary expression is type-dependent and must
+	// not be diagnosed until the template is instantiated with concrete
+	// arguments.  This guards the common std::byte operator<< / operator<<=
+	// constrained function template path where _IntType is still dependent
+	// during overload probing or partial instantiation.
+	if (typeIndexContainsDependentPlaceholder(lhs_desc.type_index) ||
+		typeIndexContainsDependentPlaceholder(rhs_desc.type_index))
+		return;
+
+	if (tryResolveLateBinaryOperatorOverload(bin_op, lhs_desc, rhs_desc))
+		return;
 
 	const bool lhs_scoped = isScopedEnum(lhs_desc);
 	const bool rhs_scoped = isScopedEnum(rhs_desc);
