@@ -128,26 +128,18 @@ ParseResult Parser::parse_template_function_declaration_body(
 	FlashCpp::MemberQualifiers member_quals;
 	member_quals = FlashCpp::MemberQualifiers{};
 	while (!peek().is_eof()) {
-		if (peek() == "const"_tok) {
-			member_quals.cv_qualifier |= CVQualifier::Const;
-			advance();
+		CVQualifier cv = parse_cv_qualifiers();
+		if (cv != CVQualifier::None) {
+			member_quals.cv_qualifier |= cv;
 			continue;
 		}
-		if (peek() == "volatile"_tok) {
-			member_quals.cv_qualifier |= CVQualifier::Volatile;
-			advance();
+
+		ReferenceQualifier ref = parse_reference_qualifier();
+		if (ref != ReferenceQualifier::None) {
+			member_quals.ref_qualifier = ref;
 			continue;
 		}
-		if (peek() == "&"_tok) {
-			member_quals.ref_qualifier = ReferenceQualifier::LValueReference;
-			advance();
-			continue;
-		}
-		if (peek() == "&&"_tok) {
-			member_quals.ref_qualifier = ReferenceQualifier::RValueReference;
-			advance();
-			continue;
-		}
+
 		if (peek() == "noexcept"_tok) {
 			advance();
 			func_decl.set_noexcept(true);
@@ -171,16 +163,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 		if (peek() == "throw"_tok) {
 			advance();
 			if (peek() == "("_tok) {
-				advance();
-				int paren_depth = 1;
-				while (!peek().is_eof() && paren_depth > 0) {
-					if (peek() == "("_tok) {
-						++paren_depth;
-					} else if (peek() == ")"_tok) {
-						--paren_depth;
-					}
-					advance();
-				}
+				skip_balanced_parens();
 			}
 			continue;
 		}

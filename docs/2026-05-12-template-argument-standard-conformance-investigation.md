@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-02
+**Last updated:** 2026-07-04
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. Keep it focused on the intended semantic model, active
@@ -48,6 +48,11 @@ The core suite now covers several formerly blocking standards-visible areas:
 - ordinary `inline` function metadata preserved through parser copies and IR,
   with COFF C-linkage inline definitions emitted as local/static symbols to
   avoid duplicate CRT definitions while preserving emitted C++ inline helpers
+- function-template redeclaration default arguments are merged into later
+  definitions, and covered function-template `noexcept(expr)` specifications
+  are evaluated through the shared constexpr evaluator
+- scoped-enum/std::byte shift and swap probes are covered, including an
+  expected-fail guard for non-dependent builtin scoped-enum shifts
 
 ## Remaining standards gaps
 
@@ -59,6 +64,10 @@ and run on the current Windows baseline:
 - `tests/std/test_cstddef.cpp`
 - `tests/std/test_cstdio_puts.cpp`
 - `tests/std/test_cstdlib.cpp`
+
+The active standards-facing std-header failure is:
+
+- `tests/std/test_std_ranges.cpp`
 
 `test_cstdio_puts.cpp` exposed the relevant rule: C++ inline definitions in
 headers must not be emitted as ordinary strong external definitions when a CRT
@@ -76,6 +85,16 @@ the next concrete failure choose the layer. Likely future areas may include
 preprocessing/header modeling, builtin declarations, namespace lookup,
 constexpr evaluation, template argument materialization, or object/link
 semantics. Do not preselect the layer.
+
+For `std/test_std_ranges.cpp`, the current failing path is no longer discovery:
+`std::swap` overload resolution reaches a constrained `std::byte` operator with
+a still-dependent `_IntType`, then the body is checked as if the shift were a
+concrete scoped-enum builtin expression. C++20 two-phase semantics require that
+still-dependent body expression to remain dependent until the selected function
+template specialization has concrete arguments. The fix should preserve
+dependency through defaulted `enable_if_t`/non-type template arguments and gate
+late body normalization on that dependency. It must not weaken the valid
+non-dependent diagnostic for builtin shifts on scoped enums.
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -107,10 +126,13 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Remove stale expected-failure tracking for `test_cstddef.cpp`,
-   `test_cstdio_puts.cpp`, and `test_cstdlib.cpp`.
-2. Fix the next concrete standard-header failure exposed after that cleanup.
-3. Add a focused non-std regression for the exposed rule when practical.
+1. Fix `std/test_std_ranges.cpp` by preserving dependent constrained function
+   template calls through `std::swap` and `std::byte` operator instantiation.
+2. Add a focused non-std regression for the exposed two-phase dependency rule,
+   plus a `_fail.cpp` guard for non-dependent invalid scoped-enum shifts.
+3. Remove stale expected-failure tracking for `test_cstddef.cpp`,
+   `test_cstdio_puts.cpp`, and `test_cstdlib.cpp` where the harness still
+   records it.
 4. Only extract deeper dependent-qualified owner materialization if that failure
    proves the current consumer-specific prefix-chain handling is the blocker.
 5. Keep replay identity and member-object-pointer work opportunistic unless a
@@ -143,4 +165,9 @@ Common adjacent guards:
 - `test_template_static_constexpr_qualified_nested_owner_collision_ret0.cpp`
 - `test_var_template_replay_dependent_member_template_call_ret0.cpp`
 - `test_template_disambiguation_pack_ret40.cpp`
+- `test_std_byte_shift_operator_ret0.cpp`
+- `test_std_byte_swap_ret0.cpp`
+- `test_std_byte_swap_noexcept_probe_ret0.cpp`
+- `test_scoped_enum_builtin_shift_fail.cpp`
 - `std/test_std_type_traits.cpp`
+- `std/test_std_ranges.cpp`
