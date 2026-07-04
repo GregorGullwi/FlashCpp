@@ -173,9 +173,8 @@ small guard set relevant to the touched layer. Common guards:
 - `test_template_qualified_member_template_nested_owner_chain_collision_ret0.cpp`
 - `test_template_qualified_member_template_enclosing_owner_collision_ret0.cpp`
 - `test_template_disambiguation_pack_ret40.cpp`
-- `test_std_byte_shift_operator_ret0.cpp`
-- `test_std_byte_swap_ret0.cpp`
-- `test_std_byte_swap_noexcept_probe_ret0.cpp`
+- `test_mock_std_byte_noexcept_probe_ret0.cpp`
+- `test_mock_std_byte_ops_traits_ret0.cpp`
 - `test_scoped_enum_builtin_shift_fail.cpp`
 - `std/test_std_type_traits.cpp`
 - `std/test_std_ranges.cpp`

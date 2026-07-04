@@ -165,9 +165,8 @@ Common adjacent guards:
 - `test_template_static_constexpr_qualified_nested_owner_collision_ret0.cpp`
 - `test_var_template_replay_dependent_member_template_call_ret0.cpp`
 - `test_template_disambiguation_pack_ret40.cpp`
-- `test_std_byte_shift_operator_ret0.cpp`
-- `test_std_byte_swap_ret0.cpp`
-- `test_std_byte_swap_noexcept_probe_ret0.cpp`
+- `test_mock_std_byte_noexcept_probe_ret0.cpp`
+- `test_mock_std_byte_ops_traits_ret0.cpp`
 - `test_scoped_enum_builtin_shift_fail.cpp`
 - `std/test_std_type_traits.cpp`
 - `std/test_std_ranges.cpp`
