@@ -40,6 +40,29 @@ TemplateEnvironment buildLazySubstitutionEnvironment(
 
 } // namespace
 
+ASTNode Parser::substituteLazyMemberBody(
+	const ASTNode& body,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args,
+	const TemplateEnvironmentSnapshot& outer_snapshot,
+	StringHandle instantiated_owner_name) {
+	std::optional<TemplateEnvironment> outer_environment;
+	TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
+		outer_snapshot,
+		template_params,
+		template_args,
+		outer_environment);
+	FlashCpp::TemplateParameterScope template_scope;
+	registerTypeParamsInScope(substitution_environment, template_scope, true);
+	FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+	populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
+	return substituteTemplateParameters(
+		body,
+		template_params,
+		template_args,
+		instantiated_owner_name);
+}
+
 std::optional<ASTNode> Parser::instantiateLazyMemberIfNeeded(const LazyMemberKey& member_key) {
 	if (!member_key.hasExactConstness()) {
 		std::optional<ASTNode> first_instantiated;
@@ -418,10 +441,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			return std::nullopt;
 		}
 
-		ASTNode substituted_body = substituteTemplateParameters(
+		ASTNode substituted_body = substituteLazyMemberBody(
 			*body_to_substitute,
 			lazy_info.template_params,
 			converted_template_args,
+			lazy_info.outer_template_environment_snapshot,
 			lazy_info.identity.instantiated_owner_name);
 		new_ctor_ref.set_definition(substituted_body);
 		new_ctor_ref.set_mangled_name(NameMangling::generateMangledNameFromNode(
@@ -575,10 +599,11 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 		}
 
-		ASTNode substituted_body = substituteTemplateParameters(
+		ASTNode substituted_body = substituteLazyMemberBody(
 			*dtor_decl.get_definition(),
 			lazy_info.template_params,
 			converted_template_args,
+			lazy_info.outer_template_environment_snapshot,
 			lazy_info.identity.instantiated_owner_name);
 		new_dtor_ref.set_definition(substituted_body);
 
@@ -893,19 +918,18 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		FlashCpp::ScopedState guard_current_function(current_function_);
 		current_function_ = &new_func_ref;
 		register_parameters_in_scope(new_func_ref.parameter_nodes());
-		FlashCpp::ScopedState guard_subs(template_param_substitutions_);
+		ASTNode substituted_body = substituteLazyMemberBody(
+			*body_to_substitute,
+			std::span<const TemplateParameterNode>(substitution_params.data(), substitution_params.size()),
+			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
+			lazy_info.outer_template_environment_snapshot,
+			lazy_info.identity.instantiated_owner_name);
 		std::optional<TemplateEnvironment> outer_environment;
 		TemplateEnvironment substitution_environment = buildLazySubstitutionEnvironment(
 			lazy_info.outer_template_environment_snapshot,
 			std::span<const TemplateParameterNode>(substitution_params.data(), substitution_params.size()),
 			std::span<const TemplateTypeArg>(converted_template_args.data(), converted_template_args.size()),
 			outer_environment);
-		populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
-		ASTNode substituted_body = substituteTemplateParameters(
-			*body_to_substitute,
-			substitution_params,
-			converted_template_args,
-			lazy_info.identity.instantiated_owner_name);
 		ExpressionSubstitutor owner_substitutor(substitution_environment, *this);
 		owner_substitutor.setCurrentOwnerTypeName(lazy_info.identity.instantiated_owner_name);
 		substituted_body = owner_substitutor.substitute(substituted_body);

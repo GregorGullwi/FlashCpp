@@ -3130,6 +3130,15 @@ public:	// Public methods for template instantiation
 		const ASTNode& node,
 		const TemplateInstantiationContext& context);
 
+	// Helper to substitute template parameters in lazy member function/constructor/destructor bodies
+	// Uses the stored outer template environment snapshot from lazy_info
+	ASTNode substituteLazyMemberBody(
+		const ASTNode& body,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args,
+		const TemplateEnvironmentSnapshot& outer_snapshot,
+		StringHandle instantiated_owner_name);
+
 	// Helper to extract type from an expression for overload resolution.
 	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
 	std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
