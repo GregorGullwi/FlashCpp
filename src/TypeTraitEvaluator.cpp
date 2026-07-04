@@ -88,6 +88,12 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 	if (resolved_alias.type_index.is_valid()) {
 		normalized_category = resolved_alias.typeEnum();
 		normalized_type_index = resolved_alias.type_index.withCategory(normalized_category);
+	} else if (normalized_type_index.is_valid() &&
+			   normalized_category == TypeCategory::Invalid) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(normalized_type_index)) {
+			normalized_category = type_info->typeEnum();
+			normalized_type_index = normalized_type_index.withCategory(normalized_category);
+		}
 	} else if (!normalized_type_index.is_valid()) {
 		normalized_type_index = nativeTypeIndex(normalized_category);
 	} else if (normalized_type_index.category() == TypeCategory::Invalid &&
@@ -783,6 +789,161 @@ TypeTraitResult evaluateTypeTrait(
 		struct_info);
 }
 
+static TypeTraitResult evaluateAssignableTrait(
+	TypeTraitKind kind,
+	const TypeSpecifierNode& target_type,
+	const TypeSpecifierNode& source_type) {
+	if (target_type.is_const()) {
+		return TypeTraitResult::success_false();
+	}
+
+	TypeSpecifierNode assigned_type = target_type;
+	assigned_type.set_reference_qualifier(ReferenceQualifier::None);
+	const bool scalar_assignment =
+		target_type.is_lvalue_reference() &&
+		TypeTraitEval::isScalarType(
+			assigned_type.category(),
+			false,
+			assigned_type.pointer_depth()) &&
+		(areSameTypeTraitOperands(assigned_type, source_type) ||
+		 can_convert_type(source_type, assigned_type).is_valid);
+	if (scalar_assignment) {
+		return TypeTraitResult::success_true();
+	}
+
+	TypeSpecifierNode source_object_type = source_type;
+	source_object_type.set_reference_qualifier(ReferenceQualifier::None);
+	source_object_type.set_cv_qualifier(CVQualifier::None);
+	const StructTypeInfo* assigned_struct =
+		structInfoFromTypeIndex(assigned_type.type_index());
+	if (!assigned_struct ||
+		assigned_struct->is_union ||
+		assigned_type.pointer_depth() != 0 ||
+		!areSameTypeTraitOperands(assigned_type, source_object_type)) {
+		return TypeTraitResult::success_false();
+	}
+
+	auto assignmentParameterMatchesSource =
+		[&source_type](const TypeSpecifierNode& parameter_type) {
+			if (parameter_type.type() != source_type.type()) {
+				return false;
+			}
+			if (parameter_type.category() == TypeCategory::Struct &&
+				parameter_type.type_index() != source_type.type_index()) {
+				return false;
+			}
+			if (parameter_type.reference_qualifier() == source_type.reference_qualifier()) {
+				return parameter_type.cv_qualifier() == source_type.cv_qualifier();
+			}
+			if (parameter_type.is_lvalue_reference()) {
+				if (parameter_type.is_const()) {
+					return true;
+				}
+				return source_type.is_lvalue_reference() && !source_type.is_const();
+			}
+			if (parameter_type.is_rvalue_reference()) {
+				return !source_type.is_lvalue_reference() &&
+					(!parameter_type.is_const() || source_type.is_const());
+			}
+			return false;
+		};
+	auto assignmentParameterExactlyMatchesSource =
+		[&source_type](const TypeSpecifierNode& parameter_type) {
+			if (parameter_type.type() != source_type.type()) {
+				return false;
+			}
+			if (parameter_type.category() == TypeCategory::Struct &&
+				parameter_type.type_index() != source_type.type_index()) {
+				return false;
+			}
+			ReferenceQualifier source_reference_qualifier = source_type.reference_qualifier();
+			if (source_reference_qualifier == ReferenceQualifier::None) {
+				source_reference_qualifier = ReferenceQualifier::RValueReference;
+			}
+			return parameter_type.reference_qualifier() == source_reference_qualifier &&
+				parameter_type.cv_qualifier() == source_type.cv_qualifier();
+		};
+	auto findSelectedAssignmentOperator = [&]() -> const StructMemberFunction* {
+		auto isAssignmentCandidate = [](const StructMemberFunction& member_function) {
+			return isAssignOperator(member_function.operator_kind) &&
+				get_function_decl_node(member_function.function_decl) != nullptr;
+		};
+		auto parameterMatches = [&](const StructMemberFunction& member_function, bool require_exact) {
+			if (!isAssignmentCandidate(member_function)) {
+				return false;
+			}
+			const FunctionDeclarationNode* function_node =
+				get_function_decl_node(member_function.function_decl);
+			if (function_node->is_implicit()) {
+				return false;
+			}
+			const auto& params = function_node->parameter_nodes();
+			if (params.size() != 1 || !params[0].is<DeclarationNode>()) {
+				return false;
+			}
+			const TypeSpecifierNode& parameter_type =
+				params[0].as<DeclarationNode>().type_specifier_node();
+			return require_exact
+				? assignmentParameterExactlyMatchesSource(parameter_type)
+				: assignmentParameterMatchesSource(parameter_type);
+		};
+		auto selected = std::ranges::find_if(
+			assigned_struct->member_functions,
+			[&](const StructMemberFunction& member_function) {
+				return parameterMatches(member_function, true);
+			});
+		if (selected != assigned_struct->member_functions.end()) {
+			return &*selected;
+		}
+		selected = std::ranges::find_if(
+			assigned_struct->member_functions,
+			[&](const StructMemberFunction& member_function) {
+				return parameterMatches(member_function, false);
+			});
+		return selected == assigned_struct->member_functions.end()
+			? nullptr
+			: &*selected;
+	};
+	const StructMemberFunction* selected_assignment_operator =
+		findSelectedAssignmentOperator();
+
+	if (kind == TypeTraitKind::IsAssignable) {
+		const bool has_user_assignment =
+			assigned_struct->hasCopyAssignmentOperator() ||
+			assigned_struct->hasMoveAssignmentOperator();
+		return selected_assignment_operator ||
+			(!has_user_assignment &&
+			 !assigned_struct->isCopyAssignmentDeleted() &&
+			 !assigned_struct->isMoveAssignmentDeleted())
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+
+	if (kind == TypeTraitKind::IsNothrowAssignable) {
+		const bool has_user_assignment =
+			assigned_struct->hasCopyAssignmentOperator() ||
+			assigned_struct->hasMoveAssignmentOperator();
+		if (!has_user_assignment) {
+			return (!assigned_struct->has_vtable &&
+					!assigned_struct->isCopyAssignmentDeleted() &&
+					!assigned_struct->isMoveAssignmentDeleted())
+				? TypeTraitResult::success_true()
+				: TypeTraitResult::success_false();
+		}
+		return selected_assignment_operator && selected_assignment_operator->is_noexcept
+			? TypeTraitResult::success_true()
+			: TypeTraitResult::success_false();
+	}
+
+	return (!assigned_struct->has_vtable &&
+			!assigned_struct->hasCopyAssignmentOperator() &&
+			!assigned_struct->hasMoveAssignmentOperator() &&
+			!assigned_struct->isCopyAssignmentDeleted() &&
+			!assigned_struct->isMoveAssignmentDeleted())
+		? TypeTraitResult::success_true()
+		: TypeTraitResult::success_false();
+}
+
 TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 	if (trait_expr.is_no_arg_trait()) {
 		return trait_expr.kind() == TypeTraitKind::IsConstantEvaluated
@@ -831,6 +992,18 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 				}
 				return can_convert_type(arg, target).is_valid;
 			};
+
+		if (trait_expr.kind() == TypeTraitKind::IsAssignable ||
+			trait_expr.kind() == TypeTraitKind::IsTriviallyAssignable ||
+			trait_expr.kind() == TypeTraitKind::IsNothrowAssignable) {
+			if (additional_types.size() != 1) {
+				return TypeTraitResult::success_false();
+			}
+			return evaluateAssignableTrait(
+				trait_expr.kind(),
+				type_spec,
+				additional_types.front());
+		}
 
 		// Reference targets are never default-constructible and only support a single source type.
 		// Use sema-level implicit conversion rules for reference binding compatibility.
@@ -896,6 +1069,13 @@ TypeTraitResult evaluateTypeTrait(const TypeTraitExprNode& trait_expr) {
 			return areSameTypeTraitOperands(type_spec, second_type_spec)
 				? TypeTraitResult::success_true()
 				: TypeTraitResult::success_false();
+		case TypeTraitKind::IsAssignable:
+		case TypeTraitKind::IsTriviallyAssignable:
+		case TypeTraitKind::IsNothrowAssignable:
+			return evaluateAssignableTrait(
+				trait_expr.kind(),
+				type_spec,
+				second_type_spec);
 		default:
 			return TypeTraitResult::failure();
 		}

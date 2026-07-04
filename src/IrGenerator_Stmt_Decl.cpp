@@ -1349,12 +1349,21 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	std::optional<TypedValue> initializer_typed_value;
 	std::optional<ExprResult> cached_copy_init_expr_result;
 	auto appendExprResultToOperands = [&](const ExprResult& result) {
-		initializer_typed_value = toTypedValue(result);
+		ExprResult appended_result =
+			materializeAddressResultForValueContext(
+				result,
+				type_node.type_index(),
+				type_node.type(),
+				type_node.sizeBits(),
+				PointerDepth{static_cast<int>(type_node.pointer_depth())},
+				type_node.reference_qualifier(),
+				decl.identifier_token());
+		initializer_typed_value = toTypedValue(appended_result);
 		operands.reserve(operands.size() + 4);
-		operands.emplace_back(result.typeEnum());
-		operands.emplace_back(result.size_in_bits.value);
-		operands.emplace_back(result.value);
-		operands.emplace_back(static_cast<int>(result.storage));
+		operands.emplace_back(appended_result.typeEnum());
+		operands.emplace_back(appended_result.size_in_bits.value);
+		operands.emplace_back(appended_result.value);
+		operands.emplace_back(static_cast<int>(appended_result.storage));
 	};
 	operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size

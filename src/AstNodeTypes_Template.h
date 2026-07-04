@@ -108,6 +108,7 @@ public:
 		  function_declaration_(function_decl),
 		  requires_clause_(requires_clause) {}
 	const InlineVector<TemplateParameterNode, 4>& template_parameters() const { return template_parameters_; }
+	InlineVector<TemplateParameterNode, 4>& template_parameters() { return template_parameters_; }
 	const ASTNode& function_declaration() const { return function_declaration_; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }

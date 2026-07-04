@@ -530,6 +530,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 							if (operand_size == 0)
 								operand_size = get_type_size_bits(operand_type);
 						}
+						TypeIndex value_type_index = return_type_spec.type_index().is_valid()
+							? return_type_spec.type_index().withCategory(return_type_spec.type())
+							: nativeTypeIndex(operand_type);
 
 						op.operand.setType(operand_type);
 						op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
@@ -538,8 +541,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 
-						// Return pointer type (64-bit address) with pointer depth 1
-						return makeExprResult(nativeTypeIndex(operand_type), SizeInBits{64}, IrOperand{result_var}, PointerDepth{1}, ValueStorage::ContainsData);
+						TempVarMetadata metadata = TempVarMetadata::makeReference(
+							value_type_index,
+							SizeInBits{operand_size},
+							return_type_spec.is_rvalue_reference() ? ValueCategory::XValue : ValueCategory::LValue);
+						metadata.lvalue_info = LValueInfo(LValueInfo::Kind::Direct, id_handle, 0);
+						setTempVarMetadata(result_var, std::move(metadata));
+
+						return makeExprResult(value_type_index, SizeInBits{64}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 					// For non-identifier expressions, fall through to generate a regular call
 					// (we can't inline complex expressions that need reference semantics)

@@ -1274,6 +1274,14 @@ private:
 
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
 	TempVar emitDereference(TypeCategory pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
+	ExprResult materializeAddressResultForValueContext(
+		const ExprResult& result,
+		TypeIndex target_type_index,
+		TypeCategory target_category,
+		SizeInBits target_size,
+		PointerDepth target_pointer_depth,
+		ReferenceQualifier target_reference_qualifier,
+		const Token& token);
 
 	// ============================================================================
 	// Return IR helper

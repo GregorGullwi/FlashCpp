@@ -786,10 +786,20 @@ ExprResult AstToIr::handleRValueReferenceCast(
 	auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 	LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 	FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
-	setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type_index.category(), target_size));
+	TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
+	TypeCategory result_category = target_type_index.category();
+	if (result_category == TypeCategory::Invalid) {
+		result_category = expr_operands.typeEnum();
+	}
+	TempVarMetadata metadata = TempVarMetadata::makeReference(
+		result_type_index.withCategory(result_category),
+		SizeInBits{target_size},
+		ValueCategory::XValue);
+	metadata.lvalue_info = lvalue_info;
+	setTempVarMetadata(result_var, std::move(metadata));
 
 		// Generate AddressOf operation if needed
-	generateAddressOfForReference(base, result_var, target_type_index.category(), target_size, token, cast_name);
+	generateAddressOfForReference(base, result_var, result_category, target_size, token, cast_name);
 
 		// Return the xvalue with reference semantics (64-bit pointer size).
 		// Use the target type's TypeIndex for struct/enum-to-struct/enum casts
@@ -797,11 +807,6 @@ ExprResult AstToIr::handleRValueReferenceCast(
 		// lookup sees the cast target's semantic identity, not the source's.
 		// Primitive/reference-only targets have no semantic TypeIndex, so keep the
 		// source TypeIndex in that case.
-	TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-	TypeCategory result_category = target_type_index.category();
-	if (result_category == TypeCategory::Invalid) {
-		result_category = expr_operands.typeEnum();
-	}
 	return makeExprResult(result_type_index.withCategory(result_category), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 }
 
@@ -819,20 +824,25 @@ ExprResult AstToIr::handleLValueReferenceCast(
 	auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 	LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 	FLASH_LOG_FORMAT(Codegen, Debug, "{} to lvalue reference", cast_name);
-	setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type_index.category(), target_size));
-
-		// Generate AddressOf operation if needed
-	generateAddressOfForReference(base, result_var, target_type_index.category(), target_size, token, cast_name);
-
-		// Return the lvalue with reference semantics (64-bit pointer size).
-		// Use the target type's TypeIndex for struct-to-struct casts (e.g., static_cast<Base&>(derived))
-		// so downstream conversion-operator lookup finds Base's operators, not Derived's.
-		// Fall back to the source type_index for non-struct targets (primitives have no TypeIndex).
 	TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
 	TypeCategory result_category = target_type_index.category();
 	if (result_category == TypeCategory::Invalid) {
 		result_category = expr_operands.typeEnum();
 	}
+	TempVarMetadata metadata = TempVarMetadata::makeReference(
+		result_type_index.withCategory(result_category),
+		SizeInBits{target_size},
+		ValueCategory::LValue);
+	metadata.lvalue_info = lvalue_info;
+	setTempVarMetadata(result_var, std::move(metadata));
+
+		// Generate AddressOf operation if needed
+	generateAddressOfForReference(base, result_var, result_category, target_size, token, cast_name);
+
+		// Return the lvalue with reference semantics (64-bit pointer size).
+		// Use the target type's TypeIndex for struct-to-struct casts (e.g., static_cast<Base&>(derived))
+		// so downstream conversion-operator lookup finds Base's operators, not Derived's.
+		// Fall back to the source type_index for non-struct targets (primitives have no TypeIndex).
 	return makeExprResult(result_type_index.withCategory(result_category), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 }
 
