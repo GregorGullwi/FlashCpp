@@ -4916,14 +4916,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (peek() == "("_tok) {
 					skip_balanced_parens();
 				} else if (peek() == "{"_tok) {
-					auto check_save = save_token_position();
 					skip_balanced_braces();
-					if (peek() == ","_tok) {
-						discard_saved_token(check_save);
-					} else {
-						restore_token_position(check_save);
-						break;
-					}
 				} else {
 					break;
 				}
@@ -6022,6 +6015,16 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				auto alias_result = parse_member_type_alias("typedef", &member_struct_ref, current_access);
 				if (alias_result.is_error()) {
 					return alias_result;
+				}
+				continue;
+			}
+			if (keyword == "friend") {
+				auto friend_result = parse_friend_declaration();
+				if (friend_result.is_error()) {
+					return friend_result;
+				}
+				if (auto friend_node = friend_result.node()) {
+					member_struct_ref.add_friend(*friend_node);
 				}
 				continue;
 			}

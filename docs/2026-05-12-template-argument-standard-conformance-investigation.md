@@ -134,12 +134,18 @@ regression is:
 
 - `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to a
-later parser diagnostic in MSVC `__msvc_ranges_to.hpp`:
+The later `std/test_std_ranges.cpp` member-template parser blockers are now
+covered:
 
-- `__msvc_ranges_to.hpp:676:40: Expected '(' or ';' after member declaration`
-- first visible shape: `_Parent_t* _Parent{};` inside
-  `transform_view::_Iterator`
+- `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`
+- `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to
+semantic/template consistency:
+
+- `function 'end' has inconsistent deduced auto return types`
+- first visible conflict: `_Iterator<...>` versus `_Sentinel<...>` from
+  `std::ranges::end`
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -171,10 +177,12 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` member declaration
-   parser failure around `_Parent_t* _Parent{};`.
+1. Reduce and fix the current `std/test_std_ranges.cpp` inconsistent deduced
+   `auto` return failure around `std::ranges::end`.
 2. Keep the cleared dependent-alias and `std::byte` constrained-operator paths
-   guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+    guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+   `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
+   `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,
    `tests/test_member_struct_template_dependent_alias_const_assign_fail.cpp`,
    `tests/test_member_template_partial_specialization_same_args_fail.cpp`,
    `tests/test_member_template_partial_specialization_pack_echo_fail.cpp`,
