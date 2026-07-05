@@ -4,6 +4,11 @@ struct maybe_const {
 };
 
 template <class Type>
+struct maybe_const<true, Type> {
+	using type = const Type;
+};
+
+template <class Type>
 struct iterator_of {
 	using type = Type;
 };
@@ -32,5 +37,6 @@ struct outer {
 
 int main() {
 	outer<int>::iterator<false> it{};
-	return it.check();
+	outer<int>::iterator<true> const_it{};
+	return it.check() + const_it.check();
 }
