@@ -58,6 +58,10 @@ identity-preserving behavior:
 - member class template partial specializations reject argument lists that
   exactly echo the primary template parameter list; the remaining positive
   member-specialization guards use standards-valid discriminator patterns
+- namespace-qualified callable-object calls such as `ranges::swap(...)` keep
+  the member-call path when the qualified receiver is a concrete struct object,
+  so instantiated `operator()` member templates receive the implicit object
+  argument and preserve reference-argument mutation
 
 ## Architectural invariants
 
@@ -156,8 +160,13 @@ template constructor ends with a braced member initializer before the function
 body, and where an inline hidden-friend `operator==` appears inside the member
 class template body.
 
-The active `std/test_std_ranges.cpp` frontier has moved to semantic/template
-return-type consistency:
+The namespace-qualified callable-object receiver path is now covered by:
+
+- `tests/test_constrained_cpo_call_operator_ret0.cpp`
+- `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`
+
+The active `std/test_std_ranges.cpp` frontier remains at semantic/template
+return-type consistency on the current main baseline:
 
 - `function 'end' has inconsistent deduced auto return types`
 - first visible conflict: `_Iterator<...>` versus `_Sentinel<...>` from
@@ -204,7 +213,9 @@ declarator-shaped `member_class + pointer_depth` forms.
 2. Trace whether the failure belongs in constrained overload viability,
    function-template instantiation reuse, `if constexpr` pruning, or auto return
    deduction before changing return-type behavior.
-3. Keep `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+3. Keep `tests/test_constrained_cpo_call_operator_ret0.cpp`,
+   `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`,
+   `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
    `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
    `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,
    `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,

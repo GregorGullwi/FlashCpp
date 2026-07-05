@@ -489,6 +489,54 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	return {ConcreteCallOperatorResolution::State::NoViableMatch, nullptr};
 }
 
+const FunctionDeclarationNode*
+Parser::tryResolveQualifiedCallableObjectTemplateOperator(
+	const QualifiedIdentifierNode& receiver,
+	std::span<const TypeSpecifierNode> arg_types) {
+	std::optional<ASTNode> receiver_symbol =
+		gSymbolTable.lookup_qualified(receiver.qualifiedIdentifier());
+	const DeclarationNode* receiver_decl =
+		receiver_symbol.has_value()
+			? get_decl_from_symbol(*receiver_symbol)
+			: nullptr;
+	if (receiver_decl == nullptr) {
+		return nullptr;
+	}
+
+	const TypeSpecifierNode& receiver_type = receiver_decl->type_specifier_node();
+	const TypeInfo* callable_type_info =
+		tryResolveConcreteStructOwnerType(receiver_type, false);
+	if (callable_type_info == nullptr ||
+		!concreteOwnerHasMemberFunctionTemplate(
+			*callable_type_info,
+			StringTable::getOrInternStringHandle("operator()"sv))) {
+		return nullptr;
+	}
+
+	instantiateLazyClassToPhase(
+		callable_type_info->name(),
+		ClassInstantiationPhase::Full);
+	std::string_view callable_struct_name =
+		StringTable::getStringView(callable_type_info->name());
+	if (const StructTypeInfo* callable_struct =
+			callable_type_info->getStructInfo()) {
+		callable_struct_name =
+			StringTable::getStringView(callable_struct->name);
+	}
+
+	std::optional<ASTNode> instantiated_operator =
+		try_instantiate_member_function_template(
+			callable_struct_name,
+			"operator()"sv,
+			arg_types);
+	if (!instantiated_operator.has_value() ||
+		!instantiated_operator->is<FunctionDeclarationNode>()) {
+		return nullptr;
+	}
+
+	return &instantiated_operator->as<FunctionDeclarationNode>();
+}
+
 void Parser::finalizePostfixCallExpression(
 	std::optional<ASTNode>& result,
 	const Token& paren_token,
@@ -639,6 +687,21 @@ void Parser::finalizePostfixCallExpression(
 		args.size(),
 		all_arg_types_known);
 	const FunctionDeclarationNode* func_ref = call_operator_resolution.function;
+	bool resolved_qualified_callable_template_operator = false;
+	if (!func_ref &&
+		call_operator_resolution.state == ConcreteCallOperatorResolution::State::Unavailable &&
+		all_arg_types_known &&
+		result->is<ExpressionNode>()) {
+		const ExpressionNode& receiver_expr = result->as<ExpressionNode>();
+		if (const auto* qualified_receiver = std::get_if<QualifiedIdentifierNode>(&receiver_expr)) {
+			func_ref = tryResolveQualifiedCallableObjectTemplateOperator(
+				*qualified_receiver,
+				arg_types);
+			if (func_ref != nullptr) {
+				resolved_qualified_callable_template_operator = true;
+			}
+		}
+	}
 	if (call_operator_resolution.state == ConcreteCallOperatorResolution::State::Ambiguous) {
 		throw CompileError("call to overloaded operator() is ambiguous");
 	}
@@ -656,7 +719,8 @@ void Parser::finalizePostfixCallExpression(
 	result = emplace_node<ExpressionNode>(
 		makeResolvedMemberCallExpr(*result, *func_ref, std::move(args), operator_token));
 	if (call_operator_resolution.state ==
-			ConcreteCallOperatorResolution::State::Resolved) {
+			ConcreteCallOperatorResolution::State::Resolved ||
+		resolved_qualified_callable_template_operator) {
 		attachResolvedMemberCallMetadata(
 			result->as<ExpressionNode>(),
 			current_template_definition_lookup_context_,

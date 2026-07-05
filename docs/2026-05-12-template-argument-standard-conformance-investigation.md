@@ -62,6 +62,9 @@ The core suite now covers several formerly blocking standards-visible areas:
   the caller-owned outer `>` available
 - member class template partial-specialization parsing now rejects argument
   lists that are not more specialized than the primary parameter list
+- namespace-qualified callable objects keep member-call semantics when the
+  receiver is a concrete struct object, including the implicit object argument
+  for instantiated constrained `operator()` member templates
 
 ## Remaining standards gaps
 
@@ -140,6 +143,11 @@ covered:
 - `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`
 - `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`
 
+The namespace-qualified CPO receiver path is now covered by:
+
+- `tests/test_constrained_cpo_call_operator_ret0.cpp`
+- `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`
+
 The active standards-facing `std/test_std_ranges.cpp` failure has moved to
 semantic/template consistency:
 
@@ -180,7 +188,9 @@ declarator-shaped pointer-depth/member-class metadata.
 1. Reduce and fix the current `std/test_std_ranges.cpp` inconsistent deduced
    `auto` return failure around `std::ranges::end`.
 2. Keep the cleared dependent-alias and `std::byte` constrained-operator paths
-   guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+   guarded with `tests/test_constrained_cpo_call_operator_ret0.cpp`,
+   `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`,
+   `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
    `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
    `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,
    `tests/test_member_struct_template_dependent_alias_const_assign_fail.cpp`,
