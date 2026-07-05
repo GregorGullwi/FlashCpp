@@ -4186,6 +4186,7 @@ private:	 // Resume private methods
 	void skip_template_arguments();	// Skip over template arguments <...>
 	void skip_qualified_name_parts();  // Skip namespace-qualified name parts (e.g., ::Class after 'ns')
 	std::string_view consume_qualified_name_suffix(std::string_view base_name);	// Same but builds and returns full qualified name
+	void skip_constructor_member_initializer_list();	 // Skip constructor member-initializer-list after ':'
 	void skip_member_declaration_to_semicolon();	 // Skip member declaration until ';' or end of struct
 	void skip_function_body();  // Skip over '{...}' or function-try-block 'try {...} catch...'
 	void skip_catch_clauses();  // Skip over one or more 'catch(...){}' clauses

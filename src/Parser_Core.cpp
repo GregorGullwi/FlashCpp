@@ -1373,6 +1373,40 @@ std::string_view Parser::consume_qualified_name_suffix(std::string_view base_nam
 	return builder.commit();
 }
 
+void Parser::skip_constructor_member_initializer_list() {
+	if (peek() != ":"_tok) {
+		return;
+	}
+	advance(); // consume ':'
+
+	while (!peek().is_eof()) {
+		if (peek() == "typename"_tok) {
+			advance();
+		}
+		while (!peek().is_eof() && peek() != "("_tok && peek() != "{"_tok && peek() != ";"_tok) {
+			if (peek() == "<"_tok) {
+				skip_template_arguments();
+			} else if (peek() == "::"_tok) {
+				advance();
+			} else {
+				advance();
+			}
+		}
+		if (peek() == "("_tok) {
+			skip_balanced_parens();
+		} else if (peek() == "{"_tok) {
+			skip_balanced_braces();
+		} else {
+			break;
+		}
+		if (peek() == ","_tok) {
+			advance();
+		} else {
+			break;
+		}
+	}
+}
+
 void Parser::skip_member_declaration_to_semicolon() {
 	// Skip tokens until we reach ';' at top level, or an unmatched '}'
 	// Handles nested parentheses, angle brackets, and braces

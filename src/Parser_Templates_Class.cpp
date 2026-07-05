@@ -618,49 +618,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				if (peek() == ":"_tok) {
 					initializer_list_start = save_token_position();
 					has_initializer_list = true;
-					advance(); // consume ':'
-					// Skip member initializer list entries: name(expr), name(expr), ...
-					while (!peek().is_eof()) {
-						// Skip initializer name (possibly qualified: typename X<T>::type() or Base<T>(...))
-						if (peek() == "typename"_tok) {
-							advance(); // consume 'typename'
-						}
-						// Skip tokens until we find '(' or '{' of the initializer
-						while (!peek().is_eof() && peek() != "("_tok && peek() != "{"_tok && peek() != ";"_tok) {
-							if (peek() == "<"_tok) {
-								skip_template_arguments();
-							} else if (peek() == "::"_tok) {
-								advance();
-							} else {
-								advance();
-							}
-						}
-						// Skip the initializer arguments
-						if (peek() == "("_tok) {
-							skip_balanced_parens();
-						} else if (peek() == "{"_tok) {
-							// Could be brace-init for a member, or the start of the function body
-							// If followed by a comma or another initializer, it's brace-init
-							auto check_save = save_token_position();
-							skip_balanced_braces();
-							if (peek() == ","_tok) {
-								// Brace-init member, continue
-								discard_saved_token(check_save);
-							} else {
-								// This was the function body (or end) - restore and break
-								restore_token_position(check_save);
-								break;
-							}
-						} else {
-							break;
-						}
-						// Check for more initializers
-						if (peek() == ","_tok) {
-							advance(); // consume ','
-						} else {
-							break;
-						}
-					}
+					skip_constructor_member_initializer_list();
 				}
 
 				// Save the delayed-parse position right before the function body.
@@ -4899,33 +4857,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 
 		if (peek() == ":"_tok) {
-			advance(); // consume ':'
-			while (!peek().is_eof()) {
-				if (peek() == "typename"_tok) {
-					advance();
-				}
-				while (!peek().is_eof() && peek() != "("_tok && peek() != "{"_tok && peek() != ";"_tok) {
-					if (peek() == "<"_tok) {
-						skip_template_arguments();
-					} else if (peek() == "::"_tok) {
-						advance();
-					} else {
-						advance();
-					}
-				}
-				if (peek() == "("_tok) {
-					skip_balanced_parens();
-				} else if (peek() == "{"_tok) {
-					skip_balanced_braces();
-				} else {
-					break;
-				}
-				if (peek() == ","_tok) {
-					advance();
-				} else {
-					break;
-				}
-			}
+			skip_constructor_member_initializer_list();
 		}
 
 		skipMemberTemplateFunctionTail();

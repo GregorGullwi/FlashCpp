@@ -180,7 +180,7 @@ declarator-shaped pointer-depth/member-class metadata.
 1. Reduce and fix the current `std/test_std_ranges.cpp` inconsistent deduced
    `auto` return failure around `std::ranges::end`.
 2. Keep the cleared dependent-alias and `std::byte` constrained-operator paths
-    guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+   guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
    `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
    `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,
    `tests/test_member_struct_template_dependent_alias_const_assign_fail.cpp`,
