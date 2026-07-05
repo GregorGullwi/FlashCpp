@@ -104,17 +104,30 @@ shift. The non-dependent invalid scoped-enum diagnostic remains covered by
 The previous MSVC `<tuple>:28` specialization-pattern failure is now covered by
 `tests/test_variable_template_tuple_pack_pattern_ret0.cpp`.
 
-The active standards-facing failure remains in MSVC `<tuple>`, now at the
-allocator-aware constructor constraint:
+The previous MSVC `<tuple>:138` allocator-aware constructor constraint is now
+covered:
 
-- `include\tuple:138:21: Expected identifier for non-type template parameter`
+- `tests/test_template_nttp_unqualified_conjunction_alias_args_ret0.cpp`
+- `tests/test_template_nttp_global_qualified_alias_args_ret0.cpp`
 
-The failing shape is an unqualified `enable_if_t<conjunction_v<...>, int> = 0`
+The covered shape is an unqualified `enable_if_t<conjunction_v<...>, int> = 0`
 inside namespace `std`, where the operands are globally qualified traits such as
-`::std:: uses_allocator<_Ty, _Alloc>`. A globally qualified reduced form is
-covered by `tests/test_template_nttp_global_qualified_alias_args_ret0.cpp`, so
-the remaining conformance task is the current-namespace/unqualified
-variable-template argument path.
+`::std:: uses_allocator<_Ty, _Alloc>`. The parser now keeps the
+current-namespace `conjunction_v<...>` template-id on the value-like NTTP path
+instead of treating it as a type-specifier.
+
+The following MSVC `<tuple>` `_Equals` const-receiver failure is now covered by:
+
+- `tests/test_template_const_member_function_template_receiver_ret0.cpp`
+
+Member-function-template cv metadata now survives member-template registration,
+class-template instantiation, and member-template materialization.
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to
+`swap` overload resolution and dependent-placeholder materialization:
+
+- `All 5 template overload(s) failed for 'swap'`
+- `Fatal error: Unregistered dependent placeholder type reached template argument classification`
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -146,8 +159,8 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` `<tuple>:138`
-   unqualified alias-template NTTP parser failure.
+1. Reduce and fix the current `std/test_std_ranges.cpp` `swap` failure where an
+   unregistered dependent placeholder reaches template-argument classification.
 2. Keep the cleared `std::byte` constrained-operator path guarded with
    `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and

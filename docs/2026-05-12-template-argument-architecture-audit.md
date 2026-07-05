@@ -116,18 +116,29 @@ late operator-template retry.
 The previous `<tuple>:28` variable-template specialization-pattern blocker is
 covered by `tests/test_variable_template_tuple_pack_pattern_ret0.cpp`.
 
-The current `std/test_std_ranges.cpp` frontier remains in MSVC `<tuple>`, now at
-the allocator-aware constructor constraint:
+The previous MSVC `<tuple>:138` allocator-aware constructor constraint is now
+covered:
 
-- `include\tuple:138:21: Expected identifier for non-type template parameter`
+- `tests/test_template_nttp_unqualified_conjunction_alias_args_ret0.cpp`
+- `tests/test_template_nttp_global_qualified_alias_args_ret0.cpp`
 
-The failing shape is an unqualified alias-template NTTP type in namespace `std`:
+The covered shape is an unqualified alias-template NTTP type in namespace `std`:
 `enable_if_t<conjunction_v<::std:: uses_allocator<...>, ::std:: is_constructible<...>>, int> = 0`.
-The reduced `::meta::enable_if_t<::meta::conjunction_v<...>>` form is covered by
-`tests/test_template_nttp_global_qualified_alias_args_ret0.cpp`, so the next
-slice should focus on the unqualified current-namespace variable-template
-argument path rather than the already-fixed `>>` skip or variable-template
-specialization-pattern parser.
+The parser now recognizes current-namespace variable-template-ids as value-like
+arguments before falling through to type parsing.
+
+The subsequent MSVC `<tuple>` `_Equals` const-receiver failure is also covered:
+
+- `tests/test_template_const_member_function_template_receiver_ret0.cpp`
+
+Member-function-template cv metadata is now preserved from parsing through
+class-template instantiation and member-template materialization.
+
+The active `std/test_std_ranges.cpp` frontier has moved to `swap` overload
+selection and dependent-placeholder classification:
+
+- `All 5 template overload(s) failed for 'swap'`
+- `Fatal error: Unregistered dependent placeholder type reached template argument classification`
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -165,11 +176,12 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Reduce the current `std/test_std_ranges.cpp` `<tuple>:138` failure into a
-   focused parser test using unqualified `enable_if_t<conjunction_v<...>>`
-   inside the declaring namespace and globally qualified trait operands.
-2. Fix the responsible parser layer without weakening existing template-id,
-   value-vs-type argument, pack, or partial-specialization diagnostics.
+1. Reduce the current `std/test_std_ranges.cpp` `swap` failure into a focused
+   test that preserves the dependent placeholder reaching template-argument
+   classification.
+2. Trace whether the failure belongs in template argument materialization,
+   placeholder registration, `swap` overload selection, or a stale parser
+   fallback before changing parser behavior.
 3. Keep `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
    `tests/test_scoped_enum_builtin_shift_fail.cpp` in the guard set so the

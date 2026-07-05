@@ -854,10 +854,28 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	// Add to struct as a member function template
 	// First, add to the struct's member functions list so it can be found for inheritance lookup
 	OverloadableOperator operator_kind = overloadableOperatorFromFunctionName(decl_node.identifier_token().value());
+	const CVQualifier member_template_cv = static_cast<CVQualifier>(
+		static_cast<uint8_t>(func_decl.is_const_member_function() ? CVQualifier::Const : CVQualifier::None) |
+		static_cast<uint8_t>(func_decl.is_volatile_member_function() ? CVQualifier::Volatile : CVQualifier::None));
 	if (operator_kind != OverloadableOperator::None) {
-		struct_node.add_operator_overload(operator_kind, template_func_node, access);
+		struct_node.add_operator_overload(
+			operator_kind,
+			template_func_node,
+			access,
+			false,
+			false,
+			false,
+			false,
+			member_template_cv);
 	} else {
-		struct_node.add_member_function(template_func_node, access);
+		struct_node.add_member_function(
+			template_func_node,
+			access,
+			false,
+			false,
+			false,
+			false,
+			member_template_cv);
 	}
 
 	// Register the template in the global registry with qualified name (ClassName::functionName)
