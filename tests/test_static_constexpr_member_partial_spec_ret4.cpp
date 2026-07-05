@@ -2,22 +2,22 @@
 class TestClass {
 public:
 	// Primary template
-	template <typename...>
+	template <bool Active, typename...>
 	struct List {
 		static constexpr int size = 0;
 	};
 
 	// Partial specialization with static constexpr member
 	template <typename T, typename... Rest>
-	struct List<T, Rest...> : List<Rest...> {
+	struct List<true, T, Rest...> : List<true, Rest...> {
 		static constexpr int size = sizeof(T);
 	};
 };
 
 int main() {
 	// Test instantiation - verify static constexpr members parse correctly
-	TestClass::List<int> list1;
-	TestClass::List<int, char> list2;
+	TestClass::List<true, int> list1;
+	TestClass::List<true, int, char> list2;
 
 	return decltype(list1)::size + (decltype(list2)::size - decltype(list1)::size);
 }

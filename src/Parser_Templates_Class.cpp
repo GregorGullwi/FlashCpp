@@ -4989,6 +4989,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	for (StringHandle param_name : template_param_metadata.names) {
 		template_param_names.push_back(StringTable::getStringView(param_name));
 	}
+	auto pushMemberStructTemplateParameters = [&]() {
+		for (size_t i = 0; i < template_param_metadata.names.size(); ++i) {
+			pushCurrentTemplateParameter(
+				template_param_metadata.names[i],
+				template_param_metadata.kinds[i],
+				template_param_metadata.non_type_categories[i]);
+		}
+	};
 
 	// Skip requires clause if present (for partial specializations with constraints)
 	// e.g., template<typename T> requires Constraint<T> struct Name<T> { ... };
@@ -5073,9 +5081,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Save current template param names and set up the new ones for pattern parsing
 		// This allows template parameter references like _Sz in the pattern <_Sz, _List<_Uint, _UInts...>, true>
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
-		for (const auto& name : template_param_names) {
-			pushCurrentTemplateParamName(StringTable::getOrInternStringHandle(name));
-		}
+		pushMemberStructTemplateParameters();
 
 		// Parse the specialization pattern: <T, Rest...>, etc.
 		auto pattern_args_opt = parse_explicit_template_arguments();
@@ -5085,6 +5091,52 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 
 		InlineVector<TemplateTypeArg, 4> pattern_args = *pattern_args_opt;
+		auto is_exact_primary_parameter_pattern =
+			[&template_param_nodes](std::span<const TemplateTypeArg> args) -> bool {
+				if (args.size() != template_param_nodes.size()) {
+					return false;
+				}
+				for (size_t i = 0; i < args.size(); ++i) {
+					const TemplateParameterNode& param = template_param_nodes[i];
+					const TemplateTypeArg& arg = args[i];
+					if (arg.dependent_name != param.nameHandle() ||
+						arg.is_pack != param.is_variadic()) {
+						return false;
+					}
+					if (arg.pointer_depth != 0 ||
+						arg.is_array ||
+						arg.member_pointer_kind != MemberPointerKind::None ||
+						arg.ref_qualifier != ReferenceQualifier::None ||
+						arg.cv_qualifier != CVQualifier::None ||
+						arg.function_signature.has_value()) {
+						return false;
+					}
+					switch (param.kind()) {
+					case TemplateParameterKind::NonType:
+						if (!arg.is_value || !arg.is_dependent) {
+							return false;
+						}
+						break;
+					case TemplateParameterKind::Template:
+						if (!arg.is_template_template_arg &&
+							(!arg.is_dependent || arg.category() != TypeCategory::Template)) {
+							return false;
+						}
+						break;
+					case TemplateParameterKind::Type:
+						if (arg.is_value ||
+							arg.is_template_template_arg ||
+							!arg.is_dependent) {
+							return false;
+						}
+						break;
+					}
+				}
+				return true;
+			};
+		if (is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()))) {
+			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
+		}
 
 		// Generate a unique name for the pattern template
 		// We use the template parameter names + modifiers to create unique pattern names
@@ -5177,9 +5229,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 		// Set template context flags so static_assert deferral works correctly
 		FlashCpp::ScopedState guard_tpn_partial(currentTemplateParamState());
-		for (const auto& name : template_param_names) {
-			pushCurrentTemplateParamName(StringTable::getOrInternStringHandle(name));
-		}
+		pushMemberStructTemplateParameters();
 		FlashCpp::TemplateDepthGuard guard_ptb_partial(parsing_template_depth_);
 
 		while (!peek().is_eof() && peek() != "}"_tok) {
@@ -5692,6 +5742,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		is_class,
 		is_union);
 
+	// Set template context before base parsing so dependent bases such as
+	// _Category_base<_Const> see non-type and template-template parameter kinds.
+	FlashCpp::ScopedState guard_tpn_body(currentTemplateParamState());
+	pushMemberStructTemplateParameters();
+	FlashCpp::TemplateDepthGuard guard_ptb_body(parsing_template_depth_);
+
 	// Handle base class list if present (e.g., : true_type<T>)
 	if (peek() == ":"_tok) {
 		advance();  // consume ':'
@@ -5711,13 +5767,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// For template member structs, parse members but don't instantiate dependent types yet
 	// This matches C++ semantics where template members are parsed but not instantiated until needed
 	AccessSpecifier current_access = is_class ? AccessSpecifier::Private : AccessSpecifier::Public;
-
-	// Set template context flags so static_assert deferral works correctly
-	FlashCpp::ScopedState guard_tpn_body(currentTemplateParamState());
-	for (const auto& name : template_param_names) {
-		pushCurrentTemplateParamName(StringTable::getOrInternStringHandle(name));
-	}
-	FlashCpp::TemplateDepthGuard guard_ptb_body(parsing_template_depth_);
 
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		// Skip empty declarations (bare ';' tokens) - valid in C++

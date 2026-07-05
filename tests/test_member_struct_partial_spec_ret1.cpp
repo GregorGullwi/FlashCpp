@@ -4,20 +4,20 @@
 class TestClass {
 public:
 	// Primary template
-	template <typename...>
+	template <bool Active, typename...>
 	struct List {
 		static constexpr int size = 0;
 	};
 
 	// Partial specialization with static constexpr member
 	template <typename T, typename... Rest>
-	struct List<T, Rest...> : List<Rest...> {
+	struct List<true, T, Rest...> : List<true, Rest...> {
 		static constexpr int size = 1;
 	};
 };
 
 int main() {
 	// Instantiate template - the static constexpr members now parse correctly
-	TestClass::List<int, char, float> list;
+	TestClass::List<true, int, char, float> list;
 	return decltype(list)::size;
 }
