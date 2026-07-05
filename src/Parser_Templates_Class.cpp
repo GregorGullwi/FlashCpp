@@ -5134,7 +5134,14 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				return true;
 			};
-		if (is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()))) {
+		// C++20 [temp.class.spec.mfunc] allows a partial specialization whose
+		// argument list matches the primary template parameter list when a
+		// requires-clause makes it more specialized than the primary. The MSVC
+		// STL relies on this for transform_view::_Category_base. Only reject the
+		// unconstrained echo pattern; a constrained same-arg specialization is
+		// valid and is disambiguated via the constrained-pattern counter below.
+		if (!requires_clause.has_value() &&
+			is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()))) {
 			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
 		}
 
@@ -5653,10 +5660,24 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after member initializer", current_token_);
 				}
-				member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
-			} else {
-				// Skip other complex cases (e.g., friend declarations)
-				int brace_depth = 0;
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
+		} else if (peek() == "{"_tok) {
+			// Brace-init default member initializer: _Tp _M_tp{};
+			// Mirrors the primary-template body handling so partial specializations
+			// don't silently drop brace-initialized members via the fallback below.
+			const DeclarationNode& decl = member_result.node()->as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+			auto init_result = parse_brace_initializer(type_spec);
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after member brace initializer", current_token_);
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
+		} else {
+			// Skip other complex cases (e.g., friend declarations)
+			int brace_depth = 0;
 				while (!peek().is_eof()) {
 					if (peek() == "{"_tok) {
 						brace_depth++;
@@ -6172,6 +6193,21 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after member initializer", peek_info());
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
+		} else if (peek() == "{"_tok) {
+			// Brace-init default member initializer: _Tp _M_tp{};
+			// This mirrors the partial-specialization body handling and is required
+			// for MSVC STL patterns such as transform_view::_Iterator's
+			// _Parent_t* _Parent{};
+			const DeclarationNode& decl = member_result.node()->as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+			auto init_result = parse_brace_initializer(type_spec);
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after member brace initializer", peek_info());
 			}
 			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
 		} else {
