@@ -6181,6 +6181,21 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				return ParseResult::error("Expected ';' after member initializer", peek_info());
 			}
 			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
+		} else if (peek() == "{"_tok) {
+			// Brace-init default member initializer: _Tp _M_tp{};
+			// This mirrors the partial-specialization body handling and is required
+			// for MSVC STL patterns such as transform_view::_Iterator's
+			// _Parent_t* _Parent{};
+			const DeclarationNode& decl = member_result.node()->as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+			auto init_result = parse_brace_initializer(type_spec);
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after member brace initializer", peek_info());
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
 		} else {
 			return ParseResult::error("Expected '(' or ';' after member declaration", peek_info());
 		}
