@@ -5091,6 +5091,52 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 
 		InlineVector<TemplateTypeArg, 4> pattern_args = *pattern_args_opt;
+		auto is_exact_primary_parameter_pattern =
+			[&template_param_nodes](std::span<const TemplateTypeArg> args) -> bool {
+				if (args.size() != template_param_nodes.size()) {
+					return false;
+				}
+				for (size_t i = 0; i < args.size(); ++i) {
+					const TemplateParameterNode& param = template_param_nodes[i];
+					const TemplateTypeArg& arg = args[i];
+					if (arg.dependent_name != param.nameHandle() ||
+						arg.is_pack != param.is_variadic()) {
+						return false;
+					}
+					if (arg.pointer_depth != 0 ||
+						arg.is_array ||
+						arg.member_pointer_kind != MemberPointerKind::None ||
+						arg.ref_qualifier != ReferenceQualifier::None ||
+						arg.cv_qualifier != CVQualifier::None ||
+						arg.function_signature.has_value()) {
+						return false;
+					}
+					switch (param.kind()) {
+					case TemplateParameterKind::NonType:
+						if (!arg.is_value || !arg.is_dependent) {
+							return false;
+						}
+						break;
+					case TemplateParameterKind::Template:
+						if (!arg.is_template_template_arg &&
+							(!arg.is_dependent || arg.category() != TypeCategory::Template)) {
+							return false;
+						}
+						break;
+					case TemplateParameterKind::Type:
+						if (arg.is_value ||
+							arg.is_template_template_arg ||
+							!arg.is_dependent) {
+							return false;
+						}
+						break;
+					}
+				}
+				return true;
+			};
+		if (is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()))) {
+			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
+		}
 
 		// Generate a unique name for the pattern template
 		// We use the template parameter names + modifiers to create unique pattern names

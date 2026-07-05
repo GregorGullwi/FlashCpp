@@ -7,19 +7,19 @@ struct Wrap {
 
 template <template <typename> class Meta>
 struct Outer {
-	template <typename...>
+	template <bool Active, typename...>
 	struct Inner {
 		static constexpr int value = 0;
 	};
 
 	template <typename T>
-	struct Inner<T> {
+	struct Inner<true, T> {
 		static constexpr int value = Meta<T>::value;
 	};
 };
 
 int main() {
-	Outer<Wrap>::Inner<int> inner;
+	Outer<Wrap>::Inner<true, int> inner;
 	int ok[(decltype(inner)::value == sizeof(int)) ? 1 : -1];
 	return sizeof(ok) == sizeof(int) ? 0 : 1;
 }

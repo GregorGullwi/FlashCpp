@@ -60,6 +60,8 @@ The core suite now covers several formerly blocking standards-visible areas:
 - template-argument skipping preserves nested-template `>>` tokenization by
   splitting only when the skipped template-id consumes the inner `>` and leaves
   the caller-owned outer `>` available
+- member class template partial-specialization parsing now rejects argument
+  lists that are not more specialized than the primary parameter list
 
 ## Remaining standards gaps
 
@@ -173,6 +175,9 @@ declarator-shaped pointer-depth/member-class metadata.
    parser failure around `_Parent_t* _Parent{};`.
 2. Keep the cleared dependent-alias and `std::byte` constrained-operator paths
    guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+   `tests/test_member_struct_template_dependent_alias_const_assign_fail.cpp`,
+   `tests/test_member_template_partial_specialization_same_args_fail.cpp`,
+   `tests/test_member_template_partial_specialization_pack_echo_fail.cpp`,
    `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
    `tests/test_scoped_enum_builtin_shift_fail.cpp`.
@@ -215,5 +220,8 @@ Common adjacent guards:
 - `test_mock_std_byte_ops_traits_ret0.cpp`
 - `test_scoped_enum_shift_assign_operator_template_ret0.cpp`
 - `test_scoped_enum_builtin_shift_fail.cpp`
+- `test_member_struct_template_dependent_alias_const_assign_fail.cpp`
+- `test_member_template_partial_specialization_same_args_fail.cpp`
+- `test_member_template_partial_specialization_pack_echo_fail.cpp`
 - `std/test_std_type_traits.cpp`
 - `std/test_std_ranges.cpp`

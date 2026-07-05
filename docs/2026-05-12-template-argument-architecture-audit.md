@@ -55,6 +55,9 @@ identity-preserving behavior:
 - template-argument skipping preserves C++ maximal-munch tokenization by
   splitting `>>` only when a skipped template-id closes at depth one and the
   caller still owns the outer `>`
+- member class template partial specializations reject argument lists that
+  exactly echo the primary template parameter list; the remaining positive
+  member-specialization guards use standards-valid discriminator patterns
 
 ## Architectural invariants
 
@@ -219,6 +222,9 @@ small guard set relevant to the touched layer. Common guards:
 - `test_mock_std_byte_ops_traits_ret0.cpp`
 - `test_scoped_enum_shift_assign_operator_template_ret0.cpp`
 - `test_scoped_enum_builtin_shift_fail.cpp`
+- `test_member_struct_template_dependent_alias_const_assign_fail.cpp`
+- `test_member_template_partial_specialization_same_args_fail.cpp`
+- `test_member_template_partial_specialization_pack_echo_fail.cpp`
 - `std/test_std_type_traits.cpp`
 - `std/test_std_ranges.cpp`
 

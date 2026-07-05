@@ -27,16 +27,11 @@ struct outer {
 		using Current = typename iterator_of<Base>::type;
 
 		Current value;
-
-		int check() {
-			Current local = 42;
-			return local - 42;
-		}
 	};
 };
 
 int main() {
-	outer<int>::iterator<false> it{};
-	outer<int>::iterator<true> const_it{};
-	return it.check() + const_it.check();
+	outer<int>::iterator<true> it{};
+	it.value = 7;
+	return it.value;
 }
