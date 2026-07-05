@@ -3128,60 +3128,122 @@ try_type_template_argument_parse:
 			// their template-parameter owner before they reach argument classification.
 			if (!arg.is_dependent && !type_node.type_index().is_valid()) {
 				const StringHandle token_name = type_node.token().handle();
-				const auto& current_param_names = currentTemplateParamNames();
-				bool is_current_template_param = std::any_of(
-					current_param_names.begin(),
-					current_param_names.end(),
-					[token_name](StringHandle param_name) {
-						return param_name == token_name;
-					});
-				if (is_current_template_param) {
-					auto param_kind = currentTemplateParamKind(token_name);
-					if (param_kind.has_value() && *param_kind == TemplateParameterKind::NonType) {
-						TypeCategory non_type_category =
-							currentTemplateParamNonTypeCategory(token_name).value_or(TypeCategory::Int);
+				bool handled_by_target_param = false;
+				if (const TemplateParameterNode* target_param = currentTargetTemplateParam();
+					target_param != nullptr &&
+					target_param->nameHandle() == token_name) {
+					handled_by_target_param = true;
+					if (target_param->kind() == TemplateParameterKind::NonType) {
+						TypeCategory non_type_category = target_param->has_type()
+							? target_param->type_specifier_node().type()
+							: TypeCategory::Int;
 						bool was_pack = arg.is_pack;
 						arg = TemplateTypeArg::makeDependentValue(token_name, non_type_category);
 						arg.is_pack = was_pack;
-						FLASH_LOG(Templates, Debug, "Registered missing dependent non-type template argument");
+						FLASH_LOG(Templates, Debug, "Registered target non-type template parameter as dependent template argument");
 					} else {
-						TypeInfo& type_info = add_template_param_type(token_name, TypeCategory::UserDefined, 0);
-						type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-						type_node.set_type_index(type_info.type_index_.withCategory(TypeCategory::UserDefined));
-						arg.type_index = type_node.type_index();
-						arg.is_dependent = true;
-						arg.dependent_name = token_name;
-						FLASH_LOG(Templates, Debug, "Registered missing dependent placeholder TypeIndex for template argument");
-					}
-				}
-				else if (findTypeByName(token_name) == nullptr) {
-					auto [simple_identifier_kind, prebuilt_arg] = classifySimpleTemplateArgName(token_name);
-					if (simple_identifier_kind == SimpleTemplateArgKind::ValueLike) {
-						bool was_pack = arg.is_pack;
-						if (prebuilt_arg.has_value() && prebuilt_arg->is_value) {
-							arg = *prebuilt_arg;
-						} else {
-							TypeCategory non_type_category =
-								dependentIdentifierValueCategory(token_name).value_or(TypeCategory::Int);
-							arg = TemplateTypeArg::makeDependentValue(token_name, non_type_category);
+						TypeIndex recovered_type_index = target_param->registered_type_index();
+						if (!recovered_type_index.is_valid()) {
+							if (const TypeInfo* target_type_info = findTypeByName(token_name)) {
+								recovered_type_index =
+									target_type_info->type_index_.withCategory(TypeCategory::UserDefined);
+							} else {
+								TypeInfo& type_info = add_template_param_type(
+									token_name,
+									target_param->kind() == TemplateParameterKind::Template
+										? TypeCategory::Template
+										: TypeCategory::UserDefined,
+									0);
+								type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+								recovered_type_index = type_info.type_index_.withCategory(
+									target_param->kind() == TemplateParameterKind::Template
+										? TypeCategory::Template
+										: TypeCategory::UserDefined);
+							}
 						}
-						arg.is_pack = was_pack;
-						FLASH_LOG(Templates, Debug, "Recovered unresolved template argument as value-like identifier");
-					} else if (parsing_template_depth_ > 0 ||
-							   !struct_parsing_context_stack_.empty()) {
-						arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);
-						arg.is_value = false;
+						type_node.set_type_index(recovered_type_index);
+						arg.type_index = recovered_type_index;
 						arg.is_dependent = true;
 						arg.dependent_name = token_name;
-						FLASH_LOG(Templates, Debug, "Recovered unresolved template argument as dependent type identifier");
-					} else {
-						restore_token_position(saved_pos);
-						last_failed_template_arg_parse_handle_ = saved_pos;
-						return std::nullopt;
+						FLASH_LOG(Templates, Debug, "Registered target type template parameter as dependent template argument");
 					}
 				}
-				else {
-					throw InternalError("Unregistered dependent placeholder type reached template argument classification");
+				if (!handled_by_target_param) {
+					const auto& current_param_names = currentTemplateParamNames();
+					bool is_current_template_param = std::any_of(
+						current_param_names.begin(),
+						current_param_names.end(),
+						[token_name](StringHandle param_name) {
+							return param_name == token_name;
+						});
+					if (is_current_template_param) {
+						auto param_kind = currentTemplateParamKind(token_name);
+						if (param_kind.has_value() && *param_kind == TemplateParameterKind::NonType) {
+							TypeCategory non_type_category =
+								currentTemplateParamNonTypeCategory(token_name).value_or(TypeCategory::Int);
+							bool was_pack = arg.is_pack;
+							arg = TemplateTypeArg::makeDependentValue(token_name, non_type_category);
+							arg.is_pack = was_pack;
+							FLASH_LOG(Templates, Debug, "Registered missing dependent non-type template argument");
+						} else {
+							TypeInfo& type_info = add_template_param_type(token_name, TypeCategory::UserDefined, 0);
+							type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+							type_node.set_type_index(type_info.type_index_.withCategory(TypeCategory::UserDefined));
+							arg.type_index = type_node.type_index();
+							arg.is_dependent = true;
+							arg.dependent_name = token_name;
+							FLASH_LOG(Templates, Debug, "Registered missing dependent placeholder TypeIndex for template argument");
+						}
+					}
+					else if (findTypeByName(token_name) == nullptr) {
+						auto [simple_identifier_kind, prebuilt_arg] = classifySimpleTemplateArgName(token_name);
+						if (simple_identifier_kind == SimpleTemplateArgKind::ValueLike) {
+							bool was_pack = arg.is_pack;
+							if (prebuilt_arg.has_value() && prebuilt_arg->is_value) {
+								arg = *prebuilt_arg;
+							} else {
+								TypeCategory non_type_category =
+									dependentIdentifierValueCategory(token_name).value_or(TypeCategory::Int);
+								arg = TemplateTypeArg::makeDependentValue(token_name, non_type_category);
+							}
+							arg.is_pack = was_pack;
+							FLASH_LOG(Templates, Debug, "Recovered unresolved template argument as value-like identifier");
+						} else if (parsing_template_depth_ > 0 ||
+								   !struct_parsing_context_stack_.empty()) {
+							arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);
+							arg.is_value = false;
+							arg.is_dependent = true;
+							arg.dependent_name = token_name;
+							FLASH_LOG(Templates, Debug, "Recovered unresolved template argument as dependent type identifier");
+						} else {
+							restore_token_position(saved_pos);
+							last_failed_template_arg_parse_handle_ = saved_pos;
+							return std::nullopt;
+						}
+					}
+					else {
+						const TypeInfo* known_type_info = findTypeByName(token_name);
+						if (known_type_info != nullptr &&
+							(known_type_info->isDependentPlaceholder() ||
+							 known_type_info->is_incomplete_instantiation_)) {
+							TypeIndex recovered_type_index =
+								known_type_info->type_index_.withCategory(TypeCategory::UserDefined);
+							type_node.set_type_index(recovered_type_index);
+							arg.type_index = recovered_type_index;
+							arg.is_dependent = true;
+							arg.dependent_name = token_name;
+							FLASH_LOG(Templates, Debug, "Reattached known dependent placeholder TypeIndex for template argument");
+						} else if (parsing_template_depth_ > 0 ||
+								   !struct_parsing_context_stack_.empty()) {
+							arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);
+							arg.is_value = false;
+							arg.is_dependent = true;
+							arg.dependent_name = token_name;
+							FLASH_LOG(Templates, Debug, "Recovered known-name template argument as dependent type identifier");
+						} else {
+							throw InternalError("Unregistered dependent placeholder type reached template argument classification");
+						}
+					}
 				}
 			}
 		}

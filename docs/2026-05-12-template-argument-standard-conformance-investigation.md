@@ -123,11 +123,21 @@ The following MSVC `<tuple>` `_Equals` const-receiver failure is now covered by:
 Member-function-template cv metadata now survives member-template registration,
 class-template instantiation, and member-template materialization.
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to
-`swap` overload resolution and dependent-placeholder materialization:
+The previous standards-facing `std/test_std_ranges.cpp` `swap` overload and
+dependent-placeholder materialization blocker is now covered. Member struct
+template parameter kind metadata is preserved through partial-specialization
+pattern parsing and dependent base parsing, and dependent member aliases remain
+marked as dependent when used later as template arguments. The focused
+regression is:
 
-- `All 5 template overload(s) failed for 'swap'`
-- `Fatal error: Unregistered dependent placeholder type reached template argument classification`
+- `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to a
+later parser diagnostic in MSVC `__msvc_ranges_to.hpp`:
+
+- `__msvc_ranges_to.hpp:676:40: Expected '(' or ';' after member declaration`
+- first visible shape: `_Parent_t* _Parent{};` inside
+  `transform_view::_Iterator`
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -159,9 +169,10 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` `swap` failure where an
-   unregistered dependent placeholder reaches template-argument classification.
-2. Keep the cleared `std::byte` constrained-operator path guarded with
+1. Reduce and fix the current `std/test_std_ranges.cpp` member declaration
+   parser failure around `_Parent_t* _Parent{};`.
+2. Keep the cleared dependent-alias and `std::byte` constrained-operator paths
+   guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
    `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
    `tests/test_scoped_enum_builtin_shift_fail.cpp`.

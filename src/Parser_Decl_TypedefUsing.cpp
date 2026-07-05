@@ -400,6 +400,14 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Register the simple name so the alias can be used as a type within
 			// the same struct body (e.g., using A = int; using B = A;).
 			TypeInfo& alias_info = register_type_alias(alias_name, resolved_type_spec, current_ns);
+			if (typeSpecStillUsesDependentPlaceholder(resolved_type_spec) ||
+				(!resolved_type_spec.type_index().is_valid() &&
+				 (resolved_type_spec.category() == TypeCategory::UserDefined ||
+				  resolved_type_spec.category() == TypeCategory::TypeAlias ||
+				  resolved_type_spec.category() == TypeCategory::Template))) {
+				alias_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+				alias_info.is_incomplete_instantiation_ = true;
+			}
 			// Also add struct-chain-relative entry pointing to the same TypeInfo.
 			getTypesByNameMap().emplace(struct_relative_handle, &alias_info);
 

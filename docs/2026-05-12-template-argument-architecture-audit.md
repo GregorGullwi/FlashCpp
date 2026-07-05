@@ -134,11 +134,20 @@ The subsequent MSVC `<tuple>` `_Equals` const-receiver failure is also covered:
 Member-function-template cv metadata is now preserved from parsing through
 class-template instantiation and member-template materialization.
 
-The active `std/test_std_ranges.cpp` frontier has moved to `swap` overload
-selection and dependent-placeholder classification:
+The previous `std/test_std_ranges.cpp` `swap` overload and dependent-placeholder
+classification blocker is now covered by preserving full member-struct-template
+parameter metadata while parsing partial-specialization patterns and dependent
+bases, and by keeping dependent member aliases marked as dependent when they are
+later used as template arguments. The focused regression is:
 
-- `All 5 template overload(s) failed for 'swap'`
-- `Fatal error: Unregistered dependent placeholder type reached template argument classification`
+- `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`
+
+The active `std/test_std_ranges.cpp` frontier has moved to a later parser error
+in MSVC `__msvc_ranges_to.hpp`:
+
+- `__msvc_ranges_to.hpp:676:40: Expected '(' or ';' after member declaration`
+- first visible shape: `_Parent_t* _Parent{};` inside
+  `transform_view::_Iterator`
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -176,16 +185,16 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Reduce the current `std/test_std_ranges.cpp` `swap` failure into a focused
-   test that preserves the dependent placeholder reaching template-argument
-   classification.
-2. Trace whether the failure belongs in template argument materialization,
-   placeholder registration, `swap` overload selection, or a stale parser
-   fallback before changing parser behavior.
-3. Keep `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
+1. Reduce the current `std/test_std_ranges.cpp` parser failure around
+   `_Parent_t* _Parent{};` into a focused member declaration test.
+2. Trace whether the failure belongs in member declarator parsing, brace
+   default member initializers, alias-to-pointer metadata, or template-body
+   context setup before changing parser behavior.
+3. Keep `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+   `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
    `tests/test_scoped_enum_builtin_shift_fail.cpp` in the guard set so the
-   cleared `std::byte` operator path does not regress.
+   cleared `std::byte` operator and dependent-alias paths do not regress.
 4. Re-run `std/test_std_ranges.cpp` after the parser fix and let the next
    concrete failure choose the following layer.
 5. Promote stale expected-failure tracking only after the corresponding harness
