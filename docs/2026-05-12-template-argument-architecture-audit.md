@@ -165,7 +165,7 @@ The namespace-qualified callable-object receiver path is now covered by:
 - `tests/test_constrained_cpo_call_operator_ret0.cpp`
 - `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`
 - `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`
-- `tests/test_std_concepts_ranges_swap_int_ret0.cpp`
+- `tests/std/test_std_concepts_ranges_swap_int_ret0.cpp`
 
 Deleted rvalue-reference function-template sentinels now preserve their
 `= delete` metadata and no longer accept lvalue arguments through accidental
@@ -174,12 +174,15 @@ forwarding-reference treatment:
 - `tests/test_deleted_rvalue_template_overload_ret0.cpp`
 - `tests/test_deleted_rvalue_template_overload_fail.cpp`
 
-The active `std/test_std_ranges.cpp` frontier remains at semantic/template
-return-type consistency on the current main baseline:
+The `std::ranges::end` inconsistent auto-return frontier is now covered by:
 
-- `function 'end' has inconsistent deduced auto return types`
-- first visible conflict: `_Iterator<...>` versus `_Sentinel<...>` from
-  `std::ranges::end`
+- `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`
+
+The active `std/test_std_ranges.cpp` frontier has moved to constrained
+template overload viability:
+
+- `All 5 template overload(s) failed for 'swap'`
+- `All 2 template overload(s) failed for 'std::invoke'`
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline
@@ -223,17 +226,18 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Reduce the current `std/test_std_ranges.cpp` inconsistent deduced `auto`
-   return failure into a focused range/end overload or conditional-return test.
-2. Trace whether the failure belongs in constrained overload viability,
-   function-template instantiation reuse, `if constexpr` pruning, or auto return
-   deduction before changing return-type behavior.
-3. Keep `tests/test_deleted_rvalue_template_overload_ret0.cpp`,
+1. Reduce the current `std/test_std_ranges.cpp` `swap` / `std::invoke`
+   overload failures into focused constrained-call tests.
+2. Trace whether the failure belongs in overload viability, constraint
+   substitution, function-template instantiation reuse, or `invoke_result`
+   style return-type formation before changing call resolution behavior.
+3. Keep `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
+   `tests/test_deleted_rvalue_template_overload_ret0.cpp`,
    `tests/test_deleted_rvalue_template_overload_fail.cpp`,
    `tests/test_constrained_cpo_call_operator_ret0.cpp`,
    `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`,
    `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`,
-   `tests/test_std_concepts_ranges_swap_int_ret0.cpp`,
+   `tests/std/test_std_concepts_ranges_swap_int_ret0.cpp`,
    `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
    `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
    `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,
