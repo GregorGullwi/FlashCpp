@@ -640,8 +640,11 @@ private:
 	// Diagnose scoped enum used as operand in binary arithmetic/comparison with a
 	// different type.  Per C++20, scoped enums only support relational/equality
 	// operators between values of the same scoped enum type.
-	void diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op,
-										  CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
+	void diagnoseScopedEnumBinaryOperands(BinaryOperatorNode& bin_op,
+										  CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id);
+	bool tryResolveLateBinaryOperatorOverload(BinaryOperatorNode& bin_op,
+											  const CanonicalTypeDesc& lhs_desc,
+											  const CanonicalTypeDesc& rhs_desc);
 
 	// State
 	Parser* parser_ = nullptr;
