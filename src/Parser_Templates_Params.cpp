@@ -1278,6 +1278,26 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			   target_param->kind() != TemplateParameterKind::NonType;
 	};
 
+	auto qualifiedIdNamesVariableTemplate = [&](const QualifiedIdentifierNode& qi) {
+		std::string_view qname = buildQualifiedNameFromHandle(qi.namespace_handle(), qi.name());
+		if (gTemplateRegistry.lookupVariableTemplate(qname).has_value() ||
+			gTemplateRegistry.lookupVariableTemplate(qi.nameHandle()).has_value()) {
+			return true;
+		}
+		if (qname.find("::") == std::string_view::npos) {
+			NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+			if (!current_namespace.isGlobal()) {
+				StringHandle qualified_handle =
+					gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, qi.nameHandle());
+				if (qualified_handle.isValid() &&
+					gTemplateRegistry.lookupVariableTemplate(qualified_handle).has_value()) {
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+
 	auto hasConcreteSubstitutionForName = [&](StringHandle name) {
 		if (!name.isValid()) {
 			return false;
@@ -1872,8 +1892,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 						(peek() == ">"_tok || peek() == ","_tok)) {
 						const auto& qi = std::get<QualifiedIdentifierNode>(expr);
 						std::string_view qname = buildQualifiedNameFromHandle(qi.namespace_handle(), qi.name());
+						const bool variable_template_expression =
+							qi.has_template_arguments() && qualifiedIdNamesVariableTemplate(qi);
 						auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qname));
-						if (type_it != getTypesByNameMap().end() &&
+						if (!variable_template_expression &&
+							type_it != getTypesByNameMap().end() &&
 							type_it->second != nullptr &&
 							(type_it->second->isTypeAlias() ||
 							 type_it->second->getStructInfo() != nullptr ||
@@ -2155,8 +2178,11 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
 							// Build the qualified name and check if it exists in getTypesByNameMap()
 							std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+							const bool variable_template_expression =
+								qual_id.has_template_arguments() && qualifiedIdNamesVariableTemplate(qual_id);
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_name));
-							if (type_it != getTypesByNameMap().end()) {
+							if (!variable_template_expression &&
+								type_it != getTypesByNameMap().end()) {
 								const TypeInfo* type_info = type_it->second;
 								if (type_info->struct_info_ != nullptr) {
 									is_concrete_type = true;
@@ -2454,6 +2480,102 @@ try_type_template_argument_parse:
 			return has_template_arguments;
 		};
 		const bool source_spells_template_id = sourceSpellsTemplateId();
+		auto sourceTemplateIdNamesVariableTemplate = [&]() {
+			SaveHandle lookahead_pos = save_token_position();
+			ScopeGuard lookahead_guard([&]() {
+				discard_saved_token(lookahead_pos);
+			});
+			if (peek() == "::"_tok) {
+				advance();
+			}
+			if (!peek().is_identifier()) {
+				restore_token_position(lookahead_pos);
+				return false;
+			}
+			StringHandle first_name = peek_info().handle();
+			StringHandle candidate_name = first_name;
+			advance();
+			StringBuilder qualified_name_builder;
+			qualified_name_builder.append(StringTable::getStringView(first_name));
+			while (peek() == "::"_tok) {
+				advance();
+				if (peek() == "template"_tok) {
+					advance();
+				}
+				if (!peek().is_identifier()) {
+					restore_token_position(lookahead_pos);
+					return false;
+				}
+				candidate_name = peek_info().handle();
+				qualified_name_builder.append("::").append(peek_info().value());
+				advance();
+			}
+			const bool has_template_arguments = peek() == "<"_tok;
+			std::string_view qualified_name = qualified_name_builder.commit();
+			bool names_variable_template =
+				gTemplateRegistry.lookupVariableTemplate(qualified_name).has_value() ||
+				gTemplateRegistry.lookupVariableTemplate(candidate_name).has_value();
+			if (!names_variable_template && qualified_name.find("::") == std::string_view::npos) {
+				NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+				if (!current_namespace.isGlobal()) {
+					StringHandle qualified_handle =
+						gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, candidate_name);
+					names_variable_template =
+						qualified_handle.isValid() &&
+						gTemplateRegistry.lookupVariableTemplate(qualified_handle).has_value();
+				}
+			}
+			restore_token_position(lookahead_pos);
+			return has_template_arguments && names_variable_template;
+		};
+		const bool source_spells_variable_template_id = sourceTemplateIdNamesVariableTemplate();
+		if (source_spells_variable_template_id && !currentArgRejectsValueLikeParsing()) {
+			auto value_expr_result = parse_expression(2, ExpressionContext::TemplateTypeArg);
+			if (!value_expr_result.is_error() && value_expr_result.node().has_value()) {
+				if (peek() == ">>"_tok) {
+					split_right_shift_token();
+				}
+				if (!peek().is_eof() &&
+					(peek() == ","_tok || peek() == ">"_tok || peek() == "..."_tok)) {
+					const ExpressionNode& value_expr =
+						value_expr_result.node()->as<ExpressionNode>();
+					StringHandle dependent_name;
+					if (const auto* id = std::get_if<IdentifierNode>(&value_expr)) {
+						dependent_name = StringTable::getOrInternStringHandle(id->name());
+					} else if (const auto* qual_id =
+								   std::get_if<QualifiedIdentifierNode>(&value_expr)) {
+						dependent_name = StringTable::getOrInternStringHandle(qual_id->full_name());
+					}
+					TemplateTypeArg dependent_arg = TemplateTypeArg::makeDependentValue(
+						dependent_name,
+						dependentExpressionValueCategory(
+							value_expr,
+							dependent_name.isValid()
+								? std::optional<StringHandle>(dependent_name)
+								: std::nullopt),
+						0,
+						*value_expr_result.node());
+					if (peek() == "..."_tok) {
+						advance();
+						dependent_arg.is_pack = true;
+					}
+					template_args.push_back(dependent_arg);
+					if (out_type_nodes) {
+						out_type_nodes->push_back(*value_expr_result.node());
+					}
+					discard_saved_token(arg_saved_pos);
+					if (peek() == ">"_tok) {
+						advance();
+						break;
+					}
+					if (peek() == ","_tok) {
+						advance();
+						continue;
+					}
+				}
+			}
+			restore_token_position(arg_saved_pos);
+		}
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
 			// Neither type nor expression parsing worked
