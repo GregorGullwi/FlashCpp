@@ -3142,23 +3142,22 @@ try_type_template_argument_parse:
 						arg.is_pack = was_pack;
 						FLASH_LOG(Templates, Debug, "Registered target non-type template parameter as dependent template argument");
 					} else {
+						const TypeCategory recovered_type_category =
+							target_param->kind() == TemplateParameterKind::Template
+								? TypeCategory::Template
+								: TypeCategory::UserDefined;
 						TypeIndex recovered_type_index = target_param->registered_type_index();
 						if (!recovered_type_index.is_valid()) {
 							if (const TypeInfo* target_type_info = findTypeByName(token_name)) {
 								recovered_type_index =
-									target_type_info->type_index_.withCategory(TypeCategory::UserDefined);
+									target_type_info->type_index_.withCategory(recovered_type_category);
 							} else {
 								TypeInfo& type_info = add_template_param_type(
 									token_name,
-									target_param->kind() == TemplateParameterKind::Template
-										? TypeCategory::Template
-										: TypeCategory::UserDefined,
+									recovered_type_category,
 									0);
 								type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
-								recovered_type_index = type_info.type_index_.withCategory(
-									target_param->kind() == TemplateParameterKind::Template
-										? TypeCategory::Template
-										: TypeCategory::UserDefined);
+								recovered_type_index = type_info.type_index_.withCategory(recovered_type_category);
 							}
 						}
 						type_node.set_type_index(recovered_type_index);
