@@ -164,6 +164,8 @@ The namespace-qualified callable-object receiver path is now covered by:
 
 - `tests/test_constrained_cpo_call_operator_ret0.cpp`
 - `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`
+- `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`
+- `tests/test_std_concepts_ranges_swap_int_ret0.cpp`
 
 The active `std/test_std_ranges.cpp` frontier remains at semantic/template
 return-type consistency on the current main baseline:
@@ -215,6 +217,8 @@ declarator-shaped `member_class + pointer_depth` forms.
    deduction before changing return-type behavior.
 3. Keep `tests/test_constrained_cpo_call_operator_ret0.cpp`,
    `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`,
+   `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`,
+   `tests/test_std_concepts_ranges_swap_int_ret0.cpp`,
    `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
    `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
    `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,

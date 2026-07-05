@@ -41,7 +41,19 @@ StringHandle Parser::getStructQualifiedNameForRegistration(const StructDeclarati
 	}
 
 	if (found_struct) {
-		return StringTable::getOrInternStringHandle(chain_builder.commit());
+		std::string_view struct_chain = chain_builder.commit();
+		NamespaceHandle namespace_handle =
+			struct_parsing_context_stack_.front().namespace_handle;
+		std::string_view namespace_name =
+			gNamespaceRegistry.getQualifiedName(namespace_handle);
+		if (!namespace_name.empty()) {
+			return StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(namespace_name)
+					.append("::"sv)
+					.append(struct_chain));
+		}
+		return StringTable::getOrInternStringHandle(struct_chain);
 	}
 
 	chain_builder.reset();
