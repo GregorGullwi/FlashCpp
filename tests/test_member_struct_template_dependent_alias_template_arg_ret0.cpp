@@ -22,9 +22,15 @@ struct outer {
 		using Current = typename iterator_of<Base>::type;
 
 		Current value;
+
+		int check() {
+			Current local = 42;
+			return local - 42;
+		}
 	};
 };
 
 int main() {
-	return 0;
+	outer<int>::iterator<false> it{};
+	return it.check();
 }
