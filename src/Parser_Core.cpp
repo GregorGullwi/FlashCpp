@@ -1326,6 +1326,9 @@ void Parser::skip_template_arguments() {
 	const size_t MAX_TOKENS = 10000;	 // Safety limit to prevent infinite loops
 
 	while (!peek().is_eof() && token_count < MAX_TOKENS) {
+		if (peek() == ">>"_tok && angle_depth == 1) {
+			split_right_shift_token();
+		}
 		update_angle_depth(peek(), angle_depth);
 		advance();
 
