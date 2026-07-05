@@ -2563,12 +2563,13 @@ try_type_template_argument_parse:
 					if (out_type_nodes) {
 						out_type_nodes->push_back(*value_expr_result.node());
 					}
-					discard_saved_token(arg_saved_pos);
 					if (peek() == ">"_tok) {
+						discard_saved_token(arg_saved_pos);
 						advance();
 						break;
 					}
 					if (peek() == ","_tok) {
+						discard_saved_token(arg_saved_pos);
 						advance();
 						continue;
 					}
