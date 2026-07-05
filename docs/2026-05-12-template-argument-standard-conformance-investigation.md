@@ -140,12 +140,15 @@ covered:
 - `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`
 - `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to
-semantic/template consistency:
+The `std::ranges::end` inconsistent auto-return path is now covered by:
 
-- `function 'end' has inconsistent deduced auto return types`
-- first visible conflict: `_Iterator<...>` versus `_Sentinel<...>` from
-  `std::ranges::end`
+- `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to
+constrained template overload viability:
+
+- `All 5 template overload(s) failed for 'swap'`
+- `All 2 template overload(s) failed for 'std::invoke'`
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -177,10 +180,12 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` inconsistent deduced
-   `auto` return failure around `std::ranges::end`.
-2. Keep the cleared dependent-alias and `std::byte` constrained-operator paths
-   guarded with `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+1. Reduce and fix the current `std/test_std_ranges.cpp` `swap` / `std::invoke`
+   overload failures.
+2. Keep the cleared auto-return, dependent-alias, and `std::byte`
+   constrained-operator paths guarded with
+   `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
+   `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
    `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
    `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,
    `tests/test_member_struct_template_dependent_alias_const_assign_fail.cpp`,
