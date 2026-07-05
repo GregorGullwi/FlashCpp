@@ -150,12 +150,25 @@ The namespace-qualified CPO receiver path is now covered by:
 - `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`
 - `tests/test_std_concepts_ranges_swap_int_ret0.cpp`
 
+Deleted rvalue-reference function-template sentinels now preserve their deleted
+status and participate in C++20 reference binding correctly: `const T&&` is not
+a forwarding reference and cannot bind an lvalue argument.
+
+- `tests/test_deleted_rvalue_template_overload_ret0.cpp`
+- `tests/test_deleted_rvalue_template_overload_fail.cpp`
+
 The active standards-facing `std/test_std_ranges.cpp` failure has moved to
 semantic/template consistency:
 
 - `function 'end' has inconsistent deduced auto return types`
 - first visible conflict: `_Iterator<...>` versus `_Sentinel<...>` from
   `std::ranges::end`
+
+A reduced `<utility>` `std::addressof` probe now reaches a separate link
+frontier: duplicate emitted definitions for std inline objects such as
+`std::less`, `std::greater`, and `std::equivalent`. Keep that as an
+object/linkage follow-up after the active `std::ranges::end` issue is merged or
+otherwise no longer blocks `test_std_ranges.cpp`.
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -190,7 +203,9 @@ declarator-shaped pointer-depth/member-class metadata.
 1. Reduce and fix the current `std/test_std_ranges.cpp` inconsistent deduced
    `auto` return failure around `std::ranges::end`.
 2. Keep the cleared dependent-alias and `std::byte` constrained-operator paths
-   guarded with `tests/test_constrained_cpo_call_operator_ret0.cpp`,
+   guarded with `tests/test_deleted_rvalue_template_overload_ret0.cpp`,
+   `tests/test_deleted_rvalue_template_overload_fail.cpp`,
+   `tests/test_constrained_cpo_call_operator_ret0.cpp`,
    `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`,
    `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`,
    `tests/test_std_concepts_ranges_swap_int_ret0.cpp`,

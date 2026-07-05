@@ -39,6 +39,26 @@ static void logTemplateRequiresClauseFailure(
 	FLASH_LOG(Templates, Debug, "  template arguments: ", args_str);
 }
 
+static bool isForwardingReferenceParameter(
+	const TypeSpecifierNode& type,
+	std::span<const TemplateParameterNode> template_params) {
+	if (!type.is_rvalue_reference() || type.cv_qualifier() != CVQualifier::None)
+		return false;
+
+	const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+	if (type_info == nullptr)
+		return false;
+
+	const StringHandle type_name = type_info->name();
+	for (const TemplateParameterNode& template_param : template_params) {
+		if (template_param.kind() == TemplateParameterKind::Type &&
+			template_param.nameHandle() == type_name) {
+			return true;
+		}
+	}
+	return false;
+}
+
 template <typename ParamContainer>
 static bool defaultExpressionReferencesTemplateParams(
 	const ASTNode& expr,
@@ -2042,11 +2062,14 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			new_arg.cv_qualifier = static_cast<CVQualifier>(argument_cv & ~parameter_cv);
 		} else if (fp_type.reference_qualifier() == ReferenceQualifier::RValueReference) {
 			const bool is_forwarding_reference =
-				fp_type.cv_qualifier() == CVQualifier::None;
+				isForwardingReferenceParameter(fp_type, template_params);
 			if (is_forwarding_reference) {
 				// Forwarding-reference deduction needs the full T&& vs lvalue/rvalue rules.
 				// Let the main deduction path handle it instead of pre-deducing the wrong shape.
 				continue;
+			}
+			if (ca_type.is_lvalue_reference()) {
+				return std::nullopt;
 			}
 			new_arg.ref_qualifier = ReferenceQualifier::None;
 			const auto argument_cv = static_cast<uint8_t>(new_arg.cv_qualifier);
@@ -2348,7 +2371,8 @@ bool Parser::materializeTemplateFunctionParameters(
 		if (param_decl.is_parameter_pack()) {
 			size_t pack_start_index = arg_type_index;
 			const TypeSpecifierNode& orig_param_type = param_decl.type_specifier_node();
-			bool is_forwarding_reference = orig_param_type.is_rvalue_reference();
+			bool is_forwarding_reference =
+				isForwardingReferenceParameter(orig_param_type, template_params);
 			while (arg_type_index < arg_types->size()) {
 				const TypeSpecifierNode& arg_type = (*arg_types)[arg_type_index];
 				ASTNode param_type = emplace_node<TypeSpecifierNode>(
@@ -2449,7 +2473,8 @@ bool Parser::materializeTemplateFunctionParameters(
 			param_type = emplace_node<TypeSpecifierNode>(substituted_param_type);
 		}
 
-		if (orig_param_type.is_rvalue_reference() && arg_type_index < arg_types->size()) {
+		if (orig_param_type.is_rvalue_reference() && arg_type_index < arg_types->size() &&
+			isForwardingReferenceParameter(orig_param_type, template_params)) {
 			const TypeSpecifierNode& arg_type = (*arg_types)[arg_type_index];
 			if (arg_type.is_lvalue_reference()) {
 				param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);

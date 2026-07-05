@@ -267,12 +267,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Use trailing requires clause if present, otherwise use the leading one
 	std::optional<ASTNode> final_requires_clause = trailing_requires_clause.has_value() ? trailing_requires_clause : requires_clause;
 
-	// Create a template function declaration node
 	func_decl.set_is_template_pattern(true);
-	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-		template_params,
-		*func_result_node,
-		final_requires_clause);
 
 	// Save the declaration position for every template function declaration, not
 	// only for out-of-line definitions with bodies. SFINAE return-type checking
@@ -313,6 +308,11 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Skip over the body (handles both '{...}' and function-try-blocks 'try{...}catch...')
 		skip_function_body();
 	}
+
+	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+		template_params,
+		*func_result_node,
+		final_requires_clause);
 
 	out_template_node = template_func_node;
 	return ParseResult::success(template_func_node);

@@ -419,6 +419,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	}();
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "=== generateFunctionCallIr: func_name={} ===", func_name_view);
+	if (pre_resolved_direct_target && pre_resolved_direct_target->is_deleted()) {
+		throw CompileError(
+			std::string{
+				StringBuilder()
+					.append("Call to deleted function '"sv)
+					.append(func_name_view)
+					.append("'"sv)
+					.commit()});
+	}
 
 	// Check for compiler intrinsics and handle them specially
 	auto intrinsic_result = tryGenerateIntrinsicIr(func_name_view, callExprNode);

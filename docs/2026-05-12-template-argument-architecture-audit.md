@@ -167,12 +167,25 @@ The namespace-qualified callable-object receiver path is now covered by:
 - `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`
 - `tests/test_std_concepts_ranges_swap_int_ret0.cpp`
 
+Deleted rvalue-reference function-template sentinels now preserve their
+`= delete` metadata and no longer accept lvalue arguments through accidental
+forwarding-reference treatment:
+
+- `tests/test_deleted_rvalue_template_overload_ret0.cpp`
+- `tests/test_deleted_rvalue_template_overload_fail.cpp`
+
 The active `std/test_std_ranges.cpp` frontier remains at semantic/template
 return-type consistency on the current main baseline:
 
 - `function 'end' has inconsistent deduced auto return types`
 - first visible conflict: `_Iterator<...>` versus `_Sentinel<...>` from
   `std::ranges::end`
+
+A standalone `<utility>` `std::addressof` probe now gets past the deleted
+`const T&&` overload selection issue and exposes duplicate emitted std inline
+objects such as `std::less`, `std::greater`, and `std::equivalent`. Treat that
+as the next object/linkage std-header reduction after the active
+`std::ranges::end` semantic frontier is cleared or merged forward.
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -215,7 +228,9 @@ declarator-shaped `member_class + pointer_depth` forms.
 2. Trace whether the failure belongs in constrained overload viability,
    function-template instantiation reuse, `if constexpr` pruning, or auto return
    deduction before changing return-type behavior.
-3. Keep `tests/test_constrained_cpo_call_operator_ret0.cpp`,
+3. Keep `tests/test_deleted_rvalue_template_overload_ret0.cpp`,
+   `tests/test_deleted_rvalue_template_overload_fail.cpp`,
+   `tests/test_constrained_cpo_call_operator_ret0.cpp`,
    `tests/test_if_constexpr_static_enum_strategy_prune_ret0.cpp`,
    `tests/test_qualified_cpo_nested_type_receiver_ret0.cpp`,
    `tests/test_std_concepts_ranges_swap_int_ret0.cpp`,
