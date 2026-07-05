@@ -5660,10 +5660,24 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after member initializer", current_token_);
 				}
-				member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
-			} else {
-				// Skip other complex cases (e.g., friend declarations)
-				int brace_depth = 0;
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
+		} else if (peek() == "{"_tok) {
+			// Brace-init default member initializer: _Tp _M_tp{};
+			// Mirrors the primary-template body handling so partial specializations
+			// don't silently drop brace-initialized members via the fallback below.
+			const DeclarationNode& decl = member_result.node()->as<DeclarationNode>();
+			const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+			auto init_result = parse_brace_initializer(type_spec);
+			if (init_result.is_error()) {
+				return init_result;
+			}
+			if (!consume(";"_tok)) {
+				return ParseResult::error("Expected ';' after member brace initializer", current_token_);
+			}
+			member_struct_ref.add_member(*member_result.node(), current_access, init_result.node());
+		} else {
+			// Skip other complex cases (e.g., friend declarations)
+			int brace_depth = 0;
 				while (!peek().is_eof()) {
 					if (peek() == "{"_tok) {
 						brace_depth++;
