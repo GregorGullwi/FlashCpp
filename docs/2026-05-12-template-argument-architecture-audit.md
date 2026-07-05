@@ -145,12 +145,23 @@ later used as template arguments. The focused regression is:
 
 - `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`
 
-The active `std/test_std_ranges.cpp` frontier has moved to a later parser error
-in MSVC `__msvc_ranges_to.hpp`:
+The previous `std/test_std_ranges.cpp` member-template parser blockers are now
+covered:
 
-- `__msvc_ranges_to.hpp:676:40: Expected '(' or ';' after member declaration`
-- first visible shape: `_Parent_t* _Parent{};` inside
-  `transform_view::_Iterator`
+- `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`
+- `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`
+
+These guard the `transform_view::_Iterator` shapes where a skipped member class
+template constructor ends with a braced member initializer before the function
+body, and where an inline hidden-friend `operator==` appears inside the member
+class template body.
+
+The active `std/test_std_ranges.cpp` frontier has moved to semantic/template
+return-type consistency:
+
+- `function 'end' has inconsistent deduced auto return types`
+- first visible conflict: `_Iterator<...>` versus `_Sentinel<...>` from
+  `std::ranges::end`
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -188,18 +199,20 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Reduce the current `std/test_std_ranges.cpp` parser failure around
-   `_Parent_t* _Parent{};` into a focused member declaration test.
-2. Trace whether the failure belongs in member declarator parsing, brace
-   default member initializers, alias-to-pointer metadata, or template-body
-   context setup before changing parser behavior.
+1. Reduce the current `std/test_std_ranges.cpp` inconsistent deduced `auto`
+   return failure into a focused range/end overload or conditional-return test.
+2. Trace whether the failure belongs in constrained overload viability,
+   function-template instantiation reuse, `if constexpr` pruning, or auto return
+   deduction before changing return-type behavior.
 3. Keep `tests/test_member_struct_template_dependent_alias_template_arg_ret0.cpp`,
+   `tests/test_member_struct_template_ctor_brace_init_tail_ret0.cpp`,
+   `tests/test_member_struct_template_hidden_friend_operator_eq_ret0.cpp`,
    `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
    `tests/test_scoped_enum_builtin_shift_fail.cpp` in the guard set so the
    cleared `std::byte` operator and dependent-alias paths do not regress.
-4. Re-run `std/test_std_ranges.cpp` after the parser fix and let the next
-   concrete failure choose the following layer.
+4. Re-run `std/test_std_ranges.cpp` after the semantic/template fix and let the
+   next concrete failure choose the following layer.
 5. Promote stale expected-failure tracking only after the corresponding harness
    entry is proven green.
 
