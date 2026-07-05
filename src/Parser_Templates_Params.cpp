@@ -1963,7 +1963,6 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							dependent_arg.is_pack = true;
 							FLASH_LOG(Templates, Debug, "Marked compile-time expression as pack expansion");
 						}
-
 						template_args.push_back(dependent_arg);
 						if (out_type_nodes && expr_result.node().has_value()) {
 							out_type_nodes->push_back(*expr_result.node());
@@ -2426,6 +2425,35 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		// Expression parsing failed or wasn't a numeric literal - try parsing a type
 try_type_template_argument_parse:
 		restore_token_position(arg_saved_pos);
+		auto sourceSpellsTemplateId = [&]() {
+			SaveHandle lookahead_pos = save_token_position();
+			ScopeGuard lookahead_guard([&]() {
+				discard_saved_token(lookahead_pos);
+			});
+			if (peek() == "::"_tok) {
+				advance();
+			}
+			if (!peek().is_identifier()) {
+				restore_token_position(lookahead_pos);
+				return false;
+			}
+			advance();
+			while (peek() == "::"_tok) {
+				advance();
+				if (peek() == "template"_tok) {
+					advance();
+				}
+				if (!peek().is_identifier()) {
+					restore_token_position(lookahead_pos);
+					return false;
+				}
+				advance();
+			}
+			const bool has_template_arguments = peek() == "<"_tok;
+			restore_token_position(lookahead_pos);
+			return has_template_arguments;
+		};
+		const bool source_spells_template_id = sourceSpellsTemplateId();
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error() || !type_result.node().has_value()) {
 			// Neither type nor expression parsing worked
@@ -2812,6 +2840,7 @@ try_type_template_argument_parse:
 			if (template_name_handle.isValid() &&
 				token_names_entire_type &&
 				!parsed_type_is_template_id &&
+				!source_spells_template_id &&
 				(gTemplateRegistry.lookup_alias_template(template_name_handle).has_value() ||
 				 gTemplateRegistry.lookupTemplate(template_name_handle).has_value() ||
 				 gTemplateRegistry.isClassTemplate(template_name_handle))) {

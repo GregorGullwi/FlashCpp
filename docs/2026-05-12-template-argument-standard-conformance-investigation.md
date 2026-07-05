@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-04
+**Last updated:** 2026-07-05
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. Keep it focused on the intended semantic model, active
@@ -53,6 +53,13 @@ The core suite now covers several formerly blocking standards-visible areas:
   are evaluated through the shared constexpr evaluator
 - scoped-enum/std::byte shift and swap probes are covered, including an
   expected-fail guard for non-dependent builtin scoped-enum shifts
+- MSVC `<tuple>` variable-template specialization patterns with nested
+  template-ids and trailing packs are parsed through the shared explicit
+  template-argument parser, and nested pack-pattern matching can bind a trailing
+  pack against a multi-argument concrete template-id
+- template-argument skipping preserves nested-template `>>` tokenization by
+  splitting only when the skipped template-id consumes the inner `>` and leaves
+  the caller-owned outer `>` available
 
 ## Remaining standards gaps
 
@@ -94,14 +101,20 @@ selected instead of treating the expression as an invalid builtin scoped-enum
 shift. The non-dependent invalid scoped-enum diagnostic remains covered by
 `tests/test_scoped_enum_builtin_shift_fail.cpp`.
 
-The active standards-facing failure has advanced to MSVC `<tuple>`:
+The previous MSVC `<tuple>:28` specialization-pattern failure is now covered by
+`tests/test_variable_template_tuple_pack_pattern_ret0.cpp`.
 
-- `include\tuple:28:79: Expected '>' after variable template specialization pattern`
+The active standards-facing failure remains in MSVC `<tuple>`, now at the
+allocator-aware constructor constraint:
 
-The next fix should reduce that declaration shape and repair the parser layer
-that handles variable-template specialization patterns. Likely suspects are
-partial-specialization template-id parsing, pack handling, or a missing MSVC
-header pattern, but the reduced test should choose the layer.
+- `include\tuple:138:21: Expected identifier for non-type template parameter`
+
+The failing shape is an unqualified `enable_if_t<conjunction_v<...>, int> = 0`
+inside namespace `std`, where the operands are globally qualified traits such as
+`::std:: uses_allocator<_Ty, _Alloc>`. A globally qualified reduced form is
+covered by `tests/test_template_nttp_global_qualified_alias_args_ret0.cpp`, so
+the remaining conformance task is the current-namespace/unqualified
+variable-template argument path.
 
 ### 2. Deeper dependent-qualified owner materialization
 
@@ -133,8 +146,8 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the new `std/test_std_ranges.cpp` `<tuple>` variable-template
-   specialization pattern parser failure.
+1. Reduce and fix the current `std/test_std_ranges.cpp` `<tuple>:138`
+   unqualified alias-template NTTP parser failure.
 2. Keep the cleared `std::byte` constrained-operator path guarded with
    `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and

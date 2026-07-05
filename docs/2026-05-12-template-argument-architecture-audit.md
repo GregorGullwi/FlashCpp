@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-04
+**Last updated:** 2026-07-05
 
 This document is a planning aid for the remaining template-infrastructure work.
 It is intentionally forward-looking: keep it focused on the current baseline,
@@ -48,6 +48,13 @@ identity-preserving behavior:
 - parser trailing-specifier handling now routes cv/ref qualifiers through
   `parse_cv_qualifiers()` and `parse_reference_qualifier()` in the common
   function-header, skip, and template-function paths
+- variable-template partial-specialization patterns now reuse the explicit
+  template-argument parser, so nested template-ids and pack patterns such as
+  `tuple<Dests...>` are preserved for matching; nested trailing packs can bind
+  against multi-argument concrete template-ids
+- template-argument skipping preserves C++ maximal-munch tokenization by
+  splitting `>>` only when a skipped template-id closes at depth one and the
+  caller still owns the outer `>`
 
 ## Architectural invariants
 
@@ -106,15 +113,21 @@ invalid non-dependent builtin shifts, and
 `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp` covers the
 late operator-template retry.
 
-The current `std/test_std_ranges.cpp` frontier has advanced to a parser error in
-MSVC `<tuple>`:
+The previous `<tuple>:28` variable-template specialization-pattern blocker is
+covered by `tests/test_variable_template_tuple_pack_pattern_ret0.cpp`.
 
-- `include\tuple:28:79: Expected '>' after variable template specialization pattern`
+The current `std/test_std_ranges.cpp` frontier remains in MSVC `<tuple>`, now at
+the allocator-aware constructor constraint:
 
-The next slice should inspect that declaration shape directly and decide whether
-the fix belongs in variable-template partial-specialization parsing, pack
-handling, nested template-id parsing, or MSVC header modeling. Do not fold this
-into the operator-overload path unless a reduced repro proves a shared cause.
+- `include\tuple:138:21: Expected identifier for non-type template parameter`
+
+The failing shape is an unqualified alias-template NTTP type in namespace `std`:
+`enable_if_t<conjunction_v<::std:: uses_allocator<...>, ::std:: is_constructible<...>>, int> = 0`.
+The reduced `::meta::enable_if_t<::meta::conjunction_v<...>>` form is covered by
+`tests/test_template_nttp_global_qualified_alias_args_ret0.cpp`, so the next
+slice should focus on the unqualified current-namespace variable-template
+argument path rather than the already-fixed `>>` skip or variable-template
+specialization-pattern parser.
 
 ### 2. Dependent-qualified owner prefix-chain extraction
 
@@ -152,10 +165,11 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Reduce the new `std/test_std_ranges.cpp` `<tuple>` failure at line 28 into a
-   focused parser test for the variable-template specialization pattern shape.
+1. Reduce the current `std/test_std_ranges.cpp` `<tuple>:138` failure into a
+   focused parser test using unqualified `enable_if_t<conjunction_v<...>>`
+   inside the declaring namespace and globally qualified trait operands.
 2. Fix the responsible parser layer without weakening existing template-id,
-   pack, or partial-specialization diagnostics.
+   value-vs-type argument, pack, or partial-specialization diagnostics.
 3. Keep `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
    `tests/test_scoped_enum_builtin_shift_fail.cpp` in the guard set so the

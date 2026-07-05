@@ -1176,106 +1176,13 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 		std::vector<TemplateTypeArg> specialization_pattern;
 		bool is_partial_spec = false;
 		if (peek() == "<"_tok) {
-			advance(); // consume '<'
 			is_partial_spec = true;
 
-			// Parse the specialization pattern (e.g., T&, T*, T&&, or non-type values like 0)
-			// These are template argument patterns
-			while (peek() != ">"_tok) {
-				// Check for typename keyword (for dependent types)
-				if (peek() == "typename"_tok) {
-					advance(); // consume 'typename'
-				}
-
-				// Check if this is a non-type value (numeric or boolean literal)
-				if (peek() == "true"_tok || peek() == "false"_tok) {
-					bool bool_value = peek() == "true"_tok;
-					advance();
-
-					TemplateTypeArg arg;
-					arg.is_value = true;
-					arg.value = bool_value ? 1LL : 0LL;
-					arg.setCategory(TypeCategory::Bool);
-					specialization_pattern.push_back(arg);
-				} else if (peek().is_literal()) {
-					// It's a numeric literal - treat as non-type value
-					Token value_token = peek_info();
-					advance();
-
-					// Create template type argument for the value
-					TemplateTypeArg arg;
-					arg.is_value = true;
-					arg.value = std::stoll(std::string(value_token.value()));
-					arg.setCategory(TypeCategory::Int);
-					specialization_pattern.push_back(arg);
-				} else {
-					// Parse the pattern type
-					auto pattern_type = parse_type_specifier();
-					if (pattern_type.is_error()) {
-						return pattern_type;
-					}
-
-					// Check for reference modifiers
-					TypeSpecifierNode& type_spec = pattern_type.node()->as<TypeSpecifierNode>();
-					CVQualifier cv = parse_cv_qualifiers();
-					type_spec.add_cv_qualifier(cv);
-
-					// Parse pointer/reference declarators
-					while (peek() == "*"_tok) {
-						advance(); // consume '*'
-						CVQualifier ptr_cv = parse_cv_qualifiers();
-						type_spec.add_pointer_level(ptr_cv);
-					}
-
-					// Parse reference qualifier
-					ReferenceQualifier ref = parse_reference_qualifier();
-					if (ref != ReferenceQualifier::None) {
-						type_spec.set_reference_qualifier(ref);
-					}
-
-					// Parse array bounds: [_Nm] or []
-					bool is_array = false;
-					while (peek() == "["_tok) {
-						advance(); // consume '['
-						is_array = true;
-						// Skip the array bound expression (could be a template parameter like _Nm)
-						while (peek() != "]"_tok) {
-							advance();
-						}
-						if (peek() == "]"_tok) {
-							advance(); // consume ']'
-						}
-					}
-
-					// Create template type argument
-					TemplateTypeArg arg(type_spec);
-					arg.is_array = is_array;
-					// Mark as dependent only for partial specializations
-					// For full specializations (template<>), the types are concrete, not dependent
-					arg.is_dependent = !template_param_nodes.empty();
-
-					// Store the type name for pattern matching
-					// For template instantiations like ratio<_Num, _Den>, this will be "ratio"
-					// For simple types like T, this will be "T"
-					if (type_spec.token().value().size() > 0) {
-						arg.dependent_name = type_spec.token().handle();
-					}
-
-					specialization_pattern.push_back(arg);
-				}
-
-				// Check for comma or closing >
-				if (peek() == ","_tok) {
-					advance(); // consume ','
-				} else {
-					break;
-				}
-			}
-
-			if (peek() != ">"_tok) {
+			auto pattern_args_opt = parse_explicit_template_arguments();
+			if (!pattern_args_opt.has_value()) {
 				return ParseResult::error("Expected '>' after variable template specialization pattern", current_token_);
 			}
-			advance(); // consume '>'
+			specialization_pattern.assign(pattern_args_opt->begin(), pattern_args_opt->end());
 		}
 
 		// Create DeclarationNode

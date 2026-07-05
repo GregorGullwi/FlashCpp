@@ -158,6 +158,74 @@ struct TemplatePattern {
 		return true;
 	}
 
+	static std::optional<StringHandle> getNestedPatternParameterName(
+		const TypeInfo::TemplateArgInfo& pattern_arg,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names) {
+		if (pattern_arg.dependent_name.isValid() && template_param_names.count(pattern_arg.dependent_name)) {
+			return pattern_arg.dependent_name;
+		}
+		if (const TypeInfo* pattern_type_info = tryGetTypeInfo(pattern_arg.type_index);
+			pattern_type_info != nullptr) {
+			StringHandle name = pattern_type_info->name();
+			if (name.isValid() && template_param_names.count(name)) {
+				return name;
+			}
+		}
+		return std::nullopt;
+	}
+
+	static bool matchInnerArgs(
+		const InlineVector<TypeInfo::TemplateArgInfo, 4>& pattern_inner_args,
+		const InlineVector<TypeInfo::TemplateArgInfo, 4>& concrete_inner_args,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions,
+		int nested_arg_depth) {
+		const bool has_trailing_pack =
+			!pattern_inner_args.empty() &&
+			pattern_inner_args.back().is_pack &&
+			getNestedPatternParameterName(pattern_inner_args.back(), template_param_names).has_value();
+		if (!has_trailing_pack && pattern_inner_args.size() != concrete_inner_args.size()) {
+			FLASH_LOG(Templates, Trace, "  FAILED: inner arg count mismatch: pattern=",
+					  pattern_inner_args.size(), " concrete=", concrete_inner_args.size());
+			return false;
+		}
+		if (has_trailing_pack && concrete_inner_args.size() < pattern_inner_args.size() - 1) {
+			FLASH_LOG(Templates, Trace, "  FAILED: inner pack pattern has too few concrete args");
+			return false;
+		}
+
+		const size_t fixed_inner_count =
+			has_trailing_pack ? pattern_inner_args.size() - 1 : pattern_inner_args.size();
+		for (size_t inner_index = 0; inner_index < fixed_inner_count; ++inner_index) {
+			const auto& p_inner = pattern_inner_args[inner_index];
+			const auto& c_inner = concrete_inner_args[inner_index];
+
+			FLASH_LOG(Templates, Trace, "  Inner arg[", inner_index, "]: p_inner.is_value=", p_inner.is_value,
+					  " category=", static_cast<int>(p_inner.category()),
+					  " type_index=", p_inner.type_index,
+					  " | c_inner.is_value=", c_inner.is_value,
+					  " category=", static_cast<int>(c_inner.category()));
+
+			if (!matchNestedArg(p_inner, c_inner, template_param_names, param_substitutions, nested_arg_depth)) {
+				return false;
+			}
+		}
+		if (has_trailing_pack) {
+			StringHandle pack_name =
+				*getNestedPatternParameterName(pattern_inner_args.back(), template_param_names);
+			TemplateTypeArg pack_representative;
+			if (fixed_inner_count < concrete_inner_args.size()) {
+				pack_representative =
+					createDeducedArgFromConcrete(concrete_inner_args[fixed_inner_count]);
+			}
+			pack_representative.is_pack = true;
+			if (!recordDeduction(pack_name, pack_representative, param_substitutions)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// Maximum nesting depth for recursive template argument matching/scoring.
 	// Prevents stack overflow on pathological or circular TypeInfo chains.
 	// Real-world C++ template nesting is shallow; 64 is generous.
@@ -195,14 +263,8 @@ struct TemplatePattern {
 					}
 					const auto& np = p_ti->templateArgs();
 					const auto& nc = c_ti->templateArgs();
-					if (np.size() != nc.size()) {
-						FLASH_LOG(Templates, Trace, "  FAILED: nested inner arg count mismatch: pattern=",
-								  np.size(), " concrete=", nc.size());
+					if (!matchInnerArgs(np, nc, template_param_names, param_substitutions, depth + 1)) {
 						return false;
-					}
-					for (size_t k = 0; k < np.size(); ++k) {
-						if (!matchNestedArg(np[k], nc[k], template_param_names, param_substitutions, depth + 1))
-							return false;
 					}
 					return true;
 				}
@@ -608,29 +670,13 @@ struct TemplatePattern {
 					// Uses matchNestedArg which handles arbitrary nesting depth,
 					// e.g., Pair<Pair<A,B>, Pair<C,D>> against pair<pair<int,float>, pair<double,bool>>.
 					const size_t subs_before_inner = param_substitutions.size();
-					{
-						const auto& pattern_inner_args = pattern_type_info->templateArgs();
-						const auto& concrete_inner_args = concrete_type_info->templateArgs();
-
-						if (pattern_inner_args.size() != concrete_inner_args.size()) {
-							FLASH_LOG(Templates, Trace, "  FAILED: inner arg count mismatch: pattern=",
-									  pattern_inner_args.size(), " concrete=", concrete_inner_args.size());
-							return false;
-						}
-
-						for (size_t j = 0; j < pattern_inner_args.size(); ++j) {
-							const auto& p_inner = pattern_inner_args[j];
-							const auto& c_inner = concrete_inner_args[j];
-
-							FLASH_LOG(Templates, Trace, "  Inner arg[", j, "]: p_inner.is_value=", p_inner.is_value,
-									  " category=", static_cast<int>(p_inner.category()),
-									  " type_index=", p_inner.type_index,
-									  " | c_inner.is_value=", c_inner.is_value,
-									  " category=", static_cast<int>(c_inner.category()));
-
-							if (!matchNestedArg(p_inner, c_inner, template_param_names, param_substitutions))
-								return false;
-						}
+					if (!matchInnerArgs(
+							pattern_type_info->templateArgs(),
+							concrete_type_info->templateArgs(),
+							template_param_names,
+							param_substitutions,
+							0)) {
+						return false;
 					}
 					// Advance param_index past inner-deduced parameters so that
 					// subsequent pattern args use the correct fallback index.
