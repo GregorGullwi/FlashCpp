@@ -2354,6 +2354,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						return signature_result;
 					}
 
+					member_func_ref.set_is_const_member_function(member_quals.is_const());
+					member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
+
 					// Propagate noexcept specifier to the function declaration node
 					if (func_specs.is_noexcept) {
 						member_func_ref.set_noexcept(true);

@@ -24,6 +24,17 @@ static thread_local int g_template_inst_iteration_count = 0;
 static thread_local bool g_template_inst_iteration_limit_tripped = false;
 static constexpr int g_template_inst_max_iterations = 10000;
 
+static FunctionDeclarationNode& normalizeMemberTemplateFunctionCvFromWrapper(
+	const TemplateFunctionDeclarationNode& tmpl_func,
+	bool is_const_member,
+	bool is_volatile_member) {
+	FunctionDeclarationNode& inner_func =
+		const_cast<TemplateFunctionDeclarationNode&>(tmpl_func).function_decl_node();
+	inner_func.set_is_const_member_function(is_const_member);
+	inner_func.set_is_volatile_member_function(is_volatile_member);
+	return inner_func;
+}
+
 void resetTemplateInstantiationCounters() {
 	g_template_inst_iteration_count = 0;
 	g_template_inst_iteration_limit_tripped = false;
@@ -2404,7 +2415,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Member function template (e.g., template<typename _Up, typename... _Args> void construct(...))
 					// Add as-is without return type substitution - the template will handle it when instantiated
 					const TemplateFunctionDeclarationNode& tmpl_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
-					const FunctionDeclarationNode& inner_func = tmpl_func.function_decl_node();
+					FunctionDeclarationNode& inner_func =
+						normalizeMemberTemplateFunctionCvFromWrapper(
+							tmpl_func,
+							mem_func.is_const(),
+							mem_func.is_volatile());
 					StringHandle func_name_handle = inner_func.decl_node().identifier_token().handle();
 					if (mem_func.operator_kind != OverloadableOperator::None) {
 						struct_info->addOperatorOverload(
