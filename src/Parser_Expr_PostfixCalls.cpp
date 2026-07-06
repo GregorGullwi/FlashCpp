@@ -691,6 +691,7 @@ void Parser::finalizePostfixCallExpression(
 	if (!func_ref &&
 		call_operator_resolution.state == ConcreteCallOperatorResolution::State::Unavailable &&
 		all_arg_types_known &&
+		result.has_value() &&
 		result->is<ExpressionNode>()) {
 		const ExpressionNode& receiver_expr = result->as<ExpressionNode>();
 		if (const auto* qualified_receiver = std::get_if<QualifiedIdentifierNode>(&receiver_expr)) {

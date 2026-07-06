@@ -3582,7 +3582,9 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					ConstExpr::Evaluator::evaluate(if_stmt.get_condition(), eval_ctx);
 				if (eval_result.success()) {
 					if (eval_result.as_bool()) {
-						self(self, if_stmt.get_then_statement());
+						if (if_stmt.get_then_statement().has_value()) {
+							self(self, if_stmt.get_then_statement());
+						}
 					} else if (if_stmt.get_else_statement().has_value()) {
 						self(self, *if_stmt.get_else_statement());
 					}
@@ -3593,7 +3595,9 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					return;
 				}
 			}
-			self(self, if_stmt.get_then_statement());
+			if (if_stmt.get_then_statement().has_value()) {
+				self(self, if_stmt.get_then_statement());
+			}
 			if (if_stmt.get_else_statement().has_value()) {
 				self(self, *if_stmt.get_else_statement());
 			}
