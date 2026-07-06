@@ -3463,6 +3463,9 @@ private:	 // Resume private methods
 		std::span<const TypeSpecifierNode> arg_types,
 		size_t argument_count,
 		bool all_arg_types_known);
+	const FunctionDeclarationNode* tryResolveQualifiedCallableObjectTemplateOperator(
+		const QualifiedIdentifierNode& receiver,
+		std::span<const TypeSpecifierNode> arg_types);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
 		const std::optional<InlineVector<TemplateTypeArg, 4>>& explicit_template_args, std::span<const TypeSpecifierNode> arg_types);
 	// Shared member-template call dispatch once the caller knows whether arguments were

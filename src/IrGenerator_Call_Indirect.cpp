@@ -934,9 +934,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 	}
 
-	// Special case: Handle namespace-qualified function calls that were incorrectly parsed as member function calls
-	// This can happen when std::function() is parsed and the object is a namespace identifier
-	if (object_expr && std::holds_alternative<QualifiedIdentifierNode>(*object_expr)) {
+	// Special case: handle namespace-qualified function calls that were incorrectly
+	// parsed as member function calls.  Namespace-qualified callable objects such as
+	// `std::ranges::swap(...)` are valid struct receivers and must keep the member
+	// call path so the implicit object argument is emitted.
+	if (object_expr &&
+		std::holds_alternative<QualifiedIdentifierNode>(*object_expr) &&
+		!isIrStructType(toIrType(object_type.type()))) {
 		// This is a namespace-qualified function call, not a member function call
 		// Treat it as a regular function call instead
 		return convertMemberCallToFunctionCall(callExprNode, context, sema_call_key);

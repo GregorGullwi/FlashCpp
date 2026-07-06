@@ -3576,6 +3576,25 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 			});
 		} else if (node.is<IfStatementNode>()) {
 			const IfStatementNode& if_stmt = node.as<IfStatementNode>();
+			if (if_stmt.is_constexpr()) {
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
+				ConstExpr::EvalResult eval_result =
+					ConstExpr::Evaluator::evaluate(if_stmt.get_condition(), eval_ctx);
+				if (eval_result.success()) {
+					if (eval_result.as_bool()) {
+						if (if_stmt.get_then_statement().has_value()) {
+							self(self, if_stmt.get_then_statement());
+						}
+					} else if (if_stmt.get_else_statement().has_value()) {
+						self(self, *if_stmt.get_else_statement());
+					}
+					return;
+				}
+				if (expressionTypeDeductionIsStillDependent(if_stmt.get_condition(), currentTemplateParamNames())) {
+					has_still_dependent_return = true;
+					return;
+				}
+			}
 			if (if_stmt.get_then_statement().has_value()) {
 				self(self, if_stmt.get_then_statement());
 			}
@@ -3653,7 +3672,8 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		}
 	}
 
-	if (has_still_dependent_return && func_decl.is_template_pattern()) {
+	if (has_still_dependent_return &&
+		(func_decl.is_template_pattern() || isDependentTemplateContext() || !currentTemplateParamNames().empty())) {
 		FLASH_LOG(Parser, Debug, "  Keeping auto return type unresolved in dependent template context");
 		return;
 	}

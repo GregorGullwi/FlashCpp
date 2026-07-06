@@ -41,7 +41,19 @@ StringHandle Parser::getStructQualifiedNameForRegistration(const StructDeclarati
 	}
 
 	if (found_struct) {
-		return StringTable::getOrInternStringHandle(chain_builder.commit());
+		std::string_view struct_chain = chain_builder.commit();
+		NamespaceHandle namespace_handle =
+			struct_parsing_context_stack_.front().namespace_handle;
+		std::string_view namespace_name =
+			gNamespaceRegistry.getQualifiedName(namespace_handle);
+		if (!namespace_name.empty()) {
+			return StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(namespace_name)
+					.append("::"sv)
+					.append(struct_chain));
+		}
+		return StringTable::getOrInternStringHandle(struct_chain);
 	}
 
 	chain_builder.reset();
@@ -255,12 +267,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// Use trailing requires clause if present, otherwise use the leading one
 	std::optional<ASTNode> final_requires_clause = trailing_requires_clause.has_value() ? trailing_requires_clause : requires_clause;
 
-	// Create a template function declaration node
 	func_decl.set_is_template_pattern(true);
-	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
-		template_params,
-		*func_result_node,
-		final_requires_clause);
 
 	// Save the declaration position for every template function declaration, not
 	// only for out-of-line definitions with bodies. SFINAE return-type checking
@@ -301,6 +308,11 @@ ParseResult Parser::parse_template_function_declaration_body(
 		// Skip over the body (handles both '{...}' and function-try-blocks 'try{...}catch...')
 		skip_function_body();
 	}
+
+	auto template_func_node = emplace_node<TemplateFunctionDeclarationNode>(
+		template_params,
+		*func_result_node,
+		final_requires_clause);
 
 	out_template_node = template_func_node;
 	return ParseResult::success(template_func_node);

@@ -7822,6 +7822,9 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 
 	const bool arg_is_lvalue = arg_binding_type.is_lvalue_reference();
 	const bool arg_is_xvalue = arg_binding_type.is_rvalue_reference();
+	if (param_type.is_rvalue_reference() && arg_is_lvalue)
+		return std::nullopt;
+
 	const ConversionPlan direct_plan = buildConversionPlan(arg_binding_type, param_type);
 	if (direct_plan.is_valid && (arg_is_lvalue || arg_is_xvalue) &&
 		(direct_plan.kind == StandardConversionKind::None ||
@@ -7839,10 +7842,7 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 		}
 	}
 
-	if (param_type.is_rvalue_reference()) {
-		if (arg_is_lvalue)
-			return std::nullopt;
-	} else if (param_type.is_reference()) {
+	if (!param_type.is_rvalue_reference() && param_type.is_reference()) {
 		if (!param_type.is_const())
 			return std::nullopt;
 	}
