@@ -746,10 +746,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							advance();
 						}
 						// Now check what follows the closing >
-						// If it's '=' or '{', it's a variable template partial spec
+						// If it's ';', '=' or '{', it's a variable template partial spec
 						// If it's '::', it's a static member definition (NOT variable template)
 						if (!peek().is_eof() &&
-							(peek() == "="_tok || peek() == "{"_tok)) {
+							(peek() == ";"_tok || peek() == "="_tok || peek() == "{"_tok)) {
 							is_variable_template = true;
 						}
 						// If it's '::', fall through (is_variable_template stays false)
@@ -829,7 +829,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 								advance();
 							}
 							if (!peek().is_eof() &&
-								(peek() == "="_tok || peek() == "{"_tok)) {
+								(peek() == ";"_tok || peek() == "="_tok || peek() == "{"_tok)) {
 								is_variable_template = true;
 								FLASH_LOG(Parser, Debug, "Re-detected variable template partial spec after requires clause");
 							}
