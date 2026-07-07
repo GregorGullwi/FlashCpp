@@ -5060,14 +5060,25 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 				return true;
 			};
+		auto has_constrained_template_parameter =
+			[&template_param_nodes]() -> bool {
+				for (const TemplateParameterNode& param : template_param_nodes) {
+					if (param.has_concept_constraint()) {
+						return true;
+					}
+				}
+				return false;
+			};
 		// C++20 [temp.class.spec.mfunc] allows a partial specialization whose
-		// argument list matches the primary template parameter list when a
-		// requires-clause makes it more specialized than the primary. The MSVC
-		// STL relies on this for transform_view::_Category_base. Only reject the
+		// argument list matches the primary template parameter list when either
+		// a requires-clause or a constrained template parameter makes it more
+		// specialized than the primary. The MSVC STL relies on the constrained
+		// parameter form for transform_view::_Category_base. Only reject the
 		// unconstrained echo pattern; a constrained same-arg specialization is
 		// valid and is disambiguated via the constrained-pattern counter below.
 		if (!requires_clause.has_value() &&
-			is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()))) {
+			is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size())) &&
+			!has_constrained_template_parameter()) {
 			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
 		}
 

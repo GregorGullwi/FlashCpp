@@ -192,15 +192,24 @@ standard headers use this form for CPO-like objects such as
 `std::views::empty`. Template declaration lookahead now recognizes the trailing
 semicolon form before falling through to function-template parsing.
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to a
-constrained member class-template partial specialization in MSVC `<ranges>`:
+The previous standards-facing `std/test_std_ranges.cpp` constrained member
+class-template partial-specialization failure is now covered:
 
-- `template <forward_range _View> struct _Category_base<_View> { ... };`
+- `tests/test_member_template_constrained_partial_spec_same_args_ret0.cpp`
 
-The next slice should preserve the valid rejection of a partial-specialization
-argument list that merely repeats the primary parameters, while accepting a
-constrained parameter pattern that is more specialized than the unconstrained
-primary.
+The parser now accepts same-argument member class-template partial
+specializations when either an explicit `requires` clause or constrained
+template parameter makes the specialization more constrained than the primary.
+The unconstrained same-argument rejection remains in place.
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to
+template instantiation depth:
+
+- `Max template instantiation depth (40) exceeded for 'std::remove_cv'.`
+
+The next slice should trace whether `std::remove_cv` recursion comes from
+missing early caching, non-canonicalized template arguments, or alias/specialty
+materialization re-entry before changing recursion limits.
 
 A reduced `<utility>` `std::addressof` probe now reaches a separate link
 frontier: duplicate emitted definitions for std inline objects such as
@@ -238,8 +247,8 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` constrained member
-   class-template partial-specialization parse failure.
+1. Reduce and fix the current `std/test_std_ranges.cpp` `std::remove_cv`
+   instantiation-depth failure.
 2. Keep the cleared auto-return, dependent-alias, and `std::byte`
    constrained-operator paths guarded with
    `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
