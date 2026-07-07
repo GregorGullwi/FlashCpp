@@ -1636,9 +1636,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						if (auto nested_node = nested_result.node()) {
 							// Set enclosing class relationship
 							auto& nested_struct = nested_node->as<StructDeclarationNode>();
-							if (nested_struct.is_local_class()) {
-								continue;
-							}
 							nested_struct.set_enclosing_class(&struct_ref);
 
 							// Add to outer class
