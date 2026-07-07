@@ -5077,8 +5077,8 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// unconstrained echo pattern; a constrained same-arg specialization is
 		// valid and is disambiguated via the constrained-pattern counter below.
 		if (!requires_clause.has_value() &&
-			!has_constrained_template_parameter() &&
-			is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size()))) {
+			is_exact_primary_parameter_pattern(std::span<const TemplateTypeArg>(pattern_args.data(), pattern_args.size())) &&
+			!has_constrained_template_parameter()) {
 			return ParseResult::error("Partial specialization argument list cannot match the primary template parameter list", current_token_);
 		}
 
