@@ -202,15 +202,25 @@ used by namespace-qualified templates. Repeated `std::char_traits<char>` probes
 therefore hit the existing early cache instead of consuming the global
 instantiation-iteration budget.
 
-The active `std/test_std_ranges.cpp` frontier has moved to parsing a defaulted
-constructor with a trailing requires-clause in MSVC `<ranges>`:
+The previous `std/test_std_ranges.cpp` variable-template declaration blocker is
+now covered:
 
-- `single_view() requires default_initializable<_Ty> = default;`
+- `tests/test_variable_template_declaration_no_initializer_ret0.cpp`
 
-Investigate the constructor/function declarator path that accepts a
-requires-clause before a defaulted/deleted function definition. Keep this as a
-parser grammar fix unless the live trace proves the parsed declaration shape is
-already correct and a later semantic path is misreporting the error.
+Template declaration lookahead now recognizes declaration-only variable
+templates such as `template <class T> constexpr empty_view<T> empty;` as
+variable templates instead of falling through to function-template parsing.
+
+The active `std/test_std_ranges.cpp` frontier has moved to constrained member
+class-template partial specialization parsing in MSVC `<ranges>`:
+
+- `template <forward_range _View> struct _Category_base<_View> { ... };`
+
+Investigate why the partial-specialization guard treats this constrained
+parameter-list pattern as exactly echoing the primary template parameter list.
+The earlier "primary parameter list" rejection is still correct for genuinely
+non-specialized member class templates, so keep the fix specific to constrained
+or otherwise more-specialized patterns.
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline
