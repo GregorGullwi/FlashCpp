@@ -7928,6 +7928,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& nested_class : class_decl.nested_classes()) {
 		if (nested_class.is<StructDeclarationNode>()) {
 			const StructDeclarationNode& nested_struct = nested_class.as<StructDeclarationNode>();
+			if (nested_struct.is_local_class()) {
+				continue;
+			}
 			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 
 			// Create a new StructTypeInfo for the nested class

@@ -347,6 +347,17 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	}
 
 	auto struct_name = name_token.handle();
+	const bool is_local_class_declaration = current_function_ != nullptr;
+	std::vector<DelayedFunctionBody> saved_local_class_parent_delayed_bodies;
+	if (is_local_class_declaration) {
+		saved_local_class_parent_delayed_bodies = std::move(delayed_function_bodies_);
+		delayed_function_bodies_.clear();
+	}
+	ScopeGuard restore_parent_delayed_bodies([&]() {
+		if (is_local_class_declaration) {
+			delayed_function_bodies_ = std::move(saved_local_class_parent_delayed_bodies);
+		}
+	});
 
 	// Handle out-of-line nested class definitions and template specializations.
 	// Patterns: class Outer::Inner { ... }
@@ -453,6 +464,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Create struct declaration node - string_view points directly into source text
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
+	struct_ref.set_is_local_class(is_local_class_declaration);
 
 	// Push struct parsing context for nested class support
 	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name),
@@ -3297,7 +3309,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// This must happen before implicit constructor generation
 	if (!struct_parsing_context_stack_.empty() &&
 		struct_parsing_context_stack_.back().has_inherited_constructors &&
-		!parsing_template_class_) {
+		(!parsing_template_class_ || is_local_class_declaration)) {
 		// Iterate through base classes and generate forwarding constructors
 		for (const auto& base_class : struct_info->base_classes) {
 			const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);

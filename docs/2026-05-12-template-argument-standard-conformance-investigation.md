@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-07
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. Keep it focused on the intended semantic model, active
@@ -161,11 +161,22 @@ The `std::ranges::end` inconsistent auto-return path is now covered by:
 
 - `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to
-constrained template overload viability:
+The previous standards-facing `std/test_std_ranges.cpp` local proxy-class
+failure is now covered:
 
-- `All 5 template overload(s) failed for 'swap'`
-- `All 2 template overload(s) failed for 'std::invoke'`
+- `tests/test_template_member_local_proxy_class_ret0.cpp`
+
+The covered C++20 rule is that classes declared inside an instantiated member
+function body are local classes, not nested member classes of the enclosing
+class template. Their delayed bodies must not replay the enclosing member body,
+and inheriting constructors declared by the local class remain usable for
+brace-initialized local proxy objects.
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to
+template instantiation reuse/loop control:
+
+- `Template instantiation iteration limit exceeded (10000). Last template:
+  'std::char_traits' with 1 args. Possible infinite loop.`
 
 A reduced `<utility>` `std::addressof` probe now reaches a separate link
 frontier: duplicate emitted definitions for std inline objects such as
@@ -203,8 +214,8 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` `swap` / `std::invoke`
-   overload failures.
+1. Reduce and fix the current `std/test_std_ranges.cpp` `std::char_traits`
+   instantiation loop.
 2. Keep the cleared auto-return, dependent-alias, and `std::byte`
    constrained-operator paths guarded with
    `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
@@ -226,8 +237,9 @@ declarator-shaped pointer-depth/member-class metadata.
 3. Remove stale expected-failure tracking for `test_cstddef.cpp`,
    `test_cstdio_puts.cpp`, and `test_cstdlib.cpp` where the harness still
    records it.
-4. Only extract deeper dependent-qualified owner materialization if that failure
-   proves the current consumer-specific prefix-chain handling is the blocker.
+4. Only extract deeper dependent-qualified owner materialization if a concrete
+   failure proves the current consumer-specific prefix-chain handling is the
+   blocker.
 5. Keep replay identity and member-object-pointer work opportunistic unless a
    concrete regression points there.
 

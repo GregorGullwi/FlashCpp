@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-07
 
 This document is a planning aid for the remaining template-infrastructure work.
 It is intentionally forward-looking: keep it focused on the current baseline,
@@ -178,11 +178,24 @@ The `std::ranges::end` inconsistent auto-return frontier is now covered by:
 
 - `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`
 
-The active `std/test_std_ranges.cpp` frontier has moved to constrained
-template overload viability:
+The previous `std/test_std_ranges.cpp` `common_iterator` local proxy-class
+frontier is now covered:
 
-- `All 5 template overload(s) failed for 'swap'`
-- `All 2 template overload(s) failed for 'std::invoke'`
+- `tests/test_template_member_local_proxy_class_ret0.cpp`
+
+Local classes parsed inside instantiated template member bodies now keep their
+own delayed function-body queue instead of replaying the enclosing member body
+recursively. They are also marked as local classes so template class
+instantiation does not copy them as owner member classes. Inheriting
+constructors declared by local classes, such as `using _Proxy_base::_Proxy_base`,
+are materialized during instantiated member-body parsing so brace-initialized
+proxy objects can select the inherited base constructor.
+
+The active `std/test_std_ranges.cpp` frontier has moved to template
+instantiation loop control:
+
+- `Template instantiation iteration limit exceeded (10000). Last template:
+  'std::char_traits' with 1 args. Possible infinite loop.`
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline
@@ -226,11 +239,12 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Reduce the current `std/test_std_ranges.cpp` `swap` / `std::invoke`
-   overload failures into focused constrained-call tests.
-2. Trace whether the failure belongs in overload viability, constraint
-   substitution, function-template instantiation reuse, or `invoke_result`
-   style return-type formation before changing call resolution behavior.
+1. Reduce the current `std/test_std_ranges.cpp` `std::char_traits`
+   instantiation loop into a focused cache/reuse or recursion guard test.
+2. Trace whether repeated `char_traits` materialization is caused by missing
+   class-template instantiation reuse, a stale failed-instantiation state,
+   specialization lookup drift, or a replay side effect before changing the
+   iteration limit.
 3. Keep `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
    `tests/test_deleted_rvalue_template_overload_ret0.cpp`,
    `tests/test_deleted_rvalue_template_overload_fail.cpp`,
