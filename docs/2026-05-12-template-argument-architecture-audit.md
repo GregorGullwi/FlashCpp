@@ -191,11 +191,26 @@ constructors declared by local classes, such as `using _Proxy_base::_Proxy_base`
 are materialized during instantiated member-body parsing so brace-initialized
 proxy objects can select the inherited base constructor.
 
-The active `std/test_std_ranges.cpp` frontier has moved to template
-instantiation loop control:
+The previous `std/test_std_ranges.cpp` `std::char_traits` instantiation loop is
+now covered:
 
-- `Template instantiation iteration limit exceeded (10000). Last template:
-  'std::char_traits' with 1 args. Possible infinite loop.`
+- `tests/test_template_exact_specialization_reuse_ret0.cpp`
+
+Exact class-template specializations now register in the class-template
+instantiation cache after materialization, including the unqualified cache key
+used by namespace-qualified templates. Repeated `std::char_traits<char>` probes
+therefore hit the existing early cache instead of consuming the global
+instantiation-iteration budget.
+
+The active `std/test_std_ranges.cpp` frontier has moved to parsing a defaulted
+constructor with a trailing requires-clause in MSVC `<ranges>`:
+
+- `single_view() requires default_initializable<_Ty> = default;`
+
+Investigate the constructor/function declarator path that accepts a
+requires-clause before a defaulted/deleted function definition. Keep this as a
+parser grammar fix unless the live trace proves the parsed declaration shape is
+already correct and a later semantic path is misreporting the error.
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline

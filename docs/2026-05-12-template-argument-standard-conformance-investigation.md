@@ -172,11 +172,25 @@ class template. Their delayed bodies must not replay the enclosing member body,
 and inheriting constructors declared by the local class remain usable for
 brace-initialized local proxy objects.
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to
-template instantiation reuse/loop control:
+The previous standards-facing `std/test_std_ranges.cpp` `std::char_traits`
+instantiation loop is now covered:
 
-- `Template instantiation iteration limit exceeded (10000). Last template:
-  'std::char_traits' with 1 args. Possible infinite loop.`
+- `tests/test_template_exact_specialization_reuse_ret0.cpp`
+
+Exact class-template specializations participate in the same class-template
+instantiation cache as primary-template materializations, so repeated
+standard-header probes of a full specialization do not exhaust the global
+instantiation-iteration budget.
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to
+parsing a defaulted constructor with a trailing requires-clause in MSVC
+`<ranges>`:
+
+- `single_view() requires default_initializable<_Ty> = default;`
+
+The C++20 grammar permits constrained non-template functions and constructors.
+The next slice should verify the parser path that handles a constructor
+declarator followed by a requires-clause and then `= default` or `= delete`.
 
 A reduced `<utility>` `std::addressof` probe now reaches a separate link
 frontier: duplicate emitted definitions for std inline objects such as
@@ -214,8 +228,8 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` `std::char_traits`
-   instantiation loop.
+1. Reduce and fix the current `std/test_std_ranges.cpp` trailing-requires
+   defaulted-constructor parse failure.
 2. Keep the cleared auto-return, dependent-alias, and `std::byte`
    constrained-operator paths guarded with
    `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
