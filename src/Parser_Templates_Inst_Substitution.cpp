@@ -4772,6 +4772,23 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 
 	StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
 	InlineVector<TemplateParameterNode, 4> no_template_params;
+	auto register_exact_specialization_instantiation = [&]() {
+		const StringHandle qualified_template_name =
+			StringTable::getOrInternStringHandle(template_name);
+		gTemplateRegistry.registerInstantiation(
+			qualified_template_name,
+			template_args,
+			spec_node);
+		if (size_t last_colon = template_name.rfind("::");
+			last_colon != std::string_view::npos) {
+			const StringHandle unqualified_template_name =
+				StringTable::getOrInternStringHandle(template_name.substr(last_colon + 2));
+			gTemplateRegistry.registerInstantiation(
+				unqualified_template_name,
+				template_args,
+				spec_node);
+		}
+	};
 
 	// Helper lambda to register type aliases with qualified names
 	auto register_type_aliases = [&]() {
@@ -5023,6 +5040,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		// with qualified names if they haven't been registered yet
 		register_type_aliases();
 		register_nested_class_aliases();
+		register_exact_specialization_instantiation();
 
 		return std::nullopt;	 // Already instantiated
 	}
@@ -5270,6 +5288,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	if (struct_type_info.getStructInfo()) {
 		struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 	}
+	register_exact_specialization_instantiation();
 
 	return std::nullopt;	 // Return nullopt since we don't need to add anything to AST
 }
