@@ -211,16 +211,25 @@ Template declaration lookahead now recognizes declaration-only variable
 templates such as `template <class T> constexpr empty_view<T> empty;` as
 variable templates instead of falling through to function-template parsing.
 
-The active `std/test_std_ranges.cpp` frontier has moved to constrained member
-class-template partial specialization parsing in MSVC `<ranges>`:
+The previous `std/test_std_ranges.cpp` constrained member class-template
+partial-specialization blocker is now covered:
 
-- `template <forward_range _View> struct _Category_base<_View> { ... };`
+- `tests/test_member_template_constrained_partial_spec_same_args_ret0.cpp`
 
-Investigate why the partial-specialization guard treats this constrained
-parameter-list pattern as exactly echoing the primary template parameter list.
-The earlier "primary parameter list" rejection is still correct for genuinely
-non-specialized member class templates, so keep the fix specific to constrained
-or otherwise more-specialized patterns.
+The member class-template partial-specialization guard now treats constrained
+template parameters as a specialization discriminator, matching the existing
+explicit `requires` handling while preserving the rejection of unconstrained
+argument lists that merely echo the primary template parameter list.
+
+The active `std/test_std_ranges.cpp` frontier has moved to template
+instantiation depth:
+
+- `Max template instantiation depth (40) exceeded for 'std::remove_cv'.`
+
+Investigate whether `std::remove_cv` is being recursively re-entered because
+an exact specialization or alias substitution path is not cached/canonicalized
+early enough. Do not raise the depth limit unless the live trace proves a real
+valid instantiation chain needs it.
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline

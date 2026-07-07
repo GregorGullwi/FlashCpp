@@ -20,7 +20,19 @@ struct outer {
 	};
 };
 
+struct constrained_parameter_outer {
+	template <typename View>
+	struct category_base {};
+
+	template <Forward View>
+	struct category_base<View> {
+		using type = int;
+	};
+};
+
 int main() {
 	using cat = outer::category_base<true>;
-	return sizeof(cat) - sizeof(outer::category_base<true>);
+	using constrained_cat = constrained_parameter_outer::category_base<int>;
+	return (sizeof(cat) - sizeof(outer::category_base<true>)) +
+		   (sizeof(constrained_cat) - sizeof(constrained_parameter_outer::category_base<int>));
 }
