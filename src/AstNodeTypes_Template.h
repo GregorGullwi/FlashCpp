@@ -1085,6 +1085,8 @@ public:
 	void set_is_final(bool final) { is_final_ = final; }
 	bool is_forward_declaration() const { return is_forward_declaration_; }
 	void set_is_forward_declaration(bool value) { is_forward_declaration_ = value; }
+	bool is_local_class() const { return is_local_class_; }
+	void set_is_local_class(bool value) { is_local_class_ = value; }
 	AccessSpecifier default_access() const {
 		return is_class_ ? AccessSpecifier::Private : AccessSpecifier::Public;
 	}
@@ -1434,6 +1436,7 @@ private:
 	bool is_union_;	// true for union, false for struct/class
 	bool is_final_ = false;	// true if declared with 'final' keyword
 	bool is_forward_declaration_ = false;  // true for forward declarations without body
+	bool is_local_class_ = false;
 	bool has_deleted_default_constructor_ = false;  // Track deleted default constructor
 	bool has_deleted_copy_constructor_ = false;		// Track deleted copy constructor
 	bool has_deleted_move_constructor_ = false;		// Track deleted move constructor
