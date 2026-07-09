@@ -202,14 +202,25 @@ specializations when either an explicit `requires` clause or constrained
 template parameter makes the specialization more constrained than the primary.
 The unconstrained same-argument rejection remains in place.
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to
-template instantiation depth:
+The previous standards-facing `std/test_std_ranges.cpp` template-depth failure
+is now covered:
 
-- `Max template instantiation depth (40) exceeded for 'std::remove_cv'.`
+- `tests/test_member_template_self_specialization_param_no_eager_depth_ret0.cpp`
 
-The next slice should trace whether `std::remove_cv` recursion comes from
-missing early caching, non-canonicalized template arguments, or alias/specialty
-materialization re-entry before changing recursion limits.
+The live trace showed a valid finite chain of constrained class-template
+viability checks, not a `std::remove_cv` semantic shortcut or recursive alias
+bug. The parser depth guard remains finite but now has enough headroom for that
+kind of conforming C++20 template chain.
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved to CPO
+overload viability:
+
+- `[depth=1]: All 4 template overload(s) failed for 'iter_swap'`
+- `[depth=1]: All 2 template overload(s) failed for 'std::invoke'`
+
+The next slice should reduce the generic constrained overload-resolution path
+behind `iter_swap`/`invoke`, with a non-`std` regression before touching the
+compiler implementation.
 
 A reduced `<utility>` `std::addressof` probe now reaches a separate link
 frontier: duplicate emitted definitions for std inline objects such as
@@ -247,8 +258,8 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` `std::remove_cv`
-   instantiation-depth failure.
+1. Reduce and fix the current `std/test_std_ranges.cpp` `iter_swap` /
+   `std::invoke` constrained overload-viability failure.
 2. Keep the cleared auto-return, dependent-alias, and `std::byte`
    constrained-operator paths guarded with
    `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,

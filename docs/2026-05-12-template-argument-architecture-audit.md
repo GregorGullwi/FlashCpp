@@ -221,15 +221,24 @@ template parameters as a specialization discriminator, matching the existing
 explicit `requires` handling while preserving the rejection of unconstrained
 argument lists that merely echo the primary template parameter list.
 
-The active `std/test_std_ranges.cpp` frontier has moved to template
-instantiation depth:
+The previous `std/test_std_ranges.cpp` template-depth blocker is now covered:
 
-- `Max template instantiation depth (40) exceeded for 'std::remove_cv'.`
+- `tests/test_member_template_self_specialization_param_no_eager_depth_ret0.cpp`
 
-Investigate whether `std::remove_cv` is being recursively re-entered because
-an exact specialization or alias substitution path is not cached/canonicalized
-early enough. Do not raise the depth limit unless the live trace proves a real
-valid instantiation chain needs it.
+`std::remove_cv` was not the root cause; it appeared inside a valid finite
+chain of constrained class-template viability checks. The parser nesting guard
+now has enough headroom for those conforming chains while still retaining a
+finite runaway-recursion diagnostic.
+
+The active `std/test_std_ranges.cpp` frontier has moved to constrained CPO
+overload viability:
+
+- `[depth=1]: All 4 template overload(s) failed for 'iter_swap'`
+- `[depth=1]: All 2 template overload(s) failed for 'std::invoke'`
+
+Reduce the next slice without hardcoding standard-library names. Start from the
+generic overload-resolution/constraints path used by `iter_swap` and `invoke`,
+then keep a non-`std` regression for the accepted language rule.
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline
