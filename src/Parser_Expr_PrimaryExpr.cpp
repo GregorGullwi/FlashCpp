@@ -628,10 +628,10 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 	}
 
 	if (std::optional<ASTNode> instantiated =
-			tryInstantiateTemplateFromCallArguments(
+			tryInstantiateFunctionTemplateFromArgTypes(
 				{},
 				StringTable::getStringView(record.callee_name),
-				arguments);
+				arg_types);
 		instantiated.has_value()) {
 		return instantiated;
 	}
@@ -7973,11 +7973,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								FLASH_LOG(Parser, Debug, "Template brace initialization detected for '", identifier_token.value(), "', has_dependent_args=", has_dependent_args);
 
 								if (has_dependent_args) {
-									// Dependent template arguments - create a placeholder for now
-									// The actual instantiation will happen when the outer template is instantiated
 									advance(); // consume '{'
-
-									// Skip the brace content - should be empty {} for value-initialization
 									ChunkedVector<ASTNode> args;
 									while (!peek().is_eof() && peek() != "}"_tok) {
 										auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -7999,11 +7995,58 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										return ParseResult::error("Expected '}' after brace initializer", current_token_);
 									}
 
-									// For dependent args, create a placeholder ConstructorCallNode
-									// The actual type will be resolved during template instantiation
-									// Use a placeholder type for now
-									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, identifier_token, CVQualifier::None, ReferenceQualifier::None);
-									result = emplace_node<ExpressionNode>(ConstructorCallNode(placeholder_type_node, std::move(args), identifier_token));
+									InlineVector<TypeInfo::TemplateArgInfo, 4> dependent_template_args =
+										toTemplateArgInfoList(*explicit_template_args);
+									StringBuilder dependent_type_builder;
+									dependent_type_builder.append(identifier_token.value());
+									dependent_type_builder.append("<");
+									for (size_t i = 0;
+										 i < dependent_template_args.size();
+										 ++i) {
+										if (i != 0) {
+											dependent_type_builder.append(", ");
+										}
+										appendDependentTemplateArgSpelling(
+											dependent_type_builder,
+											dependent_template_args[i]);
+									}
+									dependent_type_builder.append(">");
+									StringHandle dependent_type_handle =
+										StringTable::getOrInternStringHandle(
+											dependent_type_builder.commit());
+									TypeInfo* dependent_type_info = nullptr;
+									auto dependent_type_it = getTypesByNameMap().find(dependent_type_handle);
+									if (dependent_type_it != getTypesByNameMap().end()) {
+										dependent_type_info = dependent_type_it->second;
+									}
+									if (dependent_type_info == nullptr) {
+										dependent_type_info = &add_template_param_type(
+											dependent_type_handle,
+											TypeCategory::Template,
+											0);
+									}
+									QualifiedIdentifier base_template_name =
+										QualifiedIdentifier::fromQualifiedName(
+											identifier_token.value(),
+											gSymbolTable.get_current_namespace_handle());
+									dependent_type_info->setTemplateInstantiationInfo(
+										base_template_name,
+										dependent_template_args);
+									dependent_type_info->setInstantiationContext(
+										{},
+										dependent_template_args,
+										nullptr);
+									auto dependent_type_node = emplace_node<TypeSpecifierNode>(
+										dependent_type_info->registeredTypeIndex().withCategory(TypeCategory::Template),
+										0,
+										identifier_token,
+										CVQualifier::None,
+										ReferenceQualifier::None);
+									result = emplace_node<ExpressionNode>(
+										ConstructorCallNode(
+											dependent_type_node,
+											std::move(args),
+											identifier_token));
 									return ParseResult::success(*result);
 								}
 

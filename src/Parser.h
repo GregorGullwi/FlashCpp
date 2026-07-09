@@ -1954,6 +1954,10 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::string_view qualified_name,
 		std::string_view simple_name,
 		const ChunkedVector<ASTNode>& arguments);
+	std::optional<ASTNode> tryInstantiateFunctionTemplateFromArgTypes(
+		std::string_view qualified_name,
+		std::string_view simple_name,
+		std::span<const TypeSpecifierNode> arg_types);
 	std::optional<ASTNode> tryInstantiateAdlTemplateCandidates(
 		StringHandle callee_name,
 		bool argument_dependent_lookup_included,

@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-07
+**Last updated:** 2026-07-09
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. Keep it focused on the intended semantic model, active
@@ -65,6 +65,9 @@ The core suite now covers several formerly blocking standards-visible areas:
 - namespace-qualified callable objects keep member-call semantics when the
   receiver is a concrete struct object, including the implicit object argument
   for instantiated constrained `operator()` member templates
+- dependent alias-template brace construction keeps template identity until the
+  enclosing template arguments are concrete, allowing ordinary
+  function-template deduction to consume the resolved alias target type
 
 ## Remaining standards gaps
 
@@ -212,15 +215,26 @@ viability checks, not a `std::remove_cv` semantic shortcut or recursive alias
 bug. The parser depth guard remains finite but now has enough headroom for that
 kind of conforming C++20 template chain.
 
-The active standards-facing `std/test_std_ranges.cpp` failure has moved to CPO
-overload viability:
+Dependent alias-template brace construction used by `std::exchange`-like calls
+is now covered by:
 
-- `[depth=1]: All 4 template overload(s) failed for 'iter_swap'`
+- `tests/test_template_exchange_dependent_alias_default_ret0.cpp`
+
+The reduced rule is generic: an alias template-id such as
+`difference_t<Range>{...}` remains a dependent template-instantiation type
+until `Range` is known, then materializes to its alias target before
+function-template deduction.
+
+The active standards-facing `std/test_std_ranges.cpp` failure has moved again:
+
 - `[depth=1]: All 2 template overload(s) failed for 'std::invoke'`
+- `function 'size' has inconsistent deduced auto return types: first return has
+  type 'unknown', but another return has type 'std::ranges::_Size::_Cpo'`
 
-The next slice should reduce the generic constrained overload-resolution path
-behind `iter_swap`/`invoke`, with a non-`std` regression before touching the
-compiler implementation.
+The next slices should reduce the generic constrained overload-resolution path
+behind `invoke` and the CPO-object auto-return deduction path behind
+`ranges::size`, with non-`std` regressions before touching the compiler
+implementation.
 
 A reduced `<utility>` `std::addressof` probe now reaches a separate link
 frontier: duplicate emitted definitions for std inline objects such as
@@ -258,11 +272,15 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` `iter_swap` /
-   `std::invoke` constrained overload-viability failure.
-2. Keep the cleared auto-return, dependent-alias, and `std::byte`
+1. Reduce and fix the current `std/test_std_ranges.cpp` `std::invoke`
+   constrained overload-viability failure.
+2. Reduce and fix the `ranges::size` CPO-object auto-return deduction issue
+   without hardcoding standard-library names.
+3. Keep the cleared auto-return, dependent-alias, alias-brace construction, and
+   `std::byte`
    constrained-operator paths guarded with
    `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
+   `tests/test_template_exchange_dependent_alias_default_ret0.cpp`,
    `tests/test_deleted_rvalue_template_overload_ret0.cpp`,
    `tests/test_deleted_rvalue_template_overload_fail.cpp`,
    `tests/test_constrained_cpo_call_operator_ret0.cpp`,
@@ -278,13 +296,13 @@ declarator-shaped pointer-depth/member-class metadata.
    `tests/test_scoped_enum_shift_assign_operator_template_ret0.cpp`,
    `tests/test_mock_std_byte_ops_traits_ret0.cpp`, and
    `tests/test_scoped_enum_builtin_shift_fail.cpp`.
-3. Remove stale expected-failure tracking for `test_cstddef.cpp`,
+4. Remove stale expected-failure tracking for `test_cstddef.cpp`,
    `test_cstdio_puts.cpp`, and `test_cstdlib.cpp` where the harness still
    records it.
-4. Only extract deeper dependent-qualified owner materialization if a concrete
+5. Only extract deeper dependent-qualified owner materialization if a concrete
    failure proves the current consumer-specific prefix-chain handling is the
    blocker.
-5. Keep replay identity and member-object-pointer work opportunistic unless a
+6. Keep replay identity and member-object-pointer work opportunistic unless a
    concrete regression points there.
 
 ## Standards rules for follow-up work

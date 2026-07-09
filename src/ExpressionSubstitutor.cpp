@@ -2051,12 +2051,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		if (target_func.has_mangled_name()) {
 			setCallMangledName(new_expr, target_func.mangled_name());
 		}
-		const bool needs_structured_qualified_record =
-			call.has_qualified_name() ||
-			(qualified_call_name.has_value() && !qualified_call_name->empty()) ||
-			infer_qualified_name_from_parent;
-		if (needs_structured_qualified_record &&
-			!call.has_definition_lookup_record() &&
+		if (!call.has_definition_lookup_record() &&
 			!call.has_dependent_unqualified_lookup_record()) {
 			CallExprNode* materialized_call = std::get_if<CallExprNode>(&new_expr);
 			if (materialized_call != nullptr) {
@@ -2071,7 +2066,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 								false,
 								target_func,
 								true,
-								false);
+								call.has_dependent_unqualified_lookup_record());
 						record.has_value()) {
 						setCallDefinitionLookupRecord(*materialized_call, *record);
 					}
@@ -4520,6 +4515,146 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 				applyResolvedAliasModifiers(substituted_alias, resolved_alias);
 				applyOuterTypeModifiers(substituted_alias, type);
 				return substituted_alias;
+			}
+		}
+		if (type_info != nullptr && type_info->isTemplateInstantiation()) {
+			MaterializedStoredTemplateArgs materialized_args =
+				materializeStoredTemplateArgs(
+					*type_info,
+					/*evaluate_dependent_member_values=*/false,
+					kInitialDependentMemberTypeResolutionDepth);
+			if (templateArgsStillDependent(materialized_args.args) &&
+				current_owner_type_name_.isValid()) {
+				const TypeInfo* owner_type_info =
+					findTypeByName(current_owner_type_name_);
+				OuterTemplateBinding owner_binding =
+					parser_.buildAccumulatedOuterTemplateBinding(
+						owner_type_info,
+						nullptr,
+						current_owner_type_name_);
+				for (TemplateTypeArg& materialized_arg : materialized_args.args) {
+					if (!materialized_arg.dependent_name.isValid()) {
+						continue;
+					}
+					for (size_t i = 0;
+						 i < owner_binding.param_names.size() &&
+						 i < owner_binding.param_args.size();
+						 ++i) {
+						if (owner_binding.param_names[i] ==
+							materialized_arg.dependent_name) {
+							materialized_arg =
+								rebindDependentTemplateTypeArg(
+									owner_binding.param_args[i],
+									materialized_arg);
+							materialized_args.had_substitution = true;
+							break;
+						}
+					}
+				}
+			}
+			if (materialized_args.had_substitution &&
+				!materialized_args.args.empty() &&
+				!templateArgsStillDependent(materialized_args.args)) {
+				StringHandle qualified_base_template_name =
+					gNamespaceRegistry.buildQualifiedIdentifier(
+						type_info->sourceNamespace(),
+						type_info->baseTemplateName());
+				std::string_view base_template_name =
+					StringTable::getStringView(qualified_base_template_name);
+				if (base_template_name.empty()) {
+					base_template_name =
+						StringTable::getStringView(type_info->baseTemplateName());
+				}
+				if (!base_template_name.empty()) {
+					std::optional<ASTNode> alias_entry =
+						gTemplateRegistry.lookup_alias_template(base_template_name);
+					if (!alias_entry.has_value() &&
+						qualified_base_template_name != type_info->baseTemplateName()) {
+						alias_entry =
+							gTemplateRegistry.lookup_alias_template(
+								StringTable::getStringView(type_info->baseTemplateName()));
+					}
+					if (alias_entry.has_value() &&
+						alias_entry->is<TemplateAliasNode>()) {
+						const TemplateAliasNode& alias_node =
+							alias_entry->as<TemplateAliasNode>();
+						if (std::optional<TemplateTypeArg> rebound_arg =
+								parser_.tryRebindAliasTargetTemplateArg(
+									alias_node,
+									materialized_args.args);
+							rebound_arg.has_value() &&
+							!rebound_arg->is_value) {
+							TypeSpecifierNode substituted_type =
+								makeTypeSpecifierFromTemplateTypeArg(
+									*rebound_arg,
+									type.token());
+							applyOuterTypeModifiers(substituted_type, type);
+							return substituted_type;
+						}
+						TypeSpecifierNode substituted_type =
+							substituteInType(alias_node.target_type_node());
+						if (substituted_type.category() != TypeCategory::Invalid &&
+							substituted_type.category() != TypeCategory::Template &&
+							!isPlaceholderAutoType(substituted_type.category())) {
+							applyOuterTypeModifiers(substituted_type, type);
+							return substituted_type;
+						}
+					}
+					Parser::AliasTemplateMaterializationResult materialized_type =
+						parser_.materializeAliasTemplateInstantiation(
+							base_template_name,
+							materialized_args.args);
+					const TypeInfo* resolved_type_info =
+						materialized_type.resolved_type_info;
+					if (resolved_type_info == nullptr) {
+						materialized_type =
+							parser_.materializeTemplateInstantiationForLookup(
+								base_template_name,
+								materialized_args.args);
+						resolved_type_info = materialized_type.resolved_type_info;
+					}
+					if (resolved_type_info == nullptr &&
+						qualified_base_template_name != type_info->baseTemplateName()) {
+						materialized_type =
+							parser_.materializeAliasTemplateInstantiation(
+								StringTable::getStringView(type_info->baseTemplateName()),
+								materialized_args.args);
+						resolved_type_info = materialized_type.resolved_type_info;
+						if (resolved_type_info == nullptr) {
+							materialized_type =
+								parser_.materializeTemplateInstantiationForLookup(
+									StringTable::getStringView(type_info->baseTemplateName()),
+									materialized_args.args);
+							resolved_type_info = materialized_type.resolved_type_info;
+						}
+					}
+					if (resolved_type_info == nullptr &&
+						materialized_type.canonicalNameHandle().isValid()) {
+						resolved_type_info =
+							findTypeByName(materialized_type.canonicalNameHandle());
+					}
+					if (resolved_type_info != nullptr) {
+						ResolvedAliasTypeInfo resolved_alias =
+							resolveAliasTypeInfo(
+								resolved_type_info->registeredTypeIndex().withCategory(
+									resolved_type_info->typeEnum()));
+						TypeSpecifierNode substituted_type =
+							resolved_alias.type_index.is_valid()
+								? buildTerminalTypeFromResolvedAlias(resolved_alias, type.token())
+								: TypeSpecifierNode(
+									resolved_type_info->registeredTypeIndex().withCategory(
+										resolved_type_info->typeEnum()),
+									resolved_type_info->sizeInBits(),
+									type.token(),
+									type.cv_qualifier(),
+									type.reference_qualifier());
+						if (resolved_alias.type_index.is_valid()) {
+							applyResolvedAliasModifiers(substituted_type, resolved_alias);
+						}
+						applyOuterTypeModifiers(substituted_type, type);
+						return substituted_type;
+					}
+				}
 			}
 		}
 	}

@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-07
+**Last updated:** 2026-07-09
 
 This document is a planning aid for the remaining template-infrastructure work.
 It is intentionally forward-looking: keep it focused on the current baseline,
@@ -62,6 +62,10 @@ identity-preserving behavior:
   the member-call path when the qualified receiver is a concrete struct object,
   so instantiated `operator()` member templates receive the implicit object
   argument and preserve reference-argument mutation
+- dependent alias-template brace construction now preserves a structured
+  template-instantiation type through substitution, so function-template
+  deduction can see the resolved argument type instead of an `auto`
+  placeholder in the covered class-template member path
 
 ## Architectural invariants
 
@@ -230,15 +234,26 @@ chain of constrained class-template viability checks. The parser nesting guard
 now has enough headroom for those conforming chains while still retaining a
 finite runaway-recursion diagnostic.
 
-The active `std/test_std_ranges.cpp` frontier has moved to constrained CPO
-overload viability:
+Dependent alias-template brace construction used by `std::exchange`-like calls
+is now covered by:
 
-- `[depth=1]: All 4 template overload(s) failed for 'iter_swap'`
+- `tests/test_template_exchange_dependent_alias_default_ret0.cpp`
+
+This preserves the alias template-id through `difference_t<Range>{...}`,
+materializes the alias target after the enclosing class-template argument is
+known, and lets ordinary function-template deduction consume the concrete
+argument type.
+
+The active `std/test_std_ranges.cpp` frontier has moved again:
+
 - `[depth=1]: All 2 template overload(s) failed for 'std::invoke'`
+- `function 'size' has inconsistent deduced auto return types: first return has
+  type 'unknown', but another return has type 'std::ranges::_Size::_Cpo'`
 
 Reduce the next slice without hardcoding standard-library names. Start from the
-generic overload-resolution/constraints path used by `iter_swap` and `invoke`,
-then keep a non-`std` regression for the accepted language rule.
+generic overload-resolution/constraints path used by `invoke`, and separately
+reduce the CPO-object auto-return deduction issue behind `ranges::size`. Keep a
+non-`std` regression for each accepted language rule.
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline
