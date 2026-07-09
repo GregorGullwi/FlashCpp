@@ -154,14 +154,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// This is independent from the total-call iteration_count below, which cannot prevent
 	// deep recursion.  Equivalent to GCC's -ftemplate-depth.
 	//
-	// NOTE: each nesting frame here pulls in substantial stack (parser state + template
-	// instantiation context + base-class substitution); empirically on Linux with a 16MB
-	// thread stack, the process starts SIGSEGV'ing on the stack guard page around depth
-	// 50-60 when parsing real libstdc++ headers.  Keep the guard well below that so we
-	// emit a diagnostic before the kernel kills us.
+	// Real C++20 programs can form valid finite chains deeper than 80 nested
+	// specializations while checking constrained partial specializations and
+	// member declarations. Keep a finite guard for runaway recursion, with enough
+	// headroom for those conforming chains.
 	static thread_local size_t s_instantiation_nesting_depth = 0;
 	static thread_local bool s_instantiation_depth_warned = false;
-	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 40;
+	static constexpr size_t MAX_INSTANTIATION_NESTING_DEPTH = 128;
 	++s_instantiation_nesting_depth;
 	// Iteration counters are file-scope thread_locals reset once per parse() call;
 	// see resetTemplateInstantiationCounters().  The NestingGuard here only manages
