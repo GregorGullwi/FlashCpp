@@ -1976,7 +1976,15 @@ TypeIndex Parser::substitute_template_parameter(
 	};
 	auto tryResolveConcreteTemplatePlaceholder = [&]() -> bool {
 		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
-		if (!placeholder_info || !placeholder_info->isTemplateInstantiation()) {
+		if (placeholder_info != nullptr && !placeholder_info->isTemplateInstantiation()) {
+			const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				placeholder_info->registeredTypeIndex().withCategory(
+					placeholder_info->typeEnum()));
+			if (resolved_alias.terminal_type_info != nullptr) {
+				placeholder_info = resolved_alias.terminal_type_info;
+			}
+		}
+		if (placeholder_info == nullptr || !placeholder_info->isTemplateInstantiation()) {
 			return false;
 		}
 

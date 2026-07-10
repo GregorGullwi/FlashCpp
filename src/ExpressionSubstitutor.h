@@ -100,6 +100,9 @@ public:
 	/// @return A new expression with template parameters substituted
 	ASTNode substitute(const ASTNode& expr);
 
+	// Substitute a type-id without routing it through expression-node wrapping.
+	TypeSpecifierNode substituteTypeSpecifier(const TypeSpecifierNode& type);
+
 	const TypeInfo* resolveDependentMemberTypeForSubstitution(const TypeInfo& type_info);
 
 	void setCurrentOwnerTypeName(StringHandle owner_type_name) {

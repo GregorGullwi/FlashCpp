@@ -29,7 +29,7 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload);
 
-bool isTemplateDerivedFreeFunction(const FunctionDeclarationNode* func_decl) {
+bool isTemplateDerivedFreeFunctionTarget(const FunctionDeclarationNode* func_decl) {
 	return func_decl != nullptr &&
 		(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
 }
@@ -6386,7 +6386,7 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 			(!overload_result.has_match ||
 			 overload_result.is_ambiguous ||
 			 (overload_result.is_free_function &&
-			  isTemplateDerivedFreeFunction(overload_result.free_function_overload)))) {
+			  isTemplateDerivedFreeFunctionTarget(overload_result.free_function_overload)))) {
 			overload_result = OperatorOverloadResult(instantiated_overload);
 		}
 	}
@@ -8564,7 +8564,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (const FunctionDeclarationNode* parser_selected_target =
 			useParserResolvedDirectTarget();
 		parser_selected_target != nullptr &&
-		isTemplateDerivedFreeFunction(parser_selected_target)) {
+		isTemplateDerivedFreeFunctionTarget(parser_selected_target)) {
 		return parser_selected_target;
 	}
 	if (!call_info.is_indirect &&

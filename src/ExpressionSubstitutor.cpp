@@ -442,6 +442,11 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	}
 }
 
+TypeSpecifierNode ExpressionSubstitutor::substituteTypeSpecifier(
+	const TypeSpecifierNode& type) {
+	return substituteInType(type);
+}
+
 ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNode& ctor) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing constructor call");
 

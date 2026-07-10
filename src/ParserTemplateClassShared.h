@@ -1094,9 +1094,15 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 			  getSubstitutedTypeSizeBits(substituted_type_index),
 			  fallback_token,
 			  original_type_spec.cv_qualifier());
+	const bool full_substitution_is_type =
+		full_substituted_node.is<TypeSpecifierNode>();
+	const bool substituted_index_is_concrete =
+		substituted_type_index.is_valid() &&
+		!typeIndexContainsDependentPlaceholder(substituted_type_index);
 	if (substituted_type_index.is_valid() &&
-		(apply_resolved_index_to_full_substitution ||
-		 !full_substituted_node.is<TypeSpecifierNode>())) {
+		(!full_substitution_is_type ||
+		 (apply_resolved_index_to_full_substitution &&
+		  substituted_index_is_concrete))) {
 		substituted_type.set_type_index(substituted_type_index.withCategory(substituted_type_index.category()));
 		substituted_type.set_category(substituted_type_index.category());
 	}

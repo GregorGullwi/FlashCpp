@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-09
+**Last updated:** 2026-07-10
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. Keep it focused on the intended semantic model, active
@@ -65,9 +65,9 @@ The core suite now covers several formerly blocking standards-visible areas:
 - namespace-qualified callable objects keep member-call semantics when the
   receiver is a concrete struct object, including the implicit object argument
   for instantiated constrained `operator()` member templates
-- dependent alias-template brace construction keeps template identity until the
-  enclosing template arguments are concrete, allowing ordinary
-  function-template deduction to consume the resolved alias target type
+- direct dependent alias template-ids and brace construction keep template
+  identity until enclosing arguments are concrete; a materialized builtin
+  target carries its canonical native type identity
 
 ## Remaining standards gaps
 
@@ -215,15 +215,16 @@ viability checks, not a `std::remove_cv` semantic shortcut or recursive alias
 bug. The parser depth guard remains finite but now has enough headroom for that
 kind of conforming C++20 template chain.
 
-Dependent alias-template brace construction used by `std::exchange`-like calls
-is now covered by:
+Dependent alias-template type-ids and brace construction used by
+`std::exchange`-like calls are now covered by:
 
 - `tests/test_template_exchange_dependent_alias_default_ret0.cpp`
 
-The reduced rule is generic: an alias template-id such as
-`difference_t<Range>{...}` remains a dependent template-instantiation type
-until `Range` is known, then materializes to its alias target before
-function-template deduction.
+The reduced rule is generic: a direct alias template-id such as
+`select_first_t<Left, FirstTail>` remains a structured instantiation until the
+enclosing arguments are known, then materializes to its alias target before
+function-template deduction and code generation. A concrete builtin target
+must use its native type index, not an invalid category-only placeholder.
 
 The active standards-facing `std/test_std_ranges.cpp` failure has moved again:
 
@@ -304,6 +305,9 @@ declarator-shaped pointer-depth/member-class metadata.
    blocker.
 6. Keep replay identity and member-object-pointer work opportunistic unless a
    concrete regression points there.
+7. Unify direct dependent-alias placeholder creation and materialization across
+   declaration, signature, and expression entry points; add non-`std` coverage
+   for qualifier-bearing direct aliases and unused alias parameters.
 
 ## Standards rules for follow-up work
 

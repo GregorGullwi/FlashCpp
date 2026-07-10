@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-09
+**Last updated:** 2026-07-10
 
 This document is a planning aid for the remaining template-infrastructure work.
 It is intentionally forward-looking: keep it focused on the current baseline,
@@ -62,10 +62,10 @@ identity-preserving behavior:
   the member-call path when the qualified receiver is a concrete struct object,
   so instantiated `operator()` member templates receive the implicit object
   argument and preserve reference-argument mutation
-- dependent alias-template brace construction now preserves a structured
-  template-instantiation type through substitution, so function-template
-  deduction can see the resolved argument type instead of an `auto`
-  placeholder in the covered class-template member path
+- direct dependent alias template-ids preserve the alias identity and argument
+  binding through member-function signature and body materialization; resolved
+  builtin targets use canonical native type indices rather than an invalid
+  category-only index
 
 ## Architectural invariants
 
@@ -78,6 +78,9 @@ Follow-up work should preserve these rules:
   silently recovering through compatibility metadata
 - keep substitution, deduction, overload ranking, replay/materialization, and
   constexpr evaluation as separate responsibilities
+- do not replace a concrete substituted type with an unresolved placeholder
+  index, and do not use a category-only builtin type where a native `TypeIndex`
+  is available
 - prefer identity-first replay attachment over `StructTypeInfo` repair scans
 - add abstractions only when they remove real repeated owner/replay logic or
   prevent standards-visible fallback behavior from reappearing
@@ -234,15 +237,16 @@ chain of constrained class-template viability checks. The parser nesting guard
 now has enough headroom for those conforming chains while still retaining a
 finite runaway-recursion diagnostic.
 
-Dependent alias-template brace construction used by `std::exchange`-like calls
-is now covered by:
+Dependent alias-template type-ids and brace construction used by
+`std::exchange`-like calls are now covered by:
 
 - `tests/test_template_exchange_dependent_alias_default_ret0.cpp`
 
-This preserves the alias template-id through `difference_t<Range>{...}`,
-materializes the alias target after the enclosing class-template argument is
-known, and lets ordinary function-template deduction consume the concrete
-argument type.
+This preserves direct aliases such as `select_first_t<Left, FirstTail>` through
+member-function signature materialization, materializes the target after the
+enclosing class-template argument is known, and lets ordinary
+function-template deduction consume the concrete argument type on both Windows
+and Linux.
 
 The active `std/test_std_ranges.cpp` frontier has moved again:
 
@@ -321,6 +325,11 @@ declarator-shaped `member_class + pointer_depth` forms.
    next concrete failure choose the following layer.
 5. Promote stale expected-failure tracking only after the corresponding harness
    entry is proven green.
+6. Consolidate the direct dependent-alias placeholder factory and materializer
+   so parse, member-function shell substitution, and body substitution share a
+   single structured contract. Add focused coverage for direct aliases with
+   cv/ref/pointer modifiers and for aliases whose targets are intentionally
+   independent of one or more arguments.
 
 ## Validation guidance
 
