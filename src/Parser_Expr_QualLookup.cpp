@@ -1976,7 +1976,15 @@ TypeIndex Parser::substitute_template_parameter(
 	};
 	auto tryResolveConcreteTemplatePlaceholder = [&]() -> bool {
 		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
-		if (!placeholder_info || !placeholder_info->isTemplateInstantiation()) {
+		if (placeholder_info != nullptr && !placeholder_info->isTemplateInstantiation()) {
+			const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				placeholder_info->registeredTypeIndex().withCategory(
+					placeholder_info->typeEnum()));
+			if (resolved_alias.terminal_type_info != nullptr) {
+				placeholder_info = resolved_alias.terminal_type_info;
+			}
+		}
+		if (placeholder_info == nullptr || !placeholder_info->isTemplateInstantiation()) {
 			return false;
 		}
 
@@ -1993,6 +2001,30 @@ TypeIndex Parser::substitute_template_parameter(
 		std::vector<TemplateTypeArg> concrete_args = materializeConcretePlaceholderArgs(*placeholder_info);
 		if (!areTemplateArgsConcrete(concrete_args)) {
 			return false;
+		}
+		AliasTemplateMaterializationResult materialized_alias =
+			materializeAliasTemplateInstantiation(
+				base_template_name,
+				concrete_args);
+		if ((materialized_alias.resolved_type_info == nullptr ||
+			 materialized_alias.instantiated_name.empty()) &&
+			placeholder_info->baseTemplateName().isValid() &&
+			base_template_name !=
+				StringTable::getStringView(placeholder_info->baseTemplateName())) {
+			materialized_alias =
+				materializeAliasTemplateInstantiation(
+					StringTable::getStringView(placeholder_info->baseTemplateName()),
+					concrete_args);
+		}
+		if (materialized_alias.resolved_type_info != nullptr) {
+			assignResolvedType(*materialized_alias.resolved_type_info);
+			FLASH_LOG_FORMAT(
+				Templates,
+				Debug,
+				"Resolved alias-template placeholder '{}' -> '{}'",
+				StringTable::getStringView(placeholder_info->name()),
+				StringTable::getStringView(materialized_alias.resolved_type_info->name()));
+			return true;
 		}
 		const TypeInfo* instantiated_type_info = resolveConcreteInstantiatedMemberChain(
 			base_template_name,

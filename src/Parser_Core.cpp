@@ -370,24 +370,47 @@ Parser::tryBuildCurrentFunctionCallDefinitionLookupRecord(
 		argument_dependent_lookup_included);
 }
 
-// Try template instantiation from call arguments by first using collected
-// argument types (qualified name first, then simple name) and then falling back
-// to constructor-wrapper deduction such as __type_identity<T>{}.
+std::optional<ASTNode> Parser::tryInstantiateFunctionTemplateFromArgTypes(
+	std::string_view qualified_name,
+	std::string_view simple_name,
+	std::span<const TypeSpecifierNode> arg_types) {
+	if (arg_types.empty()) {
+		return std::nullopt;
+	}
+
+	if (!qualified_name.empty()) {
+		if (std::optional<ASTNode> instantiated =
+				try_instantiate_template(qualified_name, arg_types);
+			instantiated.has_value()) {
+			return instantiated;
+		}
+	}
+	if (!simple_name.empty() && simple_name != qualified_name) {
+		if (std::optional<ASTNode> instantiated =
+				try_instantiate_template(simple_name, arg_types);
+			instantiated.has_value()) {
+			return instantiated;
+		}
+	}
+	return std::nullopt;
+}
+
+// Try ordinary function-template deduction from the call argument types. The
+// final branch still handles old placeholder constructor-wrapper nodes that
+// predate structured expression typing.
 std::optional<ASTNode> Parser::tryInstantiateTemplateFromCallArguments(
 	std::string_view qualified_name,
 	std::string_view simple_name,
 	const ChunkedVector<ASTNode>& arguments) {
 	std::vector<TypeSpecifierNode> arg_types;
 	if (tryCollectFunctionCallArgTypes(arguments, arg_types)) {
-		if (!qualified_name.empty()) {
-			if (std::optional<ASTNode> instantiated = try_instantiate_template(qualified_name, arg_types)) {
-				return instantiated;
-			}
-		}
-		if (!simple_name.empty() && simple_name != qualified_name) {
-			if (std::optional<ASTNode> instantiated = try_instantiate_template(simple_name, arg_types)) {
-				return instantiated;
-			}
+		if (std::optional<ASTNode> instantiated =
+				tryInstantiateFunctionTemplateFromArgTypes(
+					qualified_name,
+					simple_name,
+					arg_types);
+			instantiated.has_value()) {
+			return instantiated;
 		}
 	}
 

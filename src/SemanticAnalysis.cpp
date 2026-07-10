@@ -29,7 +29,7 @@ void requireParserSemanticServicesAttachment(const SemanticAnalysis& sema, const
 
 const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload);
 
-bool isTemplateDerivedFreeFunction(const FunctionDeclarationNode* func_decl) {
+bool isTemplateDerivedFreeFunctionTarget(const FunctionDeclarationNode* func_decl) {
 	return func_decl != nullptr &&
 		(func_decl->has_template_body_position() || func_decl->has_template_declaration_position());
 }
@@ -2385,13 +2385,26 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::resolveCallableReturnType(const FunctionDeclarationNode& callable) {
+	if (std::optional<TypeSpecifierNode> concrete_return_type =
+			FlashCpp::ParserFunctionTypeHelpers::
+				tryGetConcreteReturnTypeFromFunctionDeclaration(
+					callable,
+					callable.decl_node().identifier_token());
+		concrete_return_type.has_value() &&
+		concrete_return_type->category() != TypeCategory::Invalid &&
+		concrete_return_type->category() != TypeCategory::Template &&
+		!isPlaceholderAutoType(concrete_return_type->type())) {
+		return concrete_return_type;
+	}
+
 	ASTNode resolved_return_type = callable.decl_node().type_node();
 	if (!resolved_return_type.has_value() || !resolved_return_type.is<TypeSpecifierNode>()) {
 		return std::nullopt;
 	}
 
 	TypeSpecifierNode return_type = resolved_return_type.as<TypeSpecifierNode>();
-	if (!isPlaceholderAutoType(return_type.type())) {
+	if (!isPlaceholderAutoType(return_type.type()) &&
+		return_type.category() != TypeCategory::Template) {
 		return return_type;
 	}
 
@@ -6373,7 +6386,7 @@ bool SemanticAnalysis::tryResolveLateBinaryOperatorOverload(
 			(!overload_result.has_match ||
 			 overload_result.is_ambiguous ||
 			 (overload_result.is_free_function &&
-			  isTemplateDerivedFreeFunction(overload_result.free_function_overload)))) {
+			  isTemplateDerivedFreeFunctionTarget(overload_result.free_function_overload)))) {
 			overload_result = OperatorOverloadResult(instantiated_overload);
 		}
 	}
@@ -8440,14 +8453,20 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			}
 			return nullptr;
 		};
-	auto fallbackToEarlyParserSelectedTarget = [&]() -> const FunctionDeclarationNode* {
-		if (normalized_call) {
+	auto useParserResolvedDirectTarget = [&]() -> const FunctionDeclarationNode* {
+		if (call_info.function_declaration == nullptr) {
+			return nullptr;
+		}
+		if (normalized_call &&
+			!isFunctionCandidateViableForArgCount(
+				*call_info.function_declaration,
+				arguments.size())) {
 			return nullptr;
 		}
 		return call_info.function_declaration;
 	};
 	// Resolution order:
-	// 1. receiver-member direct lookup, including receiver-side parser-selected fallback
+	// 1. receiver-member direct lookup, including parser-resolved direct targets
 	// 2. non-receiver definition-bound direct-call recovery
 	// 3. callable operator / local callable resolution
 	// 4. dependent-unqualified POI / definition-bound recovery
@@ -8535,12 +8554,18 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 			}
 		}
 		if (const FunctionDeclarationNode* parser_selected_target =
-				fallbackToEarlyParserSelectedTarget();
+				useParserResolvedDirectTarget();
 			parser_selected_target != nullptr) {
 			return parser_selected_target;
 		}
 
 		return nullptr;
+	}
+	if (const FunctionDeclarationNode* parser_selected_target =
+			useParserResolvedDirectTarget();
+		parser_selected_target != nullptr &&
+		isTemplateDerivedFreeFunctionTarget(parser_selected_target)) {
+		return parser_selected_target;
 	}
 	if (!call_info.is_indirect &&
 		!call_info.has_receiver &&
@@ -8549,8 +8574,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		definition_lookup_record_target != nullptr) {
 		return definition_lookup_record_target;
 	}
-	if (!normalized_call &&
-		!call_info.is_indirect &&
+	if (!call_info.is_indirect &&
 		!call_info.has_receiver &&
 		(!call_info.qualified_name.isValid() ||
 		 qualified_name_targets_namespace) &&
@@ -8589,8 +8613,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return nullptr;
 	}
 
-	if (!normalized_call &&
-		!call_info.has_receiver &&
+	if (!call_info.has_receiver &&
 		call_info.dependent_unqualified_lookup_record != nullptr &&
 		call_info.dependent_unqualified_lookup_record->has_value()) {
 		const DependentUnqualifiedCallLookupRecord& dependent_record =

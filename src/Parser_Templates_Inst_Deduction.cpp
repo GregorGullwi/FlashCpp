@@ -4478,9 +4478,15 @@ std::optional<ASTNode> Parser::try_instantiate_template(std::string_view templat
 		return deferred_forward_declaration_result;
 	}
 
-	// All overloads failed
-	FLASH_LOG_FORMAT(Templates, Error, "[depth={}]: All {} template overload(s) failed for '{}'",
-					 recursion_depth, all_templates.size(), template_name);
+	// All overloads failed. In SFINAE/constraint probes, that is an ordinary
+	// not-viable result, not a hard program diagnostic.
+	if (isTemplateInstantiationFailureProbeMode()) {
+		FLASH_LOG_FORMAT(Templates, Debug, "[depth={}]: All {} template overload(s) failed for '{}'",
+						 recursion_depth, all_templates.size(), template_name);
+	} else {
+		FLASH_LOG_FORMAT(Templates, Error, "[depth={}]: All {} template overload(s) failed for '{}'",
+						 recursion_depth, all_templates.size(), template_name);
+	}
 	return std::nullopt;
 }
 
