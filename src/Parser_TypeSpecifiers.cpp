@@ -3536,8 +3536,10 @@ ParseResult Parser::parse_type_specifier() {
 						FLASH_LOG_FORMAT(Templates, Debug,
 										 "parse_type_specifier: '{}' is a template parameter, returning dependent type at index {}",
 										 type_name, param_type_idx);
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							param_type_idx.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						TypeSpecifierNode param_type(
+							param_type_idx.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None);
+						param_type.set_template_parameter_identity(type_name_handle);
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(param_type));
 					} else {
 						// Template parameter not yet in getTypesByNameMap() - create a placeholder
 						// This can happen when parsing the template parameter list itself
@@ -3550,8 +3552,10 @@ ParseResult Parser::parse_type_specifier() {
 						type_info.is_incomplete_instantiation_ = true;
 						type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 						getTypesByNameMap()[type_name_handle] = &type_info;
-						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						TypeSpecifierNode param_type(
+							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None);
+						param_type.set_template_parameter_identity(type_name_handle);
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(param_type));
 					}
 				}
 			}

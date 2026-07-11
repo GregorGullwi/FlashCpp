@@ -268,11 +268,23 @@ expansion. This is covered by:
 
 - `tests/test_template_dependent_inherited_static_call_pack_ret0.cpp`
 
-The remaining `std::invoke` trace is narrower: its two-argument overload is
-rejected with `argument count 2 > parameter count 1` before viability because
-the raw function-parameter count does not account for the trailing parameter
-pack. Fix that generic count/shape rule next, then separately reduce the
-CPO-object auto-return issue behind `ranges::size`.
+Function-template parameter types now preserve direct template-parameter
+identity on `TypeSpecifierNode`. Downstream deduction and member-template
+materialization consume that identity through `getStructuredTypeName(...)`
+instead of reconstructing it from a token spelling or depending on a transient
+dependent `TypeInfo` entry. Fixed forwarding-reference parameters are deduced
+against their exact call-argument slots before a trailing function parameter
+pack, with the C++20 lvalue/rvalue adjustment applied explicitly. This is
+covered by:
+
+- `tests/test_function_template_fixed_param_before_pack_ret0.cpp`
+
+The one-argument `std::invoke` candidate is still correctly rejected for the
+two-argument call. The variadic candidate now passes pack-aware count/shape
+viability and preserves `_Callable`, `_Ty1`, and `_Types2` identities, but fails
+later while substituting its `_Invoker1<...>::_Call` trailing return/noexcept
+shape. Reduce that substitution failure next. Keep the independent
+`ranges::size` CPO-object auto-return issue separate.
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline
@@ -316,10 +328,9 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Replace the raw function-parameter count rejection in template candidate
-   viability with the existing pack-aware argument-count rule; add a non-`std`
-   regression matching a fixed leading parameter plus a trailing function
-   parameter pack.
+1. Reduce the variadic `std::invoke` candidate's later substitution failure,
+   centered on `_Invoker1<...>::_Call` in its trailing return/noexcept shape;
+   preserve structured identities rather than adding spelling recovery.
 2. Re-run `std/test_std_ranges.cpp`; once `std::invoke` advances, reduce the
    independent `ranges::size` CPO-object auto-return deduction failure.
 3. Keep `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,

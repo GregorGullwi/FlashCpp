@@ -1776,6 +1776,14 @@ public:
 	bool is_pack_expansion() const { return is_pack_expansion_; }
 	void set_pack_expansion(bool is_pack) { is_pack_expansion_ = is_pack; }
 
+	// Structured identity for a type template parameter such as T in T&&.
+	// This remains stable when a dependent TypeInfo entry is unavailable during
+	// replay and avoids reconstructing semantic identity from token spelling.
+	bool has_template_parameter_identity() const { return template_parameter_name_.isValid(); }
+	StringHandle template_parameter_name() const { return template_parameter_name_; }
+	void set_template_parameter_identity(StringHandle name) { template_parameter_name_ = name; }
+	void clear_template_parameter_identity() { template_parameter_name_ = {}; }
+
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
 	StringHandle member_class_name() const { return *member_class_name_; }
@@ -1825,6 +1833,7 @@ private:
 	bool has_unsized_outer_array_dimension_ = false;	// True for parser-only shapes like T[][N]
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;	 // True if this type is followed by ... (pack expansion)
+	StringHandle template_parameter_name_; // Bound type-template parameter identity
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
 
@@ -1834,6 +1843,19 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_; }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
+
+// Return the structured identity carried by a type specifier. Direct template
+// parameters keep their declaration identity on the node; other dependent
+// types use their registered semantic TypeInfo identity.
+inline StringHandle getStructuredTypeName(const TypeSpecifierNode& type_spec) {
+	if (type_spec.has_template_parameter_identity()) {
+		return type_spec.template_parameter_name();
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+		return type_info->name();
+	}
+	return {};
+}
 
 inline void TypeInfo::clearAliasTypeSpecifier() {
 	alias_type_spec_.reset();

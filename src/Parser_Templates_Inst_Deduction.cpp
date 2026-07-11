@@ -166,13 +166,7 @@ bool Parser::isTemplateFunctionParameterPack(
 		return false;
 	}
 
-	StringHandle fp_type_name;
-	if (const TypeInfo* ti = tryGetTypeInfo(fp_ts.type_index())) {
-		fp_type_name = ti->name();
-	}
-	if (!fp_type_name.isValid()) {
-		fp_type_name = fp_ts.token().handle();
-	}
+	StringHandle fp_type_name = getStructuredTypeName(fp_ts);
 	if (!fp_type_name.isValid()) {
 		return false;
 	}
@@ -1799,13 +1793,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				++abbreviated_auto_param_index;
 			}
 		}
-		StringHandle direct_fp_type_name;
-		if (const TypeInfo* direct_type_info = tryGetTypeInfo(direct_fp_type.type_index())) {
-			direct_fp_type_name = direct_type_info->name();
-		}
-		if (!direct_fp_type_name.isValid()) {
-			direct_fp_type_name = direct_fp_type.token().handle();
-		}
+		StringHandle direct_fp_type_name = getStructuredTypeName(direct_fp_type);
 		auto direct_param_it = tparam_nodes_by_name.find(direct_fp_type_name);
 		if (direct_param_it != tparam_nodes_by_name.end() &&
 			direct_param_it->second->kind() == TemplateParameterKind::Type &&
@@ -1846,13 +1834,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				// inner member function template pack parameters the token handle is
 				// often invalid/empty, while the TypeInfo name is always populated.
 				// This matches the priority order used in the detection block above.
-				StringHandle pack_type_name;
-				if (const TypeInfo* ti = tryGetTypeInfo(fp_type.type_index())) {
-					pack_type_name = ti->name();
-				}
-				if (!pack_type_name.isValid()) {
-					pack_type_name = fp_type.token().handle();
-				}
+				StringHandle pack_type_name = getStructuredTypeName(fp_type);
 				if (!tparam_nodes_by_name.count(pack_type_name)) {
 					pack_type_name = {};
 				}
@@ -2033,12 +2015,10 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 		if (fp_type.pointer_depth() != 0 || fp_type.is_array() || fp_decl.is_array())
 			continue;
 
-		TypeIndex fp_idx = fp_type.type_index();
-		const TypeInfo* fp_type_info = tryGetTypeInfo(fp_idx);
-		if (!fp_type_info)
+		StringHandle fp_name = getStructuredTypeName(fp_type);
+		if (!fp_name.isValid()) {
 			continue;
-
-		StringHandle fp_name = fp_type_info->name();
+		}
 		if (!tparam_nodes_by_name.count(fp_name))
 			continue;  // not a template parameter
 		if (param_name_to_arg.count(fp_name))
@@ -2064,17 +2044,22 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			const bool is_forwarding_reference =
 				isForwardingReferenceParameter(fp_type, template_params);
 			if (is_forwarding_reference) {
-				// Forwarding-reference deduction needs the full T&& vs lvalue/rvalue rules.
-				// Let the main deduction path handle it instead of pre-deducing the wrong shape.
-				continue;
+				// C++20 [temp.deduct.call]: when P is a forwarding reference and the
+				// argument is an lvalue, deduction uses an lvalue reference to the
+				// argument type. For an rvalue, T is the non-reference argument type.
+				new_arg.ref_qualifier = ca_type.is_lvalue_reference()
+					? ReferenceQualifier::LValueReference
+					: ReferenceQualifier::None;
+				new_arg.cv_qualifier = ca_type.cv_qualifier();
+			} else {
+				if (ca_type.is_lvalue_reference()) {
+					return std::nullopt;
+				}
+				new_arg.ref_qualifier = ReferenceQualifier::None;
+				const auto argument_cv = static_cast<uint8_t>(new_arg.cv_qualifier);
+				const auto parameter_cv = static_cast<uint8_t>(fp_type.cv_qualifier());
+				new_arg.cv_qualifier = static_cast<CVQualifier>(argument_cv & ~parameter_cv);
 			}
-			if (ca_type.is_lvalue_reference()) {
-				return std::nullopt;
-			}
-			new_arg.ref_qualifier = ReferenceQualifier::None;
-			const auto argument_cv = static_cast<uint8_t>(new_arg.cv_qualifier);
-			const auto parameter_cv = static_cast<uint8_t>(fp_type.cv_qualifier());
-			new_arg.cv_qualifier = static_cast<CVQualifier>(argument_cv & ~parameter_cv);
 		}
 		param_name_to_arg.emplace(fp_name, new_arg);
 		pre_deduced_arg_indices.insert(concrete_arg_index);

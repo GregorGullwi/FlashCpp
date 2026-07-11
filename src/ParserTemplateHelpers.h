@@ -4005,7 +4005,10 @@ inline std::optional<StringHandle> findUnresolvedHardUseTypeSpecifier(const ASTN
 
 		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 		if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
-			unresolved_name = type_info ? type_info->name() : type_spec.token().handle();
+			StringHandle structured_name = getStructuredTypeName(type_spec);
+			unresolved_name = structured_name.isValid()
+				? structured_name
+				: type_spec.token().handle();
 			return;
 		}
 
