@@ -2015,80 +2015,17 @@ ParseResult Parser::parse_type_specifier() {
 							}
 						}
 					}
-					const TypeSpecifierNode& alias_target = alias_node.target_type_node();
-					const TypeInfo* alias_target_info =
-						tryGetTypeInfo(alias_target.type_index());
-					const StringHandle alias_target_name = alias_target_info != nullptr
-						? alias_target_info->name()
-						: alias_target.token().handle();
-					const bool alias_target_is_template_parameter = [&] {
-						for (StringHandle param_name : alias_node.template_param_names()) {
-							if (param_name == alias_target_name) {
-								return true;
-							}
-						}
-						return false;
-					}();
-					const bool is_unmodified_direct_alias_target =
-						!alias_node.is_deferred() &&
-						alias_target_name.isValid() &&
-						alias_target.cv_qualifier() == CVQualifier::None &&
-						alias_target.pointer_depth() == 0 &&
-						alias_target.reference_qualifier() == ReferenceQualifier::None &&
-						!alias_target.is_array() &&
-						(alias_target_info == nullptr ||
-							(!alias_target_info->isTemplateInstantiation() &&
-							 !alias_target_info->isDependentMemberType() &&
-							 !alias_target_info->hasDependentQualifiedName())) &&
-						alias_target_is_template_parameter;
 					if (has_dependent_alias_args && peek() != "::"_tok) {
-						if (!is_unmodified_direct_alias_target) {
+						if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 						}
-						// Keep the alias-id and its dependent arguments together until the
-						// enclosing template is substituted. Returning the alias target here
-						// would erase the binding between arguments such as Left and First,
-						// leaving the dependent alias parameter as an unresolved type.
-						StringHandle dependent_alias_handle =
-							StringTable::getOrInternStringHandle(
-								get_instantiated_class_name(type_name, *template_args));
-						TypeInfo* dependent_alias_info = nullptr;
-						auto dependent_alias_it = getTypesByNameMap().find(dependent_alias_handle);
-						if (dependent_alias_it != getTypesByNameMap().end()) {
-							dependent_alias_info = dependent_alias_it->second;
-						}
-						if (dependent_alias_info == nullptr) {
-							TypeInfo& placeholder_type = add_empty_type_entry();
-							placeholder_type.fallback_size_bits_ = 0;
-							placeholder_type.name_ = dependent_alias_handle;
-							placeholder_type.is_incomplete_instantiation_ = true;
-							placeholder_type.placeholder_kind_ =
-								DependentPlaceholderKind::DependentArgs;
-							InlineVector<StringHandle, 4> alias_param_names;
-							for (const TemplateParameterNode& param : alias_node.template_parameters()) {
-								alias_param_names.push_back(param.nameHandle());
-							}
-							InlineVector<TypeInfo::TemplateArgInfo, 4> alias_args =
-								toTemplateArgInfoList(*template_args);
-							placeholder_type.setTemplateInstantiationInfo(
-								QualifiedIdentifier::fromQualifiedName(
-									type_name,
-									gSymbolTable.get_current_namespace_handle()),
-								alias_args);
-							placeholder_type.setInstantiationContext(
-								std::move(alias_param_names),
-								alias_args,
-								nullptr);
-							getTypesByNameMap()[dependent_alias_handle] = &placeholder_type;
-							dependent_alias_info = &placeholder_type;
-						}
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							dependent_alias_info->registeredTypeIndex().withCategory(
-								TypeCategory::Template),
-							0,
-							type_name_token,
-							cv_qualifier,
-							ReferenceQualifier::None));
+							buildDependentDirectAliasTypeSpecifier(
+								type_name,
+								alias_node,
+								*template_args,
+								type_name_token,
+								cv_qualifier)));
 					}
 
 					if (const TypeInfo* instantiated_type_info =

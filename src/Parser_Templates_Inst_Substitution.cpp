@@ -1532,22 +1532,47 @@ StringHandle Parser::getAliasTargetNameHandle(const TypeSpecifierNode& alias_tar
 	return {};
 }
 
-std::optional<size_t> Parser::findAliasTargetTemplateParamIndex(
-	const TemplateAliasNode& alias_node,
-	std::span<const TemplateTypeArg> concrete_args) const {
-	StringHandle alias_target_name = getAliasTargetNameHandle(alias_node.target_type_node());
+std::optional<size_t> Parser::findDirectAliasTargetParameterIndex(
+	const TemplateAliasNode& alias_node) const {
+	if (alias_node.is_deferred()) {
+		return std::nullopt;
+	}
+
+	const TypeSpecifierNode& alias_target = alias_node.target_type_node();
+	const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target.type_index());
+	if (alias_target_info != nullptr &&
+		(alias_target_info->isTemplateInstantiation() ||
+		 alias_target_info->isDependentMemberType() ||
+		 alias_target_info->hasDependentQualifiedName())) {
+		return std::nullopt;
+	}
+
+	StringHandle alias_target_name = getAliasTargetNameHandle(alias_target);
 	if (!alias_target_name.isValid()) {
 		return std::nullopt;
 	}
 
 	const auto& alias_param_names = alias_node.template_param_names();
-	size_t max_alias_param_index = std::min(alias_param_names.size(), concrete_args.size());
-	for (size_t alias_param_index = 0; alias_param_index < max_alias_param_index; ++alias_param_index) {
+	for (size_t alias_param_index = 0;
+		 alias_param_index < alias_param_names.size();
+		 ++alias_param_index) {
 		if (alias_param_names[alias_param_index] == alias_target_name) {
 			return alias_param_index;
 		}
 	}
 	return std::nullopt;
+}
+
+std::optional<size_t> Parser::findAliasTargetTemplateParamIndex(
+	const TemplateAliasNode& alias_node,
+	std::span<const TemplateTypeArg> concrete_args) const {
+	std::optional<size_t> alias_param_index =
+		findDirectAliasTargetParameterIndex(alias_node);
+	if (!alias_param_index.has_value() ||
+		*alias_param_index >= concrete_args.size()) {
+		return std::nullopt;
+	}
+	return alias_param_index;
 }
 
 std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(
@@ -1561,6 +1586,61 @@ std::optional<TemplateTypeArg> Parser::tryRebindAliasTargetTemplateArg(
 	return rebindDependentTemplateTypeArg(
 		concrete_args[*alias_param_index],
 		TemplateTypeArg(alias_node.target_type_node()));
+}
+
+TypeSpecifierNode Parser::buildDependentDirectAliasTypeSpecifier(
+	std::string_view alias_name,
+	const TemplateAliasNode& alias_node,
+	std::span<const TemplateTypeArg> template_args,
+	const Token& source_token,
+	CVQualifier cv_qualifier) {
+	if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
+		throw InternalError(
+			"Dependent direct-alias placeholder requested for a non-direct alias target");
+	}
+
+	StringHandle dependent_alias_handle =
+		StringTable::getOrInternStringHandle(
+			get_instantiated_class_name(alias_name, template_args));
+	const TypeInfo* dependent_alias_info = findTypeByName(dependent_alias_handle);
+	if (dependent_alias_info == nullptr) {
+		TypeInfo& placeholder_type = add_empty_type_entry();
+		placeholder_type.fallback_size_bits_ = 0;
+		placeholder_type.name_ = dependent_alias_handle;
+		placeholder_type.is_incomplete_instantiation_ = true;
+		placeholder_type.placeholder_kind_ =
+			DependentPlaceholderKind::DependentArgs;
+		InlineVector<StringHandle, 4> alias_param_names;
+		for (const TemplateParameterNode& param : alias_node.template_parameters()) {
+			alias_param_names.push_back(param.nameHandle());
+		}
+		InlineVector<TypeInfo::TemplateArgInfo, 4> alias_args =
+			toTemplateArgInfoList(template_args);
+		placeholder_type.setTemplateInstantiationInfo(
+			QualifiedIdentifier::fromQualifiedName(
+				alias_name,
+				gSymbolTable.get_current_namespace_handle()),
+			alias_args);
+		placeholder_type.setInstantiationContext(
+			std::move(alias_param_names),
+			alias_args,
+			nullptr);
+		getTypesByNameMap()[dependent_alias_handle] = &placeholder_type;
+		dependent_alias_info = &placeholder_type;
+	}
+
+	if (!dependent_alias_info->isTemplateInstantiation()) {
+		throw InternalError(
+			"Dependent direct-alias placeholder collided with a non-template type");
+	}
+
+	return TypeSpecifierNode(
+		dependent_alias_info->registeredTypeIndex().withCategory(
+			TypeCategory::Template),
+		0,
+		source_token,
+		cv_qualifier,
+		ReferenceQualifier::None);
 }
 
 
@@ -2224,8 +2304,8 @@ Parser::AliasTemplateMaterializationResult Parser::materializeAliasTemplateInsta
 					resolved_type_info,
 					alias_target_type_spec);
 			if (!alias_registration_type_spec.type_index().is_valid()) {
-				alias_registration_type_spec.set_type_index(alias_target_index);
-				alias_registration_type_spec.set_category(resolved_type_info.typeEnum());
+				alias_registration_type_spec.set_type_index(
+					alias_target_index.withCategory(resolved_type_info.typeEnum()));
 				alias_registration_type_spec.set_size_in_bits(resolved_type_info.sizeInBits());
 			}
 		}
@@ -4859,8 +4939,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 					alias_registration_type_spec = *concrete_alias_spec;
 				} else {
 					alias_registration_type_spec.set_type_index(alias_target_index);
-					alias_registration_type_spec.set_category(
-						concrete_sibling_alias->typeEnum());
 					alias_registration_type_spec.set_size_in_bits(
 						concrete_sibling_alias->sizeInBits());
 				}
@@ -4881,7 +4959,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 					alias_registration_type_spec = *concrete_alias_spec;
 				} else {
 					alias_registration_type_spec.set_type_index(alias_target_index);
-					alias_registration_type_spec.set_category(concrete_member_info->typeEnum());
 					alias_registration_type_spec.set_size_in_bits(
 						concrete_member_info->sizeInBits());
 				}
@@ -5002,8 +5079,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 						original_nested_info->registeredTypeIndex().withCategory(
 							original_nested_info->typeEnum());
 					alias_registration_type_spec.set_type_index(alias_target_index);
-					alias_registration_type_spec.set_category(
-						original_nested_info->typeEnum());
 					alias_registration_type_spec.set_size_in_bits(
 						original_nested_info->sizeInBits());
 				}

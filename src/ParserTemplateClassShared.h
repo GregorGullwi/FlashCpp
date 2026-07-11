@@ -61,7 +61,6 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
 	if (resolved_alias.type_index.is_valid()) {
 		type_spec.set_type_index(resolved_alias.type_index.withCategory(resolved_alias.typeEnum()));
-		type_spec.set_category(resolved_alias.typeEnum());
 	}
 	type_spec.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
 	if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
@@ -1103,8 +1102,7 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 		(!full_substitution_is_type ||
 		 (apply_resolved_index_to_full_substitution &&
 		  substituted_index_is_concrete))) {
-		substituted_type.set_type_index(substituted_type_index.withCategory(substituted_type_index.category()));
-		substituted_type.set_category(substituted_type_index.category());
+		substituted_type.set_type_index(substituted_type_index);
 	}
 	if (!full_substituted_node.is<TypeSpecifierNode>()) {
 		for (const auto& ptr_level : original_type_spec.pointer_levels()) {

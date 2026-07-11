@@ -2588,12 +2588,24 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::span<const TemplateTypeArg> template_args,
 		std::string_view instantiated_name);
 	StringHandle getAliasTargetNameHandle(const TypeSpecifierNode& alias_target) const;
+	std::optional<size_t> findDirectAliasTargetParameterIndex(
+		const TemplateAliasNode& alias_node) const;
 	std::optional<size_t> findAliasTargetTemplateParamIndex(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> concrete_args) const;
 	std::optional<TemplateTypeArg> tryRebindAliasTargetTemplateArg(
 		const TemplateAliasNode& alias_node,
 		std::span<const TemplateTypeArg> concrete_args) const;
+	TypeSpecifierNode buildDependentDirectAliasTypeSpecifier(
+		std::string_view alias_name,
+		const TemplateAliasNode& alias_node,
+		std::span<const TemplateTypeArg> template_args,
+		const Token& source_token,
+		CVQualifier cv_qualifier);
+	std::optional<TypeSpecifierNode> tryMaterializeDependentDirectAliasTypeSpecifier(
+		const TypeSpecifierNode& type_spec,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 	// Substitute template parameters in an expression.
 	// substitution_owner: when valid, member aliases of that instantiation are resolved for sizeof/alignof.
 	ASTNode substitute_template_params_in_expression(

@@ -2505,7 +2505,6 @@ bool Parser::materializeTemplateFunctionParameters(
 			(resolved_param_alias_index != resolved_param_type.type_index() ||
 			 resolved_param_type.category() != param_alias_info.typeEnum())) {
 			resolved_param_type.set_type_index(resolved_param_alias_index.withCategory(param_alias_info.typeEnum()));
-			resolved_param_type.set_category(param_alias_info.typeEnum());
 		}
 		resolved_param_type.add_pointer_levels(static_cast<int>(param_alias_info.pointer_depth));
 		if (resolved_param_type.reference_qualifier() == ReferenceQualifier::None &&
@@ -2693,7 +2692,6 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			(resolved_alias_index != type_spec.type_index() ||
 			 type_spec.category() != alias_info.typeEnum())) {
 			type_spec.set_type_index(resolved_alias_index.withCategory(alias_info.typeEnum()));
-			type_spec.set_category(alias_info.typeEnum());
 		}
 		type_spec.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
 		if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
@@ -3831,8 +3829,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					template_args);
 				if (substituted_index.is_valid() &&
 					substituted_index.category() != TypeCategory::Invalid) {
-					substituted_type.set_type_index(substituted_index.withCategory(substituted_index.category()));
-					substituted_type.set_category(substituted_index.category());
+					substituted_type.set_type_index(substituted_index);
 				}
 
 				ASTNode substituted_type_node = emplace_node<TypeSpecifierNode>(substituted_type);
