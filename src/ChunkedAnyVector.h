@@ -172,6 +172,14 @@ public:
 		return emplace_back(value);
 	}
 
+	void pop_back() {
+		assert(!empty() && "ChunkedVector::pop_back called on empty container");
+		data.back().pop_back();
+		if (data.back().empty()) {
+			data.pop_back();
+		}
+	}
+
 	template <typename... Args>
 	T& emplace_back(Args&&... args) {
 		if (data.empty() || data.back().size() == ChunkSize) {

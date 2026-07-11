@@ -260,10 +260,19 @@ The active `std/test_std_ranges.cpp` frontier has moved again:
 - `function 'size' has inconsistent deduced auto return types: first return has
   type 'unknown', but another return has type 'std::ranges::_Size::_Cpo'`
 
-Reduce the next slice without hardcoding standard-library names. Start from the
-generic overload-resolution/constraints path used by `invoke`, and separately
-reduce the CPO-object auto-return deduction issue behind `ranges::size`. Keep a
-non-`std` regression for each accepted language rule.
+Dependent qualified calls now preserve a concrete owner when only their call
+argument pack remains dependent. Substitution can therefore deduce and
+materialize inherited static member-function templates, and trailing-return
+SFINAE treats a known empty function parameter pack as a zero-element
+expansion. This is covered by:
+
+- `tests/test_template_dependent_inherited_static_call_pack_ret0.cpp`
+
+The remaining `std::invoke` trace is narrower: its two-argument overload is
+rejected with `argument count 2 > parameter count 1` before viability because
+the raw function-parameter count does not account for the trailing parameter
+pack. Fix that generic count/shape rule next, then separately reduce the
+CPO-object auto-return issue behind `ranges::size`.
 
 A standalone `<utility>` `std::addressof` probe now gets past the deleted
 `const T&&` overload selection issue and exposes duplicate emitted std inline
@@ -307,12 +316,12 @@ declarator-shaped `member_class + pointer_depth` forms.
 
 ## Recommended next task
 
-1. Reduce the current `std/test_std_ranges.cpp` `std::char_traits`
-   instantiation loop into a focused cache/reuse or recursion guard test.
-2. Trace whether repeated `char_traits` materialization is caused by missing
-   class-template instantiation reuse, a stale failed-instantiation state,
-   specialization lookup drift, or a replay side effect before changing the
-   iteration limit.
+1. Replace the raw function-parameter count rejection in template candidate
+   viability with the existing pack-aware argument-count rule; add a non-`std`
+   regression matching a fixed leading parameter plus a trailing function
+   parameter pack.
+2. Re-run `std/test_std_ranges.cpp`; once `std::invoke` advances, reduce the
+   independent `ranges::size` CPO-object auto-return deduction failure.
 3. Keep `tests/test_auto_return_if_constexpr_branch_prune_ret0.cpp`,
    `tests/test_deleted_rvalue_template_overload_ret0.cpp`,
    `tests/test_deleted_rvalue_template_overload_fail.cpp`,

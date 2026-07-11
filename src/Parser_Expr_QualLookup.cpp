@@ -252,9 +252,12 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			if (peek() == "..."_tok) {
 				Token ellipsis_token = peek_info();
 				advance(); // consume '...'
-				auto pack_expr = emplace_node<ExpressionNode>(
-					PackExpansionExprNode(*argResult.node(), ellipsis_token));
-				args.push_back(pack_expr);
+				if (!expressionReferencesKnownEmptyFunctionParameterPack(
+						*argResult.node())) {
+					auto pack_expr = emplace_node<ExpressionNode>(
+						PackExpansionExprNode(*argResult.node(), ellipsis_token));
+					args.push_back(pack_expr);
+				}
 			} else {
 				args.push_back(*argResult.node());
 			}
@@ -296,6 +299,12 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 		deduced_arg_types.push_back(*type_opt);
 	}
+	has_dependent_call_arg =
+		deduced_arg_types.size() != args.size() ||
+		argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
+		argTypesAreDeferredTemplateDependent(
+			deduced_arg_types,
+			currentTemplateParamNames());
 	AliasTemplateMaterializationResult canonical_owner =
 		resolveCanonicalInstantiatedOwnerForLookup(instantiated_class_name);
 	if (!canonical_owner.instantiated_name.empty()) {
@@ -538,10 +547,15 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 			std::move(member_template_arg_nodes));
 	}
 	if (resolved_function == nullptr) {
-		if (owner_is_dependent_instantiation) {
+		const bool preserve_qualified_owner_for_deferred_call =
+			owner_type_info != nullptr &&
+			(owner_is_dependent_instantiation ||
+			 has_deferred_template_call_args);
+		if (preserve_qualified_owner_for_deferred_call) {
 			TypeInfo::DependentQualifiedNameRecord dependent_record;
-			dependent_record.owner_kind =
-				TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation;
+			dependent_record.owner_kind = owner_type_info->isTemplateInstantiation()
+				? TypeInfo::DependentQualifiedNameRecord::OwnerKind::DependentInstantiation
+				: TypeInfo::DependentQualifiedNameRecord::OwnerKind::UnknownSpecialization;
 			dependent_record.owner_name = owner_name_handle;
 			dependent_record.owner_type =
 				owner_type_info->registeredTypeIndex();

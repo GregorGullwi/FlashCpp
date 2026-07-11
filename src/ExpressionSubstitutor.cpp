@@ -2132,9 +2132,25 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			definition_target != nullptr) {
 			return definition_target;
 		}
-		return resolveUniqueFunctionOverload(
-			owner_overloads.all,
-			substituted_arg_types);
+		if (const FunctionDeclarationNode* materialized_target =
+				resolveUniqueFunctionOverload(
+					owner_overloads.all,
+					substituted_arg_types);
+			materialized_target != nullptr) {
+			return materialized_target;
+		}
+
+		std::optional<ASTNode> instantiated_member_template =
+			parser_.try_instantiate_member_function_template(
+				owner_name,
+				member_name,
+				substituted_arg_types);
+		if (!instantiated_member_template.has_value() ||
+			!instantiated_member_template->is<FunctionDeclarationNode>()) {
+			return nullptr;
+		}
+		normalizePendingSemanticRoots();
+		return &instantiated_member_template->as<FunctionDeclarationNode>();
 	};
 	auto materializeSubstitutedUnresolvedCall = [&](ChunkedVector<ASTNode>&& substituted_args) -> ASTNode {
 		CallExprNode substituted_call(
