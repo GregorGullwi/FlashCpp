@@ -2358,9 +2358,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		}
 
 		TypeSpecifierNode concrete_alias_spec = *alias_type_spec;
-		concrete_alias_spec.set_type_index(
-			concrete_alias_index.withCategory(concrete_alias_index.category()));
-		concrete_alias_spec.set_category(concrete_alias_index.category());
+		concrete_alias_spec.set_type_index(concrete_alias_index);
 		normalizeSubstitutedTypeSpec(concrete_alias_spec);
 		return concrete_alias_spec;
 	};

@@ -200,8 +200,9 @@ static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) 
 
 	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(return_type.type_index());
 	if (resolved_alias.terminal_type_info) {
-		return_type.set_type_index(resolved_alias.terminal_type_info->type_index_);
-		return_type.set_category(resolved_alias.terminal_type_info->category());
+		return_type.set_type_index(
+			resolved_alias.terminal_type_info->type_index_.withCategory(
+				resolved_alias.terminal_type_info->category()));
 	}
 	return_type.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
 	if (return_type.reference_qualifier() == ReferenceQualifier::None &&

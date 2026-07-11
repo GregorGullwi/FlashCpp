@@ -197,7 +197,6 @@ inline ConcreteTypeSizeQueryResult queryConcreteAliasResolvedTypeSizeBitsImpl(co
 
 	TypeSpecifierNode alias_resolved_type = type_spec;
 	alias_resolved_type.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
-	alias_resolved_type.set_category(alias_info.typeEnum());
 	applyResolvedAliasShapeForSizeQuery(alias_resolved_type, alias_info);
 	const int alias_spec_size_bits = getTypeSpecSizeBits(alias_resolved_type);
 	if (alias_spec_size_bits > 0) {

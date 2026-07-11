@@ -300,6 +300,60 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 
 }
 
+std::optional<TypeSpecifierNode>
+Parser::tryMaterializeDependentDirectAliasTypeSpecifier(
+	const TypeSpecifierNode& type_spec,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	const TypeInfo* dependent_alias_info = tryGetTypeInfo(type_spec.type_index());
+	if (dependent_alias_info == nullptr ||
+		!dependent_alias_info->isTemplateInstantiation()) {
+		return std::nullopt;
+	}
+
+	StringHandle qualified_alias_name =
+		gNamespaceRegistry.buildQualifiedIdentifier(
+			dependent_alias_info->sourceNamespace(),
+			dependent_alias_info->baseTemplateName());
+	std::optional<ASTNode> alias_entry =
+		gTemplateRegistry.lookup_alias_template(
+			StringTable::getStringView(qualified_alias_name));
+	if (!alias_entry.has_value()) {
+		alias_entry = gTemplateRegistry.lookup_alias_template(
+			StringTable::getStringView(dependent_alias_info->baseTemplateName()));
+	}
+	if (!alias_entry.has_value() || !alias_entry->is<TemplateAliasNode>()) {
+		return std::nullopt;
+	}
+
+	const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
+	if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
+		return std::nullopt;
+	}
+
+	TemplateEnvironment substitution_environment =
+		buildTemplateEnvironment(template_params, template_args, nullptr);
+	ExpressionSubstitutor substitutor(substitution_environment, *this);
+	TypeSpecifierNode substituted_type =
+		substitutor.substituteTypeSpecifier(type_spec);
+	if (!substituted_type.type_index().is_valid() &&
+		is_builtin_type(substituted_type.type())) {
+		TypeIndex native_type_index = nativeTypeIndex(substituted_type.type());
+		if (native_type_index.is_valid()) {
+			substituted_type.set_type_index(native_type_index);
+			substituted_type.set_size_in_bits(
+				get_type_size_bits(substituted_type.type()));
+		}
+	}
+	if (typeSpecStillUsesDependentPlaceholder(substituted_type) ||
+		substituted_type.type() == TypeCategory::Template ||
+		(substituted_type.type() == type_spec.type() &&
+		 substituted_type.type_index() == type_spec.type_index())) {
+		return std::nullopt;
+	}
+	return substituted_type;
+}
+
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	std::span<const TemplateParameterNode> template_params,
@@ -1692,63 +1746,12 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 		}
 
-		// A direct dependent alias parameter is represented by a structured alias-id
-		// placeholder. Materialize it through the active environment before the
-		// generic TypeIndex path can retain its unresolved storage type.
-		if (type_spec.type_index().is_valid()) {
-			if (const TypeInfo* dependent_alias_info = tryGetTypeInfo(type_spec.type_index());
-				dependent_alias_info != nullptr &&
-				dependent_alias_info->isTemplateInstantiation()) {
-				StringHandle qualified_alias_name =
-					gNamespaceRegistry.buildQualifiedIdentifier(
-						dependent_alias_info->sourceNamespace(),
-						dependent_alias_info->baseTemplateName());
-				std::optional<ASTNode> alias_entry =
-					gTemplateRegistry.lookup_alias_template(
-						StringTable::getStringView(qualified_alias_name));
-				if (!alias_entry.has_value()) {
-					alias_entry = gTemplateRegistry.lookup_alias_template(
-						StringTable::getStringView(dependent_alias_info->baseTemplateName()));
-				}
-				if (alias_entry.has_value() && alias_entry->is<TemplateAliasNode>()) {
-					const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
-					const TypeSpecifierNode& alias_target = alias_node.target_type_node();
-					const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target.type_index());
-					const bool is_unmodified_direct_target =
-						!alias_node.is_deferred() &&
-						alias_target.cv_qualifier() == CVQualifier::None &&
-						alias_target.pointer_depth() == 0 &&
-						alias_target.reference_qualifier() == ReferenceQualifier::None &&
-						!alias_target.is_array() &&
-						(alias_target_info == nullptr ||
-							(!alias_target_info->isTemplateInstantiation() &&
-							 !alias_target_info->isDependentMemberType() &&
-							 !alias_target_info->hasDependentQualifiedName()));
-					if (is_unmodified_direct_target) {
-						TemplateEnvironment substitution_environment =
-							buildTemplateEnvironment(template_params, template_args, nullptr);
-						ExpressionSubstitutor substitutor(substitution_environment, *this);
-						TypeSpecifierNode substituted_type =
-							substitutor.substituteTypeSpecifier(type_spec);
-						if (!substituted_type.type_index().is_valid() &&
-							is_builtin_type(substituted_type.type())) {
-							TypeIndex native_type_index =
-								nativeTypeIndex(substituted_type.type());
-							if (native_type_index.is_valid()) {
-								substituted_type.set_type_index(native_type_index);
-								substituted_type.set_size_in_bits(
-									get_type_size_bits(substituted_type.type()));
-							}
-						}
-						if (!typeSpecStillUsesDependentPlaceholder(substituted_type) &&
-							substituted_type.type() != TypeCategory::Template &&
-							(substituted_type.type() != type_spec.type() ||
-							 substituted_type.type_index() != type_spec.type_index())) {
-							return emplace_node<TypeSpecifierNode>(substituted_type);
-						}
-					}
-				}
-			}
+		if (std::optional<TypeSpecifierNode> direct_alias_type =
+				tryMaterializeDependentDirectAliasTypeSpecifier(
+					type_spec,
+					template_params,
+					template_args)) {
+			return emplace_node<TypeSpecifierNode>(*direct_alias_type);
 		}
 
 		// Check if this is a user-defined type that matches a template parameter,

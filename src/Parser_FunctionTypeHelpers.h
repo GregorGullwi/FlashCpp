@@ -202,7 +202,6 @@ inline std::optional<TypeSpecifierNode> tryResolveTypeFromRegisteredAlias(
 	TypeSpecifierNode outer_spec = type_spec;
 	outer_spec.set_type_index(
 		type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-	outer_spec.set_category(type_info->typeEnum());
 	TypeSpecifierNode resolved_type =
 		resolveTypeInfoToTypeSpec(*type_info, outer_spec);
 	if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_type);

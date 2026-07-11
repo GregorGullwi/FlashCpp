@@ -3488,9 +3488,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			}
 			if (dependent_member_type_index.is_valid() &&
 				dependent_member_type_index != substituted_param_type.type_index()) {
-				substituted_param_type.set_type_index(
-					dependent_member_type_index.withCategory(dependent_member_type_index.category()));
-				substituted_param_type.set_category(dependent_member_type_index.category());
+				substituted_param_type.set_type_index(dependent_member_type_index);
 				if (!preserve_dependent_member_template_identity) {
 					normalizeSubstitutedTypeSpec(substituted_param_type);
 				}
@@ -3513,8 +3511,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 		if (self_type_from_index.is_valid() &&
 			self_type_to_index.is_valid() &&
 			substituted_param_type.type_index() == self_type_from_index) {
-			substituted_param_type.set_type_index(self_type_to_index.withCategory(self_type_to_index.category()));
-			substituted_param_type.set_category(self_type_to_index.category());
+			substituted_param_type.set_type_index(self_type_to_index);
 			normalizeSubstitutedTypeSpec(substituted_param_type);
 		}
 

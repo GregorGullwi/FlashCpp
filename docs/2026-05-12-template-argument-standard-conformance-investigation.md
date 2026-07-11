@@ -1,7 +1,7 @@
 # Template Argument Standard-Conformance Investigation
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-10
+**Last updated:** 2026-07-11
 
 This document tracks the standards-facing target for the remaining template
 infrastructure work. Keep it focused on the intended semantic model, active
@@ -65,9 +65,10 @@ The core suite now covers several formerly blocking standards-visible areas:
 - namespace-qualified callable objects keep member-call semantics when the
   receiver is a concrete struct object, including the implicit object argument
   for instantiated constrained `operator()` member templates
-- direct dependent alias template-ids and brace construction keep template
-  identity until enclosing arguments are concrete; a materialized builtin
-  target carries its canonical native type identity
+- direct dependent alias template-ids use shared classification, placeholder,
+  and materialization infrastructure; substitution retains the complete type
+  specifier so alias-introduced cv/ref/pointer structure survives every covered
+  declaration, signature, expression, and class-member consumer
 
 ## Remaining standards gaps
 
@@ -216,15 +217,19 @@ bug. The parser depth guard remains finite but now has enough headroom for that
 kind of conforming C++20 template chain.
 
 Dependent alias-template type-ids and brace construction used by
-`std::exchange`-like calls are now covered by:
+`std::exchange`-like calls, including modifier-bearing direct aliases and
+unused alias parameters, are now covered by:
 
 - `tests/test_template_exchange_dependent_alias_default_ret0.cpp`
+- `tests/test_dependent_direct_alias_modifiers_unused_ret0.cpp`
 
 The reduced rule is generic: a direct alias template-id such as
 `select_first_t<Left, FirstTail>` remains a structured instantiation until the
 enclosing arguments are known, then materializes to its alias target before
 function-template deduction and code generation. A concrete builtin target
-must use its native type index, not an invalid category-only placeholder.
+must use its native type index, not an invalid category-only placeholder, while
+the surrounding `TypeSpecifierNode` remains the carrier for declarator
+modifiers that cannot be represented by `TypeIndex` alone.
 
 The active standards-facing `std/test_std_ranges.cpp` failure has moved again:
 
@@ -305,13 +310,12 @@ declarator-shaped pointer-depth/member-class metadata.
    blocker.
 6. Keep replay identity and member-object-pointer work opportunistic unless a
    concrete regression points there.
-7. Unify direct dependent-alias placeholder creation and materialization across
-   declaration, signature, and expression entry points; add non-`std` coverage
-   for qualifier-bearing direct aliases and unused alias parameters.
 
 ## Standards rules for follow-up work
 
 - do not normalize textual reconstruction as acceptable semantics
+- do not reduce a substituted alias target to base `TypeIndex` identity before
+  preserving its complete declarator metadata
 - prefer hard failure or correct diagnostics over silent repair in normalized
   semantic flows
 - keep compatibility behavior explicit, narrow, and temporary

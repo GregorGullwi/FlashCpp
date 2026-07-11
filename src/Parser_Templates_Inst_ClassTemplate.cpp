@@ -733,9 +733,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							param_type_spec.cv_qualifier());
 			// Apply the resolved TypeIndex (self-type rewrite or alias resolution).
 			if (param_type_index.is_valid()) {
-				substituted_param_type.set_type_index(
-					param_type_index.withCategory(param_type_index.category()));
-				substituted_param_type.set_category(param_type_index.category());
+				substituted_param_type.set_type_index(param_type_index);
 			}
 			if (!full_substituted_param_node.is<TypeSpecifierNode>()) {
 				for (const auto& ptr_level : param_type_spec.pointer_levels()) {
@@ -1091,7 +1089,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			type_alias.type_node.as<TypeSpecifierNode>();
 		TypeSpecifierNode substituted_type_spec = alias_decl_pattern_spec;
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
-		substituted_type_spec.set_category(substituted_type);
 		std::optional<TemplateTypeArg> rebound_arg;
 		// Function-pointer aliases carry their dependent parameter use inside the
 		// signature; the existing alias-resolution path below preserves that full
@@ -7062,6 +7059,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& member_decl : class_decl.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+		ASTNode full_substituted_type_node = substituteTemplateParameters(
+			decl.type_node(), template_params, template_args_to_use);
 
 		// Substitute template parameter if the member type is a template parameter
 		TypeIndex member_type_index = substitute_template_parameter(
@@ -7219,27 +7218,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
-		// Create the substituted type specifier
-		// IMPORTANT: Preserve the base CV qualifier from the original type!
-		// For example: const T* should become const int* when T=int
-		auto substituted_type = emplace_node<TypeSpecifierNode>(
-			member_type_index,
-			get_type_size_bits(member_type_index.category()),
-			Token(),
-			type_spec.cv_qualifier(), // Preserve const/volatile qualifier
-			ReferenceQualifier::None);
-
-		// Copy pointer levels from the original type specifier
-		auto& substituted_type_spec = substituted_type.as<TypeSpecifierNode>();
-		const TemplateTypeArg* resolved_member_arg =
-			findResolvedTypeTemplateArg(type_spec, template_params, template_args_to_use);
-		for (const auto& ptr_level : type_spec.pointer_levels()) {
-			substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-		}
-
-		// Preserve reference qualifiers from the original type
-		substituted_type_spec.set_reference_qualifier(type_spec.reference_qualifier());
-		applyResolvedTemplateArgTypeMetadata(substituted_type_spec, resolved_member_arg);
+		TypeSpecifierNode substituted_type_spec = full_substituted_type_node.is<TypeSpecifierNode>()
+			? full_substituted_type_node.as<TypeSpecifierNode>()
+			: type_spec;
+		substituted_type_spec.set_type_index(member_type_index);
+		substituted_type_spec.set_size_in_bits(
+			get_type_size_bits(member_type_index.category()));
 
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);

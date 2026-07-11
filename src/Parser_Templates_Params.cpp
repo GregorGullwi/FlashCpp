@@ -2890,7 +2890,6 @@ try_type_template_argument_parse:
 				TypeIndex substituted_index = subst_it->second;
 				TypeCategory substituted_category = substituted_index.category();
 				type_node.set_type_index(substituted_index.withCategory(substituted_category));
-				type_node.set_category(substituted_category);
 				const int substituted_size_bits = getTypeSpecSizeBits(type_node);
 				if (substituted_size_bits > 0) {
 					type_node.set_size_in_bits(substituted_size_bits);
@@ -2992,7 +2991,6 @@ try_type_template_argument_parse:
 					if (substituted_index.is_valid()) {
 						TypeCategory substituted_category = substituted_arg.typeEnum();
 						type_node.set_type_index(substituted_index.withCategory(substituted_category));
-						type_node.set_category(substituted_category);
 						for (const CVQualifier cv : substituted_arg.pointer_cv_qualifiers) {
 							type_node.add_pointer_level(cv);
 						}
