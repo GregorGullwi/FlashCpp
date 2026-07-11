@@ -237,10 +237,19 @@ The active standards-facing `std/test_std_ranges.cpp` failure has moved again:
 - `function 'size' has inconsistent deduced auto return types: first return has
   type 'unknown', but another return has type 'std::ranges::_Size::_Cpo'`
 
-The next slices should reduce the generic constrained overload-resolution path
-behind `invoke` and the CPO-object auto-return deduction path behind
-`ranges::size`, with non-`std` regressions before touching the compiler
-implementation.
+Dependent qualified calls with concrete owners now retain structured lookup
+identity while their call argument packs remain dependent. Known empty
+function parameter packs expand to an empty argument list during
+trailing-return SFINAE, and inherited static member-function templates are
+deduced after substitution. The generic regression is:
+
+- `tests/test_template_dependent_inherited_static_call_pack_ret0.cpp`
+
+The remaining `std::invoke` failure occurs earlier in candidate viability: the
+two-argument overload is rejected with `argument count 2 > parameter count 1`
+because a raw parameter count ignores its trailing function parameter pack.
+The next slice should fix that generic pack-aware count/shape rule. Keep the
+`ranges::size` auto-return issue separate.
 
 A reduced `<utility>` `std::addressof` probe now reaches a separate link
 frontier: duplicate emitted definitions for std inline objects such as
@@ -278,8 +287,8 @@ declarator-shaped pointer-depth/member-class metadata.
 
 ## Priority order
 
-1. Reduce and fix the current `std/test_std_ranges.cpp` `std::invoke`
-   constrained overload-viability failure.
+1. Make function-template candidate argument-count viability account for
+   function parameter packs, then rerun the current `std::invoke` frontier.
 2. Reduce and fix the `ranges::size` CPO-object auto-return deduction issue
    without hardcoding standard-library names.
 3. Keep the cleared auto-return, dependent-alias, alias-brace construction, and

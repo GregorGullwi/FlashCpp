@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
@@ -20,6 +21,26 @@ void applyDeclarationArrayBoundsToTypeSpec(
 	const DeclarationNode& decl,
 	TypeSpecifierNode& type_spec,
 	Parser& parser);
+
+bool Parser::expressionReferencesKnownEmptyFunctionParameterPack(
+	const ASTNode& expression) const {
+	return AstTraversal::visitASTUntil(
+		expression,
+		[&](const ASTNode& node) {
+			if (!node.is<IdentifierNode>()) {
+				return false;
+			}
+			const std::string_view identifier_name =
+				node.as<IdentifierNode>().name();
+			return std::any_of(
+				pack_param_info_.begin(),
+				pack_param_info_.end(),
+				[&](const PackParamInfo& pack_info) {
+					return pack_info.pack_size == 0 &&
+						identifier_name == pack_info.original_name;
+				});
+		});
+}
 
 namespace {
 bool expressionYieldsOrdinaryCallLValue(const ExpressionNode& arg_expr) {
@@ -6303,7 +6324,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (std::holds_alternative<IdentifierNode>(expr)) {
 								const auto& id = std::get<IdentifierNode>(expr);
 								for (const auto& pack_info : pack_param_info_) {
-									if (id.name() == pack_info.original_name && pack_info.pack_size > 0) {
+									if (id.name() == pack_info.original_name) {
 										matching_pack = &pack_info;
 										break;
 									}
@@ -6355,16 +6376,34 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 							}
 						}
+						if (matching_pack->pack_size == 0) {
+							args.pop_back();
+							if (arg_types.size() > args.size()) {
+								arg_types.pop_back();
+							}
+						}
 					} else {
-						// Complex pack expansion: the argument is a complex expression
-						// containing a pack parameter (e.g., identity(args)..., static_cast<Args>(args)...)
-						// Wrap the expression in a PackExpansionExprNode for expansion during template substitution
-						advance(); // consume '...'
-						Token ellipsis_token(Token::Type::Punctuator, "..."sv, 0, 0, 0);
-						ASTNode& last_arg_ref = args[args.size() - 1];
-						auto pack_expansion = emplace_node<ExpressionNode>(
-							PackExpansionExprNode(last_arg_ref, ellipsis_token));
-						last_arg_ref = pack_expansion;
+						const ASTNode& pack_pattern = args[args.size() - 1];
+						const bool expands_known_empty_pack =
+							expressionReferencesKnownEmptyFunctionParameterPack(
+								pack_pattern);
+						if (expands_known_empty_pack) {
+							advance(); // consume '...'
+							args.pop_back();
+							if (arg_types.size() > args.size()) {
+								arg_types.pop_back();
+							}
+						} else {
+							// Complex pack expansion: the argument is a complex expression
+							// containing a pack parameter (e.g., identity(args)..., static_cast<Args>(args)...)
+							// Wrap the expression in a PackExpansionExprNode for expansion during template substitution
+							advance(); // consume '...'
+							Token ellipsis_token(Token::Type::Punctuator, "..."sv, 0, 0, 0);
+							ASTNode& last_arg_ref = args[args.size() - 1];
+							auto pack_expansion = emplace_node<ExpressionNode>(
+								PackExpansionExprNode(last_arg_ref, ellipsis_token));
+							last_arg_ref = pack_expansion;
+						}
 					}
 				}
 

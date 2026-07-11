@@ -3323,6 +3323,8 @@ private:	 // Resume private methods
 		}
 		return std::nullopt;
 	}
+	bool expressionReferencesKnownEmptyFunctionParameterPack(
+		const ASTNode& expression) const;
 
 	// Get the per-template-parameter-pack element count set by try_instantiate_template_explicit.
 	// This is the authoritative count for sizeof...(P) when multiple packs are present,

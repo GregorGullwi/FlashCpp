@@ -3764,6 +3764,31 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
 			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 			FlashCpp::ScopedState guard_sfinae_map(sfinae_type_map_);
+			auto saved_pack_param_info = std::move(pack_param_info_);
+			pack_param_info_.clear();
+			auto restore_pack_param_info = ScopeGuard([&]() {
+				pack_param_info_ = std::move(saved_pack_param_info);
+			});
+			if (deduction_info.has_value() &&
+				deduction_info->function_pack_call_arg_start != SIZE_MAX &&
+				deduction_info->function_pack_call_arg_end != SIZE_MAX) {
+				const size_t function_pack_size =
+					deduction_info->function_pack_call_arg_end -
+					deduction_info->function_pack_call_arg_start;
+				for (const ASTNode& param_node : func_decl.parameter_nodes()) {
+					if (!param_node.is<DeclarationNode>()) {
+						continue;
+					}
+					const DeclarationNode& param_decl =
+						param_node.as<DeclarationNode>();
+					if (param_decl.is_parameter_pack()) {
+						pack_param_info_.push_back({
+							param_decl.identifier_token().value(),
+							deduction_info->function_pack_call_arg_start,
+							function_pack_size});
+					}
+				}
+			}
 			ScopedParserInstantiationContext guard_instantiation_mode(*this, TemplateInstantiationMode::SoftProbe, StringHandle{});
 			parsing_template_depth_ = 0;	 // suppress template body context during SFINAE
 			clearCurrentTemplateParameters();  // No dependent names during SFINAE
