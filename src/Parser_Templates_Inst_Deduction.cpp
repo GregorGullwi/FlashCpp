@@ -45,11 +45,10 @@ static bool isForwardingReferenceParameter(
 	if (!type.is_rvalue_reference() || type.cv_qualifier() != CVQualifier::None)
 		return false;
 
-	const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
-	if (type_info == nullptr)
+	const StringHandle type_name = getStructuredTypeName(type);
+	if (!type_name.isValid())
 		return false;
 
-	const StringHandle type_name = type_info->name();
 	for (const TemplateParameterNode& template_param : template_params) {
 		if (template_param.kind() == TemplateParameterKind::Type &&
 			template_param.nameHandle() == type_name) {

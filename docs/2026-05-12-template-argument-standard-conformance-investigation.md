@@ -248,11 +248,17 @@ deduced after substitution. The generic regression is:
 Direct function-parameter types now preserve their type-template-parameter
 identity on `TypeSpecifierNode`, and shared deduction/materialization consumers
 use `getStructuredTypeName(...)` instead of reconstructing identity from token
-spelling. Fixed forwarding references before a trailing function parameter
+spelling. Direct substitution uses that same scoped binding, while a concrete
+`TypeIndex` rebind clears obsolete parameter identity. Fixed forwarding references before a trailing function parameter
 pack use their exact parameter-to-argument mapping and the C++20 lvalue/rvalue
 deduction adjustment. The generic regression is:
 
 - `tests/test_function_template_fixed_param_before_pack_ret0.cpp`
+- `tests/test_const_rvalue_reference_before_pack_lvalue_fail.cpp`
+
+Coverage distinguishes lvalue, const-lvalue, and rvalue deduction, includes a
+non-empty trailing pack and an explicit `T&`, and verifies that `const T&&`
+cannot bind an lvalue.
 
 The one-argument `std::invoke` overload is correctly rejected for a
 two-argument call. Its variadic overload passes pack-aware count/shape

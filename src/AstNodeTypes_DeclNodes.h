@@ -1776,9 +1776,9 @@ public:
 	bool is_pack_expansion() const { return is_pack_expansion_; }
 	void set_pack_expansion(bool is_pack) { is_pack_expansion_ = is_pack; }
 
-	// Structured identity for a type template parameter such as T in T&&.
-	// This remains stable when a dependent TypeInfo entry is unavailable during
-	// replay and avoids reconstructing semantic identity from token spelling.
+	// Scoped binding identity for a type template parameter such as T in T&&.
+	// Consumers resolve this handle against the active template parameter list,
+	// so replay does not depend on token spelling or a transient TypeInfo entry.
 	bool has_template_parameter_identity() const { return template_parameter_name_.isValid(); }
 	StringHandle template_parameter_name() const { return template_parameter_name_; }
 	void set_template_parameter_identity(StringHandle name) { template_parameter_name_ = name; }
@@ -1796,7 +1796,12 @@ public:
 		}
 	}
 
-	void set_type_index(TypeIndex index) { type_index_ = index; }
+	void set_type_index(TypeIndex index) {
+		if (template_parameter_name_.isValid() && index.index() != type_index_.index()) {
+			clear_template_parameter_identity();
+		}
+		type_index_ = index;
+	}
 	void set_category(TypeCategory cat) { type_index_ = type_index_.withCategory(cat); }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
@@ -1833,7 +1838,7 @@ private:
 	bool has_unsized_outer_array_dimension_ = false;	// True for parser-only shapes like T[][N]
 	std::optional<FunctionSignature> function_signature_;  // For function pointers
 	bool is_pack_expansion_ = false;	 // True if this type is followed by ... (pack expansion)
-	StringHandle template_parameter_name_; // Bound type-template parameter identity
+	StringHandle template_parameter_name_; // Scoped type-template parameter binding
 	std::optional<StringHandle> member_class_name_;	// For pointer-to-member types (int Class::*)
 	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
 
@@ -1844,9 +1849,9 @@ public:
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
 
-// Return the structured identity carried by a type specifier. Direct template
-// parameters keep their declaration identity on the node; other dependent
-// types use their registered semantic TypeInfo identity.
+// Return the structured name carried by a type specifier. Direct template
+// parameters keep their scoped binding on the node; other dependent types use
+// their registered semantic TypeInfo identity.
 inline StringHandle getStructuredTypeName(const TypeSpecifierNode& type_spec) {
 	if (type_spec.has_template_parameter_identity()) {
 		return type_spec.template_parameter_name();

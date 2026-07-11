@@ -272,12 +272,19 @@ Function-template parameter types now preserve direct template-parameter
 identity on `TypeSpecifierNode`. Downstream deduction and member-template
 materialization consume that identity through `getStructuredTypeName(...)`
 instead of reconstructing it from a token spelling or depending on a transient
-dependent `TypeInfo` entry. Fixed forwarding-reference parameters are deduced
+dependent `TypeInfo` entry. Central direct substitution uses the same scoped
+binding, and rebinding a type specifier to a different concrete `TypeIndex`
+invalidates the old parameter identity. Fixed forwarding-reference parameters are deduced
 against their exact call-argument slots before a trailing function parameter
 pack, with the C++20 lvalue/rvalue adjustment applied explicitly. This is
 covered by:
 
 - `tests/test_function_template_fixed_param_before_pack_ret0.cpp`
+- `tests/test_const_rvalue_reference_before_pack_lvalue_fail.cpp`
+
+The positive regression distinguishes lvalue, const-lvalue, and rvalue
+deduction, exercises non-empty packs and an explicit `T&` argument, and the
+negative regression keeps `const T&&` out of the forwarding-reference path.
 
 The one-argument `std::invoke` candidate is still correctly rejected for the
 two-argument call. The variadic candidate now passes pack-aware count/shape

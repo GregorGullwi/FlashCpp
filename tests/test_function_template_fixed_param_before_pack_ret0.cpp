@@ -23,13 +23,46 @@ struct Sum {
 	}
 };
 
+template <class T>
+struct ReferenceKind {
+	static constexpr int value = 0;
+};
+
+template <class T>
+struct ReferenceKind<T&> {
+	static constexpr int value = 1;
+};
+
+template <class T>
+struct ReferenceKind<const T&> {
+	static constexpr int value = 2;
+};
+
+template <class First, class... Rest>
+constexpr int deductionCode(First&&, Rest&&...) {
+	return ReferenceKind<First>::value * 10 + sizeof...(Rest);
+}
+
 int main() {
 	Sum sum;
 	int value = 42;
+	const int const_value = 42;
 	using LvalueResult = decltype(invokeLike(sum, value));
 	using RvalueResult = decltype(invokeLike(Sum{}, 42));
 	if (sizeof(LvalueResult) != sizeof(int)) {
 		return 1;
 	}
-	return sizeof(RvalueResult) == sizeof(int) ? 0 : 2;
+	if (sizeof(RvalueResult) != sizeof(int)) {
+		return 2;
+	}
+	if (deductionCode(value, static_cast<short>(1), Sum{}) != 12) {
+		return 3;
+	}
+	if (deductionCode(const_value, 1) != 21) {
+		return 4;
+	}
+	if (deductionCode(42, 1) != 1) {
+		return 5;
+	}
+	return deductionCode<int&>(value) == 10 ? 0 : 6;
 }

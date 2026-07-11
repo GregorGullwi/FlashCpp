@@ -107,9 +107,12 @@ Function-parameter type template identities now travel on `TypeSpecifierNode`
 and are consumed through the shared `getStructuredTypeName(...)` helper during
 deduction and member-template materialization. Fixed forwarding references
 before a trailing function parameter pack use their exact call-argument slots
-and the C++20 lvalue/rvalue deduction rule. Regression:
+and the C++20 lvalue/rvalue deduction rule. Direct substitution consumes the
+same scoped binding, and concrete type rebinding clears stale parameter
+identity. Regressions:
 
 - `tests/test_function_template_fixed_param_before_pack_ret0.cpp`
+- `tests/test_const_rvalue_reference_before_pack_lvalue_fail.cpp`
 
 Fresh individual runner wall times (`x64/Sharded/FlashCppMSVC.exe`, MSVC STL
 14.44; includes FlashCpp compile, MSVC link, and execution) were:
@@ -123,7 +126,7 @@ Fresh individual runner wall times (`x64/Sharded/FlashCppMSVC.exe`, MSVC STL
 | `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~19.5s warm | Current first diagnostics are all three `ranges::empty` template overloads failing, followed by unresolved `auto` reaching MSVC mangling in `view_interface`. |
 | `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile error | ~28.4s warm before the fix / ~29.0s after | The one-argument `std::invoke` candidate is correctly rejected; the variadic candidate reaches later `_Invoker1<...>::_Call` substitution failure. The independent `ranges::size` inconsistent-auto-return diagnostic remains. |
 
-Full Windows validation after the change: 2750 regular tests passed, all 235
+Full Windows validation after the change: 2750 regular tests passed, all 236
 expected-fail tests failed as expected, with no crashes or return mismatches.
 
 ### 2026-05-28 Linux/libstdc++ template-substitution metadata follow-up
