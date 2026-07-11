@@ -6378,7 +6378,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 						if (matching_pack->pack_size == 0) {
 							args.pop_back();
-							if (!arg_types.empty()) {
+							if (arg_types.size() > args.size()) {
 								arg_types.pop_back();
 							}
 						}
@@ -6390,7 +6390,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						if (expands_known_empty_pack) {
 							advance(); // consume '...'
 							args.pop_back();
-							if (!arg_types.empty()) {
+							if (arg_types.size() > args.size()) {
 								arg_types.pop_back();
 							}
 						} else {
