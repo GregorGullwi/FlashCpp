@@ -3198,15 +3198,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						alias_target_name = alias_target_info->name();
 					}
 					const StringHandle alias_token_name = alias_type_spec.token().handle();
-					for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
-						const StringHandle parameter_name = template_params[param_idx].nameHandle();
-						if (parameter_name != alias_token_name && parameter_name != alias_target_name) {
-							continue;
-						}
-						if (param_idx >= template_args_for_pattern.size()) {
-							throw InternalError("Partial-specialization alias parameter has no semantic binding");
-						}
-						const TemplateTypeArg& concrete_arg = template_args_for_pattern[param_idx];
+					auto binding = pattern_match_opt->substitutions.find(alias_token_name);
+					if (binding == pattern_match_opt->substitutions.end() &&
+						alias_target_name.isValid()) {
+						binding = pattern_match_opt->substitutions.find(alias_target_name);
+					}
+					if (binding != pattern_match_opt->substitutions.end()) {
+						const TemplateTypeArg& concrete_arg = binding->second;
 						substituted_type = concrete_arg.typeEnum();
 						substituted_type_index = concrete_arg.type_index;
 						substituted_size = is_struct_type(substituted_type)
@@ -3216,8 +3214,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_size = substituted_type_info->sizeInBits().value;
 						}
 						FLASH_LOG(Templates, Debug, "Substituted partial-specialization alias parameter '",
-							StringTable::getStringView(parameter_name), "' from its semantic binding");
-						break;
+							StringTable::getStringView(binding->first), "' from its semantic binding");
 					}
 				}
 

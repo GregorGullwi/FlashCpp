@@ -498,16 +498,17 @@ struct TemplatePattern {
 			const TypeInfo* pattern_arg_type_info = tryGetTypeInfo(pattern_arg.type_index);
 			const std::optional<StringHandle> pattern_parameter_name =
 				getPatternParameterName(pattern_arg, template_param_names);
+			const bool pattern_arg_is_template_instantiation =
+				pattern_arg_type_info && pattern_arg_type_info->isTemplateInstantiation();
 			const bool is_direct_type_template_parameter =
 				pattern_arg.is_dependent &&
 				pattern_arg.isTypeArgument() &&
 				pattern_parameter_name.has_value();
 			const bool pattern_arg_is_deduced_type_param =
 				is_direct_type_template_parameter ||
-				(pattern_arg.category() == TypeCategory::UserDefined) ||
-				(pattern_arg.category() == TypeCategory::Invalid &&
-				 pattern_arg_type_info &&
-				 !pattern_arg_type_info->isTemplateInstantiation());
+				((pattern_arg.category() == TypeCategory::UserDefined ||
+				  pattern_arg.category() == TypeCategory::Invalid) &&
+				 !pattern_arg_is_template_instantiation);
 			// A bare dependent type parameter represents the complete template
 			// argument.  For example, the pattern `Invoker<Callable, First>` must
 			// match `Invoker<F&, T&>` and preserve those reference qualifiers in the
@@ -625,9 +626,10 @@ struct TemplatePattern {
 			// Struct-type template instantiation patterns (e.g., Pair<A,B> where Pair is a struct
 			// template) must reach the template instantiation handler below, not the concrete
 			// type check. Detect that case up front.
-			bool is_struct_template_inst = (is_struct_type(pattern_arg.category()) || pattern_arg.category() == TypeCategory::Invalid) &&
-										   pattern_arg_type_info &&
-										   pattern_arg_type_info->isTemplateInstantiation();
+			const bool is_struct_template_inst =
+				(is_struct_type(pattern_arg.category()) ||
+				 pattern_arg.category() == TypeCategory::Invalid) &&
+				pattern_arg_is_template_instantiation;
 
 			// pattern_arg is a template parameter placeholder if it is UserDefined, or if category is
 			// Invalid (legacy TypeIndex) and the type_index points to a non-instantiation struct entry.
