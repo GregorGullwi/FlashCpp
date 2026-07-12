@@ -165,6 +165,7 @@ struct TemplateTypeArg {
 	CVQualifier cv_qualifier;  // const/volatile qualifiers
 	bool is_array;
 	std::vector<size_t> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
+	InlineVector<StringHandle, 4> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 	MemberPointerKind member_pointer_kind;
 	StringHandle member_class_name;
 
@@ -390,6 +391,11 @@ struct TemplateTypeArg {
 		for (size_t dim : array_dimensions) {
 			h ^= std::hash<size_t>{}(dim) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
+		if (is_dependent) {
+			for (StringHandle dimension_parameter_name : array_dimension_parameter_names) {
+				h ^= std::hash<StringHandle>{}(dimension_parameter_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
+		}
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<bool>{}(member_class_name.isValid()) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (member_class_name.isValid()) {
@@ -439,6 +445,7 @@ struct TemplateTypeArg {
 			  cv_qualifier == other.cv_qualifier &&
 			  is_array == other.is_array &&
 			  array_dimensions == other.array_dimensions &&
+			  (!is_dependent || array_dimension_parameter_names == other.array_dimension_parameter_names) &&
 			  member_pointer_kind == other.member_pointer_kind &&
 			  member_class_name == other.member_class_name &&
 			  is_value == other.is_value &&
@@ -765,6 +772,7 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 	if (pattern_arg.is_array) {
 		deduced.is_array = false;
 		deduced.array_dimensions.clear();
+		deduced.array_dimension_parameter_names.clear();
 	}
 	// Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
 	if (pattern_arg.cv_qualifier != CVQualifier::None) {
@@ -1234,6 +1242,9 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 	pattern_arg.array_dimensions.assign(
 		dependent_pattern.array_dimensions.begin(),
 		dependent_pattern.array_dimensions.end());
+	pattern_arg.array_dimension_parameter_names.assign(
+		dependent_pattern.array_dimension_parameter_names.begin(),
+		dependent_pattern.array_dimension_parameter_names.end());
 	pattern_arg.is_array = dependent_pattern.is_array;
 	pattern_arg.function_signature = dependent_pattern.function_signature;
 	pattern_arg.dependent_name = dependent_pattern.dependent_name;

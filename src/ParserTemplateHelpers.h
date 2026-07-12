@@ -3519,6 +3519,8 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 		auto substituted_param_decl = emplace_node<DeclarationNode>(
 			substituted_param_type_node,
 			param_decl.identifier_token());
+		substituted_param_decl.as<DeclarationNode>().set_parameter_pack(
+			param_decl.is_parameter_pack());
 		if (param_decl.has_default_value()) {
 			if (default_argument_policy == SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters) {
 				ASTNode substituted_default = substituteTemplateParameters(

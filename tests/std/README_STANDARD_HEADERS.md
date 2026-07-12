@@ -101,32 +101,37 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-### 2026-07-11 Windows/MSVC structured template-parameter identity follow-up
+### Current Windows/MSVC snapshot (2026-07-12)
 
-Function-parameter type template identities now travel on `TypeSpecifierNode`
-and are consumed through the shared `getStructuredTypeName(...)` helper during
-deduction and member-template materialization. Fixed forwarding references
-before a trailing function parameter pack use their exact call-argument slots
-and the C++20 lvalue/rvalue deduction rule. Direct substitution consumes the
-same scoped binding, and concrete type rebinding clears stale parameter
-identity. Regressions:
+Structured template-parameter identity is preserved through deduction and
+substitution. Bare partial-specialization parameters now bind complete template
+arguments, including references, while explicit pattern qualifiers remain
+structural requirements. Substituted member-function declarations also retain
+their function-parameter-pack metadata, including for empty packs. Regressions:
 
 - `tests/test_function_template_fixed_param_before_pack_ret0.cpp`
 - `tests/test_const_rvalue_reference_before_pack_lvalue_fail.cpp`
+- `tests/test_template_partial_specialization_inherited_static_call_pack_ret0.cpp`
+- `tests/test_template_partial_specialization_reordered_identity_ret0.cpp`
+- `tests/test_template_partial_specialization_array_bound_identity_ret0.cpp`
 
-Fresh individual runner wall times (`x64/Sharded/FlashCppMSVC.exe`, MSVC STL
-14.44; includes FlashCpp compile, MSVC link, and execution) were:
+Individual runner wall times (`x64/Sharded/FlashCppMSVC.exe`, MSVC STL 14.44;
+compiler, link, and execution included):
 
 | Header/Test | Status | Runner wall time | Current note |
 |-------------|--------|------------------|--------------|
-| `<cstddef>` (`test_cstddef.cpp`) | ✅ Pass | ~35.7s cold / includes ~30.5s compiler rebuild | Returned 3 as expected. |
-| `<cstdio>` (`test_cstdio_puts.cpp`) | ✅ Pass | ~8.7s warm | Compiles, links, and returns 0. |
-| `<cstdlib>` (`test_cstdlib.cpp`) | ✅ Pass | ~3.9s warm | Compiles, links, and returns 0. |
-| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~4.8s warm | Compiles, links, and returns 0. |
-| `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~19.5s warm | Current first diagnostics are all three `ranges::empty` template overloads failing, followed by unresolved `auto` reaching MSVC mangling in `view_interface`. |
-| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile error | ~28.4s warm before the fix / ~29.0s after | The one-argument `std::invoke` candidate is correctly rejected; the variadic candidate reaches later `_Invoker1<...>::_Call` substitution failure. The independent `ranges::size` inconsistent-auto-return diagnostic remains. |
+| `<cstddef>` (`test_cstddef.cpp`) | ✅ Pass | ~3.22s | Returned 3 as expected. |
+| `<cstdio>` (`test_cstdio_puts.cpp`) | ✅ Pass | ~9.39s | Compiles, links, and returns 0. |
+| `<cstdlib>` (`test_cstdlib.cpp`) | ✅ Pass | ~3.71s | Compiles, links, and returns 0. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~5.07s | Compiles, links, and returns 0. |
+| `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~22.97s | `ranges::empty` overload viability, then unresolved `auto` during `view_interface` mangling. |
+| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile error | ~20.80s | Current diagnostics are the `make_signed<T>` constraint/static-assert path and a scoped-enum `_St` equality diagnostic in tuple `_Equals`; the independent `ranges::size` issue is not yet isolated by this run. |
 
-Full Windows validation after the change: 2750 regular tests passed, all 236
+The separate `std::invoke` frontier remains its variadic
+`_Invoker1<...>::_Call` trailing-return/noexcept substitution. The one-argument
+candidate is correctly rejected for the two-argument call.
+
+Full Windows validation after the change: 2753 regular tests passed, all 236
 expected-fail tests failed as expected, with no crashes or return mismatches.
 
 ### 2026-05-28 Linux/libstdc++ template-substitution metadata follow-up
