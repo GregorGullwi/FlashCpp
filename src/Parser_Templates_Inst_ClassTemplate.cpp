@@ -1620,13 +1620,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Try to match a specialization pattern and get the substitution mapping
 	{
 		PROFILE_TEMPLATE_SPECIALIZATION_MATCH();
-		std::unordered_map<std::string, TemplateTypeArg> param_substitutions;
 		FLASH_LOG(Templates, Debug, "Looking for pattern match for ", template_name, " with ", filled_args_for_pattern_match.size(), " args (after default fill-in)");
-		auto pattern_match_opt = gTemplateRegistry.matchSpecializationPattern(template_name, filled_args_for_pattern_match);
+		auto pattern_match_opt = gTemplateRegistry.matchSpecializationPatternWithBindings(
+			template_name,
+			filled_args_for_pattern_match);
 		if (pattern_match_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "Found pattern match!");
 			// Found a matching pattern - we need to instantiate it with concrete types
-			ASTNode& pattern_node = *pattern_match_opt;
+			ASTNode& pattern_node = pattern_match_opt->node;
+			const TemplatePattern& matched_pattern = *pattern_match_opt->pattern;
 
 			// Handle both StructDeclarationNode (top-level partial specialization) and
 			// TemplateClassDeclarationNode (member template partial specialization)
@@ -1653,130 +1655,50 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					StringTable::getOrInternStringHandle(template_name));
 			}
 
-			// Get template parameters from the pattern (partial specialization), NOT the primary template
-			// The pattern stores its own template parameters (e.g., <typename First, typename... Rest>)
-			InlineVector<TemplateParameterNode, 4> pattern_template_params;
-			auto patterns_it = gTemplateRegistry.specialization_patterns_.find(template_name);
-			if (patterns_it != gTemplateRegistry.specialization_patterns_.end()) {
-				// Find the matching pattern to get its template params
-				for (const auto& pattern : patterns_it->second) {
-					// Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
-					const StructDeclarationNode* spec_struct_ptr = nullptr;
-					if (pattern.specialized_node.is<StructDeclarationNode>()) {
-						spec_struct_ptr = &pattern.specialized_node.as<StructDeclarationNode>();
-					} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
-						spec_struct_ptr = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
-					}
-					if (spec_struct_ptr && spec_struct_ptr == &pattern_struct) {
-						pattern_template_params = pattern.template_params;
-						break;
-					}
-				}
-			}
-
-			// Fall back to primary template params if pattern params not found
-			if (pattern_template_params.empty()) {
-				// Check ALL template overloads to find one with named parameters
-				// Forward declarations like `template<typename...> class tuple;` register with
-				// anonymous names (e.g., __anon_type_64), while definitions have real names (e.g., _Elements).
-				// Prefer the definition's parameters for correct sizeof...() resolution.
-				const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(template_name);
-				if (all_tmpls) {
-					const TemplateClassDeclarationNode* best = nullptr;
-					for (const auto& tmpl_node : *all_tmpls) {
-						if (tmpl_node.is<TemplateClassDeclarationNode>()) {
-							const auto& tmpl_class = tmpl_node.as<TemplateClassDeclarationNode>();
-							if (!best) {
-								best = &tmpl_class;
-							} else {
-								// Prefer template with named parameters (not __anon_type_)
-								bool current_has_anon = false;
-								bool best_has_anon = false;
-								for (const auto& param : tmpl_class.template_parameters()) {
-									if (param.name().starts_with("__anon_type_"))
-										current_has_anon = true;
-								}
-								for (const auto& param : best->template_parameters()) {
-									if (param.name().starts_with("__anon_type_"))
-										best_has_anon = true;
-								}
-								if (best_has_anon && !current_has_anon)
-									best = &tmpl_class;
-							}
-						}
-					}
-					if (best) {
-						pattern_template_params = best->template_parameters();
-					}
-				}
-			}
-			const auto& template_params = pattern_template_params;
-
-			InlineVector<TemplateTypeArg, 4> pattern_args_for_member_copy;
-			if (patterns_it != gTemplateRegistry.specialization_patterns_.end()) {
-				for (const auto& pattern : patterns_it->second) {
-					const StructDeclarationNode* spec_struct_ptr = nullptr;
-					if (pattern.specialized_node.is<StructDeclarationNode>()) {
-						spec_struct_ptr = &pattern.specialized_node.as<StructDeclarationNode>();
-					} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
-						spec_struct_ptr = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
-					}
-					if (spec_struct_ptr &&
-						(spec_struct_ptr == &pattern_struct || spec_struct_ptr->name() == pattern_struct.name())) {
-						pattern_args_for_member_copy = pattern.pattern_args;
-						break;
-					}
-				}
-			}
+			const auto& template_params = matched_pattern.template_params;
+			const auto& pattern_args = matched_pattern.pattern_args;
 			std::vector<TemplateTypeArg> template_args_for_member_copy_storage;
-			if (!pattern_args_for_member_copy.empty()) {
-				template_args_for_member_copy_storage.reserve(template_params.size());
-				// Use filled_args_for_pattern_match (primary-template-aligned, with defaults filled
-				// in) as the source of concrete values and as the loop upper bound.  Using the raw
-				// template_args span instead caused a deduction failure when the leading pattern
-				// arguments are concrete (e.g. enable_if<true, T>) and the instantiation relies on
-				// default arguments (e.g. enable_if<true> -> T=void): the loop would terminate
-				// before reaching the dependent position, leaving the storage empty and falling
-				// back to the wrong arg vector.
-				std::span<const TemplateTypeArg> concrete_args = filled_args_for_pattern_match;
-				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
-					std::optional<TemplateTypeArg> deduced_arg;
-					for (size_t pattern_idx = 0;
-						 pattern_idx < pattern_args_for_member_copy.size() && pattern_idx < concrete_args.size();
-						 ++pattern_idx) {
-						const TemplateTypeArg& pattern_arg = pattern_args_for_member_copy[pattern_idx];
-						if (!pattern_arg.is_dependent) {
-							continue;
-						}
-
-						size_t dependent_param_index = 0;
-						for (size_t i = 0; i < pattern_idx; ++i) {
-							if (pattern_args_for_member_copy[i].is_dependent) {
-								dependent_param_index++;
-							}
-						}
-
-						if (dependent_param_index == template_param_slot) {
-							if (template_params[template_param_slot].is_variadic()) {
-								for (size_t pack_idx = pattern_idx; pack_idx < concrete_args.size(); ++pack_idx) {
-									template_args_for_member_copy_storage.push_back(
-										deduceArgFromPattern(concrete_args[pack_idx], pattern_arg));
-								}
-								deduced_arg.reset();
-								break;
-							}
-							deduced_arg = deduceArgFromPattern(concrete_args[pattern_idx], pattern_arg);
-							break;
-						}
+			template_args_for_member_copy_storage.reserve(template_params.size());
+			for (const TemplateParameterNode& template_param : template_params) {
+				const StringHandle parameter_name = template_param.nameHandle();
+				if (!template_param.is_variadic()) {
+					auto binding = pattern_match_opt->substitutions.find(parameter_name);
+					if (binding == pattern_match_opt->substitutions.end()) {
+						throw InternalError("Partial-specialization parameter has no deduced semantic binding");
 					}
+					template_args_for_member_copy_storage.push_back(binding->second);
+					continue;
+				}
 
-					if (deduced_arg.has_value()) {
-						template_args_for_member_copy_storage.push_back(*deduced_arg);
+				bool found_pack_pattern = false;
+				for (size_t pattern_idx = 0; pattern_idx < pattern_args.size(); ++pattern_idx) {
+					auto pattern_parameter_name = TemplatePattern::getPatternParameterName(
+						pattern_args[pattern_idx],
+						matched_pattern.getTemplateParamNames());
+					if (!pattern_parameter_name.has_value() ||
+						*pattern_parameter_name != parameter_name) {
+						continue;
+					}
+					found_pack_pattern = true;
+					for (size_t pack_idx = pattern_idx;
+						 pack_idx < filled_args_for_pattern_match.size();
+						 ++pack_idx) {
+						template_args_for_member_copy_storage.push_back(
+							deduceArgFromPattern(
+								filled_args_for_pattern_match[pack_idx],
+								pattern_args[pattern_idx]));
+					}
+					break;
+				}
+				if (!found_pack_pattern) {
+					auto binding = pattern_match_opt->substitutions.find(parameter_name);
+					if (binding != pattern_match_opt->substitutions.end()) {
+						template_args_for_member_copy_storage.push_back(binding->second);
 					}
 				}
 			}
 			std::span<const TemplateTypeArg> template_args_for_member_copy =
-				template_args_for_member_copy_storage.empty() ? template_args : std::span<const TemplateTypeArg>(template_args_for_member_copy_storage);
+				template_args_for_member_copy_storage;
 			// Push class template pack info for specialization path
 			ClassTemplatePackGuard spec_pack_guard(class_template_pack_stack_);
 			bool has_spec_pack_info = false;
@@ -1786,8 +1708,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					const auto& tparam = template_params[i];
 					if (tparam.is_variadic()) {
-						size_t pack_size = template_args.size() >= non_variadic_count
-											   ? template_args.size() - non_variadic_count
+						size_t pack_size = template_args_for_member_copy_storage.size() >= non_variadic_count
+											   ? template_args_for_member_copy_storage.size() - non_variadic_count
 											   : 0;
 						pack_infos.push_back({tparam.name(), pack_size});
 					} else {
@@ -2582,7 +2504,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												non_variadic_count++;
 											}
 										}
-										return template_args.size() - non_variadic_count;
+										return template_args_for_member_copy.size() - non_variadic_count;
 									}
 								}
 								return std::nullopt;
@@ -2715,7 +2637,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 								const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 								FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
-								if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args, template_params)) {
+								if (auto subst = substitute_template_param_in_initializer(tparam_ref.param_name().view(), template_args_for_member_copy, template_params)) {
 									substituted_initializer = subst;
 									FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", tparam_ref.param_name(), "'");
 								}
@@ -2725,7 +2647,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 								std::string_view id_name = id_node.name();
 								FLASH_LOG(Templates, Debug, "Static member initializer contains IdentifierNode: ", id_name);
-								if (auto subst = substitute_template_param_in_initializer(id_name, template_args, template_params)) {
+								if (auto subst = substitute_template_param_in_initializer(id_name, template_args_for_member_copy, template_params)) {
 									substituted_initializer = subst;
 									FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", id_name, "' (template parameter)");
 								}
@@ -2760,10 +2682,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										}
 									}
 
-									for (size_t i = non_variadic_count; i < template_args.size() && all_values_found; ++i) {
-										if (template_args[i].is_value) {
-											pack_values.push_back(template_args[i].value);
-											FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args[i].value);
+									for (size_t i = non_variadic_count; i < template_args_for_member_copy.size() && all_values_found; ++i) {
+										if (template_args_for_member_copy[i].is_value) {
+											pack_values.push_back(template_args_for_member_copy[i].value);
+											FLASH_LOG(Templates, Debug, "Pack value[", i - non_variadic_count, "] = ", template_args_for_member_copy[i].value);
 										} else {
 											all_values_found = false;
 										}
@@ -2795,8 +2717,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										for (size_t p = 0; p < template_params.size(); ++p) {
 											const TemplateParameterNode& tparam = template_params[p];
 											if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
-												if (p < template_args.size() && template_args[p].is_value) {
-													cond_value = template_args[p].value;
+												if (p < template_args_for_member_copy.size() && template_args_for_member_copy[p].is_value) {
+													cond_value = template_args_for_member_copy[p].value;
 													FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
 												}
 												break;
@@ -2811,8 +2733,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										for (size_t p = 0; p < template_params.size(); ++p) {
 											const TemplateParameterNode& tparam = template_params[p];
 											if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
-												if (p < template_args.size() && template_args[p].is_value) {
-													cond_value = template_args[p].value;
+												if (p < template_args_for_member_copy.size() && template_args_for_member_copy[p].is_value) {
+													cond_value = template_args_for_member_copy[p].value;
 													FLASH_LOG(Templates, Debug, "Found template param value: ", *cond_value);
 												}
 												break;
@@ -2852,7 +2774,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // still need template parameter substitution (e.g., T → int).
 						if (substituted_initializer.has_value()) {
 							substituted_initializer = substituteTemplateParameters(
-							substituted_initializer.value(), template_params, template_args);
+							substituted_initializer.value(), template_params, template_args_for_member_copy);
 							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member '",
 									  static_member.getName(), "' initializer");
 						}
@@ -2870,7 +2792,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 							original_type_spec.set_type_index(static_member.type_index);
 							TypeIndex new_type_index = substitute_template_parameter(
-								original_type_spec, template_params, template_args);
+								original_type_spec, template_params, template_args_for_member_copy);
 							if (new_type_index != static_member.type_index) {
 								substituted_type_index = new_type_index;
 								substituted_size = get_substituted_type_size_bytes(new_type_index);
@@ -3224,79 +3146,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
-			// Register type aliases from the pattern with qualified names
-			// We need the pattern_args to map template parameters to template arguments
-			InlineVector<TemplateTypeArg, 4> pattern_args;
-			auto patterns_it_for_alias = gTemplateRegistry.specialization_patterns_.find(template_name);
-			if (patterns_it_for_alias != gTemplateRegistry.specialization_patterns_.end()) {
-				for (const auto& pattern : patterns_it_for_alias->second) {
-					// Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
-					const StructDeclarationNode* spec_struct_ptr_alias = nullptr;
-					if (pattern.specialized_node.is<StructDeclarationNode>()) {
-						spec_struct_ptr_alias = &pattern.specialized_node.as<StructDeclarationNode>();
-					} else if (pattern.specialized_node.is<TemplateClassDeclarationNode>()) {
-						spec_struct_ptr_alias = &pattern.specialized_node.as<TemplateClassDeclarationNode>().class_decl_node();
-					}
-					if (spec_struct_ptr_alias &&
-						(spec_struct_ptr_alias == &pattern_struct || spec_struct_ptr_alias->name() == pattern_struct.name())) {
-						pattern_args = pattern.pattern_args;
-						break;
-					}
-				}
-			}
-
-			// Partial specializations receive raw concrete instantiation args
-			// (e.g. [int, double] for Box<int, double>) while template_params describe
-			// only the specialization's deduced parameters (e.g. [T] for Box<int, T>).
-			// Build one arg vector aligned with template_params and reuse it across the
-			// sema-owned AST copy path so bindings stay positional.
-			std::vector<TemplateTypeArg> template_args_for_pattern_storage;
-			if (!pattern_args.empty()) {
-				template_args_for_pattern_storage.reserve(template_params.size());
-				// Use filled_args_for_pattern_match (primary-template-aligned, with defaults filled
-				// in) as the concrete-arg source and loop bound.  The raw template_args span only
-				// covers explicitly supplied arguments; when a leading pattern argument is concrete
-				// (e.g. enable_if<true, T>) and the trailing dependent argument maps to a
-				// defaulted primary-template parameter, the old bound cut the loop short before the
-				// dependent position, leaving the storage empty and causing the fallback below to
-				// yield an incorrect specialization-aligned arg vector.
-				std::span<const TemplateTypeArg> concrete_args = filled_args_for_pattern_match;
-				for (size_t template_param_slot = 0; template_param_slot < template_params.size(); ++template_param_slot) {
-					std::optional<TemplateTypeArg> deduced_arg;
-					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < concrete_args.size(); ++pattern_idx) {
-						const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
-						if (!pattern_arg.is_dependent) {
-							continue;
-						}
-
-						size_t dependent_param_index = 0;
-						for (size_t i = 0; i < pattern_idx; ++i) {
-							if (pattern_args[i].is_dependent) {
-								dependent_param_index++;
-							}
-						}
-
-						if (dependent_param_index == template_param_slot) {
-							if (template_params[template_param_slot].is_variadic()) {
-								for (size_t pack_idx = pattern_idx; pack_idx < concrete_args.size(); ++pack_idx) {
-									template_args_for_pattern_storage.push_back(
-										deduceArgFromPattern(concrete_args[pack_idx], pattern_arg));
-								}
-								deduced_arg.reset();
-								break;
-							}
-							deduced_arg = deduceArgFromPattern(concrete_args[pattern_idx], pattern_arg);
-							break;
-						}
-					}
-
-					if (deduced_arg.has_value()) {
-						template_args_for_pattern_storage.push_back(*deduced_arg);
-					}
-				}
-			}
+			// Reuse the matcher-produced, specialization-parameter-aligned bindings
+			// across member copying, aliases, and semantic substitution.
 			std::span<const TemplateTypeArg> template_args_for_pattern =
-				template_args_for_pattern_storage.empty() ? template_args : std::span<const TemplateTypeArg>(template_args_for_pattern_storage);
+				template_args_for_member_copy;
 			StructTypeInfo* instantiated_struct_info_mut = struct_info.get();
 			const StructTypeInfo* instantiated_struct_info = instantiated_struct_info_mut;
 			auto [effective_pattern_template_params, effective_pattern_template_args_storage] =
@@ -3337,96 +3190,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_size);
 
 				// Check if the alias type is a template parameter that needs substitution
-				if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template) &&
-					!filled_args_for_pattern_match.empty() &&
-					!pattern_args.empty()) {
-					bool alias_refers_to_template_parameter = false;
+				if (alias_type_spec.category() == TypeCategory::UserDefined ||
+					alias_type_spec.category() == TypeCategory::TypeAlias ||
+					alias_type_spec.category() == TypeCategory::Template) {
 					StringHandle alias_target_name{};
 					if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_type_spec.type_index())) {
 						alias_target_name = alias_target_info->name();
 					}
-					StringHandle alias_token_name = alias_type_spec.token().handle();
-					auto applyTemplateArgAliasSubstitution = [&](size_t pattern_idx, std::string_view parameter_name) {
-						const TemplateTypeArg& concrete_arg = filled_args_for_pattern_match[pattern_idx];
+					const StringHandle alias_token_name = alias_type_spec.token().handle();
+					for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
+						const StringHandle parameter_name = template_params[param_idx].nameHandle();
+						if (parameter_name != alias_token_name && parameter_name != alias_target_name) {
+							continue;
+						}
+						if (param_idx >= template_args_for_pattern.size()) {
+							throw InternalError("Partial-specialization alias parameter has no semantic binding");
+						}
+						const TemplateTypeArg& concrete_arg = template_args_for_pattern[param_idx];
 						substituted_type = concrete_arg.typeEnum();
 						substituted_type_index = concrete_arg.type_index;
-						if (!is_struct_type(substituted_type)) {
-							substituted_size = get_type_size_bits(substituted_type);
-						} else {
-							substituted_size = 0;
-							if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
-								substituted_size = sub_ti->sizeInBits().value;
-							}
+						substituted_size = is_struct_type(substituted_type)
+							? 0
+							: get_type_size_bits(substituted_type);
+						if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
+							substituted_size = substituted_type_info->sizeInBits().value;
 						}
-						FLASH_LOG(Templates, Debug, "Substituted template parameter '",
-								  parameter_name,
-								  "' at pattern position ", pattern_idx, " with type=", static_cast<int>(substituted_type));
-					};
-					for (const TemplateParameterNode& template_param_node : template_params) {
-						StringHandle param_name = template_param_node.nameHandle();
-						if (param_name == alias_token_name || param_name == alias_target_name) {
-							alias_refers_to_template_parameter = true;
-							break;
-						}
+						FLASH_LOG(Templates, Debug, "Substituted partial-specialization alias parameter '",
+							StringTable::getStringView(parameter_name), "' from its semantic binding");
+						break;
 					}
-					if (!alias_refers_to_template_parameter) {
-						goto substitution_done;
-					}
-
-					// The alias_type_spec.type_index() identifies which template parameter this is
-					// We need to find which pattern_arg corresponds to this template parameter,
-					// then map to the corresponding template_arg
-
-					// For enable_if<true, T>:
-					// - pattern_args = [true (is_value=true), T (is_value=false, is_dependent=true)]
-					// - template_params = [T] (template parameter at index 0)
-					// - filled_args_for_pattern_match = [true (is_value=true), int (is_value=false)]
-					// - The alias "using type = T" has T which is template_params[0]
-					// - T appears at pattern_args[1]
-					// - So we substitute with filled_args_for_pattern_match[1] = int
-
-					// Find which template parameter index this alias type corresponds to
-					for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < filled_args_for_pattern_match.size(); ++pattern_idx) {
-						const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
-						if (!pattern_arg.is_value && pattern_arg.is_dependent && pattern_arg.dependent_name.isValid()) {
-							StringHandle pattern_param_name = pattern_arg.dependent_name;
-							if (pattern_param_name == alias_token_name || pattern_param_name == alias_target_name) {
-								applyTemplateArgAliasSubstitution(
-									pattern_idx,
-									StringTable::getStringView(pattern_param_name));
-								goto substitution_done;
-							}
-						}
-					}
-
-					for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
-						// Find which pattern_arg position this template parameter appears at
-						for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < filled_args_for_pattern_match.size(); ++pattern_idx) {
-							const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
-
-							// Check if this pattern_arg is a template parameter (not a concrete value/type)
-							if (!pattern_arg.is_value && pattern_arg.is_dependent) {
-								// This is a template parameter position
-								// Check if it's the parameter we're looking for
-								// We can match by counting dependent parameters
-								size_t dependent_param_index = 0;
-								for (size_t i = 0; i < pattern_idx; ++i) {
-									if (!pattern_args[i].is_value && pattern_args[i].is_dependent) {
-										dependent_param_index++;
-									}
-								}
-
-								if (dependent_param_index == param_idx) {
-									// Found it! Substitute with template_args[pattern_idx]
-									applyTemplateArgAliasSubstitution(
-										pattern_idx,
-										template_params[param_idx].name());
-									goto substitution_done;
-								}
-							}
-						}
-					}
-				substitution_done:;
 				}
 
 				const TypeInfo* alias_semantic_source =

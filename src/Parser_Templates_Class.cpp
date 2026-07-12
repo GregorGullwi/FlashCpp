@@ -2751,7 +2751,17 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			advance();
 
 			// Parse the specialization pattern: <T&>, <T*, U>, etc.
-			auto pattern_args_opt = parse_explicit_template_arguments();
+			std::vector<ASTNode> pattern_arg_syntax_nodes;
+			auto class_template_opt = gTemplateRegistry.lookupTemplate(template_name);
+			if (!class_template_opt.has_value() ||
+				!class_template_opt->is<TemplateClassDeclarationNode>()) {
+				return ParseResult::error(
+					"Partial specialization requires a declared primary class template",
+					class_name_token);
+			}
+			auto pattern_args_opt = parse_explicit_template_arguments(
+				class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+				&pattern_arg_syntax_nodes);
 			if (!pattern_args_opt.has_value()) {
 				return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);
 			}
@@ -5010,7 +5020,17 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		pushMemberStructTemplateParameters();
 
 		// Parse the specialization pattern: <T, Rest...>, etc.
-		auto pattern_args_opt = parse_explicit_template_arguments();
+		std::vector<ASTNode> pattern_arg_syntax_nodes;
+		auto class_template_opt = gTemplateRegistry.lookupTemplate(struct_name);
+		if (!class_template_opt.has_value() ||
+			!class_template_opt->is<TemplateClassDeclarationNode>()) {
+			return ParseResult::error(
+				"Member partial specialization requires a declared primary class template",
+				struct_name_token);
+		}
+		auto pattern_args_opt = parse_explicit_template_arguments(
+			class_template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+			&pattern_arg_syntax_nodes);
 
 		if (!pattern_args_opt.has_value()) {
 			return ParseResult::error("Expected template argument pattern in partial specialization", current_token_);

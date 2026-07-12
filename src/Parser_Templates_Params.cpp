@@ -2900,9 +2900,11 @@ try_type_template_argument_parse:
 		// Check for array declarators (e.g., T[], T[N])
 		bool is_array_type = false;
 		std::optional<size_t> parsed_array_size;
+		InlineVector<StringHandle, 4> parsed_array_dimension_parameter_names;
 		while (peek() == "["_tok) {
 			is_array_type = true;
 			advance(); // consume '['
+			StringHandle dimension_parameter_name{};
 
 			// Optional size expression
 			if (peek() != "]"_tok) {
@@ -2922,6 +2924,22 @@ try_type_template_argument_parse:
 					// Use SIZE_MAX as a sentinel to indicate "sized array with unknown size"
 					parsed_array_size = SIZE_MAX;
 				}
+				if (size_result.node()->is<ExpressionNode>()) {
+					const ExpressionNode& dimension_expr = size_result.node()->as<ExpressionNode>();
+					if (const auto* parameter_ref =
+							std::get_if<TemplateParameterReferenceNode>(&dimension_expr)) {
+						dimension_parameter_name = parameter_ref->param_name();
+					} else if (const auto* identifier =
+							   std::get_if<IdentifierNode>(&dimension_expr)) {
+						const StringHandle identifier_name =
+							StringTable::getOrInternStringHandle(identifier->name());
+						auto parameter_kind = currentTemplateParamKind(identifier_name);
+						if (parameter_kind.has_value() &&
+							*parameter_kind == TemplateParameterKind::NonType) {
+							dimension_parameter_name = identifier_name;
+						}
+					}
+				}
 			}
 
 			if (!consume("]"_tok)) {
@@ -2929,6 +2947,7 @@ try_type_template_argument_parse:
 				last_failed_template_arg_parse_handle_ = saved_pos;
 				return std::nullopt;
 			}
+			parsed_array_dimension_parameter_names.push_back(dimension_parameter_name);
 		}
 
 		if (is_array_type) {
@@ -2944,6 +2963,8 @@ try_type_template_argument_parse:
 
 		// Create TemplateTypeArg from the fully parsed type
 		TemplateTypeArg arg(type_node);
+		arg.array_dimension_parameter_names =
+			std::move(parsed_array_dimension_parameter_names);
 		arg.is_pack = is_pack_expansion;
 		arg.member_pointer_kind = member_pointer_kind;
 		if (dependent_member_probe.isValid()) {

@@ -1080,6 +1080,7 @@ struct TypeInfo {
 		bool is_pack;
 		bool is_array;
 		InlineVector<size_t, 2> array_dimensions;  // All dimension sizes (e.g., {3, 4} for T[3][4])
+		InlineVector<StringHandle, 2> array_dimension_parameter_names; // Direct dependent bound for each dimension, if any
 		StringHandle dependent_name;	 // Name of the dependent template parameter (for inner deduction)
 		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
 		std::optional<ASTNode> dependent_expr;  // Original AST for dependent NTTP expressions (e.g., sizeof(T))
@@ -1121,6 +1122,7 @@ struct TypeInfo {
 			  is_pack(other.is_pack),
 			  is_array(other.is_array),
 			  array_dimensions(other.array_dimensions),
+			  array_dimension_parameter_names(other.array_dimension_parameter_names),
 			  dependent_name(other.dependent_name),
 			  function_signature(other.function_signature),
 			  dependent_expr(other.dependent_expr),
@@ -1147,6 +1149,7 @@ struct TypeInfo {
 				is_pack = other.is_pack;
 				is_array = other.is_array;
 				array_dimensions = other.array_dimensions;
+				array_dimension_parameter_names = other.array_dimension_parameter_names;
 				dependent_name = other.dependent_name;
 				function_signature = other.function_signature;
 				dependent_expr = other.dependent_expr;

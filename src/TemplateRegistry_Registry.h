@@ -4,6 +4,12 @@
 
 class TemplateRegistry {
 public:
+	struct SpecializationPatternMatch {
+		const TemplatePattern* pattern;
+		ASTNode node;
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
+	};
+
 	// Register a template function declaration
 	void registerTemplate(std::string_view name, ASTNode template_node) {
 		registerTemplate(StringTable::getOrInternStringHandle(name), template_node);
@@ -793,49 +799,22 @@ public:
 
 	// Find a matching specialization pattern (StringHandle overload)
 	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name,
-													  std::span<const TemplateTypeArg> concrete_args) const {
-		auto patterns_it = specialization_patterns_.find(template_name);
-		if (patterns_it == specialization_patterns_.end()) {
-			FLASH_LOG(Templates, Debug, "    No patterns registered for template '", StringTable::getStringView(template_name), "'");
-			return std::nullopt;	 // No patterns for this template
-		}
-
-		std::span<const TemplatePattern> patterns = patterns_it->second;
-		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", StringTable::getStringView(template_name), "'");
-
-		const TemplatePattern* best_match = nullptr;
-		int best_specificity = -1;
-
-		// Find the most specific matching pattern
-		for (size_t i = 0; i < patterns.size(); ++i) {
-			const auto& pattern = patterns[i];
-			FLASH_LOG(Templates, Debug, "    Checking pattern #", i, " (specificity=", pattern.specificity(), ")");
-			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> substitutions;
-			if (pattern.matches(concrete_args, substitutions)) {
-				FLASH_LOG(Templates, Debug, "      Pattern #", i, " MATCHES!");
-				int spec = pattern.specificity();
-				if (spec > best_specificity) {
-					best_match = &pattern;
-					best_specificity = spec;
-					FLASH_LOG(Templates, Debug, "      New best match (specificity=", spec, ")");
-				}
-			} else {
-				FLASH_LOG(Templates, Debug, "      Pattern #", i, " does not match");
-			}
-		}
-
-		if (best_match) {
-			FLASH_LOG(Templates, Debug, "    Selected best pattern (specificity=", best_specificity, ")");
-			return best_match->specialized_node;
-		}
-
-		FLASH_LOG(Templates, Debug, "    No matching pattern found");
-		return std::nullopt;
+											  std::span<const TemplateTypeArg> concrete_args) const {
+		return matchSpecializationPattern(StringTable::getStringView(template_name), concrete_args);
 	}
 
 	// Find a matching specialization pattern (string_view overload)
 	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name,
-													  std::span<const TemplateTypeArg> concrete_args) const {
+											  std::span<const TemplateTypeArg> concrete_args) const {
+		auto match = matchSpecializationPatternWithBindings(template_name, concrete_args);
+		return match.has_value()
+			? std::optional<ASTNode>(match->node)
+			: std::nullopt;
+	}
+
+	std::optional<SpecializationPatternMatch> matchSpecializationPatternWithBindings(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> concrete_args) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
@@ -847,6 +826,7 @@ public:
 		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", template_name, "'");
 
 		const TemplatePattern* best_match = nullptr;
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> best_substitutions;
 		int best_specificity = -1;
 
 		// Find the most specific matching pattern
@@ -859,6 +839,7 @@ public:
 				int spec = pattern.specificity();
 				if (spec > best_specificity) {
 					best_match = &pattern;
+					best_substitutions = std::move(substitutions);
 					best_specificity = spec;
 					FLASH_LOG(Templates, Debug, "      New best match (specificity=", spec, ")");
 				}
@@ -869,7 +850,10 @@ public:
 
 		if (best_match) {
 			FLASH_LOG(Templates, Debug, "    Selected best pattern (specificity=", best_specificity, ")");
-			return best_match->specialized_node;
+			return SpecializationPatternMatch{
+				best_match,
+				best_match->specialized_node,
+				std::move(best_substitutions)};
 		}
 
 		FLASH_LOG(Templates, Debug, "    No matching pattern found");
