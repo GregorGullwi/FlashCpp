@@ -149,11 +149,7 @@ inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	if (source_member != nullptr && source_member->function_signature.has_value())
 		return source_member->function_signature;
 
-	StringHandle type_name_handle;
-	if (const TypeInfo* ts_ti = tryGetTypeInfo(type_spec.type_index()))
-		type_name_handle = ts_ti->name();
-	if (!type_name_handle.isValid())
-		type_name_handle = type_spec.token().handle();
+	StringHandle type_name_handle = getStructuredTypeName(type_spec);
 	if (!type_name_handle.isValid())
 		return std::nullopt;
 
@@ -171,11 +167,7 @@ inline void applyBoundTemplateArgMetadata(
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
 
-	StringHandle type_name_handle;
-	if (const TypeInfo* ts_ti = tryGetTypeInfo(original_type.type_index()))
-		type_name_handle = ts_ti->name();
-	if (!type_name_handle.isValid())
-		type_name_handle = original_type.token().handle();
+	StringHandle type_name_handle = getStructuredTypeName(original_type);
 	if (!type_name_handle.isValid())
 		return;
 

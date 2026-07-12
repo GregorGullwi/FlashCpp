@@ -1765,19 +1765,14 @@ ASTNode Parser::substituteTemplateParameters(
 			const TemplateTypeArg* matched_direct_template_arg = nullptr;
 			bool exact_template_param_substituted = false;
 			std::optional<ASTNode> exact_template_param_node;
-			std::string_view direct_type_name = type_spec.token().value();
-			if (direct_type_name.empty()) {
-				if (const TypeInfo* direct_type_info = tryGetTypeInfo(type_spec.type_index())) {
-					direct_type_name = StringTable::getStringView(direct_type_info->name());
-				}
-			}
+			const StringHandle direct_type_name = getStructuredTypeName(type_spec);
 			forEachNonPackTemplateParamArgBinding(
 				template_params,
 				template_args,
 				[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
 					if (exact_template_param_substituted ||
 						template_param.kind() != TemplateParameterKind::Type ||
-						template_param.name() != direct_type_name ||
+						template_param.nameHandle() != direct_type_name ||
 						!template_arg.isTypeArgument()) {
 						return;
 					}

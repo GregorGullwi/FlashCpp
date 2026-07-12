@@ -697,19 +697,6 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			tparam_names.insert(tp.nameHandle());
 		}
 
-		// Resolve the base name of a function-parameter type (possibly U, U*, U**, etc.).
-		// Uses TypeInfo name first, then the token handle as a fallback.
-		auto getBaseName = [&](const TypeSpecifierNode& fp_type) -> StringHandle {
-			StringHandle base_name;
-			if (const TypeInfo* ti = tryGetTypeInfo(fp_type.type_index())) {
-				base_name = ti->name();
-			}
-			if (!base_name.isValid()) {
-				base_name = fp_type.token().handle();
-			}
-			return base_name;
-		};
-
 		// For each function parameter whose base type is a template parameter, record how many
 		// pointer levels the pattern adds on top of U (e.g. pick(U*) → depth["U"]=1).
 		// This is used for two purposes:
@@ -733,7 +720,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 				const TypeSpecifierNode& fp_type = fp_decl.type_specifier_node();
 				const TypeSpecifierNode& ca_type = arg_types[call_idx];
 
-				StringHandle base_name = getBaseName(fp_type);
+				StringHandle base_name = getStructuredTypeName(fp_type);
 				if (base_name.isValid() && tparam_names.count(base_name) > 0) {
 					// Viability check: a parameter pattern U*^N (e.g. U*, U**) requires at least
 					// N pointer levels in the call argument.  Without this, pick(U*) would be
@@ -1744,13 +1731,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 				// depth 1 for `Apply<U>*`) that the pre-filter should honour.
 				if (typeSpecStillUsesDependentPlaceholder(pts)) {
 					// Determine the base type name of the parameter.
-					StringHandle base_name;
-					if (const TypeInfo* ti = tryGetTypeInfo(pts.type_index())) {
-						base_name = ti->name();
-					}
-					if (!base_name.isValid()) {
-						base_name = pts.token().handle();
-					}
+					StringHandle base_name = getStructuredTypeName(pts);
 					bool is_direct_tparam = false;
 					if (base_name.isValid()) {
 						for (const auto& tp : template_params) {
@@ -2434,10 +2415,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			type_spec.category() != TypeCategory::Template) {
 			return {};
 		}
-		if (type_spec.type_index().is_valid()) {
-			if (const TypeInfo* ti = tryGetTypeInfo(type_spec.type_index())) {
-				return ti->name();
-			}
+		StringHandle structured_name = getStructuredTypeName(type_spec);
+		if (structured_name.isValid()) {
+			return structured_name;
 		}
 		return type_spec.token().handle();
 	};
