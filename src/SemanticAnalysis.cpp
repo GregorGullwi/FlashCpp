@@ -2732,9 +2732,23 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	SemanticContext ctx;
 
 	std::optional<MemberContext> member_context;
-	if (func.is_member_function()) {
-		if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(func.parent_struct_name());
-			type_info && type_info->getStructInfo()) {
+	const std::string_view semantic_owner_name = func.semantic_owner_name().isValid()
+		? func.semantic_owner_name().view()
+		: func.parent_struct_name();
+	if (!semantic_owner_name.empty()) {
+		const StringHandle parent_name =
+			StringTable::getOrInternStringHandle(semantic_owner_name);
+		auto owner_type = getTypesByNameMap().find(parent_name);
+		if (owner_type == getTypesByNameMap().end()) {
+			const StringHandle qualified_parent_name =
+				gNamespaceRegistry.buildQualifiedIdentifier(
+					func.namespace_handle(), parent_name);
+			owner_type = getTypesByNameMap().find(qualified_parent_name);
+		}
+		const TypeInfo* type_info = owner_type != getTypesByNameMap().end()
+			? owner_type->second
+			: findStructTypeInfoByNameFragment(semantic_owner_name);
+		if (type_info && type_info->getStructInfo()) {
 			member_context = MemberContext{type_info->type_index_, !func.is_static(), CVQualifier::None};
 			if (func.is_const_member_function()) {
 				member_context->this_base_cv |= CVQualifier::Const;
@@ -4935,7 +4949,7 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 			return type_info;
 		};
 
-		auto resolve_owner_type = [&resolve_alias_target](NamespaceHandle owner_ns) -> const TypeInfo* {
+		auto resolve_owner_type = [this, &resolve_alias_target](NamespaceHandle owner_ns) -> const TypeInfo* {
 			std::vector<StringHandle> components;
 			NamespaceHandle current = owner_ns;
 			while (current.isValid() && !current.isGlobal()) {
@@ -4948,7 +4962,41 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 				return nullptr;
 			}
 
-			const TypeInfo* owner_type_info = lookupTypeInCurrentContext(components.front());
+			const TypeInfo* owner_type_info = nullptr;
+			if (components.size() == 1) {
+				if (const MemberContext* member_context = getCurrentMemberContext()) {
+					if (const StructTypeInfo* struct_info =
+						tryGetStructTypeInfo(member_context->type_index)) {
+						InlineVector<const TypeInfo*, 2> nested_enum_matches;
+						visitStructHierarchyDepthFirst(struct_info, [&](const StructTypeInfo& current) {
+							for (TypeIndex nested_enum_index : current.getNestedEnumIndices()) {
+								const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
+								const EnumTypeInfo* nested_enum_info =
+									nested_enum_type_info ? nested_enum_type_info->getEnumInfo() : nullptr;
+								if (nested_enum_info && nested_enum_info->name == components.front()) {
+									if (std::ranges::find(nested_enum_matches, nested_enum_type_info) ==
+										nested_enum_matches.end()) {
+										nested_enum_matches.push_back(nested_enum_type_info);
+									}
+									return false;
+								}
+							}
+							return true;
+						});
+						if (nested_enum_matches.size() > 1) {
+							throw CompileError(
+								"ambiguous nested enum type '" +
+								std::string(components.front().view()) + "'");
+						}
+						if (!nested_enum_matches.empty()) {
+							owner_type_info = nested_enum_matches.front();
+						}
+					}
+				}
+			}
+			if (!owner_type_info) {
+				owner_type_info = lookupTypeInCurrentContext(components.front());
+			}
 			auto owner_it = getTypesByNameMap().end();
 			if (!owner_type_info) {
 				owner_it = getTypesByNameMap().find(components.front());
