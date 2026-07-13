@@ -140,6 +140,7 @@ private:
 	ASTNode substituteSizeofExpr(const SizeofExprNode& sizeof_expr);
 	ASTNode substituteTypeTraitExpr(const TypeTraitExprNode& trait_expr);
 	ASTNode substituteStaticCast(const StaticCastNode& cast_node);
+	ASTNode substituteInitializerListConstruction(const InitializerListConstructionNode& init_list);
 	ASTNode substituteLiteral(const ASTNode& literal);
 	void captureParserPackState();
 	void substituteCallArgumentPreservingPackExpansion(

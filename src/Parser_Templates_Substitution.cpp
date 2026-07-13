@@ -301,7 +301,7 @@ bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name) {
 }
 
 std::optional<TypeSpecifierNode>
-Parser::tryMaterializeDependentDirectAliasTypeSpecifier(
+Parser::tryMaterializeDependentAliasTypeSpecifier(
 	const TypeSpecifierNode& type_spec,
 	std::span<const TemplateParameterNode> template_params,
 	std::span<const TemplateTypeArg> template_args) {
@@ -323,11 +323,6 @@ Parser::tryMaterializeDependentDirectAliasTypeSpecifier(
 			StringTable::getStringView(dependent_alias_info->baseTemplateName()));
 	}
 	if (!alias_entry.has_value() || !alias_entry->is<TemplateAliasNode>()) {
-		return std::nullopt;
-	}
-
-	const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
-	if (!findDirectAliasTargetParameterIndex(alias_node).has_value()) {
 		return std::nullopt;
 	}
 
@@ -1372,6 +1367,8 @@ ASTNode Parser::substituteTemplateParameters(
 								   TypeCategory::Int, TypeQualifier::None, 32));
 			FLASH_LOG(Templates, Debug, "*** Created NumericLiteralNode, returning");
 			return result;
+		} else if (std::holds_alternative<InitializerListConstructionNode>(expr)) {
+			return substituteWithExpressionSubstitutor(node);
 		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
 			// static_cast<Type>(expr) - recursively substitute in both target type and expression
 			const StaticCastNode& cast_node = *static_cast_node;
@@ -1746,12 +1743,12 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 		}
 
-		if (std::optional<TypeSpecifierNode> direct_alias_type =
-				tryMaterializeDependentDirectAliasTypeSpecifier(
+		if (std::optional<TypeSpecifierNode> materialized_alias_type =
+				tryMaterializeDependentAliasTypeSpecifier(
 					type_spec,
 					template_params,
 					template_args)) {
-			return emplace_node<TypeSpecifierNode>(*direct_alias_type);
+			return emplace_node<TypeSpecifierNode>(*materialized_alias_type);
 		}
 
 		// Check if this is a user-defined type that matches a template parameter,

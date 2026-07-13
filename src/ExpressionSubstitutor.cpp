@@ -424,6 +424,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteTypeTraitExpr(expr.as<TypeTraitExprNode>());
 	} else if (expr.is<StaticCastNode>()) {
 		return substituteStaticCast(expr.as<StaticCastNode>());
+	} else if (expr.is<InitializerListConstructionNode>()) {
+		return substituteInitializerListConstruction(expr.as<InitializerListConstructionNode>());
 	} else if (expr.is<NumericLiteralNode>()) {
 		// Literals don't need content substitution, but always return wrapped in ExpressionNode
 		// so downstream evaluators (which require is<ExpressionNode>()) see a consistent result.
@@ -4514,6 +4516,25 @@ ASTNode ExpressionSubstitutor::substituteStaticCast(const StaticCastNode& cast_n
 
 	// Wrap in ExpressionNode
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_cast);
+	return ASTNode(&new_expr);
+}
+
+ASTNode ExpressionSubstitutor::substituteInitializerListConstruction(
+	const InitializerListConstructionNode& init_list) {
+	ASTNode substituted_element_type = substitute(init_list.element_type());
+	ASTNode substituted_target_type = substitute(init_list.target_type());
+	std::vector<ASTNode> substituted_elements;
+	substituted_elements.reserve(init_list.size());
+	for (const ASTNode& element : init_list.elements()) {
+		substituted_elements.push_back(substitute(element));
+	}
+
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+		InitializerListConstructionNode(
+			substituted_element_type,
+			substituted_target_type,
+			std::move(substituted_elements),
+			init_list.called_from()));
 	return ASTNode(&new_expr);
 }
 
