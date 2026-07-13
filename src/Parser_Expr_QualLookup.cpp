@@ -3579,7 +3579,7 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		void_type.set_type_index(nativeTypeIndex(TypeCategory::Void));
 		return void_type;
 	};
-	auto normalize_return_type_identity = [](TypeSpecifierNode type) {
+	auto normalize_return_type_identity = [](const TypeSpecifierNode& type) {
 		if (std::optional<TypeSpecifierNode> canonical_builtin =
 				makeCanonicalBuiltinTypeSpecifier(type)) {
 			return *canonical_builtin;
