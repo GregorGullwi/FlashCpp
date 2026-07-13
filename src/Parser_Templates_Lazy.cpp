@@ -934,6 +934,23 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		owner_substitutor.setCurrentOwnerTypeName(lazy_info.identity.instantiated_owner_name);
 		substituted_body = owner_substitutor.substitute(substituted_body);
 		new_func_ref.set_definition(substituted_body);
+
+		ASTNode resolved_return_type_node = new_func_ref.decl_node().type_node();
+		const TypeInfo* return_type_info = tryGetTypeInfo(
+			new_func_ref.decl_node().type_specifier_node().type_index());
+		if (return_type_info != nullptr &&
+			return_type_info->isDependentMemberType() &&
+			return_type_info->hasDependentQualifiedName() &&
+			resolveDependentMemberAlias(
+				resolved_return_type_node,
+				std::span<const TemplateParameterNode>(
+					substitution_params.data(), substitution_params.size()),
+				std::span<const TemplateTypeArg>(
+					converted_template_args.data(), converted_template_args.size())) ==
+				DependentAliasResolutionStatus::Resolved) {
+			new_func_ref.decl_node().set_type_node(
+				resolved_return_type_node.as<TypeSpecifierNode>());
+		}
 	}
 
 	copy_function_properties(new_func_ref, func_decl);
