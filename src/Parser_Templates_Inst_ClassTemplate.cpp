@@ -1117,40 +1117,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_type = substituted_type_spec.type();
 		}
 		if (substituted_type_spec.has_function_signature()) {
-			auto substitute_signature_type_index = [&](TypeIndex signature_type_index) {
-				const TypeInfo* signature_type_info = tryGetTypeInfo(signature_type_index);
-				if (signature_type_info == nullptr) {
-					return signature_type_index;
-				}
-				TypeIndex substituted_signature_index = signature_type_index;
-				forEachNonPackTemplateParamArgBinding(
+			substituted_type_spec.set_function_signature(
+				substituteTemplateFunctionSignature(
+					substituted_type_spec.function_signature(),
 					params,
-					args,
-					[&](const TemplateParameterNode& param, const TemplateTypeArg& concrete_arg, size_t) {
-						if (substituted_signature_index != signature_type_index ||
-							concrete_arg.is_value ||
-							param.nameHandle() != signature_type_info->name()) {
-							return;
-						}
-						if (concrete_arg.type_index.is_valid()) {
-							substituted_signature_index =
-								concrete_arg.type_index.withCategory(concrete_arg.typeEnum());
-							return;
-						}
-						TypeIndex native_index = nativeTypeIndex(concrete_arg.typeEnum());
-						substituted_signature_index = native_index.is_valid()
-							? native_index.withCategory(concrete_arg.typeEnum())
-							: TypeIndex{0, concrete_arg.typeEnum()};
-					});
-				return substituted_signature_index;
-			};
-			FunctionSignature substituted_signature = substituted_type_spec.function_signature();
-			substituted_signature.return_type_index =
-				substitute_signature_type_index(substituted_signature.return_type_index);
-			for (TypeIndex& parameter_type_index : substituted_signature.parameter_type_indices) {
-				parameter_type_index = substitute_signature_type_index(parameter_type_index);
-			}
-			substituted_type_spec.set_function_signature(substituted_signature);
+					args));
 		}
 
 		FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: alias_name=", StringTable::getStringView(type_alias.alias_name),
