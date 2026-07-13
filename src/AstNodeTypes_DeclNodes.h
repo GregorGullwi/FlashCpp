@@ -2837,6 +2837,8 @@ public:
 	// Member function support
 	bool is_member_function() const { return is_member_function_; }
 	std::string_view parent_struct_name() const { return parent_struct_name_; }
+	void set_semantic_owner_name(StringHandle owner_name) { semantic_owner_name_ = owner_name; }
+	StringHandle semantic_owner_name() const { return semantic_owner_name_; }
 
 	// Implicit function support (for compiler-generated functions like operator=)
 	void set_is_implicit(bool implicit) { is_implicit_ = implicit; }
@@ -2982,6 +2984,7 @@ private:
 	std::vector<ASTNode> parameter_nodes_;
 	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
 	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
+	StringHandle semantic_owner_name_;  // Declaring class scope, independent of an implicit object parameter
 	NamespaceHandle namespace_handle_;  // Namespace this function was declared in (default: INVALID = not yet set)
 	bool is_member_function_;
 	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)

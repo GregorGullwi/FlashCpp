@@ -124,14 +124,19 @@ compiler, link, and execution included):
 | `<cstdio>` (`test_cstdio_puts.cpp`) | ✅ Pass | ~9.39s | Compiles, links, and returns 0. |
 | `<cstdlib>` (`test_cstdlib.cpp`) | ✅ Pass | ~3.71s | Compiles, links, and returns 0. |
 | `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~5.07s | Compiles, links, and returns 0. |
-| `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~22.97s | `ranges::empty` overload viability, then unresolved `auto` during `view_interface` mangling. |
-| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile error | ~20.80s | Current diagnostics are the `make_signed<T>` constraint/static-assert path and a scoped-enum `_St` equality diagnostic in tuple `_Equals`; the independent `ranges::size` issue is not yet isolated by this run. |
+| `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~19.23s | `ranges::empty` overload viability, then unresolved `auto` during `view_interface` mangling. |
+| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile error | ~33.16s | The nested-enum identity and `make_signed<T>` stops are gone; the live diagnostics are variadic `std::invoke` substitution and the independent `ranges::size` inconsistent-`auto` return. |
 
 The separate `std::invoke` frontier remains its variadic
 `_Invoker1<...>::_Call` trailing-return/noexcept substitution. The one-argument
 candidate is correctly rejected for the two-argument call.
 
-Full Windows validation after the change: 2753 regular tests passed, all 236
+Class-scope identity for static member-function templates is now preserved
+separately from implicit-object semantics, and nested enums are registered from
+their declaration `TypeIndex`. Regression:
+`tests/test_member_template_nested_enum_identity_ret0.cpp`.
+
+Full Windows validation after the change: 2756 regular tests passed, all 236
 expected-fail tests failed as expected, with no crashes or return mismatches.
 
 ### 2026-05-28 Linux/libstdc++ template-substitution metadata follow-up

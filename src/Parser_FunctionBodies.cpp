@@ -556,6 +556,9 @@ FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 
 void Parser::copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src) {
 	dest.set_namespace_handle(src.namespace_handle());
+	if (src.semantic_owner_name().isValid()) {
+		dest.set_semantic_owner_name(src.semantic_owner_name());
+	}
 	dest.set_is_constexpr(src.is_constexpr());
 	dest.set_is_consteval(src.is_consteval());
 	dest.set_is_constinit(src.is_constinit());

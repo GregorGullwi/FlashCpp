@@ -859,9 +859,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	}
 
 	// Get the function name for registration
-	const TemplateFunctionDeclarationNode& template_decl = template_func_node.as<TemplateFunctionDeclarationNode>();
-	const FunctionDeclarationNode& func_decl = template_decl.function_declaration().as<FunctionDeclarationNode>();
+	TemplateFunctionDeclarationNode& template_decl = template_func_node.as<TemplateFunctionDeclarationNode>();
+	FunctionDeclarationNode& func_decl = template_decl.function_decl_node();
 	const DeclarationNode& decl_node = func_decl.decl_node();
+	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
+	func_decl.set_semantic_owner_name(owner_qualified_name);
 
 	// Add to struct as a member function template
 	// First, add to the struct's member functions list so it can be found for inheritance lookup
@@ -891,7 +893,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 	}
 
 	// Register the template in the global registry with qualified name (ClassName::functionName)
-	StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
 	auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(owner_qualified_name).append("::"sv).append(decl_node.identifier_token().value()));
 	gTemplateRegistry.registerTemplate(qualified_name, template_func_node);
 

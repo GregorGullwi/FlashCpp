@@ -36,6 +36,12 @@ tasks; completed branch history belongs in tests and version control.
   paths.
 - Replay and instantiated-member synchronization use source identity and
   canonical substituted signatures instead of name/arity repair.
+- Class-scope ownership is independent of the implicit object parameter.
+  Static member-function templates retain their qualified declaring scope
+  through declaration copying so sema performs nested-type lookup in the
+  correct class.
+- Nested enum registration uses the declaration's `TypeIndex`; same-spelled
+  enums are never recovered through an unqualified type-map lookup.
 
 ## Invariants
 
@@ -65,10 +71,10 @@ Fresh Windows/MSVC individual runner wall times after the 2026-07-12 rebuild:
 | `std/test_cstdio_puts.cpp` | Pass | 9.39s | Green control |
 | `std/test_cstdlib.cpp` | Pass | 3.71s | Green control |
 | `std/test_std_type_traits.cpp` | Pass | 5.07s | Green control |
-| `std/test_std_iterator.cpp` | Fail | 22.97s | `ranges::empty` overload viability, then unresolved `auto` in `view_interface` mangling |
-| `std/test_std_ranges.cpp` | Fail | 20.80s | `make_signed<T>` constraint/static-assert path and scoped-enum `_St` equality in tuple `_Equals` |
+| `std/test_std_iterator.cpp` | Fail | 19.23s | `ranges::empty` overload viability, then unresolved `auto` in `view_interface` mangling |
+| `std/test_std_ranges.cpp` | Fail | 33.16s | variadic `std::invoke` substitution, then `ranges::size` inconsistent `auto` deduction |
 
-The full Windows suite passes: 2753 regular tests compile, link, and run; all
+The full Windows suite passes: 2756 regular tests compile, link, and run; all
 236 expected-failure tests fail as expected.
 
 The current slice is guarded by:
@@ -77,6 +83,7 @@ The current slice is guarded by:
 - `tests/test_template_partial_specialization_reordered_identity_ret0.cpp`
 - `tests/test_template_partial_specialization_array_bound_identity_ret0.cpp`
 - `tests/test_template_dependent_inherited_static_call_pack_ret0.cpp`
+- `tests/test_member_template_nested_enum_identity_ret0.cpp`
 - existing partial-specialization qualifier/pointer/array/function-pointer tests
 
 ## Remaining work
@@ -86,17 +93,14 @@ The current slice is guarded by:
    correctly rejected for the two-argument call; the variadic candidate passes
    pack-aware viability, so this is a later substitution problem. Keep it
    separate from the completed empty-pack and partial-specialization fix.
-2. Reduce the current `std/test_std_ranges.cpp` `make_signed<T>` and scoped-enum
-   equality diagnostics. Determine whether the generic fault is constraint
-   substitution, canonical enum identity, or overload selection before editing.
-3. Reduce the `std/test_std_iterator.cpp` `ranges::empty` overload failure and
+2. Reduce the `std/test_std_iterator.cpp` `ranges::empty` overload failure and
    unresolved-auto mangling path at the sema/return-type layer.
-4. Re-isolate the independent `ranges::size` inconsistent-auto-return issue
-   after earlier failures advance.
-5. Replace the targeted local-symbol treatment for C-linkage inline wrappers
+3. Reduce the now-live `ranges::size` inconsistent-auto-return issue without
+   coupling it to the independent `std::invoke` substitution failure.
+4. Replace the targeted local-symbol treatment for C-linkage inline wrappers
    with proper per-function COFF COMDAT/weak-external emission when the object
    writer can split the monolithic text section.
-6. Extract deeper dependent-qualified owner or replay helpers only when a
+5. Extract deeper dependent-qualified owner or replay helpers only when a
    concrete failure proves repeated consumer logic is the blocker.
 
 ## Validation

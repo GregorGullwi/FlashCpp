@@ -1078,40 +1078,44 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Track the enum's TypeIndex in the struct for nested enum enumerator lookup during codegen
 				if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
 					const auto& enum_decl = enum_node->as<EnumDeclarationNode>();
-					auto enum_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(enum_decl.name()));
-					if (enum_it != getTypesByNameMap().end()) {
-						struct_info->addNestedEnumIndex(enum_it->second->type_index_);
+					if (!enum_decl.type_index().is_valid()) {
+						throw InternalError("Nested enum declaration has no semantic type identity");
+					}
+					TypeInfo* enum_type_info = &getTypeInfoMut(enum_decl.type_index());
+					if (!enum_type_info->isEnum()) {
+						throw InternalError("Nested enum declaration semantic identity is not an enum");
+					}
+					struct_info->addNestedEnumIndex(enum_decl.type_index());
 
-						// Register the enum under every qualified name a caller might use.
-						// Per C++20 [basic.lookup.qual], a nested enum is accessed by
-						// qualifying through the enclosing class name(s).
-						// Per [basic.lookup.argdep]/2 the associated namespace is the
-						// innermost enclosing namespace.
-						//
-						// Walk struct_parsing_context_stack_ (which already includes the
-						// current struct pushed above) from outermost to innermost to
-						// build the full struct chain.  This correctly handles any depth
-						// of struct nesting, e.g.:
-						//   ns::A::B::C::E   (3 levels: A > B > C, enum E)
-						//   ns::Container::Status (1 level)
-						StringBuilder struct_chain_builder;
-						for (const auto& ctx : struct_parsing_context_stack_) {
-							struct_chain_builder.append(ctx.struct_name).append("::");
-						}
-						struct_chain_builder.append(enum_decl.name());
-						StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(
-							struct_chain_builder.commit());
-						// Register struct-relative name ("A::B::C::E", "Container::Status")
-						getTypesByNameMap().emplace(struct_relative_handle, enum_it->second);
+					// Register the enum under every qualified name a caller might use.
+					// Per C++20 [basic.lookup.qual], a nested enum is accessed by
+					// qualifying through the enclosing class name(s).
+					// Per [basic.lookup.argdep]/2 the associated namespace is the
+					// innermost enclosing namespace.
+					//
+					// Walk struct_parsing_context_stack_ (which already includes the
+					// current struct pushed above) from outermost to innermost to
+					// build the full struct chain.  This correctly handles any depth
+					// of struct nesting, e.g.:
+					//   ns::A::B::C::E   (3 levels: A > B > C, enum E)
+					//   ns::Container::Status (1 level)
+					StringBuilder struct_chain_builder;
+					for (const auto& ctx : struct_parsing_context_stack_) {
+						struct_chain_builder.append(ctx.struct_name).append("::");
+					}
+					struct_chain_builder.append(enum_decl.name());
+					StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(
+						struct_chain_builder.commit());
+					// Register struct-relative name ("A::B::C::E", "Container::Status")
+					getTypesByNameMap().emplace(struct_relative_handle, enum_type_info);
 
-						// Also register namespace-fully-qualified name using NamespaceHandle
-						// ("ns::A::B::C::E", "ns::Container::Status")
-						if (!qualified_namespace.empty()) {
-							StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-								current_namespace_handle, struct_relative_handle);
-							if (ns_qualified_handle != struct_relative_handle) {
-								getTypesByNameMap().emplace(ns_qualified_handle, enum_it->second);
-							}
+					// Also register namespace-fully-qualified name using NamespaceHandle
+					// ("ns::A::B::C::E", "ns::Container::Status")
+					if (!qualified_namespace.empty()) {
+						StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+							current_namespace_handle, struct_relative_handle);
+						if (ns_qualified_handle != struct_relative_handle) {
+							getTypesByNameMap().emplace(ns_qualified_handle, enum_type_info);
 						}
 					}
 				}

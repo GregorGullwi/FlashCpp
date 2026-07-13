@@ -47,6 +47,12 @@ deduction, trailing return types, `noexcept`, and body substitution.
 No layer may recognize standard-library or vendor helper names to make a header
 compile.
 
+Static member functions remain members of their declaring class even though
+they have no implicit object parameter. Their declaration and every
+instantiated copy must therefore retain class-scope identity for unqualified
+and nested-type lookup. Nested enum identity comes from the enum declaration,
+not a same-spelled global registry entry.
+
 ## Covered behavior
 
 `tests/test_template_partial_specialization_inherited_static_call_pack_ret0.cpp`
@@ -78,10 +84,10 @@ Windows/MSVC runner snapshot from 2026-07-12:
 | `test_cstdio_puts.cpp` | Pass | 9.39s | — |
 | `test_cstdlib.cpp` | Pass | 3.71s | — |
 | `test_std_type_traits.cpp` | Pass | 5.07s | — |
-| `test_std_iterator.cpp` | Fail | 22.97s | `ranges::empty` overload viability, then unresolved `auto` in `view_interface` mangling |
-| `test_std_ranges.cpp` | Fail | 20.80s | `make_signed<T>` constraint/static-assert path and scoped-enum `_St` equality in tuple `_Equals` |
+| `test_std_iterator.cpp` | Fail | 19.23s | `ranges::empty` overload viability, then unresolved `auto` in `view_interface` mangling |
+| `test_std_ranges.cpp` | Fail | 33.16s | variadic `std::invoke` substitution, then `ranges::size` inconsistent `auto` deduction |
 
-Full-suite result: 2753 regular tests pass and all 236 expected-failure tests
+Full-suite result: 2756 regular tests pass and all 236 expected-failure tests
 fail as expected.
 
 ## Active investigations
@@ -95,23 +101,17 @@ fail as expected.
    return/noexcept shape. Reduce this with a non-`std` non-empty-pack test and
    fix substitution at the structured expression/type layer.
 
-2. Current ranges failure
-
-   Trace the `make_signed<T>` constraint/static-assert and tuple `_Equals`
-   scoped-enum comparison independently. Establish whether the enum operands
-   should have one canonical type, whether a constraint should have removed the
-   candidate, or whether overload lookup selected the wrong operation.
-
-3. Iterator return-type frontier
+2. Iterator return-type frontier
 
    Reduce `ranges::empty` candidate viability separately from the unresolved
    `auto` that reaches `view_interface` mangling. Resolved return types must be
    established before code generation.
 
-4. Independent `ranges::size` issue
+3. Independent `ranges::size` issue
 
-   Reconfirm the inconsistent-auto-return diagnostic after the earlier ranges
-   failures are removed. Keep it separate from variadic call substitution.
+   The earlier `make_signed<T>` and scoped-enum diagnostics are removed. Reduce
+   the now-live inconsistent-auto-return diagnostic separately from variadic
+   call substitution.
 
 ## Acceptance criteria
 
