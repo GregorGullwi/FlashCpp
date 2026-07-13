@@ -784,8 +784,11 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 						}
 
 						// Create a function declaration for the conversion operator
+						StringHandle owner_qualified_name =
+							getStructQualifiedNameForRegistration(struct_node);
 						auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-							decl_node.as<DeclarationNode>(), identifier_token.value());
+							decl_node.as<DeclarationNode>(), owner_qualified_name);
+						func_ref.set_semantic_owner_name(owner_qualified_name);
 						for (const auto& param : params.parameters) {
 							func_ref.add_parameter_node(param);
 						}
@@ -830,7 +833,6 @@ ParseResult Parser::parse_member_function_template(StructDeclarationNode& struct
 														false, false, false, false,
 														member_quals.cv_qualifier);
 
-						StringHandle owner_qualified_name = getStructQualifiedNameForRegistration(struct_node);
 						auto qualified_name = StringTable::getOrInternStringHandle(
 							StringBuilder().append(owner_qualified_name).append("::"sv).append(operator_name));
 						gTemplateRegistry.registerTemplate(qualified_name, template_func_node);

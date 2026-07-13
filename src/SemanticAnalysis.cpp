@@ -2738,13 +2738,16 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	if (!semantic_owner_name.empty()) {
 		const StringHandle parent_name =
 			StringTable::getOrInternStringHandle(semantic_owner_name);
-		const StringHandle qualified_parent_name =
-			gNamespaceRegistry.buildQualifiedIdentifier(
-				func.namespace_handle(), parent_name);
-		auto qualified_parent = getTypesByNameMap().find(qualified_parent_name);
-		const TypeInfo* type_info = qualified_parent != getTypesByNameMap().end()
-				? qualified_parent->second
-				: findStructTypeInfoByNameFragment(semantic_owner_name);
+		auto owner_type = getTypesByNameMap().find(parent_name);
+		if (owner_type == getTypesByNameMap().end()) {
+			const StringHandle qualified_parent_name =
+				gNamespaceRegistry.buildQualifiedIdentifier(
+					func.namespace_handle(), parent_name);
+			owner_type = getTypesByNameMap().find(qualified_parent_name);
+		}
+		const TypeInfo* type_info = owner_type != getTypesByNameMap().end()
+			? owner_type->second
+			: findStructTypeInfoByNameFragment(semantic_owner_name);
 		if (type_info && type_info->getStructInfo()) {
 			member_context = MemberContext{type_info->type_index_, !func.is_static(), CVQualifier::None};
 			if (func.is_const_member_function()) {
@@ -4964,15 +4967,45 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 				if (const MemberContext* member_context = getCurrentMemberContext()) {
 					if (const StructTypeInfo* struct_info =
 						tryGetStructTypeInfo(member_context->type_index)) {
-						for (TypeIndex nested_enum_index : struct_info->getNestedEnumIndices()) {
-							const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
-							const EnumTypeInfo* nested_enum_info =
-								nested_enum_type_info ? nested_enum_type_info->getEnumInfo() : nullptr;
-							if (nested_enum_info && nested_enum_info->name == components.front()) {
-								owner_type_info = nested_enum_type_info;
-								break;
+						std::unordered_set<const StructTypeInfo*> visited;
+						auto find_nested_enum = [&](const StructTypeInfo* current,
+							const auto& self) -> std::pair<const TypeInfo*, bool> {
+							if (!current || !visited.insert(current).second) {
+								return {nullptr, false};
 							}
+							for (TypeIndex nested_enum_index : current->getNestedEnumIndices()) {
+								const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
+								const EnumTypeInfo* nested_enum_info =
+									nested_enum_type_info ? nested_enum_type_info->getEnumInfo() : nullptr;
+								if (nested_enum_info && nested_enum_info->name == components.front()) {
+									return {nested_enum_type_info, false};
+								}
+							}
+
+							const TypeInfo* inherited_match = nullptr;
+							for (const BaseClassSpecifier& base : current->base_classes) {
+								auto [candidate, ambiguous] =
+									self(tryGetStructTypeInfo(base.type_index), self);
+								if (ambiguous) {
+									return {nullptr, true};
+								}
+								if (candidate && inherited_match && candidate != inherited_match) {
+									return {nullptr, true};
+								}
+								if (candidate) {
+									inherited_match = candidate;
+								}
+							}
+							return {inherited_match, false};
+						};
+						auto [nested_enum_type_info, ambiguous] =
+							find_nested_enum(struct_info, find_nested_enum);
+						if (ambiguous) {
+							throw CompileError(
+								"ambiguous nested enum type '" +
+								std::string(components.front().view()) + "'");
 						}
+						owner_type_info = nested_enum_type_info;
 					}
 				}
 			}
