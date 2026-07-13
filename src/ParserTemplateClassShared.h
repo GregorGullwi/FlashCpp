@@ -206,13 +206,17 @@ inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	if (type_spec.has_function_signature()) {
 		signature = type_spec.function_signature();
 	}
-	if (ResolvedAliasTypeInfo substituted_alias = resolveAliasTypeInfo(substituted_type_index);
-		!signature.has_value() && substituted_alias.function_signature.has_value()) {
-		signature = substituted_alias.function_signature;
+	if (!signature.has_value()) {
+		if (ResolvedAliasTypeInfo substituted_alias = resolveAliasTypeInfo(substituted_type_index);
+			substituted_alias.function_signature.has_value()) {
+			signature = substituted_alias.function_signature;
+		}
 	}
-	if (ResolvedAliasTypeInfo original_alias = resolveAliasTypeInfo(type_spec.type_index());
-		!signature.has_value() && original_alias.function_signature.has_value()) {
-		signature = original_alias.function_signature;
+	if (!signature.has_value()) {
+		if (ResolvedAliasTypeInfo original_alias = resolveAliasTypeInfo(type_spec.type_index());
+			original_alias.function_signature.has_value()) {
+			signature = original_alias.function_signature;
+		}
 	}
 	if (!signature.has_value() &&
 		source_member != nullptr &&
