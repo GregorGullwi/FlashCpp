@@ -1,8 +1,44 @@
-# 2026-04-27 Fallback Comments Audit
+# Fallback Comments Audit (snapshot 2026-07-13)
 
 > Historical note: the filename is retained for continuity, but the tracked items
 > should be understood as temporary compatibility/recovery behavior and
 > standards-alignment debt, not as endorsed long-term compiler semantics.
+
+## Current snapshot (2026-07-13)
+
+The April/May probe log below is historical evidence, not the current priority
+list. The current checkout was rebuilt with `.\build_flashcpp.bat` and passed
+the Windows suite with 2,756 regular tests and 236 expected-fail tests. A first
+run used a 2026-07-09 binary and reported seven failures; rerunning those exact
+tests after the clean 2026-07-13 rebuild passed all seven, so those failures were
+stale-binary artifacts rather than current regressions.
+
+The claims that remain valid are narrower than the original audit suggested:
+
+- Normalized direct-call, callable-object, constructor-call, ternary, arithmetic,
+  contextual-`bool`, and variable-initialization conversion paths now require
+  sema-owned metadata or throw `InternalError`. Their old codegen recovery
+  branches are closed for normalized bodies; only legacy non-normalized or
+  synthesized-wrapper boundaries remain.
+- Lazy member materialization is now a sema-owned ODR-use fixpoint drained before
+  codegen. The old codegen-side materialization claim is historical and should
+  not remain in the active removal queue.
+- Template substitution still has live recovery: unresolved non-type defaults,
+  variable-template evaluation, deferred-base type passthrough, pack metadata
+  reconstruction, and TypeIndex/name matching. The recent partial-specialization
+  and static-member-template work improves identity propagation but does not
+  remove these fallback classes.
+- Type layout is more centralized than in April through `TypeSizeQuery.h`, but
+  that helper still deliberately returns `fallback_size_bits_`, 32-bit placeholder
+  sizes, and legacy alias sizes. It is not yet an authoritative complete/
+  incomplete/dependent layout service.
+- Parser skip recovery remains active for unsupported nested member-template forms
+  in `Parser_Templates_Class.cpp`; it can still discard a body or declaration
+  after a parse failure. This is a separate parser-coverage task, not a codegen
+  fallback task.
+
+Use function/helper names rather than the old line numbers when following the
+historical entries below; source line numbers have moved substantially.
 
 ## Scope
 
@@ -10,15 +46,24 @@ This audit reviewed C++ source comments containing `fallback` in `src\*.h` and `
 
 ## Executive summary
 
-The risky fallback sites cluster into five architectural gaps:
+The original five gaps now divide into three active debt classes and one mostly
+closed boundary:
 
-1. Codegen still performs semantic decisions when `SemanticAnalysis` has not annotated expression types, conversions, overload targets, or callable targets.
-2. Template instantiation still relies on secondary substitution, name scans, placeholder types, and TypeIndex recovery instead of preserving canonical dependent-type bindings.
-3. Lazy member materialization is partly enforced before codegen, but residual comments show several places where codegen historically compensated for missing sema materialization.
-4. Type size and type identity are split between authoritative metadata and parser-stored or alias-stored fallback fields.
-5. Parser recovery skips unsupported template/friend/member constructs, which can turn unsupported C++ into silently accepted incomplete ASTs.
+1. Template instantiation still relies on secondary substitution, name scans,
+   placeholder types, pack metadata, and TypeIndex recovery instead of preserving
+   canonical dependent bindings everywhere.
+2. Type size and type identity still have legacy answers in `TypeSizeQuery.h`,
+   `fallback_size_bits_`, parser snapshots, and placeholder sizing.
+3. Parser recovery still skips unsupported nested template/member constructs.
+4. Codegen semantic recovery is mostly closed for normalized bodies. The remaining
+   compatibility boundary is the non-normalized/synthesized path and should only
+   be removed when a real executing case is captured by a regression test.
 
-The removal strategy should be to make the higher phase produce complete metadata and make lower phases fail with `CompileError` or `InternalError` when required metadata is absent. In particular, codegen should not be doing overload resolution, type inference, template lookup, or substitution recovery.
+The architectural rule remains: higher phases should produce complete metadata;
+lower phases should emit from that metadata and fail with `CompileError` or
+`InternalError` when required metadata is absent. This rule is now enforced for
+the normalized codegen paths listed above, but not yet for every substitution,
+layout, or parser-recovery path.
 
 ## High-risk findings
 
@@ -26,116 +71,174 @@ The removal strategy should be to make the higher phase produce complete metadat
 
 Representative sites:
 
-- `src\IrGenerator_Call_Direct.cpp` — the prior arity-based `operator()` lookup, the `scoped_overloads` / `gSymbolTable_overloads` single-overload recovery branches, the precomputed-mangled `gSymbolTable` pointer-equality scan, the current-struct + base-class member-by-name recovery, and the qualified-static-member struct-iteration recovery were probed across the full 2239-test corpus with hard-fail guards, never hit, and have been removed.
-- `src\IrGenerator_Call_Direct.cpp` / `src\SemanticAnalysis.cpp` — sema no longer exposes a coarse `unresolved_call_args_` bit for direct calls, and direct-call compatibility-reason bookkeeping has now been removed. Qualified-owner member lookup, qualified-static-member scanning, template-parameter-qualified static call recovery, dependent base-template qualified-call remap, stale precomputed pattern-owner remap, declaration-address overload rescans, and mangled-symbol retry lookup have all been removed from direct-call lowering. Sema-normalized direct calls now hard-fail during annotation when unresolved, and sema now covers the first exposed follow-up gaps itself (qualified namespace lookup, ADL-only hidden-friend candidate augmentation, reuse of concrete parser-instantiated direct-call targets after dependent-unqualified POI failure, direct consumption of parser-stored definition-bound call records, definition-time filtering for namespace-qualified function templates without filtering dependent ADL completion, and exclusion of indirect calls from the invariant). A 2026-05-26 follow-up tightened the remaining sema-side compatibility path by consuming definition-record mangled identity before broad lookup and by resolving qualified-owner namespaces from source spelling directly, so relative and leading-`::` qualifiers no longer depend on manual forced-global splitting. Later follow-ups resolve concrete postfix `operator()` member calls from receiver type information before creating the direct-call node when receiver/call arguments are already concrete, build qualified direct-call member overload sets from owner-type metadata, remove post-overload and lookup-empty member-recovery branches, and remove receiver-member recovery from direct-call target resolution. The remaining compatibility behavior is now the non-normalized/synthesized transition boundary, not an active codegen-side direct-call recovery chain.
-- Standard C++20 follow-up for this cluster: remove the remaining non-normalized compatibility branches so ordinary direct-call acceptance depends only on standard lookup/overload rules captured by sema.
-- `src\IrGenerator_Call_Indirect.cpp:275` - parser fallback for inconclusive callable type; sema now explicitly annotates resolved call-expression result types so nested callable receivers no longer need codegen-side inference.
-- `src\IrGenerator_MemberAccess.cpp` — the arity-only constructor fallback for `__is_nothrow_constructible` and the "first non-implicit `operator=`" fallback for `__is_nothrow_assignable` (audit §1, formerly lines 2919 and 3047) were probed across the full 2239-test corpus with hard-fail guards, never hit, and have been removed. The exact-match constructor / `operator=` lookups above already cover the corpus.
-- `src\OverloadResolution.h:1130` - arity-only constructor overload resolution when argument type information is unavailable.
+- `src\IrGenerator_Call_Direct.cpp::allow_lookup_recovery` — the old declaration-address rescans, mangled-symbol retries, qualified-owner remaps, and member-hierarchy scans have been removed. The remaining flag is only a compatibility boundary for non-normalized bodies and synthesized wrappers; normalized calls throw when sema has not supplied a target.
+- `src\IrGenerator_Call_Indirect.cpp` — the callable-type parser fallback is now an `InternalError` in sema-normalized bodies. The source comment records a 2026-05-20 full-corpus probe that never reached it; the parser path remains only for non-normalized bodies.
+- `src\IrGenerator_Visitors_Decl.cpp::generateConstructorCallIr`, `src\IrGenerator_Stmt_Decl.cpp`, and `src\IrGenerator_Expr_Conversions.cpp` — normalized constructor calls, struct-to-primitive variable initialization, and contextual-`bool` conversion operators now require sema annotations and hard-fail if the old recovery would run.
+- `src\IrGenerator_Expr_Operators.cpp::generateTernaryIr` and binary conversion lowering — normalized ternaries require an exact sema result type, and normalized arithmetic conversions throw on a missing annotation. Residual enum/pointer and non-normalized conversion paths are still present but are not the old overload/type-inference recovery chain.
 
 Missing feature:
 
-`SemanticAnalysis` and overload resolution do not yet guarantee that every call expression, constructor expression, callable object invocation, and builtin type-trait query carries the selected declaration and exact conversion sequence before IR generation.
+For sema-normalized bodies, `SemanticAnalysis` now supplies the selected call/
+constructor target and the required expression/conversion metadata. The remaining
+gap is coverage of legacy non-normalized bodies and synthesized wrappers, where
+codegen still has compatibility lookup/conversion behavior.
 
 Why the fallback is non-compliant:
 
-C++ overload resolution cannot degrade to arity-only, first-match, unique-name, or symbol-table scan semantics. These heuristics can select the wrong overload, ignore constraints, mishandle cv/ref qualifiers, and produce code for an ill-formed program.
+C++ overload resolution cannot degrade to arity-only, first-match, unique-name, or
+symbol-table scan semantics. Those heuristics have been removed from normalized
+codegen; the remaining compatibility boundary must be retired only when a real
+non-normalized execution path is covered by a regression test.
 
 Removal direction:
 
-- Treat resolved call target identity as mandatory sema output for all normalized bodies, including template-instantiated bodies and lazy member bodies.
-- Store the selected constructor/operator/function declaration on the AST or in a stable sema side table keyed by the call node.
-- Make codegen consume that target only. If a normalized body reaches codegen without it, throw `InternalError`.
-- Keep only true diagnostic/error-recovery paths in parser, not codegen selection heuristics.
+- Keep the normalized-body invariants and add a focused probe for each remaining
+  non-normalized/synthesized wrapper path before removing its compatibility branch.
+- Do not reintroduce codegen lookup or overload selection to support a new template
+  case; extend sema normalization and preserve the structured target instead.
+- Delete the stale historical comments once the compatibility boundary has either
+  been proven dead or moved into a sema-owned path.
 
 ### 2. Codegen-side type conversion and expression typing
 
 Representative sites:
 
-- `src\IrGenerator_Expr_Operators.cpp:738`, `src\IrGenerator_Expr_Operators.cpp:750`, `src\IrGenerator_Expr_Operators.cpp:758` - ternary lowering falls back from sema annotations to sema expression types and then parser expression typing; sema now normalizes ternary children before branch-conversion annotation so child slots/call targets exist before codegen consults them, and deferred member codegen now re-enqueues late materialized member bodies into the pending sema-root queue before emission so sema-available delayed members do not fall through to the parser ternary fallback.
-- `src\IrGenerator_Expr_Operators.cpp:2840` through `src\IrGenerator_Expr_Operators.cpp:2875` - binary operators prefer sema conversions but still generate fallback standard arithmetic conversions. A 2026-04-30 probe that replaced the normalized-body arithmetic fallback warning with `InternalError` found one live gap: `tests\test_lazy_conv_op_multi_cv_types_ret0.cpp` (`Box<T>::operator T() { return val + 1; }` for `T=double`). Root fix: `SemanticAnalysis::inferExpressionType(...)` now bypasses the sema type-slot cache for `IdentifierNode` / `MemberAccessNode` expressions while an implicit-`this` member context is active, so shared AST nodes in multiple template member instantiations no longer reuse stale `this` / member-access type slots from an earlier instantiation. After the fix, the focused regression and the full 2254-test Linux suite passed with the hard-fail probe enabled.
-- `src\IrGenerator_Expr_Conversions.cpp:1484`, `src\IrGenerator_Expr_Conversions.cpp:1506` - conversion lowering falls back to promotion when sema is missing or unavailable. The contextual-`bool` struct → `bool` conversion-operator fallback (formerly line 2535/2538) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant.
-- `src\IrGenerator_Visitors_Namespace.cpp` - the return-statement struct-with-conversion-operator branch (formerly the `if (conv_op)` arm) was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant. The surrounding `generateTypeConversion` fallback class has been narrowed again: return lowering now resolves alias-backed `UserDefined` / `TypeAlias` sources to their canonical primitive before applying the residual fallback. A 2026-05-01 follow-up root-fixed the alias-template portion by updating existing instantiated alias-template `TypeInfo` entries to real `TypeAlias` entries that point at the resolved target, including qualified member-alias template names; a later follow-up preserved `__underlying_type(T)` operands through template substitution so enum underlying-type aliases materialize as primitive targets before return lowering. Alias entries now hard-fail if they still reach the codegen fallback. Remaining live traffic is the generic missing-type-info residual. The lambda returned-closure false-positive was removed by sema-normalized lambda root tracking.
-- `src\IrGenerator_Stmt_Decl.cpp:1975` - variable initialization searches conversion operators directly when sema annotation is absent. Confirmed *active* on 2026-04-29: replacing it with a hard error broke `tests\test_const_cast_conv_op_ret0.cpp`, `tests\test_static_cast_base_ref_conv_op_ret0.cpp`, and `tests\test_xvalue_all_casts_ret0.cpp`.
+- `src\IrGenerator_Expr_Operators.cpp::generateTernaryIr` — sema now owns the exact result type for normalized ternaries. The remaining sema-expression-type lookup is a compatibility step, not parser expression typing; a normalized body throws if the exact result or branch types are unavailable.
+- Binary operator lowering now throws for missing normalized arithmetic annotations. The remaining fallback is explicitly limited to enum/pointer and legacy non-normalized cases. The previous live `Box<T>::operator T()` cache issue was fixed by recomputing implicit-`this` member types per instantiation.
+- `src\IrGenerator_Expr_Conversions.cpp` — the contextual-`bool` struct conversion-operator fallback is gone; the old location now throws an invariant if it would be needed.
+- `src\IrGenerator_Visitors_Namespace.cpp` — struct conversion-operator return fallback is dead for normalized bodies. The residual path is for legacy parser-only bodies and for lambda-owned template parameters that still lack a concrete TypeIndex; it must not be mistaken for a standards-compliant type-resolution path.
+- `src\IrGenerator_Stmt_Decl.cpp` — struct-to-primitive variable-initialization conversion is sema-only in normalized bodies; the former codegen lookup now throws if reached.
 
 Missing feature:
 
-The sema-to-codegen contract for expression type and conversion annotations is incomplete. Some normalized bodies still reach codegen without explicit conversion edges and without a canonical expression type for every subexpression.
+The sema-to-codegen contract is complete for the normalized expression contexts
+covered by the current suite. It is still incomplete for legacy non-normalized
+bodies, some synthesized lambda/template paths, and residual enum/pointer
+conversion cases.
 
 Why the fallback is non-compliant:
 
-Usual arithmetic conversions, contextual conversions, user-defined conversions, ternary common type calculation, and initialization conversions are semantic operations. Performing them opportunistically in codegen risks applying conversions in the wrong context, missing narrowing diagnostics, bypassing overload resolution ranking, and producing implementation-specific behavior.
+Usual arithmetic conversions, contextual conversions, user-defined conversions,
+ternary common type calculation, and initialization conversions are semantic
+operations. The normalized-body hard failures now protect that contract; the
+remaining compatibility code is still risky if it becomes reachable for a new
+template or wrapper path.
 
 Removal direction:
 
-- Require sema to own the exact result type for every ternary expression and annotate every implicit conversion, including ternary branch conversions, assignment RHS conversions, binary arithmetic conversions, contextual `bool`, and user-defined conversions.
-- Extend sema coverage to template-instantiated, catch-block, lambda, and delayed member bodies so parser expression typing is never needed by codegen.
-- Replace codegen fallbacks with assertions once all normalized body contexts are covered.
-- TODO: remove the remaining non-normalized ternary category/size fallback once template-instantiated, catch-block, lambda, and delayed member bodies all carry sema-owned exact ternary result types.
-- Keep codegen conversion helpers only as emitters for an already-selected conversion, not as selectors.
+- Keep codegen conversion helpers as emitters for an already-selected conversion,
+  and keep the normalized-body assertions enabled.
+- Add probes only around the residual non-normalized/synthesized paths, especially
+  lambda-owned template parameters and enum/pointer conversions; remove a path
+  only after a focused regression proves sema coverage.
+- Treat the remaining ternary category/type lookup as compatibility code, not as
+  an active normalized-body defect.
 
 ### 3. Template instantiation and substitution recovery
 
 Representative sites:
 
-- `src\ExpressionSubstitutor.cpp:951` and `src\Parser_Templates_Lazy.cpp:1012` - general substitution for remaining template-dependent expressions.
-- `src\ExpressionSubstitutor.cpp:1537` - recovers template arguments from type names when TypeInfo has no stored args.
-- `src\Parser_Templates_Inst_ClassTemplate.cpp:4049`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4589`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4787`, `src\Parser_Templates_Inst_ClassTemplate.cpp:4813`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5246`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5844`, `src\Parser_Templates_Inst_ClassTemplate.cpp:5904` - non-type defaults, variable templates, array dimensions, initializers, and static members use catch-all substitution or AST fallback passes.
-- `src\Parser_Templates_Substitution.cpp:692`, `src\Parser_Templates_Substitution.cpp:762`, `src\Parser_Templates_Substitution.cpp:848`, `src\Parser_Templates_Substitution.cpp:1633` - pack and template parameter lookup fallbacks after primary scope information is unavailable.
-- `src\Parser_Templates_Params.cpp:1826` - invalid `type_index` is no longer a catch-all unresolved dependent-placeholder signal; classification now either materializes a canonical placeholder for a known current template parameter, rejects non-template speculative parses such as comparisons, or hard-fails active template contexts that still produce an invalid placeholder.
+- `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved non-type defaults still retry through `substituteAndEvaluateNonTypeDefault(...)`; deferred-base type arguments still pass through the original `TypeSpecifierNode` when canonical substitution cannot resolve them; and variable-template evaluation remains a dedicated bridge before generic constexpr evaluation.
+- `src\Parser_Templates_Inst_ClassTemplate.cpp` and `src\Parser_Templates_Inst_MemberFunc.cpp` — replay-first static-member initialization and registry-backed outer bindings are now authoritative where source metadata exists, but AST substitution and registry binding fallbacks remain for no-source and partial-specialization cases.
+- `src\Parser_Templates_Inst_Substitution.cpp` — type-trait substitution still matches by TypeInfo name when TypeIndex registration differs across templates. This is exactly the kind of identity recovery the audit should retire after all current template-parameter bindings are canonical.
+- `src\ExpressionSubstitutor.cpp::substituteQualifiedIdentifier` — if the qualified type is absent from `gTypesByNameMap`, it reconstructs arguments from the current bound-template map. This remains a legitimate compatibility path but is still name/context recovery.
+- `src\Parser_FunctionHeaders.cpp` — pack expansion can still recover element count from symbol-table names, and argument type collection can synthesize a type from the expression or default to `int` when parser typing is unavailable.
+- The invalid-`TypeIndex` path in `Parser_Templates_Params.cpp` has been narrowed to canonical current-parameter materialization, speculative-parse rejection, or invariant failure; it is no longer a broad accepted-dependent signal.
 
 Missing feature:
 
-Template instantiation lacks one authoritative dependent-type and dependent-expression substitution pipeline. Template parameter bindings, pack bindings, non-type parameter values, array bounds, nested types, and instantiated TypeInfo metadata can be lost and later reconstructed from names or parser state.
+Template instantiation still lacks one authoritative dependent-type and
+dependent-expression substitution pipeline. Recent identity fixes for forwarding
+parameters, partial specializations, and static-member-template class scope have
+closed several concrete gaps, but bindings, pack slices, non-type values, array
+bounds, nested types, and instantiated TypeInfo metadata can still be recovered
+from names or parser state.
 
 Why the fallback is non-compliant:
 
-C++ template semantics depend on precise dependent identity, current instantiation rules, two-phase lookup, pack expansion rules, non-type template parameter value/category, and constraints. Name-based or positional fallback can bind the wrong declaration, lose cv/ref or value category, accept ill-formed substitutions, or fail to diagnose SFINAE vs hard-error boundaries correctly.
+C++ template semantics depend on precise dependent identity, current instantiation
+rules, two-phase lookup, pack expansion rules, non-type template parameter
+value/category, and constraints. Name-based or positional fallback can bind the
+wrong declaration, lose cv/ref or value category, accept ill-formed substitutions,
+or fail to diagnose SFINAE vs hard-error boundaries correctly. The clean full
+suite demonstrates coverage, not that these fallback branches are dead.
 
 Removal direction:
 
-- Introduce a single substitution context object that carries type parameters, non-type values, packs, current instantiation, and namespace/member context through all template instantiation paths.
-- Store canonical template arguments and pattern-to-instantiation links in TypeInfo/TemplateRegistry at creation time rather than reconstructing from strings.
-- Replace `type_index == 0` dependent detection with explicit dependent placeholder metadata.
-- Make ExpressionSubstitutor a normal part of substitution with explicit preconditions instead of a catch-all recovery path after parser/template code failed to substitute.
+- Continue carrying canonical type/non-type/template-template bindings and source
+  identity through partial-specialization, static-member, deferred-base, and pack
+  instantiation paths.
+- Replace the active TypeIndex/name fallback in trait substitution and the
+  symbol-name pack reconstruction with explicit binding metadata; add regressions
+  for reordered parameters, packs outside function signatures, and nested owners.
+- Make ExpressionSubstitutor's fallback inputs explicit and observable, then
+  delete a fallback only after a hard-fail probe identifies no remaining user path.
+- Keep `type_index == 0` out of dependency classification; use the canonical
+  dependent-placeholder metadata already established for current template params.
 
-### 4. Lazy member materialization fallback history
+### 4. Lazy member materialization (closed for normalized flow)
 
 Representative sites:
 
-- `src\FlashCppMain.cpp:602` - deferred member generation is described as coming from a struct search fallback in call lowering.
-- `src\IrGenerator_Call_Direct.cpp:1074`, `src\IrGenerator_Call_Direct.cpp:1390`, `src\IrGenerator_Call_Direct.cpp:1692` - comments document historical or retained lazy member materialization fallbacks around direct calls.
-- `src\IrGenerator_Call_Indirect.cpp:1081` - historical indirect-call lazy member fallback.
-- `src\SemanticAnalysis.cpp:3812`, `src\SemanticAnalysis.cpp:5257`, `src\SemanticAnalysis.cpp:5458` - sema comments identify lazy materialization as the replacement for codegen-side fallbacks.
+- `src\SemanticAnalysis.cpp::drainLazyMemberRegistry` — sema drains an ODR-use
+  fixpoint before codegen and normalizes newly materialized roots during the
+  drain.
+- `src\SemanticAnalysis.cpp::tryMaterializeLazyCallTarget` and its constructor/
+  receiver helpers — selected members are marked ODR-used and materialized while
+  sema still owns overload/call identity.
+- `src\FlashCppMain.cpp` — codegen consumes the remaining deferred member queue
+  after semantic normalization; it no longer searches member structures to decide
+  which body to instantiate.
 
 Missing feature:
 
-Lazy member materialization now lives in semantic analysis for the exercised corpus, but comments and remaining recovery paths show the invariant is not fully encoded for every legacy lowering path: all ODR-used instantiated members must exist before codegen.
+The normalized pipeline now encodes the required invariant: every sema-selected
+ODR-used member is materialized and normalized before its body is emitted. The
+remaining audit work is comment cleanup and a probe for any parser-only or
+synthesized entry point that bypasses this pipeline.
 
 Why the fallback is non-compliant:
 
-On-demand body materialization from codegen couples declaration lookup, overload selection, template instantiation, and emission order. It can miss ODR-use cases, instantiate members under the wrong context, or silently select pattern-owned declarations instead of instantiated declarations.
+On-demand body materialization from codegen would couple declaration lookup,
+overload selection, template instantiation, and emission order. The current sema
+fixpoint avoids that failure mode; the concern is retained here to prevent a
+future recovery branch from reintroducing it.
 
 Removal direction:
 
-- Make sema's end-of-normalization drain the only lazy materialization path.
-- Record ODR-use and selected instantiated member declarations during sema call resolution.
-- Add hard checks before codegen begins: no lazy selected call target may still point to an unmaterialized stub when its body is required.
-- Delete dead historical comments after replacing them with executable assertions or tests.
+- Keep `drainLazyMemberRegistry()` as the only pre-codegen lazy-member fixpoint
+  and preserve its ODR-use-only behavior.
+- Delete stale comments that describe codegen-side struct searches or historical
+  fallback materialization; retain executable invariants and the existing ODR-use
+  regressions.
+- If a parser-only/synthesized path is found to bypass sema, add a focused test
+  first and route it through semantic normalization rather than adding codegen
+  materialization.
 
 ### 5. Parser skip fallbacks for unsupported syntax
 
 Representative sites:
 
-- `src\Parser_Templates_Class.cpp:246` and `src\Parser_Templates_Class.cpp:559` - nested template parsing skips the rest when parsing fails or the pattern is not recognized.
-- `src\Parser_Decl_StructEnum.cpp:4339` - qualified friends or unparsed params skip bodies.
-- `src\Parser_FunctionHeaders.cpp:126` - falls back to normal expression parsing after failing another interpretation.
+- `src\Parser_Templates_Class.cpp` — nested template parsing still skips the
+  remainder after an inner-template parse error or an unrecognized pattern,
+  including balanced bodies and declarations terminated by `;`.
+- `src\Parser_Decl_StructEnum.cpp` — qualified friends or declarations with
+  unparsed parameters still skip bodies, including try-blocks.
+- `src\Parser_FunctionHeaders.cpp` — valid pack metadata is preferred, but the
+  parser can still reconstruct pack elements from symbol-table names and can
+  synthesize `int` when argument type collection cannot obtain a type.
+- `src\Parser_Expr_BinaryPrecedence.cpp` and `src\Parser_FunctionHeaders.cpp` —
+  expression/declaration ambiguity fallbacks are legitimate only when they
+  preserve both parses; they should not be grouped with token-skipping recovery.
 
 The "regular specialization without any template args" branch in `src\Parser_Templates_Class.cpp` (formerly line ~4454, "shouldn't happen but fallback") was probed across the full 2243-test corpus with a hard-fail guard, never hit, and has been replaced with an `InternalError` invariant: function-template specializations that reach this branch always carry either type or non-type template arguments.
 
 Missing feature:
 
-The parser does not fully model all member template, out-of-line definition, friend, requires/trailing-specifier, and ambiguous declaration/expression grammar forms it encounters in C++20/library headers.
+The parser still does not fully model every nested member-template, out-of-line
+friend, requires/trailing-specifier, and ambiguous declaration/expression form it
+encounters in C++20/library headers. The skip branches are active by source
+inspection; the clean full suite does not prove that every branch is dead.
 
 Why the fallback is non-compliant:
 
@@ -154,41 +257,67 @@ Removal direction:
 
 Representative sites:
 
-- `src\AstNodeTypes_DeclNodes.h:938` - `TypeInfo::fallback_size_bits_` stores generic size for aliases, incomplete types, and forward declarations.
-- `src\AstNodeTypes_DeclNodes.h:1831` through `src\AstNodeTypes_DeclNodes.h:1878` - `getTypeSpecSizeBits` uses StructTypeInfo first, TypeInfo stored size next, scalar size next, then parser-stored `type_spec.size_in_bits()`.
-- `src\AstNodeTypes.cpp:443` - enum sizing fallback when concrete enum TypeIndex has been lost.
-- `src\AstNodeTypes.cpp:645` - fallback names for non-primitive types.
-- `src\IrGenerator_MemberAccess.cpp:1930` and `src\IrGenerator_MemberAccess.cpp:1935` - `sizeof` member handling falls back to TypeInfo and TypeSpecifier size metadata.
-- `src\TemplateRegistry_Lazy.h:1565`, `src\TemplateRegistry_Lazy.h:1568`, `src\TemplateRegistry_Lazy.h:1581` - lazy registry converts fallback size bits or primitive type sizes.
+- `src\AstNodeTypes_DeclNodes.h::TypeInfo::fallback_size_bits_` remains the
+  generic size slot for aliases, incomplete types, and forward declarations.
+- `src\TypeSizeQuery.h::queryCompleteTypeInfoObjectSizeBits` and
+  `queryDependentPlaceholderLegacySizeBits` now centralize much of the old
+  sizing logic, but intentionally return `fallback_size_bits_` or a 32-bit
+  placeholder size for legacy/dependent paths.
+- `src\TypeSizeQuery.h::queryConcreteAliasResolvedTypeSizeBits` still preserves
+  a legacy alias size instead of reporting an incomplete layout in some cases.
+- `getTypeSpecSizeBits`, enum sizing, `sizeof` lowering, and
+  `TemplateRegistry_Lazy.h` still consume stored/parser/primitive size metadata
+  after authoritative struct information is unavailable.
 
 Missing feature:
 
-The compiler does not have a single authoritative type layout query for all complete object types and aliases. Size can come from StructTypeInfo, EnumTypeInfo, TypeInfo fallback fields, TypeSpecifier parser snapshots, native category tables, or alias metadata.
+The compiler now has a shared size-query layer, but it is not yet a single
+authoritative layout result for all complete object types and aliases. Size can
+still come from `StructTypeInfo`, `EnumTypeInfo`, `TypeInfo` fallback fields,
+`TypeSpecifier` parser snapshots, native category tables, or alias metadata.
 
 Why the fallback is risky:
 
-For aliases, dependent instantiations, forward declarations, and enums, stale or parser-cached sizes can hide incomplete type use or return the wrong size after substitution.
+For aliases, dependent instantiations, forward declarations, and enums, stale or
+parser-cached sizes can hide incomplete type use or return the wrong size after
+substitution. Returning 32 bits for an unresolved dependent placeholder is a
+particularly strong sign that the lower phase is still accepting missing layout
+metadata.
 
 Removal direction:
 
-- Centralize size/layout queries behind a `TypeLayout` service that takes canonical TypeIndex plus qualifiers/pointer/reference state.
-- Keep parser-stored size only as a display/cache field for primitive tokens, not as a fallback authority.
-- Replace `fallback_size_bits_` with explicit states: complete layout, known scalar alias, dependent/incomplete, and invalid.
-- Make `sizeof` and array-bound code reject incomplete object types rather than falling through to zero or cached parser size.
+- Evolve `TypeSizeQuery.h` into an explicit result with complete-layout,
+  known-scalar/alias, dependent/incomplete, and invalid states instead of legacy
+  numeric fallbacks.
+- Keep parser-stored size only as a display/cache field for primitive tokens, not
+  as a layout authority.
+- Make `sizeof`, array-bound, and lazy registry consumers reject incomplete object
+  types or defer them explicitly rather than using 32/64-bit placeholder sizes.
 
-### 7. `sizeof` and constexpr evaluation fallbacks
+### 7. `sizeof` and constexpr evaluation fallbacks (active, narrower)
 
 Representative sites:
 
-- `src\IrGenerator_MemberAccess.cpp:1996` - `sizeof(member_access)` searches instantiated types by string prefix when direct lookup finds unsubstituted template members.
-- `src\IrGenerator_MemberAccess.cpp:2081`, `src\IrGenerator_MemberAccess.cpp:2110`, `src\IrGenerator_MemberAccess.cpp:2131`, `src\IrGenerator_MemberAccess.cpp:2151` - `sizeof(arr[index])` and general `sizeof(expr)` fall through to IR generation and can return zero with only a warning.
-- `src\ConstExprEvaluator_Core.cpp:4002` - `__is_complete_or_unbounded` previously returned true if it could not extract the type; this now reports a constexpr evaluation error instead of treating missing type metadata as success.
-- `src\ConstExprEvaluator_Members.cpp:4194` - struct initializer evaluation falls back to evaluating the initializer expression directly.
-- `src\IrGenerator_Visitors_TypeInit.cpp:1175`, `src\IrGenerator_Visitors_TypeInit.cpp:1420` - type initialization tries full constexpr eval or emits bytes from fallback zero-initialization.
+- `src\IrGenerator_MemberAccess.cpp` — `sizeof(arr[index])` still falls through
+  to IR generation when dimensions cannot be evaluated, and a final zero-size
+  result is only warned about. This is an active codegen recovery path.
+- `src\ConstExprEvaluator_Core.cpp` — the `__is_complete_or_unbounded`
+  missing-type case now reports an evaluation error instead of returning true;
+  that portion of the original claim is closed.
+- `src\ConstExprEvaluator_MemberAccess.cpp` — struct initializer evaluation can
+  still evaluate the initializer expression directly when a more specific
+  member-binding path does not apply.
+- `src\IrGenerator_Visitors_TypeInit.cpp` — static initialization still has
+  constexpr-first behavior plus aggregate/leaf fallback handling after an
+  evaluation failure. This needs a contract review before it is classified as
+  either valid diagnostic recovery or silent zero-initialization.
 
 Missing feature:
 
-Compile-time evaluation and type trait evaluation are not consistently driven by semantic type metadata. When type extraction or member layout fails, code falls back to runtime IR generation, direct evaluation, or permissive trait answers.
+Compile-time evaluation and type trait evaluation are not consistently driven by
+semantic type metadata. When type extraction or member layout fails, code can
+still fall back to runtime IR generation or direct evaluation; the permissive
+`__is_complete_or_unbounded` success answer has been removed.
 
 Why the fallback is non-compliant:
 
@@ -196,43 +325,79 @@ Why the fallback is non-compliant:
 
 Removal direction:
 
-- Add sema-owned type resolution for all `sizeof`, `alignof`, trait, and initializer contexts.
-- Make constexpr/type-trait evaluators distinguish "false by rule" from "unknown due compiler limitation".
-- Replace permissive fallback answers with `CompileError` for user-facing invalid code or `InternalError` for missing compiler metadata.
-- Ensure instantiated member access preserves the instantiated TypeIndex so `sizeof(t.member)` never searches by string prefix.
+- Add sema-owned type resolution for all `sizeof`, `alignof`, trait, and
+  initializer contexts, then make the `sizeof(arr[index])` path reject or defer
+  unresolved dimensions instead of emitting runtime IR.
+- Make constexpr/type-trait evaluators distinguish "false by rule" from
+  "unknown due compiler limitation".
+- Replace permissive fallback answers with `CompileError` for user-facing invalid
+  code or `InternalError` for missing compiler metadata.
+- Ensure instantiated member access preserves the instantiated TypeIndex so
+  `sizeof(t.member)` never searches by string prefix.
 
 ## Lower-risk or acceptable fallback comments
 
 Some comments use "fallback" for non-semantic recovery or platform integration:
 
-- `src\CrashHandler.h:362` installs an unhandled exception filter fallback.
-- `src\FileReader_Macros.cpp:1190` handles `#include_next` by using normal include lookup when the current directory is not in include paths.
-- `src\Token.h:71` returns a fallback token spelling for tokens not in a table.
-- `src\CodeViewDebug.cpp:771` uses a fallback object filename for debug info.
-- `src\ObjFileWriter.h:316` reports failure after both COFFI and manual object writer paths fail.
-- `src\IRConverter_ABI.h:271` and `src\IRConverter_ABI.h:295` remember dirty registers as allocator fallbacks.
+- `src\CrashHandler.h` installs an unhandled exception filter fallback.
+- `src\FileReader_Macros.cpp` handles `#include_next` by using normal include lookup when the current directory is not in include paths.
+- `src\Token.h` returns a fallback token spelling for tokens not in a table.
+- `src\CodeViewDebug.cpp` uses a fallback object filename for debug info.
+- `src\ObjFileWriter.h` reports failure after both COFFI and manual object writer paths fail.
+- `src\IRConverter_ABI.h` remembers dirty registers as allocator fallbacks.
 
 These are not C++ semantic fallbacks. They may still deserve cleanup, but they do not indicate standard-compliance gaps in the compiler front-end.
 
 ## Recommended removal order
 
-1. **Sema/codegen contract hardening**: make call targets, constructor targets, expression types, and implicit conversions mandatory for normalized bodies. Convert codegen fallbacks to assertions after adding missing sema coverage.
-2. **Template substitution unification**: carry explicit substitution context and dependent placeholder metadata through all instantiation paths; remove name-based and `type_index == 0` recovery.
-3. **Lazy member pre-codegen invariant**: enforce that ODR-used instantiated member bodies are materialized before IR generation starts.
-4. **Authoritative type layout service**: replace `fallback_size_bits_` and parser-size fallback reads with explicit complete/incomplete/dependent layout states.
-5. **Parser recovery split**: parse supported C++20 constructs fully; for unsupported constructs, produce targeted errors instead of skipping and letting later phases recover.
+1. **Template identity and substitution recovery**: retire TypeIndex/name scans,
+   pack symbol-name reconstruction, and unresolved default/deferred-base recovery
+   by carrying canonical bindings through the active template frontiers.
+2. **Authoritative layout state**: finish `TypeSizeQuery.h` so incomplete or
+   dependent types are represented explicitly instead of receiving 32/64-bit
+   fallback sizes.
+3. **Parser skip recovery**: replace nested-template/friend token skipping with
+   explicit AST support or targeted `CompileError` after adding focused tests.
+4. **Residual codegen compatibility**: only after an executing non-normalized or
+   synthesized path is isolated, move it into sema normalization and remove the
+   lower-phase selector.
 
 ## Practical next audit steps
 
-- Add temporary hard-fail guards behind a debug flag for codegen fallbacks in `IrGenerator_Call_Direct.cpp`, `IrGenerator_Expr_Operators.cpp`, `IrGenerator_Expr_Conversions.cpp`, and `IrGenerator_MemberAccess.cpp` to measure which sites still execute in the current corpus.
-- For each executing site, add a regression test that demonstrates the sema/template metadata gap before removing the fallback.
-- Prefer deleting comments for already-removed historical fallbacks once their invariant is enforced by a test or assertion.
+- Probe the active template identity/default/pack fallbacks individually and add
+  one reduced regression per executing path before changing behavior.
+- Probe `TypeSizeQuery.h`'s 32/64-bit placeholder and alias-size branches with
+  incomplete, dependent, alias, enum, and nested-member `sizeof` cases.
+- Delete comments for already-removed normalized codegen fallbacks, keeping only
+  the executable invariant and a short reference to the regression that proved
+  the path dead.
 
-## Probe results from 2026-04-27 validation
+## Next 3 items (2026-07-13)
 
-The initial audit above was architectural. Several template-instantiation fallbacks were then probed directly by replacing them with hard failures or by deleting the fallback path and running the full Windows validation (`.\build_flashcpp.bat` and `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1`). The audit document keeps only the still-relevant post-audit state below rather than a historical list of removed fallbacks.
+1. **Canonical template identity and substitution** — remove the active
+   TypeIndex/name matching and symbol-name pack recovery by carrying canonical
+   bindings through partial specializations, deferred bases, static members, and
+   packs. Add focused regressions before each fallback removal.
+2. **Explicit layout states** — finish the `TypeSizeQuery.h` transition so
+   incomplete/dependent aliases cannot receive 32/64-bit placeholder sizes, then
+   harden `sizeof` and array-bound lowering against unresolved layout.
+3. **Parser skip recovery** — cover nested member-template and qualified-friend
+   skip branches with reduced tests, then parse valid forms explicitly or emit a
+   targeted `CompileError` instead of discarding the construct.
 
-### Proven active in the current corpus
+## Historical probe results from 2026-04-27 through 2026-05-26
+
+The initial audit was architectural. Several template-instantiation fallbacks were
+then probed directly by replacing them with hard failures or by deleting the
+fallback path and running the Windows validation. The entries below preserve the
+historical probe evidence and regression names; they are intentionally not a
+replacement for the current snapshot above.
+
+The entries in this section preserve historical evidence and exact regression
+names. They are not a current status report; where an entry conflicts with the
+2026-07-13 snapshot or the three-item queue above, the newer snapshot wins.
+
+### Proven active in the 2026-04/05 probe corpus
 
 1. `src\Parser_Templates_Inst_ClassTemplate.cpp` — unresolved template-default catch-all
     - Previous behavior: if no handler resolved a default template argument, the code pushed a placeholder (`void` for type params, `0` for non-type params).
@@ -350,7 +515,7 @@ The initial audit above was architectural. Several template-instantiation fallba
     - Validation: `tests\test_struct_default_arg_constructor_ret42.cpp`, `tests\test_template_current_instantiation_functional_cast_ret0.cpp`, and the new regression `tests\test_constructor_overload_return_same_arity_ret0.cpp` passed with the stricter constructor-call invariant enabled; the full Linux/clang suite also passed with 2271 regular tests and 154 expected-fail tests.
     - Conclusion: the normalized-body constructor-call fallback is now closed for shared expression lowering. Legacy constructor recovery remains only in other non-normalized or specialized lowering paths.
 
-### Confidence update
+### Historical confidence update
 
 The audit is now backed by direct suite evidence for several representative template fallbacks:
 
@@ -546,7 +711,7 @@ The audit is now backed by direct suite evidence for several representative temp
   implicit-`this` member context, forcing per-instantiation recomputation from
   the current member context. The focused regression and the full 2254-test
   Linux suite passed with the hard-fail probe enabled after this change;
-- the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes should still be assumed active until probed or root-fixed individually.
+- at that historical point, the larger ExpressionSubstitutor/static-initializer/pack-size fallback classes were still assumed active until probed or root-fixed individually; the current snapshot above narrows which of those classes remain live.
 - the `ConstExprEvaluator_Core.cpp` `__is_complete_or_unbounded` missing-type fallback now hard-fails instead of returning true. Added `tests/test_is_complete_or_unbounded_invalid_arg_fail.cpp`; the existing `tests/test_stdlib_features_ret0.cpp` still covers valid type-shaped use.
 - pseudo-destructor `noexcept(expr)` evaluation no longer depends on the
   destructor-name token for template temporaries. `TypeTraitEvaluator.cpp`
