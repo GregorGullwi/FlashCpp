@@ -1722,6 +1722,18 @@ ASTNode Parser::substituteTemplateParameters(
 			return emplace_node<TypeSpecifierNode>(substituted_spec);
 		};
 
+		if (current_owner_type_name.isValid() && type_spec.type_index().is_valid()) {
+			if (const TypeInfo* current_owner_type_info =
+					findTypeByName(current_owner_type_name)) {
+				const StructTypeInfo* current_owner_struct_info =
+					current_owner_type_info->getStructInfo();
+				if (current_owner_struct_info != nullptr &&
+					current_owner_struct_info->isOwnTypeIndex(type_spec.type_index())) {
+					return makeTypeSpecifier(*current_owner_type_info);
+				}
+			}
+		}
+
 		if (type_spec.type_index().is_valid()) {
 			if (const TypeInfo* dependent_type_info = tryGetTypeInfo(type_spec.type_index());
 				dependent_type_info != nullptr &&
