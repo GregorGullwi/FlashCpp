@@ -2806,6 +2806,27 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 
 			ASTNode resolved_return_type = *return_type_result.node();
+			const TypeSpecifierNode& parsed_return_type =
+				resolved_return_type.as<TypeSpecifierNode>();
+			TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+				parsed_return_type,
+				resolved_return_type,
+				parsed_return_type.token(),
+				template_params,
+				template_args,
+				[this](const ASTNode& node, const auto& params, const auto& args) {
+					return substituteTemplateParameters(node, params, args);
+				},
+				[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+					return substitute_template_parameter(type_spec, params, args);
+				},
+				nullptr,
+				TypeIndex{},
+				TypeIndex{},
+				false,
+				true);
+			resolved_return_type =
+				emplace_node<TypeSpecifierNode>(substituted_return_type);
 			resolveDependentMemberAlias(resolved_return_type, template_params, template_args);
 			TypeSpecifierNode& resolved_type = resolved_return_type.as<TypeSpecifierNode>();
 			resolveAliasTemplateInstantiation(resolved_type);
