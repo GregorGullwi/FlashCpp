@@ -4967,45 +4967,30 @@ std::optional<SemanticAnalysis::ResolvedQualifiedIdentifierInfo> SemanticAnalysi
 				if (const MemberContext* member_context = getCurrentMemberContext()) {
 					if (const StructTypeInfo* struct_info =
 						tryGetStructTypeInfo(member_context->type_index)) {
-						std::unordered_set<const StructTypeInfo*> visited;
-						auto find_nested_enum = [&](const StructTypeInfo* current,
-							const auto& self) -> std::pair<const TypeInfo*, bool> {
-							if (!current || !visited.insert(current).second) {
-								return {nullptr, false};
-							}
-							for (TypeIndex nested_enum_index : current->getNestedEnumIndices()) {
+						InlineVector<const TypeInfo*, 2> nested_enum_matches;
+						visitStructHierarchyDepthFirst(struct_info, [&](const StructTypeInfo& current) {
+							for (TypeIndex nested_enum_index : current.getNestedEnumIndices()) {
 								const TypeInfo* nested_enum_type_info = tryGetTypeInfo(nested_enum_index);
 								const EnumTypeInfo* nested_enum_info =
 									nested_enum_type_info ? nested_enum_type_info->getEnumInfo() : nullptr;
 								if (nested_enum_info && nested_enum_info->name == components.front()) {
-									return {nested_enum_type_info, false};
+									if (std::ranges::find(nested_enum_matches, nested_enum_type_info) ==
+										nested_enum_matches.end()) {
+										nested_enum_matches.push_back(nested_enum_type_info);
+									}
+									return false;
 								}
 							}
-
-							const TypeInfo* inherited_match = nullptr;
-							for (const BaseClassSpecifier& base : current->base_classes) {
-								auto [candidate, ambiguous] =
-									self(tryGetStructTypeInfo(base.type_index), self);
-								if (ambiguous) {
-									return {nullptr, true};
-								}
-								if (candidate && inherited_match && candidate != inherited_match) {
-									return {nullptr, true};
-								}
-								if (candidate) {
-									inherited_match = candidate;
-								}
-							}
-							return {inherited_match, false};
-						};
-						auto [nested_enum_type_info, ambiguous] =
-							find_nested_enum(struct_info, find_nested_enum);
-						if (ambiguous) {
+							return true;
+						});
+						if (nested_enum_matches.size() > 1) {
 							throw CompileError(
 								"ambiguous nested enum type '" +
 								std::string(components.front().view()) + "'");
 						}
-						owner_type_info = nested_enum_type_info;
+						if (!nested_enum_matches.empty()) {
+							owner_type_info = nested_enum_matches.front();
+						}
 					}
 				}
 			}

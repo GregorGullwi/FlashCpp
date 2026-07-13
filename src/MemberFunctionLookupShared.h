@@ -50,6 +50,28 @@ inline bool sameMemberCandidateSet(
 	return std::ranges::equal(lhs, rhs);
 }
 
+template <typename VisitFn>
+void visitStructHierarchyDepthFirst(
+	const StructTypeInfo* root_struct_info,
+	VisitFn&& visit) {
+	InlineVector<const StructTypeInfo*, 8> visited;
+	auto recurse = [&](const StructTypeInfo* current_struct_info,
+		const auto& self) -> void {
+		if (current_struct_info == nullptr ||
+			std::ranges::find(visited, current_struct_info) != visited.end()) {
+			return;
+		}
+		visited.push_back(current_struct_info);
+		if (!visit(*current_struct_info)) {
+			return;
+		}
+		for (const BaseClassSpecifier& base_spec : current_struct_info->base_classes) {
+			self(tryGetStructTypeInfo(base_spec.type_index), self);
+		}
+	};
+	recurse(root_struct_info, recurse);
+}
+
 inline void appendUniqueMemberFunctionOverloadNodes(
 	InlineVector<ASTNode, 8>& target,
 	std::span<const StructMemberFunction* const> members) {
@@ -77,18 +99,9 @@ DefinitionPreferredMemberOverloadSet collectVisibleMemberFunctionOverloadNodes(
 		return result;
 	}
 
-	InlineVector<const StructTypeInfo*, 8> visited;
-	auto recurse = [&](const StructTypeInfo* current_struct_info, const auto& self) -> void {
-		if (current_struct_info == nullptr) {
-			return;
-		}
-		if (std::ranges::find(visited, current_struct_info) != visited.end()) {
-			return;
-		}
-		visited.push_back(current_struct_info);
-
+	visitStructHierarchyDepthFirst(root_struct_info, [&](const StructTypeInfo& current_struct_info) {
 		bool found_local_overload = false;
-		for (const auto& member_func : current_struct_info->member_functions) {
+		for (const auto& member_func : current_struct_info.member_functions) {
 			if (member_func.getName() != member_name_handle ||
 				!member_func.function_decl.is<FunctionDeclarationNode>()) {
 				continue;
@@ -116,18 +129,10 @@ DefinitionPreferredMemberOverloadSet collectVisibleMemberFunctionOverloadNodes(
 		}
 
 		if (found_local_overload && stop_at_first_local_name_set) {
-			return;
+			return false;
 		}
-
-		for (const auto& base_spec : current_struct_info->base_classes) {
-			if (const StructTypeInfo* base_struct =
-					tryGetStructTypeInfo(base_spec.type_index)) {
-				self(base_struct, self);
-			}
-		}
-	};
-
-	recurse(root_struct_info, recurse);
+		return true;
+	});
 	return result;
 }
 
@@ -205,18 +210,9 @@ ConstAwareMemberCandidateSet collectConstAwareVisibleMemberFunctionCandidates(
 		return result;
 	}
 
-	InlineVector<const StructTypeInfo*, 8> visited;
-	auto recurse = [&](const StructTypeInfo* current_struct_info, const auto& self) -> void {
-		if (current_struct_info == nullptr) {
-			return;
-		}
-		if (std::ranges::find(visited, current_struct_info) != visited.end()) {
-			return;
-		}
-		visited.push_back(current_struct_info);
-
+	visitStructHierarchyDepthFirst(root_struct_info, [&](const StructTypeInfo& current_struct_info) {
 		bool found_local_overload = false;
-		for (const auto& member_func : current_struct_info->member_functions) {
+		for (const auto& member_func : current_struct_info.member_functions) {
 			if (member_func.is_constructor ||
 				member_func.is_destructor ||
 				member_func.getName() != member_name_handle ||
@@ -252,17 +248,9 @@ ConstAwareMemberCandidateSet collectConstAwareVisibleMemberFunctionCandidates(
 		}
 
 		if (found_local_overload && stop_at_first_local_name_set) {
-			return;
+			return false;
 		}
-
-		for (const auto& base_spec : current_struct_info->base_classes) {
-			if (const StructTypeInfo* base_struct =
-					tryGetStructTypeInfo(base_spec.type_index)) {
-				self(base_struct, self);
-			}
-		}
-	};
-
-	recurse(root_struct_info, recurse);
+		return true;
+	});
 	return result;
 }
