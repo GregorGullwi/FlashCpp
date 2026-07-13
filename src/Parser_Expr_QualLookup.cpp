@@ -9,6 +9,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
 #include "StringLiteralTokenUtils.h"
 
@@ -3578,6 +3579,23 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 		void_type.set_type_index(nativeTypeIndex(TypeCategory::Void));
 		return void_type;
 	};
+	auto normalize_return_type_identity = [](TypeSpecifierNode type) {
+		if (std::optional<TypeSpecifierNode> canonical_builtin =
+				makeCanonicalBuiltinTypeSpecifier(type)) {
+			return *canonical_builtin;
+		}
+		const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+		if (type_info == nullptr) {
+			return type;
+		}
+		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+			type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+		if (resolved_alias.terminal_type_info == nullptr ||
+			typeIndexContainsDependentPlaceholder(resolved_alias.type_index)) {
+			return type;
+		}
+		return resolveTypeInfoToTypeSpec(*resolved_alias.terminal_type_info, type);
+	};
 
 	// Recursive lambda to search for return statements
 	auto find_return_statements = [&](const auto& self, const ASTNode& node) -> void {
@@ -3589,12 +3607,19 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					// Store this return type for validation
 					TypeSpecifierNode normalized_type =
 						finalizePlaceholderTypeDeduction(return_type.type(), *expr_type_opt);
-					if (isPlaceholderAutoType(normalized_type.type())) {
+					if (isPlaceholderAutoType(normalized_type.type()) ||
+						typeSpecStillUsesDependentPlaceholder(normalized_type) ||
+						(isDependentTemplateContext() &&
+						 expressionTypeDeductionIsStillDependent(
+							 *ret.expression(),
+							 currentTemplateParamNames()))) {
 						// Expression type could be formed but remains dependent at this
 						// stage; defer hard deduction/consistency checks for now.
 						has_still_dependent_return = true;
 					} else {
-						all_return_types.emplace_back(normalized_type, decl_node.identifier_token());
+						all_return_types.emplace_back(
+							normalize_return_type_identity(normalized_type),
+							decl_node.identifier_token());
 
 						// Set deduced type from first return
 						if (!deduced_type.has_value()) {
@@ -3695,6 +3720,15 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 	// Search the function body
 	find_return_statements(find_return_statements, body);
 
+	if (has_still_dependent_return &&
+		(func_decl.is_template_pattern() || isDependentTemplateContext() || !currentTemplateParamNames().empty())) {
+		// A dependent return may become the same type as the concrete returns
+		// after substitution. Validate the complete set when the specialization
+		// is instantiated instead of comparing a partially materialized set.
+		FLASH_LOG(Parser, Debug, "  Keeping auto return type unresolved in dependent template context");
+		return;
+	}
+
 	// Validate that all return statements have compatible types
 	if (all_return_types.size() > 1) {
 		const TypeSpecifierNode& first_type = all_return_types[0].first;
@@ -3716,12 +3750,6 @@ void Parser::deduce_and_update_auto_return_type(FunctionDeclarationNode& func_de
 					.commit()));
 			}
 		}
-	}
-
-	if (has_still_dependent_return &&
-		(func_decl.is_template_pattern() || isDependentTemplateContext() || !currentTemplateParamNames().empty())) {
-		FLASH_LOG(Parser, Debug, "  Keeping auto return type unresolved in dependent template context");
-		return;
 	}
 
 	if (!deduced_type.has_value()) {

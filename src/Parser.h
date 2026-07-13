@@ -2602,7 +2602,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		std::span<const TemplateTypeArg> template_args,
 		const Token& source_token,
 		CVQualifier cv_qualifier);
-	std::optional<TypeSpecifierNode> tryMaterializeDependentDirectAliasTypeSpecifier(
+	std::optional<TypeSpecifierNode> tryMaterializeDependentAliasTypeSpecifier(
 		const TypeSpecifierNode& type_spec,
 		std::span<const TemplateParameterNode> template_params,
 		std::span<const TemplateTypeArg> template_args);
