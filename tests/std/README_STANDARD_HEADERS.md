@@ -101,17 +101,23 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
 
-### Current Windows/MSVC snapshot (2026-07-12)
+### Current Windows/MSVC snapshot (2026-07-13)
 
 Structured template-parameter identity is preserved through deduction and
 substitution. Bare partial-specialization parameters now bind complete template
 arguments, including references, while explicit pattern qualifiers remain
 structural requirements. Substituted member-function declarations also retain
-their function-parameter-pack metadata, including for empty packs. Regressions:
+their function-parameter-pack metadata, including for empty packs. Reparsed
+trailing return types now run through structured substitution before alias
+resolution, including non-empty packs. Dependent `auto` return validation waits
+for complete specialization types and compares canonical builtin/alias identity
+without replacing the original deduced node. Regressions:
 
 - `tests/test_function_template_fixed_param_before_pack_ret0.cpp`
 - `tests/test_const_rvalue_reference_before_pack_lvalue_fail.cpp`
 - `tests/test_template_partial_specialization_inherited_static_call_pack_ret0.cpp`
+- `tests/test_template_partial_specialization_inherited_static_call_nonempty_pack_ret0.cpp`
+- `tests/test_dependent_decltype_cpo_alias_auto_return_ret0.cpp`
 - `tests/test_template_partial_specialization_reordered_identity_ret0.cpp`
 - `tests/test_template_partial_specialization_array_bound_identity_ret0.cpp`
 
@@ -120,23 +126,27 @@ compiler, link, and execution included):
 
 | Header/Test | Status | Runner wall time | Current note |
 |-------------|--------|------------------|--------------|
-| `<cstddef>` (`test_cstddef.cpp`) | ✅ Pass | ~3.22s | Returned 3 as expected. |
-| `<cstdio>` (`test_cstdio_puts.cpp`) | ✅ Pass | ~9.39s | Compiles, links, and returns 0. |
-| `<cstdlib>` (`test_cstdlib.cpp`) | ✅ Pass | ~3.71s | Compiles, links, and returns 0. |
-| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~5.07s | Compiles, links, and returns 0. |
-| `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~19.23s | `ranges::empty` overload viability, then unresolved `auto` during `view_interface` mangling. |
-| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile error | ~33.16s | The nested-enum identity and `make_signed<T>` stops are gone; the live diagnostics are variadic `std::invoke` substitution and the independent `ranges::size` inconsistent-`auto` return. |
+| `<cstddef>` (`test_std_cstddef.cpp`) | ✅ Pass | ~2.73s | Compiles, links, and returns the expected value. |
+| `<cstdio>` (`test_std_cstdio.cpp`) | ✅ Pass | ~2.76s | Compiles, links, and returns the expected value. |
+| `<cstdlib>` (`test_std_cstdlib.cpp`) | ✅ Pass | ~2.62s | Compiles, links, and returns the expected value. |
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~4.48s | Compiles, links, and returns 0. |
+| `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~19.04s | The unresolved-`auto` mangling stop is gone. Current diagnostics are `ranges::empty` overload viability and a later missing `operator==` semantic annotation in `view_interface`. |
+| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile error | ~32.40s | The `ranges::size` inconsistent-`auto` diagnostic is gone. Current diagnostics are deferred `_Traits::compare`, `basic_string_view` trait validation through `is_same_v`, and the independent variadic `std::invoke` failure. |
 
-The separate `std::invoke` frontier remains its variadic
-`_Invoker1<...>::_Call` trailing-return/noexcept substitution. The one-argument
-candidate is correctly rejected for the two-argument call.
+The separate `std::invoke` frontier remains after structured trailing-return
+substitution: the variadic candidate reaches deferred body replay and still
+fails to materialize `_Invoker1<...>::_Call`. The one-argument candidate is
+correctly rejected for the two-argument call. A reduced CPO-alias probe also
+found a later codegen issue where a templated callable body containing
+`range.size()` can be emitted as an unresolved free `size` symbol; keep that
+separate from the resolved alias/`auto` semantic slice.
 
 Class-scope identity for static member-function templates is now preserved
 separately from implicit-object semantics, and nested enums are registered from
 their declaration `TypeIndex`. Regression:
 `tests/test_member_template_nested_enum_identity_ret0.cpp`.
 
-Full Windows validation after the change: 2756 regular tests passed, all 236
+Full Windows validation after the change: 2758 regular tests passed, all 236
 expected-fail tests failed as expected, with no crashes or return mismatches.
 
 ### 2026-05-28 Linux/libstdc++ template-substitution metadata follow-up

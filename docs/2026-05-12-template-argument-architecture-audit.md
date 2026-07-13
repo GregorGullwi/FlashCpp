@@ -1,7 +1,7 @@
 # Template Argument Architecture Audit
 
 **Date:** 2026-05-12  
-**Last updated:** 2026-07-12
+**Last updated:** 2026-07-13
 
 This is a forward-looking planning reference for template infrastructure. Keep
 it limited to the current architecture, invariants, live failures, and next
@@ -29,8 +29,16 @@ tasks; completed branch history belongs in tests and version control.
   specifier and declaration metadata. In particular, a function-parameter pack
   remains a pack after class-template substitution, including when it expands
   to zero arguments.
-- Direct dependent alias template-ids remain structured until their enclosing
-  arguments are known, then materialize before deduction and code generation.
+- Dependent alias template-ids remain structured until their enclosing
+  arguments are known, then materialize through the shared alias/substitution
+  path before deduction and code generation, including deferred `decltype`
+  targets.
+- Placeholder-`auto` return analysis defers consistency checks while any return
+  remains dependent. Once concrete, it compares canonical builtin/alias
+  identities without replacing the original deduced node.
+- Reparsed trailing return types pass through the same structured type
+  substitution used by other instantiated declarations before member-alias
+  resolution.
 - `ResolvedQualifiedOwner` and structured dependent-call records are the shared
   owner/lookup representation across parser, substitution, constexpr, and sema
   paths.
@@ -63,23 +71,25 @@ tasks; completed branch history belongs in tests and version control.
 
 ## Current standard-header snapshot
 
-Fresh Windows/MSVC individual runner wall times after the 2026-07-12 rebuild:
+Fresh Windows/MSVC individual runner wall times after the 2026-07-13 rebuild:
 
 | Test | Status | Time | Current frontier |
 |------|--------|------|------------------|
-| `std/test_cstddef.cpp` | Pass | 3.22s | Green control |
-| `std/test_cstdio_puts.cpp` | Pass | 9.39s | Green control |
-| `std/test_cstdlib.cpp` | Pass | 3.71s | Green control |
-| `std/test_std_type_traits.cpp` | Pass | 5.07s | Green control |
-| `std/test_std_iterator.cpp` | Fail | 19.23s | `ranges::empty` overload viability, then unresolved `auto` in `view_interface` mangling |
-| `std/test_std_ranges.cpp` | Fail | 33.16s | variadic `std::invoke` substitution, then `ranges::size` inconsistent `auto` deduction |
+| `std/test_std_cstddef.cpp` | Pass | 2.73s | Green control |
+| `std/test_std_cstdio.cpp` | Pass | 2.76s | Green control |
+| `std/test_std_cstdlib.cpp` | Pass | 2.62s | Green control |
+| `std/test_std_type_traits.cpp` | Pass | 4.48s | Green control |
+| `std/test_std_iterator.cpp` | Fail | 19.04s | `ranges::empty` viability, then missing `operator==` semantic annotation in `view_interface`; unresolved-`auto` mangling is gone |
+| `std/test_std_ranges.cpp` | Fail | 32.40s | deferred `_Traits::compare`, `basic_string_view` `is_same_v` validation, and variadic `std::invoke`; inconsistent `ranges::size` auto deduction is gone |
 
-The full Windows suite passes: 2756 regular tests compile, link, and run; all
+The full Windows suite passes: 2758 regular tests compile, link, and run; all
 236 expected-failure tests fail as expected.
 
 The current slice is guarded by:
 
 - `tests/test_template_partial_specialization_inherited_static_call_pack_ret0.cpp`
+- `tests/test_template_partial_specialization_inherited_static_call_nonempty_pack_ret0.cpp`
+- `tests/test_dependent_decltype_cpo_alias_auto_return_ret0.cpp`
 - `tests/test_template_partial_specialization_reordered_identity_ret0.cpp`
 - `tests/test_template_partial_specialization_array_bound_identity_ret0.cpp`
 - `tests/test_template_dependent_inherited_static_call_pack_ret0.cpp`
@@ -88,19 +98,22 @@ The current slice is guarded by:
 
 ## Remaining work
 
-1. Reduce the variadic `std::invoke` trailing return/noexcept substitution
-   failure around `_Invoker1<...>::_Call`. The one-argument candidate is
-   correctly rejected for the two-argument call; the variadic candidate passes
-   pack-aware viability, so this is a later substitution problem. Keep it
-   separate from the completed empty-pack and partial-specialization fix.
+1. Reduce the variadic `std::invoke` deferred-body replay failure around
+   `_Invoker1<...>::_Call`. Structured trailing-return substitution and the
+   non-empty pack work in isolation, so inspect body replay and inherited
+   static-call lookup rather than adding another signature fallback.
 2. Reduce the `std/test_std_iterator.cpp` `ranges::empty` overload failure and
-   unresolved-auto mangling path at the sema/return-type layer.
-3. Reduce the now-live `ranges::size` inconsistent-auto-return issue without
-   coupling it to the independent `std::invoke` substitution failure.
-4. Replace the targeted local-symbol treatment for C-linkage inline wrappers
+   missing `operator==` annotation at sema before the codegen visitor. The old
+   unresolved-auto mangling path is complete.
+3. Reduce the newly exposed `<ranges>` deferred `_Traits::compare` lookup and
+   `basic_string_view` `is_same_v` validation independently of `std::invoke`.
+4. Reduce the discovered templated-callable codegen path that emits
+   `range.size()` as an unresolved free `size` symbol; preserve the resolved
+   member-call metadata instead of repairing the name during emission.
+5. Replace the targeted local-symbol treatment for C-linkage inline wrappers
    with proper per-function COFF COMDAT/weak-external emission when the object
    writer can split the monolithic text section.
-5. Extract deeper dependent-qualified owner or replay helpers only when a
+6. Extract deeper dependent-qualified owner or replay helpers only when a
    concrete failure proves repeated consumer logic is the blocker.
 
 ## Validation
