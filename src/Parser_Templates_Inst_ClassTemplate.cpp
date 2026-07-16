@@ -8117,7 +8117,65 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			addNestedMemberFunctionsToStructInfo(
 				nested_struct,
 				*nested_struct_info,
-				&nested_struct_info_member_identity_maps);
+				&nested_struct_info_member_identity_maps,
+				[&](const StructMemberFunctionDecl& source_member) -> ASTNode {
+					const ConstructorDeclarationNode& original_ctor =
+						source_member.function_declaration.as<ConstructorDeclarationNode>();
+					if (!original_ctor.is_materialized()) {
+						return source_member.function_declaration;
+					}
+
+					auto [substituted_ctor_node, substituted_ctor] =
+						emplace_node_ref<ConstructorDeclarationNode>(
+							qualified_name,
+							original_ctor.name());
+					setOuterTemplateBindingsFromParams(
+						substituted_ctor,
+						template_params,
+						template_args_to_use);
+					substituted_ctor.set_template_parameters(
+						original_ctor.template_parameters());
+
+					const size_t saved_pack_info = pack_param_info_.size();
+					substituteAndCopyParams(
+						original_ctor.parameter_nodes(),
+						substituted_ctor,
+						template_params,
+						template_args_to_use);
+					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
+					substituteAndCopyInitializers(
+						original_ctor,
+						substituted_ctor,
+						template_params,
+						template_args_to_use,
+						std::span<const PackParamInfo>(
+							ctor_pack_param_info.data(),
+							ctor_pack_param_info.size()));
+					substituted_ctor.set_definition(substituteTemplateParameters(
+						*original_ctor.get_definition(),
+						template_params,
+						template_args_to_use,
+						qualified_name));
+					pack_param_info_.resize(saved_pack_info);
+
+					substituted_ctor.set_is_implicit(original_ctor.is_implicit());
+					substituted_ctor.set_is_explicitly_defaulted(
+						original_ctor.is_explicitly_defaulted());
+					substituted_ctor.set_noexcept(original_ctor.is_noexcept());
+					substituted_ctor.set_explicit(original_ctor.is_explicit());
+					substituted_ctor.set_constexpr(original_ctor.is_constexpr());
+					if (original_ctor.has_requires_clause()) {
+						substituted_ctor.set_requires_clause(substituteTemplateParameters(
+							*original_ctor.requires_clause(),
+							template_params,
+							template_args_to_use,
+							qualified_name));
+					}
+					instantiated_nested_struct_ref.add_constructor(
+						substituted_ctor_node,
+						source_member.access);
+					return substituted_ctor_node;
+				});
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,

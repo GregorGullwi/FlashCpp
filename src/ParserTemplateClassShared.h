@@ -1344,15 +1344,17 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	return lazy_mem_info;
 }
 
+template <typename MaterializeConstructorFn>
 inline void addNestedMemberFunctionsToStructInfo(
 	const StructDeclarationNode& nested_struct,
 	StructTypeInfo& nested_struct_info,
-	SourceMemberStructInfoIndexMaps* struct_info_index_maps) {
+	SourceMemberStructInfoIndexMaps* struct_info_index_maps,
+	MaterializeConstructorFn&& materialize_constructor) {
 	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 		if (mem_func.is_constructor || mem_func.is_destructor) {
 			if (mem_func.is_constructor) {
 				nested_struct_info.addConstructor(
-					mem_func.function_declaration,
+					materialize_constructor(mem_func),
 					mem_func.access);
 			} else {
 				nested_struct_info.addDestructor(
@@ -1480,7 +1482,10 @@ inline void registerNestedMemberFunctionsForLazy(
 	addNestedMemberFunctionsToStructInfo(
 		nested_struct,
 		nested_struct_info,
-		nullptr);
+		nullptr,
+		[](const StructMemberFunctionDecl& mem_func) {
+			return mem_func.function_declaration;
+		});
 	registerNestedMemberFunctionsLazyEntries(
 		nested_struct,
 		class_template_name,
