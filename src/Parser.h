@@ -1127,6 +1127,9 @@ private:
 	// Use FlashCpp::TemplateDepthGuard to increment/decrement; use ScopedState to temporarily
 	// suppress (set to 0) during SFINAE and lazy instantiation.
 	size_t parsing_template_depth_ = 0;
+	// True only while token-replaying a materialized template member body whose
+	// parsed AST contains a block-scope class declaration.
+	bool replaying_template_member_local_classes_ = false;
 
 	// Phase 1 two-phase name lookup enforcement (C++20 [temp.res]/9).
 	// Set to the opening-brace line of the template body being re-parsed.

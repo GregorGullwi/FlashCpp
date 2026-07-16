@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AstTraversal.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -706,12 +707,24 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	const bool has_saved_body_position = func_decl.has_template_body_position();
 	const bool has_parsed_body = func_decl.is_materialized();
+	const bool parsed_body_has_local_class =
+		has_parsed_body &&
+		AstTraversal::visitASTUntil(
+			*func_decl.get_definition(),
+			[](const ASTNode& body_node) {
+				return body_node.is<StructDeclarationNode>() &&
+					body_node.as<StructDeclarationNode>().is_local_class();
+			});
+	const bool replay_saved_body =
+		has_saved_body_position && (!has_parsed_body || parsed_body_has_local_class);
 	if (has_saved_body_position && has_parsed_body) {
-		FLASH_LOG(Templates, Debug,
-				  "Lazy member function has both parsed body and saved body position; reparsing with concrete template bindings");
+		FLASH_LOG(Templates, Debug, "Lazy member function has both parsed body and saved body position; ",
+			parsed_body_has_local_class
+				? "replaying local class declarations with concrete template bindings"
+				: "using the parsed body for structural substitution");
 	}
 
-	if (has_saved_body_position) {
+	if (replay_saved_body) {
 		FLASH_LOG(Templates, Debug, "Lazy member function body: re-parsing from saved position");
 		FLASH_LOG(
 			Templates,
@@ -775,6 +788,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				pushCurrentTemplateParamName(pn);
 			}
 
+			FlashCpp::ScopedState guard_local_class_replay(replaying_template_member_local_classes_);
+			replaying_template_member_local_classes_ = parsed_body_has_local_class;
 			auto block_result = parse_function_body();	// handles function-try-blocks
 
 			if (!block_result.is_error() && block_result.node().has_value()) {

@@ -1321,7 +1321,9 @@ bool AstToIr::beginStructDeclarationCodegen(const StructDeclarationNode& node) {
 	// For nested classes, we need to use the fully qualified name from TypeInfo
 	// If current_struct_name_ is valid, this is a nested class, so construct fully qualified name
 	StringHandle lookup_name;
-	if (frame.saved_struct_name.isValid()) {
+	if (is_local_struct && node.semantic_name() != node.name()) {
+		lookup_name = node.semantic_name();
+	} else if (frame.saved_struct_name.isValid()) {
 		// This is a nested class - construct fully qualified name like "Outer::Inner"
 		StringBuilder qualified_name_builder;
 		qualified_name_builder.append(StringTable::getStringView(frame.saved_struct_name))

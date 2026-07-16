@@ -348,6 +348,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	auto struct_name = name_token.handle();
 	const bool is_local_class_declaration = current_function_ != nullptr;
+	bool owns_replayed_local_class_identity =
+		replaying_template_member_local_classes_ &&
+		is_local_class_declaration &&
+		struct_parsing_context_stack_.empty();
 	std::vector<DelayedFunctionBody> saved_local_class_parent_delayed_bodies;
 	if (is_local_class_declaration) {
 		saved_local_class_parent_delayed_bodies = std::move(delayed_function_bodies_);
@@ -382,7 +386,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			break;
 		}
 	}
-
+	if (owns_replayed_local_class_identity &&
+		peek() != "{"_tok &&
+		peek() != ":"_tok &&
+		peek() != "final"_tok &&
+		peek() != "alignas"_tok &&
+		peek() != ";"_tok) {
+		// An elaborated type specifier such as `struct Point value` refers to
+		// an existing type; it does not declare a new block-scope class.
+		owns_replayed_local_class_identity = false;
+	}
 	// Register the struct type in the global type system EARLY
 	// This allows member functions (like constructors) to reference the struct type
 	// We'll fill in the struct info later after parsing all members
@@ -440,7 +453,26 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		qualified_struct_name = full_qualified_name; // Also update qualified_struct_name for implicit constructors
 		type_name = full_qualified_name; // TypeInfo should also use fully qualified name
 	}
-
+	if (owns_replayed_local_class_identity) {
+		const Token function_token = current_function_->decl_node().identifier_token();
+		StringBuilder local_identity;
+		if (!current_function_->parent_struct_name().empty()) {
+			local_identity.append(current_function_->parent_struct_name()).append("::");
+		}
+		local_identity
+			.append(function_token.handle())
+			.append("::$local$")
+			.append(static_cast<int64_t>(name_token.file_index()))
+			.append('_')
+			.append(static_cast<int64_t>(name_token.line()))
+			.append('_')
+			.append(static_cast<int64_t>(name_token.column()))
+			.append("::")
+			.append(struct_name);
+		type_name = StringTable::getOrInternStringHandle(local_identity.commit());
+		qualified_struct_name = type_name;
+		full_qualified_name = type_name;
+	}
 	TypeInfo& struct_type_info = add_struct_type(type_name, current_namespace_handle);
 
 	// For nested classes and namespace classes, register lookup aliases that mirror
@@ -456,7 +488,30 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		true,
 		true,
 		!parsing_template_class_);
-
+	if (owns_replayed_local_class_identity) {
+		getTypesByNameMap().insert_or_assign(struct_name, &struct_type_info);
+	} else if (replaying_template_member_local_classes_ && is_nested_class) {
+		bool nested_in_replayed_local_class = false;
+		StringBuilder lexical_nested_name;
+		for (const StructParsingContext& context : struct_parsing_context_stack_) {
+			if (context.struct_node != nullptr) {
+				lexical_nested_name.append(context.struct_node->name());
+				nested_in_replayed_local_class =
+					nested_in_replayed_local_class ||
+					context.struct_node->semantic_name() != context.struct_node->name();
+			} else {
+				lexical_nested_name.append(context.struct_name);
+			}
+			lexical_nested_name.append("::");
+		}
+		lexical_nested_name.append(struct_name);
+		StringHandle lexical_nested_handle = StringTable::getOrInternStringHandle(
+			lexical_nested_name.commit());
+		if (nested_in_replayed_local_class) {
+			getTypesByNameMap().insert_or_assign(struct_name, &struct_type_info);
+			getTypesByNameMap().insert_or_assign(lexical_nested_handle, &struct_type_info);
+		}
+	}
 	// Check for alignas specifier after struct name (if not already specified)
 	if (!custom_alignment.has_value()) {
 		custom_alignment = parse_alignas_specifier();
@@ -465,9 +520,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Create struct declaration node - string_view points directly into source text
 	auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 	struct_ref.set_is_local_class(is_local_class_declaration);
+	if (owns_replayed_local_class_identity) {
+		struct_ref.set_semantic_name(type_name);
+	}
 
 	// Push struct parsing context for nested class support
-	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name),
+	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_ref.semantic_name()),
 											 &struct_ref,
 											 nullptr,
 											 gSymbolTable.get_current_namespace_handle(),
@@ -3918,19 +3976,29 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Parse all delayed function bodies using unified helper (Phase 5)
 	for (auto& delayed : delayed_function_bodies_) {
-		// Member function templates (e.g., template<typename U> ClassName(U arg) {...})
-		// must always defer body parsing until instantiation. Parsing them while the
-		// surrounding class template still has unbound parameters incorrectly forces
-		// lookup and deduction in a non-instantiated context.
-		if (delayed.is_member_function_template) {
+		// Keep the token-backed definition for every class-template member. The
+		// pattern body is still parsed below for early semantic checks, while lazy
+		// instantiation can replay the definition with concrete template bindings.
+		// This is required for declarations inside the body, including local
+		// classes, whose types belong to the function-template specialization.
+		if (parsing_template_class_ || delayed.is_member_function_template) {
 			if (delayed.is_constructor && delayed.ctor_node) {
 				delayed.ctor_node->set_template_body_position(delayed.body_start);
 				if (delayed.has_initializer_list) {
 					delayed.ctor_node->set_template_initializer_list_position(delayed.initializer_list_start);
 				}
+			} else if (delayed.is_destructor && delayed.dtor_node) {
+				delayed.dtor_node->set_template_body_position(delayed.body_start);
 			} else if (delayed.func_node) {
 				delayed.func_node->set_template_body_position(delayed.body_start);
 			}
+		}
+
+		// Member function templates (e.g., template<typename U> ClassName(U arg) {...})
+		// must always defer body parsing until instantiation. Parsing them while the
+		// surrounding class template still has unbound parameters incorrectly forces
+		// lookup and deduction in a non-instantiated context.
+		if (delayed.is_member_function_template) {
 			continue; // body deferred to instantiation time
 		}
 
