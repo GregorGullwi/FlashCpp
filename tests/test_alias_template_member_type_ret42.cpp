@@ -73,6 +73,7 @@ struct result_of {
 };
 
 int main() {
-	result_of<int, int>::type x = 42;  // Should resolve to int
-	return x;  // Returns 42
+	result_of<int, int>::type same = 42;
+	result_of<int, double>::type different = 3.5;
+	return same == 42 && different == 3.5 ? 42 : 0;
 }

@@ -1037,7 +1037,8 @@ InlineVector<TemplateTypeArg, 4> ExpressionSubstitutor::materializeDependentReco
 				context_binding.has_value()) {
 				arg = rebindDependentTemplateTypeArg(*context_binding, arg);
 			}
-		} else if (!arg.is_value && arg.type_index.is_valid()) {
+		}
+		if (!arg.is_value && arg.type_index.is_valid()) {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
 				if (arg_type_info->isDependentMemberType()) {
 					if (const TypeInfo* resolved_member_type =
@@ -1056,6 +1057,43 @@ InlineVector<TemplateTypeArg, 4> ExpressionSubstitutor::materializeDependentReco
 				if (auto subst_it = param_map_.find(arg_type_name);
 					subst_it != param_map_.end()) {
 					arg = rebindDependentTemplateTypeArg(subst_it->second, arg);
+				}
+			}
+		}
+		if (!arg.is_value && arg.type_index.is_valid() &&
+			depth < kMaxDependentMemberTypeResolutionDepth) {
+			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index);
+				arg_type_info != nullptr &&
+				arg_type_info->isTemplateInstantiation() &&
+				arg_type_info->is_incomplete_instantiation_ &&
+				!arg_type_info->templateArgs().empty()) {
+				MaterializedStoredTemplateArgs nested_args = materializeStoredTemplateArgs(
+					*arg_type_info,
+					/*evaluate_dependent_member_values=*/true,
+					depth + 1);
+				if (!templateArgsStillDependent(nested_args.args)) {
+					Parser::AliasTemplateMaterializationResult materialized_type =
+						parser_.materializeCanonicalOwnerTypeForLookup(
+							*arg_type_info,
+							nested_args.args);
+					const TypeInfo* resolved_type_info = materialized_type.resolved_type_info;
+					if (resolved_type_info == nullptr) {
+						StringHandle canonical_name = materialized_type.canonicalNameHandle();
+						if (canonical_name.isValid()) {
+							resolved_type_info = findTypeByName(canonical_name);
+						}
+					}
+					if (resolved_type_info != nullptr) {
+						TypeIndex resolved_index =
+							resolved_type_info->registeredTypeIndex().withCategory(
+								resolved_type_info->typeEnum());
+						TemplateTypeArg resolved_arg = makeTemplateTypeArgFromResolvedAlias(
+							resolveAliasTypeInfo(resolved_index),
+							resolved_index);
+						arg = rebindDependentTemplateTypeArg(resolved_arg, arg);
+						arg.dependent_name = {};
+						arg.is_dependent = false;
+					}
 				}
 			}
 		}
