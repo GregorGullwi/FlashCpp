@@ -1657,6 +1657,13 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		// Substitute template parameters using parent's template args
 		TypeIndex substituted_type_index = substitute_template_parameter(
 			type_spec, parent_template_params_inline, lazy_info->parent_template_args);
+		TypeSpecifierNode substituted_type_spec = type_spec;
+		substituted_type_spec.set_type_index(substituted_type_index);
+		materializeSubstitutedFunctionTypeMetadata(
+			substituted_type_spec,
+			type_spec,
+			lazy_info->parent_template_params,
+			lazy_info->parent_template_args);
 
 		// Get size and alignment for the member
 		size_t member_size = get_type_size_bits(substituted_type_index.category()) / 8;
@@ -1685,10 +1692,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			{},		// array_dimensions
 			static_cast<int>(type_spec.pointer_depth()),
 			member_decl.bitfield_width,
-			resolveTemplateFunctionPointerSignature(
-				type_spec, substituted_type_index,
-				nullptr,
-				lazy_info->parent_template_params, lazy_info->parent_template_args),
+			getCanonicalFunctionPointerSignature(substituted_type_spec),
 			member_decl.is_no_unique_address);
 	}
 

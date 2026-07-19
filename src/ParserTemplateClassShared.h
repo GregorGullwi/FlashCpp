@@ -114,18 +114,6 @@ inline int getSubstitutedTypeSizeBits(TypeIndex substituted_type_index) {
 	return get_type_size_bits(size_type_index.category());
 }
 
-inline const StructMember* findDirectStructMemberByName(
-	const StructTypeInfo* struct_info,
-	StringHandle member_name) {
-	if (struct_info == nullptr || !member_name.isValid())
-		return nullptr;
-	for (const StructMember& member : struct_info->members) {
-		if (member.name == member_name)
-			return &member;
-	}
-	return nullptr;
-}
-
 template <typename ParamContainer, typename ArgContainer>
 inline TypeIndex substituteTemplateParameterTypeIndex(
 	TypeIndex original_type_index,
@@ -193,49 +181,67 @@ inline FunctionSignature substituteTemplateFunctionSignature(
 }
 
 template <typename ParamContainer, typename ArgContainer>
-inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
-	const TypeSpecifierNode& type_spec,
-	TypeIndex substituted_type_index,
-	const StructMember* source_member,
+inline void materializeSubstitutedFunctionTypeMetadata(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& original_type,
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
-	if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
-		substituted_type_index.category() != TypeCategory::MemberFunctionPointer)
-		return std::nullopt;
-	std::optional<FunctionSignature> signature;
-	if (type_spec.has_function_signature()) {
-		signature = type_spec.function_signature();
-	}
-	if (!signature.has_value()) {
-		if (ResolvedAliasTypeInfo substituted_alias = resolveAliasTypeInfo(substituted_type_index);
-			substituted_alias.function_signature.has_value()) {
-			signature = substituted_alias.function_signature;
-		}
-	}
-	if (!signature.has_value()) {
-		if (ResolvedAliasTypeInfo original_alias = resolveAliasTypeInfo(type_spec.type_index());
-			original_alias.function_signature.has_value()) {
-			signature = original_alias.function_signature;
-		}
-	}
-	if (!signature.has_value() &&
-		source_member != nullptr &&
-		source_member->function_signature.has_value()) {
-		signature = source_member->function_signature;
+	normalizeSubstitutedTypeSpec(substituted_type);
+	const ResolvedAliasTypeInfo substituted_alias =
+		resolveAliasTypeInfo(substituted_type.type_index());
+	const TypeCategory substituted_category = substituted_alias.type_index.is_valid()
+		? substituted_alias.typeEnum()
+		: substituted_type.type_index().category();
+	if (substituted_category != TypeCategory::FunctionPointer &&
+		substituted_category != TypeCategory::MemberFunctionPointer) {
+		return;
 	}
 
-	if (!signature.has_value()) {
-		if (const auto* arg = findTemplateArgByRegisteredTypeIndex(
-				type_spec.type_index(), template_params, template_args)) {
-			signature = arg->function_signature;
+	std::optional<FunctionSignature> signature;
+	if (substituted_type.has_function_signature()) {
+		signature = substituted_type.function_signature();
+	} else if (substituted_alias.function_signature.has_value()) {
+		signature = substituted_alias.function_signature;
+	} else if (original_type.has_function_signature()) {
+		signature = original_type.function_signature();
+	} else {
+		const ResolvedAliasTypeInfo original_alias =
+			resolveAliasTypeInfo(original_type.type_index());
+		if (original_alias.function_signature.has_value()) {
+			signature = original_alias.function_signature;
+		} else {
+			const TypeIndex binding_type_index = original_alias.type_index.is_valid()
+				? original_alias.type_index
+				: original_type.type_index();
+			if (const auto* arg = findTemplateArgByRegisteredTypeIndex(
+					binding_type_index, template_params, template_args)) {
+				signature = arg->function_signature;
+			}
 		}
 	}
-	if (!signature.has_value())
+	if (!signature.has_value()) {
+		throw InternalError(
+			"Concrete function pointer type is missing canonical FunctionSignature metadata");
+	}
+	substituted_type.set_function_signature(substituteTemplateFunctionSignature(
+		*signature, template_params, template_args));
+}
+
+inline std::optional<FunctionSignature> getCanonicalFunctionPointerSignature(
+	const TypeSpecifierNode& type_spec) {
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
+	const TypeCategory resolved_category = resolved_alias.type_index.is_valid()
+		? resolved_alias.typeEnum()
+		: type_spec.type_index().category();
+	if (resolved_category != TypeCategory::FunctionPointer &&
+		resolved_category != TypeCategory::MemberFunctionPointer) {
 		return std::nullopt;
-	return substituteTemplateFunctionSignature(
-		*signature,
-		template_params,
-		template_args);
+	}
+	if (!type_spec.has_function_signature()) {
+		throw InternalError(
+			"Concrete function pointer type is missing canonical FunctionSignature metadata");
+	}
+	return type_spec.function_signature();
 }
 
 template <typename ParamContainer, typename ArgContainer>
@@ -1188,15 +1194,11 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 			template_params,
 			template_args);
 	}
-	if (auto signature = resolveTemplateFunctionPointerSignature(
-				   original_type_spec,
-				   substituted_type.type_index(),
-				   nullptr,
-				   template_params,
-				   template_args)) {
-		substituted_type.set_function_signature(*signature);
-	}
-	normalizeSubstitutedTypeSpec(substituted_type);
+	materializeSubstitutedFunctionTypeMetadata(
+		substituted_type,
+		original_type_spec,
+		template_params,
+		template_args);
 	return substituted_type;
 }
 
@@ -1514,23 +1516,6 @@ inline ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
 		return ReferenceQualifier::LValueReference;
 	}
 	return ReferenceQualifier::RValueReference;
-}
-
-template <typename ParamContainer, typename ArgContainer>
-inline void propagateFunctionSignatureFromTemplateArg(
-	TypeSpecifierNode& substituted_type,
-	const TypeSpecifierNode& orig_type,
-	TypeIndex substituted_type_index,
-	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
-	if (auto signature = resolveTemplateFunctionPointerSignature(
-			orig_type,
-			substituted_type_index,
-			nullptr,
-			template_params,
-			template_args)) {
-		substituted_type.set_function_signature(*signature);
-	}
 }
 
 template <typename ParamContainer, typename ArgContainer>

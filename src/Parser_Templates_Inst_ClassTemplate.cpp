@@ -2111,12 +2111,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			const StructTypeInfo* pattern_struct_layout_info = nullptr;
-			if (auto pattern_struct_it = getTypesByNameMap().find(pattern_struct.name());
-				pattern_struct_it != getTypesByNameMap().end()) {
-				pattern_struct_layout_info = pattern_struct_it->second->getStructInfo();
-			}
-
 			// Copy members from pattern
 			FLASH_LOG(Templates, Debug, "Pattern struct '", pattern_struct.name(), "' has ", pattern_struct.members().size(), " members");
 			for (const auto& member_decl : pattern_struct.members()) {
@@ -2163,7 +2157,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Use substitute_template_parameter to properly match template parameters by name
 				TypeIndex member_type_index = substitute_template_parameter(
 					*effective_type_spec, template_params, template_args_for_member_copy);
-				size_t ptr_depth = effective_type_spec->pointer_depth();
+				TypeSpecifierNode substituted_member_type_spec = *effective_type_spec;
+				substituted_member_type_spec.set_type_index(member_type_index);
+				materializeSubstitutedFunctionTypeMetadata(
+					substituted_member_type_spec,
+					*effective_type_spec,
+					template_params,
+					template_args_for_member_copy);
+				size_t ptr_depth = substituted_member_type_spec.pointer_depth();
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_for_member_copy);
@@ -2198,13 +2199,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 					member_decl.default_initializer, template_args_for_member_copy, template_params);
 
-				// For function pointer members instantiated from a template parameter (e.g., F func
-				// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
-				// — it only carries the placeholder.  Retrieve it from the matching TemplateTypeArg.
+				// Member registration consumes the canonical substituted type metadata materialized above.
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
-				const StructMember* source_member =
-					findDirectStructMemberByName(pattern_struct_layout_info, member_name_handle);
 				struct_info->addMember(
 					member_name_handle,
 					stored_member_type_index,
@@ -2218,12 +2215,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::move(resolved_array_dimensions),
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
-					resolveTemplateFunctionPointerSignature(
-						*effective_type_spec,
-						member_type_index,
-						source_member,
-						template_params,
-						template_args_for_member_copy),
+					getCanonicalFunctionPointerSignature(substituted_member_type_spec),
 					member_decl.is_no_unique_address);
 			}
 
@@ -6800,22 +6792,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Copy members from the template, substituting template parameters with concrete types
-	const StructTypeInfo* source_template_struct_info = nullptr;
-	{
-		auto source_template_type_it =
-			getTypesByNameMap().find(StringTable::getOrInternStringHandle(template_name));
-		if (source_template_type_it == getTypesByNameMap().end()) {
-			std::string_view template_name_view = template_name;
-			size_t last_colon = template_name_view.rfind("::");
-			if (last_colon != std::string_view::npos) {
-				source_template_type_it = getTypesByNameMap().find(
-					StringTable::getOrInternStringHandle(template_name_view.substr(last_colon + 2)));
-			}
-		}
-		if (source_template_type_it != getTypesByNameMap().end()) {
-			source_template_struct_info = source_template_type_it->second->getStructInfo();
-		}
-	}
 	for (const auto& member_decl : class_decl.members()) {
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
@@ -6984,6 +6960,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		substituted_type_spec.set_type_index(member_type_index);
 		substituted_type_spec.set_size_in_bits(
 			get_type_size_bits(member_type_index.category()));
+		materializeSubstitutedFunctionTypeMetadata(
+			substituted_type_spec,
+			type_spec,
+			effective_template_params,
+			effective_template_args);
 
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
@@ -7041,13 +7022,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 			member_decl.default_initializer, effective_template_args, effective_template_params);
 
-		// For function pointer members instantiated from a template parameter (e.g., F func
-		// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
-		// — it only carries the placeholder.  Retrieve it from the matching TemplateTypeArg.
+		// Member registration consumes the canonical substituted type metadata materialized above.
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
-		const StructMember* source_member =
-			findDirectStructMemberByName(source_template_struct_info, member_name_handle);
 		struct_info->addMember(
 			member_name_handle,
 			stored_member_type_index,
@@ -7061,12 +7038,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::move(resolved_array_dimensions),
 			static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
-			resolveTemplateFunctionPointerSignature(
-				substituted_type_spec,
-				member_type_index,
-				source_member,
-				effective_template_params,
-				effective_template_args),
+			getCanonicalFunctionPointerSignature(substituted_type_spec),
 			member_decl.is_no_unique_address);
 	}
 
@@ -7931,23 +7903,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			const StructTypeInfo* source_nested_struct_info = nullptr;
-			{
-				StringBuilder original_nested_name_builder;
-				original_nested_name_builder.append(template_name).append("::"sv).append(nested_struct.name());
-				std::string_view original_nested_name = original_nested_name_builder.commit();
-				auto original_nested_it = getTypesByNameMap().find(
-					StringTable::getOrInternStringHandle(original_nested_name));
-				if (original_nested_it != getTypesByNameMap().end()) {
-					source_nested_struct_info = original_nested_it->second->getStructInfo();
-				} else {
-					auto simple_nested_it = getTypesByNameMap().find(nested_struct.name());
-					if (simple_nested_it != getTypesByNameMap().end()) {
-						source_nested_struct_info = simple_nested_it->second->getStructInfo();
-					}
-				}
-			}
-
 			// Copy and substitute members from the nested class
 			for (const auto& member_decl : nested_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
@@ -7975,6 +7930,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : type_spec.pointer_levels()) {
 					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 				}
+				materializeSubstitutedFunctionTypeMetadata(
+					substituted_type_spec,
+					type_spec,
+					template_params,
+					template_args_to_use);
 
 				size_t member_size;
 				if (is_array_member) {
@@ -8013,8 +7973,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																			 : std::nullopt;
 
 				StringHandle member_name_handle = decl.identifier_token().handle();
-				const StructMember* source_member =
-					findDirectStructMemberByName(source_nested_struct_info, member_name_handle);
 				nested_struct_info->addMember(
 					member_name_handle,
 					stored_member_type_index,
@@ -8028,12 +7986,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					resolved_array_dimensions,
 					static_cast<int>(substituted_type_spec.pointer_depth()),
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-					resolveTemplateFunctionPointerSignature(
-						type_spec,
-						substituted_type_spec.type_index(),
-						source_member,
-						template_params,
-						template_args_to_use),
+					getCanonicalFunctionPointerSignature(substituted_type_spec),
 					member_decl.is_no_unique_address);
 
 				ASTNode substituted_member_decl = substituteTemplateParameters(
