@@ -87,6 +87,10 @@ class Evaluator;
 struct EvalResult;
 }
 
+namespace SemanticValidation {
+std::optional<StringHandle> findInvalidConcreteSizeofTypeOperand(const ASTNode& root);
+}
+
 class SemanticAnalysis;
 
 // RAII helper to execute a cleanup function on scope exit

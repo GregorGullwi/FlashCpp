@@ -6820,11 +6820,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_specifier_node();
 		ASTNode full_substituted_type_node = substituteTemplateParameters(
-			decl.type_node(), template_params, template_args_to_use);
+			decl.type_node(), effective_template_params, effective_template_args);
 
 		// Substitute template parameter if the member type is a template parameter
 		TypeIndex member_type_index = substitute_template_parameter(
-			type_spec, template_params, template_args_to_use);
+			type_spec, effective_template_params, effective_template_args);
 
 		// WORKAROUND: If member type is a Struct or UserDefined that is actually a template (not an instantiation),
 		// try to instantiate it with the current template arguments.
@@ -6836,7 +6836,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (const TypeInfo* member_type_info = (is_struct_type(member_type_index.category())) ? tryGetTypeInfo(member_type_index) : nullptr) {
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
 			auto materializeMemberTemplateArgs = [&]() {
-				return materializeTemplateArgs(*member_type_info, template_params, template_args_to_use);
+				return materializeTemplateArgs(*member_type_info, effective_template_params, effective_template_args);
 			};
 
 			FLASH_LOG(Templates, Debug, "Member type_info: name='", member_struct_name,
@@ -6950,15 +6950,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// If we found an identifier, try to substitute it with a non-type template parameter value
 				if (identifier_name.has_value()) {
 					// Try to find which non-type template parameter this is
-					for (size_t i = 0; i < template_params.size(); ++i) {
-						const TemplateParameterNode* tparam = tryGetTemplateParameterNode(template_params[i]);
+					for (size_t i = 0; i < effective_template_params.size(); ++i) {
+						const TemplateParameterNode* tparam = tryGetTemplateParameterNode(effective_template_params[i]);
 						if (tparam != nullptr &&
 							tparam->kind() == TemplateParameterKind::NonType &&
 							tparam->name() == *identifier_name) {
 							// Found the non-type parameter - substitute with the actual value
-							if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
+							if (i < effective_template_args.size() && effective_template_args[i].is_value) {
 								// Create a numeric literal node with the substituted value
-								int64_t val = template_args_to_use[i].value;
+								int64_t val = effective_template_args[i].value;
 								Token num_token(Token::Type::Literal, StringBuilder().append(val).commit(), 0, 0, 0);
 								auto num_literal = emplace_node<ExpressionNode>(
 									NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 32));
@@ -6990,7 +6990,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Calculate member size - for arrays, multiply element size by array size
 		ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
-		std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args_to_use);
+		std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
+			decl, effective_template_params, effective_template_args);
 		if (resolved_array_dimensions.empty()) {
 			resolved_array_dimensions = resolved_member_alias.array_dimensions;
 		}
@@ -7038,7 +7039,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Substitute template parameters in default member initializers
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
-			member_decl.default_initializer, template_args_to_use, template_params);
+			member_decl.default_initializer, effective_template_args, effective_template_params);
 
 		// For function pointer members instantiated from a template parameter (e.g., F func
 		// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
@@ -7059,13 +7060,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			is_array_member,
 			std::move(resolved_array_dimensions),
 			static_cast<int>(substituted_type_spec.pointer_depth()),
-			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
+			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
 			resolveTemplateFunctionPointerSignature(
 				substituted_type_spec,
 				member_type_index,
 				source_member,
-				template_params,
-				template_args_to_use),
+				effective_template_params,
+				effective_template_args),
 			member_decl.is_no_unique_address);
 	}
 
@@ -7593,7 +7594,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_type_index,
 					substituted_size,
 					static_member.reference_qualifier,
-					static_member.pointer_depth);
+					static_member.pointer_depth,
+					UnresolvedSizeofPolicy::AllowDependent);
 
 			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.memberType(),
 					  " -> substituted type=", (int)substituted_type_index.category(), ", size=", substituted_size);
@@ -9161,7 +9163,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						instantiated_static_member->type_index,
 						instantiated_static_member->size,
 						instantiated_static_member->reference_qualifier,
-						instantiated_static_member->pointer_depth);
+						instantiated_static_member->pointer_depth,
+						UnresolvedSizeofPolicy::AllowDependent);
 				if (!normalized_initializer.has_value()) {
 					continue;
 				}
@@ -9364,17 +9367,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		false // is_class
 	);
 	StructDeclarationNode& instantiated_struct_ref = instantiated_struct.as<StructDeclarationNode>();
-	setOuterTemplateBindingsFromParams(instantiated_struct_ref, template_params, template_args_to_use);
+	setOuterTemplateBindingsFromParams(
+		instantiated_struct_ref, effective_template_params, effective_template_args);
 
 	for (const auto& member_decl : class_decl.members()) {
 		ASTNode substituted_member_decl = substituteTemplateParameters(
-			member_decl.declaration, template_params, template_args_to_use);
+			member_decl.declaration, effective_template_params, effective_template_args);
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
-			member_decl.default_initializer, template_args_to_use, template_params);
-		std::optional<ASTNode> substituted_bitfield_width_expr = member_decl.bitfield_width_expr.has_value()
-																	 ? std::optional<ASTNode>(substituteTemplateParameters(
-																		   *member_decl.bitfield_width_expr, template_params, template_args_to_use))
-																	 : std::nullopt;
+			member_decl.default_initializer, effective_template_args, effective_template_params);
+		std::optional<ASTNode> substituted_bitfield_width_expr;
+		if (member_decl.bitfield_width_expr.has_value()) {
+			substituted_bitfield_width_expr = substituteTemplateParameters(
+				*member_decl.bitfield_width_expr,
+				effective_template_params,
+				effective_template_args);
+		}
 		instantiated_struct_ref.add_member(
 			substituted_member_decl,
 			member_decl.access,

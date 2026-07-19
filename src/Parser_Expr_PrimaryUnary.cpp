@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "AstTraversal.h"
 #include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "LazyMemberResolver.h"
@@ -67,6 +68,70 @@ bool qualifiedNameNamesDataMember(std::string_view qualified_name) {
 }
 
 } // namespace
+
+std::optional<StringHandle> SemanticValidation::findInvalidConcreteSizeofTypeOperand(
+	const ASTNode& root) {
+	std::optional<StringHandle> invalid_type_name;
+	AstTraversal::visitASTWithDecisions(root, [&](const ASTNode& current) {
+		const SizeofExprNode* sizeof_expression = nullptr;
+		if (current.is<SizeofExprNode>()) {
+			sizeof_expression = &current.as<SizeofExprNode>();
+		} else if (current.is<ExpressionNode>()) {
+			sizeof_expression = std::get_if<SizeofExprNode>(&current.as<ExpressionNode>());
+		}
+		if (sizeof_expression == nullptr || !sizeof_expression->is_type() ||
+			!sizeof_expression->type_or_expr().is<TypeSpecifierNode>()) {
+			return AstTraversal::VisitDecision::Continue;
+		}
+
+		const TypeSpecifierNode& type_spec =
+			sizeof_expression->type_or_expr().as<TypeSpecifierNode>();
+		if (type_spec.pointer_depth() > 0) {
+			return AstTraversal::VisitDecision::Continue;
+		}
+
+		auto reject_type = [&]() {
+			StringHandle structured_name = getStructuredTypeName(type_spec);
+			invalid_type_name = structured_name.isValid()
+				? structured_name
+				: type_spec.token().handle();
+			return AstTraversal::VisitDecision::Stop;
+		};
+
+		if (typeSpecStillUsesDependentPlaceholder(type_spec)) {
+			return reject_type();
+		}
+
+		const ResolvedAliasTypeInfo resolved_alias =
+			resolveAliasTypeInfo(type_spec.type_index());
+		const TypeCategory category = resolved_alias.type_index.is_valid()
+			? resolved_alias.typeEnum()
+			: type_spec.category();
+		if (category == TypeCategory::Void || category == TypeCategory::Function ||
+			type_spec.has_unsized_outer_array_dimension()) {
+			return reject_type();
+		}
+		for (size_t extent : type_spec.array_dimensions()) {
+			if (extent == 0) {
+				return reject_type();
+			}
+		}
+
+		const TypeInfo* terminal_type_info = resolved_alias.terminal_type_info;
+		if (terminal_type_info == nullptr && resolved_alias.type_index.is_valid()) {
+			terminal_type_info = tryGetTypeInfo(resolved_alias.type_index);
+		}
+		if (terminal_type_info != nullptr && terminal_type_info->isStruct()) {
+			const StructTypeInfo* struct_info = terminal_type_info->getStructInfo();
+			if (struct_info == nullptr || !struct_info->hasCompleteObjectLayout()) {
+				return reject_type();
+			}
+		}
+
+		return AstTraversal::VisitDecision::Continue;
+	});
+	return invalid_type_name;
+}
 
 ParseResult Parser::parse_return_statement() {
 	auto current_token_opt = peek_info();
@@ -840,6 +905,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 				}
 
 				auto sizeof_expr = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
+				if (!typeSpecStillUsesDependentPlaceholder(type_spec)) {
+					if (std::optional<StringHandle> invalid_type =
+							SemanticValidation::findInvalidConcreteSizeofTypeOperand(sizeof_expr);
+						invalid_type.has_value()) {
+						throw CompileError("sizeof operand is an incomplete or invalid type");
+					}
+				}
 				return ParseResult::success(sizeof_expr);
 			} else {
 				// Not a type (or doesn't look like one), try parsing as expression
