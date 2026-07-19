@@ -1,14 +1,17 @@
 # Known Issues
 
-## Namespace-qualified lazy class-template self-copy miscompiles
-Wrapping the fixture in
-`tests/test_explicit_ctor_same_template_copy_init_ret0.cpp` in a non-global
-namespace and qualifying both `ReverseIter<int*>` uses in `main` compiles and
-links, but returns 1 instead of 0 because `copy_self()` does not preserve the
-stored pointer value. The same deferred member-body self-copy works in the
-global namespace. This is a separate namespace-sensitive runtime/codegen issue;
-the local declaration's current-instantiation `TypeIndex` is already rebound to
-the concrete owner before codegen.
+## Nested class-template members lack a canonical current-instantiation owner during constructor substitution
+When a nested class is instantiated as part of its enclosing class template,
+its constructors are copied before the nested `TypeInfo` is registered. A
+user-written copy constructor such as `Inner(const Inner&)` therefore cannot
+rewrite the pattern's injected-class-name type to the concrete nested owner.
+Copy initialization inside a nested member can then reject the valid copy
+constructor and diagnose an unrelated `explicit` converting constructor.
+
+The sustainable fix is to register the nested semantic type and owner identity
+before copying constructor signatures, then use that typed identity in the
+shared current-instantiation rewrite. Do not repair this with nested-name scans
+or overload-resolution guesses.
 
 ## Modular-build-only crash: test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp
 `ConstructorDeclarationNode::has_template_parameters()` dereferences a null inner

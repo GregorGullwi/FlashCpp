@@ -588,33 +588,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Helper: substitute template parameter types in a function/constructor parameter list
 	// and add the substituted parameters to a target node.
 	// Consolidates the ~25-line pattern repeated across all instantiation paths.
-	struct SelfTypeRewriteInfo {
+	struct CurrentInstantiationTypeRewrite {
 		TypeIndex from_type_index;
 		TypeIndex to_type_index;
 	};
-	auto makeImplicitCtorSelfTypeRewrite = [&](StringHandle pattern_struct_name, TypeIndex instantiated_struct_type_index)
-		-> std::optional<SelfTypeRewriteInfo> {
-		if (!instantiated_struct_type_index.is_valid()) {
-			return std::nullopt;
-		}
-		auto it = getTypesByNameMap().find(pattern_struct_name);
-		if (it == getTypesByNameMap().end() || it->second == nullptr) {
-			return std::nullopt;
-		}
-		TypeIndex pattern_struct_type_index = it->second->registeredTypeIndex();
-		if (!pattern_struct_type_index.is_valid()) {
-			return std::nullopt;
+	// An injected class name denotes the current instantiation in every constructor
+	// signature, including user-written copy and move constructors.
+	auto makeCurrentInstantiationTypeRewrite = [](
+		const ConstructorDeclarationNode& pattern_constructor,
+		TypeIndex instantiated_struct_type_index) -> CurrentInstantiationTypeRewrite {
+		TypeIndex pattern_struct_type_index = pattern_constructor.owning_type_index();
+		if (!pattern_struct_type_index.is_valid() || !instantiated_struct_type_index.is_valid()) {
+			throw InternalError(
+				"Constructor parameter substitution requires canonical pattern and instantiated owner types");
 		}
 		pattern_struct_type_index.setCategory(TypeCategory::Struct);
 		instantiated_struct_type_index.setCategory(TypeCategory::Struct);
-		return SelfTypeRewriteInfo{pattern_struct_type_index, instantiated_struct_type_index};
+		return CurrentInstantiationTypeRewrite{pattern_struct_type_index, instantiated_struct_type_index};
 	};
 	auto substituteAndCopyParams = [&](
 									   std::span<const ASTNode> orig_params,
 									   auto& target_node,
 									   const auto& tmpl_params,
 									   const auto& tmpl_args,
-									   std::optional<SelfTypeRewriteInfo> self_type_rewrite = std::nullopt) {
+									   std::optional<CurrentInstantiationTypeRewrite> current_instantiation_rewrite) {
 		for (const auto& param : orig_params) {
 			if (!param.is<DeclarationNode>()) {
 				target_node.add_parameter_node(param);
@@ -690,8 +687,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			// Use substituteTemplateParameters as the primary substitution to correctly
 			// propagate pointer depth from template args (e.g. I→int* gives ptr_depth=1).
-			// The TypeIndex from substitute_template_parameter+self_type_rewrite is applied
-			// on top to handle self-referential types.
+			// The TypeIndex from substitution plus the current-instantiation rewrite is
+			// applied on top to handle self-referential types.
 			ASTNode original_param_type_node = param_decl.type_node();
 			const bool preserve_dependent_member_template_identity =
 				typeSpecifierPreservesDependentMemberTemplateSignatureIdentity(
@@ -700,9 +697,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				original_param_type_node, tmpl_params, tmpl_args);
 			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, tmpl_params, tmpl_args);
-			if (self_type_rewrite.has_value() &&
-				param_type_index == self_type_rewrite->from_type_index) {
-				param_type_index = self_type_rewrite->to_type_index;
+			if (current_instantiation_rewrite.has_value() &&
+				param_type_index == current_instantiation_rewrite->from_type_index) {
+				param_type_index = current_instantiation_rewrite->to_type_index;
 			}
 			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
 				original_param_type_node,
@@ -2246,11 +2243,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref,
 						template_params,
 						template_args_for_member_copy,
-						orig_ctor.is_implicit()
-							? makeImplicitCtorSelfTypeRewrite(
-								pattern_struct.name(),
-								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
-							: std::nullopt);
+						makeCurrentInstantiationTypeRewrite(
+							orig_ctor,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 					substituteAndCopyInitializers(
 						orig_ctor,
@@ -3482,11 +3477,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref,
 						template_params,
 						template_args_for_pattern,
-						orig_ctor.is_implicit()
-							? makeImplicitCtorSelfTypeRewrite(
-								pattern_struct.name(),
-								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
-							: std::nullopt);
+						makeCurrentInstantiationTypeRewrite(
+							orig_ctor,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 
 					// Copy initializers (member, base, delegating)
@@ -8096,7 +8089,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						original_ctor.parameter_nodes(),
 						substituted_ctor,
 						template_params,
-						template_args_to_use);
+						template_args_to_use,
+						// The nested type receives its semantic owner after this copy phase.
+						std::nullopt);
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 					substituteAndCopyInitializers(
 						original_ctor,
@@ -9949,7 +9944,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Substitute and copy parameters — may add function-pack info to pack_param_info_
 					// so that pack expansions in the body and initializers resolve correctly.
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
+					substituteAndCopyParams(
+						ctor_decl.parameter_nodes(),
+						new_ctor_ref,
+						template_params,
+						template_args_to_use,
+						makeCurrentInstantiationTypeRewrite(
+							ctor_decl,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 
 					std::optional<ASTNode> substituted_body;
@@ -10040,7 +10042,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Substitute and copy parameters so the stub has concrete types.
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
+					substituteAndCopyParams(
+						ctor_decl.parameter_nodes(),
+						new_ctor_ref,
+						template_params,
+						template_args_to_use,
+						makeCurrentInstantiationTypeRewrite(
+							ctor_decl,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					pack_param_info_.resize(saved_pack_info);
 
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
