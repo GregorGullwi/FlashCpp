@@ -1,14 +1,5 @@
 # Known Issues
 
-## Aggregate return transport can lose trailing fields
-A nested current-instantiation function that returns a multi-field aggregate by
-value can preserve construction and direct copy-construction but lose trailing
-fields while transporting the result through its hidden return slot. The
-aggregate member metadata, by-value argument classification, and memberwise copy
-are canonical before this point. Trace the non-RVO return copy and hidden
-return-slot destination as object representations; do not reinterpret either as
-a scalar register value or add a nested-template special case.
-
 ## Implicit anonymous-union construction initializes inactive members
 The implicit default-constructor IR for an anonymous union can emit stores for
 both the active member with a default member initializer and later overlapping

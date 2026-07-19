@@ -449,6 +449,14 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 
 	TypeCategory lowered_cat = resolve_type_alias(type_index);
 	const TypeCategory semantic_cat = type_index.category();
+	if (isIrStructType(toIrType(semantic_cat))) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_index);
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (!struct_info || !struct_info->hasCompleteObjectLayout()) {
+			throw InternalError("Runtime aggregate value requires complete canonical layout metadata");
+		}
+		return struct_info->sizeInBits().value;
+	}
 
 	if (lowered_cat == TypeCategory::Enum) {
 		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
