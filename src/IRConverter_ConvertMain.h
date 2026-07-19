@@ -241,6 +241,21 @@ private:
 	// This makes both source and destination sizes explicit for clarity
 	void emitMovFromFrameSized(SizedRegister dest, SizedStackSlot source);
 
+	enum class FrameMemoryStorage {
+		Direct,
+		Indirect
+	};
+
+	struct FrameMemoryLocation {
+		int32_t frame_offset;
+		int32_t displacement;
+		FrameMemoryStorage storage;
+	};
+
+	// Copy an object representation between direct frame storage and frame slots
+	// that contain an address, preserving every byte of aggregate values.
+	void emitFrameMemoryCopy(FrameMemoryLocation source, FrameMemoryLocation destination, SizeInBytes size);
+
 	// Helper to generate and emit LEA from frame
 	void emitLeaFromFrame(X64Register destinationRegister, int32_t offset);
 

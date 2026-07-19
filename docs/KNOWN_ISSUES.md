@@ -1,17 +1,23 @@
 # Known Issues
 
-## Nested aggregate template-parameter members miscompile during value construction and copy
-For `template<typename T> struct Outer { struct Inner { T current; }; };`,
-instantiating `Outer<Payload>::Inner` with a multi-field `Payload` records the
-correct aggregate width but does not preserve its fields through a nested
-value-construction and copy sequence. Native 32-bit and 64-bit values and
-pointer template arguments now preserve their layout and value correctly.
+## Aggregate return transport can lose trailing fields
+A nested current-instantiation function that returns a multi-field aggregate by
+value can preserve construction and direct copy-construction but lose trailing
+fields while transporting the result through its hidden return slot. The
+aggregate member metadata, by-value argument classification, and memberwise copy
+are canonical before this point. Trace the non-RVO return copy and hidden
+return-slot destination as object representations; do not reinterpret either as
+a scalar register value or add a nested-template special case.
 
-The constructor signature and nested member `TypeSpecifierNode` producers are
-already canonical at this point. Trace the aggregate through by-value argument
-lowering and aggregate member load/store lowering to find the first incomplete
-or incorrectly classified value operation. Do not repair it with byte-count
-guesses or a codegen-only special case for nested members.
+## Implicit anonymous-union construction initializes inactive members
+The implicit default-constructor IR for an anonymous union can emit stores for
+both the active member with a default member initializer and later overlapping
+members. `test_anonymous_union_member_brace_init_ret0.cpp` currently succeeds
+only because the backend ignores the unsupported wide scalar store emitted for
+the inactive aggregate member. The constructor producer must select and
+initialize only the union member whose lifetime begins under C++20; the backend
+must then reject aggregate values that have neither object storage nor a proper
+aggregate-initialization operation.
 
 ## Modular-build-only crash: test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp
 `ConstructorDeclarationNode::has_template_parameters()` dereferences a null inner

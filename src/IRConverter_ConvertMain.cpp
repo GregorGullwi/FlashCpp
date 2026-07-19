@@ -2644,6 +2644,60 @@ void IrToObjConverter<TWriterClass>::emitMovFromFrameBySize(X64Register destinat
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitFrameMemoryCopy(FrameMemoryLocation source, FrameMemoryLocation destination, SizeInBytes size) {
+	if (!size.is_set()) {
+		throw InternalError("Aggregate copy requires a positive object size");
+	}
+
+	X64Register source_address = X64Register::Count;
+	if (source.storage == FrameMemoryStorage::Indirect) {
+		source_address = allocateRegisterWithSpilling();
+		emitMovFromFrame(source_address, source.frame_offset);
+	}
+
+	X64Register destination_address = X64Register::Count;
+	if (destination.storage == FrameMemoryStorage::Indirect) {
+		destination_address = allocateRegisterWithSpilling();
+		emitMovFromFrame(destination_address, destination.frame_offset);
+	}
+
+	X64Register copy_register = allocateRegisterWithSpilling();
+	for (int byte_offset = 0; byte_offset < size.value;) {
+		const SizeInBytes remaining{size.value - byte_offset};
+		const SizeInBytes chunk_size{
+			remaining.value >= 8 ? 8 : remaining.value >= 4 ? 4 : remaining.value >= 2 ? 2 : 1};
+		const SizeInBits chunk_size_bits = toBits(chunk_size);
+
+		if (source.storage == FrameMemoryStorage::Indirect) {
+			emitMovFromMemory(copy_register, source_address, source.displacement + byte_offset, chunk_size.value);
+		} else {
+			emitMovFromFrameSized(
+				SizedRegister{copy_register, 64, false},
+				SizedStackSlot{source.frame_offset + source.displacement + byte_offset, chunk_size_bits.value, false});
+		}
+
+		if (destination.storage == FrameMemoryStorage::Indirect) {
+			emitStoreToMemory(textSectionData, copy_register, destination_address,
+							  destination.displacement + byte_offset, chunk_size.value);
+		} else {
+			emitMovToFrameSized(
+				SizedRegister{copy_register, 64, false},
+				SizedStackSlot{destination.frame_offset + destination.displacement + byte_offset, chunk_size_bits.value, false});
+		}
+
+		byte_offset += chunk_size.value;
+	}
+
+	regAlloc.release(copy_register);
+	if (destination_address != X64Register::Count) {
+		regAlloc.release(destination_address);
+	}
+	if (source_address != X64Register::Count) {
+		regAlloc.release(source_address);
+	}
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrame(X64Register destinationRegister, int32_t offset) {
 	auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, 64);
 	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -13685,8 +13739,46 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		member_stack_offset = object_base_offset + op.offset;
 	}
 
-		// Calculate member size in bytes
+	// Calculate member size in bytes
 	int member_size_bytes = op.value.size_in_bits.value / 8;
+
+	const bool is_non_scalar_struct_copy =
+		isIrStructType(op.value.effectiveIrType()) &&
+		!op.value.pointer_depth.is_pointer() &&
+		!op.is_reference() &&
+		op.value.size_in_bits.value > 64 &&
+		!is_literal;
+	if (is_non_scalar_struct_copy) {
+		int32_t source_offset = 0;
+		FrameMemoryStorage source_storage = FrameMemoryStorage::Direct;
+		if (is_variable) {
+			auto source_it = current_scope.variables.find(variable_name);
+			if (source_it == current_scope.variables.end()) {
+				throw InternalError("Aggregate member initializer variable not found in scope");
+			}
+			source_offset = source_it->second.offset;
+			if (isPointerBaseStorage(source_offset)) {
+				source_storage = FrameMemoryStorage::Indirect;
+			}
+		} else {
+			const TempVar source_temp = std::get<TempVar>(op.value.value);
+			source_offset = getStackOffsetFromTempVar(source_temp, op.value.size_in_bits.value);
+			if (isPointerBaseStorage(source_offset, source_temp)) {
+				source_storage = FrameMemoryStorage::Indirect;
+			}
+		}
+
+		const FrameMemoryLocation source{
+			.frame_offset = source_offset,
+			.displacement = 0,
+			.storage = source_storage};
+		const FrameMemoryLocation destination{
+			.frame_offset = is_pointer_access ? object_base_offset : member_stack_offset,
+			.displacement = is_pointer_access ? op.offset : 0,
+			.storage = is_pointer_access ? FrameMemoryStorage::Indirect : FrameMemoryStorage::Direct};
+		emitFrameMemoryCopy(source, destination, toBytesExact(op.value.size_in_bits));
+		return;
+	}
 
 	const bool is_float_pointer_store = is_pointer_access && !op.is_reference() && !op.bitfield_width.has_value() && isIrFloatingPointType(op.value.effectiveIrType());
 	if (is_float_pointer_store) {
