@@ -131,36 +131,14 @@ std::optional<ASTNode> tryFoldSubstitutedSizeofTypeNode(
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	size_t size_in_bytes = 0;
-
-	if (type_spec.is_array()) {
-		size_t element_size = static_cast<size_t>(type_spec.size_in_bits()) / 8;
-		if (type_spec.array_size().has_value()) {
-			size_in_bytes = element_size * *type_spec.array_size();
-		} else {
-			size_in_bytes = element_size;
-		}
-	} else if (type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-		size_in_bytes = static_cast<size_t>(type_spec.size_in_bits()) / 8;
-	} else if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().is_valid()) {
-		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-			size_in_bytes = toSizeT(struct_info->sizeInBytes());
-		}
-	} else {
-		size_in_bytes = static_cast<size_t>(type_spec.size_in_bits()) / 8;
-		if (size_in_bytes == 0 && type_spec.type_index().is_valid()) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index()); type_info && type_info->hasStoredSize()) {
-				size_in_bytes = toSizeT(type_info->sizeInBytes());
-			}
-		}
-	}
-
-	if (size_in_bytes == 0) {
+	const std::optional<size_t> size_in_bytes =
+		ConstExpr::tryGetConstexprTypeSizeBytes(type_spec);
+	if (!size_in_bytes.has_value() || *size_in_bytes == 0) {
 		return std::nullopt;
 	}
 
 	StringBuilder size_builder;
-	std::string_view size_str = size_builder.append(size_in_bytes).commit();
+	std::string_view size_str = size_builder.append(*size_in_bytes).commit();
 	Token literal_token(
 		Token::Type::Literal,
 		size_str,
@@ -170,7 +148,7 @@ std::optional<ASTNode> tryFoldSubstitutedSizeofTypeNode(
 	return ASTNode::emplace_node<ExpressionNode>(
 		NumericLiteralNode(
 			literal_token,
-			static_cast<unsigned long long>(size_in_bytes),
+		static_cast<unsigned long long>(*size_in_bytes),
 			TypeCategory::UnsignedLongLong,
 			TypeQualifier::None,
 			64));
@@ -1428,10 +1406,10 @@ ASTNode Parser::substituteTemplateParameters(
 				if (type_or_expr.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 
-					// Try to find a matching template parameter and evaluate sizeof directly.
-					// This handles both struct types (matched by name) and non-struct dependent
-					// types (matched by type_index) where the template arg carries pointer_depth.
-					if (type_spec.type_index().is_valid()) {
+					// A direct template parameter carries an explicit scoped binding identity.
+					// Do not infer that identity from a matching terminal type index: aliases
+					// can denote the same element type while adding array or indirection shape.
+					if (type_spec.has_template_parameter_identity()) {
 						bool substituted_sizeof_type = false;
 						std::optional<ASTNode> substituted_sizeof_node;
 						forEachNonPackTemplateParamArgBinding(
@@ -1440,12 +1418,7 @@ ASTNode Parser::substituteTemplateParameters(
 							[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
 								if (substituted_sizeof_type || !arg.isTypeArgument())
 									return;
-								// Match by name (struct types) or by type_index (dependent types)
-								const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-								if (type_info == nullptr)
-									return;
-								std::string_view type_name = StringTable::getStringView(type_info->name());
-								if (tparam.name() != type_name && type_info->type_index_ != arg.type_index)
+								if (tparam.nameHandle() != type_spec.template_parameter_name())
 									return;
 
 								size_t type_size = getSubstitutedTemplateArgumentSizeInBytes(arg);
@@ -2162,14 +2135,21 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	const std::string_view type_name = StringTable::getStringView(type_handle);
 
 	// Prefer declarations from the active symbol scope for unqualified type names.
-	// This keeps block/function-local enum tags authoritative even when
+	// This keeps block/function-local types authoritative even when
 	// getTypesByNameMap() still holds an older outer-scope type under the same key.
 	if (type_name.find("::") == std::string_view::npos) {
 		if (std::optional<ASTNode> symbol = gSymbolTable.lookup(type_name);
-			symbol.has_value() && symbol->is<EnumDeclarationNode>()) {
-			const TypeIndex enum_type_index = symbol->as<EnumDeclarationNode>().type_index();
-			if (const TypeInfo* enum_type_info = tryGetTypeInfo(enum_type_index)) {
-				return enum_type_info;
+			symbol.has_value()) {
+			TypeIndex scoped_type_index;
+			if (symbol->is<EnumDeclarationNode>()) {
+				scoped_type_index = symbol->as<EnumDeclarationNode>().type_index();
+			} else if (symbol->is<TypedefDeclarationNode>()) {
+				scoped_type_index = symbol->as<TypedefDeclarationNode>()
+					.type_specifier_node()
+					.type_index();
+			}
+			if (const TypeInfo* scoped_type_info = tryGetTypeInfo(scoped_type_index)) {
+				return scoped_type_info;
 			}
 		}
 	}
@@ -2210,8 +2190,8 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	}
 
 	// Then try direct unqualified lookup, subject to namespace visibility rules.
-	// Note: local enum shadowing is already handled by the symbol-table lookup above
-	// (lines 2020-2028), which is scope-aware and always returns the innermost declaration.
+	// Note: local type shadowing is already handled by the symbol-table lookup above,
+	// which is scope-aware and always returns the innermost declaration.
 	auto it = getTypesByNameMap().find(type_handle);
 	if (it != getTypesByNameMap().end() && isDirectlyVisibleUnqualified(it->second)) {
 		return it->second;

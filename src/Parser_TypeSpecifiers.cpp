@@ -2503,7 +2503,7 @@ ParseResult Parser::parse_type_specifier() {
 						return qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value()).commit();
 					};
 					auto buildResolvedTypeNode = [&](const TypeInfo& resolved_type_info) -> ASTNode {
-						if (resolved_type_info.isStruct()) {
+						if (resolved_type_info.isStruct() && !resolved_type_info.isTypeAlias()) {
 							const StructTypeInfo* struct_info = resolved_type_info.getStructInfo();
 							int resolved_type_size = struct_info
 								? static_cast<int>(struct_info->sizeInBits().value)
@@ -3571,6 +3571,7 @@ ParseResult Parser::parse_type_specifier() {
 								cv_qualifier,
 								ReferenceQualifier::None);
 							TypeSpecifierNode concrete_type = resolveTypeInfoToTypeSpec(*param_type_info, outer_spec);
+							concrete_type.set_template_parameter_identity(type_name_handle);
 							if (const int concrete_size_bits = getTypeSpecSizeBits(concrete_type); concrete_size_bits > 0) {
 								concrete_type.set_size_in_bits(concrete_size_bits);
 							}
