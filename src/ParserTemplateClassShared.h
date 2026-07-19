@@ -114,18 +114,6 @@ inline int getSubstitutedTypeSizeBits(TypeIndex substituted_type_index) {
 	return get_type_size_bits(size_type_index.category());
 }
 
-inline const StructMember* findDirectStructMemberByName(
-	const StructTypeInfo* struct_info,
-	StringHandle member_name) {
-	if (struct_info == nullptr || !member_name.isValid())
-		return nullptr;
-	for (const StructMember& member : struct_info->members) {
-		if (member.name == member_name)
-			return &member;
-	}
-	return nullptr;
-}
-
 template <typename ParamContainer, typename ArgContainer>
 inline TypeIndex substituteTemplateParameterTypeIndex(
 	TypeIndex original_type_index,
@@ -196,21 +184,24 @@ template <typename ParamContainer, typename ArgContainer>
 inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	const TypeSpecifierNode& type_spec,
 	TypeIndex substituted_type_index,
-	const StructMember* source_member,
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
-	if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
-		substituted_type_index.category() != TypeCategory::MemberFunctionPointer)
+	const ResolvedAliasTypeInfo substituted_alias =
+		resolveAliasTypeInfo(substituted_type_index);
+	const TypeCategory substituted_category = substituted_alias.type_index.is_valid()
+		? substituted_alias.typeEnum()
+		: substituted_type_index.category();
+	if (substituted_category != TypeCategory::FunctionPointer &&
+		substituted_category != TypeCategory::MemberFunctionPointer) {
 		return std::nullopt;
-	std::optional<FunctionSignature> signature;
-	if (type_spec.has_function_signature()) {
-		signature = type_spec.function_signature();
 	}
-	if (!signature.has_value()) {
-		if (ResolvedAliasTypeInfo substituted_alias = resolveAliasTypeInfo(substituted_type_index);
-			substituted_alias.function_signature.has_value()) {
-			signature = substituted_alias.function_signature;
-		}
+
+	std::optional<FunctionSignature> signature;
+	if (substituted_alias.function_signature.has_value()) {
+		signature = substituted_alias.function_signature;
+	}
+	if (!signature.has_value() && type_spec.has_function_signature()) {
+		signature = type_spec.function_signature();
 	}
 	if (!signature.has_value()) {
 		if (ResolvedAliasTypeInfo original_alias = resolveAliasTypeInfo(type_spec.type_index());
@@ -218,20 +209,16 @@ inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 			signature = original_alias.function_signature;
 		}
 	}
-	if (!signature.has_value() &&
-		source_member != nullptr &&
-		source_member->function_signature.has_value()) {
-		signature = source_member->function_signature;
-	}
-
 	if (!signature.has_value()) {
 		if (const auto* arg = findTemplateArgByRegisteredTypeIndex(
 				type_spec.type_index(), template_params, template_args)) {
 			signature = arg->function_signature;
 		}
 	}
-	if (!signature.has_value())
-		return std::nullopt;
+	if (!signature.has_value()) {
+		throw InternalError(
+			"Concrete function pointer type is missing canonical FunctionSignature metadata");
+	}
 	return substituteTemplateFunctionSignature(
 		*signature,
 		template_params,
@@ -1191,7 +1178,6 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 	if (auto signature = resolveTemplateFunctionPointerSignature(
 				   original_type_spec,
 				   substituted_type.type_index(),
-				   nullptr,
 				   template_params,
 				   template_args)) {
 		substituted_type.set_function_signature(*signature);
@@ -1526,7 +1512,6 @@ inline void propagateFunctionSignatureFromTemplateArg(
 	if (auto signature = resolveTemplateFunctionPointerSignature(
 			orig_type,
 			substituted_type_index,
-			nullptr,
 			template_params,
 			template_args)) {
 		substituted_type.set_function_signature(*signature);
