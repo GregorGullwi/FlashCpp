@@ -2,6 +2,7 @@
 #include "LazyMemberResolver.h"
 #include "StringBuilder.h"
 #include "NameMangling.h"
+#include "NamespaceRegistry.h"
 #include "Log.h"
 #include <algorithm>
 #include <cstring>
@@ -1439,11 +1440,22 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
 		return true;
 	}
 
-	// Template instantiation fallback: allow matching the underlying base template pattern.
-	if (own_info.isTemplateInstantiation() && own_info.baseTemplateName() == param_info.name()) {
-		return true;
-	}
-	if (param_info.isTemplateInstantiation() && param_info.baseTemplateName() == own_info.name()) {
+	const auto namesPrimaryTemplate = [](const TypeInfo& instantiation, const TypeInfo& primary) {
+		if (!instantiation.isTemplateInstantiation()) {
+			return false;
+		}
+		StringHandle primary_name = instantiation.baseTemplateName();
+		if (instantiation.sourceNamespace().isValid() &&
+			!instantiation.sourceNamespace().isGlobal()) {
+			primary_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				instantiation.sourceNamespace(),
+				primary_name);
+		}
+		return primary_name == primary.name();
+	};
+
+	if (namesPrimaryTemplate(own_info, param_info) ||
+		namesPrimaryTemplate(param_info, own_info)) {
 		return true;
 	}
 

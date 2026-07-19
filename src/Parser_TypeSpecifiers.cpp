@@ -1648,19 +1648,25 @@ ParseResult Parser::parse_type_specifier() {
 						StringHandle qualified_member_handle = buildQualifiedMemberNameHandle(
 							StringTable::getOrInternStringHandle(base_type_name),
 							StringTable::getOrInternStringHandle(member_name));
-						auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
-						if (member_type_it == getTypesByNameMap().end()) {
-							TypeInfo& placeholder_type = add_empty_type_entry();
-							placeholder_type.fallback_size_bits_ = 0;
-							placeholder_type.name_ = qualified_member_handle;
-							placeholder_type.is_incomplete_instantiation_ = true;
-							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
-							if (auto base_type_it = getTypesByNameMap().find(
-									StringTable::getOrInternStringHandle(base_type_name));
-								base_type_it != getTypesByNameMap().end() &&
-								base_type_it->second != nullptr &&
-								base_type_it->second->isTemplateInstantiation()) {
-								const TypeInfo& base_type_info = *base_type_it->second;
+						auto refreshDependentMemberMetadata =
+							[&](TypeInfo& member_type_info) {
+							if (!member_type_info.isDependentMemberType()) {
+								return;
+							}
+							auto base_type_it = getTypesByNameMap().find(
+								StringTable::getOrInternStringHandle(base_type_name));
+							if (base_type_it == getTypesByNameMap().end() ||
+								base_type_it->second == nullptr) {
+								return;
+							}
+							const TypeInfo& base_type_info = *base_type_it->second;
+							if (base_type_info.hasDependentQualifiedName()) {
+								TypeInfo::DependentQualifiedNameRecord dependent_record =
+									*base_type_info.dependentQualifiedName();
+								appendDependentMemberPathComponents(dependent_record, member_name);
+								member_type_info.setDependentQualifiedName(std::move(dependent_record));
+							} else if (!member_type_info.hasDependentQualifiedName() &&
+								base_type_info.isTemplateInstantiation()) {
 								StringHandle owner_name = base_type_info.baseTemplateName();
 								if (!owner_name.isValid()) {
 									owner_name = base_type_info.name();
@@ -1668,7 +1674,7 @@ ParseResult Parser::parse_type_specifier() {
 								InlineVector<TypeInfo::TemplateArgInfo, 4> owner_template_arguments =
 									base_type_info.templateArgs();
 								DependentMemberSegmentInfo terminal_segment_info;
-								placeholder_type.setDependentQualifiedName(
+								member_type_info.setDependentQualifiedName(
 									makeDependentQualifiedNameRecord(
 										owner_name,
 										base_type_info.registeredTypeIndex(),
@@ -1679,8 +1685,46 @@ ParseResult Parser::parse_type_specifier() {
 											&terminal_segment_info,
 											1)));
 							}
+							const TypeInfo::InstantiationContext* base_context =
+								base_type_info.instantiationContext();
+							if (template_args.has_value()) {
+								InlineVector<StringHandle, 4> alias_param_names;
+								InlineVector<TypeInfo::TemplateArgInfo, 4> alias_context_args;
+								const auto& alias_params = alias_node.template_parameters();
+								const size_t binding_count = std::min(
+									alias_params.size(),
+									template_args->size());
+								alias_param_names.reserve(binding_count);
+								alias_context_args.reserve(binding_count);
+								for (size_t i = 0; i < binding_count; ++i) {
+									alias_param_names.push_back(alias_params[i].nameHandle());
+									alias_context_args.push_back(toTemplateArgInfo(
+										enrichTemplateArgForParameter(alias_params[i], (*template_args)[i])));
+								}
+								member_type_info.setInstantiationContext(
+									std::move(alias_param_names),
+									std::move(alias_context_args),
+									base_context);
+							} else if (base_context != nullptr) {
+								member_type_info.setInstantiationContext(
+									base_context->param_names,
+									base_context->param_args,
+									base_context->parent);
+							}
+						};
+						auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
+						if (member_type_it == getTypesByNameMap().end()) {
+							TypeInfo& placeholder_type = add_empty_type_entry();
+							placeholder_type.fallback_size_bits_ = 0;
+							placeholder_type.name_ = qualified_member_handle;
+							placeholder_type.is_incomplete_instantiation_ = true;
+							placeholder_type.placeholder_kind_ = DependentPlaceholderKind::DependentMemberType;
+							refreshDependentMemberMetadata(placeholder_type);
 							getTypesByNameMap()[qualified_member_handle] = &placeholder_type;
 							return placeholder_type;
+						}
+						if (member_type_it->second != nullptr) {
+							refreshDependentMemberMetadata(*member_type_it->second);
 						}
 						return *member_type_it->second;
 					};
@@ -2459,7 +2503,7 @@ ParseResult Parser::parse_type_specifier() {
 						return qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value()).commit();
 					};
 					auto buildResolvedTypeNode = [&](const TypeInfo& resolved_type_info) -> ASTNode {
-						if (resolved_type_info.isStruct()) {
+						if (resolved_type_info.isStruct() && !resolved_type_info.isTypeAlias()) {
 							const StructTypeInfo* struct_info = resolved_type_info.getStructInfo();
 							int resolved_type_size = struct_info
 								? static_cast<int>(struct_info->sizeInBits().value)
@@ -3527,6 +3571,7 @@ ParseResult Parser::parse_type_specifier() {
 								cv_qualifier,
 								ReferenceQualifier::None);
 							TypeSpecifierNode concrete_type = resolveTypeInfoToTypeSpec(*param_type_info, outer_spec);
+							concrete_type.set_template_parameter_identity(type_name_handle);
 							if (const int concrete_size_bits = getTypeSpecSizeBits(concrete_type); concrete_size_bits > 0) {
 								concrete_type.set_size_in_bits(concrete_size_bits);
 							}

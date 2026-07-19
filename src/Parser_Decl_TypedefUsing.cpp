@@ -4,6 +4,20 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+void Parser::bindLocalTypeAlias(
+	const Token& alias_token,
+	const TypeCreationResult& alias_type,
+	const TypeSpecifierNode& resolved_type_spec) {
+	const ScopeType scope_type = gSymbolTable.get_current_scope_type();
+	if (scope_type != ScopeType::Function && scope_type != ScopeType::Block) {
+		return;
+	}
+	TypeSpecifierNode alias_symbol_type = resolved_type_spec;
+	alias_symbol_type.set_type_index(alias_type.index);
+	ASTNode alias_symbol = emplace_node<TypedefDeclarationNode>(alias_symbol_type, alias_token);
+	gSymbolTable.insert(alias_token.handle(), alias_symbol);
+}
+
 // Parse the function type suffix used in aliases such as ReturnType (*)(Args...),
 // including vendor calling conventions, variadic ellipses, and trailing noexcept.
 // Returns false after restoring the token position when the next tokens are not
@@ -2101,7 +2115,9 @@ ParseResult Parser::parse_typedef_declaration() {
 	// Register the typedef alias in the type system
 	// The typedef should resolve to the underlying type, not be a new UserDefined type
 	// We create a TypeInfo entry that mirrors the underlying type
-	register_type_alias(StringTable::getOrInternStringHandle(qualified_alias_name), type_spec);
+	TypeCreationResult alias_type = register_type_alias(
+		StringTable::getOrInternStringHandle(qualified_alias_name), type_spec);
+	bindLocalTypeAlias(*alias_token, alias_type, type_spec);
 
 	// Create and return typedef declaration node
 	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_spec, *alias_token);

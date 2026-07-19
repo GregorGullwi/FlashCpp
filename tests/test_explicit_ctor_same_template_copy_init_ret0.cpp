@@ -32,7 +32,6 @@ struct ReverseIter {
 int main() {
 	int a = 1;
 	ReverseIter<int*> ri(&a);
-	(void)ri;
-	return 0;
+	ReverseIter<int*> copy = ri.copy_self();
+	return copy.current == &a ? 0 : 1;
 }
-

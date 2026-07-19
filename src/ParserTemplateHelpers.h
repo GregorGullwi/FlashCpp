@@ -3872,6 +3872,11 @@ inline void instantiateDeferredStaticInitializerCalls(
 	});
 }
 
+enum class UnresolvedSizeofPolicy {
+	AllowDependent,
+	RejectAfterSubstitution,
+};
+
 template <typename TemplateParamsContainer>
 inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMemberInitializer(
 	std::optional<ASTNode>& initializer,
@@ -3883,7 +3888,8 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	TypeIndex type_index,
 	size_t size_in_bytes,
 	ReferenceQualifier reference_qualifier,
-	int pointer_depth) {
+	int pointer_depth,
+	UnresolvedSizeofPolicy unresolved_sizeof_policy) {
 	if (!initializer.has_value()) {
 		return std::nullopt;
 	}
@@ -3915,6 +3921,16 @@ inline std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 			ExpressionSubstitutor substitutor(substitution_environment, parser);
 			substitutor.setCurrentOwnerTypeName(struct_info->getName());
 			initializer = substitutor.substitute(initializer.value());
+		}
+	}
+	if (unresolved_sizeof_policy == UnresolvedSizeofPolicy::RejectAfterSubstitution) {
+		if (std::optional<StringHandle> invalid_type =
+				SemanticValidation::findInvalidConcreteSizeofTypeOperand(*initializer);
+			invalid_type.has_value()) {
+			throw CompileError(
+				std::string("sizeof operand '") +
+				std::string(StringTable::getStringView(*invalid_type)) +
+				"' is incomplete or unresolved after template substitution");
 		}
 	}
 
@@ -3987,7 +4003,10 @@ inline void retryNormalizeTemplateStaticMembersAfterDeferredBodies(
 				static_member.type_index,
 				static_member.size,
 				static_member.reference_qualifier,
-				static_member.pointer_depth);
+				static_member.pointer_depth,
+				static_member.is_constexpr
+					? UnresolvedSizeofPolicy::RejectAfterSubstitution
+					: UnresolvedSizeofPolicy::AllowDependent);
 		if (!normalized_initializer.has_value()) {
 			continue;
 		}

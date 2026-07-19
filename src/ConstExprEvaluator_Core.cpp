@@ -185,29 +185,6 @@ std::optional<EvalResult> tryEvaluateSimpleConstexprTypeHelperCall(
 }
 
 
-std::optional<size_t> tryGetConstexprTypeSizeBytes(const TypeSpecifierNode& type_spec) {
-	if (type_spec.is_array()) {
-		const std::span<const size_t> dimensions = type_spec.array_dimensions();
-		TypeSpecifierNode element_type = type_spec;
-		element_type.set_array_dimensions({});
-		const int element_size_bits = getTypeSpecSizeBits(element_type);
-		if (element_size_bits <= 0) {
-			return std::nullopt;
-		}
-		size_t total_size = static_cast<size_t>(element_size_bits) / 8;
-		for (size_t dimension : dimensions) {
-			total_size *= dimension;
-		}
-		return total_size;
-	}
-
-	const int size_bits = getTypeSpecSizeBits(type_spec);
-	if (size_bits <= 0) {
-		return std::nullopt;
-	}
-	return static_cast<size_t>(size_bits) / 8;
-}
-
 // Returns the total element count for an array declaration when constexpr evaluation can
 // determine it immediately. Handles both explicit dimensions (`int a[2][3]`) and
 // inferred-size arrays backed by an initializer list (`int a[] = {1, 2, 3}`).

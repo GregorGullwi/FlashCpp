@@ -127,6 +127,72 @@ inline const StructMember* findDirectStructMemberByName(
 }
 
 template <typename ParamContainer, typename ArgContainer>
+inline TypeIndex substituteTemplateParameterTypeIndex(
+	TypeIndex original_type_index,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	TypeIndex substituted_type_index = original_type_index;
+	bool substituted = false;
+	forEachNonPackTemplateParamArgBinding(
+		template_params,
+		template_args,
+		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+			if (substituted ||
+				param.kind() != TemplateParameterKind::Type ||
+				!arg.isTypeArgument() ||
+				!FlashCpp::equalTypeIndexIdentity(
+					original_type_index,
+					param.registered_type_index()) ||
+				!FlashCpp::hasConcreteTemplateIdentity(arg.type_index)) {
+				return;
+			}
+			substituted_type_index =
+				FlashCpp::canonicalizeTemplateIdentityTypeIndex(arg.type_index);
+			substituted = true;
+		});
+	return substituted_type_index;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline const TemplateTypeArg* findTemplateArgByRegisteredTypeIndex(
+	TypeIndex type_index,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	const TemplateTypeArg* matched_arg = nullptr;
+	forEachNonPackTemplateParamArgBinding(
+		template_params,
+		template_args,
+		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+			if (matched_arg == nullptr &&
+				param.kind() == TemplateParameterKind::Type &&
+				FlashCpp::equalTypeIndexIdentity(
+					type_index,
+					param.registered_type_index())) {
+				matched_arg = &arg;
+			}
+		});
+	return matched_arg;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+inline FunctionSignature substituteTemplateFunctionSignature(
+	FunctionSignature signature,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	signature.return_type_index = substituteTemplateParameterTypeIndex(
+		signature.return_type_index,
+		template_params,
+		template_args);
+	for (TypeIndex& parameter_type_index : signature.parameter_type_indices) {
+		parameter_type_index = substituteTemplateParameterTypeIndex(
+			parameter_type_index,
+			template_params,
+			template_args);
+	}
+	return signature;
+}
+
+template <typename ParamContainer, typename ArgContainer>
 inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	const TypeSpecifierNode& type_spec,
 	TypeIndex substituted_type_index,
@@ -136,28 +202,40 @@ inline std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
 		substituted_type_index.category() != TypeCategory::MemberFunctionPointer)
 		return std::nullopt;
-	if (type_spec.has_function_signature())
-		return type_spec.function_signature();
-	if (ResolvedAliasTypeInfo substituted_alias = resolveAliasTypeInfo(substituted_type_index);
-		substituted_alias.function_signature.has_value()) {
-		return substituted_alias.function_signature;
+	std::optional<FunctionSignature> signature;
+	if (type_spec.has_function_signature()) {
+		signature = type_spec.function_signature();
 	}
-	if (ResolvedAliasTypeInfo original_alias = resolveAliasTypeInfo(type_spec.type_index());
-		original_alias.function_signature.has_value()) {
-		return original_alias.function_signature;
+	if (!signature.has_value()) {
+		if (ResolvedAliasTypeInfo substituted_alias = resolveAliasTypeInfo(substituted_type_index);
+			substituted_alias.function_signature.has_value()) {
+			signature = substituted_alias.function_signature;
+		}
 	}
-	if (source_member != nullptr && source_member->function_signature.has_value())
-		return source_member->function_signature;
+	if (!signature.has_value()) {
+		if (ResolvedAliasTypeInfo original_alias = resolveAliasTypeInfo(type_spec.type_index());
+			original_alias.function_signature.has_value()) {
+			signature = original_alias.function_signature;
+		}
+	}
+	if (!signature.has_value() &&
+		source_member != nullptr &&
+		source_member->function_signature.has_value()) {
+		signature = source_member->function_signature;
+	}
 
-	StringHandle type_name_handle = getStructuredTypeName(type_spec);
-	if (!type_name_handle.isValid())
+	if (!signature.has_value()) {
+		if (const auto* arg = findTemplateArgByRegisteredTypeIndex(
+				type_spec.type_index(), template_params, template_args)) {
+			signature = arg->function_signature;
+		}
+	}
+	if (!signature.has_value())
 		return std::nullopt;
-
-	if (const auto* arg = findTemplateArgByName(type_name_handle.view(), template_params, template_args)) {
-		if (arg->function_signature.has_value())
-			return arg->function_signature;
-	}
-	return std::nullopt;
+	return substituteTemplateFunctionSignature(
+		*signature,
+		template_params,
+		template_args);
 }
 
 template <typename ParamContainer, typename ArgContainer>
@@ -1110,9 +1188,7 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 			template_params,
 			template_args);
 	}
-	if (original_type_spec.has_function_signature()) {
-		substituted_type.set_function_signature(original_type_spec.function_signature());
-	} else if (auto signature = resolveTemplateFunctionPointerSignature(
+	if (auto signature = resolveTemplateFunctionPointerSignature(
 				   original_type_spec,
 				   substituted_type.type_index(),
 				   nullptr,
@@ -1268,15 +1344,17 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	return lazy_mem_info;
 }
 
+template <typename MaterializeConstructorFn>
 inline void addNestedMemberFunctionsToStructInfo(
 	const StructDeclarationNode& nested_struct,
 	StructTypeInfo& nested_struct_info,
-	SourceMemberStructInfoIndexMaps* struct_info_index_maps) {
+	SourceMemberStructInfoIndexMaps* struct_info_index_maps,
+	MaterializeConstructorFn&& materialize_constructor) {
 	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 		if (mem_func.is_constructor || mem_func.is_destructor) {
 			if (mem_func.is_constructor) {
 				nested_struct_info.addConstructor(
-					mem_func.function_declaration,
+					materialize_constructor(mem_func),
 					mem_func.access);
 			} else {
 				nested_struct_info.addDestructor(
@@ -1404,7 +1482,10 @@ inline void registerNestedMemberFunctionsForLazy(
 	addNestedMemberFunctionsToStructInfo(
 		nested_struct,
 		nested_struct_info,
-		nullptr);
+		nullptr,
+		[](const StructMemberFunctionDecl& mem_func) {
+			return mem_func.function_declaration;
+		});
 	registerNestedMemberFunctionsLazyEntries(
 		nested_struct,
 		class_template_name,
@@ -1442,16 +1523,13 @@ inline void propagateFunctionSignatureFromTemplateArg(
 	TypeIndex substituted_type_index,
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
-	if (orig_type.has_function_signature()) {
-		substituted_type.set_function_signature(orig_type.function_signature());
-	} else if (substituted_type_index.category() == TypeCategory::FunctionPointer ||
-			   substituted_type_index.category() == TypeCategory::MemberFunctionPointer) {
-		if (const auto* arg = findTemplateArgByName(
-				orig_type.token().value(), template_params, template_args)) {
-			if (arg->function_signature.has_value()) {
-				substituted_type.set_function_signature(*arg->function_signature);
-			}
-		}
+	if (auto signature = resolveTemplateFunctionPointerSignature(
+			orig_type,
+			substituted_type_index,
+			nullptr,
+			template_params,
+			template_args)) {
+		substituted_type.set_function_signature(*signature);
 	}
 }
 

@@ -87,6 +87,10 @@ class Evaluator;
 struct EvalResult;
 }
 
+namespace SemanticValidation {
+std::optional<StringHandle> findInvalidConcreteSizeofTypeOperand(const ASTNode& root);
+}
+
 class SemanticAnalysis;
 
 // RAII helper to execute a cleanup function on scope exit
@@ -1127,6 +1131,9 @@ private:
 	// Use FlashCpp::TemplateDepthGuard to increment/decrement; use ScopedState to temporarily
 	// suppress (set to 0) during SFINAE and lazy instantiation.
 	size_t parsing_template_depth_ = 0;
+	// True only while token-replaying a materialized template member body whose
+	// parsed AST contains a block-scope class declaration.
+	bool replaying_template_member_local_classes_ = false;
 
 	// Phase 1 two-phase name lookup enforcement (C++20 [temp.res]/9).
 	// Set to the opening-brace line of the template body being re-parsed.
@@ -1556,6 +1563,10 @@ private:
 	// whose return type is itself a function pointer.
 	ParseResult parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types, bool& out_is_variadic);
 	bool parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context);
+	void bindLocalTypeAlias(
+		const Token& alias_token,
+		const TypeCreationResult& alias_type,
+		const TypeSpecifierNode& resolved_type_spec);
 	ParseResult parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl);
 	ParseResult validateOperatorSignature(const FunctionDeclarationNode& func_decl, bool is_member) const;
 	ParseResult validateMemberOperatorSignature(const FunctionDeclarationNode& func_decl) const;

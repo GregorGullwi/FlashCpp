@@ -1,5 +1,25 @@
 # Known Issues
 
+## Nested member lazy identity is shared across outer instantiations
+When two outer class-template instantiations contain the same nested class,
+their lazy nested member functions still share the pattern declaration identity.
+In `tests/test_nested_class_constructor_template_param_ret42.cpp`, replacing the
+final field reads with `i.get()` and `d.get()` causes the lookup for the first
+owner to materialize the second owner's `get()` body. The first call then retains
+the dependent `T` return metadata and compilation fails during `operator+`
+resolution. Lazy nested-member registry/cache identity must include the concrete
+owner independently of the shared source declaration.
+
+## Namespace-qualified lazy class-template self-copy miscompiles
+Wrapping the fixture in
+`tests/test_explicit_ctor_same_template_copy_init_ret0.cpp` in a non-global
+namespace and qualifying both `ReverseIter<int*>` uses in `main` compiles and
+links, but returns 1 instead of 0 because `copy_self()` does not preserve the
+stored pointer value. The same deferred member-body self-copy works in the
+global namespace. This is a separate namespace-sensitive runtime/codegen issue;
+the local declaration's current-instantiation `TypeIndex` is already rebound to
+the concrete owner before codegen.
+
 ## Modular-build-only crash: test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp
 `ConstructorDeclarationNode::has_template_parameters()` dereferences a null inner
 pointer in `InlineVector::size()` during `materializeMatchingConstructorTemplate`.

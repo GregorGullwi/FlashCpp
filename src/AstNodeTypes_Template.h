@@ -1073,6 +1073,12 @@ public:
 		: name_(name), is_class_(is_class), is_union_(is_union) {}
 
 	StringHandle name() const { return name_; }
+	StringHandle semantic_name() const {
+		return semantic_name_.isValid() ? semantic_name_ : name_;
+	}
+	void set_semantic_name(StringHandle semantic_name) {
+		semantic_name_ = semantic_name;
+	}
 	std::span<const StructMemberDecl> members() const { return members_; }
 	std::span<const StructMemberFunctionDecl> member_functions() const { return member_functions_; }
 	std::vector<StructMemberFunctionDecl>& member_functions() { return member_functions_; }
@@ -1421,6 +1427,7 @@ public:
 
 private:
 	StringHandle name_;	// Points directly into source text from lexer token
+	StringHandle semantic_name_; // Canonical identity for replayed local classes
 	std::vector<StructMemberDecl> members_;
 	std::vector<StructMemberFunctionDecl> member_functions_;
 	std::vector<BaseClassSpecifier> base_classes_;  // Base classes for inheritance
