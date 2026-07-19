@@ -7643,8 +7643,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 
-			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), decl_ns);
+			// Register the nested semantic owner before producing members and signatures.
+			// Constructor current-instantiation substitution requires both the pattern
+			// and instantiated owner TypeIndex values to be canonical at this point.
+			auto nested_struct_info_owner = std::make_unique<StructTypeInfo>(
+				qualified_name,
+				nested_struct.default_access(),
+				nested_struct.is_union(),
+				decl_ns);
+			auto& nested_type_info = add_instantiated_type(
+				qualified_name,
+				TypeCategory::Struct,
+				0); // Layout is finalized after member production.
+			nested_type_info.setStructInfo(std::move(nested_struct_info_owner));
+			StructTypeInfo* nested_struct_info = nested_type_info.getStructInfo();
+			if (nested_struct_info == nullptr || !nested_struct_info->own_type_index_.has_value()) {
+				throw InternalError("Nested class registration did not establish a canonical semantic owner");
+			}
+			nested_type_info.setInstantiationContext(
+				collectParamNameHandles(
+					effective_template_params,
+					effective_template_args.size()),
+				collectEnrichedTemplateArgInfos(
+					effective_template_params,
+					effective_template_args),
+				struct_type_info.instantiationContext());
 			auto instantiated_nested_struct = emplace_node<StructDeclarationNode>(
 				nested_struct.name(),
 				nested_struct.is_class(),
@@ -8090,8 +8113,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_ctor,
 						template_params,
 						template_args_to_use,
-						// The nested type receives its semantic owner after this copy phase.
-						std::nullopt);
+						makeCurrentInstantiationTypeRewrite(
+							original_ctor,
+							nested_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 					substituteAndCopyInitializers(
 						original_ctor,
@@ -8282,7 +8306,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (nested_struct_info != nullptr) {
 						OutOfLineConstructorStubResolution info_ctor_resolution =
 							findReplayedOutOfLineConstructorInStructInfo(
-								nested_struct_info.get(),
+								nested_struct_info,
 								nested_struct_info_member_identity_maps,
 								ctor_resolution.source_member,
 								ctor_decl,
@@ -8511,24 +8535,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct_info->needs_default_constructor = true;
 			}
 
-			// Register the nested class in the type system
-			auto& nested_type_info = add_instantiated_type(qualified_name, TypeCategory::Struct, 0); // Placeholder size
-			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.fallback_size_bits_ = nested_type_info.getStructInfo()->sizeInBits().value;
 			}
-
- // Propagate the outer type's instantiation context to the nested type.
- // The nested type isn't itself a template instantiation, but it lives inside
- // one and needs the enclosing template's bindings for constexpr evaluation.
-			nested_type_info.setInstantiationContext(
-				collectParamNameHandles(
-					effective_template_params,
-					effective_template_args.size()),
-				collectEnrichedTemplateArgInfos(
-					effective_template_params,
-					effective_template_args),
-				struct_type_info.instantiationContext());
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));

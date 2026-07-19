@@ -1,17 +1,22 @@
 # Known Issues
 
-## Nested class-template members lack a canonical current-instantiation owner during constructor substitution
-When a nested class is instantiated as part of its enclosing class template,
-its constructors are copied before the nested `TypeInfo` is registered. A
-user-written copy constructor such as `Inner(const Inner&)` therefore cannot
-rewrite the pattern's injected-class-name type to the concrete nested owner.
-Copy initialization inside a nested member can then reject the valid copy
-constructor and diagnose an unrelated `explicit` converting constructor.
+## Nested template-parameter pointer and aggregate members miscompile
+For `template<typename T> struct Outer { struct Inner { T current; }; };`,
+instantiating `Outer<int*>::Inner` records `current` as a 32-bit member instead
+of a 64-bit pointer member. Instantiating the same pattern with a multi-field
+aggregate records the aggregate width but does not preserve its value through a
+nested value-construction and copy sequence. Native 32-bit and 64-bit value
+members copy correctly.
 
-The sustainable fix is to register the nested semantic type and owner identity
-before copying constructor signatures, then use that typed identity in the
-shared current-instantiation rewrite. Do not repair this with nested-name scans
-or overload-resolution guesses.
+The pointer case shows that the nested member producer substitutes the concrete
+`TypeIndex` without consistently propagating the bound template argument's
+pointer depth and pointer-sized layout metadata. The aggregate case needs to be
+traced separately from signature production into aggregate member load/store
+lowering before deciding whether it shares that producer.
+
+Fix the nested member `TypeSpecifierNode` producer so registration consumes the
+canonical substituted pointer metadata. Do not repair the resulting layout in
+codegen or with a pointer-size fallback.
 
 ## Modular-build-only crash: test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp
 `ConstructorDeclarationNode::has_template_parameters()` dereferences a null inner
