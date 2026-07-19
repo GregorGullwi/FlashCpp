@@ -223,28 +223,28 @@ inline StringHandle getLazyMemberRegistryKeyForOwner(
 		return stored_key;
 	}
 
+	StringHandle member_name;
+	bool is_const_member = false;
 	if (const FunctionDeclarationNode* function_decl = get_function_decl_node(node)) {
-		return makeLazyMemberExactKey(
-			instantiated_owner_name,
-			function_decl->decl_node().identifier_token().handle(),
-			function_decl->is_const_member_function(),
-			node.raw_pointer());
+		member_name = function_decl->decl_node().identifier_token().handle();
+		is_const_member = function_decl->is_const_member_function();
+	} else if (node.is<ConstructorDeclarationNode>()) {
+		member_name = node.as<ConstructorDeclarationNode>().name();
+		// Constructors cannot be const-qualified.
+		is_const_member = false;
+	} else if (node.is<DestructorDeclarationNode>()) {
+		member_name = node.as<DestructorDeclarationNode>().name();
+		// Destructors cannot be const-qualified.
+		is_const_member = false;
+	} else {
+		return {};
 	}
-	if (node.is<ConstructorDeclarationNode>()) {
-		return makeLazyMemberExactKey(
-			instantiated_owner_name,
-			node.as<ConstructorDeclarationNode>().name(),
-			false, // Constructors cannot be const-qualified.
-			node.raw_pointer());
-	}
-	if (node.is<DestructorDeclarationNode>()) {
-		return makeLazyMemberExactKey(
-			instantiated_owner_name,
-			node.as<DestructorDeclarationNode>().name(),
-			false, // Destructors cannot be const-qualified.
-			node.raw_pointer());
-	}
-	return {};
+
+	return makeLazyMemberExactKey(
+		instantiated_owner_name,
+		member_name,
+		is_const_member,
+		node.raw_pointer());
 }
 
 // Registry for tracking uninstantiated template member functions
