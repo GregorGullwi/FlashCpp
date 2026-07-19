@@ -13742,13 +13742,15 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 	// Calculate member size in bytes
 	int member_size_bytes = op.value.size_in_bits.value / 8;
 
-	const bool is_non_scalar_struct_copy =
+	const bool is_non_scalar_struct_value =
 		isIrStructType(op.value.effectiveIrType()) &&
 		!op.value.pointer_depth.is_pointer() &&
 		!op.is_reference() &&
-		op.value.size_in_bits.value > 64 &&
-		!is_literal;
-	if (is_non_scalar_struct_copy) {
+		op.value.size_in_bits > SizeInBits{64};
+	if (is_non_scalar_struct_value && is_literal) {
+		throw InternalError("Non-scalar aggregate member value must have object storage");
+	}
+	if (is_non_scalar_struct_value) {
 		int32_t source_offset = 0;
 		FrameMemoryStorage source_storage = FrameMemoryStorage::Direct;
 		if (is_variable) {

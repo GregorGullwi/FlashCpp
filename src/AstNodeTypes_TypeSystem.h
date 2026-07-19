@@ -1152,6 +1152,8 @@ struct StructMember {
 	int pointer_depth;	   // Pointer indirection level (e.g., int* = 1, int** = 2)
 	std::optional<FunctionSignature> function_signature;	 // For FunctionPointer members: stores return type and parameter types
 	bool is_no_unique_address = false;
+	// Identifies variants flattened from the same anonymous union; absent for non-variant members.
+	std::optional<size_t> anonymous_union_group_index;
 
 	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }

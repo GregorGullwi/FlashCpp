@@ -2459,6 +2459,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					// In that case skip generating the body entirely — the function is effectively deleted.
 					bool is_implicitly_deleted = false;
 					for (const auto& member : struct_info->members) {
+						if (!struct_info->isPotentiallyConstructedByDefaultConstructor(member)) {
+							continue;
+						}
 						if (member.type_index.category() == TypeCategory::Struct) {
 							const TypeInfo* mti = tryGetTypeInfo(member.type_index);
 							if (mti && mti->struct_info_ &&
@@ -2477,6 +2480,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							std::unordered_map<size_t, unsigned long long> combined_bitfield_values;
 							std::unordered_set<size_t> bitfield_offsets;
 							for (const auto& member : struct_info->members) {
+								if (!struct_info->isPotentiallyConstructedByDefaultConstructor(member)) {
+									continue;
+								}
 								if (member.bitfield_width.has_value()) {
 									bitfield_offsets.insert(member.offset);
 									unsigned long long val = 0;
@@ -2500,7 +2506,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							}
 							for (auto offset : bitfield_offsets) {
 								for (const auto& member : struct_info->members) {
-									if (member.offset == offset && member.bitfield_width.has_value()) {
+									if (member.offset == offset && member.bitfield_width.has_value() &&
+										struct_info->isPotentiallyConstructedByDefaultConstructor(member)) {
 										MemberStoreOp combined_store;
 										combined_store.value.setType(member.type_index.category());
 										combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
@@ -2521,6 +2528,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						for (const auto& member : struct_info->members) {
 							if (member.bitfield_width.has_value())
 								continue; // handled above
+							if (!struct_info->isPotentiallyConstructedByDefaultConstructor(member)) {
+								continue;
+							}
 
 							// Generate MemberStore IR to initialize the member
 							// Format: [member_type, member_size, object_name, member_name, offset, value]

@@ -1,15 +1,5 @@
 # Known Issues
 
-## Implicit anonymous-union construction initializes inactive members
-The implicit default-constructor IR for an anonymous union can emit stores for
-both the active member with a default member initializer and later overlapping
-members. `test_anonymous_union_member_brace_init_ret0.cpp` currently succeeds
-only because the backend ignores the unsupported wide scalar store emitted for
-the inactive aggregate member. The constructor producer must select and
-initialize only the union member whose lifetime begins under C++20; the backend
-must then reject aggregate values that have neither object storage nor a proper
-aggregate-initialization operation.
-
 ## Modular-build-only crash: test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp
 `ConstructorDeclarationNode::has_template_parameters()` dereferences a null inner
 pointer in `InlineVector::size()` during `materializeMatchingConstructorTemplate`.

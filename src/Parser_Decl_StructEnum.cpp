@@ -3104,27 +3104,33 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			size_t aligned_union_start = ((union_start_offset + union_max_alignment - 1) & ~(union_max_alignment - 1));
 
 			// Second pass: add all union members at the same aligned offset
-			for (const auto& union_member : union_info.union_members) {
+			for (size_t union_member_index = 0; union_member_index < union_info.union_members.size(); ++union_member_index) {
+				const auto& union_member = union_info.union_members[union_member_index];
+				const StructMemberDecl& union_member_decl =
+					struct_ref.members()[union_info.member_index_in_ast + union_member_index];
 				size_t effective_alignment = union_member.member_alignment;
 				if (struct_info->pack_alignment > 0 && struct_info->pack_alignment < union_member.member_alignment) {
 					effective_alignment = struct_info->pack_alignment;
 				}
 
 				// Manually add member to struct_info at the aligned offset
-				struct_info->members.emplace_back(
+				StructMember& semantic_member = struct_info->members.emplace_back(
 					union_member.member_name,
 					union_member.type_index,
 					aligned_union_start, // Same offset for all union members
 					union_member.member_size,
 					effective_alignment,
 					AccessSpecifier::Public, // Anonymous union members are always public
-					std::nullopt, // No default initializer
+					union_member_decl.default_initializer,
 					union_member.reference_qualifier,
 					union_member.referenced_size_bits,
 					union_member.is_array,
 					union_member.array_dimensions,
 					union_member.pointer_depth,
 					union_member.bitfield_width);
+				if (union_info.is_union) {
+					semantic_member.anonymous_union_group_index = next_union_idx;
+				}
 
 				// Update struct alignment
 				struct_info->alignment = std::max(struct_info->alignment, effective_alignment);
