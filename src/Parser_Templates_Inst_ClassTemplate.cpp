@@ -2157,7 +2157,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Use substitute_template_parameter to properly match template parameters by name
 				TypeIndex member_type_index = substitute_template_parameter(
 					*effective_type_spec, template_params, template_args_for_member_copy);
-				size_t ptr_depth = effective_type_spec->pointer_depth();
+				TypeSpecifierNode substituted_member_type_spec = *effective_type_spec;
+				substituted_member_type_spec.set_type_index(member_type_index);
+				materializeSubstitutedFunctionTypeMetadata(
+					substituted_member_type_spec,
+					*effective_type_spec,
+					template_params,
+					template_args_for_member_copy);
+				size_t ptr_depth = substituted_member_type_spec.pointer_depth();
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_for_member_copy);
@@ -2192,9 +2199,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 					member_decl.default_initializer, template_args_for_member_copy, template_params);
 
-				// For function pointer members instantiated from a template parameter (e.g., F func
-				// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
-				// — it only carries the placeholder.  Retrieve it from the matching TemplateTypeArg.
+				// Member registration consumes the canonical substituted type metadata materialized above.
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
@@ -2210,11 +2215,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::move(resolved_array_dimensions),
 					static_cast<int>(ptr_depth),
 					resolve_bitfield_width(member_decl, template_params, template_args_for_member_copy),
-					resolveTemplateFunctionPointerSignature(
-						*effective_type_spec,
-						member_type_index,
-						template_params,
-						template_args_for_member_copy),
+					getCanonicalFunctionPointerSignature(substituted_member_type_spec),
 					member_decl.is_no_unique_address);
 			}
 
@@ -6959,6 +6960,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		substituted_type_spec.set_type_index(member_type_index);
 		substituted_type_spec.set_size_in_bits(
 			get_type_size_bits(member_type_index.category()));
+		materializeSubstitutedFunctionTypeMetadata(
+			substituted_type_spec,
+			type_spec,
+			effective_template_params,
+			effective_template_args);
 
 		// Add to the instantiated struct
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
@@ -7016,9 +7022,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 			member_decl.default_initializer, effective_template_args, effective_template_params);
 
-		// For function pointer members instantiated from a template parameter (e.g., F func
-		// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
-		// — it only carries the placeholder.  Retrieve it from the matching TemplateTypeArg.
+		// Member registration consumes the canonical substituted type metadata materialized above.
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
@@ -7034,11 +7038,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::move(resolved_array_dimensions),
 			static_cast<int>(substituted_type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, effective_template_params, effective_template_args),
-			resolveTemplateFunctionPointerSignature(
-				substituted_type_spec,
-				member_type_index,
-				effective_template_params,
-				effective_template_args),
+			getCanonicalFunctionPointerSignature(substituted_type_spec),
 			member_decl.is_no_unique_address);
 	}
 
@@ -7930,6 +7930,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& ptr_level : type_spec.pointer_levels()) {
 					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 				}
+				materializeSubstitutedFunctionTypeMetadata(
+					substituted_type_spec,
+					type_spec,
+					template_params,
+					template_args_to_use);
 
 				size_t member_size;
 				if (is_array_member) {
@@ -7981,11 +7986,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					resolved_array_dimensions,
 					static_cast<int>(substituted_type_spec.pointer_depth()),
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-					resolveTemplateFunctionPointerSignature(
-						type_spec,
-						substituted_type_spec.type_index(),
-						template_params,
-						template_args_to_use),
+					getCanonicalFunctionPointerSignature(substituted_type_spec),
 					member_decl.is_no_unique_address);
 
 				ASTNode substituted_member_decl = substituteTemplateParameters(

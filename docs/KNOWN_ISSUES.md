@@ -99,10 +99,6 @@ constant value or an ill-formed program.
 ## Function types lack one canonical semantic owner
 Complete function-type metadata is currently copied among `TypeSpecifierNode`,
 alias `TypeInfo`, `TemplateTypeArg`, and `FunctionSignature`.
-`resolveTemplateFunctionPointerSignature(...)` still searches those stores in
-precedence order when an instantiated type is missing metadata. This is recovery
-for an incomplete producer contract, not a C++20 type-substitution rule; an older
-source can mask a more concrete substituted signature.
 
 The first canonical-owner slice removed `StructMember` as a signature source,
 deleted the associated member-name scans, made substituted alias metadata take
@@ -110,6 +106,15 @@ precedence, and requires every concrete function-pointer type reaching member
 registration to already have a complete signature. `StructMember` remains a
 consumer copy used by later lowering, but it can no longer repair an incomplete
 template producer.
+
+The second slice removed the remaining registration-time original-type and
+template-argument search. Template substitution now resolves an alias to its
+terminal template-parameter identity, applies the bound `TemplateTypeArg`, and
+attaches the substituted `FunctionSignature` to the produced `TypeSpecifierNode`.
+Registration consumes only that node and treats a concrete callable without a
+signature as an internal producer error. Reading the original pattern and its
+bound argument during substitution is part of the semantic substitution step;
+doing the same lookup later from a member consumer would be recovery.
 
 The current representation can fail for alias-category function pointers, packs,
 transformed template parameters, dependent member-function-pointer owners,
@@ -122,6 +127,7 @@ The remaining intended invariant is that substitution produces one canonical
 callable `TypeSpecifierNode`/`TypeInfo` containing the complete substituted
 function type.
 Member registration, mangling, overload resolution, and code generation should
-consume that object directly. The remaining original-type/template-argument
-search cascade can then be removed; a concrete callable type without complete
-metadata is already treated as an internal producer error.
+consume that object directly. Remaining work should reduce the parallel metadata
+copies and extend structured substitution to the unsupported function-type
+components above; a concrete callable type without complete metadata is already
+treated as an internal producer error.

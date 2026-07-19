@@ -1989,13 +1989,11 @@ ASTNode Parser::buildMaterializedParamType(
 	for (const auto& ptr_level : original_param_type.pointer_levels()) {
 		param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 	}
-	propagateFunctionSignatureFromTemplateArg(
+	materializeSubstitutedFunctionTypeMetadata(
 		param_type_ref,
 		original_param_type,
-		substituted_type_index,
 		materialized_template_params,
 		materialized_template_args);
-	normalizeSubstitutedTypeSpec(param_type_ref);
 	return param_type;
 }
 

@@ -3031,10 +3031,9 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 				orig_return_type.cv_qualifier());
 			new_return_type.set_type_index(return_type_index);
 			new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
-			propagateFunctionSignatureFromTemplateArg(
+			materializeSubstitutedFunctionTypeMetadata(
 				new_return_type,
 				orig_return_type,
-				return_type_index,
 				template_params,
 				template_args);
 			applyTemplateArgIndirection(new_return_type, orig_return_type, template_params, template_args,
