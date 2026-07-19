@@ -1526,11 +1526,11 @@ private:
 	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
-	// peek(1) cache: the most common lookahead depth. Avoids a full
-	// save/advance/restore cycle through saved_tokens_ on every peek(1).
+	// peek(1) and peek(2) cache: the most common lookahead depths.
+	// Avoids a full save/advance/restore cycle through saved_tokens_.
 	// Invalidated by any mutation of current_token_ / injected_token_ or any
 	// lexer position restore (see invalidate_lookahead_cache()).
-	std::optional<Token> lookahead_token_1_cache_;
+	std::array<std::optional<Token>, 2> lookahead_token_cache_;
 #if WITH_PARSER_RUNTIME_STATS
 	bool runtime_stats_enabled_ = false;
 	size_t ast_nodes_baseline_ = 0;  // gChunkedAnyStorage.size() when stats were enabled

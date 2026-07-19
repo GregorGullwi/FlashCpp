@@ -914,7 +914,7 @@ void Parser::printRuntimeStats() const {
 }
 
 void Parser::invalidate_lookahead_cache() {
-	lookahead_token_1_cache_.reset();
+	lookahead_token_cache_.fill({});
 }
 
 Token Parser::consume_token() {
@@ -958,24 +958,28 @@ Token Parser::peek_token(size_t lookahead) {
 	}
 #endif
 
-	// Fast path: peek(1) is the most common lookahead depth. Use the cache
-	// to avoid a full save/advance/restore cycle through saved_tokens_.
-	if (lookahead == 1) {
-		if (lookahead_token_1_cache_.has_value()) {
-			return *lookahead_token_1_cache_;
+// Fast path: peek(1) and peek(2) are the most common lookahead depths.
+	// Use the cache to avoid a full save/advance/restore cycle through saved_tokens_.
+	if (lookahead <= 2) {
+		size_t idx = lookahead - 1;
+		if (lookahead_token_cache_[idx].has_value()) {
+			return *lookahead_token_cache_[idx];
 		}
-		// Cache miss: compute the lookahead token, cache it, then restore.
-		// We use save/restore directly (not consume_token which would
-		// invalidate the cache we're trying to populate).
+		// Cache miss: compute and populate cache
 		SaveHandle saved_handle = save_token_position();
-		consume_token();  // advances to the next token (invalidates cache, but we restore below)
-		Token result = current_token_;
+		for (size_t i = 0; i <= idx; ++i) {
+			if (!lookahead_token_cache_[i].has_value()) {
+				consume_token();
+				lookahead_token_cache_[i] = current_token_;
+			} else {
+				// If peek(1) is cached but we need peek(2), advance to it
+				consume_token();
+				lookahead_token_cache_[i] = current_token_;
+			}
+		}
+		Token result = *lookahead_token_cache_[idx];
 		restore_lexer_position_only(saved_handle);
 		discard_saved_token(saved_handle);
-		// Re-populate the cache after the restore. The restore above reset
-		// current_token_ to its pre-advance state, so the next-token value
-		// we captured in `result` is still the correct peek(1) value.
-		lookahead_token_1_cache_ = result;
 		return result;
 	}
 
