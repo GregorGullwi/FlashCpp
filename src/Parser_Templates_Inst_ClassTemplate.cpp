@@ -7923,6 +7923,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			for (const auto& member_decl : nested_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+				ASTNode full_substituted_type_node = substituteTemplateParameters(
+					decl.type_node(), template_params, template_args_to_use);
 				TypeIndex substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
@@ -7935,47 +7937,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
 				TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
 
-				TypeSpecifierNode substituted_type_spec(
-					substituted_type_index.category(),
-					type_spec.qualifier(),
-					get_type_size_bits(substituted_type_index.category()),
-					Token(), // Empty token
-					CVQualifier::None);
+				TypeSpecifierNode substituted_type_spec = full_substituted_type_node.is<TypeSpecifierNode>()
+					? full_substituted_type_node.as<TypeSpecifierNode>()
+					: type_spec;
 				substituted_type_spec.set_type_index(substituted_type_index);
-
-				for (const auto& ptr_level : type_spec.pointer_levels()) {
-					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-				}
+				substituted_type_spec.set_size_in_bits(
+					get_type_size_bits(substituted_type_index.category()));
 				materializeSubstitutedFunctionTypeMetadata(
 					substituted_type_spec,
 					type_spec,
 					template_params,
 					template_args_to_use);
 
-				size_t member_size;
+				const MemberSizeAndAlignment element_layout =
+					calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec,
+						member_size_type_index);
+				size_t member_size = element_layout.size;
 				if (is_array_member) {
 					size_t total_elements = 1;
 					for (size_t dim_size : resolved_array_dimensions) {
 						total_elements *= dim_size;
 					}
-
-					size_t element_size = calculateResolvedMemberSizeAndAlignment(
-											  substituted_type_spec, member_size_type_index)
-											  .size;
-					member_size = element_size * total_elements;
-				} else if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-					member_size = 8;
-				} else {
-					member_size = calculateResolvedMemberSizeAndAlignment(
-									  substituted_type_spec, member_size_type_index)
-									  .size;
+					member_size *= total_elements;
 				}
-				size_t member_alignment = get_type_alignment(member_size_type_index.category(), member_size);
-				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-					member_alignment = 8;
-				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
-					member_alignment = member_struct_info->alignment;
-				}
+				const size_t member_alignment = element_layout.alignment;
 
 				ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
 				size_t referenced_size_bits = ref_qual != ReferenceQualifier::None

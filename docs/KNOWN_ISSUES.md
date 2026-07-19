@@ -1,22 +1,17 @@
 # Known Issues
 
-## Nested template-parameter pointer and aggregate members miscompile
+## Nested aggregate template-parameter members miscompile during value construction and copy
 For `template<typename T> struct Outer { struct Inner { T current; }; };`,
-instantiating `Outer<int*>::Inner` records `current` as a 32-bit member instead
-of a 64-bit pointer member. Instantiating the same pattern with a multi-field
-aggregate records the aggregate width but does not preserve its value through a
-nested value-construction and copy sequence. Native 32-bit and 64-bit value
-members copy correctly.
+instantiating `Outer<Payload>::Inner` with a multi-field `Payload` records the
+correct aggregate width but does not preserve its fields through a nested
+value-construction and copy sequence. Native 32-bit and 64-bit values and
+pointer template arguments now preserve their layout and value correctly.
 
-The pointer case shows that the nested member producer substitutes the concrete
-`TypeIndex` without consistently propagating the bound template argument's
-pointer depth and pointer-sized layout metadata. The aggregate case needs to be
-traced separately from signature production into aggregate member load/store
-lowering before deciding whether it shares that producer.
-
-Fix the nested member `TypeSpecifierNode` producer so registration consumes the
-canonical substituted pointer metadata. Do not repair the resulting layout in
-codegen or with a pointer-size fallback.
+The constructor signature and nested member `TypeSpecifierNode` producers are
+already canonical at this point. Trace the aggregate through by-value argument
+lowering and aggregate member load/store lowering to find the first incomplete
+or incorrectly classified value operation. Do not repair it with byte-count
+guesses or a codegen-only special case for nested members.
 
 ## Modular-build-only crash: test_template_partial_spec_ool_ctor_template_same_name_overload_ret0.cpp
 `ConstructorDeclarationNode::has_template_parameters()` dereferences a null inner
