@@ -9564,6 +9564,24 @@ void SemanticAnalysis::markResolvedOperatorOverloadOdrUsed(
 		LazyMemberKey::exact(struct_name, fdecl));
 }
 
+namespace {
+const ASTNode* findConcreteOwnerMemberByLazyRegistryKey(
+	StringHandle owner_name,
+	StringHandle registry_key) {
+	if (auto owner_it = getTypesByNameMap().find(owner_name);
+		owner_it != getTypesByNameMap().end() && owner_it->second != nullptr) {
+		if (const StructTypeInfo* struct_info = owner_it->second->getStructInfo()) {
+			for (const StructMemberFunction& member_function : struct_info->member_functions) {
+				if (getLazyMemberRegistryKey(member_function.function_decl) == registry_key) {
+					return &member_function.function_decl;
+				}
+			}
+		}
+	}
+	return nullptr;
+}
+} // namespace
+
 std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 	StringHandle struct_name,
 	const FunctionDeclarationNode& function_decl) {
@@ -9571,12 +9589,21 @@ std::optional<ASTNode> SemanticAnalysis::ensureMemberFunctionMaterialized(
 		return std::nullopt;
 	}
 
+	const LazyMemberKey member_key = LazyMemberKey::exact(struct_name, function_decl);
 	auto instantiated = parser().instantiateLazyMemberIfNeeded(
-		LazyMemberKey::exact(struct_name, function_decl));
-	if (!instantiated.has_value()) {
-		return std::nullopt;
+		member_key);
+	if (instantiated.has_value()) {
+		parser().normalizePendingSemanticRoots();
 	}
-	parser().normalizePendingSemanticRoots();
+
+	// A prior semantic action may already have consumed the lazy registry entry.
+	// Refresh through the concrete owner's exact declaration key so callers never
+	// retain the shared template-pattern node after its body is materialized.
+	if (const ASTNode* concrete_member = findConcreteOwnerMemberByLazyRegistryKey(
+			struct_name,
+			member_key.exact_registry_key)) {
+		return *concrete_member;
+	}
 	return instantiated;
 }
 

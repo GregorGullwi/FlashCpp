@@ -2270,30 +2270,44 @@ EvalResult Evaluator::evaluate_resolved_function_call(
 		return *builtin_result;
 	}
 
-	if (!func_decl.is_constexpr() && !func_decl.is_consteval() &&
+	const FunctionDeclarationNode* resolved_func = &func_decl;
+	if (!resolved_func->get_definition().has_value() &&
+		!resolved_func->parent_struct_name().empty()) {
+		StringHandle owner_name = StringTable::getOrInternStringHandle(
+			resolved_func->parent_struct_name());
+		if (std::optional<ASTNode> materialized =
+				context
+					.requireParserAttachedSema("resolved member-function call materialization")
+					.ensureMemberFunctionMaterialized(owner_name, *resolved_func);
+			materialized.has_value() && materialized->is<FunctionDeclarationNode>()) {
+			resolved_func = &materialized->as<FunctionDeclarationNode>();
+		}
+	}
+
+	if (!resolved_func->is_constexpr() && !resolved_func->is_consteval() &&
 		context.storage_duration != ConstExpr::StorageDuration::Static) {
 		return EvalResult::error(
 			"Function in constant expression must be constexpr or consteval: " + std::string(func_name),
 			EvalErrorType::NotConstantExpression);
 	}
 
-	const auto& definition = func_decl.get_definition();
+	const auto& definition = resolved_func->get_definition();
 	if (!definition.has_value()) {
 		return EvalResult::error("Constexpr function has no body: " + std::string(func_name));
 	}
 
-	const size_t parameter_count = func_decl.parameter_nodes().size();
-	const size_t min_required = countMinRequiredArgs(func_decl);
+	const size_t parameter_count = resolved_func->parameter_nodes().size();
+	const size_t min_required = countMinRequiredArgs(*resolved_func);
 	if (arguments.size() < min_required || arguments.size() > parameter_count) {
 		return EvalResult::error("Function argument count mismatch in constant expression");
 	}
 
 	if (outer_bindings) {
-		return evaluate_function_call_with_bindings(func_decl, arguments, *outer_bindings, context, nullptr);
+		return evaluate_function_call_with_bindings(*resolved_func, arguments, *outer_bindings, context, nullptr);
 	}
 
 	std::unordered_map<std::string_view, EvalResult> empty_bindings;
-	return evaluate_function_call_with_template_context(func_decl, arguments, empty_bindings, context);
+	return evaluate_function_call_with_template_context(*resolved_func, arguments, empty_bindings, context);
 }
 
 bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context) {

@@ -17,5 +17,5 @@ struct Container {
 int main() {
 	Container<int>::Inner i(42);
 	Container<double>::Inner d(3.5);
-	return i.value + static_cast<int>(d.value) - 3; // Expected: 42
+	return i.get() + static_cast<int>(d.get()) - 3; // Expected: 42
 }
