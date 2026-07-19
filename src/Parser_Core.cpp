@@ -913,8 +913,13 @@ void Parser::printRuntimeStats() const {
 #endif
 }
 
+void Parser::invalidate_lookahead_cache() {
+	lookahead_token_1_cache_.reset();
+}
+
 Token Parser::consume_token() {
 	Token token = current_token_;
+	invalidate_lookahead_cache();
 
 	// Phase 5: Check if we have an injected token (from >> splitting)
 	if (injected_token_.type() != Token::Type::Uninitialized) {
@@ -952,6 +957,27 @@ Token Parser::peek_token(size_t lookahead) {
 		++runtime_stats_.lookahead_depth_hist[bucket];
 	}
 #endif
+
+	// Fast path: peek(1) is the most common lookahead depth. Use the cache
+	// to avoid a full save/advance/restore cycle through saved_tokens_.
+	if (lookahead == 1) {
+		if (lookahead_token_1_cache_.has_value()) {
+			return *lookahead_token_1_cache_;
+		}
+		// Cache miss: compute the lookahead token, cache it, then restore.
+		// We use save/restore directly (not consume_token which would
+		// invalidate the cache we're trying to populate).
+		SaveHandle saved_handle = save_token_position();
+		consume_token();  // advances to the next token (invalidates cache, but we restore below)
+		Token result = current_token_;
+		restore_lexer_position_only(saved_handle);
+		discard_saved_token(saved_handle);
+		// Re-populate the cache after the restore. The restore above reset
+		// current_token_ to its pre-advance state, so the next-token value
+		// we captured in `result` is still the correct peek(1) value.
+		lookahead_token_1_cache_ = result;
+		return result;
+	}
 
 	// Save current position
 	SaveHandle saved_handle = save_token_position();
@@ -1002,6 +1028,7 @@ void Parser::split_right_shift_token() {
 
 	// Inject second > to be consumed next
 	injected_token_ = second_gt;
+	invalidate_lookahead_cache();
 }
 
 // ---- New TokenKind-based API (Phase 0) ----
@@ -1038,6 +1065,7 @@ Token Parser::advance() {
 		++runtime_stats_.tokens_advanced;
 	}
 #endif
+	invalidate_lookahead_cache();
 
 	// Phase 5: Check if we have an injected token (from >> splitting)
 	if (injected_token_.type() != Token::Type::Uninitialized) {
@@ -1158,6 +1186,7 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 	// If the save was made before a >> split, injected_token_ will be Uninitialized (clearing it).
 	// If the save was made after a >> split, injected_token_ will contain the second >.
 	injected_token_ = saved_token.injected_token_;
+	invalidate_lookahead_cache();
 
 	// Process AST nodes that were added after the saved position.
 	// We need to:
@@ -1239,6 +1268,7 @@ void Parser::restore_lexer_position_only(Parser::SaveHandle handle) {
 	lexer_.restore_token_position(saved_token.lexer_position_);
 	current_token_ = saved_token.current_token_;
 	injected_token_ = saved_token.injected_token_;
+	invalidate_lookahead_cache();
 	// Don't erase AST nodes - they were intentionally created during re-parsing
 #if WITH_PARSER_RUNTIME_STATS
 	if (runtime_stats_enabled_) {
