@@ -462,7 +462,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						continue;
 					}
 					if (!lazy_info.registry_key.isValid() ||
-						getLazyMemberRegistryKey(member_func.function_decl) != lazy_info.registry_key) {
+						getLazyMemberRegistryKeyForOwner(
+							lazy_info.identity.instantiated_owner_name,
+							member_func.function_decl) != lazy_info.registry_key) {
 						continue;
 					}
 					member_func.function_decl = new_ctor_node;
@@ -497,7 +499,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					continue;
 				}
 				if (!lazy_info.registry_key.isValid() ||
-					getLazyMemberRegistryKey(member_func.function_declaration) != lazy_info.registry_key) {
+					getLazyMemberRegistryKeyForOwner(
+						lazy_info.identity.instantiated_owner_name,
+						member_func.function_declaration) != lazy_info.registry_key) {
 					continue;
 				}
 				member_func.function_declaration = new_ctor_node;
@@ -1017,7 +1021,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		if (struct_info) {
 			// Find and update the member function
 			for (auto& member_func : struct_info->member_functions) {
-				if (getLazyMemberRegistryKey(member_func.function_decl) == lazy_info.registry_key) {
+				if (getLazyMemberRegistryKeyForOwner(
+						lazy_info.identity.instantiated_owner_name,
+						member_func.function_decl) == lazy_info.registry_key) {
 					// Replace with the instantiated function
 					member_func.function_decl = new_func_node;
 					FLASH_LOG(Templates, Debug, "Updated StructTypeInfo with instantiated function body");

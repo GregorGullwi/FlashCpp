@@ -7,7 +7,8 @@
 class Parser;
 
 // Strip namespace prefix from a class name handle (e.g., "ns::Foo$hash" -> "Foo$hash").
-// Used by lazy registries so lookups match regardless of qualification.
+// Lazy function-member identity must not use this because nested concrete owners
+// can share the same unqualified class name.
 static StringHandle normalizeClassName(StringHandle handle) {
 	std::string_view name = StringTable::getStringView(handle);
 	if (size_t pos = name.rfind("::"); pos != std::string_view::npos) {
@@ -22,7 +23,6 @@ inline StringHandle makeLazyMemberExactKey(
 	bool is_const,
 	const void* declaration_identity) {
 	StringBuilder key_builder;
-	class_name = normalizeClassName(class_name);
 	key_builder.append(class_name).append("::").append(member_name);
 	if (is_const) {
 		key_builder.append("$const");
@@ -109,20 +109,6 @@ inline StringHandle getLazyMemberRegistryKey(const ASTNode& node) {
 		return node.as<DestructorDeclarationNode>().lazy_member_registry_key();
 	}
 	return {};
-}
-
-inline void stampLazyMemberRegistryKey(ASTNode& node, StringHandle key) {
-	if (auto* fn = get_function_decl_node_mut(node)) {
-		fn->set_lazy_member_registry_key(key);
-		return;
-	}
-	if (node.is<ConstructorDeclarationNode>()) {
-		node.as<ConstructorDeclarationNode>().set_lazy_member_registry_key(key);
-		return;
-	}
-	if (node.is<DestructorDeclarationNode>()) {
-		node.as<DestructorDeclarationNode>().set_lazy_member_registry_key(key);
-	}
 }
 
 struct LazyMemberKey {
@@ -230,6 +216,37 @@ struct LazyMemberKey {
 	}
 };
 
+inline StringHandle getLazyMemberRegistryKeyForOwner(
+	StringHandle instantiated_owner_name,
+	const ASTNode& node) {
+	if (StringHandle stored_key = getLazyMemberRegistryKey(node); stored_key.isValid()) {
+		return stored_key;
+	}
+
+	if (const FunctionDeclarationNode* function_decl = get_function_decl_node(node)) {
+		return makeLazyMemberExactKey(
+			instantiated_owner_name,
+			function_decl->decl_node().identifier_token().handle(),
+			function_decl->is_const_member_function(),
+			node.raw_pointer());
+	}
+	if (node.is<ConstructorDeclarationNode>()) {
+		return makeLazyMemberExactKey(
+			instantiated_owner_name,
+			node.as<ConstructorDeclarationNode>().name(),
+			false, // Constructors cannot be const-qualified.
+			node.raw_pointer());
+	}
+	if (node.is<DestructorDeclarationNode>()) {
+		return makeLazyMemberExactKey(
+			instantiated_owner_name,
+			node.as<DestructorDeclarationNode>().name(),
+			false, // Destructors cannot be const-qualified.
+			node.raw_pointer());
+	}
+	return {};
+}
+
 // Registry for tracking uninstantiated template member functions
 // Allows lazy (on-demand) instantiation for better compilation performance
 class LazyMemberInstantiationRegistry {
@@ -241,7 +258,6 @@ public:
 
 	// Append the shared "instantiated_class_name::member_function_name" prefix.
 	static StringBuilder& appendMemberKeyPrefix(StringBuilder& key_builder, StringHandle class_name, StringHandle member_name) {
-		class_name = normalizeClassName(class_name);
 		return key_builder.append(class_name).append("::").append(member_name);
 	}
 
@@ -284,7 +300,6 @@ public:
 			? info.registry_key
 			: makeExactKey(info.identity);
 		info.registry_key = key;
-		stampLazyMemberRegistryKey(info.identity.original_member_node, key);
 		StringHandle lookup_key = makeLookupKey(
 			info.identity.instantiated_owner_name,
 			lookup_name,
