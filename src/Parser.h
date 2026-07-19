@@ -38,7 +38,7 @@
 #endif // WITH_DEBUG_INFO
 
 #ifndef WITH_PARSER_RUNTIME_STATS
-#define WITH_PARSER_RUNTIME_STATS 0
+#define WITH_PARSER_RUNTIME_STATS 1
 #endif // WITH_PARSER_RUNTIME_STATS
 
 #if WITH_PARSER_RUNTIME_STATS
@@ -1518,6 +1518,11 @@ private:
 	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
+	// peek(1) cache: the most common lookahead depth. Avoids a full
+	// save/advance/restore cycle through saved_tokens_ on every peek(1).
+	// Invalidated by any mutation of current_token_ / injected_token_ or any
+	// lexer position restore (see invalidate_lookahead_cache()).
+	std::optional<Token> lookahead_token_1_cache_;
 #if WITH_PARSER_RUNTIME_STATS
 	bool runtime_stats_enabled_ = false;
 	size_t ast_nodes_baseline_ = 0;  // gChunkedAnyStorage.size() when stats were enabled
@@ -1526,6 +1531,10 @@ private:
 #endif
 
 	Token consume_token();
+
+	// Invalidate the peek(1) cache. Called by any operation that mutates
+	// current_token_ / injected_token_ or restores the lexer position.
+	void invalidate_lookahead_cache();
 
 	Token peek_token();
 	Token peek_token(size_t lookahead);	// Peek ahead N tokens (0 = current, 1 = next, etc.)
