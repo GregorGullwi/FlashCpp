@@ -1612,19 +1612,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							referenced_size_bits = referenced_size_bits ? referenced_size_bits : (anon_member_type_spec.size_in_bits());
 						}
 
-						StringHandle member_name_handle = anon_member_name_token.handle();
-						struct_ref.add_anonymous_union_member(
-							member_name_handle,
-							anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
-							member_size,
-							member_alignment,
-							bitfield_width,
-							referenced_size_bits,
-							ref_qual,
-							is_array,
-							static_cast<int>(anon_member_type_spec.pointer_depth()),
-							std::move(array_dimensions));
-
 						// Add DeclarationNode to struct_ref for symbol table and AST purposes
 						// During layout phase, these will be skipped (already processed as union members)
 						std::optional<ASTNode> anon_default_initializer;
@@ -1640,6 +1627,20 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								anon_default_initializer = *init_result.node();
 							}
 						}
+
+						StringHandle member_name_handle = anon_member_name_token.handle();
+						struct_ref.add_anonymous_union_member(
+							member_name_handle,
+							anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
+							member_size,
+							member_alignment,
+							bitfield_width,
+							anon_default_initializer,
+							referenced_size_bits,
+							ref_qual,
+							is_array,
+							static_cast<int>(anon_member_type_spec.pointer_depth()),
+							std::move(array_dimensions));
 
 						ASTNode anon_member_decl_node;
 						if (!anon_array_dimensions.empty()) {
@@ -3104,10 +3105,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			size_t aligned_union_start = ((union_start_offset + union_max_alignment - 1) & ~(union_max_alignment - 1));
 
 			// Second pass: add all union members at the same aligned offset
-			for (size_t union_member_index = 0; union_member_index < union_info.union_members.size(); ++union_member_index) {
-				const auto& union_member = union_info.union_members[union_member_index];
-				const StructMemberDecl& union_member_decl =
-					struct_ref.members()[union_info.member_index_in_ast + union_member_index];
+			for (const auto& union_member : union_info.union_members) {
 				size_t effective_alignment = union_member.member_alignment;
 				if (struct_info->pack_alignment > 0 && struct_info->pack_alignment < union_member.member_alignment) {
 					effective_alignment = struct_info->pack_alignment;
@@ -3121,7 +3119,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					union_member.member_size,
 					effective_alignment,
 					AccessSpecifier::Public, // Anonymous union members are always public
-					union_member_decl.default_initializer,
+					union_member.default_initializer,
 					union_member.reference_qualifier,
 					union_member.referenced_size_bits,
 					union_member.is_array,

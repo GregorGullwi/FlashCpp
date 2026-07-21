@@ -886,6 +886,7 @@ struct AnonymousUnionMemberInfo {
 	size_t member_size;					// Size in bytes (including array size if applicable)
 	size_t member_alignment;			 // Alignment requirement in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
+	std::optional<ASTNode> default_initializer;
 	size_t referenced_size_bits;		 // Size in bits of referenced type (for references)
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference, or RValueReference
 	bool is_array;					   // True if member is an array
@@ -898,12 +899,14 @@ struct AnonymousUnionMemberInfo {
 
 	AnonymousUnionMemberInfo(StringHandle name, TypeIndex tidx, size_t size, size_t align,
 							 std::optional<size_t> bitfield_w,
+							 std::optional<ASTNode> initializer,
 							 size_t ref_size_bits, ReferenceQualifier ref_qual,
 							 bool is_arr,
 							 int ptr_depth,
 							 std::vector<size_t> arr_dims)
 		: member_name(name), type_index(tidx), member_size(size),
-		  member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
+		  member_alignment(align), bitfield_width(bitfield_w), default_initializer(std::move(initializer)),
+		  referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
 		  is_array(is_arr), array_dimensions(std::move(arr_dims)),
 		  pointer_depth(ptr_depth) {}
 };
@@ -1283,6 +1286,7 @@ public:
 	// Must be called after add_anonymous_union_marker()
 	void add_anonymous_union_member(StringHandle member_name, TypeIndex type_index,
 									size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
+									std::optional<ASTNode> default_initializer,
 									size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
 									bool is_array,
 									int pointer_depth,
@@ -1291,7 +1295,7 @@ public:
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
 				member_name, type_index, member_size, member_alignment,
-				bitfield_width, referenced_size_bits, reference_qualifier, is_array,
+				bitfield_width, std::move(default_initializer), referenced_size_bits, reference_qualifier, is_array,
 				pointer_depth,
 				std::move(array_dimensions));
 		}
