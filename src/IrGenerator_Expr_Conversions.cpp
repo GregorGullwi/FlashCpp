@@ -1822,7 +1822,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 			return makeExprResult(operandIrOperands.type_index.withCategory(operandType), SizeInBits{64}, IrOperand{lvalue_temp}, PointerDepth{static_cast<int>(result_ptr_depth)}, ValueStorage::ContainsAddress);
 		}
 
-		int element_size = 64; // Default to pointer size
+		int element_size = POINTER_SIZE_BITS;
 		int pointer_depth = 0;
 
 		// First, try to get pointer depth from operandIrOperands (for TempVar results from previous operations)
@@ -1851,32 +1851,17 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 		// If still > 0, result is a pointer (64 bits)
 		// If == 0, result is the base type
 		if (pointer_depth <= 1) {
-				// Single-level pointer or less: result is base type size
-			switch (operandType) {
-			case TypeCategory::Bool:
-				element_size = 8;
-				break;
-			case TypeCategory::Char:
-				element_size = 8;
-				break;
-			case TypeCategory::Short:
-				element_size = 16;
-				break;
-			case TypeCategory::Int:
-				element_size = 32;
-				break;
-			case TypeCategory::Long:
-				element_size = 64;
-				break;
-			case TypeCategory::Float:
-				element_size = 32;
-				break;
-			case TypeCategory::Double:
-				element_size = 64;
-				break;
-			default:
-				element_size = 64;
-				break;  // Fallback for unknown types
+			// A single dereference produces the semantic pointee object. Its
+			// representation comes from the canonical TypeInfo, including complete
+			// aggregate layout, rather than from the pointer's register width.
+			const TypeIndex pointee_type_index =
+				operandIrOperands.type_index.withCategory(operandType);
+			element_size = getRuntimeValueSizeBits(
+				pointee_type_index,
+				get_type_size_bits(operandType),
+				PointerDepth{});
+			if (element_size <= 0) {
+				throw InternalError("Dereference requires a complete pointee object size");
 			}
 		}
 		// else: multi-level pointer, element_size stays 64 (pointer)

@@ -429,10 +429,12 @@ TypeCategory AstToIr::getRuntimeValueType(TypeIndex semantic_type_index, Pointer
 		return semantic_type;
 	}
 
-	TypeCategory lowered_cat = resolve_type_alias(semantic_type_index);
+	const CanonicalTypeAlias canonical_type = canonicalize_type_alias(semantic_type_index);
+	const TypeIndex runtime_type_index = canonical_type.resolvedTypeIndex();
+	const TypeCategory lowered_cat = canonical_type.typeEnum();
 
 	if (lowered_cat == TypeCategory::Enum) {
-		if (const TypeInfo* ti = tryGetTypeInfo(semantic_type_index)) {
+		if (const TypeInfo* ti = tryGetTypeInfo(runtime_type_index)) {
 			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
 				return enum_info->underlying_type;
 			}
@@ -447,11 +449,21 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 		return semantic_size_bits;
 	}
 
-	TypeCategory lowered_cat = resolve_type_alias(type_index);
+	const CanonicalTypeAlias canonical_type = canonicalize_type_alias(type_index);
+	const TypeIndex runtime_type_index = canonical_type.resolvedTypeIndex();
+	const TypeCategory lowered_cat = canonical_type.typeEnum();
 	const TypeCategory semantic_cat = type_index.category();
+	if (isIrStructType(toIrType(lowered_cat))) {
+		const TypeInfo* type_info = tryGetTypeInfo(runtime_type_index);
+		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+		if (!struct_info || !struct_info->hasCompleteObjectLayout()) {
+			throw InternalError("Runtime aggregate value requires complete canonical layout metadata");
+		}
+		return struct_info->sizeInBits().value;
+	}
 
 	if (lowered_cat == TypeCategory::Enum) {
-		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
+		if (const TypeInfo* ti = tryGetTypeInfo(runtime_type_index)) {
 			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
 				return enum_info->sizeInBits().value;
 			}

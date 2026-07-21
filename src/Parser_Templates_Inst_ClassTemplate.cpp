@@ -588,33 +588,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Helper: substitute template parameter types in a function/constructor parameter list
 	// and add the substituted parameters to a target node.
 	// Consolidates the ~25-line pattern repeated across all instantiation paths.
-	struct SelfTypeRewriteInfo {
+	struct CurrentInstantiationTypeRewrite {
 		TypeIndex from_type_index;
 		TypeIndex to_type_index;
 	};
-	auto makeImplicitCtorSelfTypeRewrite = [&](StringHandle pattern_struct_name, TypeIndex instantiated_struct_type_index)
-		-> std::optional<SelfTypeRewriteInfo> {
-		if (!instantiated_struct_type_index.is_valid()) {
-			return std::nullopt;
-		}
-		auto it = getTypesByNameMap().find(pattern_struct_name);
-		if (it == getTypesByNameMap().end() || it->second == nullptr) {
-			return std::nullopt;
-		}
-		TypeIndex pattern_struct_type_index = it->second->registeredTypeIndex();
-		if (!pattern_struct_type_index.is_valid()) {
-			return std::nullopt;
+	// An injected class name denotes the current instantiation in every constructor
+	// signature, including user-written copy and move constructors.
+	auto makeCurrentInstantiationTypeRewrite = [](
+		const ConstructorDeclarationNode& pattern_constructor,
+		TypeIndex instantiated_struct_type_index) -> CurrentInstantiationTypeRewrite {
+		TypeIndex pattern_struct_type_index = pattern_constructor.owning_type_index();
+		if (!pattern_struct_type_index.is_valid() || !instantiated_struct_type_index.is_valid()) {
+			throw InternalError(
+				"Constructor parameter substitution requires canonical pattern and instantiated owner types");
 		}
 		pattern_struct_type_index.setCategory(TypeCategory::Struct);
 		instantiated_struct_type_index.setCategory(TypeCategory::Struct);
-		return SelfTypeRewriteInfo{pattern_struct_type_index, instantiated_struct_type_index};
+		return CurrentInstantiationTypeRewrite{pattern_struct_type_index, instantiated_struct_type_index};
 	};
 	auto substituteAndCopyParams = [&](
 									   std::span<const ASTNode> orig_params,
 									   auto& target_node,
 									   const auto& tmpl_params,
 									   const auto& tmpl_args,
-									   std::optional<SelfTypeRewriteInfo> self_type_rewrite = std::nullopt) {
+									   std::optional<CurrentInstantiationTypeRewrite> current_instantiation_rewrite) {
 		for (const auto& param : orig_params) {
 			if (!param.is<DeclarationNode>()) {
 				target_node.add_parameter_node(param);
@@ -690,8 +687,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				continue;
 			// Use substituteTemplateParameters as the primary substitution to correctly
 			// propagate pointer depth from template args (e.g. I→int* gives ptr_depth=1).
-			// The TypeIndex from substitute_template_parameter+self_type_rewrite is applied
-			// on top to handle self-referential types.
+			// The TypeIndex from substitution plus the current-instantiation rewrite is
+			// applied on top to handle self-referential types.
 			ASTNode original_param_type_node = param_decl.type_node();
 			const bool preserve_dependent_member_template_identity =
 				typeSpecifierPreservesDependentMemberTemplateSignatureIdentity(
@@ -700,9 +697,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				original_param_type_node, tmpl_params, tmpl_args);
 			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, tmpl_params, tmpl_args);
-			if (self_type_rewrite.has_value() &&
-				param_type_index == self_type_rewrite->from_type_index) {
-				param_type_index = self_type_rewrite->to_type_index;
+			if (current_instantiation_rewrite.has_value() &&
+				param_type_index == current_instantiation_rewrite->from_type_index) {
+				param_type_index = current_instantiation_rewrite->to_type_index;
 			}
 			param_type_index = resolveDependentMemberPlaceholderFromOwnerArtifact(
 				original_param_type_node,
@@ -2246,11 +2243,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref,
 						template_params,
 						template_args_for_member_copy,
-						orig_ctor.is_implicit()
-							? makeImplicitCtorSelfTypeRewrite(
-								pattern_struct.name(),
-								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
-							: std::nullopt);
+						makeCurrentInstantiationTypeRewrite(
+							orig_ctor,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 					substituteAndCopyInitializers(
 						orig_ctor,
@@ -3482,11 +3477,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_ctor_ref,
 						template_params,
 						template_args_for_pattern,
-						orig_ctor.is_implicit()
-							? makeImplicitCtorSelfTypeRewrite(
-								pattern_struct.name(),
-								struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct))
-							: std::nullopt);
+						makeCurrentInstantiationTypeRewrite(
+							orig_ctor,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 
 					// Copy initializers (member, base, delegating)
@@ -7650,8 +7643,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			auto qualified_name = StringTable::getOrInternStringHandle(StringBuilder().append(instantiated_name).append("::"sv).append(nested_struct.name()));
 
-			// Create a new StructTypeInfo for the nested class
-			auto nested_struct_info = std::make_unique<StructTypeInfo>((qualified_name), nested_struct.default_access(), nested_struct.is_union(), decl_ns);
+			// Register the nested semantic owner before producing members and signatures.
+			// Constructor current-instantiation substitution requires both the pattern
+			// and instantiated owner TypeIndex values to be canonical at this point.
+			auto nested_struct_info_owner = std::make_unique<StructTypeInfo>(
+				qualified_name,
+				nested_struct.default_access(),
+				nested_struct.is_union(),
+				decl_ns);
+			auto& nested_type_info = add_instantiated_type(
+				qualified_name,
+				TypeCategory::Struct,
+				0); // Layout is finalized after member production.
+			nested_type_info.setStructInfo(std::move(nested_struct_info_owner));
+			StructTypeInfo* nested_struct_info = nested_type_info.getStructInfo();
+			if (nested_struct_info == nullptr || !nested_struct_info->own_type_index_.has_value()) {
+				throw InternalError("Nested class registration did not establish a canonical semantic owner");
+			}
+			nested_type_info.setInstantiationContext(
+				collectParamNameHandles(
+					effective_template_params,
+					effective_template_args.size()),
+				collectEnrichedTemplateArgInfos(
+					effective_template_params,
+					effective_template_args),
+				struct_type_info.instantiationContext());
 			auto instantiated_nested_struct = emplace_node<StructDeclarationNode>(
 				nested_struct.name(),
 				nested_struct.is_class(),
@@ -7907,6 +7923,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			for (const auto& member_decl : nested_struct.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& type_spec = decl.type_specifier_node();
+				ASTNode full_substituted_type_node = substituteTemplateParameters(
+					decl.type_node(), template_params, template_args_to_use);
 				TypeIndex substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
 				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
@@ -7919,47 +7937,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
 				TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
 
-				TypeSpecifierNode substituted_type_spec(
-					substituted_type_index.category(),
-					type_spec.qualifier(),
-					get_type_size_bits(substituted_type_index.category()),
-					Token(), // Empty token
-					CVQualifier::None);
+				TypeSpecifierNode substituted_type_spec = full_substituted_type_node.is<TypeSpecifierNode>()
+					? full_substituted_type_node.as<TypeSpecifierNode>()
+					: type_spec;
 				substituted_type_spec.set_type_index(substituted_type_index);
-
-				for (const auto& ptr_level : type_spec.pointer_levels()) {
-					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
-				}
+				substituted_type_spec.set_size_in_bits(
+					get_type_size_bits(substituted_type_index.category()));
 				materializeSubstitutedFunctionTypeMetadata(
 					substituted_type_spec,
 					type_spec,
 					template_params,
 					template_args_to_use);
 
-				size_t member_size;
+				const MemberSizeAndAlignment element_layout =
+					calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec,
+						member_size_type_index);
+				size_t member_size = element_layout.size;
 				if (is_array_member) {
 					size_t total_elements = 1;
 					for (size_t dim_size : resolved_array_dimensions) {
 						total_elements *= dim_size;
 					}
-
-					size_t element_size = calculateResolvedMemberSizeAndAlignment(
-											  substituted_type_spec, member_size_type_index)
-											  .size;
-					member_size = element_size * total_elements;
-				} else if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-					member_size = 8;
-				} else {
-					member_size = calculateResolvedMemberSizeAndAlignment(
-									  substituted_type_spec, member_size_type_index)
-									  .size;
+					member_size *= total_elements;
 				}
-				size_t member_alignment = get_type_alignment(member_size_type_index.category(), member_size);
-				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-					member_alignment = 8;
-				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
-					member_alignment = member_struct_info->alignment;
-				}
+				const size_t member_alignment = element_layout.alignment;
 
 				ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
 				size_t referenced_size_bits = ref_qual != ReferenceQualifier::None
@@ -8096,7 +8098,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						original_ctor.parameter_nodes(),
 						substituted_ctor,
 						template_params,
-						template_args_to_use);
+						template_args_to_use,
+						makeCurrentInstantiationTypeRewrite(
+							original_ctor,
+							nested_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 					substituteAndCopyInitializers(
 						original_ctor,
@@ -8287,7 +8292,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (nested_struct_info != nullptr) {
 						OutOfLineConstructorStubResolution info_ctor_resolution =
 							findReplayedOutOfLineConstructorInStructInfo(
-								nested_struct_info.get(),
+								nested_struct_info,
 								nested_struct_info_member_identity_maps,
 								ctor_resolution.source_member,
 								ctor_decl,
@@ -8516,24 +8521,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				nested_struct_info->needs_default_constructor = true;
 			}
 
-			// Register the nested class in the type system
-			auto& nested_type_info = add_instantiated_type(qualified_name, TypeCategory::Struct, 0); // Placeholder size
-			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.fallback_size_bits_ = nested_type_info.getStructInfo()->sizeInBits().value;
 			}
-
- // Propagate the outer type's instantiation context to the nested type.
- // The nested type isn't itself a template instantiation, but it lives inside
- // one and needs the enclosing template's bindings for constexpr evaluation.
-			nested_type_info.setInstantiationContext(
-				collectParamNameHandles(
-					effective_template_params,
-					effective_template_args.size()),
-				collectEnrichedTemplateArgInfos(
-					effective_template_params,
-					effective_template_args),
-				struct_type_info.instantiationContext());
 
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
@@ -9949,7 +9939,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Substitute and copy parameters — may add function-pack info to pack_param_info_
 					// so that pack expansions in the body and initializers resolve correctly.
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
+					substituteAndCopyParams(
+						ctor_decl.parameter_nodes(),
+						new_ctor_ref,
+						template_params,
+						template_args_to_use,
+						makeCurrentInstantiationTypeRewrite(
+							ctor_decl,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					const std::vector<PackParamInfo> ctor_pack_param_info = pack_param_info_;
 
 					std::optional<ASTNode> substituted_body;
@@ -10040,7 +10037,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Substitute and copy parameters so the stub has concrete types.
 					size_t saved_pack_info = pack_param_info_.size();
-					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
+					substituteAndCopyParams(
+						ctor_decl.parameter_nodes(),
+						new_ctor_ref,
+						template_params,
+						template_args_to_use,
+						makeCurrentInstantiationTypeRewrite(
+							ctor_decl,
+							struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct)));
 					pack_param_info_.resize(saved_pack_info);
 
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());

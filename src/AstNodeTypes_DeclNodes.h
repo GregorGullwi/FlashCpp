@@ -100,6 +100,14 @@ struct StructTypeInfo {
 		return namespace_handle;
 	}
 
+	bool isVariantMember(const StructMember& member) const {
+		return is_union || member.anonymous_union_group_index.has_value();
+	}
+
+	bool isPotentiallyConstructedByDefaultConstructor(const StructMember& member) const {
+		return !isVariantMember(member) || member.default_initializer.has_value();
+	}
+
 	void addMember(StringHandle member_name, TypeIndex type_index,
 				   size_t member_size, size_t member_alignment, AccessSpecifier access,
 				   std::optional<ASTNode> default_initializer,

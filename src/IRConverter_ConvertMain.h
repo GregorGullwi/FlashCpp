@@ -241,6 +241,21 @@ private:
 	// This makes both source and destination sizes explicit for clarity
 	void emitMovFromFrameSized(SizedRegister dest, SizedStackSlot source);
 
+	enum class FrameMemoryStorage {
+		Direct,
+		Indirect
+	};
+
+	struct FrameMemoryLocation {
+		int32_t frame_offset;
+		int32_t displacement;
+		FrameMemoryStorage storage;
+	};
+
+	// Copy an object representation between direct frame storage and frame slots
+	// that contain an address, preserving every byte of aggregate values.
+	void emitFrameMemoryCopy(FrameMemoryLocation source, FrameMemoryLocation destination, SizeInBytes size);
+
 	// Helper to generate and emit LEA from frame
 	void emitLeaFromFrame(X64Register destinationRegister, int32_t offset);
 
@@ -454,6 +469,11 @@ private:
 	/// holds the first register; `int_reg_index` is advanced for the second.
 	void emitTwoRegStructToRegs(int src_offset, X64Register target_reg,
 								size_t& int_reg_index, size_t max_int_regs);
+
+	/// Materialize a non-floating return value in the target ABI's return registers.
+	/// SysV aggregates spanning two eightbytes use RAX and RDX; other values use RAX.
+	void emitIntegerOrAggregateReturnValue(TypeIndex type_index, SizeInBits size_in_bits,
+										 int32_t frame_offset, std::optional<X64Register> live_value_register);
 
 	void handleFunctionCall(const IrInstruction& instruction);
 

@@ -2644,6 +2644,60 @@ void IrToObjConverter<TWriterClass>::emitMovFromFrameBySize(X64Register destinat
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitFrameMemoryCopy(FrameMemoryLocation source, FrameMemoryLocation destination, SizeInBytes size) {
+	if (!size.is_positive()) {
+		throw InternalError("Aggregate copy requires a positive object size");
+	}
+
+	X64Register source_address = X64Register::Count;
+	if (source.storage == FrameMemoryStorage::Indirect) {
+		source_address = allocateRegisterWithSpilling();
+		emitMovFromFrame(source_address, source.frame_offset);
+	}
+
+	X64Register destination_address = X64Register::Count;
+	if (destination.storage == FrameMemoryStorage::Indirect) {
+		destination_address = allocateRegisterWithSpilling();
+		emitMovFromFrame(destination_address, destination.frame_offset);
+	}
+
+	X64Register copy_register = allocateRegisterWithSpilling();
+	for (int byte_offset = 0; byte_offset < size.value;) {
+		const SizeInBytes remaining{size.value - byte_offset};
+		const SizeInBytes chunk_size{
+			remaining.value >= 8 ? 8 : remaining.value >= 4 ? 4 : remaining.value >= 2 ? 2 : 1};
+		const SizeInBits chunk_size_bits = toBits(chunk_size);
+
+		if (source.storage == FrameMemoryStorage::Indirect) {
+			emitMovFromMemory(copy_register, source_address, source.displacement + byte_offset, chunk_size.value);
+		} else {
+			emitMovFromFrameSized(
+				SizedRegister{copy_register, 64, false},
+				SizedStackSlot{source.frame_offset + source.displacement + byte_offset, chunk_size_bits.value, false});
+		}
+
+		if (destination.storage == FrameMemoryStorage::Indirect) {
+			emitStoreToMemory(textSectionData, copy_register, destination_address,
+							  destination.displacement + byte_offset, chunk_size.value);
+		} else {
+			emitMovToFrameSized(
+				SizedRegister{copy_register, 64, false},
+				SizedStackSlot{destination.frame_offset + destination.displacement + byte_offset, chunk_size_bits.value, false});
+		}
+
+		byte_offset += chunk_size.value;
+	}
+
+	regAlloc.release(copy_register);
+	if (destination_address != X64Register::Count) {
+		regAlloc.release(destination_address);
+	}
+	if (source_address != X64Register::Count) {
+		regAlloc.release(source_address);
+	}
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrame(X64Register destinationRegister, int32_t offset) {
 	auto opcodes = generateMovFromFrameBySize(destinationRegister, offset, 64);
 	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
@@ -4037,6 +4091,37 @@ bool IrToObjConverter<TWriterClass>::shouldPassStructByAddress(const TypedValue&
 }
 
 template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::emitIntegerOrAggregateReturnValue(
+	TypeIndex type_index, SizeInBits size_in_bits,
+	int32_t frame_offset, std::optional<X64Register> live_value_register) {
+	const bool uses_two_registers = isTwoRegisterStructRaw(
+		toIrType(type_index.category()), size_in_bits.value, false, 0);
+	if (uses_two_registers) {
+		spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+		spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
+		emitMovFromFrame(X64Register::RAX, frame_offset);
+		const SizeInBits upper_eightbyte_size{size_in_bits.value - 64};
+		emitMovFromFrameBySize(X64Register::RDX, frame_offset + 8, upper_eightbyte_size.value);
+		return;
+	}
+
+	if (live_value_register.has_value()) {
+		if (*live_value_register != X64Register::RAX) {
+			spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+			auto move_to_rax = regAlloc.get_reg_reg_move_op_code(
+				X64Register::RAX, *live_value_register, size_in_bits.value / 8);
+			logAsmEmit("emitIntegerOrAggregateReturnValue", move_to_rax.op_codes.data(), move_to_rax.size_in_bytes);
+			textSectionData.insert(textSectionData.end(), move_to_rax.op_codes.begin(),
+							   move_to_rax.op_codes.begin() + move_to_rax.size_in_bytes);
+		}
+		return;
+	}
+
+	spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+	emitMovFromFrameBySize(X64Register::RAX, frame_offset, size_in_bits.value);
+}
+
+template <class TWriterClass>
 int32_t IrToObjConverter<TWriterClass>::getVariableOffsetOrThrow(StringHandle var_handle, std::string_view context) const {
 	const VariableInfo* var_info = findVariableInfo(var_handle);
 	if (!var_info) {
@@ -4693,8 +4778,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					// SystemV AMD64 ABI: structs 9-16 bytes return in RAX (low 8 bytes) and RDX (high 8 bytes)
 				if (call_op.return_type_index.category() == TypeCategory::Struct && return_size_bits > 64 && return_size_bits <= 128) {
 						// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
-					emitMovToFrame(X64Register::RAX, result_offset, return_size_bits);  // Store low 8 bytes
-					emitMovToFrame(X64Register::RDX, result_offset + 8, return_size_bits - 64);	// Store high 8 bytes
+					emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
+					emitMovToFrameBySize(X64Register::RDX, result_offset + 8, return_size_bits - 64);
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "Storing two-register struct return ({} bits): RAX->offset {}, RDX->offset {}",
 									 return_size_bits, result_offset, result_offset + 8);
@@ -8987,59 +9072,10 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							bool is_float = (ret_op.return_size == 32);
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
-						} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-								// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
-							if (ret_op.return_type_index.category() == TypeCategory::Struct &&
-								var_size > 64 && var_size <= 128) {
-									// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
-								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-								spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
-								emitMovFromFrame(X64Register::RAX, var_offset);	// Load low 8 bytes
-								emitMovFromFrame(X64Register::RDX, var_offset + 8);	// Load high 8 bytes
-								FLASH_LOG_FORMAT(Codegen, Debug,
-												 "TempVar two-register struct return ({} bits): RAX from offset {}, RDX from offset {}",
-												 var_size, var_offset, var_offset + 8);
-								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
-								regAlloc.flushSingleDirtyRegister(X64Register::RDX);
-							} else {
-									// Single-register return (≤64 bits) in RAX - integer/pointer return
-								if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-									if (reg_var.value() != X64Register::RAX) {
-										spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-										auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
-										for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
-										}
-										logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
-										textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
-									} else {
-									}
-								} else {
-										// Load from stack using RBP-relative addressing
-										// Use actual variable size for proper zero/sign extension
-									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-									emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-									regAlloc.flushSingleDirtyRegister(X64Register::RAX);
-								}
-							}
 						} else {
-								// Windows x64 ABI: small structs (≤64 bits) return in RAX only - integer/pointer return
-							if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
-								if (reg_var.value() != X64Register::RAX) {
-									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-									auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, reg_var.value(), ret_op.return_size / 8);
-									for (size_t i = 0; i < movResultToRax.size_in_bytes; ++i) {
-									}
-									logAsmEmit("handleReturn mov to RAX", movResultToRax.op_codes.data(), movResultToRax.size_in_bytes);
-									textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
-								} else {
-								}
-							} else {
-									// Load from stack using RBP-relative addressing
-									// Use actual variable size for proper zero/sign extension
-								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
-							}
+							emitIntegerOrAggregateReturnValue(
+								ret_op.return_type_index, SizeInBits{var_size}, var_offset,
+								regAlloc.tryGetStackVariableRegister(var_offset));
 						}
 					}
 				} else {
@@ -9065,31 +9101,9 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						bool is_float = (ret_op.return_size == 32);
 						spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 						emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
-					} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-							// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
-						if (ret_op.return_type_index.category() == TypeCategory::Struct &&
-							var_size > 64 && var_size <= 128) {
-								// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
-							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-							spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
-							emitMovFromFrame(X64Register::RAX, var_offset);	// Load low 8 bytes
-							emitMovFromFrame(X64Register::RDX, var_offset + 8);	// Load high 8 bytes
-							FLASH_LOG_FORMAT(Codegen, Debug,
-											 "Fallback two-register struct return ({} bits): RAX from offset {}, RDX from offset {}",
-											 var_size, var_offset, var_offset + 8);
-							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
-							regAlloc.flushSingleDirtyRegister(X64Register::RDX);
-						} else {
-								// Single-register return (≤64 bits) in RAX
-							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
-						}
 					} else {
-							// Windows x64 ABI: small structs (≤64 bits) return in RAX only
-						spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-						emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+						emitIntegerOrAggregateReturnValue(
+							ret_op.return_type_index, SizeInBits{var_size}, var_offset, std::nullopt);
 					}
 				}
 			} else if (std::holds_alternative<StringHandle>(ret_val)) {
@@ -9188,11 +9202,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else {
-								// Load integer/pointer value into RAX
-								// Use actual variable size for proper zero/sign extension
-							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
-							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
-							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+							emitIntegerOrAggregateReturnValue(
+								ret_op.return_type_index, SizeInBits{var_size}, var_offset, std::nullopt);
 						}
 					}
 				} else {
@@ -13685,8 +13696,48 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		member_stack_offset = object_base_offset + op.offset;
 	}
 
-		// Calculate member size in bytes
+	// Calculate member size in bytes
 	int member_size_bytes = op.value.size_in_bits.value / 8;
+
+	const bool is_non_scalar_struct_value =
+		isIrStructType(op.value.effectiveIrType()) &&
+		!op.value.pointer_depth.is_pointer() &&
+		!op.is_reference() &&
+		op.value.size_in_bits > SizeInBits{64};
+	if (is_non_scalar_struct_value && is_literal) {
+		throw InternalError("Non-scalar aggregate member value must have object storage");
+	}
+	if (is_non_scalar_struct_value) {
+		int32_t source_offset = 0;
+		FrameMemoryStorage source_storage = FrameMemoryStorage::Direct;
+		if (is_variable) {
+			auto source_it = current_scope.variables.find(variable_name);
+			if (source_it == current_scope.variables.end()) {
+				throw InternalError("Aggregate member initializer variable not found in scope");
+			}
+			source_offset = source_it->second.offset;
+			if (isPointerBaseStorage(source_offset)) {
+				source_storage = FrameMemoryStorage::Indirect;
+			}
+		} else {
+			const TempVar source_temp = std::get<TempVar>(op.value.value);
+			source_offset = getStackOffsetFromTempVar(source_temp, op.value.size_in_bits.value);
+			if (isPointerBaseStorage(source_offset, source_temp)) {
+				source_storage = FrameMemoryStorage::Indirect;
+			}
+		}
+
+		const FrameMemoryLocation source{
+			.frame_offset = source_offset,
+			.displacement = 0,
+			.storage = source_storage};
+		const FrameMemoryLocation destination{
+			.frame_offset = is_pointer_access ? object_base_offset : member_stack_offset,
+			.displacement = is_pointer_access ? op.offset : 0,
+			.storage = is_pointer_access ? FrameMemoryStorage::Indirect : FrameMemoryStorage::Direct};
+		emitFrameMemoryCopy(source, destination, toBytesExact(op.value.size_in_bits));
+		return;
+	}
 
 	const bool is_float_pointer_store = is_pointer_access && !op.is_reference() && !op.bitfield_width.has_value() && isIrFloatingPointType(op.value.effectiveIrType());
 	if (is_float_pointer_store) {

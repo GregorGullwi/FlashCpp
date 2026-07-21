@@ -1916,11 +1916,13 @@ void StructTypeInfo::recalculateLayout() {
 	alignment = max_alignment;
 
 	auto addExistingMember = [this](StructMember& member) {
+		const std::optional<size_t> anonymous_union_group_index = member.anonymous_union_group_index;
 		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
 				  std::move(member.default_initializer), member.reference_qualifier,
 				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
 				  member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
 				  member.is_no_unique_address);
+		members.back().anonymous_union_group_index = anonymous_union_group_index;
 	};
 
 	for (auto& member : old_members) {
@@ -1985,11 +1987,13 @@ bool StructTypeInfo::finalizeWithBases() {
 	active_bitfield_bits_used = 0;
 	active_bitfield_type = TypeCategory::Invalid;
 	for (auto& member : old_members) {
+		const std::optional<size_t> anonymous_union_group_index = member.anonymous_union_group_index;
 		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
 				  std::move(member.default_initializer), member.reference_qualifier,
 				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
 				  member.pointer_depth, member.bitfield_width, std::move(member.function_signature),
 				  member.is_no_unique_address);
+		members.back().anonymous_union_group_index = anonymous_union_group_index;
 	}
 
 	current_offset = currentLayoutOffset();
