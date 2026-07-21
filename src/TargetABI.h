@@ -111,6 +111,9 @@ inline size_t naturalAlignment(TypeIndex type_index, size_t object_size) {
 	const TypeIndex canonical_type_index = canonicalize_type_alias(type_index).resolvedTypeIndex();
 	if (const TypeInfo* type_info = tryGetTypeInfo(canonical_type_index)) {
 		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+			if (!struct_info->layout_is_complete || struct_info->alignment == 0) {
+				throw InternalError("SysV ABI classification requires complete aggregate alignment metadata");
+			}
 			return struct_info->alignment;
 		}
 	}
