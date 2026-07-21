@@ -12,6 +12,13 @@ struct CompactPayload {
 	int third;
 };
 
+using PayloadAlias = Payload;
+
+template<typename T>
+using Identity = T;
+
+using ChainedPayloadAlias = Identity<PayloadAlias>;
+
 Payload return_payload(Payload value) {
 	Payload copy = value;
 	return copy;
@@ -24,6 +31,11 @@ CompactPayload return_compact(CompactPayload value) {
 
 Payload return_pointer_copy(const Payload* value) {
 	Payload copy = *value;
+	return copy;
+}
+
+ChainedPayloadAlias return_alias_pointer_copy(const ChainedPayloadAlias* value) {
+	ChainedPayloadAlias copy = *value;
 	return copy;
 }
 
@@ -48,6 +60,7 @@ int main() {
 	Payload returned_payload = return_payload(payload);
 	CompactPayload returned_compact = return_compact(compact);
 	Payload returned_pointer_copy = return_pointer_copy(&payload);
+	ChainedPayloadAlias returned_alias_pointer_copy = return_alias_pointer_copy(&payload);
 	Outer<Payload>::Inner original(payload);
 	Outer<Payload>::Inner returned_inner = original.copy_self();
 
@@ -61,5 +74,7 @@ int main() {
 	if (returned_inner.current.narrow != payload.narrow) result |= 64;
 	if (returned_pointer_copy.wide != payload.wide ||
 		returned_pointer_copy.narrow != payload.narrow) result |= 128;
+	if (returned_alias_pointer_copy.wide != payload.wide ||
+		returned_alias_pointer_copy.narrow != payload.narrow) result |= 256;
 	return result;
 }
