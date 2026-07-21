@@ -470,6 +470,11 @@ private:
 	void emitTwoRegStructToRegs(int src_offset, X64Register target_reg,
 								size_t& int_reg_index, size_t max_int_regs);
 
+	/// Materialize a non-floating return value in the target ABI's return registers.
+	/// SysV aggregates spanning two eightbytes use RAX and RDX; other values use RAX.
+	void emitIntegerOrAggregateReturnValue(TypeIndex type_index, SizeInBits size_in_bits,
+										 int32_t frame_offset, std::optional<X64Register> live_value_register);
+
 	void handleFunctionCall(const IrInstruction& instruction);
 
 	bool emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move = false);
