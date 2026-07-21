@@ -2645,7 +2645,7 @@ void IrToObjConverter<TWriterClass>::emitMovFromFrameBySize(X64Register destinat
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFrameMemoryCopy(FrameMemoryLocation source, FrameMemoryLocation destination, SizeInBytes size) {
-	if (!size.is_set()) {
+	if (!size.is_positive()) {
 		throw InternalError("Aggregate copy requires a positive object size");
 	}
 

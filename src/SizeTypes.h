@@ -33,6 +33,7 @@ struct SizeInBytes {
 	constexpr explicit SizeInBytes(int v) noexcept : value(v) {}
 	constexpr auto operator<=>(const SizeInBytes&) const noexcept = default;
 	constexpr bool is_set() const noexcept { return value != 0; }
+	constexpr bool is_positive() const noexcept { return value > 0; }
 };
 
 template <>
