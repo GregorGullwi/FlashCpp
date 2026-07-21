@@ -45,12 +45,56 @@ typedef struct Big4 {
 	int d;
 } Big4;
 
+typedef struct DoublePair {
+	double a;
+	double b;
+} DoublePair;
+
+typedef struct IntDouble {
+	int a;
+	double b;
+} IntDouble;
+
+typedef struct DoubleInt {
+	double a;
+	int b;
+} DoubleInt;
+
+#if defined(_MSC_VER)
+typedef __declspec(align(16)) struct TailAlignedDouble {
+	double value;
+} TailAlignedDouble;
+#else
+typedef struct __attribute__((aligned(16))) TailAlignedDouble {
+	double value;
+} TailAlignedDouble;
+#endif
+
+#pragma pack(push, 1)
+typedef struct PackedDouble {
+	char tag;
+	double value;
+} PackedDouble;
+#pragma pack(pop)
+
 int flashcpp_sum_big3(Big3 value);
 int flashcpp_big3_after_4_ints(int i1, int i2, int i3, int i4, Big3 value);
 int flashcpp_big3_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big3 value);
 int flashcpp_sum_big4(Big4 value);
 int flashcpp_big4_after_4_ints(int i1, int i2, int i3, int i4, Big4 value);
 int flashcpp_big4_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big4 value);
+int flashcpp_check_double_pair(DoublePair value);
+int flashcpp_check_int_double(IntDouble value);
+int flashcpp_check_double_int(DoubleInt value);
+DoublePair flashcpp_make_double_pair(double a, double b);
+IntDouble flashcpp_make_int_double(int a, double b);
+DoubleInt flashcpp_make_double_int(double a, int b);
+int flashcpp_check_tail_aligned_double(TailAlignedDouble value);
+TailAlignedDouble flashcpp_make_tail_aligned_double(double value);
+int flashcpp_check_packed_double(PackedDouble value);
+int flashcpp_int_double_after_8_doubles(
+	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
+	IntDouble value, int tail);
 
 int external_sum_big3(Big3 value) {
 	printf("external_sum_big3: %d %d %d\n", value.a, value.b, value.c);
@@ -122,4 +166,93 @@ int external_call_flashcpp_big4_after_5_ints(int i1, int i2, int i3, int i4, int
 	printf("external_call_flashcpp_big4_after_5_ints: %d %d %d %d %d | %d %d %d %d\n",
 		   i1, i2, i3, i4, i5, value.a, value.b, value.c, value.d);
 	return flashcpp_big4_after_5_ints(i1, i2, i3, i4, i5, value);
+}
+
+int external_check_double_pair(DoublePair value) {
+	return value.a == 10.5 && value.b == 31.5;
+}
+
+int external_check_int_double(IntDouble value) {
+	return value.a == 10 && value.b == 32.0;
+}
+
+int external_check_double_int(DoubleInt value) {
+	return value.a == 10.5 && value.b == 31;
+}
+
+int external_call_flashcpp_double_pair(DoublePair value) {
+	return flashcpp_check_double_pair(value);
+}
+
+int external_call_flashcpp_int_double(IntDouble value) {
+	return flashcpp_check_int_double(value);
+}
+
+int external_call_flashcpp_double_int(DoubleInt value) {
+	return flashcpp_check_double_int(value);
+}
+
+DoublePair external_make_double_pair(double a, double b) {
+	DoublePair value = {a, b};
+	return value;
+}
+
+IntDouble external_make_int_double(int a, double b) {
+	IntDouble value = {a, b};
+	return value;
+}
+
+DoubleInt external_make_double_int(double a, int b) {
+	DoubleInt value = {a, b};
+	return value;
+}
+
+DoublePair external_call_flashcpp_make_double_pair(double a, double b) {
+	return flashcpp_make_double_pair(a, b);
+}
+
+IntDouble external_call_flashcpp_make_int_double(int a, double b) {
+	return flashcpp_make_int_double(a, b);
+}
+
+DoubleInt external_call_flashcpp_make_double_int(double a, int b) {
+	return flashcpp_make_double_int(a, b);
+}
+
+int external_check_tail_aligned_double(TailAlignedDouble value) {
+	return value.value == 42.5;
+}
+
+int external_call_flashcpp_tail_aligned_double(TailAlignedDouble value) {
+	return flashcpp_check_tail_aligned_double(value);
+}
+
+TailAlignedDouble external_make_tail_aligned_double(double value) {
+	TailAlignedDouble result = {value};
+	return result;
+}
+
+TailAlignedDouble external_call_flashcpp_make_tail_aligned_double(double value) {
+	return flashcpp_make_tail_aligned_double(value);
+}
+
+int external_check_packed_double(PackedDouble value) {
+	return value.tag == 10 && value.value == 32.0;
+}
+
+int external_call_flashcpp_packed_double(PackedDouble value) {
+	return flashcpp_check_packed_double(value);
+}
+
+int external_int_double_after_8_doubles(
+	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
+	IntDouble value, int tail) {
+	return (int)(d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8) + value.a + (int)value.b + tail;
+}
+
+int external_call_flashcpp_int_double_after_8_doubles(
+	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
+	IntDouble value, int tail) {
+	return flashcpp_int_double_after_8_doubles(
+		d1, d2, d3, d4, d5, d6, d7, d8, value, tail);
 }
