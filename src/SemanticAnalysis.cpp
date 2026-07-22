@@ -3888,6 +3888,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					tryAnnotateUnaryOperandPromotion(e);
 				}
 				normalizeExpression(e.get_operand(), ctx);
+				if (e.op() == "&" && !e.is_builtin_addressof()) {
+					tryResolveUnaryAddressOfOperator(e);
+				}
 			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
 				tryAnnotateContextualBool(e.condition());
@@ -4642,6 +4645,16 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 			}
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			const std::string_view op = inner.op();
+			if (op == "&" && !inner.is_builtin_addressof()) {
+				if (const ResolvedUnaryOperatorCall* resolved_address =
+						getResolvedUnaryAddressOfOperator(&inner)) {
+					if (auto category = getReferenceQualifiedValueCategory(
+							resolved_address->function->decl_node().type_node());
+						category.has_value()) {
+						return *category;
+					}
+				}
+			}
 			if (op == "*" || op == "++" || op == "--") {
 				return ValueCategory::LValue;
 			}
@@ -4753,6 +4766,18 @@ void SemanticAnalysis::ensureCallableOperatorResolved(const CallExprNode& call_n
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const {
 	auto it = op_unary_deref_table_.find(key);
 	return it != op_unary_deref_table_.end() ? it->second : nullptr;
+}
+
+const SemanticAnalysis::ResolvedUnaryOperatorCall*
+SemanticAnalysis::getResolvedUnaryAddressOfOperator(const UnaryOperatorNode* key) const {
+	auto it = op_unary_address_table_.find(key);
+	return it != op_unary_address_table_.end() ? &it->second : nullptr;
+}
+
+void SemanticAnalysis::ensureUnaryAddressOfOperatorResolved(const UnaryOperatorNode& unary_node) {
+	if (analyzed_op_unary_address_queries_.count(&unary_node) == 0) {
+		tryResolveUnaryAddressOfOperator(unary_node);
+	}
 }
 
 ResolvedFunctionQueryResult SemanticAnalysis::getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const {
@@ -5705,6 +5730,16 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return inferExpressionType(e.get_operand());
 				}
 				if (op == "&") {
+					if (!e.is_builtin_addressof()) {
+						if (const ResolvedUnaryOperatorCall* resolved_address =
+								getResolvedUnaryAddressOfOperator(&e)) {
+							const ASTNode return_type_node = resolved_address->function->decl_node().type_node();
+							if (return_type_node.has_value() && return_type_node.is<TypeSpecifierNode>()) {
+								return canonicalizeType(return_type_node.as<TypeSpecifierNode>());
+							}
+							return {};
+						}
+					}
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
 					if (!operand_id)
 						return {};
@@ -7740,6 +7775,70 @@ void SemanticAnalysis::tryResolveUnaryDereferenceOperator(const UnaryOperatorNod
 	}
 
 	op_unary_deref_table_[&unary_node] = best_match;
+	stats_.op_calls_resolved++;
+}
+
+void SemanticAnalysis::tryResolveUnaryAddressOfOperator(const UnaryOperatorNode& unary_node) {
+	analyzed_op_unary_address_queries_.insert(&unary_node);
+	op_unary_address_table_.erase(&unary_node);
+	if (unary_node.op() != "&" || unary_node.is_builtin_addressof()) {
+		return;
+	}
+
+	const CanonicalTypeId operand_type_id = inferExpressionType(unary_node.get_operand());
+	if (!operand_type_id) {
+		return;
+	}
+	const CanonicalTypeDesc& operand_desc = type_context_.get(operand_type_id);
+	if ((operand_desc.category() != TypeCategory::Struct &&
+		 operand_desc.category() != TypeCategory::Enum) ||
+		!operand_desc.pointer_levels.empty() ||
+		!operand_desc.array_dimensions.empty()) {
+		return;
+	}
+
+	const std::optional<TypeSpecifierNode> operand_type =
+		getOverloadResolutionArgType(unary_node.get_operand());
+	if (!operand_type.has_value()) {
+		throw InternalError("Unary operator& resolution requires the sema-owned operand type and value category");
+	}
+	const OperatorOverloadResult resolution = findUnaryOperatorOverloadWithFreeFunction(
+		*operand_type,
+		OverloadableOperator::BitwiseAnd,
+		symbols_);
+	if (resolution.is_ambiguous) {
+		throw CompileError("Ambiguous overload for unary operator&");
+	}
+	if (!resolution.has_match) {
+		return;
+	}
+
+	ResolvedUnaryOperatorCall resolved_call;
+	resolved_call.is_member = !resolution.is_free_function;
+	if (resolution.is_free_function) {
+		resolved_call.function = resolution.free_function_overload;
+	} else {
+		if (resolution.member_overload == nullptr ||
+			!resolution.member_overload->function_decl.is<FunctionDeclarationNode>()) {
+			throw InternalError("Resolved unary operator& member is missing its function declaration");
+		}
+		markResolvedOperatorOverloadOdrUsed(*resolution.member_overload);
+		resolved_call.function =
+			&resolution.member_overload->function_decl.as<FunctionDeclarationNode>();
+	}
+	if (resolved_call.function == nullptr) {
+		throw InternalError("Resolved unary operator& is missing its function declaration");
+	}
+	if (!resolved_call.is_member) {
+		ChunkedVector<ASTNode> arguments;
+		arguments.push_back(unary_node.get_operand());
+		annotateResolvedCallArgConversions(
+			&unary_node,
+			arguments,
+			*resolved_call.function,
+			" in unary operator&");
+	}
+	op_unary_address_table_[&unary_node] = resolved_call;
 	stats_.op_calls_resolved++;
 }
 

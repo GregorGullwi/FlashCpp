@@ -14367,6 +14367,13 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
 	);
+	// ComputeAddress produces a pointer value. Preserve that fact at the backend
+	// boundary so call lowering loads the pointer instead of taking its address.
+	setAddressOnlyInfo(
+		result_offset,
+		op.result_type_index,
+		op.result_size_bits.value,
+		op.result);
 }
 
 template <class TWriterClass>
