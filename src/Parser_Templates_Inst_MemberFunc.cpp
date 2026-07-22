@@ -246,7 +246,8 @@ bool Parser::tryAppendMemberDefaultTemplateArg(
 	InlineVector<TemplateTypeArg, 4>& current_template_args) {
 	// Member templates don't have a separate namespace context - use invalid handle
 	// which causes no namespace scope to be entered during SFINAE reparse.
-	if (tryAppendDefaultTemplateArg(param, template_params, current_template_args, NamespaceHandle{})) {
+	if (outer_binding == nullptr &&
+		tryAppendDefaultTemplateArg(param, template_params, current_template_args, NamespaceHandle{})) {
 		return true;
 	}
 	if (!param.has_default() || !outer_binding) {

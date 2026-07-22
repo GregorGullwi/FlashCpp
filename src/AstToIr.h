@@ -1286,7 +1286,7 @@ private:
 	// ============================================================================
 	// Return IR helper
 	// ============================================================================
-	void emitReturn(IrValue return_value, TypeCategory return_type, int return_size, const Token& token);
+	void emitReturn(IrValue return_value, TypeIndex return_type_index, int return_size, const Token& token);
 
 	void emitVoidReturn(const Token& token) {
 		ReturnOp ret_op;

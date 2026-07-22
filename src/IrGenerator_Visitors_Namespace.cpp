@@ -183,7 +183,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			emitDestructorsForNonLocalExit(0);
 
 			// Now return the temporary variable
-			emitReturn(temp_var, return_category, return_size, node.return_token());
+			emitReturn(temp_var, currentFunctionReturnTypeIndex(), return_size, node.return_token());
 			return;
 		}
 
@@ -209,7 +209,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							emitAndClearFullExpressionTempDestructors();
 							emitDestructorsForNonLocalExit(0);
 							emitReturn(StringTable::getOrInternStringHandle("this"),
-									   currentFunctionReturnType(), current_function_return_size_,
+									   currentFunctionReturnTypeIndex(), current_function_return_size_,
 									   node.return_token());
 							return;
 						}
@@ -728,7 +728,7 @@ return_conversion_done:
 			return_value = *d_val;
 		}
 		// Use the function's return type, not the expression type
-		emitReturn(return_value, currentFunctionReturnType(), current_function_return_size_,
+		emitReturn(return_value, currentFunctionReturnTypeIndex(), current_function_return_size_,
 				   node.return_token());
 	} else {
 		// Call any enclosing __finally funclets before returning

@@ -433,24 +433,12 @@ private:
 	// Allocate an XMM register, spilling one to the stack if necessary, excluding a specific register
 	X64Register allocateXMMRegisterWithSpilling(X64Register exclude);
 
-	/// SysV AMD64 ABI: true for 9-16 byte by-value structs that must be passed in two
-	/// consecutive general-purpose registers (INTEGER+INTEGER classification).
-	/// This applies to both variadic and non-variadic calls.
-	/// NOTE: For variadic *callees*, the register-save-area prologue handles these
-	/// implicitly, so callee-side code guards this with !is_variadic separately.
-	static bool isTwoRegisterStructRaw(IrType ir_type, int size_in_bits, bool is_reference, int pointer_depth);
-
-	/// Check if an argument is a two-register struct under System V AMD64 ABI (9-16 bytes, by value).
-	bool isTwoRegisterStruct(const TypedValue& arg, [[maybe_unused]] bool is_variadic_call = false) const;
+	std::optional<SysVAbiValueLayout> classifySysVAggregate(const TypedValue& arg) const;
 
 	/// Determine if a struct argument should be passed by address (pointer) based on ABI.
-	bool shouldPassStructByAddress(const TypedValue& arg, bool is_two_register_struct = false) const;
+	bool shouldPassStructByAddress(const TypedValue& arg) const;
 
-	// ── Two-register struct helpers ──────────────────────────────────────
-	// SysV AMD64 ABI: 9-16 byte by-value structs are passed/received in two
-	// consecutive general-purpose registers.  These helpers centralise the
-	// codegen so that handleFunctionCall and handleConstructorCall don't
-	// duplicate the same emit sequences.
+	// ── Aggregate ABI transfer helpers ───────────────────────────────────
 
 	/// Resolve a TypedValue (StringHandle or TempVar) to its frame offset.
 	int32_t getVariableOffsetOrThrow(StringHandle var_handle, std::string_view context) const;
@@ -459,21 +447,18 @@ private:
 
 	bool emitLoadAddressLikeArgument(X64Register target_reg, const TypedValue& arg, int32_t address_adjustment = 0);
 
-	/// Emit code to store both 8-byte halves of a two-register struct to
-	/// consecutive RSP-relative stack slots (used when the struct overflows
-	/// the register file).
-	void emitTwoRegStructToStack(const TypedValue& arg, int stack_offset);
+	/// Copy an aggregate by value to consecutive RSP-relative overflow slots.
+	void emitAggregateToStack(const TypedValue& arg, int stack_offset);
 
-	/// Emit code to load both 8-byte halves of a two-register struct into
-	/// two consecutive integer parameter registers.  `target_reg` already
-	/// holds the first register; `int_reg_index` is advanced for the second.
-	void emitTwoRegStructToRegs(int src_offset, X64Register target_reg,
-								size_t& int_reg_index, size_t max_int_regs);
+	/// Load each classified eightbyte into its assigned integer or SSE bank.
+	void emitSysVAggregateToRegisters(const TypedValue& arg, const SysVAbiValueLayout& layout,
+									 size_t& int_reg_index, size_t& sse_reg_index);
 
-	/// Materialize a non-floating return value in the target ABI's return registers.
-	/// SysV aggregates spanning two eightbytes use RAX and RDX; other values use RAX.
+	/// Materialize an integer or classified aggregate in the target return registers.
 	void emitIntegerOrAggregateReturnValue(TypeIndex type_index, SizeInBits size_in_bits,
 										 int32_t frame_offset, std::optional<X64Register> live_value_register);
+
+	void emitStoreReturnValue(TypeIndex type_index, SizeInBits size_in_bits, int32_t frame_offset);
 
 	void handleFunctionCall(const IrInstruction& instruction);
 

@@ -19,6 +19,27 @@ struct Big4 {
 	int c;
 	int d;
 };
+struct DoublePair {
+	double a;
+	double b;
+};
+struct IntDouble {
+	int a;
+	double b;
+};
+struct DoubleInt {
+	double a;
+	int b;
+};
+struct alignas(16) TailAlignedDouble {
+	double value;
+};
+#pragma pack(push, 1)
+struct PackedDouble {
+	char tag;
+	double value;
+};
+#pragma pack(pop)
 extern "C" int external_sum_big3(Big3 value);
 extern "C" int external_big3_after_4_ints(int i1, int i2, int i3, int i4, Big3 value);
 extern "C" int external_big3_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big3 value);
@@ -31,6 +52,30 @@ extern "C" int external_call_flashcpp_big3_after_5_ints(int i1, int i2, int i3, 
 extern "C" int external_call_flashcpp_big4(Big4 value);
 extern "C" int external_call_flashcpp_big4_after_4_ints(int i1, int i2, int i3, int i4, Big4 value);
 extern "C" int external_call_flashcpp_big4_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big4 value);
+extern "C" int external_check_double_pair(DoublePair value);
+extern "C" int external_check_int_double(IntDouble value);
+extern "C" int external_check_double_int(DoubleInt value);
+extern "C" int external_call_flashcpp_double_pair(DoublePair value);
+extern "C" int external_call_flashcpp_int_double(IntDouble value);
+extern "C" int external_call_flashcpp_double_int(DoubleInt value);
+extern "C" DoublePair external_make_double_pair(double a, double b);
+extern "C" IntDouble external_make_int_double(int a, double b);
+extern "C" DoubleInt external_make_double_int(double a, int b);
+extern "C" DoublePair external_call_flashcpp_make_double_pair(double a, double b);
+extern "C" IntDouble external_call_flashcpp_make_int_double(int a, double b);
+extern "C" DoubleInt external_call_flashcpp_make_double_int(double a, int b);
+extern "C" int external_check_tail_aligned_double(TailAlignedDouble value);
+extern "C" int external_call_flashcpp_tail_aligned_double(TailAlignedDouble value);
+extern "C" TailAlignedDouble external_make_tail_aligned_double(double value);
+extern "C" TailAlignedDouble external_call_flashcpp_make_tail_aligned_double(double value);
+extern "C" int external_check_packed_double(PackedDouble value);
+extern "C" int external_call_flashcpp_packed_double(PackedDouble value);
+extern "C" int external_int_double_after_8_doubles(
+	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
+	IntDouble value, int tail);
+extern "C" int external_call_flashcpp_int_double_after_8_doubles(
+	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
+	IntDouble value, int tail);
 
 extern "C" int flashcpp_sum_big3(Big3 value) {
 	return value.a + value.b + value.c;
@@ -54,6 +99,49 @@ extern "C" int flashcpp_big4_after_4_ints(int i1, int i2, int i3, int i4, Big4 v
 
 extern "C" int flashcpp_big4_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big4 value) {
 	return i1 + i2 + i3 + i4 + i5 + value.a + value.b + value.c + value.d;
+}
+
+extern "C" int flashcpp_check_double_pair(DoublePair value) {
+	return value.a == 10.5 && value.b == 31.5;
+}
+
+extern "C" int flashcpp_check_int_double(IntDouble value) {
+	return value.a == 10 && value.b == 32.0;
+}
+
+extern "C" int flashcpp_check_double_int(DoubleInt value) {
+	return value.a == 10.5 && value.b == 31;
+}
+
+extern "C" DoublePair flashcpp_make_double_pair(double a, double b) {
+	return DoublePair{a, b};
+}
+
+extern "C" IntDouble flashcpp_make_int_double(int a, double b) {
+	return IntDouble{a, b};
+}
+
+extern "C" DoubleInt flashcpp_make_double_int(double a, int b) {
+	return DoubleInt{a, b};
+}
+
+extern "C" int flashcpp_check_tail_aligned_double(TailAlignedDouble value) {
+	return value.value == 42.5;
+}
+
+extern "C" TailAlignedDouble flashcpp_make_tail_aligned_double(double value) {
+	return TailAlignedDouble{value};
+}
+
+extern "C" int flashcpp_check_packed_double(PackedDouble value) {
+	return value.tag == 10 && value.value == 32.0;
+}
+
+extern "C" int flashcpp_int_double_after_8_doubles(
+	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
+	IntDouble value, int tail) {
+	return static_cast<int>(d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8) + value.a +
+		static_cast<int>(value.b) + tail;
 }
 
 extern "C" int main() {
@@ -159,6 +247,94 @@ extern "C" int main() {
 	Big4 test16 = {100, 200, 300, 400};
 	if (external_call_flashcpp_big4_after_5_ints(1, 2, 3, 4, 5, test16) != 1015) {
 		return 16;
+	}
+
+	// Tests 17-19: FlashCpp caller -> platform compiler callee for all SysV
+	// two-eightbyte register-class combinations.
+	if (!external_check_double_pair(DoublePair{10.5, 31.5})) {
+		return 17;
+	}
+	if (!external_check_int_double(IntDouble{10, 32.0})) {
+		return 18;
+	}
+	if (!external_check_double_int(DoubleInt{10.5, 31})) {
+		return 19;
+	}
+
+	// Tests 20-22: platform compiler caller -> FlashCpp callee.
+	if (!external_call_flashcpp_double_pair(DoublePair{10.5, 31.5})) {
+		return 20;
+	}
+	if (!external_call_flashcpp_int_double(IntDouble{10, 32.0})) {
+		return 21;
+	}
+	if (!external_call_flashcpp_double_int(DoubleInt{10.5, 31})) {
+		return 22;
+	}
+
+	// Tests 23-28: direct aggregate returns in both directions.
+	DoublePair external_double_pair = external_make_double_pair(10.5, 31.5);
+	if (external_double_pair.a != 10.5 || external_double_pair.b != 31.5) {
+		return 23;
+	}
+	IntDouble external_int_double = external_make_int_double(10, 32.0);
+	if (external_int_double.a != 10 || external_int_double.b != 32.0) {
+		return 24;
+	}
+	DoubleInt external_double_int = external_make_double_int(10.5, 31);
+	if (external_double_int.a != 10.5 || external_double_int.b != 31) {
+		return 25;
+	}
+	DoublePair flashcpp_double_pair = external_call_flashcpp_make_double_pair(10.5, 31.5);
+	if (flashcpp_double_pair.a != 10.5 || flashcpp_double_pair.b != 31.5) {
+		return 26;
+	}
+	IntDouble flashcpp_int_double = external_call_flashcpp_make_int_double(10, 32.0);
+	if (flashcpp_int_double.a != 10 || flashcpp_int_double.b != 32.0) {
+		return 27;
+	}
+	DoubleInt flashcpp_double_int = external_call_flashcpp_make_double_int(10.5, 31);
+	if (flashcpp_double_int.a != 10.5 || flashcpp_double_int.b != 31) {
+		return 28;
+	}
+
+	// Tests 29-32: trailing padding remains NO_CLASS, so this 16-byte aggregate
+	// consumes only one SSE register in both argument and return directions.
+	if (!external_check_tail_aligned_double(TailAlignedDouble{42.5})) {
+		return 29;
+	}
+	if (!external_call_flashcpp_tail_aligned_double(TailAlignedDouble{42.5})) {
+		return 30;
+	}
+	TailAlignedDouble external_tail_aligned = external_make_tail_aligned_double(42.5);
+	if (external_tail_aligned.value != 42.5) {
+		return 31;
+	}
+	TailAlignedDouble flashcpp_tail_aligned = external_call_flashcpp_make_tail_aligned_double(42.5);
+	if (flashcpp_tail_aligned.value != 42.5) {
+		return 32;
+	}
+
+	// Tests 33-34: an unaligned aggregate is MEMORY-class even though it is
+	// smaller than 16 bytes, so arguments use the overflow area.
+	if (!external_check_packed_double(PackedDouble{10, 32.0})) {
+		return 33;
+	}
+	if (!external_call_flashcpp_packed_double(PackedDouble{10, 32.0})) {
+		return 34;
+	}
+
+	// Tests 35-36: the mixed aggregate needs one GPR and one SSE register. With
+	// all SSE registers occupied, the whole aggregate spills and the following
+	// integer still uses the unconsumed first GPR.
+	IntDouble exhausted_value{10, 32.0};
+	if (external_int_double_after_8_doubles(
+			1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, exhausted_value, 5) != 83) {
+		return 35;
+	}
+	if (external_call_flashcpp_int_double_after_8_doubles(
+			1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, exhausted_value, 5) != 83) {
+		return 36;
 	}
 
 	return 0; // All tests passed!

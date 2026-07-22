@@ -18,6 +18,7 @@
 #include "ElfFileWriter.h"
 #include "ProfilingTimer.h"
 #include "ChunkedString.h"
+#include "TargetABI.h"
 
 // Global exception handling control (defined in main.cpp)
 extern bool g_enable_exceptions;
