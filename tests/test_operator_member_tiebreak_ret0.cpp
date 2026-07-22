@@ -1,4 +1,5 @@
-// Exact member/free ties should still prefer the member operator.
+// Explicit member-call syntax selects the member even when a same-signature
+// non-member operator is also declared.
 
 struct A {
 	int value;

@@ -432,7 +432,11 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 
 	if (all_arg_types_known) {
 		const OverloadResolutionResult op_result =
-			resolve_overload_with_argument_nodes(call_candidates, arg_types, std::span<const ASTNode>{});
+			resolve_member_overload_with_argument_nodes(
+				call_candidates,
+				*type_opt,
+				arg_types,
+				std::span<const ASTNode>{});
 		if (op_result.has_match && !op_result.is_ambiguous && op_result.selected_overload != nullptr) {
 			return {
 				ConcreteCallOperatorResolution::State::Resolved,

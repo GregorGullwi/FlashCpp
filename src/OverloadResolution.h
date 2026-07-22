@@ -700,13 +700,16 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 
 		const CVQualifier from_pointee_cv = from.pointee_cv_for_pointer_conversion();
 		const CVQualifier to_pointee_cv = to.pointee_cv_for_pointer_conversion();
-		bool from_pointee_is_const = hasCVQualifier(from_pointee_cv, CVQualifier::Const);
-		bool to_pointee_is_const = hasCVQualifier(to_pointee_cv, CVQualifier::Const);
+		const uint8_t from_pointee_cv_bits = static_cast<uint8_t>(from_pointee_cv);
+		const uint8_t to_pointee_cv_bits = static_cast<uint8_t>(to_pointee_cv);
+		const bool pointee_cv_matches = from_pointee_cv_bits == to_pointee_cv_bits;
+		const bool pointee_qualification_is_added =
+			(from_pointee_cv_bits & ~to_pointee_cv_bits) == 0;
 
 		// Exact type match for pointers (after resolving aliases).
 		// For struct types we must additionally compare type_index so that Foo*
 		// and Bar* (both Type::Struct) are not treated as the same type.
-		if (from_resolved_category == to_resolved_category && from_pointee_is_const == to_pointee_is_const) {
+		if (from_resolved_category == to_resolved_category && pointee_cv_matches) {
 			// For struct pointer types, "same resolved Type" is not sufficient —
 			// Foo* and Bar* both resolve to Type::Struct.  Compare type_index too.
 			if (from_resolved_index.isStruct() &&
@@ -728,24 +731,23 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
 				// Derived* → Base* is valid with const qualification adjustment too.
-				if (!from_pointee_is_const && to_pointee_is_const &&
+				if (pointee_qualification_is_added &&
 					isTransitivelyDerivedFrom(from_resolved_index, to_resolved_index)) {
 					return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 				}
 				return ConversionPlan::no_match();
 			}
-			// T* → const T* is a qualification conversion (C++20 [conv.qual]).
+			// T* → cv T* is a qualification conversion (C++20 [conv.qual]).
 			// Per [over.best.ics.general] Table 12 this is an exact-match-category
 			// conversion; we use QualificationAdjustment rank so that a pure-identity
-			// match (f(T*)) is still preferred over the adjusted one (f(const T*))
+			// match (f(T*)) is still preferred over the adjusted one (f(const T*) or
+			// f(volatile T*))
 			// via [over.ics.rank]/3.2.1 (proper-subsequence rule).
-			if (!from_pointee_is_const && to_pointee_is_const) {
+			if (pointee_qualification_is_added) {
 				return {ConversionRank::QualificationAdjustment, StandardConversionKind::QualificationAdjustment, true};
 			}
-			// const T* → T* is NOT allowed (would remove const)
-			if (from_pointee_is_const && !to_pointee_is_const) {
-				return ConversionPlan::no_match();
-			}
+			// Removing const or volatile qualification is not allowed.
+			return ConversionPlan::no_match();
 		}
 
 		// If one type is still UserDefined after resolution attempt, accept as conversion
@@ -754,31 +756,20 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// const-correctness checks (e.g., const MyInt* → void* where MyInt is typedef for int)
 		if (from_resolved_index.category() == TypeCategory::UserDefined ||
 			to_resolved_index.category() == TypeCategory::UserDefined) {
-			// Still enforce const-correctness: const T* → T* is not allowed
-			if (from_pointee_is_const && !to_pointee_is_const) {
+			// Still enforce cv-correctness: cv T* → T* is not allowed.
+			if (!pointee_qualification_is_added) {
 				return ConversionPlan::no_match();
 			}
 			return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
 		}
 
-		// Pointer conversions: any pointer can implicitly convert to void*
-		// This is a standard C/C++ implicit conversion
-		// Const-correctness rules:
-		//   - const T* → const void*  : allowed (preserves const)
-		//   - T*       → const void*  : allowed (adding const is safe)
-		//   - const T* → void*        : REJECTED (would violate const correctness)
-		//   - T*       → void*        : allowed
-		// Note: For "const T*", the const applies to the pointed-to type (checked via pointee const),
-		//       while "T* const" would have const on the pointer level itself.
+		// Pointer conversions: any object pointer can implicitly convert to void*.
+		// The conversion may add const/volatile qualification to the pointed-to
+		// type, but it cannot remove either qualifier (C++20 [conv.ptr], [conv.qual]).
 		if (to_resolved_category == TypeCategory::Void) {
-			// Check const-correctness for the pointed-to type
-			// from_pointee_is_const checks if the pointee is const (e.g., "const char*")
-			// to_pointee_is_const checks if the target pointee is const (e.g., "const void*")
-			// Rule: const T* cannot convert to non-const void* (would violate const correctness)
-			if (from_pointee_is_const && !to_pointee_is_const) {
+			if (!pointee_qualification_is_added) {
 				return ConversionPlan::no_match();
 			}
-			// All other cases are valid: T*→void*, T*→const void*, const T*→const void*
 			return {ConversionRank::Conversion, StandardConversionKind::PointerConversion, true};
 		}
 
@@ -818,8 +809,15 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 						}
 						return ConversionPlan::no_match();
 					}
-					if ((from.is_const() && !to.is_const()) || (from.is_volatile() && !to.is_volatile())) {
+					const uint8_t from_cv_bits = static_cast<uint8_t>(from.cv_qualifier());
+					const uint8_t to_cv_bits = static_cast<uint8_t>(to.cv_qualifier());
+					if ((from_cv_bits & ~to_cv_bits) != 0) {
 						return ConversionPlan::no_match();
+					}
+					if (from_cv_bits != to_cv_bits) {
+						return {ConversionRank::QualificationAdjustment,
+							StandardConversionKind::QualificationAdjustment,
+							true};
 					}
 					return ConversionPlan::exact_match();
 				}
@@ -1709,46 +1707,126 @@ inline OverloadResolutionResult resolve_overload_with_argument_nodes(
 	}
 
 	if (num_best_matches > 1) {
-		// FlashCpp doesn't track volatile qualifiers, so overloads differing only in
-		// volatile (e.g. f(T*) vs f(volatile T*)) score identically. Prefer the first
-		// declared overload in that case rather than reporting spurious ambiguity.
-		// Note: pointer const sub-ranking is handled by ConversionRank::QualificationAdjustment,
-		// and reference-binding T&& vs const T& is handled earlier by compareArgumentConversionInfo(),
-		// so this tiebreaker only fires for genuine volatile-only differences.
-		bool differs_only_in_cv = true;
-		const FunctionDeclarationNode* best_func = &best_match->as<FunctionDeclarationNode>();
-		for (const auto* candidate : tied_candidates) {
-			if (candidate == best_match)
-				continue;
-			const FunctionDeclarationNode* cand_func = &candidate->as<FunctionDeclarationNode>();
-			const auto& best_params = best_func->parameter_nodes();
-			const auto& cand_params = cand_func->parameter_nodes();
-			if (best_params.size() != cand_params.size()) {
-				differs_only_in_cv = false;
-				break;
-			}
-			for (size_t i = 0; i < best_params.size(); ++i) {
-				const auto& bp = best_params[i].as<DeclarationNode>().type_specifier_node();
-				const auto& cp = cand_params[i].as<DeclarationNode>().type_specifier_node();
-				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
-					bp.pointer_depth() != cp.pointer_depth() ||
-					bp.is_reference() != cp.is_reference() ||
-					bp.is_rvalue_reference() != cp.is_rvalue_reference()) {
-					differs_only_in_cv = false;
-					break;
-				}
-			}
-			if (!differs_only_in_cv)
-				break;
-		}
-
-		if (differs_only_in_cv) {
-			return OverloadResolutionResult(best_match);
-		}
 		return OverloadResolutionResult::ambiguous();
 	}
 
 	return OverloadResolutionResult(best_match);
+}
+
+// Resolve non-static member candidates while ranking the implicit object
+// conversion alongside the explicit arguments. C++20 [over.match.funcs] makes
+// that conversion part of best-viable-function selection; filtering solely by
+// explicit parameters loses const/volatile receiver preferences.
+template <typename ArgumentNodeContainer>
+inline OverloadResolutionResult resolve_member_overload_with_argument_nodes(
+	std::span<const ASTNode> overloads,
+	const TypeSpecifierNode& object_type,
+	std::span<const TypeSpecifierNode> argument_types,
+	const ArgumentNodeContainer& argument_nodes) {
+	struct ViableMemberCandidate {
+		const ASTNode* overload = nullptr;
+		InlineVector<ArgumentConversionInfo, 4> conversion_infos;
+	};
+
+	InlineVector<TypeSpecifierNode, 4> comparison_argument_types;
+	comparison_argument_types.push_back(object_type);
+	for (const TypeSpecifierNode& argument_type : argument_types) {
+		comparison_argument_types.push_back(argument_type);
+	}
+
+	std::vector<ViableMemberCandidate> viable_candidates;
+	viable_candidates.reserve(overloads.size());
+
+	for (const ASTNode& overload : overloads) {
+		if (!overload.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const FunctionDeclarationNode& function = overload.as<FunctionDeclarationNode>();
+		if ((object_type.is_const() && !function.is_const_member_function()) ||
+			(object_type.is_volatile() && !function.is_volatile_member_function())) {
+			continue;
+		}
+
+		const auto& parameters = function.parameter_nodes();
+		const size_t min_required = countMinRequiredArgs(function);
+		if (argument_types.size() < min_required ||
+			(!function.is_variadic() && argument_types.size() > parameters.size())) {
+			continue;
+		}
+
+		ViableMemberCandidate candidate;
+		candidate.overload = &overload;
+		const bool adds_object_qualification =
+			(!object_type.is_const() && function.is_const_member_function()) ||
+			(!object_type.is_volatile() && function.is_volatile_member_function());
+		candidate.conversion_infos.push_back({
+			adds_object_qualification
+				? ConversionRank::QualificationAdjustment
+				: ConversionRank::ExactMatch,
+			nullptr,
+			true});
+
+		const size_t params_to_check = std::min(parameters.size(), argument_types.size());
+		bool all_convertible = true;
+		for (size_t i = 0; i < params_to_check; ++i) {
+			const TypeSpecifierNode& parameter_type =
+				parameters[i].as<DeclarationNode>().type_specifier_node();
+			const ASTNode* argument_node =
+				getOverloadArgumentNodeOrNull(argument_nodes, i);
+			const ArgumentConversionInfo conversion = buildArgumentConversionInfo(
+				argument_types[i],
+				parameter_type,
+				argument_node);
+			if (!conversion.is_valid) {
+				all_convertible = false;
+				break;
+			}
+			candidate.conversion_infos.push_back(conversion);
+		}
+		if (!all_convertible) {
+			continue;
+		}
+		if (function.is_variadic()) {
+			for (size_t i = params_to_check; i < argument_types.size(); ++i) {
+				candidate.conversion_infos.push_back(
+					ArgumentConversionInfo::ellipsis_match_variadic());
+			}
+		}
+		viable_candidates.push_back(std::move(candidate));
+	}
+
+	if (viable_candidates.empty()) {
+		return OverloadResolutionResult::no_match();
+	}
+
+	const ViableMemberCandidate* best_candidate = nullptr;
+	for (size_t i = 0; i < viable_candidates.size(); ++i) {
+		bool is_dominated = false;
+		for (size_t j = 0; j < viable_candidates.size(); ++j) {
+			if (i == j) {
+				continue;
+			}
+			const ConversionInfoComparison comparison = compareConversionInfoLists(
+				comparison_argument_types,
+				viable_candidates[j].conversion_infos,
+				viable_candidates[i].conversion_infos);
+			if (comparison.lhs_is_better && !comparison.lhs_is_worse) {
+				is_dominated = true;
+				break;
+			}
+		}
+		if (is_dominated) {
+			continue;
+		}
+		if (best_candidate != nullptr) {
+			return OverloadResolutionResult::ambiguous();
+		}
+		best_candidate = &viable_candidates[i];
+	}
+
+	return best_candidate != nullptr
+		? OverloadResolutionResult(best_candidate->overload)
+		: OverloadResolutionResult::no_match();
 }
 
 // Result of operator overload resolution
@@ -2331,8 +2409,8 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 // Find binary operator overload, including free-function operators in the given symbol table.
 // Per C++20 [over.match.oper]/2, both member and non-member candidates are collected into
 // a single candidate set and ranked together per [over.best.ics] and [over.match.best].
-// When a member and non-member have identical conversion ranks on all positions,
-// the member is preferred per [over.match.oper]/3.3.
+// Member and non-member candidates remain indistinguishable when their conversion
+// sequences are equivalent; neither candidate receives a category-based preference.
 inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const TypeSpecifierNode& left_type_spec,
 	const TypeSpecifierNode& right_type_spec,
@@ -2486,36 +2564,11 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		return OperatorOverloadResult::no_match();
 	}
 
-	std::vector<const OperatorCandidate*> filtered_best_candidates;
-	filtered_best_candidates.reserve(best_candidates.size());
-
-	for (const OperatorCandidate* candidate : best_candidates) {
-		bool loses_member_tiebreak = false;
-		if (candidate->is_free_function) {
-			for (const OperatorCandidate* other : best_candidates) {
-				if (other->is_free_function)
-					continue;
-				if (compareBinaryOperatorCandidateRanks(
-						candidate->lhs_rank,
-						candidate->rhs_rank,
-						other->lhs_rank,
-						other->rhs_rank) == BinaryOperatorCandidateComparison::Equivalent) {
-					loses_member_tiebreak = true;
-					break;
-				}
-			}
-		}
-
-		if (!loses_member_tiebreak) {
-			filtered_best_candidates.push_back(candidate);
-		}
-	}
-
-	if (filtered_best_candidates.size() != 1) {
+	if (best_candidates.size() != 1) {
 		return OperatorOverloadResult::ambiguous();
 	}
 
-	const OperatorCandidate* best = filtered_best_candidates[0];
+	const OperatorCandidate* best = best_candidates[0];
 
 	// Return the winner
 	if (best->is_free_function) {
