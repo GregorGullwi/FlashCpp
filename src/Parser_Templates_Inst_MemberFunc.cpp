@@ -1263,7 +1263,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			return nullptr;
 		}
 		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			if (!member_func.is_constructor) {
 				continue;
 			}
 			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
@@ -1288,7 +1288,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 
 		AccessSpecifier ctor_access = AccessSpecifier::Public;
 		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			if (!member_func.is_constructor) {
 				continue;
 			}
 			if (member_func.function_decl.raw_pointer() != static_cast<const void*>(&source_ctor)) {
@@ -1367,8 +1367,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 		InlineVector<const ConstructorDeclarationNode*, 4> template_ctor_candidates;
 		template_ctor_candidates.reserve(struct_info.member_functions.size());
 		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor ||
-				!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			if (!member_func.is_constructor) {
 				continue;
 			}
 			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();

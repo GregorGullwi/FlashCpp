@@ -457,28 +457,14 @@ inline size_t countMinRequiredParameters(std::span<const ASTNode> params) {
 // parameter) and return a pointer to its first parameter's TypeSpecifierNode.
 // Returns nullptr when the member is not a constructor, is marked explicit, has no
 // parameters, or requires more than one argument.
-// NOTE: Constructors with is_constructor=true are always stored as ConstructorDeclarationNode
-// in practice.  The FunctionDeclarationNode branch is kept for safety but cannot enforce
-// is_explicit() because FunctionDeclarationNode has no such method; it therefore treats any
-// FunctionDeclarationNode constructor as non-explicit.
 inline const TypeSpecifierNode* getImplicitCtorFirstParamType(const StructMemberFunction& mf) {
 	if (!mf.is_constructor)
 		return nullptr;
-	std::span<const ASTNode> params;
-	size_t min_required = 0;
-	if (mf.function_decl.is<FunctionDeclarationNode>()) {
-		const auto& ctor_decl = mf.function_decl.as<FunctionDeclarationNode>();
-		params = ctor_decl.parameter_nodes();
-		min_required = countMinRequiredParameters(params);
-	} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
-		const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
-		if (ctor_decl.is_explicit())
-			return nullptr;
-		params = ctor_decl.parameter_nodes();
-		min_required = countMinRequiredParameters(params);
-	} else {
+	const auto& ctor_decl = mf.function_decl.as<ConstructorDeclarationNode>();
+	if (ctor_decl.is_explicit())
 		return nullptr;
-	}
+	const std::span<const ASTNode> params = ctor_decl.parameter_nodes();
+	const size_t min_required = countMinRequiredParameters(params);
 	if (params.empty() || min_required > 1)
 		return nullptr;
 	if (!params[0].is<DeclarationNode>())
