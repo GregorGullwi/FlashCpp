@@ -1263,7 +1263,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			return nullptr;
 		}
 		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			if (!member_func.is_constructor) {
 				continue;
 			}
 			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
@@ -1288,7 +1288,7 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 
 		AccessSpecifier ctor_access = AccessSpecifier::Public;
 		for (const auto& member_func : struct_info.member_functions) {
-			if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			if (!member_func.is_constructor) {
 				continue;
 			}
 			if (member_func.function_decl.raw_pointer() != static_cast<const void*>(&source_ctor)) {
@@ -1364,6 +1364,17 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			-> const ConstructorDeclarationNode* {
 		InlineVector<const ConstructorDeclarationNode*, 4> concrete_matches;
 		concrete_matches.reserve(struct_info.member_functions.size());
+		InlineVector<const ConstructorDeclarationNode*, 4> template_ctor_candidates;
+		template_ctor_candidates.reserve(struct_info.member_functions.size());
+		for (const auto& member_func : struct_info.member_functions) {
+			if (!member_func.is_constructor) {
+				continue;
+			}
+			const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
+			if (ctor.has_template_parameters()) {
+				template_ctor_candidates.push_back(&ctor);
+			}
+		}
 
 		auto try_materialize_candidate =
 			[&](const ConstructorDeclarationNode& template_ctor) {
@@ -1387,41 +1398,15 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 
 		const bool should_probe_other_templates =
 			preferred_template_ctor == nullptr ||
-			[&]() {
-				size_t template_ctor_count = 0;
-				for (const auto& member_func : struct_info.member_functions) {
-					if (!member_func.is_constructor ||
-						!member_func.function_decl.is<ConstructorDeclarationNode>()) {
-						continue;
-					}
-					const auto& ctor = member_func.function_decl.as<ConstructorDeclarationNode>();
-					if (!ctor.has_template_parameters()) {
-						continue;
-					}
-					++template_ctor_count;
-					if (template_ctor_count > 1) {
-						return true;
-					}
-				}
-				return false;
-			}();
+			template_ctor_candidates.size() > 1;
 
 		if (should_probe_other_templates) {
-			for (const auto& member_func : struct_info.member_functions) {
-				if (!member_func.is_constructor ||
-					!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+			for (const ConstructorDeclarationNode* ctor_decl : template_ctor_candidates) {
+				if (preferred_template_ctor != nullptr && ctor_decl == preferred_template_ctor) {
 					continue;
 				}
 
-				const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-				if (!ctor_decl.has_template_parameters()) {
-					continue;
-				}
-				if (preferred_template_ctor != nullptr && &ctor_decl == preferred_template_ctor) {
-					continue;
-				}
-
-				try_materialize_candidate(ctor_decl);
+				try_materialize_candidate(*ctor_decl);
 			}
 		}
 

@@ -9,6 +9,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "ParserTemplateClassShared.h"
 #include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
 #include "StringLiteralTokenUtils.h"
@@ -302,8 +303,10 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 	}
 	has_dependent_call_arg =
 		deduced_arg_types.size() != args.size() ||
-		argsHaveDeferredTemplateDependency(args, currentTemplateParamNames()) ||
-		argTypesAreDeferredTemplateDependent(
+		ParserExpressionDependency::argsHaveDeferredTemplateDependency(
+			args,
+			currentTemplateParamNames()) ||
+		ParserExpressionDependency::argTypesAreDeferredTemplateDependent(
 			deduced_arg_types,
 			currentTemplateParamNames());
 	AliasTemplateMaterializationResult canonical_owner =

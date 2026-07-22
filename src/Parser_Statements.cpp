@@ -1850,27 +1850,10 @@ Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) con
 
 		FLASH_LOG(Parser, Debug, "  found constructor, checking parameters...");
 
-		// Check if this constructor has a function declaration
-		if (!member_func.function_decl.has_value()) {
-			FLASH_LOG(Parser, Debug, "    no function_decl");
-			continue;
-		}
-
-		// Constructors can be stored as ConstructorDeclarationNode or FunctionDeclarationNode
-		std::span<const ASTNode> params;
-
-		if (member_func.function_decl.is<ConstructorDeclarationNode>()) {
-			const ConstructorDeclarationNode& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-			params = ctor_decl.parameter_nodes();
-			FLASH_LOG(Parser, Debug, "    is ConstructorDeclarationNode with ", params.size(), " parameters");
-		} else if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			params = func_decl.parameter_nodes();
-			FLASH_LOG(Parser, Debug, "    is FunctionDeclarationNode with ", params.size(), " parameters");
-		} else {
-			FLASH_LOG(Parser, Debug, "    unknown node type");
-			continue;
-		}
+		const ConstructorDeclarationNode& ctor_decl =
+			member_func.function_decl.as<ConstructorDeclarationNode>();
+		const std::span<const ASTNode> params = ctor_decl.parameter_nodes();
+		FLASH_LOG(Parser, Debug, "    constructor has ", params.size(), " parameters");
 
 		// Look for constructor taking exactly one initializer_list parameter
 		if (params.size() != 1)

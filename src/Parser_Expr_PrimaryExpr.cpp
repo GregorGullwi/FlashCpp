@@ -2058,6 +2058,18 @@ std::optional<std::pair<TypeIndex, SizeInBits>> tryResolveConstructibleClassAlia
 }
 }
 
+bool ParserExpressionDependency::argsHaveDeferredTemplateDependency(
+	const ChunkedVector<ASTNode>& args,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return ::argsHaveDeferredTemplateDependency(args, current_template_param_names);
+}
+
+bool ParserExpressionDependency::argTypesAreDeferredTemplateDependent(
+	std::span<const TypeSpecifierNode> arg_types,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return ::argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names);
+}
+
 std::optional<ASTNode> Parser::try_synthesize_atomic_builtin_overload(
 	std::string_view builtin_name,
 	std::span<const TypeSpecifierNode> arg_types,

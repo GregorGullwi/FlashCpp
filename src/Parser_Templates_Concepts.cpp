@@ -2,6 +2,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "SemanticAnalysis.h"
 #include "TypeTraitEvaluator.h"
 
 ParseResult Parser::parse_concept_declaration() {
