@@ -377,9 +377,6 @@
     <ClInclude Include="src\Parser.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\ParserExpressionDependency.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="src\ParserInternal.h">
       <Filter>Header Files</Filter>
     </ClInclude>
