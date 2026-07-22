@@ -6,6 +6,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "ParserExpressionDependency.h"
 #include "ParserTemplateClassShared.h"
 #include "StringLiteralTokenUtils.h"
 #include "TemplateArgumentMaterialization.h"
@@ -2056,6 +2057,18 @@ std::optional<std::pair<TypeIndex, SizeInBits>> tryResolveConstructibleClassAlia
 
 	return std::pair{resolved_alias.type_index.withCategory(ctor_type), type_size};
 }
+}
+
+bool ParserExpressionDependency::argsHaveDeferredTemplateDependency(
+	const ChunkedVector<ASTNode>& args,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return ::argsHaveDeferredTemplateDependency(args, current_template_param_names);
+}
+
+bool ParserExpressionDependency::argTypesAreDeferredTemplateDependent(
+	std::span<const TypeSpecifierNode> arg_types,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return ::argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names);
 }
 
 std::optional<ASTNode> Parser::try_synthesize_atomic_builtin_overload(

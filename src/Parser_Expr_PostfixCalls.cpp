@@ -5,6 +5,7 @@
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "Parser_FunctionTypeHelpers.h"
+#include "ParserTemplateClassShared.h"
 #include "TemplateArgumentMaterialization.h"
 #include "TypeTraitEvaluator.h"
 #include <limits>

@@ -1,6 +1,7 @@
 #include "ExpressionSubstitutor.h"
 #include "CallNodeHelpers.h"
 #include "MemberFunctionLookupShared.h"
+#include "OverloadResolution.h"
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "TemplateArgumentMaterialization.h"
