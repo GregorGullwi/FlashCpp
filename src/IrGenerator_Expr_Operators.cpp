@@ -433,8 +433,10 @@ void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpe
 	value.cv_qualifier = param_type.cv_qualifier();
 	if (param_type.is_rvalue_reference()) {
 		value.ref_qualifier = ReferenceQualifier::RValueReference;
+		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 	} else if (param_type.is_reference()) {
 		value.ref_qualifier = ReferenceQualifier::LValueReference;
+		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 	} else {
 		value.ref_qualifier = ReferenceQualifier::None;
 	}

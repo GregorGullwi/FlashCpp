@@ -253,6 +253,12 @@ public:
 	void ensureCallableOperatorResolved(const CallExprNode& call_node);
 	ResolvedFunctionQueryResult getResolvedOpSubscriptQuery(const ArraySubscriptNode* key) const;
 	const FunctionDeclarationNode* getResolvedUnaryDereferenceOperator(const UnaryOperatorNode* key) const;
+	struct ResolvedUnaryOperatorCall {
+		const FunctionDeclarationNode* function = nullptr;
+		bool is_member = false;
+	};
+	const ResolvedUnaryOperatorCall* getResolvedUnaryAddressOfOperator(const UnaryOperatorNode* key) const;
+	void ensureUnaryAddressOfOperatorResolved(const UnaryOperatorNode& unary_node);
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const void* key) const;
 	ResolvedFunctionQueryResult getResolvedDirectCallQuery(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
@@ -615,6 +621,7 @@ private:
 	void tryResolveCallableOperator(const CallExprNode& call_node);
 	void tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key);
 	void tryResolveUnaryDereferenceOperator(const UnaryOperatorNode& unary_node);
+	void tryResolveUnaryAddressOfOperator(const UnaryOperatorNode& unary_node);
 
 	// Resolve operator[] for an ArraySubscriptNode whose object is a struct type.
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
@@ -668,6 +675,8 @@ private:
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const UnaryOperatorNode*, const FunctionDeclarationNode*> op_unary_deref_table_;
+	std::unordered_map<const UnaryOperatorNode*, ResolvedUnaryOperatorCall> op_unary_address_table_;
+	std::unordered_set<const UnaryOperatorNode*> analyzed_op_unary_address_queries_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
 	std::unordered_set<const void*> analyzed_op_call_queries_;
 	std::unordered_set<const void*> analyzed_direct_call_queries_;

@@ -7,6 +7,7 @@
 #include "ChunkedString.h"
 #include "TemplateTypes.h" // For FunctionSignatureKey
 #include "InlineVector.h"
+#include <array>
 #include <vector>
 #include <optional>
 #include <unordered_map>
@@ -1952,7 +1953,7 @@ inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& ar
 	return conversion.is_valid ? conversion.rank : ConversionRank::NoMatch;
 }
 
-inline ConversionRank rankImplicitObjectToBinaryOperator(
+inline ConversionRank rankImplicitObjectToOperator(
 	const TypeSpecifierNode& object_spec,
 	const StructMemberFunction& member_func,
 	TypeIndex actual_object_type_index,
@@ -1969,6 +1970,10 @@ inline ConversionRank rankImplicitObjectToBinaryOperator(
 	if (uses_base_member) {
 		return ConversionRank::Conversion;
 	}
+	if ((!object_spec.is_const() && member_func.is_const()) ||
+		(!object_spec.is_volatile() && member_func.is_volatile())) {
+		return ConversionRank::QualificationAdjustment;
+	}
 
 	return ConversionRank::ExactMatch;
 }
@@ -1979,6 +1984,46 @@ enum class BinaryOperatorCandidateComparison {
 	Equivalent,
 	Incomparable,
 };
+
+inline std::vector<ASTNode> collectFreeOperatorCandidates(
+	std::string_view operator_name,
+	std::span<const TypeSpecifierNode> operand_types,
+	const SymbolTable& symbol_table) {
+	auto overloads = symbol_table.lookup_all(operator_name);
+	std::vector<TypeSpecifierNode> adl_arg_types(operand_types.begin(), operand_types.end());
+	auto adl_candidates = symbol_table.lookup_adl(operator_name, adl_arg_types);
+
+	std::unordered_set<std::string_view> existing_mangled;
+	std::unordered_set<const FunctionDeclarationNode*> existing_ptrs;
+	existing_mangled.reserve(overloads.size());
+	existing_ptrs.reserve(overloads.size());
+	for (const ASTNode& node : overloads) {
+		if (!node.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& function = node.as<FunctionDeclarationNode>();
+		if (function.has_mangled_name()) {
+			existing_mangled.insert(function.mangled_name());
+		} else {
+			existing_ptrs.insert(&function);
+		}
+	}
+
+	for (ASTNode& candidate : adl_candidates) {
+		if (!candidate.is<FunctionDeclarationNode>()) {
+			overloads.push_back(std::move(candidate));
+			continue;
+		}
+		const auto& function = candidate.as<FunctionDeclarationNode>();
+		const bool is_duplicate = function.has_mangled_name()
+			? !existing_mangled.insert(function.mangled_name()).second
+			: !existing_ptrs.insert(&function).second;
+		if (!is_duplicate) {
+			overloads.push_back(std::move(candidate));
+		}
+	}
+	return overloads;
+}
 
 inline BinaryOperatorCandidateComparison compareBinaryOperatorCandidateRanks(
 	ConversionRank lhs_lhs_rank,
@@ -2042,6 +2087,114 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	return OperatorOverloadResult::no_overload();
 }
 
+// C++20 [over.match.oper]: member and non-member unary operator candidates form
+// one overload set. The operand expression supplies the implicit-object
+// conversion for members and the first-parameter conversion for non-members.
+inline OperatorOverloadResult findUnaryOperatorOverloadWithFreeFunction(
+	const TypeSpecifierNode& operand_type_spec,
+	OverloadableOperator operator_kind,
+	const SymbolTable& symbol_table) {
+	if (operator_kind == OverloadableOperator::None) {
+		return OperatorOverloadResult::no_overload();
+	}
+
+	struct UnaryOperatorCandidate {
+		ConversionRank rank = ConversionRank::NoMatch;
+		const StructMemberFunction* member_function = nullptr;
+		const FunctionDeclarationNode* free_function = nullptr;
+	};
+	std::vector<UnaryOperatorCandidate> candidates;
+
+	const TypeIndex operand_type_index = operand_type_spec.type_index();
+	const size_t type_info_count = getTypeInfoCount();
+	auto gatherMemberCandidates = [&](auto& self, TypeIndex owner_type_index) -> void {
+		if (!owner_type_index.is_valid() || owner_type_index.index() >= type_info_count) {
+			return;
+		}
+		const StructTypeInfo* struct_info = getTypeInfo(owner_type_index).getStructInfo();
+		if (struct_info == nullptr) {
+			return;
+		}
+
+		for (const StructMemberFunction& member_function : struct_info->member_functions) {
+			if (member_function.operator_kind != operator_kind ||
+				!member_function.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const auto& function = member_function.function_decl.as<FunctionDeclarationNode>();
+			if (!function.parameter_nodes().empty()) {
+				continue;
+			}
+			const ConversionRank rank = rankImplicitObjectToOperator(
+				operand_type_spec,
+				member_function,
+				operand_type_index,
+				owner_type_index);
+			if (rank != ConversionRank::NoMatch) {
+				candidates.push_back({rank, &member_function, nullptr});
+			}
+		}
+
+		for (const BaseClassSpecifier& base : struct_info->base_classes) {
+			self(self, base.type_index);
+		}
+	};
+	gatherMemberCandidates(gatherMemberCandidates, operand_type_index);
+
+	StringBuilder operator_name_builder;
+	operator_name_builder.append("operator").append(overloadableOperatorToString(operator_kind));
+	const std::array<TypeSpecifierNode, 1> operand_types{operand_type_spec};
+	const std::vector<ASTNode> free_candidates = collectFreeOperatorCandidates(
+		operator_name_builder.commit(),
+		operand_types,
+		symbol_table);
+	for (const ASTNode& candidate : free_candidates) {
+		if (!candidate.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& function = candidate.as<FunctionDeclarationNode>();
+		const auto& parameters = function.parameter_nodes();
+		if (parameters.size() != 1 || !parameters[0].is<DeclarationNode>()) {
+			continue;
+		}
+		const ASTNode& parameter_type_node = parameters[0].as<DeclarationNode>().type_node();
+		if (!parameter_type_node.is<TypeSpecifierNode>()) {
+			continue;
+		}
+		const ConversionRank rank = rankBinaryOperatorOperandMatch(
+			operand_type_spec,
+			parameter_type_node.as<TypeSpecifierNode>(),
+			operand_type_index);
+		if (rank != ConversionRank::NoMatch) {
+			candidates.push_back({rank, nullptr, &function});
+		}
+	}
+
+	if (candidates.empty()) {
+		return OperatorOverloadResult::no_overload();
+	}
+	const ConversionRank best_rank = std::ranges::min(
+		candidates,
+		{},
+		&UnaryOperatorCandidate::rank).rank;
+	const UnaryOperatorCandidate* best_candidate = nullptr;
+	for (const UnaryOperatorCandidate& candidate : candidates) {
+		if (candidate.rank != best_rank) {
+			continue;
+		}
+		if (best_candidate != nullptr) {
+			return OperatorOverloadResult::ambiguous();
+		}
+		best_candidate = &candidate;
+	}
+	if (best_candidate == nullptr) {
+		return OperatorOverloadResult::no_overload();
+	}
+	return best_candidate->free_function != nullptr
+		? OperatorOverloadResult(best_candidate->free_function)
+		: OperatorOverloadResult(best_candidate->member_function);
+}
+
 // Find binary operator overload in a struct type (member function form)
 // For binary operators like operator+, operator-, etc.
 // Returns the member function that overloads the given operator, or nullptr if not found
@@ -2095,7 +2248,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 			if (!param_type_node.is<TypeSpecifierNode>())
 				continue;
 
-			ConversionRank lhs_rank = rankImplicitObjectToBinaryOperator(
+			ConversionRank lhs_rank = rankImplicitObjectToOperator(
 				left_type_spec,
 				member_func,
 				left_type_index,
@@ -2232,7 +2385,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 			if (!param_type_node.is<TypeSpecifierNode>())
 				continue;
 
-			ConversionRank lhs_rank = rankImplicitObjectToBinaryOperator(
+			ConversionRank lhs_rank = rankImplicitObjectToOperator(
 				left_type_spec,
 				member_func,
 				left_type_index,
@@ -2260,61 +2413,11 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 
 	StringBuilder op_name_sb;
 	op_name_sb.append("operator").append(overloadableOperatorToString(operator_kind));
-	std::string_view op_func_name = op_name_sb.commit();
-	auto overloads = symbol_table.lookup_all(op_func_name);
-
-	// Also search associated namespaces via full ADL (hidden friends + regular
-	// namespace-scoped operators).  Per C++20 [over.match.oper]/2, ADL is
-	// performed for operator overload resolution when at least one operand has
-	// class/enum type.  We use lookup_adl() (not lookup_adl_only()) so that
-	// regular free-function operators in associated namespaces are found — not
-	// only hidden friends.  Deduplicate against the lookup_all() results above
-	// to avoid double-counting operators that are both in the current scope
-	// chain and in an associated namespace.
-	// Use mangled names for stable, semantically-correct identity comparison.
-	{
-		std::vector<TypeSpecifierNode> adl_arg_types;
-		adl_arg_types.push_back(left_type_spec);
-		adl_arg_types.push_back(right_type_spec);
-		auto adl_candidates = symbol_table.lookup_adl(op_func_name, adl_arg_types);
-
-		// Build a set of existing mangled names for O(1) dedup.
-		// Using std::string_view is safe: mangled names are interned in
-		// stable ChunkedStringAllocator storage (they never move).
-		// ASTNode stores a typed pointer handle, so &fd is stable across
-		// copies and vector reallocations — pointer dedup is a safe fallback
-		// for functions that do not yet have a mangled name.
-		std::unordered_set<std::string_view> existing_mangled;
-		std::unordered_set<const FunctionDeclarationNode*> existing_ptrs;
-		existing_mangled.reserve(overloads.size());
-		existing_ptrs.reserve(overloads.size());
-		for (const auto& node : overloads) {
-			if (node.is<FunctionDeclarationNode>()) {
-				const auto& fd = node.as<FunctionDeclarationNode>();
-				if (fd.has_mangled_name()) {
-					existing_mangled.insert(fd.mangled_name());
-				} else {
-					existing_ptrs.insert(&fd);
-				}
-			}
-		}
-		for (auto& cand : adl_candidates) {
-			if (cand.is<FunctionDeclarationNode>()) {
-				const auto& fd = cand.as<FunctionDeclarationNode>();
-				bool is_duplicate;
-				if (fd.has_mangled_name()) {
-					is_duplicate = !existing_mangled.insert(fd.mangled_name()).second;
-				} else {
-					is_duplicate = !existing_ptrs.insert(&fd).second;
-				}
-				if (!is_duplicate) {
-					overloads.push_back(std::move(cand));
-				}
-			} else {
-				overloads.push_back(std::move(cand));
-			}
-		}
-	}
+	const std::array<TypeSpecifierNode, 2> operand_types{left_type_spec, right_type_spec};
+	const std::vector<ASTNode> overloads = collectFreeOperatorCandidates(
+		op_name_sb.commit(),
+		operand_types,
+		symbol_table);
 
 	for (const auto& overload : overloads) {
 		if (!overload.is<FunctionDeclarationNode>())

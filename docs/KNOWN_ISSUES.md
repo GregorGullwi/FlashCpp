@@ -18,12 +18,6 @@ consistently diagnosed as compile errors yet.
   ambiguous between `void log(int, const char*)` and
   `void log(int, const char*, ...)`.
 
-## Operator overload resolution mismatch (`operator&`)
-The original `tests/test_operator_addressof_overload_baseline_ret99.cpp` behavior
-documented a conformance gap where unary `&` on class type did not reliably
-select overloaded `operator&` as required, effectively collapsing behavior toward
-`__builtin_addressof`.
-
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a

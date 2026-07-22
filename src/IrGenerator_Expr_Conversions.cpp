@@ -686,77 +686,27 @@ std::optional<ExprResult> AstToIr::decayLambdaStructToFunctionPointer(const Stru
 
 ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
 											ExpressionContext context) {
-		// OPERATOR OVERLOAD RESOLUTION
-		// For full standard compliance, operator& should call overloaded operator& if it exists.
-		// __builtin_addressof (marked with is_builtin_addressof flag) always bypasses overloads.
-	if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.op() == "&" &&
-		unaryOperatorNode.get_operand().is<ExpressionNode>()) {
-		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-
-			// For now, only handle simple identifiers
-		if (std::holds_alternative<IdentifierNode>(operandExpr)) {
-			const IdentifierNode& ident = std::get<IdentifierNode>(operandExpr);
-			StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident.name());
-
-			const DeclarationNode* decl = lookupDeclaration(identifier_handle);
-
-			if (decl) {
-				const TypeSpecifierNode* type_node = &decl->type_specifier_node();
-
-				if (type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
-						// Check for operator& overload
-					auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::BitwiseAnd);
-
-					if (overload_result.has_match) {
-							// Found an overload! Generate a member function call instead of built-in address-of
-						FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator& overload for type index {}",
-										 type_node->type_index());
-
-						const StructMemberFunction& member_func = *overload_result.member_overload;
-						const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-
-							// Get struct name for mangling
-						StringHandle struct_name = getTypeInfo(type_node->type_index()).name();
-
-							// Get the return type from the function declaration
-						const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
-
-							// Generate mangled name using the proper mangling infrastructure
-							// This handles both Itanium (Linux) and MSVC (Windows) name mangling
-						std::string_view operator_func_name = "operator&";
-						std::vector<TypeSpecifierNode> empty_params; // No explicit parameters (only implicit 'this')
-						std::vector<std::string_view> empty_namespace;
-						auto mangled_name = NameMangling::generateMangledName(
-							operator_func_name,
-							return_type,
-							empty_params,
-							false, // not variadic
-							struct_name,
-							empty_namespace,
-							Linkage::CPlusPlus,
-							member_func.is_const());
-
-							// Generate the call
-						TempVar ret_var = var_counter.next();
-
-						// Create CallOp — size resolution for struct/primitive types is handled
-						// inside populateCallReturnInfo, so no post-hoc fixup needed.
-						CallOp call_op = createCallOp(ret_var, StringHandle{}, return_type, true, false);
-						call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
-
-							// Add 'this' pointer as first argument
-						call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
-
-							// Capture return metadata before the move invalidates call_op.
-						SizeInBits ret_size_in_bits = call_op.return_size_in_bits;
-							// Add the function call instruction
-						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), unaryOperatorNode.get_token()));
-
-							// Return the result
-						return makeExprResult(return_type.type_index(), ret_size_in_bits, IrOperand{ret_var}, PointerDepth{static_cast<int>(return_type.pointer_depth())}, ValueStorage::ContainsData);
-					}
-				}
+	if (!unaryOperatorNode.is_builtin_addressof() && unaryOperatorNode.op() == "&") {
+		sema_.ensureUnaryAddressOfOperatorResolved(unaryOperatorNode);
+		if (const SemanticAnalysis::ResolvedUnaryOperatorCall* resolved_address =
+				sema_.getResolvedUnaryAddressOfOperator(&unaryOperatorNode)) {
+			if (resolved_address->is_member) {
+				ChunkedVector<ASTNode> member_args;
+				CallExprNode member_call = makeResolvedMemberCallExpr(
+					unaryOperatorNode.get_operand(),
+					*resolved_address->function,
+					std::move(member_args),
+					unaryOperatorNode.get_token());
+				return generateMemberFunctionCallIr(member_call, context);
 			}
+
+			ChunkedVector<ASTNode> free_args;
+			free_args.push_back(unaryOperatorNode.get_operand());
+			CallExprNode free_call = makeResolvedCallExpr(
+				*resolved_address->function,
+				std::move(free_args),
+				unaryOperatorNode.get_token());
+			return generateFunctionCallIr(free_call, context, &unaryOperatorNode);
 		}
 	}
 
@@ -2892,25 +2842,11 @@ std::optional<ExprResult> AstToIr::tryApplySemaCallArgReferenceBinding(ExprResul
 			}
 		}
 
-		if (std::holds_alternative<TempVar>(arg_result.value)) {
-			TempVar expr_var = std::get<TempVar>(arg_result.value);
-			bool is_already_address = false;
-			auto& metadata_storage = GlobalTempVarMetadataStorage::instance();
-			if (metadata_storage.hasMetadata(expr_var)) {
-				TempVarMetadata metadata = metadata_storage.getMetadata(expr_var);
-				is_already_address = metadata.category == ValueCategory::LValue ||
-									 metadata.category == ValueCategory::XValue;
-			}
-			if (is_already_address) {
-				return arg_result;
-			}
-
-			TempVar addr_var = emitAddressOf(
-				arg_result.category(),
-				arg_result.size_in_bits.value,
-				IrValue(expr_var),
+		if (arg_expr.is<ExpressionNode>()) {
+			return materializeAddressResult(
+				arg_expr.as<ExpressionNode>(),
+				arg_result,
 				source_token);
-			return makeExprResult(arg_result.type_index, SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		return std::nullopt;
