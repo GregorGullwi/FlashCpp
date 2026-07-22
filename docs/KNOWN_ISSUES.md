@@ -8,16 +8,6 @@ appears to be a default-constructed `ConstructorDeclarationNode` whose `InlineVe
 data pointer is never initialized — the Sharded build's different TU arrangement
 happens to zero the memory. See `Parser_Templates_Inst_MemberFunc.cpp:1394`.
 
-## Missing ambiguity diagnostics in overload resolution
-Some overload sets that are ill-formed in standard C++20 due to ambiguity are not
-consistently diagnosed as compile errors yet.
-
-- `tests/test_operator_member_tiebreak_ret0.cpp` (original form): both member and
-  non-member `operator+` are viable for `lhs + rhs`; this should be ambiguous.
-- `tests/test_variadic_overload.cpp` (original form): `log(2, "Test")` is
-  ambiguous between `void log(int, const char*)` and
-  `void log(int, const char*, ...)`.
-
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a

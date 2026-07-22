@@ -184,7 +184,8 @@ public:
 						const auto& existing_params = existing_func->parameter_nodes();
 
 						// Check if parameter counts match
-						if (new_params.size() == existing_params.size()) {
+						if (new_params.size() == existing_params.size() &&
+							new_func->is_variadic() == existing_func->is_variadic()) {
 							// Check if all parameter types match
 							bool all_match = true;
 							for (size_t j = 0; j < new_params.size(); ++j) {
@@ -235,7 +236,8 @@ public:
 													const auto& ns_params = ns_func->parameter_nodes();
 
 													// Check if this is the same signature
-													if (ns_params.size() == new_params.size()) {
+													if (ns_params.size() == new_params.size() &&
+														ns_func->is_variadic() == new_func->is_variadic()) {
 														bool params_match = true;
 														for (size_t m = 0; m < ns_params.size(); ++m) {
 															const auto& ns_param_type = ns_params[m].as<DeclarationNode>().type_specifier_node();
