@@ -82,6 +82,9 @@ inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
 	if (!type_spec.has_function_signature() && resolved_alias.function_signature.has_value()) {
 		type_spec.set_function_signature(*resolved_alias.function_signature);
 	}
+	if (!type_spec.has_member_class() && resolved_alias.member_class_name.has_value()) {
+		type_spec.set_member_class_name(*resolved_alias.member_class_name);
+	}
 	if (!resolved_alias.array_dimensions.empty()) {
 		const std::span<const size_t> type_dimensions = type_spec.array_dimensions();
 		InlineVector<size_t, 4> array_dimensions;
@@ -193,6 +196,45 @@ inline FunctionSignature substituteTemplateFunctionSignature(
 }
 
 template <typename ParamContainer, typename ArgContainer>
+inline StringHandle substituteTemplateMemberFunctionOwner(
+	StringHandle original_owner,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	StringHandle substituted_owner = original_owner;
+	// The declarator stores the scoped template-parameter handle as its owner.
+	// Resolve that exact binding here while both the declaration and argument are
+	// available; consumers must not rediscover an owner through symbol/name scans.
+	forEachNonPackTemplateParamArgBinding(
+		template_params,
+		template_args,
+		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+			if (param.kind() != TemplateParameterKind::Type ||
+				param.nameHandle() != original_owner ||
+				templateArgIsStructurallyDependent(arg)) {
+				return;
+			}
+			if (!arg.isTypeArgument()) {
+				throw InternalError(
+					"Member-function-pointer owner was bound to a non-type template argument");
+			}
+
+			const TypeIndex owner_type_index =
+				FlashCpp::canonicalizeTemplateIdentityTypeIndex(arg.type_index);
+			const TypeInfo* owner_type_info = tryGetTypeInfo(owner_type_index);
+			if (owner_type_info == nullptr) {
+				throw InternalError(
+					"Concrete member-function-pointer owner is missing canonical class type metadata");
+			}
+			if (!owner_type_info->isStruct()) {
+				throw CompileError(
+					"Member-function-pointer owner must be a class or union type");
+			}
+			substituted_owner = owner_type_info->name();
+		});
+	return substituted_owner;
+}
+
+template <typename ParamContainer, typename ArgContainer>
 inline void materializeSubstitutedFunctionTypeMetadata(
 	TypeSpecifierNode& substituted_type,
 	const TypeSpecifierNode& original_type,
@@ -235,8 +277,22 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 		throw InternalError(
 			"Concrete function pointer type is missing canonical FunctionSignature metadata");
 	}
-	substituted_type.set_function_signature(substituteTemplateFunctionSignature(
-		*signature, template_params, template_args));
+	FunctionSignature substituted_signature = substituteTemplateFunctionSignature(
+		*signature, template_params, template_args);
+	if (substituted_category == TypeCategory::MemberFunctionPointer) {
+		StringHandle original_owner = substituted_type.has_member_class()
+			? substituted_type.member_class_name()
+			: substituted_signature.class_name;
+		if (!original_owner.isValid()) {
+			throw InternalError(
+				"Concrete member function pointer is missing canonical owner metadata");
+		}
+		const StringHandle substituted_owner = substituteTemplateMemberFunctionOwner(
+			original_owner, template_params, template_args);
+		substituted_type.set_member_class_name(substituted_owner);
+		substituted_signature.class_name = substituted_owner;
+	}
+	substituted_type.set_function_signature(substituted_signature);
 }
 
 inline std::optional<FunctionSignature> getCanonicalFunctionPointerSignature(

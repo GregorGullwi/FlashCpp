@@ -342,34 +342,65 @@ ParseResult Parser::parse_type_and_name() {
 						if (peek() == "("_tok) {
 							// This is a pointer-to-member-function declaration!
 							FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Detected pointer-to-member-function: {} ({}::*{})()",
-											 type_spec.token().value(), class_name_token.value(), identifier_token.value());
+										 type_spec.token().value(), class_name_token.value(), identifier_token.value());
 
-							// Skip the function parameter list by counting parentheses
 							advance(); // consume '('
-							int paren_depth = 1;
-							while (paren_depth > 0 && !peek().is_eof()) {
-								if (peek() == "("_tok) {
-									paren_depth++;
-								} else if (peek() == ")"_tok) {
-									paren_depth--;
-								}
-								advance();
+							std::vector<TypeIndex> parameter_types;
+							bool is_variadic = false;
+							ParseResult parameter_result = parse_function_pointer_parameter_types(
+								parameter_types, is_variadic);
+							if (parameter_result.is_error()) {
+								return parameter_result;
+							}
+							if (!consume(")"_tok)) {
+								return ParseResult::error(
+									"Expected ')' after member function pointer parameter list",
+									current_token_);
 							}
 
-							// Skip any cv-qualifiers after the function parameters
-							// e.g., _Ret (_Tp::*__pf)() const
+							bool is_const = false;
+							bool is_volatile = false;
+							ReferenceQualifier function_ref_qualifier = ReferenceQualifier::None;
+							bool is_noexcept = false;
 							while (!peek().is_eof()) {
 								std::string_view tok = peek_info().value();
-								if (tok == "const" || tok == "volatile" || tok == "noexcept") {
+								if (tok == "const") {
+									is_const = true;
 									advance();
+								} else if (tok == "volatile") {
+									is_volatile = true;
+									advance();
+								} else if (tok == "&") {
+									function_ref_qualifier = ReferenceQualifier::LValueReference;
+									advance();
+								} else if (tok == "&&") {
+									function_ref_qualifier = ReferenceQualifier::RValueReference;
+									advance();
+								} else if (tok == "noexcept") {
+									advance();
+									is_noexcept = parse_noexcept_value();
 								} else {
 									break;
 								}
 							}
 
-							// Set up the type as a pointer-to-member-function
+							FunctionSignature signature;
+							signature.return_type_index = type_spec.type_index();
+							signature.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+							signature.return_reference_qualifier = type_spec.reference_qualifier();
+							signature.parameter_type_indices = std::move(parameter_types);
+							signature.calling_convention = last_calling_convention_;
+							signature.is_variadic = is_variadic;
+							signature.is_const = is_const;
+							signature.is_volatile = is_volatile;
+							signature.function_reference_qualifier = function_ref_qualifier;
+							signature.is_noexcept = is_noexcept;
+
+							type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+							type_spec.set_size_in_bits(64);
+							type_spec.limit_pointer_depth(0);
 							type_spec.set_member_class_name(class_name_token.handle());
-							type_spec.add_pointer_level(CVQualifier::None);
+							type_spec.set_function_signature(signature);
 
 							// Create declaration node
 							auto decl_node = emplace_node<DeclarationNode>(

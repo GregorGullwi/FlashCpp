@@ -72,9 +72,16 @@ signature as an internal producer error. Reading the original pattern and its
 bound argument during substitution is part of the semantic substitution step;
 doing the same lookup later from a member consumer would be recovery.
 
+The third slice made member-function-pointer declarations produce a complete
+callable type instead of a pointer-shaped approximation, substitutes a dependent
+owner from the active semantic template binding, and preserves the canonical
+signature when a qualified member expression is typed. Distinct concrete owner
+classes now remain distinct through `decltype`, type traits, and mangling without
+late owner-name recovery.
+
 The current representation can fail for alias-category function pointers, packs,
-transformed template parameters, dependent member-function-pointer owners,
-dependent `noexcept` expressions, and nested callable parameter/return types.
+transformed template parameters, dependent `noexcept` expressions, and nested
+callable parameter/return types.
 Missing metadata is often detected only during indirect-call code generation;
 stale metadata can instead affect specialization identity, mangling, or ABI
 lowering without an immediate error.

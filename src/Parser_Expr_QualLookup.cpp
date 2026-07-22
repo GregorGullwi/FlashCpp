@@ -3502,6 +3502,18 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 							member_type.set_reference_qualifier(member_result.member->reference_qualifier);
 						}
+						if (member_result.member->function_signature.has_value()) {
+							const FunctionSignature& signature =
+								*member_result.member->function_signature;
+							if (member_type.is_member_function_pointer()) {
+								if (!signature.class_name.isValid()) {
+									throw InternalError(
+										"Canonical member function pointer is missing owner metadata");
+								}
+								member_type.set_member_class_name(signature.class_name);
+							}
+							member_type.set_function_signature(signature);
+						}
 						return member_type;
 					}
 				}
