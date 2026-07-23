@@ -2385,11 +2385,7 @@ public:
 	std::string_view name() const { return identifier_.value(); }
 	StringHandle nameHandle() const { return identifier_.handle(); }
 	StringHandle getOrInternNameHandle() const {
-		StringHandle handle = identifier_.handle();
-		if (!handle.isValid()) {
-			handle = StringTable::getOrInternStringHandle(identifier_.value());
-		}
-		return handle;
+		return identifier_.getOrInternHandle();
 	}
 	const Token& identifier_token() const { return identifier_; }
 	std::optional<Token> try_get_parent_token() { return parent_token_; }

@@ -33,6 +33,18 @@ public:
 	Type type() const { return type_; }
 	std::string_view value() const { return value_; }
 	StringHandle handle() const { return handle_; }
+	// Prefer the constructor-interned handle. Never call createStringHandle() on
+	// token spellings — that allocates a duplicate entry and overwrites the intern
+	// map, leaving already-lexed Tokens with stale handles for the same spelling.
+	StringHandle getOrInternHandle() const {
+		if (handle_.isValid()) {
+			return handle_;
+		}
+		if (value_.empty()) {
+			return StringHandle{};
+		}
+		return StringTable::getOrInternStringHandle(value_);
+	}
 	size_t line() const { return line_; }
 	size_t column() const { return column_; }
 	size_t file_index() const { return file_index_; }

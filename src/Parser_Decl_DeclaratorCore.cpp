@@ -799,16 +799,9 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 			return ParseResult::error("Expected identifier in structured binding", current_token_);
 		}
 
-		Token id_token = peek_info();
-		// Prefer the token's existing interned handle. createStringHandle() would allocate a
-		// duplicate entry and overwrite the intern map, leaving any already-lexed Tokens
-		// (including those from lexer pretokenization) with stale handles for the same spelling.
-		StringHandle id_handle = id_token.handle();
-		if (!id_handle.isValid()) {
-			id_handle = StringTable::getOrInternStringHandle(id_token.value());
-		}
+		Token id_token = advance();
+		StringHandle id_handle = id_token.getOrInternHandle();
 		identifiers.push_back(id_handle);
-		advance(); // consume identifier
 
 		FLASH_LOG(Parser, Debug, "parse_structured_binding: Parsed identifier: ", StringTable::getStringView(id_handle));
 
