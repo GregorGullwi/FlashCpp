@@ -260,65 +260,62 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 		}
 	};
 	if (signature.hasStructuredTypes()) {
-		substitute_function_type(signature.return_type());
-		signature.return_type_index = signature.return_type().type_index;
+		signature.updateReturnType(substitute_function_type);
 	}
 	if (!signature.parameter_types().empty()) {
-		std::vector<FunctionType> substituted_parameter_types;
-		for (FunctionType& parameter_type : signature.parameter_types()) {
-			bool expanded_pack = false;
-			if (parameter_type.is_pack_expansion &&
-				parameter_type.template_parameter_name.isValid()) {
-				size_t arg_index = 0;
-				for (size_t param_index = 0;
-					 param_index < template_params.size();
-					 ++param_index) {
-					const TemplateParameterNode* template_param =
-						tryGetTemplateParameterNode(template_params[param_index]);
-					if (template_param == nullptr) {
-						continue;
-					}
-					if (!template_param->is_variadic()) {
-						++arg_index;
-						continue;
-					}
-					const size_t remaining_args = arg_index < template_args.size()
-						? template_args.size() - arg_index
-						: 0;
-					const size_t required_after =
-						countRequiredTemplateArgsAfter<ParamContainer, ArgContainer>(
-							template_params, param_index + 1);
-					const size_t pack_size = remaining_args > required_after
-						? remaining_args - required_after
-						: 0;
-					if (template_param->nameHandle() ==
-						parameter_type.template_parameter_name) {
-						for (size_t pack_index = 0; pack_index < pack_size; ++pack_index) {
-							FunctionType expanded_type = parameter_type;
-							expanded_type.is_pack_expansion = false;
-							apply_template_argument(
-								expanded_type,
-								template_args[arg_index + pack_index]);
-							substituted_parameter_types.push_back(
-								std::move(expanded_type));
+		signature.updateParameterTypes([&](InlineVector<FunctionType, 4>& parameter_types) {
+			InlineVector<FunctionType, 4> substituted_parameter_types;
+			substituted_parameter_types.reserve(parameter_types.size());
+			for (FunctionType& parameter_type : parameter_types) {
+				bool expanded_pack = false;
+				if (parameter_type.is_pack_expansion &&
+					parameter_type.template_parameter_name.isValid()) {
+					size_t arg_index = 0;
+					for (size_t param_index = 0;
+						 param_index < template_params.size();
+						 ++param_index) {
+						const TemplateParameterNode* template_param =
+							tryGetTemplateParameterNode(template_params[param_index]);
+						if (template_param == nullptr) {
+							continue;
 						}
-						expanded_pack = true;
-						break;
+						if (!template_param->is_variadic()) {
+							++arg_index;
+							continue;
+						}
+						const size_t remaining_args = arg_index < template_args.size()
+							? template_args.size() - arg_index
+							: 0;
+						const size_t required_after =
+							countRequiredTemplateArgsAfter<ParamContainer, ArgContainer>(
+								template_params, param_index + 1);
+						const size_t pack_size = remaining_args > required_after
+							? remaining_args - required_after
+							: 0;
+						if (template_param->nameHandle() ==
+							parameter_type.template_parameter_name) {
+							for (size_t pack_index = 0; pack_index < pack_size; ++pack_index) {
+								FunctionType expanded_type = parameter_type;
+								expanded_type.is_pack_expansion = false;
+								apply_template_argument(
+									expanded_type,
+									template_args[arg_index + pack_index]);
+								substituted_parameter_types.push_back(
+									std::move(expanded_type));
+							}
+							expanded_pack = true;
+							break;
+						}
+						arg_index += pack_size;
 					}
-					arg_index += pack_size;
+				}
+				if (!expanded_pack) {
+					substitute_function_type(parameter_type);
+					substituted_parameter_types.push_back(std::move(parameter_type));
 				}
 			}
-			if (!expanded_pack) {
-				substitute_function_type(parameter_type);
-				substituted_parameter_types.push_back(std::move(parameter_type));
-			}
-		}
-		signature.parameter_types() = std::move(substituted_parameter_types);
-		signature.parameter_type_indices.clear();
-		signature.parameter_type_indices.reserve(signature.parameter_types().size());
-		for (const FunctionType& parameter_type : signature.parameter_types()) {
-			signature.parameter_type_indices.push_back(parameter_type.type_index);
-		}
+			parameter_types = std::move(substituted_parameter_types);
+		});
 	}
 	signature.return_type_index = substituteTemplateParameterTypeIndex(
 		signature.return_type_index,
