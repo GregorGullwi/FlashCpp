@@ -1493,33 +1493,69 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 	return ParseResult::success(*result);
 }
 
-ParseResult Parser::applyPointerToMemberPostfixAfterDotOrArrow(
-	std::optional<ASTNode>& result,
-	Token operator_token,
-	bool is_arrow) {
-	if (peek() != "*"_tok) {
-		return ParseResult();
+// True when peek is '.' or '->' immediately followed by '*' (.* / ->*).
+// Does not consume tokens.
+bool Parser::peek_is_pointer_to_member_operator() {
+	const bool is_dot = peek().is_punctuator() && peek() == "."_tok;
+	const bool is_arrow = peek() == "->"_tok;
+	if (!is_dot && !is_arrow) {
+		return false;
 	}
-	advance(); // consume '*'
+	SaveHandle saved = save_token_position();
+	advance(); // tentatively consume '.' or '->'
+	const bool is_pm = peek() == "*"_tok;
+	restore_token_position(saved);
+	return is_pm;
+}
 
-	ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
-	if (member_ptr_result.is_error()) {
-		return member_ptr_result;
-	}
-	if (!member_ptr_result.node().has_value()) {
-		return ParseResult::error(
-			is_arrow ? "Expected expression after '->*' operator" : "Expected expression after '.*' operator",
-			current_token_);
+// Apply pointer-to-member operators (.* / ->*) per C++ [expr.mptr.oper].
+// Not a postfix operator: binds weaker than unary/cast, stronger than multiplicative.
+// RHS is a cast-expression (parse_unary_expression), left-associative.
+ParseResult Parser::apply_pointer_to_member_operators(ASTNode start_result, ExpressionContext context) {
+	std::optional<ASTNode> result = start_result;
+
+	constexpr int MAX_PM_ITERATIONS = 100;
+	int pm_iteration = 0;
+	while (result.has_value() && !peek().is_eof() && pm_iteration < MAX_PM_ITERATIONS) {
+		++pm_iteration;
+
+		if (!peek_is_pointer_to_member_operator()) {
+			break;
+		}
+
+		const bool is_arrow = peek() == "->"_tok;
+		Token operator_token = peek_info();
+		advance(); // consume '.' or '->'
+		advance(); // consume '*'
+
+		ParseResult member_ptr_result = parse_unary_expression(context);
+		if (member_ptr_result.is_error()) {
+			return member_ptr_result;
+		}
+		if (!member_ptr_result.node().has_value()) {
+			return ParseResult::error(
+				is_arrow ? "Expected expression after '->*' operator" : "Expected expression after '.*' operator",
+				current_token_);
+		}
+
+		result = emplace_node<ExpressionNode>(
+			PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_token, is_arrow));
 	}
 
-	result = emplace_node<ExpressionNode>(
-		PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_token, is_arrow));
-	return ParseResult::success(*result);
+	if (pm_iteration >= MAX_PM_ITERATIONS) {
+		return ParseResult::error("Parser error: too many pointer-to-member operator iterations", current_token_);
+	}
+
+	if (result.has_value()) {
+		return ParseResult::success(*result);
+	}
+	return ParseResult();
 }
 
 // Apply postfix operators (., ->, [], (), ++, --) to an existing expression result
 // This allows cast expressions (static_cast, dynamic_cast, etc.) to be followed by member access
 // e.g., static_cast<T&&>(t).operator<=>(u)
+// Note: .* / ->* are NOT postfix — see apply_pointer_to_member_operators.
 ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 	std::optional<ASTNode> result = start_result;
 
@@ -1545,20 +1581,16 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			}
 		}
 
-		// Check for member access (. or ->), including pointer-to-member (.* or ->*)
+		// Check for member access (. or ->). Pointer-to-member (.* / ->*) is handled
+		// by apply_pointer_to_member_operators after unary/cast, not here.
 		if ((peek().is_punctuator() && peek() == "."_tok) || peek() == "->"_tok) {
-			Token member_operator_token = peek_info();
-			const bool is_arrow = member_operator_token.value() == "->";
-			advance(); // consume '.' or '->'
+			// Leave '.'/'->' + '*' for the pm-expression layer.
+			if (peek_is_pointer_to_member_operator()) {
+				break;
+			}
 
-			ParseResult pointer_to_member_result =
-				applyPointerToMemberPostfixAfterDotOrArrow(result, member_operator_token, is_arrow);
-			if (pointer_to_member_result.is_error()) {
-				return pointer_to_member_result;
-			}
-			if (pointer_to_member_result.has_value()) {
-				continue;
-			}
+			Token member_operator_token = peek_info();
+			advance(); // consume '.' or '->'
 
 			ParseResult member_result = parse_member_postfix(result, member_operator_token);
 			if (member_result.is_error()) {
@@ -2966,33 +2998,19 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 		}
 
-		// Check for member access operator . or -> (or pointer-to-member .* or ->*)
+		// Check for member access operator . or ->.
+		// Pointer-to-member (.* / ->*) is handled by apply_pointer_to_member_operators
+		// after unary/cast (C++ [expr.mptr.oper]), not as postfix.
 		Token operator_start_token;	// Track the operator token for error reporting
 
-		if (peek() == "."_tok) {
-			operator_start_token = peek_info();
-			advance(); // consume '.'
+		if (peek() == "."_tok || peek() == "->"_tok) {
+			// Leave '.'/'->' + '*' for the pm-expression layer.
+			if (peek_is_pointer_to_member_operator()) {
+				break;
+			}
 
-			ParseResult pointer_to_member_result =
-				applyPointerToMemberPostfixAfterDotOrArrow(result, operator_start_token, false);
-			if (pointer_to_member_result.is_error()) {
-				return pointer_to_member_result;
-			}
-			if (pointer_to_member_result.has_value()) {
-				continue;
-			}
-		} else if (peek() == "->"_tok) {
 			operator_start_token = peek_info();
-			advance(); // consume '->'
-
-			ParseResult pointer_to_member_result =
-				applyPointerToMemberPostfixAfterDotOrArrow(result, operator_start_token, true);
-			if (pointer_to_member_result.is_error()) {
-				return pointer_to_member_result;
-			}
-			if (pointer_to_member_result.has_value()) {
-				continue;
-			}
+			advance(); // consume '.' or '->'
 
 			// Note: We don't transform ptr->member to (*ptr).member here anymore.
 			// Instead, we pass the is_arrow flag to MemberAccessNode, and CodeGen will

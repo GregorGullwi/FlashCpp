@@ -1,7 +1,8 @@
 // Regression: static_cast followed by pointer-to-member access (.* / ->*)
 // MSVC type_traits _Invoker_pmf_object uses:
 //   (static_cast<_Ty1&&>(_Arg1).*_Pmf)(...)
-// apply_postfix_operators must handle .* after cast expressions.
+// .* / ->* are pm-expressions ([expr.mptr.oper]), applied after unary/cast
+// by apply_pointer_to_member_operators — not postfix.
 
 template <class Decayed, class Ty1, class... Types2>
 struct Invoker {

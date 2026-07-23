@@ -36,7 +36,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.76s (`TOTAL`) / ~5.13s wall (retested 2026-05-27, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded `rebind`. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile/Codegen Error | >40s in focused retest (2026-07-23, Windows/MSVC STL 14.44). Moved past `__msvc_ranges_to.hpp:429` noexcept/`this` parse stop; now progresses into deep template/codegen. |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~1534s compile-only / >25 min (retested 2026-07-23, Windows/MSVC STL 14.44). Parse/noexcept stops fixed; full compile now exhausts template depth on variadic `invoke` / `operator()` recursion. |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4559ms (retested 2026-04-11). |
 | `<sstream>` | `test_std_sstream.cpp` | 💥 Crash | ~4565ms (retested 2026-04-11). |
 | `<fstream>` | `test_std_fstream.cpp` | 💥 Crash | ~4642ms (retested 2026-04-11). |
@@ -105,7 +105,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 Fixes landed (parser / early semantic layer):
 
-- **`apply_postfix_operators` now handles `.*` / `->*` after cast expressions.** `static_cast<T>(obj).*pmf` inside function bodies and noexcept operands no longer stops with `Expected member name after '.'`. Shared helper: `applyPointerToMemberPostfixAfterDotOrArrow`.
+- **Pointer-to-member (`.*` / `->*`) is a pm-expression layer after unary/cast**, not postfix. `apply_pointer_to_member_operators` applies left-associative `.*`/`->*` with cast-expression RHS so `static_cast<T>(obj).*pmf`, `*p.*pm`, and `a.*pm * n` follow C++ [expr.mptr.oper].
 - **`tryParseExplicitTemplateBraceInitialization` centralizes `Template<Args>{...}` brace-init parsing** for dependent and concrete template-ids, including injected-class-name cases inside class templates. Both the early qualified/unqualified template-id paths and the general explicit-template-argument path call it.
 - **Dependent `noexcept(expr)` on member functions defers instead of hard-erroring** when constexpr evaluation fails but the surrounding template context is still dependent (`apply_parsed_function_noexcept` now mirrors `apply_parsed_function_type_qualifiers`).
 - **`this` is accepted while parsing member declarations inside a struct context**, so noexcept operands like `noexcept(_Call(std::move(*this), ...))` parse before the member-function context stack is pushed.
@@ -124,7 +124,7 @@ Validation snapshot (`x64/Sharded/FlashCppMSVC.exe`, Windows/MSVC STL 14.44; run
 | `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~4.6s | Was failing at `type_traits:1586` (`.*` after `static_cast` in `_Invoker_pmf_object` noexcept); now compiles/links/returns 0. |
 | `<concepts>` (`test_std_concepts.cpp`) | ✅ Pass | ~4.3s | Control retest still passes. |
 | `<iterator>` (`test_std_iterator.cpp`) | ❌ Codegen error | ~15.8s | Parse/noexcept regressions fixed. Current stops: `ranges::empty` overload viability (non-fatal template noise) and `view_interface` codegen: `Runtime aggregate value requires complete canonical layout metadata`. |
-| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile/codegen (in progress) | >40s in focused retest | No longer stops at `__msvc_ranges_to.hpp:429` `Expected ')' after noexcept expression`; retest reaches deep template/codegen (deferred `_Conjunction` base warnings, then later phases). Full runner retest still pending. |
+| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile/codegen (in progress) | ~1534s compile-only (`FlashCppMSVC.exe --timing`, 2026-07-23) | No longer stops at `__msvc_ranges_to.hpp:429` `Expected ')' after noexcept expression`. Full retest runs ~25.5 min and then hits repeated `Failed to instantiate template function: invoke` plus `try_instantiate_template recursion depth exceeded 64` for `operator()`. |
 | `<utility>` (`test_std_utility.cpp`) | ❌ Codegen error | ~3.7s | Reaches deferred `std::swap` / `three_way_comparable_with` / `pair` category-31 codegen after parsing `<type_traits>`. |
 
 Net movement: `<type_traits>` regressed to a hard parse failure on current branch before this work and is green again; `<iterator>` moved from parse/noexcept into codegen; `<ranges>` moved past the shared `type_traits` / `__msvc_ranges_to.hpp` noexcept parse stop.

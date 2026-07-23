@@ -398,6 +398,16 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		return result;
 	}
 
+	// Pointer-to-member (.* / ->*) binds weaker than unary/cast and stronger than
+	// multiplicative operators. Apply it here so every Pratt entry (including
+	// high min-precedence RHS parses) still forms pm-expressions correctly.
+	if (result.node().has_value()) {
+		result = apply_pointer_to_member_operators(*result.node(), context);
+		if (result.is_error()) {
+			return result;
+		}
+	}
+
 	auto isParserAtSameToken = [](const Token& lhs, const Token& rhs) {
 		return lhs.type() == rhs.type() &&
 			   lhs.value() == rhs.value() &&
@@ -1184,6 +1194,11 @@ int Parser::get_operator_precedence(const std::string_view& op) {
 	// C++ operator precedence (higher number = higher precedence)
 	// Standard precedence order: Shift > Three-Way (<=>)  > Relational
 	static const std::unordered_map<std::string_view, int> precedence_map = {
+			// Pointer-to-member (precedence 18) — above multiplicative.
+			// Lexer emits '.'/'->' + '*' separately; handled in apply_pointer_to_member_operators.
+			// Entries kept for documentation / fold-operator completeness if fused later.
+		{".*", 18},
+		{"->*", 18},
 			// Multiplicative (precedence 17)
 		{"*", 17},
 		{"/", 17},
