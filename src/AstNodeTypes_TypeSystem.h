@@ -1121,13 +1121,18 @@ struct FunctionType {
 	std::shared_ptr<FunctionSignature> callable_signature;
 };
 
+// Heap-backed structured callable components. Kept off FunctionSignature's
+// inline footprint so TemplateTypeArg / TypeSpecifierNode stack frames stay
+// small enough for deep class-template recursion on Linux's ~8-16MB stack.
+struct FunctionCallableTypes {
+	FunctionType return_type{};
+	std::vector<FunctionType> parameter_types;
+};
+
 // Function signature for function pointers
 struct FunctionSignature {
-	FunctionType return_type;
-	std::vector<FunctionType> parameter_types;
-
 	// Lowering-facing projections. Semantic identity and substitution use the
-	// structured components above when present.
+	// structured components below when present.
 	TypeIndex return_type_index{};
 	int return_pointer_depth = 0;
 	ReferenceQualifier return_reference_qualifier = ReferenceQualifier::None;
@@ -1141,20 +1146,41 @@ struct FunctionSignature {
 	ReferenceQualifier function_reference_qualifier = ReferenceQualifier::None;
 	bool is_noexcept = false;
 	std::optional<ExpressionHandle> noexcept_expression; // Retained until dependent noexcept(expr) is substituted.
+	std::shared_ptr<FunctionCallableTypes> callable_types;
 
 	// Accessor helpers
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returns_reference() const { return return_reference_qualifier != ReferenceQualifier::None; }
 	bool returns_rvalue_reference() const { return return_reference_qualifier == ReferenceQualifier::RValueReference; }
 	bool hasStructuredTypes() const {
-		return return_type.type_index.category() != TypeCategory::Invalid;
+		return callable_types != nullptr &&
+			callable_types->return_type.type_index.category() != TypeCategory::Invalid;
+	}
+
+	FunctionType& return_type() {
+		ensureCallableTypes();
+		return callable_types->return_type;
+	}
+	const FunctionType& return_type() const {
+		static const FunctionType empty{};
+		return callable_types ? callable_types->return_type : empty;
+	}
+
+	std::vector<FunctionType>& parameter_types() {
+		ensureCallableTypes();
+		return callable_types->parameter_types;
+	}
+	const std::vector<FunctionType>& parameter_types() const {
+		static const std::vector<FunctionType> empty{};
+		return callable_types ? callable_types->parameter_types : empty;
 	}
 
 	void setReturnType(FunctionType type) {
 		return_type_index = type.type_index;
 		return_pointer_depth = static_cast<int>(type.pointer_qualifiers.size());
 		return_reference_qualifier = type.reference_qualifier;
-		return_type = std::move(type);
+		ensureCallableTypes();
+		callable_types->return_type = std::move(type);
 	}
 
 	void setParameterTypes(std::vector<FunctionType> types) {
@@ -1163,7 +1189,19 @@ struct FunctionSignature {
 		for (const FunctionType& type : types) {
 			parameter_type_indices.push_back(type.type_index);
 		}
-		parameter_types = std::move(types);
+		ensureCallableTypes();
+		callable_types->parameter_types = std::move(types);
+	}
+
+private:
+	void ensureCallableTypes() {
+		if (!callable_types) {
+			callable_types = std::make_shared<FunctionCallableTypes>();
+			return;
+		}
+		if (callable_types.use_count() > 1) {
+			callable_types = std::make_shared<FunctionCallableTypes>(*callable_types);
+		}
 	}
 };
 

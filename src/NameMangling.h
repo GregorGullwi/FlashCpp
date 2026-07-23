@@ -288,7 +288,7 @@ inline TypeSpecifierNode buildFunctionTypeComponentForMangling(
 inline TypeSpecifierNode buildFunctionSignatureReturnTypeForMangling(
 	const FunctionSignature& sig) {
 	if (sig.hasStructuredTypes()) {
-		return buildFunctionTypeComponentForMangling(sig.return_type);
+		return buildFunctionTypeComponentForMangling(sig.return_type());
 	}
 	TypeSpecifierNode return_type(
 		resolveTypeAliasIndex(sig.return_type_index),
@@ -308,10 +308,10 @@ inline void appendMsvcFunctionSignatureTypeCode(
 	output += 'A';
 	appendTypeCode(output, buildFunctionSignatureReturnTypeForMangling(sig));
 	if (sig.hasStructuredTypes()) {
-		if (sig.parameter_types.empty()) {
+		if (sig.parameter_types().empty()) {
 			output += 'X';
 		} else {
-			for (const FunctionType& parameter_type : sig.parameter_types) {
+			for (const FunctionType& parameter_type : sig.parameter_types()) {
 				appendTypeCode(
 					output,
 					buildFunctionTypeComponentForMangling(parameter_type)
@@ -1194,10 +1194,10 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		appendItaniumTypeCode(
 			output, buildFunctionSignatureReturnTypeForMangling(sig), false);
 		if (sig.hasStructuredTypes()) {
-			if (sig.parameter_types.empty()) {
+			if (sig.parameter_types().empty()) {
 				output += 'v';
 			} else {
-				for (const FunctionType& parameter_type : sig.parameter_types) {
+				for (const FunctionType& parameter_type : sig.parameter_types()) {
 					appendItaniumTypeCode(
 						output,
 						buildFunctionTypeComponentForMangling(parameter_type)

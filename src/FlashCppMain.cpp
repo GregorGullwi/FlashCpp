@@ -74,6 +74,38 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
 // Forward declaration
 int main_impl(int argc, char* argv[]);
 
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
+
+// Linux/Unix default RLIMIT_STACK is often 8MB, which is too small for deep but
+// finite class-template instantiation chains in -O0 debug builds. Raise the soft
+// limit to 16MB when permitted so Nest/Chain depth regressions match Windows'
+// larger reserved stack without requiring callers to set ulimit.
+static void ensureMinimumProcessStackSize() {
+#if !defined(_WIN32)
+	constexpr rlim_t kMinimumStackBytes = static_cast<rlim_t>(16ull * 1024ull * 1024ull);
+	rlimit limit{};
+	if (getrlimit(RLIMIT_STACK, &limit) != 0) {
+		return;
+	}
+	if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur >= kMinimumStackBytes) {
+		return;
+	}
+
+	rlim_t new_soft = kMinimumStackBytes;
+	if (limit.rlim_max != RLIM_INFINITY && limit.rlim_max < new_soft) {
+		new_soft = limit.rlim_max;
+	}
+	if (new_soft <= limit.rlim_cur) {
+		return;
+	}
+
+	limit.rlim_cur = new_soft;
+	(void)setrlimit(RLIMIT_STACK, &limit);
+#endif
+}
+
 // Helper function to set mangling style in both CompileContext and NameMangling namespace
 // Also sets the data model to match (MSVC -> LLP64, Itanium -> LP64)
 // This automatic association assumes typical platform conventions:
@@ -97,6 +129,8 @@ static void setManglingStyle(CompileContext& context, CompileContext::ManglingSt
 }
 
 int main(int argc, char* argv[]) {
+	ensureMinimumProcessStackSize();
+
 	// Install crash handler for automatic crash logging with stack traces
 	CrashHandler::install();
 

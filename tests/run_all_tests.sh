@@ -7,6 +7,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Match FlashCpp's Linux startup policy: deep template instantiation needs a
+# 16MB soft stack. Raise it for the test runner process tree when permitted.
+if ulimit -s >/dev/null 2>&1; then
+	current_stack_kb="$(ulimit -s)"
+	if [ "$current_stack_kb" != "unlimited" ] && [ "$current_stack_kb" -lt 16384 ]; then
+		ulimit -s 16384 2>/dev/null || true
+	fi
+fi
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'

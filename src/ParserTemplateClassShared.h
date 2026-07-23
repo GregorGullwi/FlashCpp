@@ -260,12 +260,12 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 		}
 	};
 	if (signature.hasStructuredTypes()) {
-		substitute_function_type(signature.return_type);
-		signature.return_type_index = signature.return_type.type_index;
+		substitute_function_type(signature.return_type());
+		signature.return_type_index = signature.return_type().type_index;
 	}
-	if (!signature.parameter_types.empty()) {
+	if (!signature.parameter_types().empty()) {
 		std::vector<FunctionType> substituted_parameter_types;
-		for (FunctionType& parameter_type : signature.parameter_types) {
+		for (FunctionType& parameter_type : signature.parameter_types()) {
 			bool expanded_pack = false;
 			if (parameter_type.is_pack_expansion &&
 				parameter_type.template_parameter_name.isValid()) {
@@ -313,10 +313,10 @@ inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 				substituted_parameter_types.push_back(std::move(parameter_type));
 			}
 		}
-		signature.parameter_types = std::move(substituted_parameter_types);
+		signature.parameter_types() = std::move(substituted_parameter_types);
 		signature.parameter_type_indices.clear();
-		signature.parameter_type_indices.reserve(signature.parameter_types.size());
-		for (const FunctionType& parameter_type : signature.parameter_types) {
+		signature.parameter_type_indices.reserve(signature.parameter_types().size());
+		for (const FunctionType& parameter_type : signature.parameter_types()) {
 			signature.parameter_type_indices.push_back(parameter_type.type_index);
 		}
 	}

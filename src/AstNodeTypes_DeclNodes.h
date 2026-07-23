@@ -2252,11 +2252,11 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 			return true;
 		}
 		if (nested_signature.hasStructuredTypes() &&
-			self(nested_signature.return_type, self, depth_limit - 1)) {
+			self(nested_signature.return_type(), self, depth_limit - 1)) {
 			return true;
 		}
 		for (const FunctionType& parameter_type :
-			 nested_signature.parameter_types) {
+			 nested_signature.parameter_types()) {
 			if (self(parameter_type, self, depth_limit - 1)) {
 				return true;
 			}
@@ -2282,10 +2282,10 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 	const size_t depth_limit = getDependentPlaceholderTraversalBudget();
 	if (signature.hasStructuredTypes() &&
 		function_type_is_dependent(
-			signature.return_type, function_type_is_dependent, depth_limit)) {
+			signature.return_type(), function_type_is_dependent, depth_limit)) {
 		return true;
 	}
-	for (const FunctionType& parameter_type : signature.parameter_types) {
+	for (const FunctionType& parameter_type : signature.parameter_types()) {
 		if (function_type_is_dependent(
 				parameter_type, function_type_is_dependent, depth_limit)) {
 			return true;

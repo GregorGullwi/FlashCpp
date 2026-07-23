@@ -153,15 +153,15 @@ inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const F
 		return false;
 	}
 	if (lhs_is_structured) {
-		if (!equalFunctionTypeIdentity(lhs.return_type, rhs.return_type)) {
+		if (!equalFunctionTypeIdentity(lhs.return_type(), rhs.return_type())) {
 			return false;
 		}
-		if (lhs.parameter_types.size() != rhs.parameter_types.size()) {
+		if (lhs.parameter_types().size() != rhs.parameter_types().size()) {
 			return false;
 		}
-		for (size_t i = 0; i < lhs.parameter_types.size(); ++i) {
+		for (size_t i = 0; i < lhs.parameter_types().size(); ++i) {
 			if (!equalFunctionTypeIdentity(
-					lhs.parameter_types[i], rhs.parameter_types[i])) {
+					lhs.parameter_types()[i], rhs.parameter_types()[i])) {
 				return false;
 			}
 		}
@@ -191,8 +191,8 @@ inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const F
 inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
 	size_t h = 0;
 	if (sig.hasStructuredTypes()) {
-		combineFunctionTypeIdentityHash(h, hashFunctionTypeIdentity(sig.return_type));
-		for (const FunctionType& parameter_type : sig.parameter_types) {
+		combineFunctionTypeIdentityHash(h, hashFunctionTypeIdentity(sig.return_type()));
+		for (const FunctionType& parameter_type : sig.parameter_types()) {
 			combineFunctionTypeIdentityHash(
 				h, hashFunctionTypeIdentity(parameter_type));
 		}
