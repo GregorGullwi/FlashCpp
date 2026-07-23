@@ -574,11 +574,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 		if (dtor_decl.has_noexcept_expression()) {
 			ASTNode substituted_noexcept = substituteTemplateParameters(
-				*dtor_decl.noexcept_expression(),
+				dtor_decl.noexcept_expression()->node(),
 				lazy_info.template_params,
 				converted_template_args,
 				lazy_info.identity.instantiated_owner_name);
-			new_dtor_ref.set_noexcept_expression(substituted_noexcept);
+			new_dtor_ref.set_noexcept_expression(
+				ExpressionHandle(substituted_noexcept));
 			ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 			std::optional<TemplateEnvironment> outer_environment;
 			ctx.template_environment = buildLazySubstitutionEnvironment(
@@ -1666,6 +1667,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		TypeSpecifierNode substituted_type_spec = type_spec;
 		substituted_type_spec.set_type_index(substituted_type_index);
 		materializeSubstitutedFunctionTypeMetadata(
+			*this,
 			substituted_type_spec,
 			type_spec,
 			lazy_info->parent_template_params,

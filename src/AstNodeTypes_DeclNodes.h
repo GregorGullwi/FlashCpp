@@ -1860,6 +1860,33 @@ public:
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
 
+inline FunctionType makeFunctionTypeFromSpecifier(const TypeSpecifierNode& type_spec) {
+	FunctionType type;
+	type.type_index = type_spec.type_index();
+	type.cv_qualifier = type_spec.cv_qualifier();
+	type.reference_qualifier = type_spec.reference_qualifier();
+	type.array_dimensions.assign(
+		type_spec.array_dimensions().begin(), type_spec.array_dimensions().end());
+	type.has_unsized_outer_array_dimension =
+		type_spec.has_unsized_outer_array_dimension();
+	type.is_pack_expansion = type_spec.is_pack_expansion();
+	if (type_spec.has_template_parameter_identity()) {
+		type.template_parameter_name = type_spec.template_parameter_name();
+	}
+	type.pointer_qualifiers.reserve(type_spec.pointer_levels().size());
+	for (const PointerLevel& pointer_level : type_spec.pointer_levels()) {
+		type.pointer_qualifiers.push_back(pointer_level.cv_qualifier);
+	}
+	if (type_spec.has_member_class()) {
+		type.member_class_name = type_spec.member_class_name();
+	}
+	if (type_spec.has_function_signature()) {
+		type.callable_signature =
+			std::make_shared<FunctionSignature>(type_spec.function_signature());
+	}
+	return type;
+}
+
 // Return the structured name carried by a type specifier. Direct template
 // parameters keep their scoped binding on the node; other dependent types use
 // their registered semantic TypeInfo identity.
@@ -2194,7 +2221,87 @@ inline bool typeSpecStillUsesDependentPlaceholder(const TypeSpecifierNode& type_
 	if (isPlaceholderAutoType(type_spec.type()) && !type_spec.type_index().is_valid()) {
 		return true;
 	}
-	return typeIndexContainsDependentPlaceholder(type_spec.type_index());
+	if (typeIndexContainsDependentPlaceholder(type_spec.type_index())) {
+		return true;
+	}
+	if (type_spec.is_pack_expansion()) {
+		return true;
+	}
+	if (!type_spec.has_function_signature()) {
+		return false;
+	}
+
+	auto function_type_is_dependent = [&](
+		const FunctionType& root_type,
+		auto&& self,
+		size_t depth_limit) -> bool {
+		if (depth_limit == 0) {
+			return true;
+		}
+		if (root_type.template_parameter_name.isValid() ||
+			root_type.is_pack_expansion ||
+			typeIndexContainsDependentPlaceholder(
+				root_type.type_index, depth_limit)) {
+			return true;
+		}
+		if (!root_type.callable_signature) {
+			return false;
+		}
+		const FunctionSignature& nested_signature = *root_type.callable_signature;
+		if (nested_signature.noexcept_expression.has_value()) {
+			return true;
+		}
+		if (nested_signature.hasStructuredTypes() &&
+			self(nested_signature.return_type, self, depth_limit - 1)) {
+			return true;
+		}
+		for (const FunctionType& parameter_type :
+			 nested_signature.parameter_types) {
+			if (self(parameter_type, self, depth_limit - 1)) {
+				return true;
+			}
+		}
+		if (typeIndexContainsDependentPlaceholder(
+				nested_signature.return_type_index, depth_limit - 1)) {
+			return true;
+		}
+		for (TypeIndex parameter_type_index :
+			 nested_signature.parameter_type_indices) {
+			if (typeIndexContainsDependentPlaceholder(
+					parameter_type_index, depth_limit - 1)) {
+				return true;
+			}
+		}
+		return false;
+	};
+
+	const FunctionSignature& signature = type_spec.function_signature();
+	if (signature.noexcept_expression.has_value()) {
+		return true;
+	}
+	const size_t depth_limit = getDependentPlaceholderTraversalBudget();
+	if (signature.hasStructuredTypes() &&
+		function_type_is_dependent(
+			signature.return_type, function_type_is_dependent, depth_limit)) {
+		return true;
+	}
+	for (const FunctionType& parameter_type : signature.parameter_types) {
+		if (function_type_is_dependent(
+				parameter_type, function_type_is_dependent, depth_limit)) {
+			return true;
+		}
+	}
+	if (typeIndexContainsDependentPlaceholder(
+			signature.return_type_index, depth_limit)) {
+		return true;
+	}
+	for (TypeIndex parameter_type_index : signature.parameter_type_indices) {
+		if (typeIndexContainsDependentPlaceholder(
+				parameter_type_index, depth_limit)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {
@@ -2905,8 +3012,9 @@ public:
 	// noexcept support
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
-	void set_noexcept_expression(ASTNode expr) { noexcept_expression_ = expr; }
-	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
+	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
+	void clear_noexcept_expression() { noexcept_expression_.reset(); }
+	const std::optional<ExpressionHandle>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 
 	// Static member function support
@@ -3017,7 +3125,7 @@ private:
 	bool is_const_member_function_ = false;	// True if this function is a const member function (K qualifier)
 	bool is_volatile_member_function_ = false;  // True if this function is a volatile member function (V qualifier)
 	bool inline_always_ = false;	 // True if function should always be inlined (e.g., template pure expressions)
-	std::optional<ASTNode> noexcept_expression_;	 // Optional noexcept(expr) expression
+	std::optional<ExpressionHandle> noexcept_expression_; // Optional noexcept(expr) expression
 	std::string_view mangled_name_;	// Pre-computed mangled name (points to ChunkedStringAllocator storage)
 	std::vector<int64_t> non_type_template_args_;  // Non-type template arguments (e.g., 0 for get<0>)
 	InlineVector<StringHandle, 4> outer_template_param_names_;
@@ -3260,6 +3368,9 @@ private:
 // Used by instantiation and codegen paths to decide whether a function node
 // is safe to register for code generation.
 inline bool functionHasUnresolvedPlaceholderSignature(const FunctionDeclarationNode& func) {
+	if (func.has_noexcept_expression()) {
+		return true;
+	}
 	if (typeSpecStillUsesDependentPlaceholder(func.decl_node().type_specifier_node())) {
 		return true;
 	}

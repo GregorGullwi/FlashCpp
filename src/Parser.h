@@ -149,6 +149,14 @@ struct SubstitutedMemberFunctionShell {
 	StringHandle effective_name;
 };
 
+namespace ParserExpressionDependency {
+
+bool nodeHasDeferredTemplateDependency(
+	const ASTNode& node,
+	const InlineVector<StringHandle, 4>& current_template_param_names);
+
+} // namespace ParserExpressionDependency
+
 static std::string_view get_parser_error_string(ParserError e) {
 	switch (e) {
 	case ParserError::None:
@@ -1561,7 +1569,8 @@ private:
 	// Parse the parameter-type-list inside a function pointer declarator.
 	// Used for both standalone function pointer declarators and function declarations
 	// whose return type is itself a function pointer.
-	ParseResult parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types, bool& out_is_variadic);
+	ParseResult parse_function_pointer_parameter_types(std::vector<FunctionType>& out_param_types, bool& out_is_variadic);
+	ParseResult parse_nested_function_pointer_type(TypeSpecifierNode& type_spec);
 	bool parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context);
 	void bindLocalTypeAlias(
 		const Token& alias_token,
@@ -1632,6 +1641,11 @@ private:
 	CppAttributeInfo consume_cpp_attribute_blocks();	 // Consume consecutive [[...]] blocks and return detected flags
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
 	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
+	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);
+	ParseResult parse_function_type_qualifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs, std::span<const ASTNode> params);
+	void apply_parsed_function_type_qualifiers(FunctionSignature& signature, const FlashCpp::MemberQualifiers& qualifiers, const FlashCpp::FunctionSpecifiers& specifiers);
+	void apply_parsed_function_noexcept(FunctionDeclarationNode& function, const FlashCpp::FunctionSpecifiers& specifiers);
+	FunctionType makeFunctionType(const TypeSpecifierNode& type_spec) const;
 	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
 	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
 	void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index, bool inject_this);  // Phase 5: Helper for member function scope setup
@@ -3156,6 +3170,10 @@ public:	// Public methods for template instantiation
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		const TemplateInstantiationContext& context);
+	FunctionSignature substituteTemplateFunctionSignature(
+		FunctionSignature signature,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 
 	// Helper to substitute template parameters in lazy member function/constructor/destructor bodies
 	// Uses the stored outer template environment snapshot from lazy_info
@@ -3562,7 +3580,6 @@ private:	 // Resume private methods
 	bool skip_asm_suffix(std::optional<std::string_view>* asm_symbol_name = nullptr); // Skip declaration-suffix __asm("...") / __asm__("...")
 	void parse_variable_declarator_suffixes(DeclarationNode& decl);
 	void skip_noexcept_specifier();				// Skip noexcept or noexcept(expr) specifier
-	bool parse_noexcept_value();				// Parse noexcept or noexcept(expr), returning evaluated bool
 	void skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals);	   // Skip all trailing specifiers after function parameters (stops before 'requires')
 	void skip_trailing_requires_clause();		  // Parse and discard trailing requires clause (if present)
 	std::optional<ASTNode> parse_trailing_requires_clause();	 // Parse trailing requires clause, return RequiresClauseNode
@@ -4236,7 +4253,7 @@ private:	 // Resume private methods
 		// Parses types separated by commas, handling pack expansion (...), C-style varargs,
 		// and pointer/reference modifiers. Used for bare function types and function pointer types.
 		// Returns true if parsing succeeded and ')' was NOT consumed (caller must consume it).
-	bool parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types);
+	bool parse_function_type_parameter_list(std::vector<FunctionType>& out_param_types);
 
 		// Helper to update angle bracket depth for template parsing
 		// Handles both '>' (decrement by 1) and '>>' (decrement by 2) for nested templates

@@ -107,3 +107,16 @@ private:
 	void* raw_ptr_ = nullptr;
 	const std::type_info* type_info_ = nullptr;
 };
+
+// Strong handle for syntax that has already crossed an expression-producing
+// parser boundary. Keeping this distinct from ASTNode prevents statement/type
+// nodes from being accepted by semantic APIs that require an expression.
+class ExpressionHandle {
+public:
+	explicit ExpressionHandle(ASTNode expression) : expression_(expression) {}
+
+	const ASTNode& node() const { return expression_; }
+
+private:
+	ASTNode expression_;
+};

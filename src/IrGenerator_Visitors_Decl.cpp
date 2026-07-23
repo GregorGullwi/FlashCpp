@@ -392,7 +392,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				ctx.global_symbols = global_symbol_table_;
 			}
 
-			auto eval_result = ConstExpr::Evaluator::evaluate(*node.noexcept_expression(), ctx);
+			auto eval_result = ConstExpr::Evaluator::evaluate(
+				node.noexcept_expression()->node(), ctx);
 			is_truly_noexcept = eval_result.success() && eval_result.as_bool();
 		}
 		func_decl_op.is_noexcept = is_truly_noexcept;

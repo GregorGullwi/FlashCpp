@@ -3250,6 +3250,7 @@ SubstitutedMemberFunctionShell Parser::createSubstitutedMemberFunctionShell(
 	const DeclarationNode& original_decl = original_func.decl_node();
 	const TypeSpecifierNode& original_return_type = original_decl.type_specifier_node();
 	TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+		*this,
 		original_return_type,
 		original_return_type_node,
 		fallback_return_token,
@@ -3450,6 +3451,7 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			typeSpecifierPreservesDependentMemberTemplateSignatureIdentity(
 				param_type_spec);
 		TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
+			*this,
 			param_type_spec,
 			param_decl.type_node(),
 			param_decl.identifier_token(),

@@ -44,6 +44,17 @@ inline bool anyTemplateArgIsStructurallyDependent(std::span<const TemplateTypeAr
 	return false;
 }
 
+inline TypeIndex canonicalizeConcreteTemplateArgumentTypeIndex(
+	const TemplateTypeArg& arg) {
+	if (templateArgIsStructurallyDependent(arg)) {
+		return arg.type_index;
+	}
+	if (is_builtin_type(arg.category())) {
+		return nativeTypeIndex(arg.category());
+	}
+	return FlashCpp::canonicalizeTemplateIdentityTypeIndex(arg.type_index);
+}
+
 namespace ParserExpressionDependency {
 
 bool argsHaveDeferredTemplateDependency(
@@ -143,14 +154,12 @@ inline TypeIndex substituteTemplateParameterTypeIndex(
 			if (substituted ||
 				param.kind() != TemplateParameterKind::Type ||
 				!arg.isTypeArgument() ||
-				!FlashCpp::equalTypeIndexIdentity(
-					original_type_index,
-					param.registered_type_index()) ||
+				original_type_index != param.registered_type_index() ||
 				!FlashCpp::hasConcreteTemplateIdentity(arg.type_index)) {
 				return;
 			}
 			substituted_type_index =
-				FlashCpp::canonicalizeTemplateIdentityTypeIndex(arg.type_index);
+				canonicalizeConcreteTemplateArgumentTypeIndex(arg);
 			substituted = true;
 		});
 	return substituted_type_index;
@@ -168,9 +177,7 @@ inline const TemplateTypeArg* findTemplateArgByRegisteredTypeIndex(
 		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
 			if (matched_arg == nullptr &&
 				param.kind() == TemplateParameterKind::Type &&
-				FlashCpp::equalTypeIndexIdentity(
-					type_index,
-					param.registered_type_index())) {
+				type_index == param.registered_type_index()) {
 				matched_arg = &arg;
 			}
 		});
@@ -178,10 +185,141 @@ inline const TemplateTypeArg* findTemplateArgByRegisteredTypeIndex(
 }
 
 template <typename ParamContainer, typename ArgContainer>
-inline FunctionSignature substituteTemplateFunctionSignature(
+inline FunctionSignature substituteTemplateFunctionSignatureTypes(
 	FunctionSignature signature,
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
+	auto apply_template_argument = [](
+		FunctionType& type,
+		const TemplateTypeArg& arg) {
+		type.type_index = canonicalizeConcreteTemplateArgumentTypeIndex(arg);
+		type.cv_qualifier |= arg.cv_qualifier;
+		std::vector<CVQualifier> combined_pointer_qualifiers;
+		combined_pointer_qualifiers.reserve(
+			arg.pointer_cv_qualifiers.size() + type.pointer_qualifiers.size());
+		combined_pointer_qualifiers.insert(
+			combined_pointer_qualifiers.end(),
+			arg.pointer_cv_qualifiers.begin(),
+			arg.pointer_cv_qualifiers.end());
+		combined_pointer_qualifiers.insert(
+			combined_pointer_qualifiers.end(),
+			type.pointer_qualifiers.begin(),
+			type.pointer_qualifiers.end());
+		type.pointer_qualifiers = std::move(combined_pointer_qualifiers);
+		if (arg.ref_qualifier == ReferenceQualifier::LValueReference ||
+			type.reference_qualifier == ReferenceQualifier::LValueReference) {
+			type.reference_qualifier = ReferenceQualifier::LValueReference;
+		} else if (arg.ref_qualifier == ReferenceQualifier::RValueReference) {
+			type.reference_qualifier = ReferenceQualifier::RValueReference;
+		}
+		if (arg.is_array) {
+			type.array_dimensions.insert(
+				type.array_dimensions.begin(),
+				arg.array_dimensions.begin(),
+				arg.array_dimensions.end());
+		}
+		if (arg.member_class_name.isValid()) {
+			type.member_class_name = arg.member_class_name;
+		}
+		if (arg.function_signature.has_value()) {
+			type.callable_signature =
+				std::make_shared<FunctionSignature>(*arg.function_signature);
+		}
+		type.template_parameter_name = {};
+	};
+	auto substitute_function_type = [&](FunctionType& type) {
+		if (type.template_parameter_name.isValid()) {
+			bool substituted = false;
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& param,
+					const TemplateTypeArg& arg,
+					size_t) {
+					if (substituted ||
+						param.nameHandle() != type.template_parameter_name) {
+						return;
+					}
+					if (!arg.isTypeArgument()) {
+						throw InternalError(
+							"Function type component was bound to a non-type template argument");
+					}
+					apply_template_argument(type, arg);
+					substituted = true;
+				});
+			if (!substituted) {
+				return;
+			}
+		} else {
+			type.type_index = substituteTemplateParameterTypeIndex(
+				type.type_index, template_params, template_args);
+		}
+		if (type.callable_signature) {
+			*type.callable_signature = substituteTemplateFunctionSignatureTypes(
+				*type.callable_signature, template_params, template_args);
+		}
+	};
+	if (signature.hasStructuredTypes()) {
+		substitute_function_type(signature.return_type);
+		signature.return_type_index = signature.return_type.type_index;
+	}
+	if (!signature.parameter_types.empty()) {
+		std::vector<FunctionType> substituted_parameter_types;
+		for (FunctionType& parameter_type : signature.parameter_types) {
+			bool expanded_pack = false;
+			if (parameter_type.is_pack_expansion &&
+				parameter_type.template_parameter_name.isValid()) {
+				size_t arg_index = 0;
+				for (size_t param_index = 0;
+					 param_index < template_params.size();
+					 ++param_index) {
+					const TemplateParameterNode* template_param =
+						tryGetTemplateParameterNode(template_params[param_index]);
+					if (template_param == nullptr) {
+						continue;
+					}
+					if (!template_param->is_variadic()) {
+						++arg_index;
+						continue;
+					}
+					const size_t remaining_args = arg_index < template_args.size()
+						? template_args.size() - arg_index
+						: 0;
+					const size_t required_after =
+						countRequiredTemplateArgsAfter<ParamContainer, ArgContainer>(
+							template_params, param_index + 1);
+					const size_t pack_size = remaining_args > required_after
+						? remaining_args - required_after
+						: 0;
+					if (template_param->nameHandle() ==
+						parameter_type.template_parameter_name) {
+						for (size_t pack_index = 0; pack_index < pack_size; ++pack_index) {
+							FunctionType expanded_type = parameter_type;
+							expanded_type.is_pack_expansion = false;
+							apply_template_argument(
+								expanded_type,
+								template_args[arg_index + pack_index]);
+							substituted_parameter_types.push_back(
+								std::move(expanded_type));
+						}
+						expanded_pack = true;
+						break;
+					}
+					arg_index += pack_size;
+				}
+			}
+			if (!expanded_pack) {
+				substitute_function_type(parameter_type);
+				substituted_parameter_types.push_back(std::move(parameter_type));
+			}
+		}
+		signature.parameter_types = std::move(substituted_parameter_types);
+		signature.parameter_type_indices.clear();
+		signature.parameter_type_indices.reserve(signature.parameter_types.size());
+		for (const FunctionType& parameter_type : signature.parameter_types) {
+			signature.parameter_type_indices.push_back(parameter_type.type_index);
+		}
+	}
 	signature.return_type_index = substituteTemplateParameterTypeIndex(
 		signature.return_type_index,
 		template_params,
@@ -236,6 +374,7 @@ inline StringHandle substituteTemplateMemberFunctionOwner(
 
 template <typename ParamContainer, typename ArgContainer>
 inline void materializeSubstitutedFunctionTypeMetadata(
+	Parser& parser,
 	TypeSpecifierNode& substituted_type,
 	const TypeSpecifierNode& original_type,
 	const ParamContainer& template_params,
@@ -277,8 +416,20 @@ inline void materializeSubstitutedFunctionTypeMetadata(
 		throw InternalError(
 			"Concrete function pointer type is missing canonical FunctionSignature metadata");
 	}
-	FunctionSignature substituted_signature = substituteTemplateFunctionSignature(
-		*signature, template_params, template_args);
+	InlineVector<TemplateParameterNode, 4> semantic_template_params;
+	semantic_template_params.reserve(template_params.size());
+	for (const auto& template_param_node : template_params) {
+		const TemplateParameterNode* template_param =
+			tryGetTemplateParameterNode(template_param_node);
+		if (template_param != nullptr) {
+			semantic_template_params.push_back(*template_param);
+		}
+	}
+	FunctionSignature substituted_signature = parser.substituteTemplateFunctionSignature(
+		*signature,
+		std::span<const TemplateParameterNode>(
+			semantic_template_params.data(), semantic_template_params.size()),
+		std::span<const TemplateTypeArg>(template_args.data(), template_args.size()));
 	if (substituted_category == TypeCategory::MemberFunctionPointer) {
 		StringHandle original_owner = substituted_type.has_member_class()
 			? substituted_type.member_class_name()
@@ -1194,6 +1345,7 @@ template <
 	typename SubstituteAstFn,
 	typename SubstituteTypeIndexFn>
 TypeSpecifierNode buildSubstitutedTypeSpecifier(
+	Parser& parser,
 	const TypeSpecifierNode& original_type_spec,
 	const ASTNode& original_type_node,
 	const Token& fallback_token,
@@ -1263,6 +1415,7 @@ TypeSpecifierNode buildSubstitutedTypeSpecifier(
 			template_args);
 	}
 	materializeSubstitutedFunctionTypeMetadata(
+		parser,
 		substituted_type,
 		original_type_spec,
 		template_params,

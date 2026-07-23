@@ -1104,8 +1104,30 @@ struct DeferredTemplateBaseClassSpecifier {
 	SaveHandle replayPosition() const { return *replay_position; }
 };
 
+struct FunctionSignature;
+
+// Complete type-id used by a function signature component. Function parameter
+// adjustment is performed by the parser before this value is created.
+struct FunctionType {
+	TypeIndex type_index{};
+	CVQualifier cv_qualifier = CVQualifier::None;
+	std::vector<CVQualifier> pointer_qualifiers;
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
+	std::vector<size_t> array_dimensions;
+	bool has_unsized_outer_array_dimension = false;
+	bool is_pack_expansion = false;
+	StringHandle template_parameter_name;
+	StringHandle member_class_name;
+	std::shared_ptr<FunctionSignature> callable_signature;
+};
+
 // Function signature for function pointers
 struct FunctionSignature {
+	FunctionType return_type;
+	std::vector<FunctionType> parameter_types;
+
+	// Lowering-facing projections. Semantic identity and substitution use the
+	// structured components above when present.
 	TypeIndex return_type_index{};
 	int return_pointer_depth = 0;
 	ReferenceQualifier return_reference_qualifier = ReferenceQualifier::None;
@@ -1118,11 +1140,31 @@ struct FunctionSignature {
 	bool is_volatile = false;				  // For volatile member functions
 	ReferenceQualifier function_reference_qualifier = ReferenceQualifier::None;
 	bool is_noexcept = false;
+	std::optional<ExpressionHandle> noexcept_expression; // Retained until dependent noexcept(expr) is substituted.
 
 	// Accessor helpers
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returns_reference() const { return return_reference_qualifier != ReferenceQualifier::None; }
 	bool returns_rvalue_reference() const { return return_reference_qualifier == ReferenceQualifier::RValueReference; }
+	bool hasStructuredTypes() const {
+		return return_type.type_index.category() != TypeCategory::Invalid;
+	}
+
+	void setReturnType(FunctionType type) {
+		return_type_index = type.type_index;
+		return_pointer_depth = static_cast<int>(type.pointer_qualifiers.size());
+		return_reference_qualifier = type.reference_qualifier;
+		return_type = std::move(type);
+	}
+
+	void setParameterTypes(std::vector<FunctionType> types) {
+		parameter_type_indices.clear();
+		parameter_type_indices.reserve(types.size());
+		for (const FunctionType& type : types) {
+			parameter_type_indices.push_back(type.type_index);
+		}
+		parameter_types = std::move(types);
+	}
 };
 
 // Deferred static_assert information - stored during template definition, evaluated during instantiation

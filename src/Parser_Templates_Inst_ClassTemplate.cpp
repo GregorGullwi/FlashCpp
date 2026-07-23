@@ -24,6 +24,45 @@ static thread_local int g_template_inst_iteration_count = 0;
 static thread_local bool g_template_inst_iteration_limit_tripped = false;
 static constexpr int g_template_inst_max_iterations = 10000;
 
+FunctionSignature Parser::substituteTemplateFunctionSignature(
+	FunctionSignature signature,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	signature = substituteTemplateFunctionSignatureTypes(
+		std::move(signature), template_params, template_args);
+	if (!signature.noexcept_expression.has_value()) {
+		return signature;
+	}
+
+	ASTNode substituted_expression = substituteTemplateParameters(
+		signature.noexcept_expression->node(), template_params, template_args);
+	signature.noexcept_expression = ExpressionHandle(substituted_expression);
+	ConstExpr::EvaluationContext evaluation_context(gSymbolTable, *this);
+	evaluation_context.template_args = template_args;
+	for (const TemplateParameterNode& template_param : template_params) {
+		evaluation_context.template_param_names.push_back(template_param.name());
+	}
+	const ConstExpr::EvalResult value = ConstExpr::Evaluator::evaluate(
+		substituted_expression, evaluation_context);
+	if (value.success()) {
+		signature.is_noexcept = value.as_bool();
+		signature.noexcept_expression.reset();
+		return signature;
+	}
+	if (const auto parser_value =
+			try_evaluate_constant_expression(substituted_expression);
+		parser_value.has_value()) {
+		signature.is_noexcept = parser_value->value != 0;
+		signature.noexcept_expression.reset();
+		return signature;
+	}
+	if (!anyTemplateArgIsStructurallyDependent(template_args)) {
+		throw CompileError(
+			"Instantiated noexcept specification is not a constant expression");
+	}
+	return signature;
+}
+
 void resetTemplateInstantiationCounters() {
 	g_template_inst_iteration_count = 0;
 	g_template_inst_iteration_limit_tripped = false;
@@ -1113,12 +1152,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_type_index = substituted_type_spec.type_index();
 			substituted_type = substituted_type_spec.type();
 		}
+		if (!substituted_type_spec.has_function_signature() &&
+			resolved_alias_target.function_signature.has_value()) {
+			substituted_type_spec.set_function_signature(
+				*resolved_alias_target.function_signature);
+		}
 		if (substituted_type_spec.has_function_signature()) {
 			substituted_type_spec.set_function_signature(
 				substituteTemplateFunctionSignature(
 					substituted_type_spec.function_signature(),
-					params,
-					args));
+					std::span<const TemplateParameterNode>(params),
+					std::span<const TemplateTypeArg>(args)));
 		}
 
 		FLASH_LOG(Templates, Debug, "buildSubstitutedTypeAliasSpecifier: alias_name=", StringTable::getStringView(type_alias.alias_name),
@@ -2157,6 +2201,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode substituted_member_type_spec = *effective_type_spec;
 				substituted_member_type_spec.set_type_index(member_type_index);
 				materializeSubstitutedFunctionTypeMetadata(
+					*this,
 					substituted_member_type_spec,
 					*effective_type_spec,
 					template_params,
@@ -3673,6 +3718,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 						normalizeSubstitutedTypeSpec(new_return_spec);
+						materializeSubstitutedFunctionTypeMetadata(
+							*this,
+							new_return_spec,
+							return_type_spec,
+							template_params,
+							template_args_for_pattern);
 
 						auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 							new_return_type, decl_node.identifier_token());
@@ -6954,6 +7005,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		substituted_type_spec.set_size_in_bits(
 			get_type_size_bits(member_type_index.category()));
 		materializeSubstitutedFunctionTypeMetadata(
+			*this,
 			substituted_type_spec,
 			type_spec,
 			effective_template_params,
@@ -7944,6 +7996,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_type_spec.set_size_in_bits(
 					get_type_size_bits(substituted_type_index.category()));
 				materializeSubstitutedFunctionTypeMetadata(
+					*this,
 					substituted_type_spec,
 					type_spec,
 					template_params,
@@ -9316,6 +9369,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	for (const auto& member_decl : class_decl.members()) {
 		ASTNode substituted_member_decl = substituteTemplateParameters(
 			member_decl.declaration, effective_template_params, effective_template_args);
+		if (substituted_member_decl.is<DeclarationNode>() &&
+			member_decl.declaration.is<DeclarationNode>()) {
+			materializeSubstitutedFunctionTypeMetadata(
+				*this,
+				substituted_member_decl.as<DeclarationNode>().type_specifier_node(),
+				member_decl.declaration.as<DeclarationNode>().type_specifier_node(),
+				effective_template_params,
+				effective_template_args);
+		}
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 			member_decl.default_initializer, effective_template_args, effective_template_params);
 		std::optional<ASTNode> substituted_bitfield_width_expr;
@@ -10105,10 +10167,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 					if (dtor_decl.has_noexcept_expression()) {
 						ASTNode substituted_noexcept = substituteTemplateParameters(
-							*dtor_decl.noexcept_expression(),
+							dtor_decl.noexcept_expression()->node(),
 							template_params,
 							template_args_to_use);
-						new_dtor_ref.set_noexcept_expression(substituted_noexcept);
+						new_dtor_ref.set_noexcept_expression(
+							ExpressionHandle(substituted_noexcept));
 						ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
 						ctx.struct_info = struct_info_ptr;
 						ctx.struct_type_index =
@@ -10262,6 +10325,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 				normalizeSubstitutedTypeSpec(new_return_spec);
+				materializeSubstitutedFunctionTypeMetadata(
+					*this,
+					new_return_spec,
+					return_type_spec,
+					template_params,
+					template_args_to_use);
 
 				auto buildMergedOuterTemplateBinding = [&](OuterTemplateBinding& out_binding) {
 					if (func_decl.has_outer_template_bindings()) {

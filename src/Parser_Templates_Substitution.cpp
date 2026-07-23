@@ -1347,6 +1347,11 @@ ASTNode Parser::substituteTemplateParameters(
 			return result;
 		} else if (std::holds_alternative<InitializerListConstructionNode>(expr)) {
 			return substituteWithExpressionSubstitutor(node);
+		} else if (const auto* noexcept_expr = std::get_if<NoexceptExprNode>(&expr)) {
+			ASTNode substituted_operand = substitute_nested(noexcept_expr->expr());
+			return emplace_node<ExpressionNode>(NoexceptExprNode(
+				substituted_operand,
+				noexcept_expr->noexcept_token()));
 		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
 			// static_cast<Type>(expr) - recursively substitute in both target type and expression
 			const StaticCastNode& cast_node = *static_cast_node;

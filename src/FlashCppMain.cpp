@@ -524,10 +524,16 @@ int main_impl(int argc, char* argv[]) {
 	bool has_compile_errors = false;
 	{
 		PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
-		// Re-evaluate ast.size() each iteration so template/member instantiations appended
-		// during IR conversion are also visited in the same pass.
-		for (size_t node_index = 0; node_index < ast.size(); ++node_index) {
+		// Re-evaluate ast.size() each iteration so appended template/member
+		// instantiations are visited in the same pass. Constexpr materialization can
+		// also insert a dependency at the front; after each visit, advance to the
+		// node after the one we just processed by identity so a front insertion
+		// cannot shift the cursor onto the same node again. Front-inserted
+		// compile-time-only roots are intentionally not back-scanned: visiting
+		// them can recursively materialize more roots and grow the worklist.
+		for (size_t node_index = 0; node_index < ast.size(); ) {
 			ASTNode node_handle = ast[node_index];
+			const void* visited_node_key = node_handle.raw_pointer();
 			if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
 				const auto& func = node_handle.as<FunctionDeclarationNode>();
 				bool has_def = func.is_materialized();
@@ -599,6 +605,20 @@ int main_impl(int argc, char* argv[]) {
 				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
 				++ir_conversion_error_count;
 			}
+
+			// Advance past the node we just visited. Front inserts shift it right;
+			// locate it by identity so we neither revisit it nor fall onto a
+			// newly inserted compile-time-only root behind the cursor.
+			size_t next_index = node_index + 1;
+			if (visited_node_key != nullptr) {
+				for (size_t search_index = node_index; search_index < ast.size(); ++search_index) {
+					if (ast[search_index].raw_pointer() == visited_node_key) {
+						next_index = search_index + 1;
+						break;
+					}
+				}
+			}
+			node_index = next_index;
 		}
 	}
 

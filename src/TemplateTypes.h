@@ -51,48 +51,162 @@ bool equalDependentExpressionIdentity(const ASTNode& lhs, const ASTNode& rhs);
 size_t hashDependentExpressionIdentity(const ASTNode& node);
 
 inline bool equalTypeIndexIdentity(TypeIndex lhs, TypeIndex rhs) {
-	// TypeIndex::operator== compares only the index slot; category must be checked separately
-	// so primitive/default TypeIndex values don't collapse incorrectly.
+	if (is_builtin_type(lhs.category()) && is_builtin_type(rhs.category())) {
+		return lhs.category() == rhs.category();
+	}
+	// TypeIndex::operator== compares only the index slot; category must be checked
+	// separately for non-builtin semantic types.
 	return lhs == rhs && lhs.category() == rhs.category();
 }
 
 inline size_t hashTypeIndexIdentity(TypeIndex idx) {
+	if (is_builtin_type(idx.category())) {
+		return std::hash<int>{}(static_cast<int>(idx.category()));
+	}
 	size_t h = std::hash<TypeIndex>{}(idx);
 	h ^= std::hash<int>{}(static_cast<int>(idx.category())) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	return h;
 }
 
+inline bool equalFunctionSignatureIdentity(
+	const FunctionSignature& lhs,
+	const FunctionSignature& rhs);
+inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig);
+
+inline bool equalFunctionTypeIdentity(const FunctionType& lhs, const FunctionType& rhs) {
+	const bool type_identity_matches =
+		lhs.callable_signature && rhs.callable_signature
+			? lhs.type_index.category() == rhs.type_index.category()
+			: equalTypeIndexIdentity(lhs.type_index, rhs.type_index);
+	if (!type_identity_matches ||
+		lhs.cv_qualifier != rhs.cv_qualifier ||
+		lhs.pointer_qualifiers != rhs.pointer_qualifiers ||
+		lhs.reference_qualifier != rhs.reference_qualifier ||
+		lhs.array_dimensions != rhs.array_dimensions ||
+		lhs.has_unsized_outer_array_dimension != rhs.has_unsized_outer_array_dimension ||
+		lhs.is_pack_expansion != rhs.is_pack_expansion ||
+		lhs.template_parameter_name != rhs.template_parameter_name ||
+		lhs.member_class_name != rhs.member_class_name ||
+		static_cast<bool>(lhs.callable_signature) !=
+		static_cast<bool>(rhs.callable_signature)) {
+		return false;
+	}
+	return !lhs.callable_signature ||
+		equalFunctionSignatureIdentity(
+			*lhs.callable_signature, *rhs.callable_signature);
+}
+
+inline void combineFunctionTypeIdentityHash(size_t& seed, size_t value) {
+	seed ^= value + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+inline size_t hashFunctionTypeIdentity(const FunctionType& type) {
+	size_t hash = type.callable_signature
+		? std::hash<int>{}(static_cast<int>(type.type_index.category()))
+		: hashTypeIndexIdentity(type.type_index);
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.cv_qualifier)));
+	for (CVQualifier qualifier : type.pointer_qualifiers) {
+		combineFunctionTypeIdentityHash(
+			hash, std::hash<uint8_t>{}(static_cast<uint8_t>(qualifier)));
+	}
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<uint8_t>{}(static_cast<uint8_t>(type.reference_qualifier)));
+	for (size_t dimension : type.array_dimensions) {
+		combineFunctionTypeIdentityHash(hash, std::hash<size_t>{}(dimension));
+	}
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.has_unsized_outer_array_dimension));
+	combineFunctionTypeIdentityHash(hash, std::hash<bool>{}(type.is_pack_expansion));
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.template_parameter_name.isValid()));
+	if (type.template_parameter_name.isValid()) {
+		combineFunctionTypeIdentityHash(hash, type.template_parameter_name.hash());
+	}
+	combineFunctionTypeIdentityHash(
+		hash, std::hash<bool>{}(type.member_class_name.isValid()));
+	if (type.member_class_name.isValid()) {
+		combineFunctionTypeIdentityHash(hash, type.member_class_name.hash());
+	}
+	if (type.callable_signature) {
+		combineFunctionTypeIdentityHash(
+			hash, hashFunctionSignatureIdentity(*type.callable_signature));
+	}
+	return hash;
+}
+
 inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const FunctionSignature& rhs) {
-	// Compare every field that contributes to function type identity in the AST signature model:
-	// return type, parameter types, linkage, member class name, and cv-qualification.
-	if (!equalTypeIndexIdentity(lhs.return_type_index, rhs.return_type_index) ||
-		lhs.return_pointer_depth != rhs.return_pointer_depth ||
-		lhs.return_reference_qualifier != rhs.return_reference_qualifier ||
-		lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size() ||
-		lhs.linkage != rhs.linkage ||
+	if (lhs.linkage != rhs.linkage ||
 		lhs.class_name != rhs.class_name ||
 		lhs.calling_convention != rhs.calling_convention ||
 		lhs.is_variadic != rhs.is_variadic ||
 		lhs.is_const != rhs.is_const ||
 		lhs.is_volatile != rhs.is_volatile ||
 		lhs.function_reference_qualifier != rhs.function_reference_qualifier ||
-		lhs.is_noexcept != rhs.is_noexcept) {
+		lhs.is_noexcept != rhs.is_noexcept ||
+		lhs.noexcept_expression.has_value() != rhs.noexcept_expression.has_value()) {
 		return false;
 	}
-	for (size_t i = 0; i < lhs.parameter_type_indices.size(); ++i) {
-		if (!equalTypeIndexIdentity(lhs.parameter_type_indices[i], rhs.parameter_type_indices[i])) {
+	const bool lhs_is_structured = lhs.hasStructuredTypes();
+	const bool rhs_is_structured = rhs.hasStructuredTypes();
+	if (lhs_is_structured != rhs_is_structured) {
+		return false;
+	}
+	if (lhs_is_structured) {
+		if (!equalFunctionTypeIdentity(lhs.return_type, rhs.return_type)) {
 			return false;
 		}
+		if (lhs.parameter_types.size() != rhs.parameter_types.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs.parameter_types.size(); ++i) {
+			if (!equalFunctionTypeIdentity(
+					lhs.parameter_types[i], rhs.parameter_types[i])) {
+				return false;
+			}
+		}
+	} else {
+		if (!equalTypeIndexIdentity(lhs.return_type_index, rhs.return_type_index) ||
+			lhs.return_pointer_depth != rhs.return_pointer_depth ||
+			lhs.return_reference_qualifier != rhs.return_reference_qualifier ||
+			lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < lhs.parameter_type_indices.size(); ++i) {
+			if (!equalTypeIndexIdentity(
+					lhs.parameter_type_indices[i], rhs.parameter_type_indices[i])) {
+				return false;
+			}
+		}
+	}
+	if (lhs.noexcept_expression.has_value() &&
+		!equalDependentExpressionIdentity(
+			lhs.noexcept_expression->node(),
+			rhs.noexcept_expression->node())) {
+		return false;
 	}
 	return true;
 }
 
 inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
-	size_t h = hashTypeIndexIdentity(sig.return_type_index);
-	h ^= std::hash<int>{}(sig.return_pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_reference_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-	for (const auto& pt : sig.parameter_type_indices) {
-		h ^= hashTypeIndexIdentity(pt) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	size_t h = 0;
+	if (sig.hasStructuredTypes()) {
+		combineFunctionTypeIdentityHash(h, hashFunctionTypeIdentity(sig.return_type));
+		for (const FunctionType& parameter_type : sig.parameter_types) {
+			combineFunctionTypeIdentityHash(
+				h, hashFunctionTypeIdentity(parameter_type));
+		}
+	} else {
+		combineFunctionTypeIdentityHash(h, hashTypeIndexIdentity(sig.return_type_index));
+		combineFunctionTypeIdentityHash(h, std::hash<int>{}(sig.return_pointer_depth));
+		combineFunctionTypeIdentityHash(
+			h,
+			std::hash<uint8_t>{}(
+				static_cast<uint8_t>(sig.return_reference_qualifier)));
+		for (const TypeIndex parameter_type : sig.parameter_type_indices) {
+			combineFunctionTypeIdentityHash(
+				h, hashTypeIndexIdentity(parameter_type));
+		}
 	}
 	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.linkage)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	h ^= std::hash<bool>{}(sig.class_name.isValid()) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -105,6 +219,9 @@ inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
 	h ^= std::hash<bool>{}(sig.is_volatile) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.function_reference_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	h ^= std::hash<bool>{}(sig.is_noexcept) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	if (sig.noexcept_expression.has_value()) {
+		h ^= hashDependentExpressionIdentity(sig.noexcept_expression->node()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
 	return h;
 }
 

@@ -14,33 +14,6 @@ bool isBoolResultOperator(std::string_view op) {
 }
 }
 
-// Parse noexcept or noexcept(expr) specifier and return the evaluated boolean value.
-// Assumes the 'noexcept' token has already been consumed by the caller.
-// - Bare 'noexcept' (no parens) → returns true.
-// - 'noexcept(expr)' → tries to parse and evaluate expr as a constant expression.
-//   If expr evaluates to 0/false, returns false. Otherwise (including dependent
-//   expressions that cannot be evaluated), returns true conservatively.
-bool Parser::parse_noexcept_value() {
-	if (peek() != "("_tok) {
-		// bare noexcept (no parens) is noexcept(true)
-		return true;
-	}
-	// noexcept(expr) — try to evaluate; default to true for dependent exprs
-	SaveHandle noexcept_expr_pos = save_token_position();
-	advance(); // consume '('
-	auto noexcept_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-	if (!noexcept_expr_result.is_error() && noexcept_expr_result.node().has_value() && peek() == ")"_tok) {
-		advance(); // consume ')'
-		discard_saved_token(noexcept_expr_pos);
-		auto eval = try_evaluate_constant_expression(*noexcept_expr_result.node());
-		return !eval.has_value() || eval->value != 0;
-	}
-	// Expression parsing failed — fall back to skipping balanced parens
-	restore_token_position(noexcept_expr_pos);
-	skip_balanced_parens();
-	return true; // dependent — assume true
-}
-
 ParseResult Parser::parse_template_parameter_list(InlineVector<TemplateParameterNode, 4>& out_params) {
 	// Save and restore the current template parameter state that existed before
 	// parsing this list so names added here do not persist after the parse.
@@ -550,28 +523,31 @@ ParseResult Parser::parse_template_parameter() {
 				if (peek() == "("_tok) {
 					advance(); // consume '('
 
-					std::vector<TypeIndex> fp_param_types;
+					std::vector<FunctionType> fp_param_types;
 					bool param_parse_ok = parse_function_type_parameter_list(fp_param_types);
 
 					if (param_parse_ok && peek() == ")"_tok) {
 						advance(); // consume ')'
 
-						// Parse optional noexcept specifier after parameter list
-						bool sig_is_noexcept = false;
-						if (peek() == "noexcept"_tok) {
-							advance(); // consume 'noexcept'
-							sig_is_noexcept = parse_noexcept_value();
+						FlashCpp::MemberQualifiers qualifiers;
+						FlashCpp::FunctionSpecifiers specifiers;
+						ParseResult qualifier_result =
+							parse_function_type_qualifiers(qualifiers, specifiers);
+						if (qualifier_result.is_error()) {
+							return qualifier_result;
 						}
 
 						// Build the function signature: the return type is nttp_type as currently
 						// parsed (e.g. 'int' for int (*F)()).
 						FunctionSignature func_sig;
+						func_sig.setReturnType(makeFunctionType(nttp_type));
 						func_sig.return_type_index = nttp_type.type_index();
 						func_sig.return_pointer_depth = static_cast<int>(nttp_type.pointer_depth());
 						func_sig.return_reference_qualifier = nttp_type.reference_qualifier();
-						func_sig.parameter_type_indices = std::move(fp_param_types);
+						func_sig.setParameterTypes(std::move(fp_param_types));
 						func_sig.calling_convention = fp_calling_convention;
-						func_sig.is_noexcept = sig_is_noexcept;
+						apply_parsed_function_type_qualifiers(
+							func_sig, qualifiers, specifiers);
 
 						// Rewrite nttp_type to TypeCategory::FunctionPointer.
 						// FunctionPointer is intrinsically pointer-sized; the "pointer-ness" is
@@ -632,50 +608,30 @@ ParseResult Parser::parse_template_parameter() {
 						if (peek() == "("_tok) {
 							advance(); // consume '('
 
-							std::vector<TypeIndex> mfp_param_types;
+							std::vector<FunctionType> mfp_param_types;
 							bool mfp_param_ok = parse_function_type_parameter_list(mfp_param_types);
 
 							if (mfp_param_ok && peek() == ")"_tok) {
 								advance(); // consume ')'
 
-								// Parse optional cv-qualifiers, ref-qualifier, noexcept
-								// e.g., template <int (S::* F)() const noexcept>
-								bool mfp_is_const = false;
-								bool mfp_is_volatile = false;
-								ReferenceQualifier mfp_ref_qual = ReferenceQualifier::None;
-								bool mfp_is_noexcept = false;
-								while (!peek().is_eof()) {
-									if (peek() == "const"_tok) {
-										mfp_is_const = true;
-										advance();
-									} else if (peek() == "volatile"_tok) {
-										mfp_is_volatile = true;
-										advance();
-									} else if (peek() == "&"_tok) {
-										mfp_ref_qual = ReferenceQualifier::LValueReference;
-										advance();
-									} else if (peek() == "&&"_tok) {
-										mfp_ref_qual = ReferenceQualifier::RValueReference;
-										advance();
-									} else if (peek() == "noexcept"_tok) {
-										advance();
-										mfp_is_noexcept = parse_noexcept_value();
-									} else {
-										break;
-									}
+								FlashCpp::MemberQualifiers qualifiers;
+								FlashCpp::FunctionSpecifiers specifiers;
+								ParseResult qualifier_result =
+									parse_function_type_qualifiers(qualifiers, specifiers);
+								if (qualifier_result.is_error()) {
+									return qualifier_result;
 								}
 
 								// Build function signature for the member function pointer
 								FunctionSignature mfp_sig;
+								mfp_sig.setReturnType(makeFunctionType(nttp_type));
 								mfp_sig.return_type_index = nttp_type.type_index();
 								mfp_sig.return_pointer_depth = static_cast<int>(nttp_type.pointer_depth());
 								mfp_sig.return_reference_qualifier = nttp_type.reference_qualifier();
-								mfp_sig.parameter_type_indices = std::move(mfp_param_types);
+								mfp_sig.setParameterTypes(std::move(mfp_param_types));
 								mfp_sig.calling_convention = fp_calling_convention;
-								mfp_sig.is_const = mfp_is_const;
-								mfp_sig.is_volatile = mfp_is_volatile;
-								mfp_sig.function_reference_qualifier = mfp_ref_qual;
-								mfp_sig.is_noexcept = mfp_is_noexcept;
+								apply_parsed_function_type_qualifiers(
+									mfp_sig, qualifiers, specifiers);
 
 								// Rewrite nttp_type as MemberFunctionPointer
 								nttp_type.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
@@ -2730,7 +2686,7 @@ try_type_template_argument_parse:
 					advance(); // consume '('
 
 					// Parse parameter list using shared helper
-					std::vector<TypeIndex> param_types;
+					std::vector<FunctionType> param_types;
 					bool param_parse_ok = parse_function_type_parameter_list(param_types);
 
 					if (!param_parse_ok) {
@@ -2745,44 +2701,31 @@ try_type_template_argument_parse:
 						// For member function pointers: _Res (_Class::*)(_ArgTypes...) const & noexcept
 						// For function pointers: _Res(*)(_ArgTypes...) noexcept(_NE)
 						// For function references: _Res(&)(_ArgTypes...) noexcept
-						bool sig_is_const = false;
-						bool sig_is_volatile = false;
-						ReferenceQualifier sig_function_ref_qualifier = ReferenceQualifier::None;
-						bool sig_is_noexcept = false;
-						while (!peek().is_eof()) {
-							if ((is_member_ptr) && peek() == "const"_tok) {
-								sig_is_const = true;
-								advance();
-							} else if ((is_member_ptr) && peek() == "volatile"_tok) {
-								sig_is_volatile = true;
-								advance();
-							} else if (is_member_ptr && peek() == "&"_tok) {
-								sig_function_ref_qualifier = ReferenceQualifier::LValueReference;
-								advance();
-							} else if (is_member_ptr && peek() == "&&"_tok) {
-								sig_function_ref_qualifier = ReferenceQualifier::RValueReference;
-								advance();
-							} else if (peek() == "noexcept"_tok) {
-								advance(); // consume 'noexcept'
-								sig_is_noexcept = parse_noexcept_value();
-							} else {
-								break;
-							}
+						FlashCpp::MemberQualifiers qualifiers;
+						FlashCpp::FunctionSpecifiers specifiers;
+						ParseResult qualifier_result =
+							parse_function_type_qualifiers(qualifiers, specifiers);
+						if (qualifier_result.is_error()) {
+							return std::nullopt;
+						}
+						if (!is_member_ptr &&
+							(qualifiers.cv_qualifier != CVQualifier::None ||
+							 qualifiers.ref_qualifier != ReferenceQualifier::None)) {
+							return std::nullopt;
 						}
 
 						// Successfully parsed function reference/pointer type!
 						// Capture the return type BEFORE rewriting type_node (mirrors
 						// Parser_Decl_DeclaratorCore.cpp which creates a fresh FunctionPointer node).
 						FunctionSignature func_sig;
+						func_sig.setReturnType(makeFunctionType(type_node));
 						func_sig.return_type_index = type_node.type_index();
 						func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
 						func_sig.return_reference_qualifier = type_node.reference_qualifier();
-						func_sig.parameter_type_indices = std::move(param_types);
+						func_sig.setParameterTypes(std::move(param_types));
 						func_sig.calling_convention = paren_calling_convention;
-						func_sig.is_const = sig_is_const;
-						func_sig.is_volatile = sig_is_volatile;
-						func_sig.function_reference_qualifier = sig_function_ref_qualifier;
-						func_sig.is_noexcept = sig_is_noexcept;
+						apply_parsed_function_type_qualifiers(
+							func_sig, qualifiers, specifiers);
 
 						if (is_member_ptr) {
 							type_node.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
@@ -2828,7 +2771,7 @@ try_type_template_argument_parse:
 				// Save position within the parens
 				SaveHandle func_type_saved_pos = save_token_position();
 				bool is_bare_func_type = false;
-				std::vector<TypeIndex> func_param_types;
+				std::vector<FunctionType> func_param_types;
 
 				// Try to parse as function parameter list using shared helper
 				bool param_parse_ok = parse_function_type_parameter_list(func_param_types);
@@ -2839,32 +2782,21 @@ try_type_template_argument_parse:
 
 					// Successfully parsed bare function type
 					FunctionSignature func_sig;
+					func_sig.setReturnType(makeFunctionType(type_node));
 					func_sig.return_type_index = type_node.type_index();
 					func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
 					func_sig.return_reference_qualifier = type_node.reference_qualifier();
-					func_sig.parameter_type_indices = std::move(func_param_types);
+					func_sig.setParameterTypes(std::move(func_param_types));
 					func_sig.calling_convention = direct_function_calling_convention;
-					while (!peek().is_eof()) {
-						if (peek() == "const"_tok) {
-							func_sig.is_const = true;
-							advance();
-						} else if (peek() == "volatile"_tok) {
-							func_sig.is_volatile = true;
-							advance();
-						} else if (peek() == "&"_tok) {
-							func_sig.function_reference_qualifier = ReferenceQualifier::LValueReference;
-							advance();
-						} else if (peek() == "&&"_tok) {
-							func_sig.function_reference_qualifier = ReferenceQualifier::RValueReference;
-							advance();
-						} else {
-							break;
-						}
+					FlashCpp::MemberQualifiers qualifiers;
+					FlashCpp::FunctionSpecifiers specifiers;
+					ParseResult qualifier_result =
+						parse_function_type_qualifiers(qualifiers, specifiers);
+					if (qualifier_result.is_error()) {
+						return std::nullopt;
 					}
-					if (peek() == "noexcept"_tok) {
-						advance(); // consume 'noexcept'
-						func_sig.is_noexcept = parse_noexcept_value();
-					}
+					apply_parsed_function_type_qualifiers(
+						func_sig, qualifiers, specifiers);
 					type_node.set_function_signature(func_sig);
 
 					discard_saved_token(func_type_saved_pos);

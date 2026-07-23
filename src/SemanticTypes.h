@@ -2,6 +2,7 @@
 #include "AstNodeTypes_TypeSystem.h"
 #include "IRTypes_Registers.h"
 #include "InlineVector.h"
+#include "TemplateTypes.h"
 #include <functional>
 #include <unordered_map>
 
@@ -148,25 +149,9 @@ struct hash<CanonicalTypeDesc> {
 			h = combine(h, dim);
 		h = combine(h, static_cast<size_t>(d.flags));
 		if (d.function_signature) {
-			const auto& fs = *d.function_signature;
-			h = combine(h, static_cast<size_t>(fs.return_type_index.category()));
-			h = combine(h, fs.return_type_index.index());
-			h = combine(h, static_cast<size_t>(fs.return_pointer_depth));
-			h = combine(h, static_cast<size_t>(fs.return_reference_qualifier));
-			h = combine(h, fs.parameter_type_indices.size());
-			for (const TypeIndex& pt : fs.parameter_type_indices) {
-				h = combine(h, static_cast<size_t>(pt.category()));
-				h = combine(h, pt.index());
-			}
-			h = combine(h, static_cast<size_t>(fs.linkage));
-			h = combine(h, fs.is_variadic ? 1u : 0u);
-			h = combine(h, static_cast<size_t>(fs.calling_convention));
-			h = combine(h, fs.is_const ? 1u : 0u);
-			h = combine(h, fs.is_volatile ? 1u : 0u);
-			h = combine(h, static_cast<size_t>(fs.function_reference_qualifier));
-			h = combine(h, fs.is_noexcept ? 1u : 0u);
-			if (fs.class_name.isValid())
-				h = combine(h, fs.class_name.hash());
+			h = combine(
+				h,
+				FlashCpp::hashFunctionSignatureIdentity(*d.function_signature));
 		}
 		return h;
 	}

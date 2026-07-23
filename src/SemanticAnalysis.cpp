@@ -16,6 +16,7 @@
 #include "ParserInternal.h"
 #include "NameMangling.h"
 #include "MemberFunctionLookupShared.h"
+#include "TemplateTypes.h"
 #include <algorithm>
 #include <limits>
 
@@ -890,33 +891,7 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 	if (function_signature.has_value()) {
 		const auto& a = *function_signature;
 		const auto& b = *other.function_signature;
-		if (a.returnType() != b.returnType() ||
-			a.return_type_index != b.return_type_index ||
-			a.return_pointer_depth != b.return_pointer_depth ||
-			a.return_reference_qualifier != b.return_reference_qualifier)
-			return false;
-		if (a.parameter_type_indices.size() != b.parameter_type_indices.size())
-			return false;
-		for (size_t i = 0; i < a.parameter_type_indices.size(); ++i) {
-			if (a.parameter_type_indices[i].category() != b.parameter_type_indices[i].category() ||
-				a.parameter_type_indices[i] != b.parameter_type_indices[i])
-				return false;
-		}
-		if (a.linkage != b.linkage)
-			return false;
-		if (a.calling_convention != b.calling_convention)
-			return false;
-		if (a.is_variadic != b.is_variadic)
-			return false;
-		if (a.is_const != b.is_const)
-			return false;
-		if (a.is_volatile != b.is_volatile)
-			return false;
-		if (a.function_reference_qualifier != b.function_reference_qualifier)
-			return false;
-		if (a.is_noexcept != b.is_noexcept)
-			return false;
-		if (a.class_name != b.class_name)
+		if (!FlashCpp::equalFunctionSignatureIdentity(a, b))
 			return false;
 	}
 	return true;

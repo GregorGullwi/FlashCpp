@@ -1627,7 +1627,7 @@ void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& tar
 // Parses types separated by commas, handling pack expansion (...), C-style varargs,
 // and pointer/reference modifiers. Stops before ')' — caller must consume it.
 // Returns true if at least one type was parsed or the list is empty (valid).
-bool Parser::parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types) {
+bool Parser::parse_function_type_parameter_list(std::vector<FunctionType>& out_param_types) {
 	while (peek() != ")"_tok && !peek().is_eof()) {
 		// Handle C-style varargs: just '...' (without type before it)
 		if (peek() == "..."_tok) {
@@ -1638,15 +1638,21 @@ bool Parser::parse_function_type_parameter_list(std::vector<TypeIndex>& out_para
 		auto param_type_result = parse_type_specifier();
 		if (!param_type_result.is_error() && param_type_result.node().has_value()) {
 			TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+			ParseResult nested_function_result =
+				parse_nested_function_pointer_type(param_type);
+			if (nested_function_result.is_error()) {
+				return false;
+			}
 
 			// Handle pack expansion (...) after a parameter type
 			if (peek() == "..."_tok) {
 				advance(); // consume '...'
+				param_type.set_pack_expansion(true);
 			}
 
 			// Apply pointer/reference modifiers to the parameter type
 			consume_pointer_ref_modifiers(param_type);
-			out_param_types.push_back(param_type.type_index());
+			out_param_types.push_back(makeFunctionType(param_type));
 		} else {
 			return false; // Parsing failed
 		}

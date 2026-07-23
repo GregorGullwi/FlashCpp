@@ -1976,6 +1976,7 @@ ASTNode Parser::buildMaterializedParamType(
 		param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 	}
 	materializeSubstitutedFunctionTypeMetadata(
+		*this,
 		param_type_ref,
 		original_param_type,
 		materialized_template_params,
@@ -2785,6 +2786,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 						: nullptr;
 				if (normalized_param_type_info != nullptr) {
 					TypeSpecifierNode rebuilt_param_type_spec = buildSubstitutedTypeSpecifier(
+						*this,
 						param_type_spec,
 						param_decl.type_node(),
 						param_decl.identifier_token(),
@@ -2877,7 +2879,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	copy_function_properties(new_func_ref, func_decl);
 	if (func_decl.has_noexcept_expression()) {
 		ASTNode substituted_noexcept = substituteTemplateParameters(
-			*func_decl.noexcept_expression(),
+			func_decl.noexcept_expression()->node(),
 			template_params,
 			inline_template_args,
 			current_owner_type_name);
@@ -2927,11 +2929,15 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				outer_args,
 				current_owner_type_name);
 		}
-		new_func_ref.set_noexcept_expression(substituted_noexcept);
+		new_func_ref.set_noexcept_expression(ExpressionHandle(substituted_noexcept));
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
 		auto eval = ConstExpr::Evaluator::evaluate(substituted_noexcept, eval_ctx);
 		if (eval.success()) {
 			new_func_ref.set_noexcept(eval.as_bool());
+			new_func_ref.clear_noexcept_expression();
+		} else if (!anyTemplateArgIsStructurallyDependent(inline_template_args)) {
+			throw CompileError(
+				"Instantiated noexcept specification is not a constant expression");
 		}
 	}
 
