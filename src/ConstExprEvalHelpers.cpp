@@ -508,8 +508,8 @@ std::optional<TemplateTypeArg> trySubstituteDependentTemplateArgForLookup(
 			", owner_has_inst_ctx=", (owner_type_info != nullptr && owner_type_info->hasInstantiationContext()));
 		if (owner_type_info != nullptr && owner_type_info->hasInstantiationContext()) {
 			const auto* inst_ctx = owner_type_info->instantiationContext();
-			for (size_t i = 0; i < inst_ctx->param_names.size() && i < inst_ctx->param_args.size(); ++i) {
-				const TemplateTypeArg arg = toTemplateTypeArg(inst_ctx->param_args[i]);
+			for (size_t i = 0; i < inst_ctx->param_names.size() && i < inst_ctx->param_args().size(); ++i) {
+				const TemplateTypeArg arg = toTemplateTypeArg(inst_ctx->param_args()[i]);
 				FLASH_LOG(ConstExpr, Debug, "  owner inst_ctx[", i, "] name=",
 					StringTable::getStringView(inst_ctx->param_names[i]),
 					", is_value=", arg.is_value,

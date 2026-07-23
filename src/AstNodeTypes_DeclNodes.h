@@ -1240,6 +1240,8 @@ struct TypeInfo {
  // (codegen, constexpr evaluation) can resolve template bindings without
  // registry-name reconstruction.  For nested types inside a template
  // instantiation, `parent` points to the enclosing type's context.
+	static constexpr uint32_t kNoTemplateArgs = UINT32_MAX;
+
 	struct InstantiationContext {
 		struct Binding {
 			StringHandle name;
@@ -1253,16 +1255,16 @@ struct TypeInfo {
 
 		// Legacy fields for compatibility (populated in parallel during transition)
 		InlineVector<StringHandle, 4> param_names; // Template parameter names (e.g., "T", "U")
-		InlineVector<TemplateArgInfo, 4> param_args; // Concrete template arguments
+		uint32_t param_args_index = kNoTemplateArgs;
+
+		const InlineVector<TemplateArgInfo, 4>& param_args() const;
 
 		// Phase 5 accessors
 		bool hasInstantiationContextBindings() const { return !bindings.empty(); }
 		size_t getInstantiationContextBindingsCount() const { return bindings.size(); }
 	};
 
-	// Index into gTypeInfoTemplateArgLists. UINT32_MAX = none/empty.
 	// Keeps InlineVector<TemplateArgInfo,4> (~1.2KB) out of every TypeInfo row.
-	static constexpr uint32_t kNoTemplateArgs = UINT32_MAX;
 	uint32_t template_args_index_ = kNoTemplateArgs;
 
 	// Index into gDependentQualifiedNameRecords. UINT32_MAX = none.
@@ -1298,13 +1300,14 @@ struct TypeInfo {
 	bool hasInstantiationContext() const { return instantiation_context_ != nullptr; }
 	const TemplateArgInfo* findLegacyInstantiationArgByName(std::string_view param_name) const {
 		for (const auto* inst_ctx = instantiation_context_.get(); inst_ctx; inst_ctx = inst_ctx->parent) {
+			const auto& args = inst_ctx->param_args();
 			size_t param_count = inst_ctx->param_names.size();
-			if (inst_ctx->param_args.size() < param_count) {
-				param_count = inst_ctx->param_args.size();
+			if (args.size() < param_count) {
+				param_count = args.size();
 			}
 			for (size_t param_index = 0; param_index < param_count; ++param_index) {
 				if (StringTable::getStringView(inst_ctx->param_names[param_index]) == param_name) {
-					return &inst_ctx->param_args[param_index];
+					return &args[param_index];
 				}
 			}
 		}

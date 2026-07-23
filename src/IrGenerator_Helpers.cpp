@@ -23,11 +23,11 @@ ConstExpr::EvaluationContext AstToIr::makeEvalContext(const SymbolTable& symbols
 				if (const auto* inst_ctx = struct_type_info->instantiationContext()) {
 					ctx.template_environment = buildTemplateEnvironment(*inst_ctx);
 					ctx.template_param_names.reserve(inst_ctx->param_names.size());
-					ctx.template_args.reserve(inst_ctx->param_args.size());
+					ctx.template_args.reserve(inst_ctx->param_args().size());
 					for (StringHandle param_name : inst_ctx->param_names) {
 						ctx.template_param_names.push_back(StringTable::getStringView(param_name));
 					}
-					for (const auto& arg_info : inst_ctx->param_args) {
+					for (const auto& arg_info : inst_ctx->param_args()) {
 						ctx.template_args.push_back(toTemplateTypeArg(arg_info));
 					}
 				}

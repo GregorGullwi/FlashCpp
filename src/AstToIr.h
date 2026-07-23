@@ -1231,7 +1231,7 @@ private:
 		}
 
 		for (const auto* inst_ctx = type_info->instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
-			if (!inst_ctx->param_names.empty() || !inst_ctx->param_args.empty()) {
+			if (!inst_ctx->param_names.empty() || !inst_ctx->param_args().empty()) {
 				return true;
 			}
 		}

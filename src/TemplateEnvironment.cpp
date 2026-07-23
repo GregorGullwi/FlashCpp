@@ -219,11 +219,11 @@ void appendContextBindings(
 		return;
 	}
 
-	const size_t binding_count = std::min(context->param_names.size(), context->param_args.size());
+	const size_t binding_count = std::min(context->param_names.size(), context->param_args().size());
 	for (size_t i = 0; i < binding_count;) {
 		TemplateBinding binding;
 		binding.name = context->param_names[i];
-		TemplateTypeArg arg = toTemplateTypeArg(context->param_args[i]);
+		TemplateTypeArg arg = toTemplateTypeArg(context->param_args()[i]);
 		binding.kind = inferBindingKind(arg);
 		binding.is_pack = arg.is_pack;
 		binding.args.push_back(std::move(arg));
@@ -231,7 +231,7 @@ void appendContextBindings(
 		size_t next_index = i + 1;
 		while (next_index < binding_count && context->param_names[next_index] == binding.name) {
 			binding.is_pack = true;
-			binding.args.push_back(toTemplateTypeArg(context->param_args[next_index]));
+			binding.args.push_back(toTemplateTypeArg(context->param_args()[next_index]));
 			++next_index;
 		}
 		out_bindings.push_back(std::move(binding));

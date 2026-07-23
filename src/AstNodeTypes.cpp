@@ -304,6 +304,10 @@ size_t getTypeInfoTemplateArgsCount() {
 	return gTypeInfoTemplateArgLists.size();
 }
 
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::InstantiationContext::param_args() const {
+	return getTypeInfoTemplateArgs(param_args_index);
+}
+
 const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::templateArgs() const {
 	return getTypeInfoTemplateArgs(template_args_index_);
 }
@@ -570,7 +574,7 @@ void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& se
 		instantiation_context != nullptr) {
 		alias_type_info.setInstantiationContext(
 			instantiation_context->param_names,
-			instantiation_context->param_args,
+			InlineVector<TypeInfo::TemplateArgInfo, 4>(instantiation_context->param_args()),
 			instantiation_context->parent);
 	} else {
 		alias_type_info.instantiation_context_.reset();
@@ -1472,17 +1476,18 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 	instantiation_context_ = std::make_unique<InstantiationContext>();
 	instantiation_context_->parent = parent;
 	instantiation_context_->param_names = param_names;
-	instantiation_context_->param_args = param_args;
+	instantiation_context_->param_args_index = storeTypeInfoTemplateArgs(std::move(param_args));
+	const auto& stored_param_args = getTypeInfoTemplateArgs(instantiation_context_->param_args_index);
 
 	// Phase 5: Populate binding-based storage alongside legacy fields.
 	// param_args may be a flattened pack list and can therefore be longer than
 	// param_names in legacy callers.
-	if (param_args.size() < param_names.size()) {
+	if (stored_param_args.size() < param_names.size()) {
 		StringBuilder error_builder;
 		error_builder.append("TypeInfo::setInstantiationContext invalid size mismatch: param_names=");
 		error_builder.append(param_names.size());
 		error_builder.append(", param_args=");
-		error_builder.append(param_args.size());
+		error_builder.append(stored_param_args.size());
 		throw InternalError(std::string(error_builder.commit()));
 	}
 	const size_t estimated_binding_count = param_names.size();
@@ -1493,15 +1498,15 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 	while (name_index < param_names.size()) {
 		InlineVector<TemplateArgInfo, 1> binding_args;
 		const StringHandle binding_name = param_names[name_index];
-		if (arg_index < param_args.size()) {
-			binding_args.push_back(param_args[arg_index]);
+		if (arg_index < stored_param_args.size()) {
+			binding_args.push_back(stored_param_args[arg_index]);
 			++arg_index;
 		}
 		++name_index;
 		while (name_index < param_names.size() &&
 			   param_names[name_index] == binding_name &&
-			   arg_index < param_args.size()) {
-			binding_args.push_back(param_args[arg_index]);
+			   arg_index < stored_param_args.size()) {
+			binding_args.push_back(stored_param_args[arg_index]);
 			++arg_index;
 			++name_index;
 		}
@@ -1510,8 +1515,8 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		// element. Preserve those elements by attaching the remaining args to the
 		// final binding.
 		if (name_index == param_names.size()) {
-			while (arg_index < param_args.size()) {
-				binding_args.push_back(param_args[arg_index]);
+			while (arg_index < stored_param_args.size()) {
+				binding_args.push_back(stored_param_args[arg_index]);
 				++arg_index;
 			}
 		}

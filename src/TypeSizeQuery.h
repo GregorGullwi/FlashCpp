@@ -86,9 +86,9 @@ inline int queryInstantiationContextBindingSizeBits(
 				}
 			}
 		}
-		for (size_t i = 0; i < current->param_names.size() && i < current->param_args.size(); ++i) {
+		for (size_t i = 0; i < current->param_names.size() && i < current->param_args().size(); ++i) {
 			if (current->param_names[i] == name) {
-				const int binding_size_bits = queryTemplateArgInfoObjectSizeBits(current->param_args[i]);
+				const int binding_size_bits = queryTemplateArgInfoObjectSizeBits(current->param_args()[i]);
 				if (binding_size_bits > 0) {
 					return binding_size_bits;
 				}

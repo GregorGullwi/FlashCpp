@@ -2617,7 +2617,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeCanonicalOwnerType
 	if (canonical_owner_type_info->hasInstantiationContext() &&
 		canonical_owner_type_info->instantiationContext() != nullptr &&
 		try_materialize_exact_owner(
-			canonical_owner_type_info->instantiationContext()->param_args)) {
+			canonical_owner_type_info->instantiationContext()->param_args())) {
 		return result;
 	}
 
@@ -2776,11 +2776,11 @@ OuterTemplateBinding Parser::buildAccumulatedOuterTemplateBinding(
 		for (size_t i = 0;
 			 instantiation_context != nullptr &&
 			 i < instantiation_context->param_names.size() &&
-			 i < instantiation_context->param_args.size();
+			 i < instantiation_context->param_args().size();
 			 ++i) {
 			overlay_binding(
 				instantiation_context->param_names[i],
-				toTemplateTypeArg(instantiation_context->param_args[i]));
+				toTemplateTypeArg(instantiation_context->param_args()[i]));
 		}
 	}
 
@@ -5466,7 +5466,7 @@ std::optional<TemplateTypeArg> Parser::evaluateDependentNTTPExpression(
 			}
 			const TypeInfo::InstantiationContext* inst_ctx =
 				type_info->instantiationContext();
-			for (const TypeInfo::TemplateArgInfo& arg_info : inst_ctx->param_args) {
+			for (const TypeInfo::TemplateArgInfo& arg_info : inst_ctx->param_args()) {
 				TemplateTypeArg arg = toTemplateTypeArg(arg_info);
 				if (arg.is_dependent || arg.dependent_name.isValid()) {
 					continue;

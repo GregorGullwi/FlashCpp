@@ -1039,7 +1039,7 @@ std::optional<Parser::AliasTemplateMaterializationResult> Parser::tryResolveCurr
 	} else if (current_type_info != nullptr &&
 			   current_type_info->hasInstantiationContext()) {
 		current_param_names = &current_type_info->instantiationContext()->param_names;
-		current_concrete_args = &current_type_info->instantiationContext()->param_args;
+		current_concrete_args = &current_type_info->instantiationContext()->param_args();
 	}
 
 	if (current_param_names != nullptr && !current_param_names->empty()) {

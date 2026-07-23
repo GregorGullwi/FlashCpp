@@ -127,7 +127,7 @@ static void appendInstantiationContextBindingsToSubstitutionMap(
 	}
 	for (size_t i = 0;
 		 i < context->param_names.size() &&
-		 i < context->param_args.size();
+		 i < context->param_args().size();
 		 ++i) {
 		if (!context->param_names[i].isValid()) {
 			continue;
@@ -141,7 +141,7 @@ static void appendInstantiationContextBindingsToSubstitutionMap(
 			sub_map.param_order.end()) {
 			sub_map.param_order.push_back(binding_name);
 			sub_map.param_map[binding_name] =
-				toTemplateTypeArg(context->param_args[i]);
+				toTemplateTypeArg(context->param_args()[i]);
 		}
 	}
 }
