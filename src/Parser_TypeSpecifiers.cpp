@@ -3791,8 +3791,7 @@ ParseResult Parser::parse_type_specifier() {
 			// Keep non-alias synthetic type entries (e.g. template parameter placeholders) working.
 			// This is critical for std::move's ReturnType which is typename remove_reference<T>::type&&
 			if (!is_typedef &&
-				(type_info_ctx->reference_qualifier_ != ReferenceQualifier::None ||
-				 type_info_ctx->function_signature_.has_value())) {
+				type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
 				is_typedef = true;
 			}
 			if (is_typedef) {

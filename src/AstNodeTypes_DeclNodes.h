@@ -1056,9 +1056,6 @@ struct TypeInfo {
 	// For typedef of reference types, store the reference qualifier
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;
 
-	// For function pointer/reference type aliases, store the function signature
-	std::optional<FunctionSignature> function_signature_;
-
 	// For aliases, preserve the original aliased type specifier so consumers can
 	// recover array/pointer/reference metadata by following the alias chain.
 	std::unique_ptr<TypeSpecifierNode> alias_type_spec_;
