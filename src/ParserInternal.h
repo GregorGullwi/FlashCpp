@@ -53,8 +53,7 @@ void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<Strin
 void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
 	const InlineVector<TemplateTypeArg, 4>& type_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier);
+	FlashCpp::TemplateParameterScope& scope);
 
 TypeInfo& registerTemplateTypeBinding(
 	StringHandle param_name,
@@ -63,14 +62,12 @@ TypeInfo& registerTemplateTypeBinding(
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier);
+	FlashCpp::TemplateParameterScope& scope);
 
 void registerTypeParamsInScope(
 	const InlineVector<ASTNode, 4>& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier);
+	FlashCpp::TemplateParameterScope& scope);
 
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
@@ -81,8 +78,7 @@ void registerTypeParamsInScope(
 void registerTypeParamsInScope(
 	std::span<const TemplateParameterNode> template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier);
+	FlashCpp::TemplateParameterScope& scope);
 
 void registerTypeParamsInScope(
 	std::span<const TemplateParameterNode> template_param_nodes,
@@ -92,8 +88,7 @@ void registerTypeParamsInScope(
 
 void registerTypeParamsInScope(
 	const TemplateEnvironment& environment,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier);
+	FlashCpp::TemplateParameterScope& scope);
 
 void registerTypeParamsInScope(
 	const TemplateEnvironment& environment,

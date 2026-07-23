@@ -2026,9 +2026,8 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		const ChunkedVector<ASTNode>& arguments,
 		std::span<const TypeSpecifierNode> arg_types);
 	// Shared helper: re-parse a template function body with concrete argument substitution.
-	// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
-	// try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle
-	// detection has already passed.  Sets new_func_ref's definition.
+	// Called from both try_instantiate_template_explicit and try_instantiate_single_template
+	// after cycle detection has already passed.  Sets new_func_ref's definition.
 	// Pack-parameter state (pack_param_info_, has_parameter_packs_) and cycle detection
 	// remain entirely in the callers.  The callers must set pack_param_info_ to the
 	// already-expanded pack info before the call and restore it afterwards.
@@ -2039,8 +2038,7 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 		FunctionDeclarationNode& new_func_ref,
 		const FunctionDeclarationNode& func_decl,
 		std::span<const TemplateParameterNode> template_params,
-		std::span<const TemplateTypeArg> template_args,
-		bool preserve_ref_qualifier);
+		std::span<const TemplateTypeArg> template_args);
 	struct FunctionTemplateInstantiationContext {
 		std::string_view template_name;
 		const TemplateFunctionDeclarationNode& template_func;
@@ -2060,14 +2058,13 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	};
 	enum class FunctionTemplateInstantiationFlags : uint16_t {
 		None = 0,
-		PreserveRefQualifier = 1u << 0,
-		ExplicitMaterialization = 1u << 1,
-		CacheableInstantiation = 1u << 2,
-		CommitInstantiation = 1u << 3,
-		RegisterInstantiation = 1u << 4,
-		MemoizeBodyReparseFailure = 1u << 5,
-		RunInlineHeuristic = 1u << 6,
-		SkipBodyMaterialization = 1u << 7
+		ExplicitMaterialization = 1u << 0,
+		CacheableInstantiation = 1u << 1,
+		CommitInstantiation = 1u << 2,
+		RegisterInstantiation = 1u << 3,
+		MemoizeBodyReparseFailure = 1u << 4,
+		RunInlineHeuristic = 1u << 5,
+		SkipBodyMaterialization = 1u << 6
 	};
 	static constexpr FunctionTemplateInstantiationFlags mergeInstantiationFlags(
 		FunctionTemplateInstantiationFlags lhs,

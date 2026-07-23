@@ -9747,7 +9747,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-					registerTypeParamsInScope(param_names, effective_template_args, template_scope, true);
+					registerTypeParamsInScope(param_names, effective_template_args, template_scope);
 
 					// Save current position and parsing context
 					SaveHandle current_pos = save_token_position();

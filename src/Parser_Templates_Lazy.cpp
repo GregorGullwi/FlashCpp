@@ -54,7 +54,7 @@ ASTNode Parser::substituteLazyMemberBody(
 		template_args,
 		outer_environment);
 	FlashCpp::TemplateParameterScope template_scope;
-	registerTypeParamsInScope(substitution_environment, template_scope, true);
+	registerTypeParamsInScope(substitution_environment, template_scope);
 	FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 	populateTemplateParamSubstitutions(template_param_substitutions_, substitution_environment);
 	return substituteTemplateParameters(
@@ -388,7 +388,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
 				outer_environment);
 			FlashCpp::TemplateParameterScope template_scope;
-			registerTypeParamsInScope(substitution_environment, template_scope, true);
+			registerTypeParamsInScope(substitution_environment, template_scope);
 			ScopedDefinitionLookupContext definition_ctx_scope(
 				current_template_definition_lookup_context_,
 				lazy_info.definition_lookup_context.is_valid()
@@ -767,7 +767,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
 			outer_environment);
 		FlashCpp::TemplateParameterScope template_scope;
-		registerTypeParamsInScope(substitution_environment, template_scope, true);
+		registerTypeParamsInScope(substitution_environment, template_scope);
 
 		// Save current position and parsing context
 		SaveHandle current_pos = save_token_position();
@@ -1118,7 +1118,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			std::span<const TemplateTypeArg>(lazy_info.template_args.data(), lazy_info.template_args.size()),
 			outer_environment);
 		FlashCpp::TemplateParameterScope template_scope;
-		registerTypeParamsInScope(substitution_environment, template_scope, true);
+		registerTypeParamsInScope(substitution_environment, template_scope);
 
 		SaveHandle current_pos = save_token_position();
 		ScopedLexerPositionRestore lexer_restore(*this, current_pos);
