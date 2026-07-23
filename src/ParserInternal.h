@@ -56,6 +56,10 @@ void registerTypeParamsInScope(
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier);
 
+TypeInfo& registerTemplateTypeBinding(
+	StringHandle param_name,
+	const TemplateTypeArg& arg);
+
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,

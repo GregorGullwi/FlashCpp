@@ -1053,9 +1053,6 @@ struct TypeInfo {
 	// Struct layout remains authoritative in StructTypeInfo::total_size.
 	int fallback_size_bits_ = 0;	// Changed from unsigned char to int for large types
 
-	// For typedef of reference types, store the reference qualifier
-	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;
-
 	// For aliases, preserve the original aliased type specifier so consumers can
 	// recover array/pointer/reference metadata by following the alias chain.
 	std::unique_ptr<TypeSpecifierNode> alias_type_spec_;

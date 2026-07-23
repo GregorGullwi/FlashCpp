@@ -192,26 +192,7 @@ bool Parser::isTemplateFunctionParameterPack(
 	return false;
 }
 
-static void applyRegisteredTypeBindingMetadata(
-	TypeInfo& type_info,
-	const TemplateTypeArg& arg,
-	bool preserve_ref_qualifier) {
-	if (is_builtin_type(arg.typeEnum())) {
-		type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
-	} else if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-		type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
-	} else {
-		type_info.fallback_size_bits_ = 0;
-	}
-
-	if (preserve_ref_qualifier) {
-		type_info.reference_qualifier_ = arg.is_rvalue_reference()
-											 ? ReferenceQualifier::RValueReference
-											 : (arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-	}
-}
-
-static TypeInfo& registerTemplateTypeBinding(
+TypeInfo& registerTemplateTypeBinding(
 	StringHandle param_name,
 	const TemplateTypeArg& arg) {
 	TypeIndex registered_type_index = arg.type_index;
@@ -225,11 +206,19 @@ static TypeInfo& registerTemplateTypeBinding(
 	}
 	TypeSpecifierNode alias_spec = makeTypeSpecifierFromTemplateTypeArg(arg, Token());
 	alias_spec.set_type_index(registered_type_index.withCategory(arg.typeEnum()));
-	return add_type_alias_copy(
+	TypeInfo& type_info = add_type_alias_copy(
 		param_name,
 		registered_type_index.withCategory(arg.typeEnum()),
 		getTypeSizeFromTemplateArgument(arg),
 		alias_spec);
+	if (is_builtin_type(arg.typeEnum())) {
+		type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
+	} else if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+		type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
+	} else {
+		type_info.fallback_size_bits_ = 0;
+	}
+	return type_info;
 }
 
 static void resetTypeIndirection(TypeSpecifierNode& type_spec) {
@@ -971,10 +960,8 @@ bool Parser::tryAppendDefaultTemplateArg(
 // "N" to getTypesByNameMap() and confuse subsequent type lookups.
 // Template-template parameters are also skipped for the same reason.
 //
-// preserve_ref_qualifier: pass true for paths where the TemplateTypeArg ref_qualifier was
-//   set from user-written explicit args or class-template instantiation args (e.g., T
-//   bound to int& from a class<int&> instantiation).  Pass false for deduction paths
-//   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
+// preserve_ref_qualifier is retained on registerTypeParamsInScope for API compatibility.
+// Reference metadata for template bindings lives on alias_type_spec_ via registerTemplateTypeBinding.
 void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
 	const InlineVector<TemplateTypeArg, 4>& type_args,
@@ -987,7 +974,6 @@ void registerTypeParamsInScope(
 		if (arg.is_template_template_arg)
 			continue;  // Template-template params don't represent concrete types
 		auto& type_info = registerTemplateTypeBinding(param_names[i], arg);
-		applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 		scope.addParameter(&type_info);
 	}
 }
@@ -1023,7 +1009,6 @@ void registerTypeParamsInScope(
 				return;
 			}
 			auto& type_info = registerTemplateTypeBinding(binding.name, arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1043,7 +1028,6 @@ void registerTypeParamsInScope(
 				return;
 			}
 			auto& type_info = registerTemplateTypeBinding(binding.name, arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map) {
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1071,7 +1055,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1088,7 +1071,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1105,7 +1087,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1124,7 +1105,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1143,7 +1123,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1160,7 +1139,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1312,7 +1290,7 @@ void Parser::reparse_template_function_body(
 		param_names.push_back(template_param.nameHandle());
 	}
 	// preserve_ref_qualifier=true for the explicit path (user-written T=int& must be
-	// reflected in TypeInfo); false for the deduced path.
+	// reflected in alias_type_spec_); false for the deduced path.
 	InlineVector<TemplateParameterNode, 4> template_param_nodes;
 	template_param_nodes.reserve(template_params.size());
 	for (const TemplateParameterNode& template_param_node : template_params) {
