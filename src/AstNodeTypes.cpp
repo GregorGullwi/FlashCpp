@@ -247,6 +247,7 @@ std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 // Explicit chunk size: default ChunkSize=sizeof(T)*4 would reserve ~25k *huge* elements.
 ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
 ChunkedVector<InlineVector<TypeInfo::TemplateArgInfo, 4>, 8> gTypeInfoTemplateArgLists;
+ChunkedVector<TypeInfo::InstantiationContext, 8> gInstantiationContexts;
 
 uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record) {
 	const uint32_t index = static_cast<uint32_t>(gDependentQualifiedNameRecords.size());
@@ -302,6 +303,36 @@ const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32
 
 size_t getTypeInfoTemplateArgsCount() {
 	return gTypeInfoTemplateArgLists.size();
+}
+
+uint32_t storeInstantiationContext(TypeInfo::InstantiationContext ctx) {
+	const uint32_t index = static_cast<uint32_t>(gInstantiationContexts.size());
+	gInstantiationContexts.push_back(std::move(ctx));
+	return index;
+}
+
+const TypeInfo::InstantiationContext* getInstantiationContext(uint32_t index) {
+	if (index == TypeInfo::kNoInstantiationContext) {
+		return nullptr;
+	}
+	assert(index < gInstantiationContexts.size());
+	return &gInstantiationContexts[index];
+}
+
+TypeInfo::InstantiationContext* getInstantiationContextMut(uint32_t index) {
+	if (index == TypeInfo::kNoInstantiationContext) {
+		return nullptr;
+	}
+	assert(index < gInstantiationContexts.size());
+	return &gInstantiationContexts[index];
+}
+
+size_t getInstantiationContextCount() {
+	return gInstantiationContexts.size();
+}
+
+const TypeInfo::InstantiationContext* TypeInfo::instantiationContext() const {
+	return getInstantiationContext(instantiation_context_index_);
 }
 
 const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::InstantiationContext::param_args() const {
@@ -550,7 +581,7 @@ void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
 	alias_type_info.clearDeferredDecltypeExpression();
 	alias_type_info.base_template_ = QualifiedIdentifier{};
 	alias_type_info.clearTemplateArgs();
-	alias_type_info.instantiation_context_.reset();
+	alias_type_info.clearInstantiationContext();
 	alias_type_info.is_incomplete_instantiation_ = false;
 }
 
@@ -569,16 +600,9 @@ void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& se
 	// Share the cold-arena index; arg lists are immutable after store.
 	alias_type_info.template_args_index_ = semantic_source_type_info.template_args_index_;
 	alias_type_info.is_incomplete_instantiation_ = semantic_source_type_info.is_incomplete_instantiation_;
-	if (const TypeInfo::InstantiationContext* instantiation_context =
-			semantic_source_type_info.instantiationContext();
-		instantiation_context != nullptr) {
-		alias_type_info.setInstantiationContext(
-			instantiation_context->param_names,
-			InlineVector<TypeInfo::TemplateArgInfo, 4>(instantiation_context->param_args()),
-			instantiation_context->parent);
-	} else {
-		alias_type_info.instantiation_context_.reset();
-	}
+	// Share the cold-arena index; contexts are immutable after store.
+	alias_type_info.instantiation_context_index_ =
+		semantic_source_type_info.instantiation_context_index_;
 }
 
 } // namespace
@@ -713,6 +737,7 @@ void printTypeTableStats() {
 			  ", DependentQualifiedNameRecord=", sizeof(TypeInfo::DependentQualifiedNameRecord),
 			  ", dependent_qualified_name_index_=", sizeof(uint32_t),
 			  ", InstantiationContext=", sizeof(TypeInfo::InstantiationContext),
+			  ", instantiation_context_index_=", sizeof(uint32_t),
 			  ", FunctionSignature=", sizeof(FunctionSignature),
 			  ", optional<FunctionSignature>=", sizeof(std::optional<FunctionSignature>),
 			  ", optional<ASTNode>=", sizeof(std::optional<ASTNode>));
@@ -756,6 +781,12 @@ void printTypeTableStats() {
 			  ", list_bytes=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
 			  ", estimated cold storage=",
 			  getTypeInfoTemplateArgsCount() * sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  " bytes");
+	FLASH_LOG(General, Info, "  gInstantiationContexts: entries=",
+			  getInstantiationContextCount(),
+			  ", context_bytes=", sizeof(TypeInfo::InstantiationContext),
+			  ", estimated cold storage=",
+			  getInstantiationContextCount() * sizeof(TypeInfo::InstantiationContext),
 			  " bytes");
 
 	// Break down entries by category
@@ -1473,11 +1504,11 @@ void TypeInfo::setStructInfo(std::unique_ptr<StructTypeInfo> info) {
 void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
 									   InlineVector<TemplateArgInfo, 4> param_args,
 									   const InstantiationContext* parent) {
-	instantiation_context_ = std::make_unique<InstantiationContext>();
-	instantiation_context_->parent = parent;
-	instantiation_context_->param_names = param_names;
-	instantiation_context_->param_args_index = storeTypeInfoTemplateArgs(std::move(param_args));
-	const auto& stored_param_args = getTypeInfoTemplateArgs(instantiation_context_->param_args_index);
+	InstantiationContext ctx;
+	ctx.parent = parent;
+	ctx.param_names = param_names;
+	ctx.param_args_index = storeTypeInfoTemplateArgs(std::move(param_args));
+	const auto& stored_param_args = getTypeInfoTemplateArgs(ctx.param_args_index);
 
 	// Phase 5: Populate binding-based storage alongside legacy fields.
 	// param_args may be a flattened pack list and can therefore be longer than
@@ -1491,7 +1522,7 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		throw InternalError(std::string(error_builder.commit()));
 	}
 	const size_t estimated_binding_count = param_names.size();
-	instantiation_context_->bindings.reserve(estimated_binding_count);
+	ctx.bindings.reserve(estimated_binding_count);
 
 	size_t arg_index = 0;
 	size_t name_index = 0;
@@ -1535,8 +1566,9 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		}
 		binding.kind = static_cast<uint8_t>(binding_kind);
 		binding.is_pack = (binding.args.size() > 1);
-		instantiation_context_->bindings.push_back(std::move(binding));
+		ctx.bindings.push_back(std::move(binding));
 	}
+	instantiation_context_index_ = storeInstantiationContext(std::move(ctx));
 }
 
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {

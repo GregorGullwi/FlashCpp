@@ -1272,9 +1272,10 @@ struct TypeInfo {
 	static constexpr uint32_t kNoDependentQualifiedName = UINT32_MAX;
 	uint32_t dependent_qualified_name_index_ = kNoDependentQualifiedName;
 
- // Type-owned instantiation context (non-null for template instantiations
- // and for types nested inside a template instantiation).
-	std::unique_ptr<InstantiationContext> instantiation_context_;
+	// Index into gInstantiationContexts. UINT32_MAX = none.
+	// Keeps InstantiationContext out of every TypeInfo row.
+	static constexpr uint32_t kNoInstantiationContext = UINT32_MAX;
+	uint32_t instantiation_context_index_ = kNoInstantiationContext;
 
 	StringHandle name() const {
 		return name_;
@@ -1296,10 +1297,11 @@ struct TypeInfo {
 	void setDependentQualifiedName(DependentQualifiedNameRecord record);
 
 	// Access the type-owned instantiation context (may be null).
-	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
-	bool hasInstantiationContext() const { return instantiation_context_ != nullptr; }
+	const InstantiationContext* instantiationContext() const;
+	bool hasInstantiationContext() const { return instantiation_context_index_ != kNoInstantiationContext; }
+	void clearInstantiationContext() { instantiation_context_index_ = kNoInstantiationContext; }
 	const TemplateArgInfo* findLegacyInstantiationArgByName(std::string_view param_name) const {
-		for (const auto* inst_ctx = instantiation_context_.get(); inst_ctx; inst_ctx = inst_ctx->parent) {
+		for (const auto* inst_ctx = instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
 			const auto& args = inst_ctx->param_args();
 			size_t param_count = inst_ctx->param_names.size();
 			if (args.size() < param_count) {
@@ -1406,6 +1408,12 @@ size_t getDependentQualifiedNameRecordCount();
 uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> args);
 const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32_t index);
 size_t getTypeInfoTemplateArgsCount();
+
+// Cold arena for TypeInfo::InstantiationContext.
+uint32_t storeInstantiationContext(TypeInfo::InstantiationContext ctx);
+const TypeInfo::InstantiationContext* getInstantiationContext(uint32_t index);
+TypeInfo::InstantiationContext* getInstantiationContextMut(uint32_t index);
+size_t getInstantiationContextCount();
 
 // Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
 // register_type_alias so callers can capture both the TypeInfo reference AND the
