@@ -9,7 +9,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5795ms (retested 2026-05-25, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1124ms (`TOTAL`) / ~1.29s wall (retested 2026-05-28, Linux/libstdc++-14). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~4.6s wall (retested 2026-07-23, Windows/MSVC STL 14.44). Restored after parser fixes for cast/postfix `.*` and template brace-init/noexcept parsing. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -36,7 +36,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~4.76s (`TOTAL`) / ~5.13s wall (retested 2026-05-27, Linux/libstdc++-14). `__make_move_if_noexcept_iterator` still emits non-fatal overload noise, but the current first hard error remains depth-guarded `rebind`. |
 | `<map>` | `test_std_map.cpp` | ❌ Compile Error | ~2498ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Unregistered dependent placeholder type reached template argument classification`. |
 | `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~2350ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~2906ms (retested 2026-04-12). The earlier variable-template/type-traits arity blocker is gone. Current first error is later in the Windows UCRT headers: "No matching function for call to '__stdio_common_vfwprintf'". |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~1534s compile-only / >25 min (retested 2026-07-23, Windows/MSVC STL 14.44). Parse/noexcept stops fixed; full compile now exhausts template depth on variadic `invoke` / `operator()` recursion. |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4559ms (retested 2026-04-11). |
 | `<sstream>` | `test_std_sstream.cpp` | 💥 Crash | ~4565ms (retested 2026-04-11). |
 | `<fstream>` | `test_std_fstream.cpp` | 💥 Crash | ~4642ms (retested 2026-04-11). |
@@ -48,7 +48,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7529ms (retested 2026-05-25, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~13.49s (`TOTAL`) / ~16.5s wall (retested 2026-06-21, Windows/MSVC STL 14.44). Progressed past the old `swap`-adjacent parser stops; current first hard error is `Could not evaluate non-type template default for parameter 2 of 'subrange'`. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | ~15.8s wall (retested 2026-07-23, Windows/MSVC STL 14.44). Parse/noexcept stops fixed; current first hard stops are `ranges::empty` overload viability and `view_interface` aggregate layout metadata in codegen. |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
@@ -100,6 +100,34 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-07-23 Windows/MSVC parser/noexcept follow-up
+
+Fixes landed (parser / early semantic layer):
+
+- **Pointer-to-member (`.*` / `->*`) is a pm-expression layer after unary/cast**, not postfix. `apply_pointer_to_member_operators` applies left-associative `.*`/`->*` with cast-expression RHS so `static_cast<T>(obj).*pmf`, `*p.*pm`, and `a.*pm * n` follow C++ [expr.mptr.oper].
+- **`tryParseExplicitTemplateBraceInitialization` centralizes `Template<Args>{...}` brace-init parsing** for dependent and concrete template-ids, including injected-class-name cases inside class templates. Both the early qualified/unqualified template-id paths and the general explicit-template-argument path call it.
+- **Dependent `noexcept(expr)` on member functions defers instead of hard-erroring** when constexpr evaluation fails but the surrounding template context is still dependent (`apply_parsed_function_noexcept` now mirrors `apply_parsed_function_type_qualifiers`).
+- **`this` is accepted while parsing member declarations inside a struct context**, so noexcept operands like `noexcept(_Call(std::move(*this), ...))` parse before the member-function context stack is pushed.
+
+Regression coverage:
+
+- `tests/test_noexcept_pmf_call_ret0.cpp`
+- `tests/test_noexcept_braced_init_ctor_ret0.cpp`
+- `tests/test_noexcept_call_empty_brace_pack_ret0.cpp`
+- `tests/test_noexcept_rvalue_call_empty_brace_ret0.cpp`
+
+Validation snapshot (`x64/Sharded/FlashCppMSVC.exe`, Windows/MSVC STL 14.44; runner wall time includes compile/link/run):
+
+| Header/Test | Status | Runner wall time | First-order stop / note |
+|-------------|--------|------------------|-------------------------|
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~4.6s | Was failing at `type_traits:1586` (`.*` after `static_cast` in `_Invoker_pmf_object` noexcept); now compiles/links/returns 0. |
+| `<concepts>` (`test_std_concepts.cpp`) | ✅ Pass | ~4.3s | Control retest still passes. |
+| `<iterator>` (`test_std_iterator.cpp`) | ❌ Codegen error | ~15.8s | Parse/noexcept regressions fixed. Current stops: `ranges::empty` overload viability (non-fatal template noise) and `view_interface` codegen: `Runtime aggregate value requires complete canonical layout metadata`. |
+| `<ranges>` (`test_std_ranges.cpp`) | ❌ Compile/codegen (in progress) | ~1534s compile-only (`FlashCppMSVC.exe --timing`, 2026-07-23) | No longer stops at `__msvc_ranges_to.hpp:429` `Expected ')' after noexcept expression`. Full retest runs ~25.5 min and then hits repeated `Failed to instantiate template function: invoke` plus `try_instantiate_template recursion depth exceeded 64` for `operator()`. |
+| `<utility>` (`test_std_utility.cpp`) | ❌ Codegen error | ~3.7s | Reaches deferred `std::swap` / `three_way_comparable_with` / `pair` category-31 codegen after parsing `<type_traits>`. |
+
+Net movement: `<type_traits>` regressed to a hard parse failure on current branch before this work and is green again; `<iterator>` moved from parse/noexcept into codegen; `<ranges>` moved past the shared `type_traits` / `__msvc_ranges_to.hpp` noexcept parse stop.
 
 ### Current Windows/MSVC snapshot (2026-07-13)
 

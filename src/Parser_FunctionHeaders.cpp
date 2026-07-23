@@ -738,11 +738,16 @@ void Parser::apply_parsed_function_noexcept(
 	}
 
 	const auto evaluated = try_evaluate_constant_expression(expression.node());
-	if (!evaluated.has_value()) {
+	if (evaluated.has_value()) {
+		function.set_noexcept(evaluated->value != 0);
+		function.clear_noexcept_expression();
+		return;
+	}
+	if (!isDependentTemplateContext()) {
 		throw CompileError("noexcept specification is not a constant expression");
 	}
-	function.set_noexcept(evaluated->value != 0);
-	function.clear_noexcept_expression();
+	function.set_noexcept(false);
+	function.set_noexcept_expression(expression);
 }
 
 ParseResult Parser::parse_function_trailing_specifiers(

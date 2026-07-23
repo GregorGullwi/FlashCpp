@@ -3484,6 +3484,11 @@ private:	 // Resume private methods
 	ParseResult parse_primary_expression(ExpressionContext context);
 	ParseResult parse_postfix_expression(ExpressionContext context);	 // Phase 3: New postfix operator layer
 	ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
+	// C++ [expr.mptr.oper]: pm-expression sits between cast/unary and multiplicative.
+	// Applies left-associative .* / ->* with cast-expression RHS (parse_unary_expression).
+	ParseResult apply_pointer_to_member_operators(ASTNode start_result, ExpressionContext context);
+	// True when peek is '.' or '->' immediately followed by '*' (.* / ->*).
+	bool peek_is_pointer_to_member_operator();
 	std::optional<ASTNode> try_synthesize_atomic_builtin_overload(std::string_view builtin_name, std::span<const TypeSpecifierNode> arg_types, const Token& call_token);
 	void finalizePostfixCallExpression(
 		std::optional<ASTNode>& result,
@@ -3549,6 +3554,9 @@ private:	 // Resume private methods
 		std::span<const TemplateTypeArg> template_args,
 		std::string_view template_name,
 		const Token& identifier_token);
+	ParseResult tryParseExplicitTemplateBraceInitialization(
+		const Token& identifier_token,
+		const InlineVector<TemplateTypeArg, 4>& explicit_template_args);
 
 	// Helper to parse member template function calls: Template<T>::member<U>()
 	// Returns:
