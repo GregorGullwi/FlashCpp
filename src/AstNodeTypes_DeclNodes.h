@@ -1260,7 +1260,10 @@ struct TypeInfo {
 		size_t getInstantiationContextBindingsCount() const { return bindings.size(); }
 	};
 
-	InlineVector<TemplateArgInfo, 4> template_args_;
+	// Index into gTypeInfoTemplateArgLists. UINT32_MAX = none/empty.
+	// Keeps InlineVector<TemplateArgInfo,4> (~1.2KB) out of every TypeInfo row.
+	static constexpr uint32_t kNoTemplateArgs = UINT32_MAX;
+	uint32_t template_args_index_ = kNoTemplateArgs;
 
 	// Index into gDependentQualifiedNameRecords. UINT32_MAX = none.
 	// Keeps the fat DependentQualifiedNameRecord (~6KB) out of every TypeInfo row.
@@ -1283,7 +1286,8 @@ struct TypeInfo {
 	bool isTemplateInstantiation() const { return base_template_.valid(); }
 	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
-	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
+	const InlineVector<TemplateArgInfo, 4>& templateArgs() const;
+	void clearTemplateArgs();
 	bool hasDependentQualifiedName() const;
 	const DependentQualifiedNameRecord* dependentQualifiedName() const;
 	void clearDependentQualifiedName();
@@ -1312,10 +1316,7 @@ struct TypeInfo {
 		return deferred_decltype_expression_.has_value() ? &*deferred_decltype_expression_ : nullptr;
 	}
 
-	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
-		base_template_ = base_template;
-		template_args_ = std::move(args);
-	}
+	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args);
 
 	void clearAliasTypeSpecifier();
 	void setAliasTypeSpecifier(const TypeSpecifierNode& type_spec);
@@ -1397,6 +1398,11 @@ struct TypeInfo {
 uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record);
 const TypeInfo::DependentQualifiedNameRecord* getDependentQualifiedNameRecord(uint32_t index);
 size_t getDependentQualifiedNameRecordCount();
+
+// Cold arena for TypeInfo template-argument lists (InlineVector<TemplateArgInfo,4>).
+uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> args);
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32_t index);
+size_t getTypeInfoTemplateArgsCount();
 
 // Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
 // register_type_alias so callers can capture both the TypeInfo reference AND the

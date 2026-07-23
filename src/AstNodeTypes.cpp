@@ -246,6 +246,7 @@ std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 
 // Explicit chunk size: default ChunkSize=sizeof(T)*4 would reserve ~25k *huge* elements.
 ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
+ChunkedVector<InlineVector<TypeInfo::TemplateArgInfo, 4>, 8> gTypeInfoTemplateArgLists;
 
 uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record) {
 	const uint32_t index = static_cast<uint32_t>(gDependentQualifiedNameRecords.size());
@@ -279,6 +280,42 @@ void TypeInfo::clearDependentQualifiedName() {
 
 void TypeInfo::setDependentQualifiedName(DependentQualifiedNameRecord record) {
 	dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
+}
+
+uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> args) {
+	if (args.empty()) {
+		return TypeInfo::kNoTemplateArgs;
+	}
+	const uint32_t index = static_cast<uint32_t>(gTypeInfoTemplateArgLists.size());
+	gTypeInfoTemplateArgLists.push_back(std::move(args));
+	return index;
+}
+
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32_t index) {
+	static const InlineVector<TypeInfo::TemplateArgInfo, 4> empty_args;
+	if (index == TypeInfo::kNoTemplateArgs) {
+		return empty_args;
+	}
+	assert(index < gTypeInfoTemplateArgLists.size());
+	return gTypeInfoTemplateArgLists[index];
+}
+
+size_t getTypeInfoTemplateArgsCount() {
+	return gTypeInfoTemplateArgLists.size();
+}
+
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::templateArgs() const {
+	return getTypeInfoTemplateArgs(template_args_index_);
+}
+
+void TypeInfo::clearTemplateArgs() {
+	template_args_index_ = kNoTemplateArgs;
+}
+
+void TypeInfo::setTemplateInstantiationInfo(QualifiedIdentifier base_template,
+											InlineVector<TemplateArgInfo, 4> args) {
+	base_template_ = base_template;
+	template_args_index_ = storeTypeInfoTemplateArgs(std::move(args));
 }
 
 template <typename... Args>
@@ -508,7 +545,7 @@ void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
 	alias_type_info.clearDependentQualifiedName();
 	alias_type_info.clearDeferredDecltypeExpression();
 	alias_type_info.base_template_ = QualifiedIdentifier{};
-	alias_type_info.template_args_.clear();
+	alias_type_info.clearTemplateArgs();
 	alias_type_info.instantiation_context_.reset();
 	alias_type_info.is_incomplete_instantiation_ = false;
 }
@@ -525,7 +562,8 @@ void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& se
 		alias_type_info.clearDeferredDecltypeExpression();
 	}
 	alias_type_info.base_template_ = semantic_source_type_info.base_template_;
-	alias_type_info.template_args_ = semantic_source_type_info.template_args_;
+	// Share the cold-arena index; arg lists are immutable after store.
+	alias_type_info.template_args_index_ = semantic_source_type_info.template_args_index_;
 	alias_type_info.is_incomplete_instantiation_ = semantic_source_type_info.is_incomplete_instantiation_;
 	if (const TypeInfo::InstantiationContext* instantiation_context =
 			semantic_source_type_info.instantiationContext();
@@ -667,6 +705,7 @@ void printTypeTableStats() {
 	FLASH_LOG(General, Info, "  TypeInfo layout breakdown (bytes): ",
 			  "TemplateArgInfo=", sizeof(TypeInfo::TemplateArgInfo),
 			  ", InlineVector<TemplateArgInfo,4>=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  ", template_args_index_=", sizeof(uint32_t),
 			  ", DependentQualifiedNameRecord=", sizeof(TypeInfo::DependentQualifiedNameRecord),
 			  ", dependent_qualified_name_index_=", sizeof(uint32_t),
 			  ", InstantiationContext=", sizeof(TypeInfo::InstantiationContext),
@@ -707,6 +746,12 @@ void printTypeTableStats() {
 			  ", record_bytes=", sizeof(TypeInfo::DependentQualifiedNameRecord),
 			  ", estimated cold storage=",
 			  getDependentQualifiedNameRecordCount() * sizeof(TypeInfo::DependentQualifiedNameRecord),
+			  " bytes");
+	FLASH_LOG(General, Info, "  gTypeInfoTemplateArgLists: entries=",
+			  getTypeInfoTemplateArgsCount(),
+			  ", list_bytes=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  ", estimated cold storage=",
+			  getTypeInfoTemplateArgsCount() * sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
 			  " bytes");
 
 	// Break down entries by category
