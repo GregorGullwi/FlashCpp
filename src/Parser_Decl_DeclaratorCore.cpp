@@ -800,7 +800,13 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 		}
 
 		Token id_token = peek_info();
-		StringHandle id_handle = StringTable::createStringHandle(id_token.value());
+		// Prefer the token's existing interned handle. createStringHandle() would allocate a
+		// duplicate entry and overwrite the intern map, leaving any already-lexed Tokens
+		// (including those from lexer pretokenization) with stale handles for the same spelling.
+		StringHandle id_handle = id_token.handle();
+		if (!id_handle.isValid()) {
+			id_handle = StringTable::getOrInternStringHandle(id_token.value());
+		}
 		identifiers.push_back(id_handle);
 		advance(); // consume identifier
 
