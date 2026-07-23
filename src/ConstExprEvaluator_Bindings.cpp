@@ -1852,17 +1852,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::findConstexprOperatorOverl
 		if (lhs.has_function_signature()) {
 			const FunctionSignature& lhs_sig = lhs.function_signature();
 			const FunctionSignature& rhs_sig = rhs.function_signature();
-			if (lhs_sig.return_type_index != rhs_sig.return_type_index ||
-				lhs_sig.return_pointer_depth != rhs_sig.return_pointer_depth ||
-				lhs_sig.return_reference_qualifier != rhs_sig.return_reference_qualifier ||
-				lhs_sig.parameter_type_indices != rhs_sig.parameter_type_indices ||
-				lhs_sig.linkage != rhs_sig.linkage ||
-				lhs_sig.class_name != rhs_sig.class_name ||
-				lhs_sig.calling_convention != rhs_sig.calling_convention ||
-				lhs_sig.is_const != rhs_sig.is_const ||
-				lhs_sig.is_volatile != rhs_sig.is_volatile ||
-				lhs_sig.function_reference_qualifier != rhs_sig.function_reference_qualifier ||
-				lhs_sig.is_noexcept != rhs_sig.is_noexcept) {
+			if (!FlashCpp::equalFunctionSignatureIdentity(lhs_sig, rhs_sig)) {
 				return false;
 			}
 		}

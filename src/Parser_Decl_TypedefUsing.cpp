@@ -66,7 +66,7 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		}
 		advance();
 
-		std::vector<TypeIndex> param_types;
+		std::vector<FunctionType> param_types;
 		bool is_variadic = false;
 		auto param_result = parse_function_pointer_parameter_types(param_types, is_variadic);
 		if (param_result.is_error()) {
@@ -80,21 +80,32 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		}
 		advance();
 
-		bool is_noexcept = peek() == "noexcept"_tok;
-		skip_noexcept_specifier();
+		FlashCpp::MemberQualifiers qualifiers;
+		FlashCpp::FunctionSpecifiers specifiers;
+		ParseResult qualifier_result =
+			parse_function_type_qualifiers(qualifiers, specifiers);
+		if (qualifier_result.is_error()) {
+			restore_token_position(func_type_saved_pos);
+			return false;
+		}
 
 		FunctionSignature func_sig;
+		func_sig.setReturnType(makeFunctionType(type_spec));
 		func_sig.return_type_index = type_spec.type_index();
 		func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
 		func_sig.return_reference_qualifier = type_spec.reference_qualifier();
-		func_sig.parameter_type_indices = std::move(param_types);
+		func_sig.setParameterTypes(std::move(param_types));
 		func_sig.calling_convention = calling_conv;
 		func_sig.is_variadic = is_variadic;
-		func_sig.is_noexcept = is_noexcept;
+		apply_parsed_function_type_qualifiers(func_sig, qualifiers, specifiers);
 
-		if (is_function_ptr) {
-			type_spec.add_pointer_level(CVQualifier::None);
-		}
+		type_spec.set_type_index(nativeTypeIndex(
+			is_function_ptr
+				? TypeCategory::FunctionPointer
+				: TypeCategory::Function));
+		type_spec.set_size_in_bits(
+			is_function_ptr ? SizeInBits{64} : SizeInBits{});
+		type_spec.limit_pointer_depth(0);
 		type_spec.set_function_signature(func_sig);
 
 		if (is_function_ref) {
@@ -115,7 +126,7 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 		return true;
 	}
 
-	std::vector<TypeIndex> param_types;
+	std::vector<FunctionType> param_types;
 	bool is_variadic = false;
 	auto param_result = parse_function_pointer_parameter_types(param_types, is_variadic);
 	if (param_result.is_error()) {
@@ -129,17 +140,27 @@ bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::s
 	}
 	advance();
 
-	bool is_noexcept = peek() == "noexcept"_tok;
-	skip_noexcept_specifier();
+	FlashCpp::MemberQualifiers qualifiers;
+	FlashCpp::FunctionSpecifiers specifiers;
+	ParseResult qualifier_result =
+		parse_function_type_qualifiers(qualifiers, specifiers);
+	if (qualifier_result.is_error()) {
+		restore_token_position(func_type_saved_pos);
+		return false;
+	}
 
 	FunctionSignature func_sig;
+	func_sig.setReturnType(makeFunctionType(type_spec));
 	func_sig.return_type_index = type_spec.type_index();
 	func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
 	func_sig.return_reference_qualifier = type_spec.reference_qualifier();
-	func_sig.parameter_type_indices = std::move(param_types);
+	func_sig.setParameterTypes(std::move(param_types));
 	func_sig.calling_convention = calling_conv;
 	func_sig.is_variadic = is_variadic;
-	func_sig.is_noexcept = is_noexcept;
+	apply_parsed_function_type_qualifiers(func_sig, qualifiers, specifiers);
+	type_spec.set_type_index(nativeTypeIndex(TypeCategory::Function));
+	type_spec.set_size_in_bits(SizeInBits{});
+	type_spec.limit_pointer_depth(0);
 	type_spec.set_function_signature(func_sig);
 
 	FLASH_LOG_FORMAT(Parser, Debug, "Parsed bare function type in type alias{}", log_context);
@@ -1953,6 +1974,10 @@ ParseResult Parser::parse_typedef_declaration() {
 	// Pattern: '(' '*' identifier ')' '(' params ')'
 	bool is_function_pointer_typedef = false;
 	std::string_view function_pointer_alias_name;
+	std::vector<FunctionType> function_pointer_parameter_types;
+	bool function_pointer_is_variadic = false;
+	FlashCpp::MemberQualifiers function_pointer_qualifiers;
+	FlashCpp::FunctionSpecifiers function_pointer_specifiers;
 	if (peek() == "("_tok) {
 		// Peek ahead to check if this is a function pointer pattern
 		SaveHandle paren_saved = save_token_position();
@@ -1980,22 +2005,25 @@ ParseResult Parser::parse_typedef_declaration() {
 						is_function_pointer_typedef = true;
 						discard_saved_token(paren_saved);
 
-						// Parse the parameter list
+						// Parse the parameter-type-list and its exception specification.
 						advance(); // consume '('
-
-						// Skip the parameter list by counting parentheses
-						int paren_depth = 1;
-						while (paren_depth > 0 && !peek().is_eof()) {
-							auto token = peek_info();
-							if (token.value() == "(") {
-								paren_depth++;
-							} else if (token.value() == ")") {
-								paren_depth--;
-							}
-							advance();
+						ParseResult parameter_result = parse_function_pointer_parameter_types(
+							function_pointer_parameter_types,
+							function_pointer_is_variadic);
+						if (parameter_result.is_error()) {
+							return parameter_result;
 						}
-
-						// We've consumed through the closing ')' of the parameter list
+						if (!consume(")"_tok)) {
+							return ParseResult::error(
+								"Expected ')' after function pointer typedef parameters",
+								current_token_);
+						}
+						ParseResult qualifier_result = parse_function_type_qualifiers(
+							function_pointer_qualifiers,
+							function_pointer_specifiers);
+						if (qualifier_result.is_error()) {
+							return qualifier_result;
+						}
 					}
 				}
 			}
@@ -2016,21 +2044,19 @@ ParseResult Parser::parse_typedef_declaration() {
 		alias_token = Token(Token::Type::Identifier, function_pointer_alias_name, 0, 0, 0);
 
 		// For function pointer typedefs, create a proper FunctionPointer type
-		// The return type is in type_spec, create a function pointer type with it
-		TypeIndex return_type_index = type_spec.type_index();
-
 		// Create a new TypeSpecifierNode for the function pointer (64-bit pointer)
 		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 
-		// Create a basic function signature with the return type
-		// Note: We don't have full parameter info here since we just skipped the param list
-		// This is a simplified implementation that handles the common case
 		FunctionSignature sig;
-		sig.return_type_index = return_type_index;
-		sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
-		sig.return_reference_qualifier = type_spec.reference_qualifier();
+		sig.setReturnType(makeFunctionType(type_spec));
+		sig.setParameterTypes(std::move(function_pointer_parameter_types));
 		sig.linkage = Linkage::None;
 		sig.calling_convention = last_calling_convention_;
+		sig.is_variadic = function_pointer_is_variadic;
+		apply_parsed_function_type_qualifiers(
+			sig,
+			function_pointer_qualifiers,
+			function_pointer_specifiers);
 		fp_type.set_function_signature(sig);
 
 		// Replace type_spec with the function pointer type

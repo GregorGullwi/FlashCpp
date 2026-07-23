@@ -524,17 +524,7 @@ static bool sameTypeSpecifierShape(const TypeSpecifierNode& lhs, const TypeSpeci
 	if (lhs.has_function_signature()) {
 		const FunctionSignature& lhs_sig = lhs.function_signature();
 		const FunctionSignature& rhs_sig = rhs.function_signature();
-		if (lhs_sig.return_type_index != rhs_sig.return_type_index ||
-			lhs_sig.return_pointer_depth != rhs_sig.return_pointer_depth ||
-			lhs_sig.return_reference_qualifier != rhs_sig.return_reference_qualifier ||
-			lhs_sig.parameter_type_indices != rhs_sig.parameter_type_indices ||
-			lhs_sig.linkage != rhs_sig.linkage ||
-			lhs_sig.class_name != rhs_sig.class_name ||
-			lhs_sig.calling_convention != rhs_sig.calling_convention ||
-			lhs_sig.is_const != rhs_sig.is_const ||
-			lhs_sig.is_volatile != rhs_sig.is_volatile ||
-			lhs_sig.function_reference_qualifier != rhs_sig.function_reference_qualifier ||
-			lhs_sig.is_noexcept != rhs_sig.is_noexcept) {
+		if (!FlashCpp::equalFunctionSignatureIdentity(lhs_sig, rhs_sig)) {
 			return false;
 		}
 	}
@@ -2249,6 +2239,7 @@ bool Parser::materializeTemplateFunctionParameters(
 				}
 
 				TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
+					*this,
 					original_param_type,
 					original_param_decl.type_node(),
 					original_param_decl.identifier_token(),
@@ -2438,6 +2429,7 @@ bool Parser::materializeTemplateFunctionParameters(
 								 recursion_depth, override_type_index);
 			}
 			TypeSpecifierNode substituted_param_type = buildSubstitutedTypeSpecifier(
+				*this,
 				orig_param_type,
 				param_decl.type_node(),
 				param_decl.identifier_token(),
@@ -2537,6 +2529,22 @@ std::optional<ASTNode> Parser::finalizeInstantiatedFunction(
 	const bool skip_body_materialization =
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::SkipBodyMaterialization);
 	copy_function_properties(new_func_ref, func_decl);
+	if (func_decl.has_noexcept_expression()) {
+		FunctionSignature exception_specification;
+		exception_specification.is_noexcept = func_decl.is_noexcept();
+		exception_specification.noexcept_expression = *func_decl.noexcept_expression();
+		exception_specification = substituteTemplateFunctionSignature(
+			std::move(exception_specification),
+			instantiation_context.template_params,
+			instantiation_context.template_args);
+		new_func_ref.set_noexcept(exception_specification.is_noexcept);
+		if (exception_specification.noexcept_expression.has_value()) {
+			new_func_ref.set_noexcept_expression(
+				*exception_specification.noexcept_expression);
+		} else {
+			new_func_ref.clear_noexcept_expression();
+		}
+	}
 
 	if (run_inline_heuristic) {
 		const auto& func_definition = new_func_ref.get_definition();
@@ -2809,6 +2817,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			const TypeSpecifierNode& parsed_return_type =
 				resolved_return_type.as<TypeSpecifierNode>();
 			TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+				*this,
 				parsed_return_type,
 				resolved_return_type,
 				parsed_return_type.token(),
@@ -2901,6 +2910,19 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
 				auto& rt = return_type_result.node()->as<TypeSpecifierNode>();
 				consume_pointer_ref_modifiers(rt);
+				if (orig_return_type.has_function_signature()) {
+					rt.set_type_index(orig_return_type.type_index());
+					rt.set_size_in_bits(orig_return_type.sizeBits());
+					if (orig_return_type.has_member_class()) {
+						rt.set_member_class_name(orig_return_type.member_class_name());
+					}
+					materializeSubstitutedFunctionTypeMetadata(
+						*this,
+						rt,
+						orig_return_type,
+						template_params,
+						template_args);
+				}
 			}
 			restore_lexer_position_only(current_pos);
 			if (return_type_result.is_error()) {
@@ -2919,6 +2941,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			return_type = *return_type_result.node();
 		} else {
 			TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+				*this,
 				orig_return_type,
 				orig_decl.type_node(),
 				orig_decl.identifier_token(),
@@ -3032,6 +3055,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			new_return_type.set_type_index(return_type_index);
 			new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
 			materializeSubstitutedFunctionTypeMetadata(
+				*this,
 				new_return_type,
 				orig_return_type,
 				template_params,

@@ -192,6 +192,9 @@ inline std::string generateItaniumEncodedTypeName(std::string_view qualified_nam
 template <typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter);
 
+template <typename OutputType>
+void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node);
+
 // Helper to append CV-qualifier code (A/B/C/D) to output
 inline void appendCVQualifier(auto& output, CVQualifier cv) {
 	if (cv == CVQualifier::None) {
@@ -244,8 +247,49 @@ inline std::string_view getMsvcMemberPointerClassName(
 
 inline TypeIndex resolveTypeAliasIndex(TypeIndex idx);
 
+inline TypeSpecifierNode buildFunctionTypeComponentForMangling(
+	const FunctionType& type) {
+	if (type.template_parameter_name.isValid() || type.is_pack_expansion) {
+		StringBuilder message;
+		message.append("Dependent function type component");
+		if (type.template_parameter_name.isValid()) {
+			message
+				.append(" '")
+				.append(type.template_parameter_name.view())
+				.append("'");
+		}
+		message.append(" reached name mangling");
+		throw InternalError(std::string(message.commit()));
+	}
+	TypeSpecifierNode type_spec(
+		resolveTypeAliasIndex(type.type_index),
+		TypeQualifier::None,
+		0,
+		Token{},
+		type.cv_qualifier);
+	for (CVQualifier pointer_qualifier : type.pointer_qualifiers) {
+		type_spec.add_pointer_level(pointer_qualifier);
+	}
+	type_spec.set_reference_qualifier(type.reference_qualifier);
+	if (!type.array_dimensions.empty()) {
+		type_spec.set_array_dimensions(type.array_dimensions);
+	} else if (type.has_unsized_outer_array_dimension) {
+		type_spec.set_unsized_outer_array_dimension(true);
+	}
+	if (type.member_class_name.isValid()) {
+		type_spec.set_member_class_name(type.member_class_name);
+	}
+	if (type.callable_signature) {
+		type_spec.set_function_signature(*type.callable_signature);
+	}
+	return type_spec;
+}
+
 inline TypeSpecifierNode buildFunctionSignatureReturnTypeForMangling(
 	const FunctionSignature& sig) {
+	if (sig.hasStructuredTypes()) {
+		return buildFunctionTypeComponentForMangling(sig.return_type());
+	}
 	TypeSpecifierNode return_type(
 		resolveTypeAliasIndex(sig.return_type_index),
 		TypeQualifier::None,
@@ -255,6 +299,42 @@ inline TypeSpecifierNode buildFunctionSignatureReturnTypeForMangling(
 	return_type.set_reference_qualifier(sig.return_reference_qualifier);
 	return_type.add_pointer_levels(sig.return_pointer_depth);
 	return return_type;
+}
+
+template <typename OutputType>
+inline void appendMsvcFunctionSignatureTypeCode(
+	OutputType& output,
+	const FunctionSignature& sig) {
+	output += 'A';
+	appendTypeCode(output, buildFunctionSignatureReturnTypeForMangling(sig));
+	if (sig.hasStructuredTypes()) {
+		if (sig.parameter_types().empty()) {
+			output += 'X';
+		} else {
+			for (const FunctionType& parameter_type : sig.parameter_types()) {
+				appendTypeCode(
+					output,
+					buildFunctionTypeComponentForMangling(parameter_type)
+						.adjusted_function_parameter_type());
+			}
+			output += '@';
+		}
+	} else if (sig.parameter_type_indices.empty()) {
+		output += 'X';
+	} else {
+		for (const TypeIndex parameter_type : sig.parameter_type_indices) {
+			TypeSpecifierNode parameter_spec(
+				resolveTypeAliasIndex(parameter_type),
+				TypeQualifier::None,
+				0,
+				Token{},
+				CVQualifier::None);
+			appendTypeCode(
+				output, parameter_spec.adjusted_function_parameter_type());
+		}
+		output += '@';
+	}
+	output += sig.is_noexcept ? "_E" : "Z";
 }
 
 template <typename OutputType>
@@ -504,10 +584,12 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 
 	// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
 	// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
-	if (normalized.is_lvalue_reference()) {
+	if (normalized.category() != TypeCategory::Function &&
+		normalized.is_lvalue_reference()) {
 		output += "AE";
 		appendCVQualifier(output, normalized.cv_qualifier());
-	} else if (normalized.is_rvalue_reference()) {
+	} else if (normalized.category() != TypeCategory::Function &&
+			   normalized.is_rvalue_reference()) {
 		output += "$$QE";
 		appendCVQualifier(output, normalized.cv_qualifier());
 	}
@@ -649,25 +731,30 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		output += "@@";
 		break;
 	}
-	case TypeCategory::FunctionPointer: {
-			// MSVC function pointer: P6A<return><params>@Z
-		output += "P6A";
-		if (normalized.has_function_signature()) {
-			const auto& sig = normalized.function_signature();
-			TypeSpecifierNode ret_spec = buildFunctionSignatureReturnTypeForMangling(sig);
-			appendTypeCode(output, ret_spec);
-			if (sig.parameter_type_indices.empty()) {
-				output += 'X';  // void parameter list
-			} else {
-				for (const TypeIndex& pt : sig.parameter_type_indices) {
-					TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);	 // explicit ctor: see above
-					appendTypeCode(output, param_spec.adjusted_function_parameter_type());
-				}
-			}
+	case TypeCategory::Function: {
+		if (!normalized.has_function_signature()) {
+			throw InternalError(
+				"MSVC name mangling: Function type missing function signature");
+		}
+		if (normalized.is_lvalue_reference()) {
+			output += 'A';
+		} else if (normalized.is_rvalue_reference()) {
+			output += "$$Q";
 		} else {
+			output += "$$A";
+		}
+		output += '6';
+		appendMsvcFunctionSignatureTypeCode(
+			output, normalized.function_signature());
+		break;
+	}
+	case TypeCategory::FunctionPointer: {
+		output += "P6";
+		if (!normalized.has_function_signature()) {
 			throw InternalError("MSVC name mangling: FunctionPointer type missing function signature — cannot generate valid symbol");
 		}
-		output += "@Z";
+		appendMsvcFunctionSignatureTypeCode(
+			output, normalized.function_signature());
 		break;
 	}
 	case TypeCategory::MemberFunctionPointer: {
@@ -1082,27 +1169,59 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		}
 		break;
 	}
+	case TypeCategory::Function:
 	case TypeCategory::FunctionPointer: {
-			// Itanium ABI: function pointer is encoded as PF<return-type><param-types>E
-		output += "PF";
-		if (normalized.has_function_signature()) {
-			const auto& sig = normalized.function_signature();
-				// Use explicit constructor (not default + set_type) to prevent uninitialized
-				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
-			TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-			appendItaniumTypeCode(output, ret_spec, false);
-				// Encode parameter types
-			if (sig.parameter_type_indices.empty()) {
-				output += 'v';  // void parameter list
+		if (!normalized.has_function_signature()) {
+			throw InternalError(
+				normalized.category() == TypeCategory::Function
+					? "Itanium name mangling: Function type missing function signature"
+					: "Itanium name mangling: FunctionPointer type missing function signature");
+		}
+		const FunctionSignature& sig = normalized.function_signature();
+		if (normalized.category() == TypeCategory::FunctionPointer) {
+			output += 'P';
+		}
+		if (sig.is_const) {
+			output += 'K';
+		}
+		if (sig.is_volatile) {
+			output += 'V';
+		}
+		if (sig.is_noexcept) {
+			output += "Do";
+		}
+		output += 'F';
+		appendItaniumTypeCode(
+			output, buildFunctionSignatureReturnTypeForMangling(sig), false);
+		if (sig.hasStructuredTypes()) {
+			if (sig.parameter_types().empty()) {
+				output += 'v';
 			} else {
-				for (const TypeIndex& pt : sig.parameter_type_indices) {
-					TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);	 // explicit ctor: see above
-					appendItaniumTypeCode(output, param_spec, false);
+				for (const FunctionType& parameter_type : sig.parameter_types()) {
+					appendItaniumTypeCode(
+						output,
+						buildFunctionTypeComponentForMangling(parameter_type)
+							.adjusted_function_parameter_type(),
+						false);
 				}
 			}
+		} else if (sig.parameter_type_indices.empty()) {
+			output += 'v';
 		} else {
-			throw InternalError("Itanium name mangling: FunctionPointer type missing function signature — cannot generate valid symbol");
+			for (const TypeIndex parameter_type : sig.parameter_type_indices) {
+				TypeSpecifierNode parameter_spec(
+					resolveTypeAliasIndex(parameter_type),
+					TypeQualifier::None,
+					0,
+					Token{},
+					CVQualifier::None);
+				appendItaniumTypeCode(output, parameter_spec, false);
+			}
+		}
+		if (sig.function_reference_qualifier == ReferenceQualifier::LValueReference) {
+			output += 'R';
+		} else if (sig.function_reference_qualifier == ReferenceQualifier::RValueReference) {
+			output += 'O';
 		}
 		output += 'E';
 		break;
@@ -1499,25 +1618,24 @@ inline void appendItaniumTypeTemplateArgs(
 				output += struct_name;
 				break;
 			}
+			case TypeCategory::Function:
 			case TypeCategory::FunctionPointer: {
-					// Itanium ABI: function pointer is PF<return-type><param-types>E
-				output += "PF";
-				if (arg.function_signature.has_value()) {
-					const auto& sig = *arg.function_signature;
-					TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-					appendItaniumTypeCode(output, ret_spec, false);
-					if (sig.parameter_type_indices.empty()) {
-						output += 'v';
-					} else {
-						for (const TypeIndex& pt : sig.parameter_type_indices) {
-							TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
-							appendItaniumTypeCode(output, param_spec, false);
-						}
-					}
-				} else {
-					throw InternalError("Itanium name mangling: FunctionPointer template arg missing function signature");
+				if (!arg.function_signature.has_value()) {
+					throw InternalError(
+						"Itanium name mangling: callable template argument missing function signature");
 				}
-				output += 'E';
+				TypeSpecifierNode function_type(
+					arg.type_index,
+					TypeQualifier::None,
+					0,
+					Token{},
+					arg.cv_qualifier);
+				function_type.set_reference_qualifier(arg.ref_qualifier);
+				for (CVQualifier pointer_qualifier : arg.pointer_cv_qualifiers) {
+					function_type.add_pointer_level(pointer_qualifier);
+				}
+				function_type.set_function_signature(*arg.function_signature);
+				appendItaniumTypeCode(output, function_type, false);
 				break;
 			}
 			case TypeCategory::MemberFunctionPointer: {

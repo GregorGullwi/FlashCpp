@@ -74,6 +74,38 @@ void printTimingSummary(double preprocessing_time, double lexer_setup_time, doub
 // Forward declaration
 int main_impl(int argc, char* argv[]);
 
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
+
+// Linux/Unix default RLIMIT_STACK is often 8MB, which is too small for deep but
+// finite class-template instantiation chains in -O0 debug builds. Raise the soft
+// limit to 16MB when permitted so Nest/Chain depth regressions match Windows'
+// larger reserved stack without requiring callers to set ulimit.
+static void ensureMinimumProcessStackSize() {
+#if !defined(_WIN32)
+	constexpr rlim_t kMinimumStackBytes = static_cast<rlim_t>(16ull * 1024ull * 1024ull);
+	rlimit limit{};
+	if (getrlimit(RLIMIT_STACK, &limit) != 0) {
+		return;
+	}
+	if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur >= kMinimumStackBytes) {
+		return;
+	}
+
+	rlim_t new_soft = kMinimumStackBytes;
+	if (limit.rlim_max != RLIM_INFINITY && limit.rlim_max < new_soft) {
+		new_soft = limit.rlim_max;
+	}
+	if (new_soft <= limit.rlim_cur) {
+		return;
+	}
+
+	limit.rlim_cur = new_soft;
+	(void)setrlimit(RLIMIT_STACK, &limit);
+#endif
+}
+
 // Helper function to set mangling style in both CompileContext and NameMangling namespace
 // Also sets the data model to match (MSVC -> LLP64, Itanium -> LP64)
 // This automatic association assumes typical platform conventions:
@@ -97,6 +129,8 @@ static void setManglingStyle(CompileContext& context, CompileContext::ManglingSt
 }
 
 int main(int argc, char* argv[]) {
+	ensureMinimumProcessStackSize();
+
 	// Install crash handler for automatic crash logging with stack traces
 	CrashHandler::install();
 
@@ -524,10 +558,16 @@ int main_impl(int argc, char* argv[]) {
 	bool has_compile_errors = false;
 	{
 		PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
-		// Re-evaluate ast.size() each iteration so template/member instantiations appended
-		// during IR conversion are also visited in the same pass.
-		for (size_t node_index = 0; node_index < ast.size(); ++node_index) {
+		// Re-evaluate ast.size() each iteration so appended template/member
+		// instantiations are visited in the same pass. Constexpr materialization can
+		// also insert a dependency at the front; after each visit, advance to the
+		// node after the one we just processed by identity so a front insertion
+		// cannot shift the cursor onto the same node again. Front-inserted
+		// compile-time-only roots are intentionally not back-scanned: visiting
+		// them can recursively materialize more roots and grow the worklist.
+		for (size_t node_index = 0; node_index < ast.size(); ) {
 			ASTNode node_handle = ast[node_index];
+			const void* visited_node_key = node_handle.raw_pointer();
 			if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
 				const auto& func = node_handle.as<FunctionDeclarationNode>();
 				bool has_def = func.is_materialized();
@@ -599,6 +639,20 @@ int main_impl(int argc, char* argv[]) {
 				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
 				++ir_conversion_error_count;
 			}
+
+			// Advance past the node we just visited. Front inserts shift it right;
+			// locate it by identity so we neither revisit it nor fall onto a
+			// newly inserted compile-time-only root behind the cursor.
+			size_t next_index = node_index + 1;
+			if (visited_node_key != nullptr) {
+				for (size_t search_index = node_index; search_index < ast.size(); ++search_index) {
+					if (ast[search_index].raw_pointer() == visited_node_key) {
+						next_index = search_index + 1;
+						break;
+					}
+				}
+			}
+			node_index = next_index;
 		}
 	}
 

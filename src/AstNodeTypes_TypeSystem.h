@@ -1104,12 +1104,42 @@ struct DeferredTemplateBaseClassSpecifier {
 	SaveHandle replayPosition() const { return *replay_position; }
 };
 
+struct FunctionSignature;
+
+// Complete type-id used by a function signature component. Function parameter
+// adjustment is performed by the parser before this value is created.
+struct FunctionType {
+	TypeIndex type_index{};
+	CVQualifier cv_qualifier = CVQualifier::None;
+	std::vector<CVQualifier> pointer_qualifiers;
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
+	std::vector<size_t> array_dimensions;
+	bool has_unsized_outer_array_dimension = false;
+	bool is_pack_expansion = false;
+	StringHandle template_parameter_name;
+	StringHandle member_class_name;
+	std::shared_ptr<FunctionSignature> callable_signature;
+};
+
+// Arena-backed structured callable components. Kept off FunctionSignature's
+// inline footprint so TemplateTypeArg / TypeSpecifierNode stack frames stay
+// small enough for deep class-template recursion on Linux's ~8-16MB stack.
+// Immutable after publication: writers allocate a fresh gChunkedAnyStorage
+// entry and swing the pointer, so FunctionSignature can share by raw pointer
+// with no refcount.
+struct FunctionCallableTypes {
+	FunctionType return_type{};
+	InlineVector<FunctionType, 4> parameter_types;
+};
+
 // Function signature for function pointers
 struct FunctionSignature {
+	// Lowering-facing projections. Semantic identity and substitution use the
+	// structured components below when present.
 	TypeIndex return_type_index{};
 	int return_pointer_depth = 0;
 	ReferenceQualifier return_reference_qualifier = ReferenceQualifier::None;
-	std::vector<TypeIndex> parameter_type_indices;
+	InlineVector<TypeIndex, 4> parameter_type_indices;
 	Linkage linkage = Linkage::None;			 // C vs C++ linkage
 	StringHandle class_name;	   // For member function pointers
 	CallingConvention calling_convention = CallingConvention::Default;
@@ -1118,11 +1148,73 @@ struct FunctionSignature {
 	bool is_volatile = false;				  // For volatile member functions
 	ReferenceQualifier function_reference_qualifier = ReferenceQualifier::None;
 	bool is_noexcept = false;
+	std::optional<ExpressionHandle> noexcept_expression; // Retained until dependent noexcept(expr) is substituted.
+	FunctionCallableTypes* callable_types = nullptr;
 
 	// Accessor helpers
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returns_reference() const { return return_reference_qualifier != ReferenceQualifier::None; }
 	bool returns_rvalue_reference() const { return return_reference_qualifier == ReferenceQualifier::RValueReference; }
+	bool hasStructuredTypes() const {
+		return callable_types != nullptr &&
+			callable_types->return_type.type_index.category() != TypeCategory::Invalid;
+	}
+
+	const FunctionType& return_type() const {
+		static const FunctionType empty{};
+		return callable_types != nullptr ? callable_types->return_type : empty;
+	}
+
+	std::span<const FunctionType> parameter_types() const {
+		if (callable_types == nullptr) {
+			return {};
+		}
+		return callable_types->parameter_types;
+	}
+
+	void setReturnType(FunctionType type) {
+		return_type_index = type.type_index;
+		return_pointer_depth = static_cast<int>(type.pointer_qualifiers.size());
+		return_reference_qualifier = type.reference_qualifier;
+		FunctionCallableTypes& storage =
+			gChunkedAnyStorage.emplace_back<FunctionCallableTypes>();
+		if (callable_types != nullptr) {
+			storage.parameter_types = callable_types->parameter_types;
+		}
+		storage.return_type = std::move(type);
+		callable_types = &storage;
+	}
+
+	void setParameterTypes(InlineVector<FunctionType, 4> types) {
+		parameter_type_indices.clear();
+		parameter_type_indices.reserve(types.size());
+		for (const FunctionType& type : types) {
+			parameter_type_indices.push_back(type.type_index);
+		}
+		FunctionCallableTypes& storage =
+			gChunkedAnyStorage.emplace_back<FunctionCallableTypes>();
+		if (callable_types != nullptr) {
+			storage.return_type = callable_types->return_type;
+		}
+		storage.parameter_types = std::move(types);
+		callable_types = &storage;
+	}
+
+	// Copy-mutate-publish helper for immutable arena storage.
+	template <typename Mutator>
+	void updateReturnType(Mutator&& mutator) {
+		FunctionType type = return_type();
+		mutator(type);
+		setReturnType(std::move(type));
+	}
+
+	template <typename Mutator>
+	void updateParameterTypes(Mutator&& mutator) {
+		InlineVector<FunctionType, 4> types;
+		types = parameter_types();
+		mutator(types);
+		setParameterTypes(std::move(types));
+	}
 };
 
 // Deferred static_assert information - stored during template definition, evaluated during instantiation

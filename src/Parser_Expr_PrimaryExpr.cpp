@@ -1720,6 +1720,25 @@ bool expressionHasDeferredTemplateDependency(
 				return identifierExpressionHasDeferredTemplateDependency(
 					inner,
 					current_template_param_names);
+			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+				if (astNodesHaveDeferredTemplateDependency(
+						inner.template_arguments(), current_template_param_names)) {
+					return true;
+				}
+				const std::string_view owner_name =
+					gNamespaceRegistry.getQualifiedName(inner.namespace_handle());
+				const StringHandle owner_handle =
+					StringTable::getOrInternStringHandle(owner_name);
+				if (identifierRefersToCurrentTemplateParam(
+						owner_handle, current_template_param_names)) {
+					return true;
+				}
+				const auto owner = getTypesByNameMap().find(owner_handle);
+				if (owner != getTypesByNameMap().end() && owner->second != nullptr) {
+					return owner->second->isDependentPlaceholder() ||
+						owner->second->is_incomplete_instantiation_;
+				}
+				return inner.hasDependentQualifiedName();
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				return astNodeHasDeferredTemplateDependency(inner.get_lhs(), current_template_param_names) ||
 					   astNodeHasDeferredTemplateDependency(inner.get_rhs(), current_template_param_names);
@@ -2068,6 +2087,13 @@ bool ParserExpressionDependency::argTypesAreDeferredTemplateDependent(
 	std::span<const TypeSpecifierNode> arg_types,
 	const InlineVector<StringHandle, 4>& current_template_param_names) {
 	return ::argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names);
+}
+
+bool ParserExpressionDependency::nodeHasDeferredTemplateDependency(
+	const ASTNode& node,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return ::astNodeHasDeferredTemplateDependency(
+		node, current_template_param_names);
 }
 
 std::optional<ASTNode> Parser::try_synthesize_atomic_builtin_overload(

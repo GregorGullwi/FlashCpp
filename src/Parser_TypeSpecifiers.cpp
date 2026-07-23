@@ -3630,7 +3630,12 @@ ParseResult Parser::parse_type_specifier() {
 				if (it == getTypesByNameMap().end())
 					return nullptr;
 				const TypeInfo* info = it->second;
-				if (info->is_incomplete_instantiation_)
+				const bool is_active_dependent_alias =
+					info->isTypeAlias() &&
+					info->aliasTypeSpecifier() != nullptr &&
+					(parsing_template_depth_ > 0 || hasActiveTemplateParameters());
+				if (info->is_incomplete_instantiation_ &&
+					!is_active_dependent_alias)
 					return nullptr;
 				return info;
 			};

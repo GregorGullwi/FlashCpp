@@ -1113,16 +1113,20 @@ private:
 
 		FunctionSignature signature;
 		const TypeSpecifierNode& return_type = function_decl->decl_node().type_specifier_node();
-		signature.return_type_index = return_type.type_index();
-		signature.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
-		signature.return_reference_qualifier = return_type.reference_qualifier();
+		signature.setReturnType(makeFunctionTypeFromSpecifier(return_type));
+		std::vector<FunctionType> parameter_types;
 		for (const auto& param_node : function_decl->parameter_nodes()) {
 			if (!param_node.is<DeclarationNode>()) {
 				continue;
 			}
 			const auto& param_type =
 				param_node.as<DeclarationNode>().type_specifier_node();
-			signature.parameter_type_indices.push_back(param_type.type_index());
+			parameter_types.push_back(makeFunctionTypeFromSpecifier(param_type));
+		}
+		signature.setParameterTypes(std::move(parameter_types));
+		signature.is_noexcept = function_decl->is_noexcept();
+		if (function_decl->has_noexcept_expression()) {
+			signature.noexcept_expression = *function_decl->noexcept_expression();
 		}
 
 		TypeSpecifierNode function_pointer_type(

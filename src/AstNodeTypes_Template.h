@@ -817,8 +817,8 @@ public:
 	// isStructNothrowDestructible() instead of reading is_noexcept() directly.
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
-	void set_noexcept_expression(ASTNode expr) { noexcept_expression_ = expr; }
-	const std::optional<ASTNode>& noexcept_expression() const { return noexcept_expression_; }
+	void set_noexcept_expression(ExpressionHandle expr) { noexcept_expression_ = expr; }
+	const std::optional<ExpressionHandle>& noexcept_expression() const { return noexcept_expression_; }
 	bool has_noexcept_expression() const { return noexcept_expression_.has_value(); }
 	void set_has_noexcept_specifier(bool v) { has_noexcept_specifier_ = v; }
 	bool has_noexcept_specifier() const { return has_noexcept_specifier_; }
@@ -868,7 +868,7 @@ private:
 	bool is_noexcept_ = true;  // C++11+: destructors are implicitly noexcept(true)
 	bool has_noexcept_specifier_ = false;  // True iff an explicit noexcept / noexcept(expr) was written
 	bool is_constexpr_ = false;  // True iff the destructor was declared with 'constexpr'
-	std::optional<ASTNode> noexcept_expression_;	 // For explicit noexcept(expr)
+	std::optional<ExpressionHandle> noexcept_expression_; // For explicit noexcept(expr)
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;

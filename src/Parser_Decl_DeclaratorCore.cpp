@@ -247,7 +247,7 @@ ParseResult Parser::parse_type_and_name() {
 				else if (peek() == "("_tok) {
 					advance(); // consume '('
 
-					std::vector<TypeIndex> param_types;
+					std::vector<FunctionType> param_types;
 					bool is_variadic = false;
 					auto param_result =
 						parse_function_pointer_parameter_types(param_types, is_variadic);
@@ -256,23 +256,27 @@ ParseResult Parser::parse_type_and_name() {
 					} else if (!consume(")"_tok)) {
 						restore_token_position(saved_pos);
 					} else {
-						bool is_noexcept = false;
-						if (peek() == "noexcept"_tok) {
-							advance(); // consume 'noexcept'
-							is_noexcept = parse_noexcept_value();
+						FlashCpp::MemberQualifiers qualifiers;
+						FlashCpp::FunctionSpecifiers specifiers;
+						ParseResult qualifier_result =
+							parse_function_type_qualifiers(qualifiers, specifiers);
+						if (qualifier_result.is_error()) {
+							return qualifier_result;
 						}
 
 						FunctionSignature signature;
+						signature.setReturnType(makeFunctionType(type_spec));
 						signature.return_type_index = type_spec.type_index();
 						signature.return_pointer_depth =
 							static_cast<int>(type_spec.pointer_depth());
 						signature.return_reference_qualifier =
 							type_spec.reference_qualifier();
-						signature.parameter_type_indices = std::move(param_types);
+						signature.setParameterTypes(std::move(param_types));
 						signature.linkage = Linkage::None;
 						signature.calling_convention = last_calling_convention_;
 						signature.is_variadic = is_variadic;
-						signature.is_noexcept = is_noexcept;
+						apply_parsed_function_type_qualifiers(
+							signature, qualifiers, specifiers);
 
 						type_spec.set_function_signature(signature);
 						type_spec.set_reference_qualifier(
@@ -342,34 +346,46 @@ ParseResult Parser::parse_type_and_name() {
 						if (peek() == "("_tok) {
 							// This is a pointer-to-member-function declaration!
 							FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Detected pointer-to-member-function: {} ({}::*{})()",
-											 type_spec.token().value(), class_name_token.value(), identifier_token.value());
+										 type_spec.token().value(), class_name_token.value(), identifier_token.value());
 
-							// Skip the function parameter list by counting parentheses
 							advance(); // consume '('
-							int paren_depth = 1;
-							while (paren_depth > 0 && !peek().is_eof()) {
-								if (peek() == "("_tok) {
-									paren_depth++;
-								} else if (peek() == ")"_tok) {
-									paren_depth--;
-								}
-								advance();
+							std::vector<FunctionType> parameter_types;
+							bool is_variadic = false;
+							ParseResult parameter_result = parse_function_pointer_parameter_types(
+								parameter_types, is_variadic);
+							if (parameter_result.is_error()) {
+								return parameter_result;
+							}
+							if (!consume(")"_tok)) {
+								return ParseResult::error(
+									"Expected ')' after member function pointer parameter list",
+									current_token_);
 							}
 
-							// Skip any cv-qualifiers after the function parameters
-							// e.g., _Ret (_Tp::*__pf)() const
-							while (!peek().is_eof()) {
-								std::string_view tok = peek_info().value();
-								if (tok == "const" || tok == "volatile" || tok == "noexcept") {
-									advance();
-								} else {
-									break;
-								}
+							FlashCpp::MemberQualifiers qualifiers;
+							FlashCpp::FunctionSpecifiers specifiers;
+							ParseResult qualifier_result =
+								parse_function_type_qualifiers(qualifiers, specifiers);
+							if (qualifier_result.is_error()) {
+								return qualifier_result;
 							}
 
-							// Set up the type as a pointer-to-member-function
+							FunctionSignature signature;
+							signature.setReturnType(makeFunctionType(type_spec));
+							signature.return_type_index = type_spec.type_index();
+							signature.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+							signature.return_reference_qualifier = type_spec.reference_qualifier();
+							signature.setParameterTypes(std::move(parameter_types));
+							signature.calling_convention = last_calling_convention_;
+							signature.is_variadic = is_variadic;
+							apply_parsed_function_type_qualifiers(
+								signature, qualifiers, specifiers);
+
+							type_spec.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+							type_spec.set_size_in_bits(64);
+							type_spec.limit_pointer_depth(0);
 							type_spec.set_member_class_name(class_name_token.handle());
-							type_spec.add_pointer_level(CVQualifier::None);
+							type_spec.set_function_signature(signature);
 
 							// Create declaration node
 							auto decl_node = emplace_node<DeclarationNode>(
@@ -965,7 +981,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 			if (peek() == "("_tok) {
 				advance(); // consume '('
 
-				std::vector<TypeIndex> return_param_types;
+				std::vector<FunctionType> return_param_types;
 				bool is_return_variadic = false;
 				auto return_params_result = parse_function_pointer_parameter_types(return_param_types, is_return_variadic);
 				if (return_params_result.is_error()) {
@@ -976,17 +992,28 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 					return ParseResult::error("Expected ')' after function pointer return type parameters", current_token_);
 				}
 
-				skip_noexcept_specifier();
+				FlashCpp::MemberQualifiers return_function_qualifiers;
+				FlashCpp::FunctionSpecifiers return_function_specifiers;
+				ParseResult return_qualifier_result = parse_function_type_qualifiers(
+					return_function_qualifiers, return_function_specifiers);
+				if (return_qualifier_result.is_error()) {
+					return return_qualifier_result;
+				}
 
 				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
 				FunctionSignature signature;
+				signature.setReturnType(makeFunctionType(base_type));
 				signature.return_type_index = base_type.type_index();
 				signature.return_pointer_depth = static_cast<int>(base_type.pointer_depth());
 				signature.return_reference_qualifier = base_type.reference_qualifier();
-				signature.parameter_type_indices = return_param_types;
+				signature.setParameterTypes(std::move(return_param_types));
 				signature.linkage = linkage;
 				signature.calling_convention = calling_conv;
 				signature.is_variadic = is_return_variadic;
+				apply_parsed_function_type_qualifiers(
+					signature,
+					return_function_qualifiers,
+					return_function_specifiers);
 				function_ptr_type.set_function_signature(signature);
 				base_type = function_ptr_type;
 
@@ -1120,7 +1147,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		advance(); // consume '('
 
 		// Parse parameter list
-		std::vector<TypeIndex> param_types;
+		std::vector<FunctionType> param_types;
 		bool is_variadic = false;
 		auto param_result = parse_function_pointer_parameter_types(param_types, is_variadic);
 		if (param_result.is_error()) {
@@ -1132,9 +1159,13 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 									  current_token_);
 		}
 
-		// Check for noexcept specifier on function pointer type
-		// Pattern: void (*)(Args...) noexcept or void (*)(Args...) noexcept(expr)
-		skip_noexcept_specifier();
+		FlashCpp::MemberQualifiers qualifiers;
+		FlashCpp::FunctionSpecifiers specifiers;
+		ParseResult qualifier_result =
+			parse_function_type_qualifiers(qualifiers, specifiers);
+		if (qualifier_result.is_error()) {
+			return qualifier_result;
+		}
 		skip_asm_suffix(&asm_symbol_name);
 
 		// This is a function pointer!
@@ -1148,12 +1179,14 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
 
 		FunctionSignature sig;
+		sig.setReturnType(makeFunctionType(base_type));
 		sig.return_type_index = return_type_index;
 		sig.return_pointer_depth = static_cast<int>(base_type.pointer_depth());
 		sig.return_reference_qualifier = base_type.reference_qualifier();
-		sig.parameter_type_indices = param_types;
+		sig.setParameterTypes(std::move(param_types));
 		sig.linkage = linkage;
 		sig.is_variadic = is_variadic;
+		apply_parsed_function_type_qualifiers(sig, qualifiers, specifiers);
 		fp_type.set_function_signature(sig);
 
 		// Replace base_type with the function pointer type
@@ -1215,7 +1248,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 // Parse the parameter-type-list that appears inside a function pointer declarator.
 // This shared helper covers both standalone function pointers and function
 // declarations whose return type is itself a function pointer.
-ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types, bool& out_is_variadic) {
+ParseResult Parser::parse_function_pointer_parameter_types(std::vector<FunctionType>& out_param_types, bool& out_is_variadic) {
 	out_is_variadic = false;
 	if (peek() == ")"_tok) {
 		return ParseResult::success();
@@ -1235,10 +1268,13 @@ ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex
 		}
 
 		TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+		ParseResult nested_function_result =
+			parse_nested_function_pointer_type(param_type);
+		if (nested_function_result.is_error()) {
+			return nested_function_result;
+		}
 		skip_noop_gnu_qualifiers();
 		consume_pointer_ref_modifiers(param_type);
-		out_param_types.push_back(param_type.type_index());
-
 		if (peek() == "..."_tok) {
 			advance();
 			param_type.set_pack_expansion(true);
@@ -1250,6 +1286,7 @@ ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex
 		if (peek().is_identifier()) {
 			advance();
 		}
+		out_param_types.push_back(makeFunctionType(param_type));
 
 		if (peek() == ","_tok) {
 			advance();
@@ -1258,6 +1295,57 @@ ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex
 		}
 	}
 
+	return ParseResult::success();
+}
+
+ParseResult Parser::parse_nested_function_pointer_type(
+	TypeSpecifierNode& type_spec) {
+	if (peek() != "("_tok || peek(1) != "*"_tok) {
+		return ParseResult::success();
+	}
+	advance(); // consume '('
+	advance(); // consume '*'
+	if (peek().is_identifier()) {
+		advance();
+	}
+	if (!consume(")"_tok) || !consume("("_tok)) {
+		return ParseResult::error(
+			"Expected nested function pointer declarator",
+			current_token_);
+	}
+
+	std::vector<FunctionType> parameter_types;
+	bool is_variadic = false;
+	ParseResult parameter_result = parse_function_pointer_parameter_types(
+		parameter_types, is_variadic);
+	if (parameter_result.is_error()) {
+		return parameter_result;
+	}
+	if (!consume(")"_tok)) {
+		return ParseResult::error(
+			"Expected ')' after nested function pointer parameter list",
+			current_token_);
+	}
+
+	FlashCpp::MemberQualifiers qualifiers;
+	FlashCpp::FunctionSpecifiers specifiers;
+	ParseResult qualifier_result =
+		parse_function_type_qualifiers(qualifiers, specifiers);
+	if (qualifier_result.is_error()) {
+		return qualifier_result;
+	}
+
+	FunctionSignature signature;
+	signature.setReturnType(makeFunctionType(type_spec));
+	signature.setParameterTypes(std::move(parameter_types));
+	signature.calling_convention = last_calling_convention_;
+	signature.is_variadic = is_variadic;
+	apply_parsed_function_type_qualifiers(signature, qualifiers, specifiers);
+	type_spec.set_type_index(nativeTypeIndex(TypeCategory::FunctionPointer));
+	type_spec.set_size_in_bits(kFunctionPointerSizeBits);
+	type_spec.limit_pointer_depth(0);
+	type_spec.set_reference_qualifier(ReferenceQualifier::None);
+	type_spec.set_function_signature(signature);
 	return ParseResult::success();
 }
 
@@ -1605,4 +1693,23 @@ ParseResult Parser::parse_declaration(FlashCpp::DeclarationContext context) {
 	default:
 		return ParseResult::error("Unknown declaration context", current_token_);
 	}
+}
+FunctionType Parser::makeFunctionType(const TypeSpecifierNode& type_spec) const {
+	FunctionType type = makeFunctionTypeFromSpecifier(type_spec);
+	if (!type.template_parameter_name.isValid() &&
+		typeIndexContainsDependentPlaceholder(type_spec.type_index())) {
+		const std::optional<TemplateParameterKind> parameter_kind =
+			currentTemplateParamKind(type_spec.token().handle());
+		if (parameter_kind == TemplateParameterKind::Type ||
+			parameter_kind == TemplateParameterKind::Template) {
+			type.template_parameter_name = type_spec.token().handle();
+		} else if (std::ranges::find(
+				   currentTemplateParamNames(), type_spec.token().handle()) !=
+			   currentTemplateParamNames().end()) {
+			type.template_parameter_name = type_spec.token().handle();
+		} else {
+			type.template_parameter_name = getStructuredTypeName(type_spec);
+		}
+	}
+	return type;
 }

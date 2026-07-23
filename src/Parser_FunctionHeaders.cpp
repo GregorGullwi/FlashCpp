@@ -615,67 +615,60 @@ ParseResult Parser::parse_function_trailing_specifiers(
 	return parse_function_trailing_specifiers(out_quals, out_specs, no_params);
 }
 
-ParseResult Parser::parse_function_trailing_specifiers(
+ParseResult Parser::parse_function_type_qualifiers(
+	FlashCpp::MemberQualifiers& out_quals,
+	FlashCpp::FunctionSpecifiers& out_specs) {
+	static const std::vector<ASTNode> no_params;
+	return parse_function_type_qualifiers(out_quals, out_specs, no_params);
+}
+
+ParseResult Parser::parse_function_type_qualifiers(
 	FlashCpp::MemberQualifiers& out_quals,
 	FlashCpp::FunctionSpecifiers& out_specs,
 	std::span<const ASTNode> params) {
-	// Initialize output structures
 	out_quals = FlashCpp::MemberQualifiers{};
 	out_specs = FlashCpp::FunctionSpecifiers{};
 
 	while (!peek().is_eof()) {
-		const Token& token = peek_info();
-
-		CVQualifier cv = parse_cv_qualifiers();
+		const Token token = peek_info();
+		const CVQualifier cv = parse_cv_qualifiers();
 		if (cv != CVQualifier::None) {
 			out_quals.cv_qualifier |= cv;
 			continue;
 		}
 
-		ReferenceQualifier ref = parse_reference_qualifier();
+		const ReferenceQualifier ref = parse_reference_qualifier();
 		if (ref != ReferenceQualifier::None) {
 			out_quals.ref_qualifier = ref;
 			continue;
 		}
 
-		// Parse noexcept specifier
 		if (token.kind() == "noexcept"_tok) {
 			advance(); // consume 'noexcept'
 			out_specs.is_noexcept = true;
-
-			// Check for noexcept(expr) form
 			if (peek() == "("_tok) {
-				SaveHandle noexcept_expr_pos = save_token_position();
 				advance(); // consume '('
-
-				// Parse the constant expression.
-				// The expression parser already handles the noexcept operator
-				// (noexcept(expr) as a unary expression), so nested forms like
-				// noexcept(noexcept(may_throw())) are parsed correctly without
-				// special-casing here.
 				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
 				register_parameters_in_scope(params);
-				auto expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (!expr_result.is_error() && expr_result.node().has_value() && peek() == ")"_tok) {
-					out_specs.noexcept_expr = *expr_result.node();
-					advance(); // consume ')'
-					discard_saved_token(noexcept_expr_pos);
-				} else {
-					// Header-only standard library code frequently uses heavyweight
-					// noexcept expressions that the front-end does not need to model
-					// precisely. Recover by syntactically skipping the expression so
-					// the declaration still parses. Default to potentially-throwing
-					// (noexcept(false)) because the standard rule when we cannot use the
-					// expression is that the function may throw.
-					out_specs.is_noexcept = false;
-					restore_token_position(noexcept_expr_pos);
-					skip_balanced_parens();
+				ParseResult expression_result =
+					parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				if (expression_result.is_error()) {
+					return expression_result;
+				}
+				if (!expression_result.node().has_value()) {
+					throw InternalError(
+						"Parsed noexcept specification is missing its expression node");
+				}
+				out_specs.noexcept_expr = ExpressionHandle(*expression_result.node());
+				if (!consume(")"_tok)) {
+					return ParseResult::error(
+						"Expected ')' after noexcept expression",
+						current_token_);
 				}
 			}
 			continue;
 		}
 
-		// Parse throw() (old-style exception specification) - just skip it
 		if (token.kind() == "throw"_tok) {
 			advance(); // consume 'throw'
 			if (peek() == "("_tok) {
@@ -683,6 +676,87 @@ ParseResult Parser::parse_function_trailing_specifiers(
 			}
 			continue;
 		}
+
+		break;
+	}
+
+	return ParseResult::success();
+}
+
+void Parser::apply_parsed_function_type_qualifiers(
+	FunctionSignature& signature,
+	const FlashCpp::MemberQualifiers& qualifiers,
+	const FlashCpp::FunctionSpecifiers& specifiers) {
+	signature.is_const = qualifiers.is_const();
+	signature.is_volatile = qualifiers.is_volatile();
+	signature.function_reference_qualifier = qualifiers.ref_qualifier;
+	signature.is_noexcept = specifiers.is_noexcept;
+	signature.noexcept_expression = specifiers.noexcept_expr;
+	if (!signature.noexcept_expression.has_value()) {
+		return;
+	}
+	const bool dependent_noexcept_expression =
+		ParserExpressionDependency::nodeHasDeferredTemplateDependency(
+			signature.noexcept_expression->node(), currentTemplateParamNames());
+	if (dependent_noexcept_expression) {
+		signature.is_noexcept = false;
+		return;
+	}
+
+	const auto evaluated = try_evaluate_constant_expression(
+		signature.noexcept_expression->node());
+	if (evaluated.has_value()) {
+		signature.is_noexcept = evaluated->value != 0;
+		signature.noexcept_expression.reset();
+		return;
+	}
+	if (!isDependentTemplateContext()) {
+		throw CompileError("noexcept specification is not a constant expression");
+	}
+	signature.is_noexcept = false;
+}
+
+void Parser::apply_parsed_function_noexcept(
+	FunctionDeclarationNode& function,
+	const FlashCpp::FunctionSpecifiers& specifiers) {
+	if (!specifiers.is_noexcept) {
+		return;
+	}
+	function.set_noexcept(true);
+	if (!specifiers.noexcept_expr.has_value()) {
+		return;
+	}
+
+	const ExpressionHandle expression = *specifiers.noexcept_expr;
+	const bool is_dependent =
+		ParserExpressionDependency::nodeHasDeferredTemplateDependency(
+			expression.node(), currentTemplateParamNames());
+	if (is_dependent) {
+		function.set_noexcept(false);
+		function.set_noexcept_expression(expression);
+		return;
+	}
+
+	const auto evaluated = try_evaluate_constant_expression(expression.node());
+	if (!evaluated.has_value()) {
+		throw CompileError("noexcept specification is not a constant expression");
+	}
+	function.set_noexcept(evaluated->value != 0);
+	function.clear_noexcept_expression();
+}
+
+ParseResult Parser::parse_function_trailing_specifiers(
+	FlashCpp::MemberQualifiers& out_quals,
+	FlashCpp::FunctionSpecifiers& out_specs,
+	std::span<const ASTNode> params) {
+	ParseResult qualifier_result =
+		parse_function_type_qualifiers(out_quals, out_specs, params);
+	if (qualifier_result.is_error()) {
+		return qualifier_result;
+	}
+
+	while (!peek().is_eof()) {
+		const Token& token = peek_info();
 
 		// Parse requires clause - skip the constraint expression
 		// Pattern: func() noexcept requires constraint { }
@@ -1060,12 +1134,7 @@ ParseResult Parser::create_function_from_header(
 	func_ref.set_is_variadic(header.params.is_variadic);
 
 	// Set noexcept if specified
-	if (header.specifiers.is_noexcept) {
-		func_ref.set_noexcept(true);
-		if (header.specifiers.noexcept_expr.has_value()) {
-			func_ref.set_noexcept_expression(*header.specifiers.noexcept_expr);
-		}
-	}
+	apply_parsed_function_noexcept(func_ref, header.specifiers);
 
 	if (header.specifiers.asm_symbol_name.has_value()) {
 		func_ref.set_mangled_name(*header.specifiers.asm_symbol_name);

@@ -2567,21 +2567,28 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 
 	FunctionSignature sig;
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
-		sig.return_type_index = deduced_return->type_index();
-		sig.return_pointer_depth = static_cast<int>(deduced_return->pointer_depth());
-		sig.return_reference_qualifier = deduced_return->reference_qualifier();
+		sig.setReturnType(makeFunctionType(*deduced_return));
 	} else {
 		// No return statements found => void return type per C++20 §7.5.5.1
-		sig.return_type_index = nativeTypeIndex(TypeCategory::Void);
+		TypeSpecifierNode void_type(
+			TypeCategory::Void,
+			TypeQualifier::None,
+			0,
+			lambda.lambda_token(),
+			CVQualifier::None);
+		sig.setReturnType(makeFunctionType(void_type));
 	}
 
+	std::vector<FunctionType> parameter_types;
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
 			const auto& param_type = param_decl.type_specifier_node();
-			sig.parameter_type_indices.push_back(param_type.type_index());
+			parameter_types.push_back(makeFunctionType(param_type));
 		}
 	}
+	sig.setParameterTypes(std::move(parameter_types));
+	sig.is_noexcept = lambda.is_noexcept();
 
 	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token(), CVQualifier::None);
 	fp_type.set_function_signature(sig);
@@ -2595,12 +2602,12 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 	}
 
 	FunctionSignature sig;
-	sig.return_type_index = sig_opt->return_type.type_index();
-	sig.return_pointer_depth = static_cast<int>(sig_opt->return_type.pointer_depth());
-	sig.return_reference_qualifier = sig_opt->return_type.reference_qualifier();
+	sig.setReturnType(makeFunctionType(sig_opt->return_type));
+	std::vector<FunctionType> parameter_types;
 	for (const auto& param_type : sig_opt->param_types) {
-		sig.parameter_type_indices.push_back(param_type.type_index());
+		parameter_types.push_back(makeFunctionType(param_type));
 	}
+	sig.setParameterTypes(std::move(parameter_types));
 
 	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, source_token, CVQualifier::None);
 	fp_type.set_function_signature(sig);
@@ -3501,6 +3508,18 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 						}
 						if (member_result.member->reference_qualifier != ReferenceQualifier::None) {
 							member_type.set_reference_qualifier(member_result.member->reference_qualifier);
+						}
+						if (member_result.member->function_signature.has_value()) {
+							const FunctionSignature& signature =
+								*member_result.member->function_signature;
+							if (member_type.is_member_function_pointer()) {
+								if (!signature.class_name.isValid()) {
+									throw InternalError(
+										"Canonical member function pointer is missing owner metadata");
+								}
+								member_type.set_member_class_name(signature.class_name);
+							}
+							member_type.set_function_signature(signature);
 						}
 						return member_type;
 					}

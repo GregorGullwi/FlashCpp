@@ -2127,7 +2127,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							if (dtor_func_specs.noexcept_expr.has_value()) {
 								dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
 								ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-								auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
+								auto eval = ConstExpr::Evaluator::evaluate(
+									dtor_func_specs.noexcept_expr->node(), ctx);
 								if (eval.success())
 									dtor_ref.set_noexcept(eval.as_bool());
 							}
@@ -3605,7 +3606,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						if (dtor_func_specs.noexcept_expr.has_value()) {
 							dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
 							ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-							auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
+								auto eval = ConstExpr::Evaluator::evaluate(
+									dtor_func_specs.noexcept_expr->node(), ctx);
 							if (eval.success())
 								dtor_ref.set_noexcept(eval.as_bool());
 						}

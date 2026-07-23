@@ -138,49 +138,13 @@ ParseResult Parser::parse_template_function_declaration_body(
 	// We need to skip cv-qualifiers, ref-qualifier, and noexcept BEFORE checking for trailing return type
 	// Example: template<typename T> auto func(T x) const noexcept -> decltype(x + 1)
 	FlashCpp::MemberQualifiers member_quals;
-	member_quals = FlashCpp::MemberQualifiers{};
-	while (!peek().is_eof()) {
-		CVQualifier cv = parse_cv_qualifiers();
-		if (cv != CVQualifier::None) {
-			member_quals.cv_qualifier |= cv;
-			continue;
-		}
-
-		ReferenceQualifier ref = parse_reference_qualifier();
-		if (ref != ReferenceQualifier::None) {
-			member_quals.ref_qualifier = ref;
-			continue;
-		}
-
-		if (peek() == "noexcept"_tok) {
-			advance();
-			func_decl.set_noexcept(true);
-			if (peek() == "("_tok) {
-				SaveHandle noexcept_expr_pos = save_token_position();
-				advance();
-				FlashCpp::SymbolTableScope noexcept_scope(ScopeType::Function);
-				register_parameters_in_scope(func_decl.parameter_nodes());
-				ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				if (!expr_result.is_error() && expr_result.node().has_value() && peek() == ")"_tok) {
-					func_decl.set_noexcept_expression(*expr_result.node());
-					advance();
-					discard_saved_token(noexcept_expr_pos);
-				} else {
-					restore_token_position(noexcept_expr_pos);
-					skip_balanced_parens();
-				}
-			}
-			continue;
-		}
-		if (peek() == "throw"_tok) {
-			advance();
-			if (peek() == "("_tok) {
-				skip_balanced_parens();
-			}
-			continue;
-		}
-		break;
+	FlashCpp::FunctionSpecifiers function_specifiers;
+	ParseResult qualifier_result = parse_function_type_qualifiers(
+		member_quals, function_specifiers, func_decl.parameter_nodes());
+	if (qualifier_result.is_error()) {
+		return qualifier_result;
 	}
+	apply_parsed_function_noexcept(func_decl, function_specifiers);
 	func_decl.set_is_const_member_function(member_quals.is_const());
 	func_decl.set_is_volatile_member_function(member_quals.is_volatile());
 

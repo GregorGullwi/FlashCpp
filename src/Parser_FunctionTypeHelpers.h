@@ -38,15 +38,19 @@ inline const FunctionDeclarationNode* findFunctionDeclarationForSymbol(const AST
 inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
 	FunctionSignature sig;
 	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
-	sig.return_type_index = return_type.type_index();
-	sig.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
-	sig.return_reference_qualifier = return_type.reference_qualifier();
+	sig.setReturnType(makeFunctionTypeFromSpecifier(return_type));
+	std::vector<FunctionType> parameter_types;
 	for (const auto& param_node : func_decl.parameter_nodes()) {
 		if (!param_node.is<DeclarationNode>()) {
 			continue;
 		}
 		const auto& param_type = param_node.as<DeclarationNode>().type_specifier_node();
-		sig.parameter_type_indices.push_back(param_type.type_index());
+		parameter_types.push_back(makeFunctionTypeFromSpecifier(param_type));
+	}
+	sig.setParameterTypes(std::move(parameter_types));
+	sig.is_noexcept = func_decl.is_noexcept();
+	if (func_decl.has_noexcept_expression()) {
+		sig.noexcept_expression = *func_decl.noexcept_expression();
 	}
 
 	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
@@ -57,19 +61,22 @@ inline TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const F
 inline TypeSpecifierNode buildMemberFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
 	FunctionSignature sig;
 	const TypeSpecifierNode& return_type = func_decl.decl_node().type_specifier_node();
-	sig.return_type_index = return_type.type_index();
-	sig.return_pointer_depth = static_cast<int>(return_type.pointer_depth());
-	sig.return_reference_qualifier = return_type.reference_qualifier();
+	sig.setReturnType(makeFunctionTypeFromSpecifier(return_type));
 	sig.is_const = func_decl.is_const_member_function();
 	sig.is_volatile = func_decl.is_volatile_member_function();
 	sig.is_noexcept = func_decl.is_noexcept();
+	if (func_decl.has_noexcept_expression()) {
+		sig.noexcept_expression = *func_decl.noexcept_expression();
+	}
+	std::vector<FunctionType> parameter_types;
 	for (const auto& param_node : func_decl.parameter_nodes()) {
 		if (!param_node.is<DeclarationNode>()) {
 			continue;
 		}
 		const auto& param_type = param_node.as<DeclarationNode>().type_specifier_node();
-		sig.parameter_type_indices.push_back(param_type.type_index());
+		parameter_types.push_back(makeFunctionTypeFromSpecifier(param_type));
 	}
+	sig.setParameterTypes(std::move(parameter_types));
 
 	TypeSpecifierNode mfp_type(
 		TypeCategory::MemberFunctionPointer,

@@ -2333,7 +2333,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (dtor_func_specs.noexcept_expr.has_value()) {
 					dtor_ref.set_noexcept_expression(*dtor_func_specs.noexcept_expr);
 					ConstExpr::EvaluationContext ctx(gSymbolTable, *this);
-					auto eval = ConstExpr::Evaluator::evaluate(*dtor_func_specs.noexcept_expr, ctx);
+					auto eval = ConstExpr::Evaluator::evaluate(
+						dtor_func_specs.noexcept_expr->node(), ctx);
 					if (eval.success())
 						dtor_ref.set_noexcept(eval.as_bool());
 				}

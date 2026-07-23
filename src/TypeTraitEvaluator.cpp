@@ -147,29 +147,7 @@ TypeSpecifierNode normalizeTypeTraitOperand(const TypeSpecifierNode& type_spec) 
 bool functionSignaturesMatch(
 	const FunctionSignature& lhs,
 	const FunctionSignature& rhs) {
-	if (lhs.returnType() != rhs.returnType() ||
-		canonicalize_type_alias(lhs.return_type_index).resolvedTypeIndex() !=
-			canonicalize_type_alias(rhs.return_type_index).resolvedTypeIndex() ||
-		lhs.return_pointer_depth != rhs.return_pointer_depth ||
-		lhs.return_reference_qualifier != rhs.return_reference_qualifier ||
-		lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size() ||
-		lhs.linkage != rhs.linkage ||
-		lhs.class_name != rhs.class_name ||
-		lhs.calling_convention != rhs.calling_convention ||
-		lhs.is_variadic != rhs.is_variadic ||
-		lhs.is_const != rhs.is_const ||
-		lhs.is_volatile != rhs.is_volatile ||
-		lhs.function_reference_qualifier != rhs.function_reference_qualifier ||
-		lhs.is_noexcept != rhs.is_noexcept) {
-		return false;
-	}
-	for (size_t i = 0; i < lhs.parameter_type_indices.size(); ++i) {
-		if (canonicalize_type_alias(lhs.parameter_type_indices[i]).resolvedTypeIndex() !=
-			canonicalize_type_alias(rhs.parameter_type_indices[i]).resolvedTypeIndex()) {
-			return false;
-		}
-	}
-	return true;
+	return FlashCpp::equalFunctionSignatureIdentity(lhs, rhs);
 }
 
 bool areSameTypeTraitOperands(
@@ -178,7 +156,9 @@ bool areSameTypeTraitOperands(
 	const TypeSpecifierNode normalized_lhs = normalizeTypeTraitOperand(lhs);
 	const TypeSpecifierNode normalized_rhs = normalizeTypeTraitOperand(rhs);
 	if (normalized_lhs.type() != normalized_rhs.type() ||
-		normalized_lhs.type_index() != normalized_rhs.type_index() ||
+		(!normalized_lhs.has_function_signature() &&
+		 !normalized_rhs.has_function_signature() &&
+		 normalized_lhs.type_index() != normalized_rhs.type_index()) ||
 		normalized_lhs.cv_qualifier() != normalized_rhs.cv_qualifier() ||
 		normalized_lhs.reference_qualifier() != normalized_rhs.reference_qualifier() ||
 		normalized_lhs.pointer_levels().size() != normalized_rhs.pointer_levels().size() ||
