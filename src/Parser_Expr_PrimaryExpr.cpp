@@ -2855,6 +2855,131 @@ bool Parser::trySubstituteValueTemplateParameterExpression(
 	return false;
 }
 
+ParseResult Parser::tryParseExplicitTemplateBraceInitialization(
+	const Token& identifier_token,
+	const InlineVector<TemplateTypeArg, 4>& explicit_template_args) {
+	if (peek() != "{"_tok) {
+		return ParseResult();
+	}
+
+	bool is_template_brace_initialization =
+		gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value() ||
+		gTemplateRegistry.lookup_alias_template(identifier_token.value()).has_value() ||
+		tryResolveCurrentInstantiationTemplateOwner(
+			identifier_token.value(),
+			explicit_template_args).has_value();
+	if (!is_template_brace_initialization) {
+		NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+		if (!current_namespace.isGlobal()) {
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
+				current_namespace,
+				identifier_token.handle());
+			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
+			is_template_brace_initialization =
+				gTemplateRegistry.lookupTemplate(qualified_name).has_value() ||
+				gTemplateRegistry.lookup_alias_template(qualified_name).has_value();
+		}
+	}
+	if (!is_template_brace_initialization && !struct_parsing_context_stack_.empty()) {
+		const StructParsingContext& struct_context = struct_parsing_context_stack_.back();
+		if (struct_context.struct_name == identifier_token.value()) {
+			is_template_brace_initialization = true;
+		}
+	}
+	if (!is_template_brace_initialization) {
+		return ParseResult();
+	}
+
+	bool has_dependent_args = false;
+	for (const TemplateTypeArg& arg : explicit_template_args) {
+		if (arg.is_dependent || arg.is_pack) {
+			has_dependent_args = true;
+			break;
+		}
+	}
+
+	FLASH_LOG(Parser, Debug, "Template brace initialization detected for '", identifier_token.value(), "', has_dependent_args=", has_dependent_args);
+
+	if (has_dependent_args) {
+		advance(); // consume '{'
+		ChunkedVector<ASTNode> args;
+		while (!peek().is_eof() && peek() != "}"_tok) {
+			ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+			if (arg_result.is_error()) {
+				return arg_result;
+			}
+			if (auto node = arg_result.node()) {
+				args.push_back(*node);
+			}
+
+			if (peek() == ","_tok) {
+				advance(); // consume ','
+			} else if (peek() != "}"_tok) {
+				return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
+			}
+		}
+
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' after brace initializer", current_token_);
+		}
+
+		InlineVector<TypeInfo::TemplateArgInfo, 4> dependent_template_args =
+			toTemplateArgInfoList(explicit_template_args);
+		StringBuilder dependent_type_builder;
+		dependent_type_builder.append(identifier_token.value());
+		dependent_type_builder.append("<");
+		for (size_t i = 0; i < dependent_template_args.size(); ++i) {
+			if (i != 0) {
+				dependent_type_builder.append(", ");
+			}
+			appendDependentTemplateArgSpelling(
+				dependent_type_builder,
+				dependent_template_args[i]);
+		}
+		dependent_type_builder.append(">");
+		StringHandle dependent_type_handle =
+			StringTable::getOrInternStringHandle(dependent_type_builder.commit());
+		TypeInfo* dependent_type_info = nullptr;
+		auto dependent_type_it = getTypesByNameMap().find(dependent_type_handle);
+		if (dependent_type_it != getTypesByNameMap().end()) {
+			dependent_type_info = dependent_type_it->second;
+		}
+		if (dependent_type_info == nullptr) {
+			dependent_type_info = &add_template_param_type(
+				dependent_type_handle,
+				TypeCategory::Template,
+				0);
+		}
+		QualifiedIdentifier base_template_name =
+			QualifiedIdentifier::fromQualifiedName(
+				identifier_token.value(),
+				gSymbolTable.get_current_namespace_handle());
+		dependent_type_info->setTemplateInstantiationInfo(
+			base_template_name,
+			dependent_template_args);
+		dependent_type_info->setInstantiationContext(
+			{},
+			dependent_template_args,
+			nullptr);
+		auto dependent_type_node = emplace_node<TypeSpecifierNode>(
+			dependent_type_info->registeredTypeIndex().withCategory(TypeCategory::Template),
+			0,
+			identifier_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		return ParseResult::success(emplace_node<ExpressionNode>(
+			ConstructorCallNode(
+				dependent_type_node,
+				std::move(args),
+				identifier_token)));
+	}
+
+	return parse_template_brace_initialization(
+		explicit_template_args,
+		identifier_token.value(),
+		identifier_token);
+}
+
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 #if WITH_PARSER_RUNTIME_STATS
 	FLASHCPP_PARSER_RUNTIME_PHASE(PrimaryExpression);
@@ -8017,126 +8142,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 
 						// Template arguments parsed but NOT followed by ::
-						// Check for template class brace initialization: Template<T>{}
-						// This creates a temporary object using value-initialization or aggregate-initialization
-						if (!identifierType && peek() == "{"_tok) {
-							bool is_template_brace_initialization =
-								gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value() ||
-								gTemplateRegistry.lookup_alias_template(identifier_token.value()).has_value();
-							if (!is_template_brace_initialization) {
-								NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
-								if (!current_namespace.isGlobal()) {
-									StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-										current_namespace,
-										identifier_token.handle());
-									std::string_view qualified_name =
-										StringTable::getStringView(qualified_handle);
-									is_template_brace_initialization =
-										gTemplateRegistry.lookupTemplate(qualified_name).has_value() ||
-										gTemplateRegistry.lookup_alias_template(qualified_name).has_value();
-								}
+						if (!identifierType) {
+							ParseResult brace_init_result =
+								tryParseExplicitTemplateBraceInitialization(
+									identifier_token,
+									*explicit_template_args);
+							if (brace_init_result.is_error()) {
+								return brace_init_result;
 							}
-							if (is_template_brace_initialization) {
-								// This is template class brace initialization (e.g., type_identity<int>{})
-								// Check if any template arguments are dependent
-								bool has_dependent_args = false;
-								for (const auto& arg : *explicit_template_args) {
-									if (arg.is_dependent || arg.is_pack) {
-										has_dependent_args = true;
-										break;
-									}
-								}
-
-								FLASH_LOG(Parser, Debug, "Template brace initialization detected for '", identifier_token.value(), "', has_dependent_args=", has_dependent_args);
-
-								if (has_dependent_args) {
-									advance(); // consume '{'
-									ChunkedVector<ASTNode> args;
-									while (!peek().is_eof() && peek() != "}"_tok) {
-										auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-										if (argResult.is_error()) {
-											return argResult;
-										}
-										if (auto node = argResult.node()) {
-											args.push_back(*node);
-										}
-
-										if (peek() == ","_tok) {
-											advance(); // consume ','
-										} else if (peek() != "}"_tok) {
-											return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
-										}
-									}
-
-									if (!consume("}"_tok)) {
-										return ParseResult::error("Expected '}' after brace initializer", current_token_);
-									}
-
-									InlineVector<TypeInfo::TemplateArgInfo, 4> dependent_template_args =
-										toTemplateArgInfoList(*explicit_template_args);
-									StringBuilder dependent_type_builder;
-									dependent_type_builder.append(identifier_token.value());
-									dependent_type_builder.append("<");
-									for (size_t i = 0;
-										 i < dependent_template_args.size();
-										 ++i) {
-										if (i != 0) {
-											dependent_type_builder.append(", ");
-										}
-										appendDependentTemplateArgSpelling(
-											dependent_type_builder,
-											dependent_template_args[i]);
-									}
-									dependent_type_builder.append(">");
-									StringHandle dependent_type_handle =
-										StringTable::getOrInternStringHandle(
-											dependent_type_builder.commit());
-									TypeInfo* dependent_type_info = nullptr;
-									auto dependent_type_it = getTypesByNameMap().find(dependent_type_handle);
-									if (dependent_type_it != getTypesByNameMap().end()) {
-										dependent_type_info = dependent_type_it->second;
-									}
-									if (dependent_type_info == nullptr) {
-										dependent_type_info = &add_template_param_type(
-											dependent_type_handle,
-											TypeCategory::Template,
-											0);
-									}
-									QualifiedIdentifier base_template_name =
-										QualifiedIdentifier::fromQualifiedName(
-											identifier_token.value(),
-											gSymbolTable.get_current_namespace_handle());
-									dependent_type_info->setTemplateInstantiationInfo(
-										base_template_name,
-										dependent_template_args);
-									dependent_type_info->setInstantiationContext(
-										{},
-										dependent_template_args,
-										nullptr);
-									auto dependent_type_node = emplace_node<TypeSpecifierNode>(
-										dependent_type_info->registeredTypeIndex().withCategory(TypeCategory::Template),
-										0,
-										identifier_token,
-										CVQualifier::None,
-										ReferenceQualifier::None);
-									result = emplace_node<ExpressionNode>(
-										ConstructorCallNode(
-											dependent_type_node,
-											std::move(args),
-											identifier_token));
-									return ParseResult::success(*result);
-								}
-
-								ParseResult brace_init_result = parse_template_brace_initialization(
-									*explicit_template_args,
-									identifier_token.value(),
-									identifier_token);
-								if (brace_init_result.is_error()) {
-									return brace_init_result;
-								}
-								if (brace_init_result.node().has_value()) {
-									return ParseResult::success(*brace_init_result.node());
-								}
+							if (brace_init_result.has_value()) {
+								return brace_init_result;
 							}
 						}
 
@@ -8793,6 +8808,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				};
 				explicit_template_args = parse_contextual_template_args();
 				// If parsing failed, it might be a less-than operator, so continue normally
+
+				if (explicit_template_args.has_value()) {
+					ParseResult brace_init_result =
+						tryParseExplicitTemplateBraceInitialization(
+							identifier_token,
+							*explicit_template_args);
+					if (brace_init_result.is_error()) {
+						return brace_init_result;
+					}
+					if (brace_init_result.has_value()) {
+						return brace_init_result;
+					}
+				}
 
 				// After template arguments, check for :: to handle Template<T>::member syntax
 				if (explicit_template_args.has_value() && peek() == "::"_tok) {
@@ -10657,8 +10685,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		advance();
 	} else if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "this"sv) {
 		// Handle 'this' keyword - represents a pointer to the current object
-		// Only valid inside member functions
-		if (member_function_context_stack_.empty()) {
+		// Only valid inside member functions. During member declaration parsing the
+		// member-function context stack is not pushed yet, but the struct context is.
+		if (member_function_context_stack_.empty() && struct_parsing_context_stack_.empty()) {
 			return ParseResult::error("'this' can only be used inside a member function", current_token_);
 		}
 

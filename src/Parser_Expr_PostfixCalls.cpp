@@ -1493,6 +1493,30 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, const T
 	return ParseResult::success(*result);
 }
 
+ParseResult Parser::applyPointerToMemberPostfixAfterDotOrArrow(
+	std::optional<ASTNode>& result,
+	Token operator_token,
+	bool is_arrow) {
+	if (peek() != "*"_tok) {
+		return ParseResult();
+	}
+	advance(); // consume '*'
+
+	ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
+	if (member_ptr_result.is_error()) {
+		return member_ptr_result;
+	}
+	if (!member_ptr_result.node().has_value()) {
+		return ParseResult::error(
+			is_arrow ? "Expected expression after '->*' operator" : "Expected expression after '.*' operator",
+			current_token_);
+	}
+
+	result = emplace_node<ExpressionNode>(
+		PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_token, is_arrow));
+	return ParseResult::success(*result);
+}
+
 // Apply postfix operators (., ->, [], (), ++, --) to an existing expression result
 // This allows cast expressions (static_cast, dynamic_cast, etc.) to be followed by member access
 // e.g., static_cast<T&&>(t).operator<=>(u)
@@ -1521,10 +1545,20 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			}
 		}
 
-		// Check for member access (. or ->)
+		// Check for member access (. or ->), including pointer-to-member (.* or ->*)
 		if ((peek().is_punctuator() && peek() == "."_tok) || peek() == "->"_tok) {
 			Token member_operator_token = peek_info();
+			const bool is_arrow = member_operator_token.value() == "->";
 			advance(); // consume '.' or '->'
+
+			ParseResult pointer_to_member_result =
+				applyPointerToMemberPostfixAfterDotOrArrow(result, member_operator_token, is_arrow);
+			if (pointer_to_member_result.is_error()) {
+				return pointer_to_member_result;
+			}
+			if (pointer_to_member_result.has_value()) {
+				continue;
+			}
 
 			ParseResult member_result = parse_member_postfix(result, member_operator_token);
 			if (member_result.is_error()) {
@@ -2939,50 +2973,25 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			operator_start_token = peek_info();
 			advance(); // consume '.'
 
-			// Check for pointer-to-member operator .*
-			if (peek() == "*"_tok) {
-				advance(); // consume '*'
-
-				// Parse the RHS expression (pointer to member)
-				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
-				// But we need to stop at lower precedence operators, so use precedence 17
-				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
-
-				if (member_ptr_result.is_error()) {
-					return member_ptr_result;
-				}
-				if (!member_ptr_result.node().has_value()) {
-					return ParseResult::error("Expected expression after '.*' operator", current_token_);
-				}
-
-				// Create PointerToMemberAccessNode
-				result = emplace_node<ExpressionNode>(
-					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, false));
-				continue;  // Check for more postfix operators
+			ParseResult pointer_to_member_result =
+				applyPointerToMemberPostfixAfterDotOrArrow(result, operator_start_token, false);
+			if (pointer_to_member_result.is_error()) {
+				return pointer_to_member_result;
+			}
+			if (pointer_to_member_result.has_value()) {
+				continue;
 			}
 		} else if (peek() == "->"_tok) {
 			operator_start_token = peek_info();
 			advance(); // consume '->'
 
-			// Check for pointer-to-member operator ->*
-			if (peek() == "*"_tok) {
-				advance(); // consume '*'
-
-				// Parse the RHS expression (pointer to member)
-				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
-				// But we need to stop at lower precedence operators, so use precedence 17
-				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
-				if (member_ptr_result.is_error()) {
-					return member_ptr_result;
-				}
-				if (!member_ptr_result.node().has_value()) {
-					return ParseResult::error("Expected expression after '->*' operator", current_token_);
-				}
-
-				// Create PointerToMemberAccessNode
-				result = emplace_node<ExpressionNode>(
-					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, true));
-				continue;  // Check for more postfix operators
+			ParseResult pointer_to_member_result =
+				applyPointerToMemberPostfixAfterDotOrArrow(result, operator_start_token, true);
+			if (pointer_to_member_result.is_error()) {
+				return pointer_to_member_result;
+			}
+			if (pointer_to_member_result.has_value()) {
+				continue;
 			}
 
 			// Note: We don't transform ptr->member to (*ptr).member here anymore.
