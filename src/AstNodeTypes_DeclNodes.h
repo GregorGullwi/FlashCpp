@@ -1053,9 +1053,6 @@ struct TypeInfo {
 	// Struct layout remains authoritative in StructTypeInfo::total_size.
 	int fallback_size_bits_ = 0;	// Changed from unsigned char to int for large types
 
-	// For typedef of pointer types, store the pointer depth
-	size_t pointer_depth_ = 0;
-
 	// For typedef of reference types, store the reference qualifier
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;
 
