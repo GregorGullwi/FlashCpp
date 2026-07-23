@@ -3788,12 +3788,6 @@ ParseResult Parser::parse_type_specifier() {
 			if (!is_typedef && has_alias_type_shape) {
 				is_typedef = true;
 			}
-			// Keep non-alias synthetic type entries (e.g. template parameter placeholders) working.
-			// This is critical for std::move's ReturnType which is typename remove_reference<T>::type&&
-			if (!is_typedef &&
-				type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
-				is_typedef = true;
-			}
 			if (is_typedef) {
 				resolved_type = resolved_alias.typeEnum();
 				type_size = static_cast<unsigned char>(type_info_ctx->sizeInBits().value);

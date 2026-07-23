@@ -3020,7 +3020,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Kind::Value and Kind::Template entries are intentionally skipped by registerTypeParamsInScope:
 	// registering them would poison getTypesByNameMap() with Invalid/garbage TypeInfo entries.
-	registerTypeParamsInScope(template_params, template_args, template_scope, false);
+	registerTypeParamsInScope(template_params, template_args, template_scope);
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
 	if (func_decl.has_outer_template_bindings()) {
@@ -3031,7 +3031,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		for (const auto& outer_arg : outer_arg_infos) {
 			outer_args.push_back(toTemplateTypeArg(outer_arg));
 		}
-		registerTypeParamsInScope(outer_param_names, outer_args, template_scope, true);
+		registerTypeParamsInScope(outer_param_names, outer_args, template_scope);
 		for (StringHandle outer_name : outer_param_names) {
 			param_names.push_back(outer_name);
 		}

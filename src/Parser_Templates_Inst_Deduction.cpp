@@ -192,26 +192,7 @@ bool Parser::isTemplateFunctionParameterPack(
 	return false;
 }
 
-static void applyRegisteredTypeBindingMetadata(
-	TypeInfo& type_info,
-	const TemplateTypeArg& arg,
-	bool preserve_ref_qualifier) {
-	if (is_builtin_type(arg.typeEnum())) {
-		type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
-	} else if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-		type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
-	} else {
-		type_info.fallback_size_bits_ = 0;
-	}
-
-	if (preserve_ref_qualifier) {
-		type_info.reference_qualifier_ = arg.is_rvalue_reference()
-											 ? ReferenceQualifier::RValueReference
-											 : (arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
-	}
-}
-
-static TypeInfo& registerTemplateTypeBinding(
+TypeInfo& registerTemplateTypeBinding(
 	StringHandle param_name,
 	const TemplateTypeArg& arg) {
 	TypeIndex registered_type_index = arg.type_index;
@@ -225,11 +206,19 @@ static TypeInfo& registerTemplateTypeBinding(
 	}
 	TypeSpecifierNode alias_spec = makeTypeSpecifierFromTemplateTypeArg(arg, Token());
 	alias_spec.set_type_index(registered_type_index.withCategory(arg.typeEnum()));
-	return add_type_alias_copy(
+	TypeInfo& type_info = add_type_alias_copy(
 		param_name,
 		registered_type_index.withCategory(arg.typeEnum()),
 		getTypeSizeFromTemplateArgument(arg),
 		alias_spec);
+	if (is_builtin_type(arg.typeEnum())) {
+		type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
+	} else if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
+		type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
+	} else {
+		type_info.fallback_size_bits_ = 0;
+	}
+	return type_info;
 }
 
 static void resetTypeIndirection(TypeSpecifierNode& type_spec) {
@@ -971,15 +960,11 @@ bool Parser::tryAppendDefaultTemplateArg(
 // "N" to getTypesByNameMap() and confuse subsequent type lookups.
 // Template-template parameters are also skipped for the same reason.
 //
-// preserve_ref_qualifier: pass true for paths where the TemplateTypeArg ref_qualifier was
-//   set from user-written explicit args or class-template instantiation args (e.g., T
-//   bound to int& from a class<int&> instantiation).  Pass false for deduction paths
-//   where lvalue-ness of the call-site argument must NOT propagate to the TypeInfo entry.
+// Reference metadata for template bindings lives on alias_type_spec_ via registerTemplateTypeBinding.
 void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
 	const InlineVector<TemplateTypeArg, 4>& type_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier) {
+	FlashCpp::TemplateParameterScope& scope) {
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
 		if (arg.is_value)
@@ -987,7 +972,6 @@ void registerTypeParamsInScope(
 		if (arg.is_template_template_arg)
 			continue;  // Template-template params don't represent concrete types
 		auto& type_info = registerTemplateTypeBinding(param_names[i], arg);
-		applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 		scope.addParameter(&type_info);
 	}
 }
@@ -1010,8 +994,7 @@ void forEachEnvironmentBinding(
 
 void registerTypeParamsInScope(
 	const TemplateEnvironment& environment,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier) {
+	FlashCpp::TemplateParameterScope& scope) {
 	forEachEnvironmentBinding(
 		environment,
 		[&](const TemplateBinding& binding) {
@@ -1023,7 +1006,6 @@ void registerTypeParamsInScope(
 				return;
 			}
 			auto& type_info = registerTemplateTypeBinding(binding.name, arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1043,7 +1025,6 @@ void registerTypeParamsInScope(
 				return;
 			}
 			auto& type_info = registerTemplateTypeBinding(binding.name, arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map) {
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1062,8 +1043,7 @@ void registerTypeParamsInScope(
 void registerTypeParamsInScope(
 	const InlineVector<TemplateParameterNode, 4>& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier) {
+	FlashCpp::TemplateParameterScope& scope) {
 	forEachNonPackTemplateParamArgBinding(
 		template_param_nodes,
 		template_args,
@@ -1071,7 +1051,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1079,8 +1058,7 @@ void registerTypeParamsInScope(
 void registerTypeParamsInScope(
 	const InlineVector<ASTNode, 4>& template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier) {
+	FlashCpp::TemplateParameterScope& scope) {
 	forEachNonPackTemplateParamArgBinding(
 		template_param_nodes,
 		template_args,
@@ -1088,7 +1066,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1105,7 +1082,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1124,7 +1100,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1134,8 +1109,7 @@ void registerTypeParamsInScope(
 void registerTypeParamsInScope(
 	std::span<const TemplateParameterNode> template_param_nodes,
 	std::span<const TemplateTypeArg> template_args,
-	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier) {
+	FlashCpp::TemplateParameterScope& scope) {
 	forEachNonPackTemplateParamArgBinding(
 		template_param_nodes,
 		template_args,
@@ -1143,7 +1117,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, preserve_ref_qualifier);
 			scope.addParameter(&type_info);
 		});
 }
@@ -1160,7 +1133,6 @@ void registerTypeParamsInScope(
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
 			auto& type_info = registerTemplateTypeBinding(param.nameHandle(), arg);
-			applyRegisteredTypeBindingMetadata(type_info, arg, true);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -1260,17 +1232,15 @@ void Parser::populateTemplateParamSubstitutions(
 // Shared helper: re-parse a template function body with concrete argument
 // substitution and set the result as new_func_ref's definition.
 //
-// Called by both try_instantiate_template_explicit (preserve_ref_qualifier=true)
-// and try_instantiate_single_template (preserve_ref_qualifier=false) *after*
-// cycle detection has passed.  Pack-parameter state management and cycle
+// Called by both try_instantiate_template_explicit and try_instantiate_single_template
+// after cycle detection has passed.  Pack-parameter state management and cycle
 // detection remain the responsibility of the callers because they differ
 // between the two paths.
 void Parser::reparse_template_function_body(
 	FunctionDeclarationNode& new_func_ref,
 	const FunctionDeclarationNode& func_decl,
 	std::span<const TemplateParameterNode> template_params,
-	std::span<const TemplateTypeArg> template_args,
-	bool preserve_ref_qualifier) {
+	std::span<const TemplateTypeArg> template_args) {
 	// Depth guard: function-template body replay can recursively re-enter via
 	// expressions inside the body that instantiate further templates.  libstdc++
 	// headers like <string_view>, <vector>, and <iterator> reach dozens of nested
@@ -1311,14 +1281,7 @@ void Parser::reparse_template_function_body(
 	for (const TemplateParameterNode& template_param : template_params) {
 		param_names.push_back(template_param.nameHandle());
 	}
-	// preserve_ref_qualifier=true for the explicit path (user-written T=int& must be
-	// reflected in TypeInfo); false for the deduced path.
-	InlineVector<TemplateParameterNode, 4> template_param_nodes;
-	template_param_nodes.reserve(template_params.size());
-	for (const TemplateParameterNode& template_param_node : template_params) {
-		template_param_nodes.push_back(template_param_node);
-	}
-	registerTypeParamsInScope(template_param_nodes, template_args, template_scope, preserve_ref_qualifier);
+	registerTypeParamsInScope(template_params, template_args, template_scope);
 
 	// Save lexer position and function context.
 	SaveHandle current_pos = save_token_position();
@@ -2649,8 +2612,6 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 	const std::span<const size_t>* template_param_arg_counts = binding_data.template_param_arg_counts;
 	const std::optional<CallArgDeductionInfo>* deduction_info = binding_data.deduction_info;
 	const std::optional<TypeSpecifierNode>* reparsed_trailing_return_type = binding_data.reparsed_trailing_return_type;
-	const bool preserve_ref_qualifier =
-		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::PreserveRefQualifier);
 	const bool use_explicit_materialization =
 		hasInstantiationFlag(instantiation_flags, FunctionTemplateInstantiationFlags::ExplicitMaterialization);
 	const bool cacheable_instantiation =
@@ -2782,8 +2743,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		FlashCpp::TemplateParameterScope template_scope;
 		registerTypeParamsInScope(
 			substitution_environment,
-			template_scope,
-			preserve_ref_qualifier);
+			template_scope);
 		const int entered_namespace_count = enterSourceNamespaceIfNeeded();
 		auto exit_source_namespace = ScopeGuard([&]() {
 			exitSourceNamespaceIfNeeded(entered_namespace_count);
@@ -2901,7 +2861,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 				pushCurrentTemplateParamName(template_param.nameHandle());
 			}
 			FlashCpp::TemplateParameterScope template_scope;
-			registerTypeParamsInScope(substitution_environment, template_scope, preserve_ref_qualifier);
+			registerTypeParamsInScope(substitution_environment, template_scope);
 			const int entered_namespace_count = enterSourceNamespaceIfNeeded();
 			auto exit_source_namespace = ScopeGuard([&]() {
 				exitSourceNamespaceIfNeeded(entered_namespace_count);
@@ -3004,7 +2964,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 				pushCurrentTemplateParamName(template_param.nameHandle());
 			}
 			FlashCpp::TemplateParameterScope template_scope;
-			registerTypeParamsInScope(substitution_environment, template_scope, false);
+			registerTypeParamsInScope(substitution_environment, template_scope);
 			const int entered_namespace_count = enterSourceNamespaceIfNeeded();
 			auto exit_return_type_namespace = ScopeGuard([&]() {
 				exitSourceNamespaceIfNeeded(entered_namespace_count);
@@ -3031,7 +2991,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			return_type = *return_type_result.node();
 			restore_lexer_position_only(func_decl.template_declaration_position());
 			FlashCpp::TemplateParameterScope template_scope2;
-			registerTypeParamsInScope(substitution_environment, template_scope2, false);
+			registerTypeParamsInScope(substitution_environment, template_scope2);
 			const int entered_name_parse_namespace_count = enterSourceNamespaceIfNeeded();
 			auto exit_name_parse_namespace = ScopeGuard([&]() {
 				exitSourceNamespaceIfNeeded(entered_name_parse_namespace_count);
@@ -3174,7 +3134,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			if (!pack_param_info_.empty()) {
 				has_parameter_packs_ = true;
 			}
-			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args, preserve_ref_qualifier);
+			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
 		} else {
 			static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
 			std::string_view cycle_key = mangled_name;
@@ -3196,11 +3156,9 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 			if (template_instantiation_mode_ == TemplateInstantiationMode::HardUseCandidateProbe) {
 				ScopedParserInstantiationContext body_instantiation_mode(*this, TemplateInstantiationMode::HardUse, StringHandle{});
-				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
-											   preserve_ref_qualifier);
+				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
 			} else {
-				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args,
-											   preserve_ref_qualifier);
+				reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
 			}
 			if (!new_func_ref.is_materialized()) {
 				StringBuilder reason_builder;
@@ -3970,9 +3928,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			&template_param_arg_counts_view,
 			&helper_deduction_info,
 			&reparsed_trailing_return_type};
-		FunctionTemplateInstantiationFlags instantiation_flags = mergeInstantiationFlags(
-			FunctionTemplateInstantiationFlags::PreserveRefQualifier,
-			FunctionTemplateInstantiationFlags::ExplicitMaterialization);
+		FunctionTemplateInstantiationFlags instantiation_flags =
+			FunctionTemplateInstantiationFlags::ExplicitMaterialization;
 		instantiation_flags = mergeInstantiationFlags(
 			instantiation_flags,
 			FunctionTemplateInstantiationFlags::CommitInstantiation);
@@ -4042,9 +3999,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				&template_param_arg_counts_view,
 				&helper_deduction_info,
 				&reparsed_trailing_return_type};
-			FunctionTemplateInstantiationFlags shape_flags = mergeInstantiationFlags(
-				FunctionTemplateInstantiationFlags::SkipBodyMaterialization,
-				FunctionTemplateInstantiationFlags::PreserveRefQualifier);
+			FunctionTemplateInstantiationFlags shape_flags =
+				FunctionTemplateInstantiationFlags::SkipBodyMaterialization;
 			shape_flags = mergeInstantiationFlags(
 				shape_flags,
 				FunctionTemplateInstantiationFlags::ExplicitMaterialization);

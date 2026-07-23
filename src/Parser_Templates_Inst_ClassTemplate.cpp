@@ -3958,10 +3958,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// instantiation arguments.
 						FlashCpp::TemplateParameterScope template_scope;
 						for (const auto& [param_name, deduced_arg] : deduced_args) {
-							TypeCategory concrete_type = deduced_arg.typeEnum();
-							auto& type_info = add_template_param_type(StringTable::getOrInternStringHandle(param_name), concrete_type, get_type_size_bits(concrete_type));
-							type_info.reference_qualifier_ = deduced_arg.is_rvalue_reference() ? ReferenceQualifier::RValueReference
-																							   : (deduced_arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
+							auto& type_info = registerTemplateTypeBinding(
+								StringTable::getOrInternStringHandle(param_name),
+								deduced_arg);
 							template_scope.addParameter(&type_info);
 						}
 
@@ -9748,7 +9747,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-					registerTypeParamsInScope(param_names, effective_template_args, template_scope, true);
+					registerTypeParamsInScope(param_names, effective_template_args, template_scope);
 
 					// Save current position and parsing context
 					SaveHandle current_pos = save_token_position();
