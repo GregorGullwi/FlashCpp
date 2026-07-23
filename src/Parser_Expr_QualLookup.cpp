@@ -1079,31 +1079,31 @@ std::optional<OuterTemplateBinding> Parser::buildOuterBindingForOwner(StringHand
 
 	const size_t pair_count = std::min(
 		owner_context->param_names.size(),
-		owner_context->param_args.size());
+		owner_context->param_args().size());
 	if (pair_count == 0) {
 		return std::nullopt;
 	}
-	if (owner_context->param_names.size() != owner_context->param_args.size()) {
+	if (owner_context->param_names.size() != owner_context->param_args().size()) {
 		FLASH_LOG_FORMAT(
 			Templates,
 			Warning,
 			"Outer binding size mismatch for '{}': names={}, args={}",
 			StringTable::getStringView(owner_name),
 			owner_context->param_names.size(),
-			owner_context->param_args.size());
+			owner_context->param_args().size());
 	}
 
 	OuterTemplateBinding binding;
 	binding.param_names.reserve(pair_count);
 	binding.param_args.reserve(pair_count);
-	binding.all_args.reserve(owner_context->param_args.size());
+	binding.all_args.reserve(owner_context->param_args().size());
 	for (size_t i = 0; i < pair_count; ++i) {
 		binding.param_names.push_back(owner_context->param_names[i]);
-		TemplateTypeArg arg = toTemplateTypeArg(owner_context->param_args[i]);
-		arg.setCategory(owner_context->param_args[i].category());
+		TemplateTypeArg arg = toTemplateTypeArg(owner_context->param_args()[i]);
+		arg.setCategory(owner_context->param_args()[i].category());
 		binding.param_args.push_back(arg);
 	}
-	for (const TypeInfo::TemplateArgInfo& owner_arg : owner_context->param_args) {
+	for (const TypeInfo::TemplateArgInfo& owner_arg : owner_context->param_args()) {
 		TemplateTypeArg arg = toTemplateTypeArg(owner_arg);
 		arg.setCategory(owner_arg.category());
 		binding.all_args.push_back(arg);

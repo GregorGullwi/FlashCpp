@@ -244,6 +244,115 @@ std::deque<TypeInfo, TypeInfoTrackingAllocator<TypeInfo>> gTypeInfo;
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 
+// Explicit chunk size: default ChunkSize=sizeof(T)*4 would reserve ~25k *huge* elements.
+ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
+ChunkedVector<InlineVector<TypeInfo::TemplateArgInfo, 4>, 8> gTypeInfoTemplateArgLists;
+ChunkedVector<TypeInfo::InstantiationContext, 8> gInstantiationContexts;
+
+uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record) {
+	const uint32_t index = static_cast<uint32_t>(gDependentQualifiedNameRecords.size());
+	gDependentQualifiedNameRecords.push_back(std::move(record));
+	return index;
+}
+
+const TypeInfo::DependentQualifiedNameRecord* getDependentQualifiedNameRecord(uint32_t index) {
+	if (index == TypeInfo::kNoDependentQualifiedName) {
+		return nullptr;
+	}
+	assert(index < gDependentQualifiedNameRecords.size());
+	return &gDependentQualifiedNameRecords[index];
+}
+
+size_t getDependentQualifiedNameRecordCount() {
+	return gDependentQualifiedNameRecords.size();
+}
+
+bool TypeInfo::hasDependentQualifiedName() const {
+	return dependent_qualified_name_index_ != kNoDependentQualifiedName;
+}
+
+const TypeInfo::DependentQualifiedNameRecord* TypeInfo::dependentQualifiedName() const {
+	return getDependentQualifiedNameRecord(dependent_qualified_name_index_);
+}
+
+void TypeInfo::clearDependentQualifiedName() {
+	dependent_qualified_name_index_ = kNoDependentQualifiedName;
+}
+
+void TypeInfo::setDependentQualifiedName(DependentQualifiedNameRecord record) {
+	dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
+}
+
+uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> args) {
+	if (args.empty()) {
+		return TypeInfo::kNoTemplateArgs;
+	}
+	const uint32_t index = static_cast<uint32_t>(gTypeInfoTemplateArgLists.size());
+	gTypeInfoTemplateArgLists.push_back(std::move(args));
+	return index;
+}
+
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32_t index) {
+	static const InlineVector<TypeInfo::TemplateArgInfo, 4> empty_args;
+	if (index == TypeInfo::kNoTemplateArgs) {
+		return empty_args;
+	}
+	assert(index < gTypeInfoTemplateArgLists.size());
+	return gTypeInfoTemplateArgLists[index];
+}
+
+size_t getTypeInfoTemplateArgsCount() {
+	return gTypeInfoTemplateArgLists.size();
+}
+
+uint32_t storeInstantiationContext(TypeInfo::InstantiationContext ctx) {
+	const uint32_t index = static_cast<uint32_t>(gInstantiationContexts.size());
+	gInstantiationContexts.push_back(std::move(ctx));
+	return index;
+}
+
+const TypeInfo::InstantiationContext* getInstantiationContext(uint32_t index) {
+	if (index == TypeInfo::kNoInstantiationContext) {
+		return nullptr;
+	}
+	assert(index < gInstantiationContexts.size());
+	return &gInstantiationContexts[index];
+}
+
+TypeInfo::InstantiationContext* getInstantiationContextMut(uint32_t index) {
+	if (index == TypeInfo::kNoInstantiationContext) {
+		return nullptr;
+	}
+	assert(index < gInstantiationContexts.size());
+	return &gInstantiationContexts[index];
+}
+
+size_t getInstantiationContextCount() {
+	return gInstantiationContexts.size();
+}
+
+const TypeInfo::InstantiationContext* TypeInfo::instantiationContext() const {
+	return getInstantiationContext(instantiation_context_index_);
+}
+
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::InstantiationContext::param_args() const {
+	return getTypeInfoTemplateArgs(param_args_index);
+}
+
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& TypeInfo::templateArgs() const {
+	return getTypeInfoTemplateArgs(template_args_index_);
+}
+
+void TypeInfo::clearTemplateArgs() {
+	template_args_index_ = kNoTemplateArgs;
+}
+
+void TypeInfo::setTemplateInstantiationInfo(QualifiedIdentifier base_template,
+											InlineVector<TemplateArgInfo, 4> args) {
+	base_template_ = base_template;
+	template_args_index_ = storeTypeInfoTemplateArgs(std::move(args));
+}
+
 template <typename... Args>
 TypeInfo& emplaceTypeInfoTracked(const char* reason, Args&&... args) {
 	if (!gTypeTableStatsEnabled) {
@@ -468,17 +577,19 @@ namespace {
 
 void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
 	alias_type_info.placeholder_kind_ = DependentPlaceholderKind::None;
-	alias_type_info.dependent_qualified_name_.reset();
+	alias_type_info.clearDependentQualifiedName();
 	alias_type_info.clearDeferredDecltypeExpression();
 	alias_type_info.base_template_ = QualifiedIdentifier{};
-	alias_type_info.template_args_.clear();
-	alias_type_info.instantiation_context_.reset();
+	alias_type_info.clearTemplateArgs();
+	alias_type_info.clearInstantiationContext();
 	alias_type_info.is_incomplete_instantiation_ = false;
 }
 
 void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& semantic_source_type_info) {
 	alias_type_info.placeholder_kind_ = semantic_source_type_info.placeholder_kind_;
-	alias_type_info.dependent_qualified_name_ = semantic_source_type_info.dependent_qualified_name_;
+	// Share the cold-arena index; records are immutable after store.
+	alias_type_info.dependent_qualified_name_index_ =
+		semantic_source_type_info.dependent_qualified_name_index_;
 	if (const ASTNode* deferred_decltype_expr = semantic_source_type_info.deferredDecltypeExpression();
 		deferred_decltype_expr != nullptr) {
 		alias_type_info.setDeferredDecltypeExpression(*deferred_decltype_expr);
@@ -486,18 +597,12 @@ void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& se
 		alias_type_info.clearDeferredDecltypeExpression();
 	}
 	alias_type_info.base_template_ = semantic_source_type_info.base_template_;
-	alias_type_info.template_args_ = semantic_source_type_info.template_args_;
+	// Share the cold-arena index; arg lists are immutable after store.
+	alias_type_info.template_args_index_ = semantic_source_type_info.template_args_index_;
 	alias_type_info.is_incomplete_instantiation_ = semantic_source_type_info.is_incomplete_instantiation_;
-	if (const TypeInfo::InstantiationContext* instantiation_context =
-			semantic_source_type_info.instantiationContext();
-		instantiation_context != nullptr) {
-		alias_type_info.setInstantiationContext(
-			instantiation_context->param_names,
-			instantiation_context->param_args,
-			instantiation_context->parent);
-	} else {
-		alias_type_info.instantiation_context_.reset();
-	}
+	// Share the cold-arena index; contexts are immutable after store.
+	alias_type_info.instantiation_context_index_ =
+		semantic_source_type_info.instantiation_context_index_;
 }
 
 } // namespace
@@ -625,6 +730,64 @@ void printTypeTableStats() {
 			  ", sizeof(TypeInfo)=", sizeof(TypeInfo),
 			  ", estimated storage=", type_info_bytes, " bytes (",
 			  type_info_bytes / 1024, " KiB)");
+	FLASH_LOG(General, Info, "  TypeInfo layout breakdown (bytes): ",
+			  "TemplateArgInfo=", sizeof(TypeInfo::TemplateArgInfo),
+			  ", InlineVector<TemplateArgInfo,4>=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  ", template_args_index_=", sizeof(uint32_t),
+			  ", DependentQualifiedNameRecord=", sizeof(TypeInfo::DependentQualifiedNameRecord),
+			  ", dependent_qualified_name_index_=", sizeof(uint32_t),
+			  ", InstantiationContext=", sizeof(TypeInfo::InstantiationContext),
+			  ", instantiation_context_index_=", sizeof(uint32_t),
+			  ", FunctionSignature=", sizeof(FunctionSignature),
+			  ", optional<FunctionSignature>=", sizeof(std::optional<FunctionSignature>),
+			  ", optional<ASTNode>=", sizeof(std::optional<ASTNode>));
+
+	size_t types_with_template_args = 0;
+	size_t types_with_dependent_qualified_name = 0;
+	size_t types_with_instantiation_context = 0;
+	size_t types_with_struct_info = 0;
+	size_t types_with_alias_spec = 0;
+	for (size_t i = 0; i < type_info_count; ++i) {
+		const TypeInfo& info = gTypeInfo[i];
+		if (!info.templateArgs().empty()) {
+			++types_with_template_args;
+		}
+		if (info.hasDependentQualifiedName()) {
+			++types_with_dependent_qualified_name;
+		}
+		if (info.hasInstantiationContext()) {
+			++types_with_instantiation_context;
+		}
+		if (info.getStructInfo() != nullptr) {
+			++types_with_struct_info;
+		}
+		if (info.aliasTypeSpecifier() != nullptr) {
+			++types_with_alias_spec;
+		}
+	}
+	FLASH_LOG(General, Info, "  TypeInfo payload usage: with_template_args=", types_with_template_args,
+			  ", with_dependent_qualified_name=", types_with_dependent_qualified_name,
+			  ", with_instantiation_context=", types_with_instantiation_context,
+			  ", with_struct_info=", types_with_struct_info,
+			  ", with_alias_spec=", types_with_alias_spec);
+	FLASH_LOG(General, Info, "  gDependentQualifiedNameRecords: entries=",
+			  getDependentQualifiedNameRecordCount(),
+			  ", record_bytes=", sizeof(TypeInfo::DependentQualifiedNameRecord),
+			  ", estimated cold storage=",
+			  getDependentQualifiedNameRecordCount() * sizeof(TypeInfo::DependentQualifiedNameRecord),
+			  " bytes");
+	FLASH_LOG(General, Info, "  gTypeInfoTemplateArgLists: entries=",
+			  getTypeInfoTemplateArgsCount(),
+			  ", list_bytes=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  ", estimated cold storage=",
+			  getTypeInfoTemplateArgsCount() * sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  " bytes");
+	FLASH_LOG(General, Info, "  gInstantiationContexts: entries=",
+			  getInstantiationContextCount(),
+			  ", context_bytes=", sizeof(TypeInfo::InstantiationContext),
+			  ", estimated cold storage=",
+			  getInstantiationContextCount() * sizeof(TypeInfo::InstantiationContext),
+			  " bytes");
 
 	// Break down entries by category
 	size_t cat_struct = 0, cat_enum = 0, cat_alias = 0, cat_native = 0, cat_other = 0;
@@ -1341,39 +1504,40 @@ void TypeInfo::setStructInfo(std::unique_ptr<StructTypeInfo> info) {
 void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,
 									   InlineVector<TemplateArgInfo, 4> param_args,
 									   const InstantiationContext* parent) {
-	instantiation_context_ = std::make_unique<InstantiationContext>();
-	instantiation_context_->parent = parent;
-	instantiation_context_->param_names = param_names;
-	instantiation_context_->param_args = param_args;
+	InstantiationContext ctx;
+	ctx.parent = parent;
+	ctx.param_names = param_names;
+	ctx.param_args_index = storeTypeInfoTemplateArgs(std::move(param_args));
+	const auto& stored_param_args = getTypeInfoTemplateArgs(ctx.param_args_index);
 
 	// Phase 5: Populate binding-based storage alongside legacy fields.
 	// param_args may be a flattened pack list and can therefore be longer than
 	// param_names in legacy callers.
-	if (param_args.size() < param_names.size()) {
+	if (stored_param_args.size() < param_names.size()) {
 		StringBuilder error_builder;
 		error_builder.append("TypeInfo::setInstantiationContext invalid size mismatch: param_names=");
 		error_builder.append(param_names.size());
 		error_builder.append(", param_args=");
-		error_builder.append(param_args.size());
+		error_builder.append(stored_param_args.size());
 		throw InternalError(std::string(error_builder.commit()));
 	}
 	const size_t estimated_binding_count = param_names.size();
-	instantiation_context_->bindings.reserve(estimated_binding_count);
+	ctx.bindings.reserve(estimated_binding_count);
 
 	size_t arg_index = 0;
 	size_t name_index = 0;
 	while (name_index < param_names.size()) {
 		InlineVector<TemplateArgInfo, 1> binding_args;
 		const StringHandle binding_name = param_names[name_index];
-		if (arg_index < param_args.size()) {
-			binding_args.push_back(param_args[arg_index]);
+		if (arg_index < stored_param_args.size()) {
+			binding_args.push_back(stored_param_args[arg_index]);
 			++arg_index;
 		}
 		++name_index;
 		while (name_index < param_names.size() &&
 			   param_names[name_index] == binding_name &&
-			   arg_index < param_args.size()) {
-			binding_args.push_back(param_args[arg_index]);
+			   arg_index < stored_param_args.size()) {
+			binding_args.push_back(stored_param_args[arg_index]);
 			++arg_index;
 			++name_index;
 		}
@@ -1382,8 +1546,8 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		// element. Preserve those elements by attaching the remaining args to the
 		// final binding.
 		if (name_index == param_names.size()) {
-			while (arg_index < param_args.size()) {
-				binding_args.push_back(param_args[arg_index]);
+			while (arg_index < stored_param_args.size()) {
+				binding_args.push_back(stored_param_args[arg_index]);
 				++arg_index;
 			}
 		}
@@ -1402,8 +1566,9 @@ void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names
 		}
 		binding.kind = static_cast<uint8_t>(binding_kind);
 		binding.is_pack = (binding.args.size() > 1);
-		instantiation_context_->bindings.push_back(std::move(binding));
+		ctx.bindings.push_back(std::move(binding));
 	}
+	instantiation_context_index_ = storeInstantiationContext(std::move(ctx));
 }
 
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {

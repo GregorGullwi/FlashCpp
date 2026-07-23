@@ -1240,6 +1240,8 @@ struct TypeInfo {
  // (codegen, constexpr evaluation) can resolve template bindings without
  // registry-name reconstruction.  For nested types inside a template
  // instantiation, `parent` points to the enclosing type's context.
+	static constexpr uint32_t kNoTemplateArgs = UINT32_MAX;
+
 	struct InstantiationContext {
 		struct Binding {
 			StringHandle name;
@@ -1253,20 +1255,27 @@ struct TypeInfo {
 
 		// Legacy fields for compatibility (populated in parallel during transition)
 		InlineVector<StringHandle, 4> param_names; // Template parameter names (e.g., "T", "U")
-		InlineVector<TemplateArgInfo, 4> param_args; // Concrete template arguments
+		uint32_t param_args_index = kNoTemplateArgs;
+
+		const InlineVector<TemplateArgInfo, 4>& param_args() const;
 
 		// Phase 5 accessors
 		bool hasInstantiationContextBindings() const { return !bindings.empty(); }
 		size_t getInstantiationContextBindingsCount() const { return bindings.size(); }
 	};
 
-	InlineVector<TemplateArgInfo, 4> template_args_;
+	// Keeps InlineVector<TemplateArgInfo,4> (~1.2KB) out of every TypeInfo row.
+	uint32_t template_args_index_ = kNoTemplateArgs;
 
-	std::optional<DependentQualifiedNameRecord> dependent_qualified_name_;
+	// Index into gDependentQualifiedNameRecords. UINT32_MAX = none.
+	// Keeps the fat DependentQualifiedNameRecord (~6KB) out of every TypeInfo row.
+	static constexpr uint32_t kNoDependentQualifiedName = UINT32_MAX;
+	uint32_t dependent_qualified_name_index_ = kNoDependentQualifiedName;
 
- // Type-owned instantiation context (non-null for template instantiations
- // and for types nested inside a template instantiation).
-	std::unique_ptr<InstantiationContext> instantiation_context_;
+	// Index into gInstantiationContexts. UINT32_MAX = none.
+	// Keeps InstantiationContext out of every TypeInfo row.
+	static constexpr uint32_t kNoInstantiationContext = UINT32_MAX;
+	uint32_t instantiation_context_index_ = kNoInstantiationContext;
 
 	StringHandle name() const {
 		return name_;
@@ -1280,22 +1289,27 @@ struct TypeInfo {
 	bool isTemplateInstantiation() const { return base_template_.valid(); }
 	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
-	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
-	bool hasDependentQualifiedName() const { return dependent_qualified_name_.has_value(); }
-	const DependentQualifiedNameRecord* dependentQualifiedName() const { return dependent_qualified_name_ ? &*dependent_qualified_name_ : nullptr; }
+	const InlineVector<TemplateArgInfo, 4>& templateArgs() const;
+	void clearTemplateArgs();
+	bool hasDependentQualifiedName() const;
+	const DependentQualifiedNameRecord* dependentQualifiedName() const;
+	void clearDependentQualifiedName();
+	void setDependentQualifiedName(DependentQualifiedNameRecord record);
 
 	// Access the type-owned instantiation context (may be null).
-	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
-	bool hasInstantiationContext() const { return instantiation_context_ != nullptr; }
+	const InstantiationContext* instantiationContext() const;
+	bool hasInstantiationContext() const { return instantiation_context_index_ != kNoInstantiationContext; }
+	void clearInstantiationContext() { instantiation_context_index_ = kNoInstantiationContext; }
 	const TemplateArgInfo* findLegacyInstantiationArgByName(std::string_view param_name) const {
-		for (const auto* inst_ctx = instantiation_context_.get(); inst_ctx; inst_ctx = inst_ctx->parent) {
+		for (const auto* inst_ctx = instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
+			const auto& args = inst_ctx->param_args();
 			size_t param_count = inst_ctx->param_names.size();
-			if (inst_ctx->param_args.size() < param_count) {
-				param_count = inst_ctx->param_args.size();
+			if (args.size() < param_count) {
+				param_count = args.size();
 			}
 			for (size_t param_index = 0; param_index < param_count; ++param_index) {
 				if (StringTable::getStringView(inst_ctx->param_names[param_index]) == param_name) {
-					return &inst_ctx->param_args[param_index];
+					return &args[param_index];
 				}
 			}
 		}
@@ -1307,18 +1321,12 @@ struct TypeInfo {
 		return deferred_decltype_expression_.has_value() ? &*deferred_decltype_expression_ : nullptr;
 	}
 
-	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
-		base_template_ = base_template;
-		template_args_ = std::move(args);
-	}
+	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args);
 
 	void clearAliasTypeSpecifier();
 	void setAliasTypeSpecifier(const TypeSpecifierNode& type_spec);
 	void clearDeferredDecltypeExpression();
 	void setDeferredDecltypeExpression(const ASTNode& expr);
-	void setDependentQualifiedName(DependentQualifiedNameRecord record) {
-		dependent_qualified_name_ = std::move(record);
-	}
 
 	// Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
@@ -1389,6 +1397,23 @@ struct TypeInfo {
 	bool isDependentMemberType() const { return placeholder_kind_ == DependentPlaceholderKind::DependentMemberType; }
 	bool isDependentPlaceholder() const { return placeholder_kind_ != DependentPlaceholderKind::None; }
 };
+
+// Cold arena for DependentQualifiedNameRecord. Indices are stable; chunks stay packed
+// for linear/scattered reads without a unique_ptr malloc per record.
+uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record);
+const TypeInfo::DependentQualifiedNameRecord* getDependentQualifiedNameRecord(uint32_t index);
+size_t getDependentQualifiedNameRecordCount();
+
+// Cold arena for TypeInfo template-argument lists (InlineVector<TemplateArgInfo,4>).
+uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> args);
+const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32_t index);
+size_t getTypeInfoTemplateArgsCount();
+
+// Cold arena for TypeInfo::InstantiationContext.
+uint32_t storeInstantiationContext(TypeInfo::InstantiationContext ctx);
+const TypeInfo::InstantiationContext* getInstantiationContext(uint32_t index);
+TypeInfo::InstantiationContext* getInstantiationContextMut(uint32_t index);
+size_t getInstantiationContextCount();
 
 // Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
 // register_type_alias so callers can capture both the TypeInfo reference AND the
@@ -2434,12 +2459,14 @@ public:
 	std::string_view name() const { return identifier_.value(); }
 	StringHandle nameHandle() const { return identifier_.handle(); }
 	const Token& identifier_token() const { return identifier_; }
-	bool hasDependentQualifiedName() const { return dependent_qualified_name_.has_value(); }
+	bool hasDependentQualifiedName() const {
+		return dependent_qualified_name_index_ != TypeInfo::kNoDependentQualifiedName;
+	}
 	const TypeInfo::DependentQualifiedNameRecord* dependentQualifiedName() const {
-		return dependent_qualified_name_ ? &*dependent_qualified_name_ : nullptr;
+		return getDependentQualifiedNameRecord(dependent_qualified_name_index_);
 	}
 	void setDependentQualifiedName(TypeInfo::DependentQualifiedNameRecord record) {
-		dependent_qualified_name_ = std::move(record);
+		dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
 	}
 	void set_template_arguments(std::vector<ASTNode>&& template_args) {
 		template_arguments_ = std::move(template_args);
@@ -2467,7 +2494,7 @@ public:
 private:
 	NamespaceHandle namespace_handle_;  // Handle to namespace, e.g., handle for "std" in std::print
 	Token identifier_;				   // The final identifier (e.g., "print", "func")
-	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_name_;
+	uint32_t dependent_qualified_name_index_ = TypeInfo::kNoDependentQualifiedName;
 	std::vector<ASTNode> template_arguments_;
 };
 
@@ -3203,13 +3230,14 @@ public:
 	}
 	void set_dependent_qualified_lookup_record(
 		const TypeInfo::DependentQualifiedNameRecord& record) {
-		dependent_qualified_lookup_record_ = record;
+		dependent_qualified_lookup_record_index_ =
+			storeDependentQualifiedNameRecord(record);
 	}
-	const std::optional<TypeInfo::DependentQualifiedNameRecord>& dependent_qualified_lookup_record() const {
-		return dependent_qualified_lookup_record_;
+	const TypeInfo::DependentQualifiedNameRecord* dependent_qualified_lookup_record() const {
+		return getDependentQualifiedNameRecord(dependent_qualified_lookup_record_index_);
 	}
 	bool has_dependent_qualified_lookup_record() const {
-		return dependent_qualified_lookup_record_.has_value();
+		return dependent_qualified_lookup_record_index_ != TypeInfo::kNoDependentQualifiedName;
 	}
 
 private:
@@ -3223,7 +3251,7 @@ private:
 	std::optional<TypeSpecifierNode> parser_return_type_hint_;
 	std::optional<FunctionCallDefinitionLookupRecord> definition_lookup_record_;
 	std::optional<DependentUnqualifiedCallLookupRecord> dependent_unqualified_lookup_record_;
-	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_lookup_record_;
+	uint32_t dependent_qualified_lookup_record_index_ = TypeInfo::kNoDependentQualifiedName;
 };
 
 // Constructor call node - represents constructor calls like T(args)

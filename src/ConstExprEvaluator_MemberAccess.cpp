@@ -812,9 +812,9 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Static lookup in struct '", StringTable::getStringView(struct_handle), "', bases=", struct_info->base_classes.size());
 					if (resolved_type_info) {
-						FLASH_LOG(ConstExpr, Debug, "Resolved type base template='", StringTable::getStringView(resolved_type_info->baseTemplateName()), "', template args=", resolved_type_info->template_args_.size());
-						for (size_t i = 0; i < resolved_type_info->template_args_.size(); ++i) {
-							const auto& arg = resolved_type_info->template_args_[i];
+						FLASH_LOG(ConstExpr, Debug, "Resolved type base template='", StringTable::getStringView(resolved_type_info->baseTemplateName()), "', template args=", resolved_type_info->templateArgs().size());
+						for (size_t i = 0; i < resolved_type_info->templateArgs().size(); ++i) {
+							const auto& arg = resolved_type_info->templateArgs()[i];
 							FLASH_LOG(ConstExpr, Debug, "  resolved arg[", i, "] is_value=", arg.is_value, ", category=", static_cast<int>(arg.category()), ", type_index=", arg.type_index, ", value(int)=", arg.intValue());
 						}
 					}

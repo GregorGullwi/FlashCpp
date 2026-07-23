@@ -8352,8 +8352,7 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		resolveDefinitionLookupRecordTarget();
 	const bool has_deferred_qualified_template_metadata =
 		!call_info.template_arguments.empty() ||
-		(call_info.dependent_qualified_lookup_record != nullptr &&
-		 call_info.dependent_qualified_lookup_record->has_value());
+		call_info.dependent_qualified_lookup_record != nullptr;
 	struct QualifiedLookupTarget {
 		NamespaceHandle namespace_handle;
 		std::string_view identifier;
@@ -8415,10 +8414,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		}
 	};
 	auto resolveQualifiedOwnerTypeForCall = [&](std::string_view owner_name) -> const TypeInfo* {
-		if (call_info.dependent_qualified_lookup_record != nullptr &&
-			call_info.dependent_qualified_lookup_record->has_value()) {
+		if (call_info.dependent_qualified_lookup_record != nullptr) {
 			const TypeInfo::DependentQualifiedNameRecord& dependent_record =
-				**call_info.dependent_qualified_lookup_record;
+				*call_info.dependent_qualified_lookup_record;
 			if (dependent_record.owner_type.is_valid()) {
 				if (const TypeInfo* owner_from_record = tryGetTypeInfo(dependent_record.owner_type)) {
 					return tryResolveStructOwnerTypeInfo(owner_from_record);

@@ -5461,11 +5461,11 @@ void Evaluator::load_template_bindings_from_type(const TypeInfo* source_type, Ev
 		context.template_param_names.clear();
 		context.template_args.clear();
 		context.template_param_names.reserve(inst_ctx->param_names.size());
-		context.template_args.reserve(inst_ctx->param_args.size());
+		context.template_args.reserve(inst_ctx->param_args().size());
 		for (StringHandle h : inst_ctx->param_names) {
 			context.template_param_names.push_back(StringTable::getStringView(h));
 		}
-		for (const auto& arg_info : inst_ctx->param_args) {
+		for (const auto& arg_info : inst_ctx->param_args()) {
 			context.template_args.push_back(toTemplateTypeArg(arg_info));
 		}
 		return;

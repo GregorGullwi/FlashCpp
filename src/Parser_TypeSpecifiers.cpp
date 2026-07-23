@@ -1379,7 +1379,7 @@ ParseResult Parser::parse_type_specifier() {
 							const TypeInfo::InstantiationContext* target_context = alias_target_info->instantiationContext();
 							placeholder_type.setInstantiationContext(
 								target_context->param_names,
-								target_context->param_args,
+								InlineVector<TypeInfo::TemplateArgInfo, 4>(target_context->param_args()),
 								target_context->parent);
 						}
 						getTypesByNameMap()[target_member_handle] = &placeholder_type;
@@ -1492,7 +1492,7 @@ ParseResult Parser::parse_type_specifier() {
 							owner_type_info->instantiationContext();
 						placeholder_type.setInstantiationContext(
 							owner_context->param_names,
-							owner_context->param_args,
+							InlineVector<TypeInfo::TemplateArgInfo, 4>(owner_context->param_args()),
 							owner_context->parent);
 					}
 					getTypesByNameMap()[type_handle] = &placeholder_type;
@@ -1512,7 +1512,7 @@ ParseResult Parser::parse_type_specifier() {
 							owner_type_info->instantiationContext();
 						type_it->second->setInstantiationContext(
 							owner_context->param_names,
-							owner_context->param_args,
+							InlineVector<TypeInfo::TemplateArgInfo, 4>(owner_context->param_args()),
 							owner_context->parent);
 					}
 					type_idx = type_it->second->type_index_;
@@ -1708,7 +1708,7 @@ ParseResult Parser::parse_type_specifier() {
 							} else if (base_context != nullptr) {
 								member_type_info.setInstantiationContext(
 									base_context->param_names,
-									base_context->param_args,
+									InlineVector<TypeInfo::TemplateArgInfo, 4>(base_context->param_args()),
 									base_context->parent);
 							}
 						};
@@ -2782,7 +2782,7 @@ ParseResult Parser::parse_type_specifier() {
 								const auto* base_ctx = base_type_it->second->instantiationContext();
 								type_info.setInstantiationContext(
 									base_ctx->param_names,
-									base_ctx->param_args,
+									InlineVector<TypeInfo::TemplateArgInfo, 4>(base_ctx->param_args()),
 									base_ctx->parent);
 							}
 						}
@@ -3226,7 +3226,7 @@ ParseResult Parser::parse_type_specifier() {
 										const TypeInfo::InstantiationContext* existing_context =
 											instantiated_type_info->instantiationContext();
 										merged_param_names = existing_context->param_names;
-										merged_param_args = existing_context->param_args;
+										merged_param_args = existing_context->param_args();
 									}
 									const auto alias_arg_infos =
 										convertToTemplateArgInfo(*member_template_args);

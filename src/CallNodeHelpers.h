@@ -158,7 +158,7 @@ struct CallInfo {
 	const std::optional<TypeSpecifierNode>* parser_return_type_hint;
 	const std::optional<FunctionCallDefinitionLookupRecord>* definition_lookup_record;
 	const std::optional<DependentUnqualifiedCallLookupRecord>* dependent_unqualified_lookup_record;
-	const std::optional<TypeInfo::DependentQualifiedNameRecord>* dependent_qualified_lookup_record;
+	const TypeInfo::DependentQualifiedNameRecord* dependent_qualified_lookup_record;
 	bool is_indirect;
 
 	// --- Factory helpers ---------------------------------------------------
@@ -179,7 +179,7 @@ struct CallInfo {
 		info.dependent_unqualified_lookup_record =
 			&node.dependent_unqualified_lookup_record();
 		info.dependent_qualified_lookup_record =
-			&node.dependent_qualified_lookup_record();
+			node.dependent_qualified_lookup_record();
 		info.is_indirect           = node.callee().is_indirect();
 		return info;
 	}
@@ -241,10 +241,9 @@ inline void copyCallMetadataFromInfo(
 			**source.dependent_unqualified_lookup_record);
 	}
 	if (options.copy_dependent_qualified_lookup_record &&
-		source.dependent_qualified_lookup_record != nullptr &&
-		source.dependent_qualified_lookup_record->has_value()) {
+		source.dependent_qualified_lookup_record != nullptr) {
 		target.set_dependent_qualified_lookup_record(
-			**source.dependent_qualified_lookup_record);
+			*source.dependent_qualified_lookup_record);
 	}
 }
 

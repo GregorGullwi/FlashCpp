@@ -2297,16 +2297,16 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			self(self, current_ctx->parent);
 			size_t binding_count = current_ctx->param_names.size();
-			if (current_ctx->param_args.size() < binding_count) {
-				binding_count = current_ctx->param_args.size();
+			if (current_ctx->param_args().size() < binding_count) {
+				binding_count = current_ctx->param_args().size();
 			}
 			for (size_t binding_index = 0; binding_index < binding_count; ++binding_index) {
 				ctx_params.push_back(
 					rebuildOuterTemplateParameter(
 						current_ctx->param_names[binding_index],
-						current_ctx->param_args[binding_index]));
+						current_ctx->param_args()[binding_index]));
 				ctx_args.push_back(
-					toTemplateTypeArg(current_ctx->param_args[binding_index]));
+					toTemplateTypeArg(current_ctx->param_args()[binding_index]));
 			}
 		};
 		append_instantiation_context(append_instantiation_context, inst_ctx);
