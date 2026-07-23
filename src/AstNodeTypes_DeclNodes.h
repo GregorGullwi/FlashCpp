@@ -1262,7 +1262,10 @@ struct TypeInfo {
 
 	InlineVector<TemplateArgInfo, 4> template_args_;
 
-	std::optional<DependentQualifiedNameRecord> dependent_qualified_name_;
+	// Index into gDependentQualifiedNameRecords. UINT32_MAX = none.
+	// Keeps the fat DependentQualifiedNameRecord (~6KB) out of every TypeInfo row.
+	static constexpr uint32_t kNoDependentQualifiedName = UINT32_MAX;
+	uint32_t dependent_qualified_name_index_ = kNoDependentQualifiedName;
 
  // Type-owned instantiation context (non-null for template instantiations
  // and for types nested inside a template instantiation).
@@ -1281,8 +1284,10 @@ struct TypeInfo {
 	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
 	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
-	bool hasDependentQualifiedName() const { return dependent_qualified_name_.has_value(); }
-	const DependentQualifiedNameRecord* dependentQualifiedName() const { return dependent_qualified_name_ ? &*dependent_qualified_name_ : nullptr; }
+	bool hasDependentQualifiedName() const;
+	const DependentQualifiedNameRecord* dependentQualifiedName() const;
+	void clearDependentQualifiedName();
+	void setDependentQualifiedName(DependentQualifiedNameRecord record);
 
 	// Access the type-owned instantiation context (may be null).
 	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
@@ -1316,9 +1321,6 @@ struct TypeInfo {
 	void setAliasTypeSpecifier(const TypeSpecifierNode& type_spec);
 	void clearDeferredDecltypeExpression();
 	void setDeferredDecltypeExpression(const ASTNode& expr);
-	void setDependentQualifiedName(DependentQualifiedNameRecord record) {
-		dependent_qualified_name_ = std::move(record);
-	}
 
 	// Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
@@ -1389,6 +1391,12 @@ struct TypeInfo {
 	bool isDependentMemberType() const { return placeholder_kind_ == DependentPlaceholderKind::DependentMemberType; }
 	bool isDependentPlaceholder() const { return placeholder_kind_ != DependentPlaceholderKind::None; }
 };
+
+// Cold arena for DependentQualifiedNameRecord. Indices are stable; chunks stay packed
+// for linear/scattered reads without a unique_ptr malloc per record.
+uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record);
+const TypeInfo::DependentQualifiedNameRecord* getDependentQualifiedNameRecord(uint32_t index);
+size_t getDependentQualifiedNameRecordCount();
 
 // Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
 // register_type_alias so callers can capture both the TypeInfo reference AND the
@@ -2434,12 +2442,14 @@ public:
 	std::string_view name() const { return identifier_.value(); }
 	StringHandle nameHandle() const { return identifier_.handle(); }
 	const Token& identifier_token() const { return identifier_; }
-	bool hasDependentQualifiedName() const { return dependent_qualified_name_.has_value(); }
+	bool hasDependentQualifiedName() const {
+		return dependent_qualified_name_index_ != TypeInfo::kNoDependentQualifiedName;
+	}
 	const TypeInfo::DependentQualifiedNameRecord* dependentQualifiedName() const {
-		return dependent_qualified_name_ ? &*dependent_qualified_name_ : nullptr;
+		return getDependentQualifiedNameRecord(dependent_qualified_name_index_);
 	}
 	void setDependentQualifiedName(TypeInfo::DependentQualifiedNameRecord record) {
-		dependent_qualified_name_ = std::move(record);
+		dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
 	}
 	void set_template_arguments(std::vector<ASTNode>&& template_args) {
 		template_arguments_ = std::move(template_args);
@@ -2467,7 +2477,7 @@ public:
 private:
 	NamespaceHandle namespace_handle_;  // Handle to namespace, e.g., handle for "std" in std::print
 	Token identifier_;				   // The final identifier (e.g., "print", "func")
-	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_name_;
+	uint32_t dependent_qualified_name_index_ = TypeInfo::kNoDependentQualifiedName;
 	std::vector<ASTNode> template_arguments_;
 };
 
@@ -3203,13 +3213,14 @@ public:
 	}
 	void set_dependent_qualified_lookup_record(
 		const TypeInfo::DependentQualifiedNameRecord& record) {
-		dependent_qualified_lookup_record_ = record;
+		dependent_qualified_lookup_record_index_ =
+			storeDependentQualifiedNameRecord(record);
 	}
-	const std::optional<TypeInfo::DependentQualifiedNameRecord>& dependent_qualified_lookup_record() const {
-		return dependent_qualified_lookup_record_;
+	const TypeInfo::DependentQualifiedNameRecord* dependent_qualified_lookup_record() const {
+		return getDependentQualifiedNameRecord(dependent_qualified_lookup_record_index_);
 	}
 	bool has_dependent_qualified_lookup_record() const {
-		return dependent_qualified_lookup_record_.has_value();
+		return dependent_qualified_lookup_record_index_ != TypeInfo::kNoDependentQualifiedName;
 	}
 
 private:
@@ -3223,7 +3234,7 @@ private:
 	std::optional<TypeSpecifierNode> parser_return_type_hint_;
 	std::optional<FunctionCallDefinitionLookupRecord> definition_lookup_record_;
 	std::optional<DependentUnqualifiedCallLookupRecord> dependent_unqualified_lookup_record_;
-	std::optional<TypeInfo::DependentQualifiedNameRecord> dependent_qualified_lookup_record_;
+	uint32_t dependent_qualified_lookup_record_index_ = TypeInfo::kNoDependentQualifiedName;
 };
 
 // Constructor call node - represents constructor calls like T(args)

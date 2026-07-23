@@ -244,6 +244,43 @@ std::deque<TypeInfo, TypeInfoTrackingAllocator<TypeInfo>> gTypeInfo;
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual> gTypesByName;
 std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 
+// Explicit chunk size: default ChunkSize=sizeof(T)*4 would reserve ~25k *huge* elements.
+ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
+
+uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record) {
+	const uint32_t index = static_cast<uint32_t>(gDependentQualifiedNameRecords.size());
+	gDependentQualifiedNameRecords.push_back(std::move(record));
+	return index;
+}
+
+const TypeInfo::DependentQualifiedNameRecord* getDependentQualifiedNameRecord(uint32_t index) {
+	if (index == TypeInfo::kNoDependentQualifiedName) {
+		return nullptr;
+	}
+	assert(index < gDependentQualifiedNameRecords.size());
+	return &gDependentQualifiedNameRecords[index];
+}
+
+size_t getDependentQualifiedNameRecordCount() {
+	return gDependentQualifiedNameRecords.size();
+}
+
+bool TypeInfo::hasDependentQualifiedName() const {
+	return dependent_qualified_name_index_ != kNoDependentQualifiedName;
+}
+
+const TypeInfo::DependentQualifiedNameRecord* TypeInfo::dependentQualifiedName() const {
+	return getDependentQualifiedNameRecord(dependent_qualified_name_index_);
+}
+
+void TypeInfo::clearDependentQualifiedName() {
+	dependent_qualified_name_index_ = kNoDependentQualifiedName;
+}
+
+void TypeInfo::setDependentQualifiedName(DependentQualifiedNameRecord record) {
+	dependent_qualified_name_index_ = storeDependentQualifiedNameRecord(std::move(record));
+}
+
 template <typename... Args>
 TypeInfo& emplaceTypeInfoTracked(const char* reason, Args&&... args) {
 	if (!gTypeTableStatsEnabled) {
@@ -468,7 +505,7 @@ namespace {
 
 void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
 	alias_type_info.placeholder_kind_ = DependentPlaceholderKind::None;
-	alias_type_info.dependent_qualified_name_.reset();
+	alias_type_info.clearDependentQualifiedName();
 	alias_type_info.clearDeferredDecltypeExpression();
 	alias_type_info.base_template_ = QualifiedIdentifier{};
 	alias_type_info.template_args_.clear();
@@ -478,7 +515,9 @@ void resetTypeAliasSemanticMetadata(TypeInfo& alias_type_info) {
 
 void copyTypeAliasSemanticMetadata(TypeInfo& alias_type_info, const TypeInfo& semantic_source_type_info) {
 	alias_type_info.placeholder_kind_ = semantic_source_type_info.placeholder_kind_;
-	alias_type_info.dependent_qualified_name_ = semantic_source_type_info.dependent_qualified_name_;
+	// Share the cold-arena index; records are immutable after store.
+	alias_type_info.dependent_qualified_name_index_ =
+		semantic_source_type_info.dependent_qualified_name_index_;
 	if (const ASTNode* deferred_decltype_expr = semantic_source_type_info.deferredDecltypeExpression();
 		deferred_decltype_expr != nullptr) {
 		alias_type_info.setDeferredDecltypeExpression(*deferred_decltype_expr);
@@ -625,6 +664,50 @@ void printTypeTableStats() {
 			  ", sizeof(TypeInfo)=", sizeof(TypeInfo),
 			  ", estimated storage=", type_info_bytes, " bytes (",
 			  type_info_bytes / 1024, " KiB)");
+	FLASH_LOG(General, Info, "  TypeInfo layout breakdown (bytes): ",
+			  "TemplateArgInfo=", sizeof(TypeInfo::TemplateArgInfo),
+			  ", InlineVector<TemplateArgInfo,4>=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  ", DependentQualifiedNameRecord=", sizeof(TypeInfo::DependentQualifiedNameRecord),
+			  ", dependent_qualified_name_index_=", sizeof(uint32_t),
+			  ", InstantiationContext=", sizeof(TypeInfo::InstantiationContext),
+			  ", FunctionSignature=", sizeof(FunctionSignature),
+			  ", optional<FunctionSignature>=", sizeof(std::optional<FunctionSignature>),
+			  ", optional<ASTNode>=", sizeof(std::optional<ASTNode>));
+
+	size_t types_with_template_args = 0;
+	size_t types_with_dependent_qualified_name = 0;
+	size_t types_with_instantiation_context = 0;
+	size_t types_with_struct_info = 0;
+	size_t types_with_alias_spec = 0;
+	for (size_t i = 0; i < type_info_count; ++i) {
+		const TypeInfo& info = gTypeInfo[i];
+		if (!info.templateArgs().empty()) {
+			++types_with_template_args;
+		}
+		if (info.hasDependentQualifiedName()) {
+			++types_with_dependent_qualified_name;
+		}
+		if (info.hasInstantiationContext()) {
+			++types_with_instantiation_context;
+		}
+		if (info.getStructInfo() != nullptr) {
+			++types_with_struct_info;
+		}
+		if (info.aliasTypeSpecifier() != nullptr) {
+			++types_with_alias_spec;
+		}
+	}
+	FLASH_LOG(General, Info, "  TypeInfo payload usage: with_template_args=", types_with_template_args,
+			  ", with_dependent_qualified_name=", types_with_dependent_qualified_name,
+			  ", with_instantiation_context=", types_with_instantiation_context,
+			  ", with_struct_info=", types_with_struct_info,
+			  ", with_alias_spec=", types_with_alias_spec);
+	FLASH_LOG(General, Info, "  gDependentQualifiedNameRecords: entries=",
+			  getDependentQualifiedNameRecordCount(),
+			  ", record_bytes=", sizeof(TypeInfo::DependentQualifiedNameRecord),
+			  ", estimated cold storage=",
+			  getDependentQualifiedNameRecordCount() * sizeof(TypeInfo::DependentQualifiedNameRecord),
+			  " bytes");
 
 	// Break down entries by category
 	size_t cat_struct = 0, cat_enum = 0, cat_alias = 0, cat_native = 0, cat_other = 0;
