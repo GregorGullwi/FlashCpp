@@ -132,7 +132,7 @@ struct TemplatePattern {
 			deduced.array_dimensions.assign(
 				c.array_dimensions.begin(),
 				c.array_dimensions.end());
-			deduced.function_signature = c.function_signature;
+			deduced.function_signature = c.function_signature();
 		}
 		return deduced;
 	}

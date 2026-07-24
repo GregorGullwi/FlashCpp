@@ -248,6 +248,7 @@ std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
 ChunkedVector<InlineVector<TypeInfo::TemplateArgInfo, 4>, 8> gTypeInfoTemplateArgLists;
 ChunkedVector<TypeInfo::InstantiationContext, 8> gInstantiationContexts;
+ChunkedVector<TypeInfo::TemplateArgInfoColdPayload, 16> gTemplateArgInfoColdPayloads;
 // StructTypeInfo is large; keep chunks small to avoid huge reserved slabs.
 ChunkedVector<StructTypeInfo, 4> gStructTypeInfos;
 ChunkedVector<EnumTypeInfo, 16> gEnumTypeInfos;
@@ -306,6 +307,186 @@ const InlineVector<TypeInfo::TemplateArgInfo, 4>& getTypeInfoTemplateArgs(uint32
 
 size_t getTypeInfoTemplateArgsCount() {
 	return gTypeInfoTemplateArgLists.size();
+}
+
+uint32_t storeTemplateArgInfoColdPayload(TypeInfo::TemplateArgInfoColdPayload payload) {
+	if (!payload.function_signature.has_value() && !payload.dependent_expr.has_value()) {
+		return TypeInfo::TemplateArgInfo::kNoColdPayload;
+	}
+	const uint32_t index = static_cast<uint32_t>(gTemplateArgInfoColdPayloads.size());
+	gTemplateArgInfoColdPayloads.push_back(std::move(payload));
+	return index;
+}
+
+const TypeInfo::TemplateArgInfoColdPayload* getTemplateArgInfoColdPayload(uint32_t index) {
+	if (index == TypeInfo::TemplateArgInfo::kNoColdPayload) {
+		return nullptr;
+	}
+	assert(index < gTemplateArgInfoColdPayloads.size());
+	return &gTemplateArgInfoColdPayloads[index];
+}
+
+TypeInfo::TemplateArgInfoColdPayload* getTemplateArgInfoColdPayloadMut(uint32_t index) {
+	if (index == TypeInfo::TemplateArgInfo::kNoColdPayload) {
+		return nullptr;
+	}
+	assert(index < gTemplateArgInfoColdPayloads.size());
+	return &gTemplateArgInfoColdPayloads[index];
+}
+
+uint32_t cloneTemplateArgInfoColdPayload(uint32_t index) {
+	if (index == TypeInfo::TemplateArgInfo::kNoColdPayload) {
+		return TypeInfo::TemplateArgInfo::kNoColdPayload;
+	}
+	return storeTemplateArgInfoColdPayload(*getTemplateArgInfoColdPayload(index));
+}
+
+size_t getTemplateArgInfoColdPayloadCount() {
+	return gTemplateArgInfoColdPayloads.size();
+}
+
+namespace {
+
+const std::optional<FunctionSignature> kEmptyFunctionSignature;
+const std::optional<ASTNode> kEmptyDependentExpr;
+
+TypeInfo::TemplateArgInfoColdPayload& ensureTemplateArgInfoColdPayload(uint32_t& index) {
+	if (index == TypeInfo::TemplateArgInfo::kNoColdPayload) {
+		index = static_cast<uint32_t>(gTemplateArgInfoColdPayloads.size());
+		gTemplateArgInfoColdPayloads.push_back({});
+	}
+	return *getTemplateArgInfoColdPayloadMut(index);
+}
+
+void copyTemplateArgInfoScalarFields(TypeInfo::TemplateArgInfo& dst, const TypeInfo::TemplateArgInfo& src) {
+	dst.type_index = src.type_index;
+	dst.pointer_cv_qualifiers = src.pointer_cv_qualifiers;
+	dst.pointer_depth = src.pointer_depth;
+	dst.cv_qualifier = src.cv_qualifier;
+	dst.ref_qualifier = src.ref_qualifier;
+	dst.value = src.value;
+	dst.is_value = src.is_value;
+	dst.is_pack = src.is_pack;
+	dst.is_array = src.is_array;
+	dst.array_dimensions = src.array_dimensions;
+	dst.array_dimension_parameter_names = src.array_dimension_parameter_names;
+	dst.dependent_name = src.dependent_name;
+	dst.is_template_template_arg = src.is_template_template_arg;
+	dst.template_name = src.template_name;
+	dst.member_pointer_kind = src.member_pointer_kind;
+	dst.member_class_name = src.member_class_name;
+	dst.nttp_kind = src.nttp_kind;
+	dst.nttp_entity_name = src.nttp_entity_name;
+	dst.nttp_member_name = src.nttp_member_name;
+	dst.nttp_pointer_offset = src.nttp_pointer_offset;
+}
+
+} // namespace
+
+TypeInfo::TemplateArgInfo::TemplateArgInfo()
+	: type_index(),
+	  pointer_depth(0),
+	  cv_qualifier(CVQualifier::None),
+	  ref_qualifier(ReferenceQualifier::None),
+	  value(int64_t{0}),
+	  is_value(false),
+	  is_pack(false),
+	  is_array(false),
+	  is_template_template_arg(false),
+	  member_pointer_kind(MemberPointerKind::None),
+	  member_class_name(),
+	  nttp_kind(FlashCpp::NonTypeValueIdentityKind::Integral),
+	  nttp_pointer_offset(0) {}
+
+TypeInfo::TemplateArgInfo::TemplateArgInfo(const TemplateArgInfo& other)
+	: type_index(other.type_index),
+	  pointer_cv_qualifiers(other.pointer_cv_qualifiers),
+	  pointer_depth(other.pointer_depth),
+	  cv_qualifier(other.cv_qualifier),
+	  ref_qualifier(other.ref_qualifier),
+	  value(other.value),
+	  is_value(other.is_value),
+	  is_pack(other.is_pack),
+	  is_array(other.is_array),
+	  array_dimensions(other.array_dimensions),
+	  array_dimension_parameter_names(other.array_dimension_parameter_names),
+	  dependent_name(other.dependent_name),
+	  is_template_template_arg(other.is_template_template_arg),
+	  template_name(other.template_name),
+	  member_pointer_kind(other.member_pointer_kind),
+	  member_class_name(other.member_class_name),
+	  nttp_kind(other.nttp_kind),
+	  nttp_entity_name(other.nttp_entity_name),
+	  nttp_member_name(other.nttp_member_name),
+	  nttp_pointer_offset(other.nttp_pointer_offset),
+	  cold_payload_index_(cloneTemplateArgInfoColdPayload(other.cold_payload_index_)) {}
+
+TypeInfo::TemplateArgInfo::TemplateArgInfo(TemplateArgInfo&& other) noexcept
+	: type_index(other.type_index),
+	  pointer_cv_qualifiers(std::move(other.pointer_cv_qualifiers)),
+	  pointer_depth(other.pointer_depth),
+	  cv_qualifier(other.cv_qualifier),
+	  ref_qualifier(other.ref_qualifier),
+	  value(std::move(other.value)),
+	  is_value(other.is_value),
+	  is_pack(other.is_pack),
+	  is_array(other.is_array),
+	  array_dimensions(std::move(other.array_dimensions)),
+	  array_dimension_parameter_names(std::move(other.array_dimension_parameter_names)),
+	  dependent_name(other.dependent_name),
+	  is_template_template_arg(other.is_template_template_arg),
+	  template_name(other.template_name),
+	  member_pointer_kind(other.member_pointer_kind),
+	  member_class_name(other.member_class_name),
+	  nttp_kind(other.nttp_kind),
+	  nttp_entity_name(other.nttp_entity_name),
+	  nttp_member_name(other.nttp_member_name),
+	  nttp_pointer_offset(other.nttp_pointer_offset),
+	  cold_payload_index_(other.cold_payload_index_) {
+	other.cold_payload_index_ = kNoColdPayload;
+}
+
+TypeInfo::TemplateArgInfo& TypeInfo::TemplateArgInfo::operator=(const TemplateArgInfo& other) {
+	if (this != &other) {
+		copyTemplateArgInfoScalarFields(*this, other);
+		cold_payload_index_ = cloneTemplateArgInfoColdPayload(other.cold_payload_index_);
+	}
+	return *this;
+}
+
+TypeInfo::TemplateArgInfo& TypeInfo::TemplateArgInfo::operator=(TemplateArgInfo&& other) noexcept {
+	if (this != &other) {
+		copyTemplateArgInfoScalarFields(*this, other);
+		cold_payload_index_ = other.cold_payload_index_;
+		other.cold_payload_index_ = kNoColdPayload;
+	}
+	return *this;
+}
+
+const std::optional<FunctionSignature>& TypeInfo::TemplateArgInfo::function_signature() const {
+	if (const TypeInfo::TemplateArgInfoColdPayload* payload = getTemplateArgInfoColdPayload(cold_payload_index_)) {
+		return payload->function_signature;
+	}
+	return kEmptyFunctionSignature;
+}
+
+std::optional<FunctionSignature>& TypeInfo::TemplateArgInfo::function_signature() {
+	return ensureTemplateArgInfoColdPayload(cold_payload_index_).function_signature;
+}
+
+const std::optional<ASTNode>& TypeInfo::TemplateArgInfo::dependent_expr() const {
+	if (const TypeInfo::TemplateArgInfoColdPayload* payload = getTemplateArgInfoColdPayload(cold_payload_index_)) {
+		return payload->dependent_expr;
+	}
+	return kEmptyDependentExpr;
+}
+
+std::optional<ASTNode>& TypeInfo::TemplateArgInfo::dependent_expr() {
+	return ensureTemplateArgInfoColdPayload(cold_payload_index_).dependent_expr;
+}
+
+void TypeInfo::TemplateArgInfo::resetColdPayload() {
+	cold_payload_index_ = kNoColdPayload;
 }
 
 uint32_t storeInstantiationContext(TypeInfo::InstantiationContext ctx) {
@@ -792,6 +973,12 @@ void printTypeTableStats() {
 			  ", list_bytes=", sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
 			  ", estimated cold storage=",
 			  getTypeInfoTemplateArgsCount() * sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
+			  " bytes");
+	FLASH_LOG(General, Info, "  gTemplateArgInfoColdPayloads: entries=",
+			  getTemplateArgInfoColdPayloadCount(),
+			  ", payload_bytes=", sizeof(TypeInfo::TemplateArgInfoColdPayload),
+			  ", estimated cold storage=",
+			  getTemplateArgInfoColdPayloadCount() * sizeof(TypeInfo::TemplateArgInfoColdPayload),
 			  " bytes");
 	FLASH_LOG(General, Info, "  gInstantiationContexts: entries=",
 			  getInstantiationContextCount(),

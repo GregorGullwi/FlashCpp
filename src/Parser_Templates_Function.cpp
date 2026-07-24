@@ -1217,7 +1217,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			arg.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
 			arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
 			arg.dependent_name = arg_info.dependent_name;
-			arg.function_signature = arg_info.function_signature;
+			arg.function_signature = arg_info.function_signature();
 			arg.is_dependent = arg_info.dependent_name.isValid();
 			if (arg.is_value) {
 				arg.value = arg_info.intValue();
