@@ -8,8 +8,8 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5795ms (retested 2026-05-25, Linux/libstdc++-14); ternary common-type fix (wchar_t/int branch type correction in constexpr folding). |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~4.6s wall (retested 2026-07-23, Windows/MSVC STL 14.44). Restored after parser fixes for cast/postfix `.*` and template brace-init/noexcept parsing. |
+| `<limits>` | `test_std_limits.cpp` | ❌ Compile Error | ~8.8s wall (retested 2026-07-24, Windows/MSVC STL 14.44). IR conversion: `infinity` / `quiet_NaN` / `signaling_NaN` sema missed return conversion (`double` → `long double`). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~2000ms (`TOTAL`) / ~7.2s wall (retested 2026-07-24, Windows/MSVC STL 14.44). TypeInfo cold-arena + slim `TemplateArgInfo` + template-arg-list interning. |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
@@ -19,7 +19,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<optional>` | `test_std_optional.cpp` | 💥 Crash | ~3.30s wall (retested 2026-05-28, Linux/libstdc++-14). Current run now gets past the older `_Optional_payload_base` category-25/codegen stop and instead crashes after a constexpr/static-assert frontier: `Dependent function/variable template call in constant expression: is_same_v`. |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~1052ms (retested 2026-05-25, Linux/libstdc++-14). |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1524ms (retested 2026-05-25, Linux/libstdc++-14). |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~925ms (retested 2026-05-23, Linux/libstdc++-14). |
+| `<concepts>` | `test_std_concepts.cpp` | ❌ Compile Error | ~1230ms (`TOTAL`) / ~4.3s wall (retested 2026-07-24, Windows/MSVC STL 14.44). Current first hard stop: `callable object has no matching operator()`. |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~4.58s wall (retested 2026-05-27, Linux/libstdc++-14). First stop remains unresolved direct-call return type (`Type with no runtime size reached codegen in direct call return size`, type category 25) with repeated `to_address` instantiation failures; `_CharT` constructor-call struct-info failures still appear in `char_traits`. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~6.19s (`TOTAL`) / ~6.68s wall (retested 2026-05-27, Linux/libstdc++-14). Completed class-template cache hits no longer consume template-depth budget; current first hard error is now depth-guarded recursive `basic_string` instantiation. |
@@ -48,7 +48,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7529ms (retested 2026-05-25, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | ~15.8s wall (retested 2026-07-23, Windows/MSVC STL 14.44). Parse/noexcept stops fixed; current first hard stops are `ranges::empty` overload viability and `view_interface` aggregate layout metadata in codegen. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Compile Error | ~6750ms (`TOTAL`) / ~9.9s wall (retested 2026-07-24, Windows/MSVC STL 14.44). Now stops earlier with `callable object has no matching operator()` plus `std::swap` overload failures (was codegen error on 2026-07-23). |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
@@ -100,6 +100,23 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<generator>` | N/A | ❌ Compile Error | ~2593ms (retested 2026-04-11). Call to deleted function 'swap' — previously was a parse error, now parses successfully. (C++23) |
 
 **Legend:** ✅ Compiled | ❌ Failed/Parse/Include Error | 💥 Crash
+
+### 2026-07-24 Windows/MSVC TypeInfo memory / template-arg interning follow-up
+
+Merged work on `main` plus in-flight template-arg-list interning:
+
+- **TypeInfo cold arenas** for dependent qualified names, template-arg lists, and instantiation contexts (#1814).
+- **Slim `TemplateArgInfo`** with cold-payload arena for `function_signature` / `dependent_expr` (#1822).
+- **Template arg-list interning** in `storeTypeInfoTemplateArgs()` (~60% dedup on heavy template headers).
+
+Validation snapshot (`x64/Sharded/FlashCppMSVC.exe`, Windows/MSVC STL 14.44; 5-sample medians; compile-only `TOTAL` from `-time`, runner wall in seconds and includes compile/link/run):
+
+| Header/Test | Status | Compile `TOTAL` | Runner wall | First-order stop / note |
+|-------------|--------|-----------------|-------------|-------------------------|
+| `<type_traits>` (`test_std_type_traits.cpp`) | ✅ Pass | ~2000ms | ~7.2s | Still compiles, links, and returns 0. |
+| `<concepts>` (`test_std_concepts.cpp`) | ❌ Compile error | ~1230ms | ~4.3s | `callable object has no matching operator()`. |
+| `<limits>` (`test_std_limits.cpp`) | ❌ Compile error | (fails in IR) | ~8.8s | `infinity` / `quiet_NaN` / `signaling_NaN`: sema missed return conversion (`double` → `long double`). |
+| `<iterator>` (`test_std_iterator.cpp`) | ❌ Compile error | ~6750ms | ~9.9s | `callable object has no matching operator()` plus `std::swap` overload failures. |
 
 ### 2026-07-23 Windows/MSVC parser/noexcept follow-up
 

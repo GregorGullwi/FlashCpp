@@ -11,4 +11,9 @@ namespace FlashCpp {
 bool equalDependentExpressionIdentity(const ASTNode& lhs, const ASTNode& rhs);
 size_t hashDependentExpressionIdentity(const ASTNode& node);
 
+bool equalTemplateArgInfoListIdentity(
+	std::span<const TypeInfo::TemplateArgInfo> lhs,
+	std::span<const TypeInfo::TemplateArgInfo> rhs);
+size_t hashTemplateArgInfoListIdentity(std::span<const TypeInfo::TemplateArgInfo> args);
+
 } // namespace FlashCpp

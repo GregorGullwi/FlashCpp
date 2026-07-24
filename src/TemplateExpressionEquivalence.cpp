@@ -1087,4 +1087,14 @@ std::string NonTypeValueIdentity::toString() const {
 	return std::to_string(value);
 }
 
+bool equalTemplateArgInfoListIdentity(
+	std::span<const TypeInfo::TemplateArgInfo> lhs,
+	std::span<const TypeInfo::TemplateArgInfo> rhs) {
+	return equalTemplateArgInfoRange(lhs, rhs);
+}
+
+size_t hashTemplateArgInfoListIdentity(std::span<const TypeInfo::TemplateArgInfo> args) {
+	return hashTemplateArgInfoRange(args);
+}
+
 } // namespace FlashCpp

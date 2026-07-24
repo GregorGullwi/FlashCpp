@@ -3,6 +3,7 @@
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "NamespaceRegistry.h"
+#include "TemplateExpressionEquivalence.h"
 #include "Log.h"
 #include <algorithm>
 #include <cstring>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <set>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <cstdlib>
 #include <utility>
@@ -249,6 +251,31 @@ ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedName
 ChunkedVector<InlineVector<TypeInfo::TemplateArgInfo, 4>, 8> gTypeInfoTemplateArgLists;
 ChunkedVector<TypeInfo::InstantiationContext, 8> gInstantiationContexts;
 ChunkedVector<TypeInfo::TemplateArgInfoColdPayload, 16> gTemplateArgInfoColdPayloads;
+
+struct TypeInfoTemplateArgListInternEntry {
+	uint32_t list_index = 0;
+	size_t identity_hash = 0;
+};
+
+struct TypeInfoTemplateArgListInternStats {
+	size_t store_calls = 0;
+	size_t intern_hits = 0;
+	size_t size_histogram[9] = {}; // [0]=empty skipped, [1..8]=arg counts, [8]=9+
+	size_t hash_filters = 0;
+	size_t equality_checks = 0;
+};
+
+constexpr size_t kTemplateArgListInternInlineBucketCount = 4;
+InlineVector<TypeInfoTemplateArgListInternEntry, 16> gTypeInfoTemplateArgListsBySize[kTemplateArgListInternInlineBucketCount];
+InlineVector<TypeInfoTemplateArgListInternEntry, 16> gTypeInfoTemplateArgListsBySizeOverflow;
+TypeInfoTemplateArgListInternStats gTypeInfoTemplateArgListInternStats;
+
+InlineVector<TypeInfoTemplateArgListInternEntry, 16>& typeInfoTemplateArgListInternBucketForSize(size_t arg_count) {
+	if (arg_count >= 1 && arg_count <= kTemplateArgListInternInlineBucketCount) {
+		return gTypeInfoTemplateArgListsBySize[arg_count - 1];
+	}
+	return gTypeInfoTemplateArgListsBySizeOverflow;
+}
 // StructTypeInfo is large; keep chunks small to avoid huge reserved slabs.
 ChunkedVector<StructTypeInfo, 4> gStructTypeInfos;
 ChunkedVector<EnumTypeInfo, 16> gEnumTypeInfos;
@@ -291,8 +318,41 @@ uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> ar
 	if (args.empty()) {
 		return TypeInfo::kNoTemplateArgs;
 	}
+	++gTypeInfoTemplateArgListInternStats.store_calls;
+	const size_t arg_count = args.size();
+	const size_t hist_bucket = arg_count >= 8 ? 8 : arg_count;
+	++gTypeInfoTemplateArgListInternStats.size_histogram[hist_bucket];
+	const std::span<const TypeInfo::TemplateArgInfo> args_span(args.data(), arg_count);
+	InlineVector<TypeInfoTemplateArgListInternEntry, 16>& candidates =
+		typeInfoTemplateArgListInternBucketForSize(arg_count);
+	size_t identity_hash = 0;
+	if (!candidates.empty()) {
+		identity_hash = FlashCpp::hashTemplateArgInfoListIdentity(args_span);
+		for (const TypeInfoTemplateArgListInternEntry& candidate : candidates) {
+			if (candidate.identity_hash != identity_hash) {
+				++gTypeInfoTemplateArgListInternStats.hash_filters;
+				continue;
+			}
+			++gTypeInfoTemplateArgListInternStats.equality_checks;
+			const InlineVector<TypeInfo::TemplateArgInfo, 4>& existing_args =
+				gTypeInfoTemplateArgLists[candidate.list_index];
+			if (FlashCpp::equalTemplateArgInfoListIdentity(
+					args_span,
+					std::span<const TypeInfo::TemplateArgInfo>(
+						existing_args.data(), existing_args.size()))) {
+				++gTypeInfoTemplateArgListInternStats.intern_hits;
+				return candidate.list_index;
+			}
+		}
+	}
 	const uint32_t index = static_cast<uint32_t>(gTypeInfoTemplateArgLists.size());
 	gTypeInfoTemplateArgLists.push_back(std::move(args));
+	if (identity_hash == 0) {
+		const InlineVector<TypeInfo::TemplateArgInfo, 4>& stored_args = gTypeInfoTemplateArgLists[index];
+		identity_hash = FlashCpp::hashTemplateArgInfoListIdentity(
+			std::span<const TypeInfo::TemplateArgInfo>(stored_args.data(), stored_args.size()));
+	}
+	candidates.push_back(TypeInfoTemplateArgListInternEntry{index, identity_hash});
 	return index;
 }
 
@@ -974,6 +1034,32 @@ void printTypeTableStats() {
 			  ", estimated cold storage=",
 			  getTypeInfoTemplateArgsCount() * sizeof(InlineVector<TypeInfo::TemplateArgInfo, 4>),
 			  " bytes");
+	FLASH_LOG(General, Info, "  gTypeInfoTemplateArgLists interning: store_calls=",
+			  gTypeInfoTemplateArgListInternStats.store_calls,
+			  ", intern_hits=", gTypeInfoTemplateArgListInternStats.intern_hits,
+			  ", unique_lists=", getTypeInfoTemplateArgsCount(),
+			  ", dedup_rate=",
+			  (gTypeInfoTemplateArgListInternStats.store_calls > 0
+				   ? (100.0 * gTypeInfoTemplateArgListInternStats.intern_hits) /
+						 static_cast<double>(gTypeInfoTemplateArgListInternStats.store_calls)
+				   : 0.0),
+			  "%, hash_filters=", gTypeInfoTemplateArgListInternStats.hash_filters,
+			  ", equality_checks=", gTypeInfoTemplateArgListInternStats.equality_checks);
+	FLASH_LOG(General, Info, "  gTypeInfoTemplateArgLists size histogram: 1=",
+			  gTypeInfoTemplateArgListInternStats.size_histogram[1],
+			  ", 2=", gTypeInfoTemplateArgListInternStats.size_histogram[2],
+			  ", 3=", gTypeInfoTemplateArgListInternStats.size_histogram[3],
+			  ", 4=", gTypeInfoTemplateArgListInternStats.size_histogram[4],
+			  ", 5=", gTypeInfoTemplateArgListInternStats.size_histogram[5],
+			  ", 6=", gTypeInfoTemplateArgListInternStats.size_histogram[6],
+			  ", 7=", gTypeInfoTemplateArgListInternStats.size_histogram[7],
+			  ", 8+=", gTypeInfoTemplateArgListInternStats.size_histogram[8]);
+	FLASH_LOG(General, Info, "  gTypeInfoTemplateArgLists intern buckets: size1=",
+			  gTypeInfoTemplateArgListsBySize[0].size(),
+			  ", size2=", gTypeInfoTemplateArgListsBySize[1].size(),
+			  ", size3=", gTypeInfoTemplateArgListsBySize[2].size(),
+			  ", size4=", gTypeInfoTemplateArgListsBySize[3].size(),
+			  ", overflow=", gTypeInfoTemplateArgListsBySizeOverflow.size());
 	FLASH_LOG(General, Info, "  gTemplateArgInfoColdPayloads: entries=",
 			  getTemplateArgInfoColdPayloadCount(),
 			  ", payload_bytes=", sizeof(TypeInfo::TemplateArgInfoColdPayload),
