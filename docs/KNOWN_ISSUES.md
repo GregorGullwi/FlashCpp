@@ -64,6 +64,14 @@ treated as direct; concrete function/call IR requires a resolved plan and surfac
 missing canonical metadata as `InternalError`.
 
 Aggregate returns containing `long double` remain on the legacy path. Their SysV
-result classification uses the X87/X87UP classes, which the current backend
-return-register abstraction cannot represent yet. Aggregate parameters containing
-`long double` are still classified as MEMORY as required.
+result classification uses the X87/X87UP classes (`%st0` / paired X87UP), which the
+current backend return-register abstraction cannot represent yet. Aggregate
+parameters containing `long double` are still classified as MEMORY as required.
+
+This gap is specific to `long double` (not `float`/`double` SSE aggregates). Closing
+it is blocked on broader `long double` codegen support: FlashCpp currently has type
+identity, some constexpr/overload/builtin coverage, and inconsistent sizing (80-bit
+x87 extended in places, Windows-style 8-byte `double` alias elsewhere), but no real
+x87 load/store/`%st0` emission path. Constexpr evaluation often collapses
+`long double` to `double`. Do not paper over return ABI with size guesses or INTEGER
+fallbacks; wait until `long double` lowering can emit the SysV x87 convention.
