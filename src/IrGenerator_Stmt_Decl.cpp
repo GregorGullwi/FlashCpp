@@ -356,7 +356,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		deferred_member_functions_.push_back(std::move(deferred_info));
 	};
 	auto register_destructor_if_needed = [this](const DeclarationNode& inner_decl, const TypeInfo* type_info) {
-		if (!type_info || !type_info->struct_info_ || !type_info->struct_info_->hasDestructor()) {
+		if (!type_info || !type_info->getStructInfo() || !type_info->getStructInfo()->hasDestructor()) {
 			return;
 		}
 		registerVariableWithDestructor(
@@ -1488,8 +1488,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				if (type_node.category() == TypeCategory::Struct) {
 					TypeIndex type_index = type_node.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-						if (type_info->struct_info_) {
-							const StructTypeInfo& struct_info = *type_info->struct_info_;
+						if (type_info->getStructInfo()) {
+							const StructTypeInfo& struct_info = *type_info->getStructInfo();
 
 								// Check if this is an abstract class (only for non-pointer types)
 							if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
@@ -1566,8 +1566,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								const bool require_sema_resolved_ctor =
 									sema_normalized_current_function_ &&
 									type_info &&
-									type_info->struct_info_ &&
-									type_info->struct_info_->hasUserDeclaredConstructor();
+									type_info->getStructInfo() &&
+									type_info->getStructInfo()->hasUserDeclaredConstructor();
 
 								// SECOND: If no copy constructor matched, prefer the sema annotation.
 								// Only fall back to local type-based/arity-based resolution when sema
@@ -1873,9 +1873,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 											if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
 
 												// If this is a struct type, use the recursive helper
-												if (nested_member_type_info->struct_info_ && !nested_member_type_info->struct_info_->members.empty()) {
+												if (nested_member_type_info->getStructInfo() && !nested_member_type_info->getStructInfo()->members.empty()) {
 													generateNestedMemberStores(
-														*nested_member_type_info->struct_info_,
+														*nested_member_type_info->getStructInfo(),
 														nested_init_list,
 														decl.identifier_token().handle(),
 														static_cast<int>(member.offset),
@@ -2020,7 +2020,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				!type_node.is_reference() &&
 				!type_node.is_rvalue_reference()) {
 				const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
-				if (type_info && type_info->struct_info_ && type_info->struct_info_->hasAnyConstructor()) {
+				if (type_info && type_info->getStructInfo() && type_info->getStructInfo()->hasAnyConstructor()) {
 					is_struct_with_constructor = true;
 				}
 			}
@@ -2390,7 +2390,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			const StructTypeInfo* struct_info_ptr = nullptr;
 			if (type_node.category() == TypeCategory::Struct) {
 				if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
-					struct_info_ptr = type_info->struct_info_.get();
+					struct_info_ptr = type_info->getStructInfo();
 				}
 			}
 			if (!struct_info_ptr && type_node.array_dimension_count() > 1) {
@@ -2471,9 +2471,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				return;
 			}
 
-			if (type_info->struct_info_) {
+			if (type_info->getStructInfo()) {
 					// Check if this is an abstract class (only for non-pointer types)
-				if (type_info->struct_info_->is_abstract && type_node.pointer_levels().empty()) {
+				if (type_info->getStructInfo()->is_abstract && type_node.pointer_levels().empty()) {
 					FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info->name(), "'");
 					throw CompileError("Cannot instantiate abstract class");
 				}
@@ -2482,7 +2482,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				// synthesized by generateTrivialDefaultConstructors() for template-
 				// instantiated structs that have member default initializers but no
 				// explicit user-declared constructors.
-				if (type_info->struct_info_->hasAnyConstructor() || type_info->struct_info_->needs_default_constructor) {
+				if (type_info->getStructInfo()->hasAnyConstructor() || type_info->getStructInfo()->needs_default_constructor) {
 					FLASH_LOG(Codegen, Debug, "Struct ", type_info->name(), " has constructor or needs default constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
 						// Skip if the variable was already initialized with an rvalue (function return)
@@ -2524,8 +2524,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const bool require_sema_resolved_ctor =
 							sema_normalized_current_function_ &&
 							ctor_constructs_target_type &&
-							type_info->struct_info_ &&
-							type_info->struct_info_->hasUserDeclaredConstructor();
+							type_info->getStructInfo() &&
+							type_info->getStructInfo()->hasUserDeclaredConstructor();
 						if (const ConstructorDeclarationNode* resolved_ctor = direct_ctor->resolved_constructor()) {
 							if (resolvedConstructorMatchesTargetType(*resolved_ctor, type_node.type_index())) {
 								matching_ctor = resolved_ctor;
@@ -2538,7 +2538,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						size_t num_args = 0;
 						direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 
-						if (type_info->struct_info_) {
+						if (type_info->getStructInfo()) {
 							if (require_sema_resolved_ctor && matching_ctor) {
 								FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(type_info->name()));
 							}
@@ -2581,9 +2581,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 									// Only select same-type special members if argument is of the same struct type
 									if (arg_is_same_struct_type) {
-										diagnoseDeletedSameTypeConstructorUsage(*type_info->struct_info_, prefer_move_ctor);
+										diagnoseDeletedSameTypeConstructorUsage(*type_info->getStructInfo(), prefer_move_ctor);
 										const StructMemberFunction* same_type_ctor_func =
-											type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+											type_info->getStructInfo()->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 										if (same_type_ctor_func && same_type_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
 											matching_ctor = &same_type_ctor_func->function_decl.as<ConstructorDeclarationNode>();
 											FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", type_info->name());
@@ -2605,14 +2605,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									});
 
 									if (arg_types.size() == num_args) {
-										auto resolution = resolve_constructor_overload(*type_info->struct_info_, arg_types, false);
+										auto resolution = resolve_constructor_overload(*type_info->getStructInfo(), arg_types, false);
 										if (resolution.is_ambiguous) {
 											throw CompileError("Ambiguous constructor call");
 										}
 										bool template_ctor_ambiguous = false;
 										matching_ctor = parser_.materializeMatchingConstructorTemplate(
 											type_info->name(),
-											*type_info->struct_info_,
+											*type_info->getStructInfo(),
 											arg_types,
 											resolution.selected_overload,
 											template_ctor_ambiguous);
@@ -2626,7 +2626,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 									if (!matching_ctor && !sema_normalized_current_function_) {
 										FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(type_info->name()));
-										auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, num_args, true);
+										auto arity_resolution = resolve_constructor_overload_arity(*type_info->getStructInfo(), num_args, true);
 										matching_ctor = arity_resolution.selected_overload;
 									}
 								}
@@ -2637,9 +2637,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// If no matching constructor was found and the struct is an aggregate
 							// (no user-defined constructors), generate direct member stores.
 						bool used_aggregate_paren_init = false;
-						if (!matching_ctor && type_info->struct_info_ && num_args > 0 && !type_info->struct_info_->members.empty()) {
+						if (!matching_ctor && type_info->getStructInfo() && num_args > 0 && !type_info->getStructInfo()->members.empty()) {
 							bool is_aggregate = true;
-							for (const auto& func : type_info->struct_info_->member_functions) {
+							for (const auto& func : type_info->getStructInfo()->member_functions) {
 								if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 									if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
 										is_aggregate = false;
@@ -2648,24 +2648,24 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								}
 							}
 
-							if (is_aggregate && num_args <= type_info->struct_info_->members.size()) {
+							if (is_aggregate && num_args <= type_info->getStructInfo()->members.size()) {
 								FLASH_LOG(Codegen, Debug, "Using aggregate parenthesized init for ", type_info->name());
 								used_aggregate_paren_init = true;
 								// Emit default constructor call first (zero-initializes the object)
 								ConstructorCallOp default_ctor_op;
 								default_ctor_op.object = decl.identifier_token().handle();
-								fillInDefaultConstructorArguments(default_ctor_op, *type_info->struct_info_);
-								finalizeConstructorCallOp(default_ctor_op, *type_info->struct_info_, decl.identifier_token());
+								fillInDefaultConstructorArguments(default_ctor_op, *type_info->getStructInfo());
+								finalizeConstructorCallOp(default_ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
 
 									// Then emit member stores for each argument
 								size_t member_idx = 0;
 								direct_ctor->arguments().visit([&](ASTNode argument) {
-									if (member_idx >= type_info->struct_info_->members.size()) {
+									if (member_idx >= type_info->getStructInfo()->members.size()) {
 										member_idx++;
 										return;
 									}
-									const StructMember& member = type_info->struct_info_->members[member_idx];
+									const StructMember& member = type_info->getStructInfo()->members[member_idx];
 									ExprResult arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
 									MemberStoreOp store_op;
 									store_op.object = decl.identifier_token().handle();
@@ -2680,7 +2680,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								});
 
 									// Register for destructor if needed
-								if (type_info->struct_info_->hasDestructor()) {
+								if (type_info->getStructInfo()->hasDestructor()) {
 									registerVariableWithDestructor(
 										std::string(decl.identifier_token().value()),
 										std::string(StringTable::getStringView(type_info->name())));
@@ -2692,10 +2692,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							const bool allowImplicitDefault =
 								!matching_ctor &&
 								num_args == 0 &&
-								type_info->struct_info_->findDefaultConstructor() == nullptr &&
-								!type_info->struct_info_->hasAnyConstructor() &&
-								type_info->struct_info_->needs_default_constructor &&
-								!type_info->struct_info_->isDefaultConstructorDeleted();
+								type_info->getStructInfo()->findDefaultConstructor() == nullptr &&
+								!type_info->getStructInfo()->hasAnyConstructor() &&
+								type_info->getStructInfo()->needs_default_constructor &&
+								!type_info->getStructInfo()->isDefaultConstructorDeleted();
 							if (!matching_ctor && !allowImplicitDefault) {
 								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
 							}
@@ -2735,7 +2735,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (matching_ctor) {
 								fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 							}
-							finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
+							finalizeConstructorCallOp(ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
@@ -2815,12 +2815,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 								// For converting constructors in copy initialization, check if constructor is explicit
-							if (!sema_selected_converting_ctor && type_info->struct_info_) {
+							if (!sema_selected_converting_ctor && type_info->getStructInfo()) {
 									// Find converting constructors that take the initializer type as single parameter.
 									// Scan all candidates: only error when every match is explicit.
 								bool found_matching_ctor = false;
 								bool found_non_explicit_ctor = false;
-								for (const auto& func : type_info->struct_info_->member_functions) {
+								for (const auto& func : type_info->getStructInfo()->member_functions) {
 									if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 										const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 										const auto& params = ctor_node.parameter_nodes();
@@ -2876,8 +2876,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								if (found_matching_ctor && !found_non_explicit_ctor) {
 									const std::string_view target_name = StringTable::getStringView(type_info->name());
 									const bool suppress_explicit_ctor_error =
-										is_integer_type(init_type) && type_info->struct_info_ &&
-										toSizeT(type_info->struct_info_->sizeInBytes()) == 1 &&
+										is_integer_type(init_type) && type_info->getStructInfo() &&
+										toSizeT(type_info->getStructInfo()->sizeInBytes()) == 1 &&
 										isExactComparisonCategoryType(type_info->type_index_);
 									if (!suppress_explicit_ctor_error) {
 										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '",
@@ -2889,10 +2889,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								}
 							}
 
-							if (!sema_selected_converting_ctor && type_info->struct_info_) {
+							if (!sema_selected_converting_ctor && type_info->getStructInfo()) {
 								ConversionRank best_rank = ConversionRank::NoMatch;
 								bool best_is_ambiguous = false;
-								for (const auto& func : type_info->struct_info_->member_functions) {
+								for (const auto& func : type_info->getStructInfo()->member_functions) {
 									if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) {
 										continue;
 									}
@@ -2950,11 +2950,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								}
 							}
 
-							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
+							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->getStructInfo()) {
 								if (auto init_arg_type_opt = tryBuildCodegenOverloadResolutionArgType(init_node)) {
 									std::vector<TypeSpecifierNode> arg_types;
 									arg_types.push_back(*init_arg_type_opt);
-									auto resolution = resolve_constructor_overload(*type_info->struct_info_, arg_types, true);
+									auto resolution = resolve_constructor_overload(*type_info->getStructInfo(), arg_types, true);
 									// Keep going when overload resolution is ambiguous here: copy-init fallback
 									// still gets a second chance via arity-based selection below, which mirrors
 									// existing behavior for template-heavy library constructors.
@@ -2965,7 +2965,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									}
 								}
 								if (!sema_selected_converting_ctor) {
-									auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, 1, true);
+									auto arity_resolution = resolve_constructor_overload_arity(*type_info->getStructInfo(), 1, true);
 									if (!arity_resolution.is_ambiguous &&
 										arity_resolution.selected_overload &&
 										!arity_resolution.selected_overload->is_explicit()) {
@@ -3088,20 +3088,20 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								fillInConstructorDefaultArguments(
 									ctor_op, *sema_selected_converting_ctor, ctor_op.arguments.size());
 							}
-						} else if (type_info->struct_info_ &&
+						} else if (type_info->getStructInfo() &&
 								   (!is_converting_ctor ||
 									(is_converting_ctor &&
 									 init_category_for_copy_init == TypeCategory::Struct &&
 									 !sema_selected_converting_ctor &&
-									 !type_info->struct_info_->hasUserDeclaredConstructor()))) {
+									 !type_info->getStructInfo()->hasUserDeclaredConstructor()))) {
 							const bool prefer_move_ctor =
 								isSameTypeXValueSource(init_node, init_operands, type_node);
 							const bool is_prvalue_same_type_source = isExprResultPRValue(init_operands);
 							if (!is_prvalue_same_type_source) {
-								diagnoseDeletedSameTypeConstructorUsage(*type_info->struct_info_, prefer_move_ctor);
+								diagnoseDeletedSameTypeConstructorUsage(*type_info->getStructInfo(), prefer_move_ctor);
 							}
 							const StructMemberFunction* same_type_ctor =
-								type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+								type_info->getStructInfo()->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 							if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 								const auto& matched_ctor = same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
 								selected_ctor = &matched_ctor;
@@ -3135,7 +3135,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						if (is_converting_ctor && !selected_ctor) {
 							reportNoMatchingConstructor(type_info->name(), "copy initialization", decl.identifier_token());
 						}
-						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
+						finalizeConstructorCallOp(ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
@@ -3147,7 +3147,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// 2. The struct has default member initializers (implicit ctor needs to init them), OR
 							// 3. The struct has a vtable (implicit ctor needs to init the vptr), OR
 							// 4. The struct has base classes with constructors (implicit ctor needs to call base ctors)
-						const StructMemberFunction* default_ctor = type_info->struct_info_->findDefaultConstructor();
+						const StructMemberFunction* default_ctor = type_info->getStructInfo()->findDefaultConstructor();
 						bool is_implicit_default_ctor = false;
 						if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 							const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
@@ -3156,7 +3156,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							// Check if any base class has constructors that need to be called
 						bool has_base_with_constructors = false;
-						for (const auto& base : type_info->struct_info_->base_classes) {
+						for (const auto& base : type_info->getStructInfo()->base_classes) {
 							if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
 								const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 								if (base_struct_info && base_struct_info->hasAnyConstructor()) {
@@ -3167,8 +3167,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 
 						bool needs_default_ctor_call = !is_implicit_default_ctor ||
-													   type_info->struct_info_->hasDefaultMemberInitializers() ||
-													   type_info->struct_info_->has_vtable ||
+													   type_info->getStructInfo()->hasDefaultMemberInitializers() ||
+													   type_info->getStructInfo()->has_vtable ||
 													   has_base_with_constructors;
 
 						if (needs_default_ctor_call) {
@@ -3198,7 +3198,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
 										fillInConstructorDefaultArguments(ctor_op, ctor_node, 0);
 									}
-									finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
+									finalizeConstructorCallOp(ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 								}
@@ -3211,7 +3211,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
 									fillInConstructorDefaultArguments(ctor_op, ctor_node, 0);
 								}
-								finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
+								finalizeConstructorCallOp(ctor_op, *type_info->getStructInfo(), decl.identifier_token());
 
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							}
@@ -3221,7 +3221,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			}
 
 				// If this struct has a destructor, register it for automatic cleanup
-			if (type_info->struct_info_ && type_info->struct_info_->hasDestructor()) {
+			if (type_info->getStructInfo() && type_info->getStructInfo()->hasDestructor()) {
 				registerVariableWithDestructor(
 					std::string(decl.identifier_token().value()),
 					std::string(StringTable::getStringView(type_info->name())));

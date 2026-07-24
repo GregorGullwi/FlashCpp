@@ -552,11 +552,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	} else {
 		struct_info_name = struct_name;
 	}
-	auto struct_info = std::make_unique<StructTypeInfo>(struct_info_name, struct_ref.default_access(), is_union, current_namespace_handle);
+	StructTypeInfo* struct_info = &struct_type_info.createStructInfo(struct_info_name, struct_ref.default_access(), is_union, current_namespace_handle);
 
 	// Update the struct parsing context with the local_struct_info for static member lookup
 	if (!struct_parsing_context_stack_.empty()) {
-		struct_parsing_context_stack_.back().local_struct_info = struct_info.get();
+		struct_parsing_context_stack_.back().local_struct_info = struct_info;
 	}
 
 	// Apply pack alignment from #pragma pack BEFORE adding members
@@ -638,7 +638,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
 
 					// Check if base class is final
-					if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
+					if (base_type_info->getStructInfo() && base_type_info->getStructInfo()->is_final) {
 						return ParseResult::error("Cannot inherit from final class '" + std::string(resolved_base_class_name) + "'", base_name_token);
 					}
 
@@ -1039,7 +1039,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Validate and add the base class
-			ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, base_name_token);
+			ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info, base_access, is_virtual_base, base_name_token);
 			if (result.is_error()) {
 				return result;
 			}
@@ -1112,7 +1112,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 				if (auto result_node = template_result.node()) {
 					if (result_node->is<FriendDeclarationNode>()) {
-						registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
+						registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info);
 					}
 				}
 				continue;
@@ -1251,9 +1251,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// Create the anonymous struct/union type
 						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 
-						// Create StructTypeInfo
-						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public, is_union_keyword, gSymbolTable.get_current_namespace_handle());
-						StructTypeInfo* anon_struct_info = anon_struct_info_ptr.get();
+						// Create StructTypeInfo in the cold arena
+						StructTypeInfo* anon_struct_info = &anon_type_info.createStructInfo(anon_type_name_handle, AccessSpecifier::Public, is_union_keyword, gSymbolTable.get_current_namespace_handle());
 
 						// Parse all members of the anonymous struct/union and add them to the anonymous type
 						while (!peek().is_eof() && peek() != "}"_tok) {
@@ -1361,8 +1360,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							anon_struct_info->finalizeLayoutSize(offset, offset, max_alignment);
 						}
 
-						// Set the StructTypeInfo for the anonymous type
-						anon_type_info.setStructInfo(std::move(anon_struct_info_ptr));
+						// StructTypeInfo already lives in the arena via createStructInfo
+						anon_type_info.bindStructInfoOwnership();
 
 						// Now parse the member declarators (one or more identifiers separated by commas)
 						do {
@@ -1764,7 +1763,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Add friend declaration to struct
 			if (auto friend_node = friend_result.node()) {
 				struct_ref.add_friend(*friend_node);
-				registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
+				registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info);
 			}
 
 			continue; // Skip to next member
@@ -1806,7 +1805,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					is_static_constexpr,
 					qualified_struct_name,
 					struct_ref,
-					struct_info.get(),
+					struct_info,
 					current_access,
 					currentTemplateParamNames(),
 					/*add_to_struct_info=*/false,
@@ -1855,7 +1854,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (type_it != getTypesByNameMap().end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
-				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
+				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info});
 				ScopedDefinitionLookupContext ctx_scope(
 					current_template_definition_lookup_context_,
 					initializer_definition_lookup_context);
@@ -1883,7 +1882,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (type_it != getTypesByNameMap().end()) {
 					struct_type_index = type_it->second->type_index_;
 				}
-				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info.get()});
+				member_function_context_stack_.push_back({qualified_struct_name, struct_type_index, &struct_ref, struct_info});
 				ScopedDefinitionLookupContext ctx_scope(
 					current_template_definition_lookup_context_,
 					initializer_definition_lookup_context);
@@ -1946,7 +1945,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// covers both primary templates and partial specialisations.
 				if (!isDependentTemplateContext()) {
 					ConstExpr::EvaluationContext eval_ctx(gSymbolTable, *this);
-					eval_ctx.struct_info = struct_info.get();
+					eval_ctx.struct_info = struct_info;
 					eval_ctx.storage_duration = ConstExpr::StorageDuration::Automatic;
 					auto validation = ConstExpr::Evaluator::evaluate(*init_expr_opt, eval_ctx);
 					if (!validation.success() &&
@@ -3893,8 +3892,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		has_static_members = !struct_info->static_members.empty();
 	}
 
-	// Store struct info in type info
-	struct_type_info.setStructInfo(std::move(struct_info));
+	// StructTypeInfo already lives in the arena via createStructInfo
+	struct_type_info.bindStructInfoOwnership();
 	// Update fallback_size_bits_ from the finalized struct's total size
 	if (struct_type_info.getStructInfo()) {
 		struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
@@ -4168,8 +4167,8 @@ ParseResult Parser::parse_enum_declaration() {
 		return ParseResult::error("Expected '{' after enum name", peek_info());
 	}
 
-	// Create enum type info
-	auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
+	// Create enum type info in the cold arena (live during enumerator parsing)
+	EnumTypeInfo& enum_info = enum_type_info.createEnumInfo(enum_name, is_scoped);
 
 	// Determine underlying type (default is int)
 	TypeCategory underlying_type = TypeCategory::Int;
@@ -4179,12 +4178,11 @@ ParseResult Parser::parse_enum_declaration() {
 		underlying_type = type_spec.type();
 		underlying_size = type_spec.size_in_bits();
 	}
-	enum_info->underlying_type = underlying_type;
-	enum_info->underlying_size = SizeInBits{underlying_size};
+	enum_info.underlying_type = underlying_type;
+	enum_info.underlying_size = SizeInBits{underlying_size};
+	enum_type_info.fallback_size_bits_ = underlying_size;
 
-	// Store enum info early so ConstExprEvaluator can look up values during parsing
-	enum_type_info.setEnumInfo(std::move(enum_info));
-	auto* live_enum_info = enum_type_info.getEnumInfo();
+	auto* live_enum_info = &enum_info;
 
 	// Parse enumerators
 	long long next_value = 0;
@@ -4407,9 +4405,8 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				// Create the nested anonymous struct/union type
 				TypeInfo& nested_anon_type_info = add_struct_type(nested_anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 
-				// Create StructTypeInfo
-				auto nested_anon_struct_info_ptr = std::make_unique<StructTypeInfo>(nested_anon_type_name_handle, AccessSpecifier::Public, nested_is_union, gSymbolTable.get_current_namespace_handle());
-				StructTypeInfo* nested_anon_struct_info = nested_anon_struct_info_ptr.get();
+				// Create StructTypeInfo in the cold arena
+				StructTypeInfo* nested_anon_struct_info = &nested_anon_type_info.createStructInfo(nested_anon_type_name_handle, AccessSpecifier::Public, nested_is_union, gSymbolTable.get_current_namespace_handle());
 
 				// Recursively parse members of the nested anonymous struct/union
 				ParseResult nested_result = parse_anonymous_struct_union_members(nested_anon_struct_info, nested_anon_type_name);
@@ -4460,7 +4457,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				}
 
 				// Set the struct info on the type info
-				nested_anon_type_info.setStructInfo(std::move(nested_anon_struct_info_ptr));
+				nested_anon_type_info.bindStructInfoOwnership();
 
 				// Now parse the member name for the enclosing anonymous struct/union
 				auto outer_member_name_token = peek_info();

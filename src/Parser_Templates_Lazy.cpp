@@ -453,6 +453,23 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			new_ctor_ref, {}, NameMangling::ConstructorVariant::Complete).view());
 		pack_param_info_.resize(saved_ctor_pack_info);
 
+		// Constructor templates must remain in the overload set; each concrete
+		// instantiation is a distinct specialization. Replacing the template stub
+		// would permanently drop other specializations (e.g. TupleImpl(U, const T&)
+		// for different U). Non-template lazy OOL ctor stubs are still replaced in
+		// place once their body is materialized.
+		//
+		// Constructor-template specializations are also NOT registered here. Callers
+		// such as materializeMatchingConstructorTemplate attach them only after the
+		// concrete signature is confirmed to match the call arguments, so failed
+		// deduction probes do not pollute the overload set.
+		const bool source_is_constructor_template = ctor_decl.has_template_parameters();
+		if (source_is_constructor_template) {
+			registerLateMaterializedOwningStructRoot(lazy_info.identity.instantiated_owner_name);
+			normalizePendingSemanticRoots();
+			return new_ctor_node;
+		}
+
 		auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 		if (struct_it != getTypesByNameMap().end()) {
 			if (StructTypeInfo* struct_info = struct_it->second->getStructInfo()) {
@@ -1651,8 +1668,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	TypeInfo& nested_type_info = add_struct_type(lazy_info->qualified_name, decl_ns);
 	TypeIndex type_index = nested_type_info.type_index_;
 
-	// Create StructTypeInfo for the nested type
-	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
+	// Create StructTypeInfo for the nested type in the cold arena
+	StructTypeInfo* nested_struct_info = &nested_type_info.emplaceStructInfo(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
 
 	// Process members with template parameter substitution
 	const InlineVector<TemplateParameterNode, 4>& parent_template_params_inline =
@@ -1722,8 +1739,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 											 : nullptr,
 										 shouldCommitTemplateInstantiationArtifacts());
 
-	// Set the struct info on the type
-	nested_type_info.struct_info_ = std::move(nested_struct_info);
+	nested_type_info.attachStructInfo(*nested_struct_info);
+	nested_type_info.bindStructInfoOwnership();
 
 	// Mark as instantiated (removes from lazy registry)
 	registry.markInstantiated(parent_class_name, nested_type_name);

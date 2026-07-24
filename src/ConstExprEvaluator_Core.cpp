@@ -5164,11 +5164,11 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 
 		for (size_t i = 1; i < getTypeInfoCount(); ++i) {
 			const TypeInfo& type_info = getTypeInfo(TypeIndex{i});
-			if (!type_info.struct_info_)
+			if (!type_info.getStructInfo())
 				continue;
 
 			// Search member functions in this struct
-			for (const auto& member_func : type_info.struct_info_->member_functions) {
+			for (const auto& member_func : type_info.getStructInfo()->member_functions) {
 				if (member_func.name == StringTable::getOrInternStringHandle(func_name)) {
 					// Found a matching member function
 					const ASTNode& func_node = member_func.function_decl;

@@ -2095,7 +2095,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						TypedValue other_arg;
 						other_arg.type_index = virtual_base.type_index;
 						other_arg.setType(TypeCategory::Struct);
-						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->sizeInBits().value : enclosing_struct_info->sizeInBits().value)};
+						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->getStructInfo() ? base_type_info->getStructInfo()->sizeInBits().value : enclosing_struct_info->sizeInBits().value)};
 						other_arg.value = StringTable::getOrInternStringHandle("other");
 						other_arg.ref_qualifier = is_implicit_copy_constructor ? ReferenceQualifier::LValueReference : ReferenceQualifier::RValueReference;
 						other_arg.cv_qualifier = is_implicit_copy_constructor ? CVQualifier::Const : CVQualifier::None;
@@ -2361,7 +2361,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						TypedValue other_arg;
 						other_arg.setType(TypeCategory::Struct);	 // Parameter type (struct reference)
 						other_arg.ir_type = IrType::Struct;
-						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->sizeInBits().value : struct_info->sizeInBits().value)};
+						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->getStructInfo() ? base_type_info->getStructInfo()->sizeInBits().value : struct_info->sizeInBits().value)};
 						other_arg.value = StringTable::getOrInternStringHandle("other");	 // Parameter value ('other' object)
 						other_arg.type_index = base.type_index;	// Use BASE class type index for proper mangling
 						if (is_implicit_copy_constructor) {
@@ -2465,9 +2465,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						}
 						if (member.type_index.category() == TypeCategory::Struct) {
 							const TypeInfo* mti = tryGetTypeInfo(member.type_index);
-							if (mti && mti->struct_info_ &&
-								mti->struct_info_->hasUserDefinedConstructor() &&
-								!mti->struct_info_->hasConstructor()) {
+							if (mti && mti->getStructInfo() &&
+								mti->getStructInfo()->hasUserDefinedConstructor() &&
+								!mti->getStructInfo()->hasConstructor()) {
 								is_implicitly_deleted = true;
 								break;
 							}
@@ -2601,7 +2601,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
 
 										// If this is a struct type, we need to initialize its members
-										if (member_type_info->struct_info_ && !member_type_info->struct_info_->members.empty()) {
+										if (member_type_info->getStructInfo() && !member_type_info->getStructInfo()->members.empty()) {
 											// Build a map of member names to initializer expressions
 											std::unordered_map<StringHandle, const ASTNode*> member_values;
 											size_t positional_index = 0;
@@ -2613,8 +2613,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 													member_values[member_name] = &initializers[i];
 												} else {
 														// Positional initializer - map to member by index
-													if (positional_index < member_type_info->struct_info_->members.size()) {
-														StringHandle member_name = member_type_info->struct_info_->members[positional_index].getName();
+													if (positional_index < member_type_info->getStructInfo()->members.size()) {
+														StringHandle member_name = member_type_info->getStructInfo()->members[positional_index].getName();
 														member_values[member_name] = &initializers[i];
 														positional_index++;
 													}
@@ -2622,7 +2622,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 											}
 
 											// Generate nested member stores for each member of the nested struct
-											for (const StructMember& nested_member : member_type_info->struct_info_->members) {
+											for (const StructMember& nested_member : member_type_info->getStructInfo()->members) {
 												// Determine initial value for nested member
 												std::optional<IrValue> nested_member_value;
 												StringHandle nested_member_name_handle = nested_member.getName();
@@ -2640,9 +2640,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 														if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
 
 															// If this is a struct type, use the recursive helper
-															if (nested_member_type_info->struct_info_ && !nested_member_type_info->struct_info_->members.empty()) {
+															if (nested_member_type_info->getStructInfo() && !nested_member_type_info->getStructInfo()->members.empty()) {
 																generateNestedMemberStores(
-																	*nested_member_type_info->struct_info_,
+																	*nested_member_type_info->getStructInfo(),
 																	nested_init_list,
 																	StringTable::getOrInternStringHandle("this"),
 																	static_cast<int>(member.offset + nested_member.offset),
@@ -2738,7 +2738,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								bool is_struct_with_constructor = false;
 								if (member.type_index.category() == TypeCategory::Struct) {
 									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-									if (member_type_info && member_type_info->struct_info_ && member_type_info->struct_info_->hasAnyConstructor()) {
+									if (member_type_info && member_type_info->getStructInfo() && member_type_info->getStructInfo()->hasAnyConstructor()) {
 										is_struct_with_constructor = true;
 									}
 								}
@@ -2752,9 +2752,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									// Use base_class_offset to specify the member's offset within the parent struct
 									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 									ctor_op.base_class_offset = static_cast<int>(member.offset);
-									if (member_type_info.struct_info_) {
-										fillInDefaultConstructorArguments(ctor_op, *member_type_info.struct_info_);
-										finalizeConstructorCallOp(ctor_op, *member_type_info.struct_info_, node.name_token());
+									if (member_type_info.getStructInfo()) {
+										fillInDefaultConstructorArguments(ctor_op, *member_type_info.getStructInfo());
+										finalizeConstructorCallOp(ctor_op, *member_type_info.getStructInfo(), node.name_token());
 									}
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 									continue;  // Skip the MemberStore since constructor handles initialization
@@ -3015,7 +3015,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						bool is_struct_with_constructor = false;
 						if (member.type_index.category() == TypeCategory::Struct) {
 							const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
-							if (member_type_info && member_type_info->struct_info_ && member_type_info->struct_info_->hasAnyConstructor()) {
+							if (member_type_info && member_type_info->getStructInfo() && member_type_info->getStructInfo()->hasAnyConstructor()) {
 								is_struct_with_constructor = true;
 							}
 						}
@@ -3029,9 +3029,9 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							// Use base_class_offset to specify the member's offset within the parent struct
 							assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 							ctor_op.base_class_offset = static_cast<int>(member.offset);
-							if (member_type_info.struct_info_) {
-								fillInDefaultConstructorArguments(ctor_op, *member_type_info.struct_info_);
-								finalizeConstructorCallOp(ctor_op, *member_type_info.struct_info_, node.name_token());
+							if (member_type_info.getStructInfo()) {
+								fillInDefaultConstructorArguments(ctor_op, *member_type_info.getStructInfo());
+								finalizeConstructorCallOp(ctor_op, *member_type_info.getStructInfo(), node.name_token());
 							}
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 							continue;  // Skip the MemberStore since constructor handles initialization
@@ -3484,23 +3484,23 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	const StructTypeInfo* struct_info = nullptr;
 	if (constructor_type_category == TypeCategory::Struct) {
 		const TypeInfo* type_info = tryGetTypeInfo(normalized_type_spec.type_index());
-		if (type_info && type_info->struct_info_) {
-			actual_size_bits = static_cast<int>(type_info->struct_info_->sizeInBits().value);
-			struct_info = type_info->struct_info_.get();
+		if (type_info && type_info->getStructInfo()) {
+			actual_size_bits = static_cast<int>(type_info->getStructInfo()->sizeInBits().value);
+			struct_info = type_info->getStructInfo();
 		}
 	} else {
 		// Fallback: look up by name
 		auto type_it = getTypesByNameMap().find(constructor_name);
-		if (type_it != getTypesByNameMap().end() && type_it->second->struct_info_) {
-			actual_size_bits = static_cast<int>(type_it->second->struct_info_->sizeInBits().value);
-			struct_info = type_it->second->struct_info_.get();
+		if (type_it != getTypesByNameMap().end() && type_it->second->getStructInfo()) {
+			actual_size_bits = static_cast<int>(type_it->second->getStructInfo()->sizeInBits().value);
+			struct_info = type_it->second->getStructInfo();
 		}
 	}
 	if (current_instantiation_type_index.is_valid()) {
 		if (const TypeInfo* current_instantiation_type_info =
 				tryGetTypeInfo(current_instantiation_type_index);
-			current_instantiation_type_info && current_instantiation_type_info->struct_info_) {
-			struct_info = current_instantiation_type_info->struct_info_.get();
+			current_instantiation_type_info && current_instantiation_type_info->getStructInfo()) {
+			struct_info = current_instantiation_type_info->getStructInfo();
 			actual_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 		}
 	}

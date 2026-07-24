@@ -1258,8 +1258,8 @@ ParseResult Parser::parse_variable_declaration() {
 		const auto& init_list = first_init_expr->as<InitializerListNode>();
 		if (init_list.initializers().empty()) {
 			TypeIndex type_idx = type_specifier.type_index();
-			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx); type_info && type_info->struct_info_) {
-				const StructTypeInfo& struct_info = *type_info->struct_info_;
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx); type_info && type_info->getStructInfo()) {
+				const StructTypeInfo& struct_info = *type_info->getStructInfo();
 				if (struct_info.isDefaultConstructorDeleted()) {
 					return ParseResult::error("Call to deleted constructor of '" + std::string(StringTable::getStringView(type_info->name())) + "'", first_decl.identifier_token());
 				}
@@ -2022,7 +2022,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	const bool is_user_defined_category = (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template);
 	if (!is_struct_like_type && is_user_defined_category) {
 		TypeIndex type_index = type_specifier.type_index();
-		if (const TypeInfo* type_info = tryGetTypeInfo(type_index); type_info && type_info->struct_info_) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index); type_info && type_info->getStructInfo()) {
 			is_struct_like_type = true;
 		} else {
 			StringHandle type_name_handle = type_specifier.token().handle();
@@ -2086,7 +2086,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 	TypeIndex type_index = type_specifier.type_index();
 	const TypeInfo* type_info = tryGetTypeInfo(type_index);
-	if (!type_info || !type_info->struct_info_) {
+	if (!type_info || !type_info->getStructInfo()) {
 		const bool invalid_struct_type_index = !type_info;
 		if (!(parsing_template_depth_ > 0) && struct_parsing_context_stack_.empty()) {
 			return ParseResult::error(
@@ -2110,7 +2110,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		return ParseResult::success(init_list_node);
 	}
 
-	const StructTypeInfo& struct_info = *type_info->struct_info_;
+	const StructTypeInfo& struct_info = *type_info->getStructInfo();
 
 	auto init_list_type_result = is_initializer_list_type(type_specifier);
 	if (init_list_type_result.has_value()) {
@@ -2273,6 +2273,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		if (struct_info.hasUserDefinedConstructor()) {
 			// Semantic analysis now owns constructor overload selection and diagnostics
 			// for user-declared-constructor brace-init paths.
+			return make_constructor_call(elements);
+		}
+
+		// No user-declared constructors: empty braces are value/aggregate initialization
+		// (C++20 [dcl.init.general]/[dcl.init.aggr]). Do not require an already-
+		// synthesized implicit default constructor entry — e.g. trailing variables
+		// after `struct S { } s{}` are parsed before implicit special members exist.
+		if (elements.empty()) {
 			return make_constructor_call(elements);
 		}
 

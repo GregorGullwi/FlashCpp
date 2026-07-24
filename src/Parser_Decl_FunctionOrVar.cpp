@@ -99,15 +99,17 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	attr_info.linkage = specs.linkage;
 	attr_info.calling_convention = specs.calling_convention;
 
-	// Check for inline/constexpr struct/class definition pattern:
-	// inline constexpr struct Name { ... } variable = {};
-	// This is a struct definition combined with a variable declaration
+	// Check for inline/constexpr struct/class/union *definition* pattern:
+	//   inline constexpr struct Name { ... } variable = {};
+	// Do NOT take this path for elaborated-type variable declarations:
+	//   struct Point p1 = { 10, 20 };
+	// Those must go through parse_type_and_name() so an existing StructTypeInfo
+	// is not replaced by createStructInfo() mid-declaration.
 	if (peek().is_keyword() &&
-		(peek() == "struct"_tok || peek() == "class"_tok)) {
+		(peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok) &&
+		!looks_like_elaborated_type_variable_declaration()) {
 		// Delegate to struct parsing which will handle the full definition
-		// and any trailing variable declarations
-		// TODO is now resolved: specs are passed to parse_struct_declaration_with_specs()
-		// so they can be applied to trailing variable declarations after the struct body.
+		// and any trailing variable declarations.
 		auto result = parse_struct_declaration_with_specs(is_constexpr, is_inline);
 		if (!result.is_error()) {
 			// Successfully parsed struct, propagate the result

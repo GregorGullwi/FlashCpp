@@ -1470,6 +1470,11 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 		if (skip_implicit && is_implicit_copy_or_move) {
 			continue;
 		}
+		if (ctor_decl.has_template_parameters()) {
+			// Constructor templates require deduction; arity-only fallback must not
+			// treat them as competing non-template overloads (C++ [temp.deduct]).
+			continue;
+		}
 		const auto& parameters = ctor_decl.parameter_nodes();
 		size_t min_required = countMinRequiredArgs(ctor_decl);
 		if (num_args < min_required || num_args > parameters.size()) {
@@ -1838,7 +1843,7 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
 		return param_idx;
 	const auto& param_ti = getTypeInfo(param_idx);
-	if (!param_ti.struct_info_)
+	if (!param_ti.getStructInfo())
 		return param_idx;
 	auto param_name = StringTable::getStringView(param_ti.name());
 	auto param_base_name = simpleBaseName(param_name);

@@ -84,8 +84,8 @@ struct StructTypeInfo {
 	// Error tracking for semantic errors detected during finalization
 	std::string finalization_error_;	 // Non-empty if semantic error occurred during finalization
 
-	// Cached type_index from the owning TypeInfo, set by TypeInfo::setStructInfo().
-	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
+	// Cached type_index from the owning TypeInfo, set by TypeInfo::createStructInfo() /
+	// TypeInfo::setStructInfo(). Avoids fragile gTypesByName lookups in isOwnTypeIndex().
 	std::optional<TypeIndex> own_type_index_;
 
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
@@ -1043,11 +1043,10 @@ struct TypeInfo {
 	// True if this TypeInfo entry was registered via register_type_alias (typedef / using alias)
 	bool is_type_alias_ = false;
 
-	// For struct types, store additional information
-	std::unique_ptr<StructTypeInfo> struct_info_;
-
-	// For enum types, store additional information
-	std::unique_ptr<EnumTypeInfo> enum_info_;
+	// Pointers into gStructTypeInfos / gEnumTypeInfos cold arenas (nullptr = none).
+	// Keeps StructTypeInfo / EnumTypeInfo payloads out of every TypeInfo row.
+	StructTypeInfo* struct_info_ = nullptr;
+	EnumTypeInfo* enum_info_ = nullptr;
 
 	// Generic fallback size in bits for aliases, incomplete types, and forward declarations.
 	// Struct layout remains authoritative in StructTypeInfo::total_size.
@@ -1331,36 +1330,55 @@ struct TypeInfo {
 
 	// Helper methods for struct types
 	bool isStruct() const { return category() == TypeCategory::Struct; }
-	const StructTypeInfo* getStructInfo() const { return struct_info_.get(); }
-	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
+	bool hasStructInfo() const { return struct_info_ != nullptr; }
+	const StructTypeInfo* getStructInfo() const { return struct_info_; }
+	StructTypeInfo* getStructInfo() { return struct_info_; }
 
-	void setStructInfo(std::unique_ptr<StructTypeInfo> info);
+	// Pre-allocate StructTypeInfo in gStructTypeInfos. Does NOT publish via
+	// struct_info_ — call attachStructInfo() once the payload is complete so
+	// incomplete types stay invisible to lookup (e.g. member typedefs during
+	// template instantiation).
+	StructTypeInfo& emplaceStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+									  NamespaceHandle ns);
+	// Publish an arena-allocated StructTypeInfo on this TypeInfo.
+	void attachStructInfo(StructTypeInfo& info);
+	// emplaceStructInfo + attachStructInfo — use when the payload is immediately
+	// ready for lookup (or will be mutated while already published).
+	StructTypeInfo& createStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+									 NamespaceHandle ns);
+	// Move a stack-built or copied StructTypeInfo into the arena and attach it.
+	void setStructInfo(StructTypeInfo info);
+	// Re-bind owning TypeIndex onto constructors (safe to call after attach once
+	// all constructors have been added; redundant with addConstructor when
+	// own_type_index_ was already set at emplace time).
+	void bindStructInfoOwnership();
+	void clearStructInfo() { struct_info_ = nullptr; }
 
 	// Helper methods for enum types
 	bool isEnum() const { return category() == TypeCategory::Enum; }
-	const EnumTypeInfo* getEnumInfo() const { return enum_info_.get(); }
-	EnumTypeInfo* getEnumInfo() { return enum_info_.get(); }
+	bool hasEnumInfo() const { return enum_info_ != nullptr; }
+	const EnumTypeInfo* getEnumInfo() const { return enum_info_; }
+	EnumTypeInfo* getEnumInfo() { return enum_info_; }
 
-	void setEnumInfo(std::unique_ptr<EnumTypeInfo> info) {
-		if (info) {
-			fallback_size_bits_ = info->underlying_size.value;
-		}
-		enum_info_ = std::move(info);
-	}
+	// Pre-allocate EnumTypeInfo in gEnumTypeInfos and attach it.
+	EnumTypeInfo& createEnumInfo(StringHandle n, bool scoped);
+	// Move a stack-built or copied EnumTypeInfo into the arena and attach it.
+	void setEnumInfo(EnumTypeInfo info);
+	void clearEnumInfo() { enum_info_ = nullptr; }
 
 	SizeInBits sizeInBits() const {
-		if (struct_info_) {
-			return struct_info_->sizeInBits();
+		if (const StructTypeInfo* struct_info = getStructInfo()) {
+			return struct_info->sizeInBits();
 		}
-		if (enum_info_) {
-			return enum_info_->sizeInBits();
+		if (const EnumTypeInfo* enum_info = getEnumInfo()) {
+			return enum_info->sizeInBits();
 		}
 		return SizeInBits{fallback_size_bits_};
 	}
 
 	SizeInBytes sizeInBytes() const {
-		if (struct_info_) {
-			return struct_info_->sizeInBytes();
+		if (const StructTypeInfo* struct_info = getStructInfo()) {
+			return struct_info->sizeInBytes();
 		}
 		SizeInBits bits = sizeInBits();
 		return bits.is_set() ? toBytesCeil(bits) : SizeInBytes{};
@@ -1405,6 +1423,10 @@ uint32_t storeInstantiationContext(TypeInfo::InstantiationContext ctx);
 const TypeInfo::InstantiationContext* getInstantiationContext(uint32_t index);
 TypeInfo::InstantiationContext* getInstantiationContextMut(uint32_t index);
 size_t getInstantiationContextCount();
+
+// Cold arenas for StructTypeInfo / EnumTypeInfo payloads.
+size_t getStructTypeInfoCount();
+size_t getEnumTypeInfoCount();
 
 // Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
 // register_type_alias so callers can capture both the TypeInfo reference AND the

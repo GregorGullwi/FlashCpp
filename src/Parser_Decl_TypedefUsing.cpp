@@ -524,8 +524,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Create struct declaration node
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
 
-			// Create StructTypeInfo
-			auto struct_info = std::make_unique<StructTypeInfo>(struct_name, is_class ? AccessSpecifier::Private : AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
+			// Create StructTypeInfo in the cold arena
+			StructTypeInfo* struct_info = &struct_type_info.createStructInfo(struct_name, is_class ? AccessSpecifier::Private : AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
 
 			// Expect opening brace
 			if (!consume("{"_tok)) {
@@ -665,8 +665,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				return ParseResult::error(struct_info->getFinalizationError(), Token());
 			}
 
-			// Store struct info
-			struct_type_info.setStructInfo(std::move(struct_info));
+			// StructTypeInfo already lives in the arena via createStructInfo
+			struct_type_info.bindStructInfoOwnership();
 			// Update fallback_size_bits_ from the finalized struct's total size
 			if (struct_type_info.getStructInfo()) {
 				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
@@ -750,8 +750,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				return ParseResult::error("Expected '{' in enum definition", peek_info());
 			}
 
-			// Create enum type info
-			auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
+			// Create enum type info in the cold arena (live during enumerator parsing)
+			EnumTypeInfo& enum_info = enum_type_info.createEnumInfo(enum_name, is_scoped);
 
 			// Determine underlying type
 			int underlying_size = 32;
@@ -765,9 +765,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			size_t enumerator_count = 0;
 			const size_t MAX_ENUMERATORS = 10000; // Safety limit
 
-			// Store enum info early so ConstExprEvaluator can look up values during parsing
-			enum_type_info.setEnumInfo(std::move(enum_info));
-			auto* live_enum_info = enum_type_info.getEnumInfo();
+			auto* live_enum_info = &enum_info;
 
 			// For scoped enums, push a temporary scope so that enumerator names
 			// are visible to subsequent value expressions (C++ §9.7.1/2)
@@ -1224,8 +1222,9 @@ ParseResult Parser::parse_typedef_declaration() {
 			return ParseResult::error("Expected '{' in enum definition", peek_info());
 		}
 
-		// Create enum type info
-		auto enum_info = std::make_unique<EnumTypeInfo>(enum_name_for_typedef, is_scoped);
+		// Create enum type info in the cold arena (live during enumerator parsing)
+		auto& enum_type_info_ref = getTypeInfoMut(enum_type_index);
+		EnumTypeInfo& enum_info = enum_type_info_ref.createEnumInfo(enum_name_for_typedef, is_scoped);
 
 		// Determine underlying type (default is int)
 		int underlying_size = 32;
@@ -1234,10 +1233,7 @@ ParseResult Parser::parse_typedef_declaration() {
 			underlying_size = type_spec_node.size_in_bits();
 		}
 
-		// Store enum info early so ConstExprEvaluator can look up values during parsing
-		auto& enum_type_info_ref = getTypeInfoMut(enum_type_index);
-		enum_type_info_ref.setEnumInfo(std::move(enum_info));
-		auto* live_enum_info = enum_type_info_ref.getEnumInfo();
+		auto* live_enum_info = &enum_info;
 
 		// Parse enumerators
 		int64_t next_value = 0;
@@ -1369,12 +1365,12 @@ ParseResult Parser::parse_typedef_declaration() {
 												 gSymbolTable.get_current_namespace_handle(),
 												 {}});
 
-		// Create StructTypeInfo
-		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public, is_inline_union, gSymbolTable.get_current_namespace_handle());
+		// Create StructTypeInfo in the cold arena
+		StructTypeInfo* struct_info = &struct_type_info.createStructInfo(struct_name_for_typedef, AccessSpecifier::Public, is_inline_union, gSymbolTable.get_current_namespace_handle());
 
 		// Update the struct parsing context with the local_struct_info for static member lookup
 		if (!struct_parsing_context_stack_.empty()) {
-			struct_parsing_context_stack_.back().local_struct_info = struct_info.get();
+			struct_parsing_context_stack_.back().local_struct_info = struct_info;
 		}
 
 		// Apply pack alignment from #pragma pack
@@ -1433,8 +1429,7 @@ ParseResult Parser::parse_typedef_declaration() {
 						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
 
 						// Create StructTypeInfo
-						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public, is_union, gSymbolTable.get_current_namespace_handle());
-						StructTypeInfo* anon_struct_info = anon_struct_info_ptr.get();
+						StructTypeInfo* anon_struct_info = &anon_type_info.createStructInfo(anon_type_name_handle, AccessSpecifier::Public, is_union, gSymbolTable.get_current_namespace_handle());
 
 						// Parse all members using the recursive helper
 						ParseResult members_result = parse_anonymous_struct_union_members(anon_struct_info, anon_type_name);
@@ -1484,8 +1479,8 @@ ParseResult Parser::parse_typedef_declaration() {
 							anon_struct_info->finalizeLayoutSize(current_offset, current_offset, max_alignment);
 						}
 
-						// Set the struct info on the type info
-						anon_type_info.setStructInfo(std::move(anon_struct_info_ptr));
+						// StructTypeInfo already lives in the arena via createStructInfo
+						anon_type_info.bindStructInfoOwnership();
 
 						// Now parse the member name(s) - handle comma-separated declarators
 						do {
@@ -1906,15 +1901,15 @@ ParseResult Parser::parse_typedef_declaration() {
 			return ParseResult::error(struct_info->getFinalizationError(), Token());
 		}
 
-		// Store struct info
-		struct_type_info.setStructInfo(std::move(struct_info));
+		// StructTypeInfo already lives in the arena via createStructInfo
+		struct_type_info.bindStructInfoOwnership();
 		// Update fallback_size_bits_ from the finalized struct's total size
 		if (struct_type_info.getStructInfo()) {
 			struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 		}
 
 		// Create type specifier for the struct
-		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
+		// Note: Use struct_type_info.getStructInfo() — payload already attached via createStructInfo
 		type_spec = TypeSpecifierNode(
 			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_type_info.getStructInfo()->sizeInBits().value),
