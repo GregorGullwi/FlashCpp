@@ -442,6 +442,19 @@ void AstToIr::applyCallParameterBindingMetadata(TypedValue& value, const TypeSpe
 	}
 }
 
+TypedValue AstToIr::makeMemberThisCallArgument(TypeIndex object_type_index, IrValue this_ptr_value) {
+	if (!object_type_index.is_valid()) {
+		throw InternalError("Member function 'this' argument requires canonical class type identity");
+	}
+	TypedValue this_arg = makeTypedValue(
+		object_type_index,
+		SizeInBits{POINTER_SIZE_BITS},
+		std::move(this_ptr_value),
+		PointerDepth{1});
+	this_arg.storage = ValueStorage::ContainsAddress;
+	return this_arg;
+}
+
 CVReferenceQualifier AstToIr::callParameterRefQualifier(const TypeSpecifierNode* param_type) const {
 	if (!param_type) {
 		return CVReferenceQualifier::None;
@@ -1989,21 +2002,41 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		return isIrStructType(toIrType(resolved)) && type_index.is_valid();
 	};
 
-	auto makeReferenceArgument = [&](const ExprResult& operand_result, TypeCategory operand_type, int operand_size) -> std::optional<TypedValue> {
-		TypedValue arg;
-		arg.setType(operand_type);
-		arg.size_in_bits = SizeInBits{64};
+	auto makeReferenceArgument = [&](const ExprResult& operand_result, TypeCategory operand_type, int operand_size, const TypeSpecifierNode* param_type) -> std::optional<TypedValue> {
+		TypeIndex arg_type_index = operand_result.type_index.is_valid()
+			? operand_result.type_index.withCategory(operand_type)
+			: (param_type && param_type->type_index().is_valid()
+				   ? param_type->type_index().withCategory(operand_type)
+				   : nativeTypeIndex(operand_type).withCategory(operand_type));
+		ReferenceQualifier ref_qual = ReferenceQualifier::LValueReference;
+		if (param_type) {
+			if (param_type->is_rvalue_reference()) {
+				ref_qual = ReferenceQualifier::RValueReference;
+			} else if (param_type->is_reference()) {
+				ref_qual = ReferenceQualifier::LValueReference;
+			}
+		}
+
+		auto finishReferenceArg = [&](IrValue address_value) {
+			TypedValue arg = makeTypedValue(
+				arg_type_index,
+				SizeInBits{POINTER_SIZE_BITS},
+				std::move(address_value),
+				ref_qual);
+			if (param_type) {
+				arg.cv_qualifier = param_type->cv_qualifier();
+			}
+			return arg;
+		};
 
 		if (const auto* string = std::get_if<StringHandle>(&operand_result.value)) {
-			arg.value = emitAddressOf(operand_type, operand_size, IrValue(*string));
-			return arg;
+			return finishReferenceArg(emitAddressOf(operand_type, operand_size, IrValue(*string)));
 		}
 
 		if (std::holds_alternative<TempVar>(operand_result.value)) {
 			TempVar temp_var = std::get<TempVar>(operand_result.value);
 			if (auto global_name = tryGetGlobalLValueName(operand_result); global_name.has_value()) {
-				arg.value = emitAddressOf(operand_type, operand_size, IrValue(*global_name));
-				return arg;
+				return finishReferenceArg(emitAddressOf(operand_type, operand_size, IrValue(*global_name)));
 			}
 			bool is_already_address = false;
 
@@ -2019,10 +2052,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				is_already_address = true;
 			}
 
-			arg.value = is_already_address
-							? IrValue(temp_var)
-							: emitAddressOf(operand_type, operand_size, IrValue(temp_var));
-			return arg;
+			return finishReferenceArg(
+				is_already_address
+					? IrValue(temp_var)
+					: emitAddressOf(operand_type, operand_size, IrValue(temp_var)));
 		}
 
 		bool is_literal = std::holds_alternative<unsigned long long>(operand_result.value) || std::holds_alternative<double>(operand_result.value);
@@ -2044,8 +2077,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		assign_op.rhs = makeTypedValue(operand_type, SizeInBits{static_cast<int>(operand_size)}, rhs_value);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 
-		arg.value = emitAddressOf(operand_type, operand_size, IrValue(temp_var));
-		return arg;
+		return finishReferenceArg(emitAddressOf(operand_type, operand_size, IrValue(temp_var)));
 	};
 
 	// Special handling for struct assignment with user-defined operator=(non-struct)
@@ -2171,12 +2203,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 							false);
 
 						// Pass 'this' pointer as first argument
-						TypedValue this_arg;
-						this_arg.setType(lhsCat);
-						this_arg.ir_type = toIrType(lhsCat);
-						this_arg.size_in_bits = SizeInBits{64}; // 'this' is always a pointer (64-bit)
-						this_arg.value = lhs_addr;
-						call_op.args.push_back(this_arg);
+						call_op.args.push_back(makeMemberThisCallArgument(
+							lhs_type_index.withCategory(lhsCat),
+							IrValue(lhs_addr)));
 
 						// Pass RHS value as second argument
 						call_op.args.push_back(toTypedValue(rhsExprResult));
@@ -2554,14 +2583,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				false,
 				false);
 
-			bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64());
+			bool needs_hidden_return = needsHiddenReturnParam(return_type, context_->isLLP64());
 			if (needs_hidden_return) {
 				call_op.return_slot = result_var;
 			}
 
 			// Helper: take address of operand for reference parameters
-			auto passOperandArg = [&](const ExprResult& operand_result, TypeCategory opType, int opSize, std::string_view role, CallOp& cop) -> bool {
-				if (auto ref_arg = makeReferenceArgument(operand_result, opType, opSize); ref_arg.has_value()) {
+			auto passOperandArg = [&](const ExprResult& operand_result, TypeCategory opType, int opSize, std::string_view role, CallOp& cop, const TypeSpecifierNode* param_type) -> bool {
+				if (auto ref_arg = makeReferenceArgument(operand_result, opType, opSize, param_type); ref_arg.has_value()) {
 					cop.args.push_back(*ref_arg);
 					return true;
 				}
@@ -2571,7 +2600,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			// Pass LHS as first argument
 			if (!param_types.empty() && param_types[0].is_reference()) {
-				if (!passOperandArg(lhsExprResult, lhsCat, lhsSize, "LHS", call_op))
+				if (!passOperandArg(lhsExprResult, lhsCat, lhsSize, "LHS", call_op, &param_types[0]))
 					return ExprResult{};
 			} else {
 				TypedValue lhs_arg = toTypedValue(lhsExprResult);
@@ -2596,7 +2625,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			// Pass RHS as second argument
 			if (param_types.size() >= 2 && param_types[1].is_reference()) {
-				if (!passOperandArg(rhsExprResult, rhsCat, rhsSize, "RHS", call_op))
+				if (!passOperandArg(rhsExprResult, rhsCat, rhsSize, "RHS", call_op, &param_types[1]))
 					return ExprResult{};
 			} else {
 				TypedValue rhs_arg = toTypedValue(rhsExprResult);
@@ -2748,8 +2777,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			int actual_return_size = call_op.return_size_in_bits.value;
 
 			// Detect if returning struct by value (needs hidden return parameter for RVO)
-			bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
-			bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), actual_return_size, context_->isLLP64());
+			bool returns_struct_by_value = returnsStructByValue(resolved_return_type_spec);
+			bool needs_hidden_return_param = needsHiddenReturnParam(
+				resolved_return_type_spec, context_->isLLP64());
 
 			if (needs_hidden_return_param) {
 				call_op.return_slot = result_var;
@@ -2765,17 +2795,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			// Add 'this' pointer as first argument
-			TypedValue this_arg;
-			this_arg.setType(lhsCat);
-			this_arg.ir_type = toIrType(lhsCat);
-			this_arg.size_in_bits = SizeInBits{64}; // 'this' is always a pointer (64-bit)
-			this_arg.value = lhs_addr;
-			call_op.args.push_back(this_arg);
+			call_op.args.push_back(makeMemberThisCallArgument(
+				lhs_type_index.withCategory(lhsCat),
+				IrValue(lhs_addr)));
 
 			// Add RHS as the second argument
 			// Check if the parameter is a reference - if so, we need to pass the address
 			if (!param_types.empty() && param_types[0].is_reference()) {
-				if (auto rhs_arg = makeReferenceArgument(rhsExprResult, rhsCat, rhsSize); rhs_arg.has_value()) {
+				if (auto rhs_arg = makeReferenceArgument(rhsExprResult, rhsCat, rhsSize, &param_types[0]); rhs_arg.has_value()) {
 					call_op.args.push_back(*rhs_arg);
 				} else {
 					FLASH_LOG(Codegen, Error, "Cannot materialize binary operator RHS reference argument");
@@ -2934,8 +2961,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						func_decl.is_variadic());
 
 					// Determine if return slot is needed (same logic as generateFunctionCallIr)
-					bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
-					bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size.value, context_->isLLP64());
+					bool returns_struct_by_value = returnsStructByValue(return_type_node);
+					bool needs_hidden_return_param = needsHiddenReturnParam(
+						return_type_node, context_->isLLP64());
 
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
@@ -2948,19 +2976,34 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						FLASH_LOG(Codegen, Debug, "No return slot for spaceship operator (small struct return in RAX)");
 					}
 
-					// Add the LHS object as the first argument (this pointer)
-					// For member functions, the this pointer is passed by name or temp var
-					TypedValue lhs_arg;
-					lhs_arg.setType(lhsCat);
-					lhs_arg.ir_type = toIrType(lhsCat);
-					lhs_arg.size_in_bits = SizeInBits{lhsSize};
-					// Convert lhs_value (which can be string_view or TempVar) to IrValue
+					// Add the LHS object as the first argument (this pointer).
+					// Member 'this' is always a pointer — never a by-value aggregate.
+					IrValue this_ptr_value;
 					if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {
-						lhs_arg.value = IrValue(*string);
+						this_ptr_value = IrValue(emitAddressOf(
+							lhsCat,
+							lhsSize,
+							IrValue(*string),
+							binaryOperatorNode.get_token()));
 					} else {
-						lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
+						TempVar lhs_temp = std::get<TempVar>(lhs_value);
+						const bool temp_already_holds_address =
+							std::holds_alternative<TempVar>(lhsExprResult.value) &&
+							std::get<TempVar>(lhsExprResult.value).var_number == lhs_temp.var_number &&
+							lhsExprResult.storage == ValueStorage::ContainsAddress;
+						if (temp_already_holds_address) {
+							this_ptr_value = IrValue(lhs_temp);
+						} else {
+							this_ptr_value = IrValue(emitAddressOf(
+								lhsCat,
+								lhsSize,
+								IrValue(lhs_temp),
+								binaryOperatorNode.get_token()));
+						}
 					}
-					call_op.args.push_back(lhs_arg);
+					call_op.args.push_back(makeMemberThisCallArgument(
+						spaceship_lhs_type_index.withCategory(lhsCat),
+						this_ptr_value));
 
 					// Add the RHS as the second argument
 					// Check if parameter expects a reference
@@ -2970,8 +3013,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						const TypeSpecifierNode& param_type = param_types[0];
 						if (param_type.is_rvalue_reference()) {
 							rhs_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+							rhs_arg.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 						} else if (param_type.is_reference()) {
 							rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+							rhs_arg.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+						}
+						if (param_type.type_index().is_valid()) {
+							rhs_arg.type_index = param_type.type_index().withCategory(param_type.type());
+						} else if (rhsExprResult.type_index.is_valid()) {
+							rhs_arg.type_index = rhsExprResult.type_index.withCategory(rhsCat);
 						}
 					}
 					call_op.args.push_back(rhs_arg);

@@ -1510,9 +1510,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 				TempVar ret_var = var_counter.next();
 				CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
-				if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(),
-										   return_type.is_reference(), call_op.return_size_in_bits.value,
-										   context_->isLLP64())) {
+				if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
 					call_op.return_slot = ret_var;
 				}
 
@@ -1523,14 +1521,10 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				addr_op.operand.pointer_depth = PointerDepth{};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), unaryOperatorNode.get_token()));
 
-				TypedValue this_arg;
-				this_arg.setType(operandType);
-				this_arg.ir_type = toIrType(operandType);
-				this_arg.size_in_bits = SizeInBits{get_type_size_bits(TypeCategory::FunctionPointer)};
-				this_arg.pointer_depth = PointerDepth{1};
-				this_arg.type_index = operand_type_index.withCategory(operandType);
-				this_arg.value = this_addr;
-				call_op.args.push_back(this_arg);
+				TypedValue this_arg = makeMemberThisCallArgument(
+					operand_type_index.withCategory(operandType),
+					IrValue(this_addr));
+				call_op.args.push_back(std::move(this_arg));
 
 				const int result_size = call_op.return_size_in_bits.value;
 				const TypeIndex result_type_index = call_op.return_type_index;
@@ -1953,8 +1947,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
-	// Small structs (≤ ABI threshold) return in registers and need no return_slot.
-	if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64())) {
+	// SysV MEMORY-class and oversized aggregates use a return_slot; register-class returns do not.
+	if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
 		call_op.return_slot = ret_var;
 	}
 
@@ -1966,11 +1960,10 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	addr_op.operand.pointer_depth = PointerDepth{};
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
-	TypedValue this_arg;
-	this_arg.setType(operandType);
-	this_arg.size_in_bits = SizeInBits{64};
-	this_arg.value = this_addr;
-	call_op.args.push_back(this_arg);
+	TypedValue this_arg = makeMemberThisCallArgument(
+		operand_type_index.withCategory(operandType),
+		IrValue(this_addr));
+	call_op.args.push_back(std::move(this_arg));
 
 	// For postfix operators, pass dummy int argument (value 0)
 	// Use the matched function's actual parameter count (not the call form) to decide,

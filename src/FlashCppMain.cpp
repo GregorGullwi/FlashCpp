@@ -625,12 +625,14 @@ int main_impl(int argc, char* argv[]) {
 					has_dependent_signature = functionHasUnresolvedPlaceholderSignature(node_handle.as<FunctionDeclarationNode>());
 				}
 				if (has_dependent_signature) {
+					// Match the CompileError placeholder path: these are SFINAE/decltype
+					// probes, not concrete functions that should fail the TU.
 					FLASH_LOG(Codegen, Warning, "IR error for function '", node_desc,
 							  "' with unsubstituted dependent signature types: ", e.what());
 				} else {
 					FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
+					++ir_conversion_error_count;
 				}
-				++ir_conversion_error_count;
 			} catch (const std::runtime_error& e) {
 				std::string node_desc = node_handle.type_name();
 				if (node_handle.is<FunctionDeclarationNode>()) {

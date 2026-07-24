@@ -31,6 +31,12 @@ struct DoubleInt {
 	double a;
 	int b;
 };
+struct FloatOnly {
+	float value;
+};
+struct DoubleOnly {
+	double value;
+};
 struct alignas(16) TailAlignedDouble {
 	double value;
 };
@@ -70,6 +76,16 @@ extern "C" TailAlignedDouble external_make_tail_aligned_double(double value);
 extern "C" TailAlignedDouble external_call_flashcpp_make_tail_aligned_double(double value);
 extern "C" int external_check_packed_double(PackedDouble value);
 extern "C" int external_call_flashcpp_packed_double(PackedDouble value);
+extern "C" PackedDouble external_make_packed_double(char tag, double value);
+extern "C" PackedDouble external_call_flashcpp_make_packed_double(char tag, double value);
+extern "C" int external_check_float_only(FloatOnly value);
+extern "C" int external_call_flashcpp_float_only(FloatOnly value);
+extern "C" FloatOnly external_make_float_only(float value);
+extern "C" FloatOnly external_call_flashcpp_make_float_only(float value);
+extern "C" int external_check_double_only(DoubleOnly value);
+extern "C" int external_call_flashcpp_double_only(DoubleOnly value);
+extern "C" DoubleOnly external_make_double_only(double value);
+extern "C" DoubleOnly external_call_flashcpp_make_double_only(double value);
 extern "C" int external_int_double_after_8_doubles(
 	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
 	IntDouble value, int tail);
@@ -135,6 +151,26 @@ extern "C" TailAlignedDouble flashcpp_make_tail_aligned_double(double value) {
 
 extern "C" int flashcpp_check_packed_double(PackedDouble value) {
 	return value.tag == 10 && value.value == 32.0;
+}
+
+extern "C" PackedDouble flashcpp_make_packed_double(char tag, double value) {
+	return PackedDouble{tag, value};
+}
+
+extern "C" int flashcpp_check_float_only(FloatOnly value) {
+	return value.value == 1.5f;
+}
+
+extern "C" FloatOnly flashcpp_make_float_only(float value) {
+	return FloatOnly{value};
+}
+
+extern "C" int flashcpp_check_double_only(DoubleOnly value) {
+	return value.value == 4.5;
+}
+
+extern "C" DoubleOnly flashcpp_make_double_only(double value) {
+	return DoubleOnly{value};
 }
 
 extern "C" int flashcpp_int_double_after_8_doubles(
@@ -324,17 +360,60 @@ extern "C" int main() {
 		return 34;
 	}
 
-	// Tests 35-36: the mixed aggregate needs one GPR and one SSE register. With
+	// Tests 35-36: MEMORY-class returns also use a hidden return slot, not
+	// the direct two-register convention implied by size alone.
+	PackedDouble external_packed = external_make_packed_double(10, 32.0);
+	if (external_packed.tag != 10 || external_packed.value != 32.0) {
+		return 35;
+	}
+	PackedDouble flashcpp_packed = external_call_flashcpp_make_packed_double(10, 32.0);
+	if (flashcpp_packed.tag != 10 || flashcpp_packed.value != 32.0) {
+		return 36;
+	}
+
+	// Tests 37-38: the mixed aggregate needs one GPR and one SSE register. With
 	// all SSE registers occupied, the whole aggregate spills and the following
 	// integer still uses the unconsumed first GPR.
 	IntDouble exhausted_value{10, 32.0};
 	if (external_int_double_after_8_doubles(
 			1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, exhausted_value, 5) != 83) {
-		return 35;
+		return 37;
 	}
 	if (external_call_flashcpp_int_double_after_8_doubles(
 			1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, exhausted_value, 5) != 83) {
-		return 36;
+		return 38;
+	}
+
+	// Tests 39-42: single-eightbyte SSE-only aggregates must use XMM0, not RAX.
+	if (!external_check_float_only(FloatOnly{1.5f})) {
+		return 39;
+	}
+	if (!external_call_flashcpp_float_only(FloatOnly{1.5f})) {
+		return 40;
+	}
+	FloatOnly external_float_only = external_make_float_only(1.5f);
+	if (external_float_only.value != 1.5f) {
+		return 41;
+	}
+	FloatOnly flashcpp_float_only = external_call_flashcpp_make_float_only(1.5f);
+	if (flashcpp_float_only.value != 1.5f) {
+		return 42;
+	}
+
+	// Tests 43-46: same for an 8-byte double-only aggregate.
+	if (!external_check_double_only(DoubleOnly{4.5})) {
+		return 43;
+	}
+	if (!external_call_flashcpp_double_only(DoubleOnly{4.5})) {
+		return 44;
+	}
+	DoubleOnly external_double_only = external_make_double_only(4.5);
+	if (external_double_only.value != 4.5) {
+		return 45;
+	}
+	DoubleOnly flashcpp_double_only = external_call_flashcpp_make_double_only(4.5);
+	if (flashcpp_double_only.value != 4.5) {
+		return 46;
 	}
 
 	return 0; // All tests passed!

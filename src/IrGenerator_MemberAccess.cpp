@@ -1391,12 +1391,19 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 					lvalue_info.is_pointer_to_member = true;
 					setTempVarMetadata(member_object_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-					call_op.args.push_back(makeTypedValue(
+					// MemberAccess left an lvalue address in the temp; pass it as 'this'.
+					call_op.args.push_back(makeMemberThisCallArgument(
 						member_object->type_index,
-						SizeInBits{static_cast<int>(member_object->size * 8)},
 						IrValue(member_object_temp)));
 				} else {
-					call_op.args.push_back(makeTypedValue(type_node->type_index(), SizeInBits{64}, IrValue(identifier_handle)));
+					TempVar this_ptr = emitAddressOf(
+						type_node->category(),
+						getStructObjectSizeBits(type_node->type_index()),
+						IrValue(identifier_handle),
+						memberAccessNode.member_token());
+					call_op.args.push_back(makeMemberThisCallArgument(
+						type_node->type_index(),
+						IrValue(this_ptr)));
 				}
 
 				// Add the function call instruction
@@ -3776,22 +3783,30 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
 										 IrValue(std::get<StringHandle>(source_value)), token);
 
-		TypedValue this_arg;
-		this_arg.setType(source.category());
-		this_arg.ir_type = toIrType(source.typeEnum());
-		this_arg.size_in_bits = SizeInBits{64}; // pointer size
-		this_arg.value = this_ptr;
-		this_arg.type_index = source.type_index;
-		call_op.args.push_back(std::move(this_arg));
+		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
 	} else if (std::holds_alternative<TempVar>(source_value)) {
-		// Already a TempVar — for struct types this holds the object address
-		TypedValue this_arg;
-		this_arg.setType(source.category());
-		this_arg.ir_type = toIrType(source.typeEnum());
-		this_arg.size_in_bits = SizeInBits{64}; // pointer size
-		this_arg.value = std::get<TempVar>(source_value);
-		this_arg.type_index = source.type_index;
-		call_op.args.push_back(std::move(this_arg));
+		TempVar object_temp = std::get<TempVar>(source_value);
+		// Only treat the temp as an already-materialized 'this' pointer when the
+		// ExprResult storage says so. Dereference / Load results are ContainsData
+		// object storage and must be AddressOf'd (LEA), not MOV'd as a fake pointer.
+		const bool temp_already_holds_address =
+			std::holds_alternative<TempVar>(source.value) &&
+			std::get<TempVar>(source.value).var_number == object_temp.var_number &&
+			source.storage == ValueStorage::ContainsAddress;
+		if (temp_already_holds_address) {
+			call_op.args.push_back(makeMemberThisCallArgument(
+				source.type_index,
+				IrValue(object_temp)));
+		} else {
+			TempVar this_ptr = emitAddressOf(
+				source.category(),
+				source.size_in_bits.value,
+				IrValue(object_temp),
+				token);
+			call_op.args.push_back(makeMemberThisCallArgument(
+				source.type_index,
+				IrValue(this_ptr)));
+		}
 	} else {
 		throw InternalError("emitConversionOperatorCall: source value is neither StringHandle nor TempVar");
 	}

@@ -180,6 +180,24 @@ inline TypedValue makeTypedValue(TypeIndex type_index, SizeInBits size_in_bits, 
 	return tv;
 }
 
+/// Build the TypedValue for an ordinary (non-this) indirect-call argument. By-value
+/// aggregates must carry their canonical TypeIndex so the SysV backend can classify
+/// the eightbytes; primitives keep their native type identity. Reference/pointer
+/// storage flows through unchanged so the backend loads the address rather than the
+/// aggregate contents.
+inline TypedValue makeIndirectCallArgument(const ExprResult& argument_result) {
+	const TypeCategory arg_type = argument_result.typeEnum();
+	IrValue arg_value = toIrValue(argument_result.value);
+	TypedValue arg_tv =
+		(isIrStructType(toIrType(arg_type)) && argument_result.type_index.is_valid())
+			? makeTypedValue(argument_result.type_index.withCategory(arg_type),
+							 argument_result.size_in_bits, std::move(arg_value))
+			: makeTypedValue(arg_type, argument_result.size_in_bits, std::move(arg_value));
+	arg_tv.pointer_depth = argument_result.pointer_depth;
+	arg_tv.storage = argument_result.storage;
+	return arg_tv;
+}
+
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<TypeCategory>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");

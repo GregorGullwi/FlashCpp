@@ -379,18 +379,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (needs_placeholder_return_deduction) {
 					argument_results.push_back(argument_result);
 				}
-				TypeCategory arg_type = argument_result.typeEnum();
-				int arg_size = argument_result.size_in_bits.value;
-				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
-					using T = std::decay_t<decltype(arg)>;
-					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-						return arg;
-					}
-					return 0ULL;
-				},
-											   argument_result.value);
-				arguments.push_back(makeTypedValue(arg_type, SizeInBits{arg_size}, arg_value));
+				arguments.push_back(makeIndirectCallArgument(argument_result));
 			});
 
 			IndirectCallOp op{
@@ -784,7 +773,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				std::vector<TypedValue> arguments;
 				callExprNode.arguments().visit([&](ASTNode argument) {
 					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-					arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+					arguments.push_back(makeIndirectCallArgument(argument_result));
 				});
 
 				IndirectCallOp op{
@@ -839,7 +828,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 								std::vector<TypedValue> arguments;
 								callExprNode.arguments().visit([&](ASTNode argument) {
 									ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-									arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+									arguments.push_back(makeIndirectCallArgument(argument_result));
 								});
 
 								IndirectCallOp op{
@@ -1304,7 +1293,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					std::vector<TypedValue> arguments;
 					callExprNode.arguments().visit([&](ASTNode argument) {
 						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-						arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+						arguments.push_back(makeIndirectCallArgument(argument_result));
 					});
 
 					IndirectCallOp op{
@@ -1971,8 +1960,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 
 		// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
-		bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
-		bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
+		bool returns_struct_by_value = returnsStructByValue(return_type);
+		bool needs_hidden_return_param = needsHiddenReturnParam(return_type, context_->isLLP64());
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
@@ -2137,6 +2126,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				addr_op.operand.value = obj_temp;
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 				this_arg_value = IrValue(this_addr);
+				this_arg_is_pointer_value = true;
+				this_arg_storage = ValueStorage::ContainsAddress;
 			}
 		} else if (object_is_pointer_like) {
 			bool requires_loaded_pointer_value = false;
@@ -2181,11 +2172,23 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);
+			this_arg_is_pointer_value = true;
+			this_arg_storage = ValueStorage::ContainsAddress;
 		}
-		TypedValue this_arg = makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value);
-		this_arg.storage = this_arg_storage;
-		if (this_arg_is_pointer_value) {
-			this_arg.pointer_depth = PointerDepth{1};
+		// 'this' is always passed as a pointer in the ABI, never as a by-value aggregate.
+		if (!object_type.type_index().is_valid()) {
+			throw InternalError("Member function 'this' argument requires canonical class type identity");
+		}
+		TypedValue this_arg = makeMemberThisCallArgument(
+			object_type.type_index().withCategory(object_type.type()),
+			this_arg_value);
+		// Preserve producer intent: AddressOf / loaded pointer temps are
+		// ContainsAddress; local pointer/ref names may still need frame LEA/MOV
+		// via the StringHandle address path when storage stays ContainsData.
+		if (this_arg_is_pointer_value && this_arg_storage == ValueStorage::ContainsAddress) {
+			this_arg.storage = ValueStorage::ContainsAddress;
+		} else if (!this_arg_is_pointer_value) {
+			this_arg.storage = ValueStorage::ContainsData;
 		}
 		call_op.args.push_back(std::move(this_arg));
 

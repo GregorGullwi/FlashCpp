@@ -107,12 +107,7 @@ void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const Func
 	call_op.referenced_value_size_in_bits = call_op.returns_reference
 												? SizeInBits{requireConcreteAliasResolvedTypeSizeBits(return_type, "indirect call reference return")}
 												: call_op.return_size_in_bits;
-	call_op.use_return_slot = needsHiddenReturnParam(
-		call_op.returnType(),
-		signature.return_pointer_depth,
-		signature.returns_reference(),
-		call_op.return_size_in_bits.value,
-		context_->isLLP64());
+	call_op.use_return_slot = needsHiddenReturnParam(return_type, context_->isLLP64());
 }
 
 static TypeIndex getCallReturnTypeIndex(const TypeSpecifierNode& return_type) {
@@ -667,20 +662,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			std::vector<TypedValue> arguments;
 			callExprNode.arguments().visit([&](ASTNode argument) {
 				ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-				// Extract type, size, and value from the expression result
-				TypeCategory arg_type = argumentIrOperands.typeEnum();
-				int arg_size = argumentIrOperands.size_in_bits.value;
-				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
-					using T = std::decay_t<decltype(arg)>;
-					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-						return arg;
-					} else {
-						return 0ULL;
-					}
-				},
-											   argumentIrOperands.value);
-				arguments.push_back(makeTypedValue(arg_type, SizeInBits{arg_size}, arg_value));
+				arguments.push_back(makeIndirectCallArgument(argumentIrOperands));
 			});
 
 			// Add the indirect call instruction
@@ -766,18 +748,25 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					false,
 					false);
 
-				// Add the object (self) as the first argument (this pointer)
-				call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
-
-				// Generate IR for the remaining arguments and collect types for mangling
-				std::vector<TypeSpecifierNode> arg_types;
-
 				// Look up the closure type to get the proper type_index
 				TypeIndex closure_type_index{};
 				auto it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 				if (it != getTypesByNameMap().end()) {
 					closure_type_index = it->second->type_index_;
 				}
+				if (!closure_type_index.is_valid()) {
+					throw InternalError("Recursive lambda call missing canonical closure type identity");
+				}
+
+				// Add the object (self) as the first argument (this pointer)
+				call_op.args.push_back(makeTypedValue(
+					closure_type_index.withCategory(TypeCategory::Struct),
+					SizeInBits{64},
+					IrValue(func_name),
+					PointerDepth{1}));
+
+				// Generate IR for the remaining arguments and collect types for mangling
+				std::vector<TypeSpecifierNode> arg_types;
 
 				callExprNode.arguments().visit([&](ASTNode argument) {
 					// Check if this argument is the same as the callee (recursive lambda pattern)
@@ -793,7 +782,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					if (is_self_arg) {
 						// For the self argument in recursive lambda calls, pass the reference directly
 						// Don't call visitExpressionNode which would dereference it
-						call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
+						call_op.args.push_back(makeTypedValue(
+							closure_type_index.withCategory(TypeCategory::Struct),
+							SizeInBits{64},
+							IrValue(func_name),
+							ReferenceQualifier::LValueReference));
 
 						// Type for mangling is lvalue reference to closure type
 						TypeSpecifierNode self_type(closure_type_index.withCategory(TypeCategory::Struct), 8, Token(), CVQualifier::None, ReferenceQualifier::None);
@@ -1713,14 +1706,24 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					this_type_index = parent_it->second->type_index_;
 				}
 			}
-			call_op.args.push_back(makeTypedValue(this_type_index.withCategory(this_type), SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
+			// The implicit 'this' argument is a pointer, not a by-value aggregate.
+			// It must carry PointerDepth/ContainsAddress ABI metadata so the SysV
+			// classifier passes it in an integer register instead of misclassifying
+			// the pointee struct as a by-value aggregate argument.
+			TypedValue this_arg = makeTypedValue(
+				this_type_index.withCategory(this_type),
+				SizeInBits{POINTER_SIZE_BITS},
+				IrValue(StringTable::getOrInternStringHandle("this")),
+				PointerDepth{1});
+			this_arg.storage = ValueStorage::ContainsAddress;
+			call_op.args.push_back(std::move(this_arg));
 		}
 	}
 
 	// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 	// Exclude references - they return a pointer, not a struct by value
-	bool returns_struct = returnsStructByValue(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference());
-	bool needs_hidden_ret = needsHiddenReturnParam(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference(), effective_return_type.size_in_bits(), context_->isLLP64());
+	bool returns_struct = returnsStructByValue(effective_return_type);
+	bool needs_hidden_ret = needsHiddenReturnParam(effective_return_type, context_->isLLP64());
 	if (needs_hidden_ret) {
 		call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 

@@ -196,16 +196,110 @@ inline int getStructReturnThreshold(bool is_llp64) {
 	return is_llp64 ? WIN64_STRUCT_RETURN_THRESHOLD : SYSV_STRUCT_RETURN_THRESHOLD;
 }
 
+/// Aggregate return ABI disposition for a function or call result.
+/// Dependent means the return type is not yet concrete enough to classify; concrete
+/// function/call IR must never treat Dependent as Direct.
+enum class ReturnAbiDisposition : uint8_t {
+	Direct,
+	Indirect,
+	Dependent,
+};
+
 /// Check if a struct return type requires a hidden return parameter (for RVO)
 /// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger use hidden param
-/// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger use hidden param
+/// SystemV AMD64 ABI: classify from canonical layout; MEMORY-class and >16-byte returns
+/// use a hidden parameter. Incomplete/placeholder returns are Dependent.
 inline bool returnsStructByValue(TypeCategory type, int pointer_depth, bool is_reference) {
 	return is_struct_type(type) && pointer_depth == 0 && !is_reference;
 }
 
-inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
-	return returnsStructByValue(type, pointer_depth, is_reference) &&
-		   (size_in_bits > getStructReturnThreshold(is_llp64));
+inline bool returnsStructByValue(const TypeSpecifierNode& return_type) {
+	return returnsStructByValue(
+		return_type.type(), return_type.pointer_depth(), return_type.is_reference());
+}
+
+inline ReturnAbiDisposition planAggregateReturnDisposition(
+	TypeIndex type_index,
+	TypeCategory type,
+	int pointer_depth,
+	bool is_reference,
+	int size_in_bits,
+	bool is_llp64) {
+	if (!returnsStructByValue(type, pointer_depth, is_reference)) {
+		return ReturnAbiDisposition::Direct;
+	}
+
+	if (is_llp64) {
+		return size_in_bits > WIN64_STRUCT_RETURN_THRESHOLD
+			? ReturnAbiDisposition::Indirect
+			: ReturnAbiDisposition::Direct;
+	}
+
+	// SysV: any aggregate larger than two eightbytes is MEMORY regardless of layout.
+	if (size_in_bits > SYSV_STRUCT_RETURN_THRESHOLD) {
+		return ReturnAbiDisposition::Indirect;
+	}
+
+	if (!type_index.is_valid()) {
+		return ReturnAbiDisposition::Dependent;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+	if (!struct_info || !struct_info->hasCompleteObjectLayout()) {
+		return ReturnAbiDisposition::Dependent;
+	}
+
+	const SysVAbiValueLayout layout = TargetABI::classifySysVValue(
+		type_index, SizeInBits{size_in_bits}, pointer_depth, is_reference);
+	// x87 aggregate returns stay on the legacy direct path until X87/X87UP
+	// return registers are modeled in the backend.
+	if (layout.contains_x87) {
+		return ReturnAbiDisposition::Direct;
+	}
+	return layout.isMemory() ? ReturnAbiDisposition::Indirect : ReturnAbiDisposition::Direct;
+}
+
+inline ReturnAbiDisposition planAggregateReturnDisposition(
+	const TypeSpecifierNode& return_type, bool is_llp64) {
+	return planAggregateReturnDisposition(
+		return_type.type_index(),
+		return_type.type(),
+		return_type.pointer_depth(),
+		return_type.is_reference(),
+		getTypeSpecSizeBits(return_type),
+		is_llp64);
+}
+
+inline bool needsHiddenReturnParam(
+	TypeIndex type_index,
+	TypeCategory type,
+	int pointer_depth,
+	bool is_reference,
+	int size_in_bits,
+	bool is_llp64) {
+	const ReturnAbiDisposition disposition = planAggregateReturnDisposition(
+		type_index, type, pointer_depth, is_reference, size_in_bits, is_llp64);
+	switch (disposition) {
+	case ReturnAbiDisposition::Direct:
+		return false;
+	case ReturnAbiDisposition::Indirect:
+		return true;
+	case ReturnAbiDisposition::Dependent:
+		throw InternalError(
+			"Concrete function/call IR requires a resolved aggregate return ABI plan");
+	}
+	throw InternalError("Unhandled aggregate return ABI disposition");
+}
+
+inline bool needsHiddenReturnParam(const TypeSpecifierNode& return_type, bool is_llp64) {
+	return needsHiddenReturnParam(
+		return_type.type_index(),
+		return_type.type(),
+		return_type.pointer_depth(),
+		return_type.is_reference(),
+		getTypeSpecSizeBits(return_type),
+		is_llp64);
 }
 
 // Resolve a runtime namespace component stack back into a declaration NamespaceHandle.

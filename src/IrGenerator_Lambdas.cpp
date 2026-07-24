@@ -706,10 +706,13 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	func_decl_op.returns_reference = lambda_info.return_ref_qualifier != ReferenceQualifier::None;
 	func_decl_op.returns_rvalue_reference = lambda_info.return_ref_qualifier == ReferenceQualifier::RValueReference;
 
+	// Build TypeSpecifierNode for return type (with proper type_index if struct)
+	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
+
 	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 	// Only non-pointer, non-reference struct returns need this
-	bool returns_struct_by_value = returnsStructByValue(lambda_info.returnType(), 0, lambda_info.returnsReference());
-	bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returnsReference(), lambda_info.return_size, context_->isLLP64());
+	bool returns_struct_by_value = returnsStructByValue(return_type_node);
+	bool needs_hidden_return_param = needsHiddenReturnParam(return_type_node, context_->isLLP64());
 	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 	// Track hidden return parameter flag for current function context
@@ -726,9 +729,6 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 							 lambda_info.closure_type_name, lambda_info.return_size);
 		}
 	}
-
-	// Build TypeSpecifierNode for return type (with proper type_index if struct)
-	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
 
 	// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 	std::vector<TypeSpecifierNode> param_types;
@@ -870,16 +870,14 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	func_decl_op.returns_reference = lambda_info.return_ref_qualifier != ReferenceQualifier::None;
 	func_decl_op.returns_rvalue_reference = lambda_info.return_ref_qualifier == ReferenceQualifier::RValueReference;
 
-		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-	bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returnsReference(), lambda_info.return_size, context_->isLLP64());
+	// Build TypeSpecifierNode for return type (with proper type_index if struct)
+	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
+
+	bool needs_hidden_return_param = needsHiddenReturnParam(return_type_node, context_->isLLP64());
 	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
-		// Track hidden return parameter flag for current function context
+	// Track hidden return parameter flag for current function context
 	current_function_has_hidden_return_param_ = needs_hidden_return_param;
-
-		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, lambda_info.return_ref_qualifier);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 	std::vector<TypeSpecifierNode> param_types;

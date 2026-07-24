@@ -77,6 +77,14 @@ typedef struct PackedDouble {
 } PackedDouble;
 #pragma pack(pop)
 
+typedef struct FloatOnly {
+	float value;
+} FloatOnly;
+
+typedef struct DoubleOnly {
+	double value;
+} DoubleOnly;
+
 int flashcpp_sum_big3(Big3 value);
 int flashcpp_big3_after_4_ints(int i1, int i2, int i3, int i4, Big3 value);
 int flashcpp_big3_after_5_ints(int i1, int i2, int i3, int i4, int i5, Big3 value);
@@ -92,6 +100,11 @@ DoubleInt flashcpp_make_double_int(double a, int b);
 int flashcpp_check_tail_aligned_double(TailAlignedDouble value);
 TailAlignedDouble flashcpp_make_tail_aligned_double(double value);
 int flashcpp_check_packed_double(PackedDouble value);
+PackedDouble flashcpp_make_packed_double(char tag, double value);
+int flashcpp_check_float_only(FloatOnly value);
+FloatOnly flashcpp_make_float_only(float value);
+int flashcpp_check_double_only(DoubleOnly value);
+DoubleOnly flashcpp_make_double_only(double value);
 int flashcpp_int_double_after_8_doubles(
 	double d1, double d2, double d3, double d4, double d5, double d6, double d7, double d8,
 	IntDouble value, int tail);
@@ -242,6 +255,53 @@ int external_check_packed_double(PackedDouble value) {
 
 int external_call_flashcpp_packed_double(PackedDouble value) {
 	return flashcpp_check_packed_double(value);
+}
+
+PackedDouble external_make_packed_double(char tag, double value) {
+	PackedDouble result;
+	result.tag = tag;
+	result.value = value;
+	return result;
+}
+
+PackedDouble external_call_flashcpp_make_packed_double(char tag, double value) {
+	return flashcpp_make_packed_double(tag, value);
+}
+
+int external_check_float_only(FloatOnly value) {
+	return value.value == 1.5f;
+}
+
+int external_call_flashcpp_float_only(FloatOnly value) {
+	return flashcpp_check_float_only(value);
+}
+
+FloatOnly external_make_float_only(float value) {
+	FloatOnly result;
+	result.value = value;
+	return result;
+}
+
+FloatOnly external_call_flashcpp_make_float_only(float value) {
+	return flashcpp_make_float_only(value);
+}
+
+int external_check_double_only(DoubleOnly value) {
+	return value.value == 4.5;
+}
+
+int external_call_flashcpp_double_only(DoubleOnly value) {
+	return flashcpp_check_double_only(value);
+}
+
+DoubleOnly external_make_double_only(double value) {
+	DoubleOnly result;
+	result.value = value;
+	return result;
+}
+
+DoubleOnly external_call_flashcpp_make_double_only(double value) {
+	return flashcpp_make_double_only(value);
 }
 
 int external_int_double_after_8_doubles(
