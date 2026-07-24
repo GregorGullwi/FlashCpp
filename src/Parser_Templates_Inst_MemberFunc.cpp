@@ -1432,17 +1432,24 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 
 	if (preferred_ctor != nullptr) {
 		if (!preferred_ctor->has_template_parameters()) {
-			return preferred_ctor;
-		}
-		if (const ConstructorDeclarationNode* concrete_ctor =
+			// A previously materialized non-template specialization must still
+			// convert from the current arguments. Otherwise a stale specialization
+			// (e.g. Inner(T*,U) kept with dependent T*) can suppress probing the
+			// correct constructor template overload.
+			if (matches_call_arguments(*preferred_ctor)) {
+				return preferred_ctor;
+			}
+			preferred_ctor = nullptr;
+		} else if (const ConstructorDeclarationNode* concrete_ctor =
 				materialize_template_ctor_candidates(preferred_ctor);
 			concrete_ctor != nullptr) {
 			return concrete_ctor;
+		} else {
+			// Instantiation failed or the instantiated ctor doesn't match call arguments.
+			// Return nullptr so callers fall back to arity-based resolution instead of
+			// forwarding an uninstantiated template constructor.
+			return nullptr;
 		}
-		// Instantiation failed or the instantiated ctor doesn't match call arguments.
-		// Return nullptr so callers fall back to arity-based resolution instead of
-		// forwarding an uninstantiated template constructor.
-		return nullptr;
 	}
 
 	return materialize_template_ctor_candidates(nullptr);

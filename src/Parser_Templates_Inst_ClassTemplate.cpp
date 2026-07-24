@@ -8132,10 +8132,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				[&](const StructMemberFunctionDecl& source_member) -> ASTNode {
 					const ConstructorDeclarationNode& original_ctor =
 						source_member.function_declaration.as<ConstructorDeclarationNode>();
-					if (!original_ctor.is_materialized()) {
-						return source_member.function_declaration;
-					}
 
+					// Always materialize a nested constructor stub owned by the
+					// instantiated nested class. Constructor templates in particular
+					// must carry the enclosing class's concrete outer bindings
+					// (e.g. Outer<int>::Inner::Inner(T*, U) with T=int) so later
+					// deduction/overload ranking compares int* vs long*, not a
+					// dependent T* placeholder.
 					auto [substituted_ctor_node, substituted_ctor] =
 						emplace_node_ref<ConstructorDeclarationNode>(
 							qualified_name,
@@ -8144,8 +8147,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_ctor,
 						template_params,
 						template_args_to_use);
-					substituted_ctor.set_template_parameters(
-						original_ctor.template_parameters());
+					if (!original_ctor.is_materialized() || original_ctor.has_template_body_position()) {
+						substituted_ctor.set_template_parameters(
+							original_ctor.template_parameters());
+					}
+					if (original_ctor.has_template_body_position()) {
+						substituted_ctor.set_template_body_position(
+							original_ctor.template_body_position());
+						if (original_ctor.has_template_initializer_list_position()) {
+							substituted_ctor.set_template_initializer_list_position(
+								original_ctor.template_initializer_list_position());
+						}
+					}
 
 					const size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(
@@ -8165,11 +8178,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const PackParamInfo>(
 							ctor_pack_param_info.data(),
 							ctor_pack_param_info.size()));
-					substituted_ctor.set_definition(substituteTemplateParameters(
-						*original_ctor.get_definition(),
-						template_params,
-						template_args_to_use,
-						qualified_name));
+					if (original_ctor.is_materialized()) {
+						substituted_ctor.set_definition(substituteTemplateParameters(
+							*original_ctor.get_definition(),
+							template_params,
+							template_args_to_use,
+							qualified_name));
+					}
 					pack_param_info_.resize(saved_pack_info);
 
 					substituted_ctor.set_is_implicit(original_ctor.is_implicit());
@@ -8188,9 +8203,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_nested_struct_ref.add_constructor(
 						substituted_ctor_node,
 						source_member.access);
+					registerSourceMemberStubIdentity(
+						nested_source_member_identity_maps,
+						source_member.function_declaration,
+						substituted_ctor_node);
 					return substituted_ctor_node;
 				});
+			// Identity for non-constructor members (and any constructor that did
+			// not produce a distinct stub) still maps source→source as a fallback.
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
+				if (findSourceMemberStubByIdentity(
+						nested_source_member_identity_maps,
+						source_member.function_declaration) != nullptr) {
+					continue;
+				}
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,
 					source_member.function_declaration,
