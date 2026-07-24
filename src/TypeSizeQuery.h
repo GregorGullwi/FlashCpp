@@ -38,7 +38,7 @@ inline int queryTemplateArgInfoObjectSizeBits(const TypeInfo::TemplateArgInfo& a
 	}
 	if (arg_info.pointer_depth > 0 ||
 		arg_info.ref_qualifier != ReferenceQualifier::None ||
-		arg_info.function_signature.has_value()) {
+		arg_info.function_signature().has_value()) {
 		return 64;
 	}
 	if (arg_info.is_array) {

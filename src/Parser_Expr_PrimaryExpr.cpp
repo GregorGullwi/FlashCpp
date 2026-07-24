@@ -972,13 +972,13 @@ bool Parser::templateArgMatchesCurrentInstantiationSlot(
 		type_index_match = parsed_arg.type_index == concrete_arg->type_index;
 	}
 
-	if (parsed_arg.function_signature.has_value() != concrete_arg->function_signature.has_value()) {
+	if (parsed_arg.function_signature.has_value() != concrete_arg->function_signature().has_value()) {
 		return false;
 	}
 	if (parsed_arg.function_signature.has_value() &&
 		!FlashCpp::equalFunctionSignatureIdentity(
 			*parsed_arg.function_signature,
-			*concrete_arg->function_signature)) {
+			*concrete_arg->function_signature())) {
 		return false;
 	}
 

@@ -2048,25 +2048,25 @@ inline bool dependentQualifiedTemplateArgMatchesForSignature(
 		return false;
 	}
 
-	if (instantiated_arg.function_signature.has_value() !=
-		out_of_line_arg.function_signature.has_value()) {
+	if (instantiated_arg.function_signature().has_value() !=
+		out_of_line_arg.function_signature().has_value()) {
 		return false;
 	}
-	if (instantiated_arg.function_signature.has_value() &&
+	if (instantiated_arg.function_signature().has_value() &&
 		!FlashCpp::equalFunctionSignatureIdentity(
-			*instantiated_arg.function_signature,
-			*out_of_line_arg.function_signature)) {
+			*instantiated_arg.function_signature(),
+			*out_of_line_arg.function_signature())) {
 		return false;
 	}
 
-	if (instantiated_arg.dependent_expr.has_value() !=
-		out_of_line_arg.dependent_expr.has_value()) {
+	if (instantiated_arg.dependent_expr().has_value() !=
+		out_of_line_arg.dependent_expr().has_value()) {
 		return false;
 	}
-	if (instantiated_arg.dependent_expr.has_value() &&
+	if (instantiated_arg.dependent_expr().has_value() &&
 		!FlashCpp::equalDependentExpressionIdentity(
-			*instantiated_arg.dependent_expr,
-			*out_of_line_arg.dependent_expr)) {
+			*instantiated_arg.dependent_expr(),
+			*out_of_line_arg.dependent_expr())) {
 		return false;
 	}
 

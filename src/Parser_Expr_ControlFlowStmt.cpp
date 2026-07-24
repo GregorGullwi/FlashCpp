@@ -1158,7 +1158,7 @@ ParseResult Parser::parse_lambda_expression() {
 					info.is_array = subst.substituted_type.is_array;
 					info.array_dimensions = subst.substituted_type.array_dimensions;
 					info.dependent_name = subst.substituted_type.dependent_name;
-					info.function_signature = subst.substituted_type.function_signature;
+					info.function_signature() = subst.substituted_type.function_signature;
 				} else {
 					continue;
 				}

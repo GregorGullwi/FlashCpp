@@ -1159,7 +1159,7 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	materialized.cv_qualifier = arg_info.cv_qualifier;
 	materialized.is_array = arg_info.is_array;
 	materialized.array_dimensions.assign(arg_info.array_dimensions.begin(), arg_info.array_dimensions.end());
-	materialized.function_signature = arg_info.function_signature;
+	materialized.function_signature = arg_info.function_signature();
 
 	TypeSpecifierNode substituted_spec(
 		arg_info.type_index.withCategory(arg_info.typeEnum()),
@@ -1183,8 +1183,8 @@ inline std::optional<TypeSpecifierNode> makeTypeSpecifierFromTemplateArgInfo(
 	if (arg_info.member_class_name.isValid()) {
 		substituted_spec.set_member_class_name(arg_info.member_class_name);
 	}
-	if (arg_info.function_signature.has_value()) {
-		substituted_spec.set_function_signature(*arg_info.function_signature);
+	if (arg_info.function_signature().has_value()) {
+		substituted_spec.set_function_signature(*arg_info.function_signature());
 	}
 	return substituted_spec;
 }
@@ -1246,7 +1246,7 @@ inline TemplateTypeArg rebindDependentTemplateTypeArg(
 		dependent_pattern.array_dimension_parameter_names.begin(),
 		dependent_pattern.array_dimension_parameter_names.end());
 	pattern_arg.is_array = dependent_pattern.is_array;
-	pattern_arg.function_signature = dependent_pattern.function_signature;
+	pattern_arg.function_signature = dependent_pattern.function_signature();
 	pattern_arg.dependent_name = dependent_pattern.dependent_name;
 	pattern_arg.is_dependent = dependent_pattern.dependent_name.isValid();
 	return rebindDependentTemplateTypeArg(substituted_arg, pattern_arg);
@@ -1356,7 +1356,7 @@ inline TemplateTypeArg materializeTemplateArg(
 				if (!arg_info.is_value && !substituted_arg.is_value) {
 					concrete_arg = rebindDependentTemplateTypeArg(substituted_arg, arg_info);
 					substituted_dependent_name = true;
-				} else if (arg_info.is_value && arg_info.dependent_expr.has_value() && !substituted_arg.is_value) {
+				} else if (arg_info.is_value && arg_info.dependent_expr().has_value() && !substituted_arg.is_value) {
 					// NTTP arg (e.g. bool) has a TypeTraitExpr stored in dependent_expr but the
 					// matched template parameter was a type (e.g. Head → Empty).  Copying the
 					// type arg verbatim into the value slot is incorrect.  Instead we leave
@@ -1397,7 +1397,7 @@ inline TemplateTypeArg materializeTemplateArg(
 			}
 		}
 	}
-	if (!substituted_dependent_name && arg_info.dependent_expr.has_value() && arg_info.is_value) {
+	if (!substituted_dependent_name && arg_info.dependent_expr().has_value() && arg_info.is_value) {
 		// For dependent NTTP expressions (e.g., sizeof(T)), evaluate with concrete args.
 		// Only attempted when a non-null evaluator callback is provided.
 		if constexpr (!std::is_null_pointer_v<std::decay_t<EvalFn>>) {
@@ -1405,7 +1405,7 @@ inline TemplateTypeArg materializeTemplateArg(
 				std::remove_cvref_t<decltype(*std::begin(template_params))>;
 			if constexpr (std::is_same_v<TemplateParamNodeType, ASTNode>) {
 				if (auto evaluated = eval_dependent_expr(
-						*arg_info.dependent_expr,
+						*arg_info.dependent_expr(),
 						std::span<const ASTNode>(std::data(template_params), std::size(template_params)),
 						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
 					concrete_arg = *evaluated;
@@ -1424,7 +1424,7 @@ inline TemplateTypeArg materializeTemplateArg(
 					}
 				}
 				if (auto evaluated = eval_dependent_expr(
-						*arg_info.dependent_expr,
+						*arg_info.dependent_expr(),
 						std::span<const ASTNode>(ast_template_params.data(), ast_template_params.size()),
 						std::span<const TemplateTypeArg>(std::data(template_args), std::size(template_args)))) {
 					concrete_arg = *evaluated;
