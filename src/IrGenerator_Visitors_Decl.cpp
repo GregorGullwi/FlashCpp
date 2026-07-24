@@ -1193,24 +1193,15 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
 					}
 
-					// Return *this (the return value is the 'this' pointer dereferenced)
-					// Generate: %temp = dereference [Type][Size] %this
-					//           return [Type][Size] %temp
-					TempVar this_deref = var_counter.next();
-					std::vector<IrOperand> deref_operands;
-					deref_operands.emplace_back(this_deref);	 // result variable
-					DereferenceOp deref_op;
-					deref_op.result = this_deref;
-					deref_op.pointer.setType(TypeCategory::Struct);
-					deref_op.pointer.type_index = nativeTypeIndex(TypeCategory::Struct);
-					deref_op.pointer.ir_type = IrType::Struct;
-					deref_op.pointer.size_in_bits = SizeInBits{64};	// Pointer is always 64 bits
-					deref_op.pointer.value = StringTable::getOrInternStringHandle("this");
-
-					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
-
-						// Return the dereferenced value
-					emitReturn(this_deref, currentFunctionReturnTypeIndex(), struct_info->sizeInBits().value, func_decl.identifier_token());
+					// operator= returns 'Type&', so 'return *this' yields a reference
+					// whose value is the 'this' pointer itself. Returning the object by
+					// value (dereferencing into a full-size struct return) would wrongly
+					// trigger an sret copy — and for >128-bit types that copy re-enters
+					// the copy constructor and crashes. Return the pointer directly, the
+					// same way the visitReturnStatementNode reference fast path does.
+					emitReturn(StringTable::getOrInternStringHandle("this"),
+						currentFunctionReturnTypeIndex(), current_function_return_size_,
+						func_decl.identifier_token());
 				}
 			}
 		}

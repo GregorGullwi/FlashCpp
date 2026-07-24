@@ -4097,6 +4097,27 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitIntegerOrAggregateReturnValue(
 	TypeIndex type_index, SizeInBits size_in_bits,
 	int32_t frame_offset, std::optional<X64Register> live_value_register) {
+	if (current_function_returns_reference_ || current_function_returns_pointer_) {
+		// A reference (T& / T&&) or pointer (T*) return is an address, never a
+		// by-value aggregate. It occupies a single 64-bit pointer in RAX, so bypass
+		// SysV/struct classification entirely (classifying the pointee struct — e.g.
+		// a covariant Derived* / Derived& — would otherwise misfire as MEMORY-class
+		// and abort the whole function body).
+		if (live_value_register.has_value()) {
+			if (*live_value_register != X64Register::RAX) {
+				spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+				auto move_to_rax = regAlloc.get_reg_reg_move_op_code(
+					X64Register::RAX, *live_value_register, 8);
+				logAsmEmit("emitIntegerOrAggregateReturnValue", move_to_rax.op_codes.data(), move_to_rax.size_in_bytes);
+				textSectionData.insert(textSectionData.end(), move_to_rax.op_codes.begin(),
+								   move_to_rax.op_codes.begin() + move_to_rax.size_in_bytes);
+			}
+			return;
+		}
+		spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+		emitMovFromFrameBySize(X64Register::RAX, frame_offset, 64);
+		return;
+	}
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		if (isIrStructType(toIrType(type_index.category())) && size_in_bits.value > 0) {
 			const SysVAbiValueLayout layout = TargetABI::classifySysVValue(
@@ -4258,7 +4279,53 @@ bool IrToObjConverter<TWriterClass>::emitLoadAddressLikeArgument(X64Register tar
 }
 
 template <class TWriterClass>
+bool IrToObjConverter<TWriterClass>::isImmediateAggregateValue(const TypedValue& arg) const {
+	// A by-value aggregate whose whole payload was constant-folded to a scalar (e.g.
+	// Source(38) collapsed to its single INTEGER member) has no addressable frame slot.
+	return !std::holds_alternative<StringHandle>(arg.value) &&
+		!std::holds_alternative<TempVar>(arg.value);
+}
+
+template <class TWriterClass>
+void IrToObjConverter<TWriterClass>::materializeImmediateAggregateEightbyteInGpr(
+	const TypedValue& arg, X64Register target_reg) {
+	if (const auto* imm = std::get_if<unsigned long long>(&arg.value)) {
+		if (arg.size_in_bits == SizeInBits{32}) {
+			emitMovImm32(target_reg, static_cast<uint32_t>(*imm));
+		} else {
+			emitMovImm64(target_reg, *imm);
+		}
+		return;
+	}
+	if (const auto* dbl = std::get_if<double>(&arg.value)) {
+		uint64_t bits;
+		if (arg.effectiveIrType() == IrType::Float) {
+			float float_val = static_cast<float>(*dbl);
+			uint32_t float_bits;
+			std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+			bits = float_bits;
+		} else {
+			std::memcpy(&bits, dbl, sizeof(bits));
+		}
+		emitMovImm64(target_reg, bits);
+		return;
+	}
+	throw InternalError("Unsupported immediate value kind for by-value aggregate argument");
+}
+
+template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitAggregateToStack(const TypedValue& arg, int stack_offset) {
+	if (isImmediateAggregateValue(arg)) {
+		// Single-eightbyte constant aggregate: materialize the scalar and store it.
+		if (arg.size_in_bits.value > 64) {
+			throw InternalError("Constant aggregate wider than one eightbyte lacks addressable storage");
+		}
+		X64Register temp_reg = allocateRegisterWithSpilling();
+		materializeImmediateAggregateEightbyteInGpr(arg, temp_reg);
+		emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+		regAlloc.release(temp_reg);
+		return;
+	}
 	int src_offset = resolveTypedValueFrameOffset(arg);
 	const size_t slot_count = static_cast<size_t>((arg.size_in_bits.value + 63) / 64);
 	for (size_t slot_index = 0; slot_index < slot_count; ++slot_index) {
@@ -4274,6 +4341,26 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitSysVAggregateToRegisters(
 	const TypedValue& arg, const SysVAbiValueLayout& layout,
 	size_t& int_reg_index, size_t& sse_reg_index) {
+	if (isImmediateAggregateValue(arg)) {
+		// Constant-folded single-eightbyte aggregate: place the scalar directly in
+		// its ABI register rather than loading from a nonexistent frame slot.
+		if (layout.eightbyte_count != 1) {
+			throw InternalError("Constant aggregate spanning multiple eightbytes lacks addressable storage");
+		}
+		if (layout.eightbytes[0] == SysVRegisterClass::Integer) {
+			X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+			materializeImmediateAggregateEightbyteInGpr(arg, target_reg);
+		} else if (layout.eightbytes[0] == SysVRegisterClass::Sse) {
+			X64Register temp_gpr = allocateRegisterWithSpilling();
+			materializeImmediateAggregateEightbyteInGpr(arg, temp_gpr);
+			X64Register target_reg = getFloatParamReg<TWriterClass>(sse_reg_index++);
+			emitMovqGprToXmm(temp_gpr, target_reg);
+			regAlloc.release(temp_gpr);
+		} else {
+			throw InternalError("Unsupported SysV constant aggregate argument register class");
+		}
+		return;
+	}
 	const int src_offset = resolveTypedValueFrameOffset(arg);
 	for (size_t eightbyte_index = 0; eightbyte_index < layout.eightbyte_count; ++eightbyte_index) {
 		const int slot_size_bits = std::min(64, arg.size_in_bits.value - static_cast<int>(eightbyte_index * 64));
@@ -4839,7 +4926,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Store return value - RAX for integers, XMM0 for floats
 			// For struct returns using return slot, the struct is already in place - no copy needed
 		if (call_op.return_type_index.category() != TypeCategory::Void && !call_op.usesReturnSlot()) {
-			if (isFloatingPointType(call_op.return_type_index.category())) {
+			if (call_op.returns_reference) {
+					// A reference result is a 64-bit pointer in RAX, never a by-value
+					// aggregate. Store it directly; running SysV struct classification
+					// on the referent (e.g. a polymorphic Base) would misclassify it
+					// and emit no store, leaving the result slot uninitialized.
+				emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
+			} else if (isFloatingPointType(call_op.return_type_index.category())) {
 					// Float return value is in XMM0
 				bool is_float = (call_op.return_type_index.category() == TypeCategory::Float);
 				emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
@@ -7661,6 +7754,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	current_function_return_size_in_bits_ = func_decl.return_size_in_bits.value;
 	current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 	current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
+	current_function_returns_pointer_ = func_decl.return_pointer_depth.value > 0;  // Track if function returns a pointer
 	current_function_this_offset_ = 0;
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		current_function_is_noexcept_ = func_decl.is_noexcept;

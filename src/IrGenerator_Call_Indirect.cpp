@@ -2193,7 +2193,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		TypedValue this_arg = makeMemberThisCallArgument(
 			object_type.type_index().withCategory(object_type.type()),
 			this_arg_value);
-		this_arg.storage = this_arg_storage;
+		// Preserve producer intent: AddressOf / loaded pointer temps are
+		// ContainsAddress; local pointer/ref names may still need frame LEA/MOV
+		// via the StringHandle address path when storage stays ContainsData.
+		if (this_arg_is_pointer_value && this_arg_storage == ValueStorage::ContainsAddress) {
+			this_arg.storage = ValueStorage::ContainsAddress;
+		} else if (!this_arg_is_pointer_value) {
+			this_arg.storage = ValueStorage::ContainsData;
+		}
 		call_op.args.push_back(std::move(this_arg));
 
 		// Generate IR for function arguments and add to CallOp

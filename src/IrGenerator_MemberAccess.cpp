@@ -3785,10 +3785,28 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 		call_op.args.push_back(makeMemberThisCallArgument(source.type_index, IrValue(this_ptr)));
 	} else if (std::holds_alternative<TempVar>(source_value)) {
-		// Already a TempVar — for struct types this holds the object address
-		call_op.args.push_back(makeMemberThisCallArgument(
-			source.type_index,
-			IrValue(std::get<TempVar>(source_value))));
+		TempVar object_temp = std::get<TempVar>(source_value);
+		// Only treat the temp as an already-materialized 'this' pointer when the
+		// ExprResult storage says so. Dereference / Load results are ContainsData
+		// object storage and must be AddressOf'd (LEA), not MOV'd as a fake pointer.
+		const bool temp_already_holds_address =
+			std::holds_alternative<TempVar>(source.value) &&
+			std::get<TempVar>(source.value).var_number == object_temp.var_number &&
+			source.storage == ValueStorage::ContainsAddress;
+		if (temp_already_holds_address) {
+			call_op.args.push_back(makeMemberThisCallArgument(
+				source.type_index,
+				IrValue(object_temp)));
+		} else {
+			TempVar this_ptr = emitAddressOf(
+				source.category(),
+				source.size_in_bits.value,
+				IrValue(object_temp),
+				token);
+			call_op.args.push_back(makeMemberThisCallArgument(
+				source.type_index,
+				IrValue(this_ptr)));
+		}
 	} else {
 		throw InternalError("emitConversionOperatorCall: source value is neither StringHandle nor TempVar");
 	}

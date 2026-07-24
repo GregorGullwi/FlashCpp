@@ -445,6 +445,13 @@ private:
 
 	int resolveTypedValueFrameOffset(const TypedValue& arg);
 
+	/// True when a by-value aggregate argument was constant-folded to a scalar and
+	/// therefore has no addressable frame slot to load from.
+	bool isImmediateAggregateValue(const TypedValue& arg) const;
+
+	/// Materialize a constant-folded single-eightbyte aggregate scalar into a GPR.
+	void materializeImmediateAggregateEightbyteInGpr(const TypedValue& arg, X64Register target_reg);
+
 	bool emitLoadAddressLikeArgument(X64Register target_reg, const TypedValue& arg, int32_t address_adjustment = 0);
 
 	/// Copy an aggregate by value to consecutive RSP-relative overflow slots.
@@ -989,6 +996,7 @@ private:
 	int current_function_return_size_in_bits_ = 0;
 	bool current_function_has_hidden_return_param_ = false;	// True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
+	bool current_function_returns_pointer_ = false;  // True if function returns a pointer (any pointer depth)
 	int32_t current_function_this_offset_ = 0;  // Stack home offset of the implicit this parameter in member functions
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
 	bool skip_previous_function_finalization_ = false;  // Set when a function is skipped due to codegen error

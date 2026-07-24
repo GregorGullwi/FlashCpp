@@ -1719,7 +1719,17 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					this_type_index = parent_it->second->type_index_;
 				}
 			}
-			call_op.args.push_back(makeTypedValue(this_type_index.withCategory(this_type), SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
+			// The implicit 'this' argument is a pointer, not a by-value aggregate.
+			// It must carry PointerDepth/ContainsAddress ABI metadata so the SysV
+			// classifier passes it in an integer register instead of misclassifying
+			// the pointee struct as a by-value aggregate argument.
+			TypedValue this_arg = makeTypedValue(
+				this_type_index.withCategory(this_type),
+				SizeInBits{POINTER_SIZE_BITS},
+				IrValue(StringTable::getOrInternStringHandle("this")),
+				PointerDepth{1});
+			this_arg.storage = ValueStorage::ContainsAddress;
+			call_op.args.push_back(std::move(this_arg));
 		}
 	}
 
