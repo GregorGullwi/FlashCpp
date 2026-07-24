@@ -1971,8 +1971,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
 
 		// Detect if calling a member function that returns struct by value (needs hidden return parameter for RVO)
-		bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
-		bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
+		bool returns_struct_by_value = returnsStructByValue(return_type);
+		bool needs_hidden_return_param = needsHiddenReturnParam(return_type, context_->isLLP64());
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",

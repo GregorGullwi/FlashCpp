@@ -52,32 +52,25 @@ produce `CompileError`; missing canonical compiler metadata should produce
 `InternalError`; unsupported evaluator coverage must not be accepted as either a
 constant value or an ill-formed program.
 
-## SysV MEMORY-class aggregate returns need deferred ABI planning
+## SysV single-eightbyte and x87 aggregate return gaps
 
-SysV aggregate argument and direct register-return lowering classifies concrete
-types from canonical layout metadata. Unaligned aggregates and other MEMORY-class
-values are also classified correctly for parameter passing. Return-slot selection,
-however, is still decided while IR is generated from a size threshold. Replacing
-that threshold directly with strict layout classification exposes function
-templates and deferred lambda signatures whose return types are not concrete at
-that phase.
+Concrete SysV aggregate returns now plan `direct` vs `indirect` from canonical
+layout classification during IR generation. Aggregates larger than two
+eightbytes, and ≤16-byte MEMORY-class values such as unaligned packed
+aggregates, select a hidden return slot. Incomplete or placeholder return types
+are `dependent` and must not be treated as direct; concrete function/call IR
+requires a resolved plan and surfaces missing canonical metadata as
+`InternalError`.
 
-The remaining C++20-compliant fix is to represent return ABI disposition as
-`direct`, `indirect`, or `dependent`, defer the last case until substitution has
-produced a complete canonical return type, and require concrete call/function IR
-to carry the resulting ABI plan. Treating an unresolved type as direct, guessing
-from its category or size, or reconstructing it during code generation would hide
-the producer defect. Until that planning boundary exists, a small unaligned
-aggregate return can still use the wrong direct-return convention on SysV.
+Remaining gaps:
 
-The first shared-classifier lowering slice is deliberately limited to concrete
-two-eightbyte aggregates (9–16 bytes). Single-eightbyte aggregate lowering still
-uses the legacy scalar path, which is correct for INTEGER-class values but does
-not yet select an SSE register for aggregates containing only `float`/`double`.
-Enabling strict classification for that path currently exposes several IR
-producers that omit canonical type identity for small class values. Those
-producers must be closed before the scalar path is replaced; accepting an absent
-`TypeIndex` as INTEGER would only preserve the same non-standard guess.
+Single-eightbyte aggregate lowering still uses the legacy scalar path, which is
+correct for INTEGER-class values but does not yet select an SSE register for
+aggregates containing only `float`/`double`. Enabling strict classification for
+that path currently exposes several IR producers that omit canonical type
+identity for small class values. Those producers must be closed before the
+scalar path is replaced; accepting an absent `TypeIndex` as INTEGER would only
+preserve the same non-standard guess.
 
 Aggregate returns containing `long double` also remain on the legacy path. Their
 SysV result classification uses the X87/X87UP classes, which the current backend

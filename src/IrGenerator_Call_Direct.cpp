@@ -107,12 +107,7 @@ void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const Func
 	call_op.referenced_value_size_in_bits = call_op.returns_reference
 												? SizeInBits{requireConcreteAliasResolvedTypeSizeBits(return_type, "indirect call reference return")}
 												: call_op.return_size_in_bits;
-	call_op.use_return_slot = needsHiddenReturnParam(
-		call_op.returnType(),
-		signature.return_pointer_depth,
-		signature.returns_reference(),
-		call_op.return_size_in_bits.value,
-		context_->isLLP64());
+	call_op.use_return_slot = needsHiddenReturnParam(return_type, context_->isLLP64());
 }
 
 static TypeIndex getCallReturnTypeIndex(const TypeSpecifierNode& return_type) {
@@ -1719,8 +1714,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
 	// Exclude references - they return a pointer, not a struct by value
-	bool returns_struct = returnsStructByValue(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference());
-	bool needs_hidden_ret = needsHiddenReturnParam(effective_return_type.type(), effective_return_type.pointer_depth(), effective_return_type.is_reference(), effective_return_type.size_in_bits(), context_->isLLP64());
+	bool returns_struct = returnsStructByValue(effective_return_type);
+	bool needs_hidden_ret = needsHiddenReturnParam(effective_return_type, context_->isLLP64());
 	if (needs_hidden_ret) {
 		call_op.return_slot = ret_var;  // The result temp var serves as the return slot
 

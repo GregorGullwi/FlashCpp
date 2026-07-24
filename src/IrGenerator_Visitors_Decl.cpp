@@ -336,8 +336,8 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 	// Detect if function returns struct by value (needs hidden return parameter for RVO/NRVO)
 	// Only non-pointer, non-reference struct returns need this (pointer/reference returns are in RAX like regular pointers)
-	bool returns_struct_by_value = returnsStructByValue(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference());
-	bool needs_hidden_return_param = needsHiddenReturnParam(ret_type.type(), ret_type.pointer_depth(), ret_type.is_reference(), actual_return_size, context_->isLLP64());
+	bool returns_struct_by_value = returnsStructByValue(ret_type);
+	bool needs_hidden_return_param = needsHiddenReturnParam(ret_type, context_->isLLP64());
 	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 	// Track return type index and hidden parameter flag for current function context

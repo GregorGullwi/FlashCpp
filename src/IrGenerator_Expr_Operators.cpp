@@ -2554,7 +2554,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				false,
 				false);
 
-			bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64());
+			bool needs_hidden_return = needsHiddenReturnParam(return_type, context_->isLLP64());
 			if (needs_hidden_return) {
 				call_op.return_slot = result_var;
 			}
@@ -2748,8 +2748,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			int actual_return_size = call_op.return_size_in_bits.value;
 
 			// Detect if returning struct by value (needs hidden return parameter for RVO)
-			bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
-			bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), actual_return_size, context_->isLLP64());
+			bool returns_struct_by_value = returnsStructByValue(resolved_return_type_spec);
+			bool needs_hidden_return_param = needsHiddenReturnParam(
+				resolved_return_type_spec, context_->isLLP64());
 
 			if (needs_hidden_return_param) {
 				call_op.return_slot = result_var;
@@ -2934,8 +2935,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						func_decl.is_variadic());
 
 					// Determine if return slot is needed (same logic as generateFunctionCallIr)
-					bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
-					bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size.value, context_->isLLP64());
+					bool returns_struct_by_value = returnsStructByValue(return_type_node);
+					bool needs_hidden_return_param = needsHiddenReturnParam(
+						return_type_node, context_->isLLP64());
 
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",

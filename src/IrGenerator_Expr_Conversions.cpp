@@ -1510,9 +1510,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 				TempVar ret_var = var_counter.next();
 				CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
-				if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(),
-										   return_type.is_reference(), call_op.return_size_in_bits.value,
-										   context_->isLLP64())) {
+				if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
 					call_op.return_slot = ret_var;
 				}
 
@@ -1953,8 +1951,8 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
-	// Small structs (≤ ABI threshold) return in registers and need no return_slot.
-	if (needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64())) {
+	// SysV MEMORY-class and oversized aggregates use a return_slot; register-class returns do not.
+	if (needsHiddenReturnParam(return_type, context_->isLLP64())) {
 		call_op.return_slot = ret_var;
 	}
 
