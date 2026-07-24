@@ -379,18 +379,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (needs_placeholder_return_deduction) {
 					argument_results.push_back(argument_result);
 				}
-				TypeCategory arg_type = argument_result.typeEnum();
-				int arg_size = argument_result.size_in_bits.value;
-				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
-					using T = std::decay_t<decltype(arg)>;
-					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-						return arg;
-					}
-					return 0ULL;
-				},
-											   argument_result.value);
-				arguments.push_back(makeTypedValue(arg_type, SizeInBits{arg_size}, arg_value));
+				arguments.push_back(makeIndirectCallArgument(argument_result));
 			});
 
 			IndirectCallOp op{
@@ -784,7 +773,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				std::vector<TypedValue> arguments;
 				callExprNode.arguments().visit([&](ASTNode argument) {
 					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-					arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+					arguments.push_back(makeIndirectCallArgument(argument_result));
 				});
 
 				IndirectCallOp op{
@@ -839,7 +828,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 								std::vector<TypedValue> arguments;
 								callExprNode.arguments().visit([&](ASTNode argument) {
 									ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-									arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+									arguments.push_back(makeIndirectCallArgument(argument_result));
 								});
 
 								IndirectCallOp op{
@@ -1304,7 +1293,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					std::vector<TypedValue> arguments;
 					callExprNode.arguments().visit([&](ASTNode argument) {
 						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-						arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+						arguments.push_back(makeIndirectCallArgument(argument_result));
 					});
 
 					IndirectCallOp op{

@@ -662,20 +662,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			std::vector<TypedValue> arguments;
 			callExprNode.arguments().visit([&](ASTNode argument) {
 				ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-				// Extract type, size, and value from the expression result
-				TypeCategory arg_type = argumentIrOperands.typeEnum();
-				int arg_size = argumentIrOperands.size_in_bits.value;
-				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
-					using T = std::decay_t<decltype(arg)>;
-					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
-						return arg;
-					} else {
-						return 0ULL;
-					}
-				},
-											   argumentIrOperands.value);
-				arguments.push_back(makeTypedValue(arg_type, SizeInBits{arg_size}, arg_value));
+				arguments.push_back(makeIndirectCallArgument(argumentIrOperands));
 			});
 
 			// Add the indirect call instruction

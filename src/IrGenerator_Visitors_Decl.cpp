@@ -686,16 +686,29 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 								true,
 								false);
 
-							TypedValue lhs_arg = makeMemberThisCallArgument(
+							// MemberAccess materializes the member object in a temp.
+							// 'this' for the nested <=> must be the address of that object.
+							TempVar lhs_addr = emitAddressOf(
+								member.type_index.category(),
+								member_bits,
+								IrValue(lhs_val),
+								func_decl.identifier_token());
+							call_op.args.push_back(makeMemberThisCallArgument(
 								member.type_index.withCategory(TypeCategory::Struct),
-								IrValue(lhs_val));
-							call_op.args.push_back(std::move(lhs_arg));
+								IrValue(lhs_addr)));
 
-							call_op.args.push_back(makeTypedValue(
+							TempVar rhs_addr = emitAddressOf(
+								member.type_index.category(),
+								member_bits,
+								IrValue(rhs_val),
+								func_decl.identifier_token());
+							TypedValue rhs_arg = makeTypedValue(
 								member.type_index.withCategory(TypeCategory::Struct),
 								SizeInBits{POINTER_SIZE_BITS},
-								IrValue(rhs_val),
-								ReferenceQualifier::LValueReference));
+								IrValue(rhs_addr),
+								ReferenceQualifier::LValueReference);
+							rhs_arg.storage = ValueStorage::ContainsAddress;
+							call_op.args.push_back(std::move(rhs_arg));
 
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 
@@ -1007,16 +1020,27 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							true,
 							false);
 
-						TypedValue lhs_arg = makeMemberThisCallArgument(
+						TempVar lhs_addr = emitAddressOf(
+							member.type_index.category(),
+							member_bits,
+							IrValue(lhs_val),
+							func_decl.identifier_token());
+						call_op.args.push_back(makeMemberThisCallArgument(
 							member.type_index.withCategory(TypeCategory::Struct),
-							IrValue(lhs_val));
-						call_op.args.push_back(std::move(lhs_arg));
+							IrValue(lhs_addr)));
 
-						call_op.args.push_back(makeTypedValue(
+						TempVar rhs_addr = emitAddressOf(
+							member.type_index.category(),
+							member_bits,
+							IrValue(rhs_val),
+							func_decl.identifier_token());
+						TypedValue rhs_arg = makeTypedValue(
 							member.type_index.withCategory(TypeCategory::Struct),
 							SizeInBits{POINTER_SIZE_BITS},
-							IrValue(rhs_val),
-							ReferenceQualifier::LValueReference));
+							IrValue(rhs_addr),
+							ReferenceQualifier::LValueReference);
+						rhs_arg.storage = ValueStorage::ContainsAddress;
+						call_op.args.push_back(std::move(rhs_arg));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 

@@ -2976,19 +2976,34 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						FLASH_LOG(Codegen, Debug, "No return slot for spaceship operator (small struct return in RAX)");
 					}
 
-					// Add the LHS object as the first argument (this pointer)
-					// For member functions, the this pointer is passed by name or temp var
-					TypedValue lhs_arg;
-					lhs_arg.setType(lhsCat);
-					lhs_arg.ir_type = toIrType(lhsCat);
-					lhs_arg.size_in_bits = SizeInBits{lhsSize};
-					// Convert lhs_value (which can be string_view or TempVar) to IrValue
+					// Add the LHS object as the first argument (this pointer).
+					// Member 'this' is always a pointer — never a by-value aggregate.
+					IrValue this_ptr_value;
 					if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {
-						lhs_arg.value = IrValue(*string);
+						this_ptr_value = IrValue(emitAddressOf(
+							lhsCat,
+							lhsSize,
+							IrValue(*string),
+							binaryOperatorNode.get_token()));
 					} else {
-						lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
+						TempVar lhs_temp = std::get<TempVar>(lhs_value);
+						const bool temp_already_holds_address =
+							std::holds_alternative<TempVar>(lhsExprResult.value) &&
+							std::get<TempVar>(lhsExprResult.value).var_number == lhs_temp.var_number &&
+							lhsExprResult.storage == ValueStorage::ContainsAddress;
+						if (temp_already_holds_address) {
+							this_ptr_value = IrValue(lhs_temp);
+						} else {
+							this_ptr_value = IrValue(emitAddressOf(
+								lhsCat,
+								lhsSize,
+								IrValue(lhs_temp),
+								binaryOperatorNode.get_token()));
+						}
 					}
-					call_op.args.push_back(lhs_arg);
+					call_op.args.push_back(makeMemberThisCallArgument(
+						spaceship_lhs_type_index.withCategory(lhsCat),
+						this_ptr_value));
 
 					// Add the RHS as the second argument
 					// Check if parameter expects a reference
@@ -2998,8 +3013,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						const TypeSpecifierNode& param_type = param_types[0];
 						if (param_type.is_rvalue_reference()) {
 							rhs_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+							rhs_arg.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 						} else if (param_type.is_reference()) {
 							rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+							rhs_arg.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
+						}
+						if (param_type.type_index().is_valid()) {
+							rhs_arg.type_index = param_type.type_index().withCategory(param_type.type());
+						} else if (rhsExprResult.type_index.is_valid()) {
+							rhs_arg.type_index = rhsExprResult.type_index.withCategory(rhsCat);
 						}
 					}
 					call_op.args.push_back(rhs_arg);

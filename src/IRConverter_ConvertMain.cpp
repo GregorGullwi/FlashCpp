@@ -15231,7 +15231,13 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
 	if (op.returnType() != TypeCategory::Void && !op.usesReturnSlot()) {
-		if (isFloatingPointType(op.returnType())) {
+		if (op.returns_reference || op.return_pointer_depth.is_pointer()) {
+				// A reference (T& / T&&) or pointer (T*) result is a 64-bit address in
+				// RAX, never a by-value aggregate. Store it directly; running SysV struct
+				// classification on the referent (e.g. a MEMORY-class Big) would abort the
+				// whole function body instead of storing the pointer.
+			emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
+		} else if (isFloatingPointType(op.returnType())) {
 			bool is_float = (op.returnType() == TypeCategory::Float);
 			emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 		} else {
