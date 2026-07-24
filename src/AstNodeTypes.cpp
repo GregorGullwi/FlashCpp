@@ -1506,14 +1506,25 @@ void StructTypeInfo::addConstructor(ASTNode constructor_decl, AccessSpecifier ac
 	propagateAstProperties(ctor);
 }
 
-StructTypeInfo& TypeInfo::createStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
-										   NamespaceHandle ns) {
-	if (struct_info_ != nullptr) {
-		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(type_index_);
-	}
+StructTypeInfo& TypeInfo::emplaceStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+											NamespaceHandle ns) {
 	StructTypeInfo& info = gStructTypeInfos.emplace_back(n, default_acc, union_type, ns);
 	info.own_type_index_ = type_index_;
+	return info;
+}
+
+void TypeInfo::attachStructInfo(StructTypeInfo& info) {
+	if (struct_info_ != nullptr && struct_info_ != &info) {
+		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(type_index_);
+	}
+	info.own_type_index_ = type_index_;
 	struct_info_ = &info;
+}
+
+StructTypeInfo& TypeInfo::createStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+										   NamespaceHandle ns) {
+	StructTypeInfo& info = emplaceStructInfo(n, default_acc, union_type, ns);
+	attachStructInfo(info);
 	return info;
 }
 

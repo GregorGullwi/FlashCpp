@@ -2276,6 +2276,14 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			return make_constructor_call(elements);
 		}
 
+		// No user-declared constructors: empty braces are value/aggregate initialization
+		// (C++20 [dcl.init.general]/[dcl.init.aggr]). Do not require an already-
+		// synthesized implicit default constructor entry — e.g. trailing variables
+		// after `struct S { } s{}` are parsed before implicit special members exist.
+		if (elements.empty()) {
+			return make_constructor_call(elements);
+		}
+
 		// Check if there's a constructor that matches the argument count and types
 		bool found_matching_ctor = false;
 		auto ctor_candidates = struct_info.getConstructorsByParameterCount(elements.size(), false);

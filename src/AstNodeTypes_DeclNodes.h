@@ -1334,16 +1334,23 @@ struct TypeInfo {
 	const StructTypeInfo* getStructInfo() const { return struct_info_; }
 	StructTypeInfo* getStructInfo() { return struct_info_; }
 
-	// Pre-allocate StructTypeInfo in gStructTypeInfos and attach it. Prefer this when
-	// the payload is mutated over a long parse/instantiation — the returned reference is
-	// stable for the process lifetime (append-only arena).
+	// Pre-allocate StructTypeInfo in gStructTypeInfos. Does NOT publish via
+	// struct_info_ — call attachStructInfo() once the payload is complete so
+	// incomplete types stay invisible to lookup (e.g. member typedefs during
+	// template instantiation).
+	StructTypeInfo& emplaceStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+									  NamespaceHandle ns);
+	// Publish an arena-allocated StructTypeInfo on this TypeInfo.
+	void attachStructInfo(StructTypeInfo& info);
+	// emplaceStructInfo + attachStructInfo — use when the payload is immediately
+	// ready for lookup (or will be mutated while already published).
 	StructTypeInfo& createStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
 									 NamespaceHandle ns);
 	// Move a stack-built or copied StructTypeInfo into the arena and attach it.
 	void setStructInfo(StructTypeInfo info);
-	// Re-bind owning TypeIndex onto constructors (safe to call after createStructInfo once
-	// all constructors have been added; redundant with addConstructor when own_type_index_
-	// was already set at create time).
+	// Re-bind owning TypeIndex onto constructors (safe to call after attach once
+	// all constructors have been added; redundant with addConstructor when
+	// own_type_index_ was already set at emplace time).
 	void bindStructInfoOwnership();
 	void clearStructInfo() { struct_info_ = nullptr; }
 

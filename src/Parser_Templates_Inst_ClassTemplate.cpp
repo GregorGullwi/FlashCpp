@@ -1775,7 +1775,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				class_template_pack_registry_[instantiated_name] = class_template_pack_stack_.back();
 			}
 
-			StructTypeInfo* struct_info = &struct_type_info.createStructInfo(instantiated_name, pattern_struct.default_access(), pattern_struct.is_union(), spec_decl_ns);
+			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, pattern_struct.default_access(), pattern_struct.is_union(), spec_decl_ns);
 
 			// Handle base classes from the pattern
 			// Base classes need to be instantiated with concrete template arguments
@@ -3144,10 +3144,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Parser, Error, struct_info->getFinalizationError());
 				return std::nullopt;
 			}
-			struct_type_info.bindStructInfoOwnership();
-			if (struct_type_info.getStructInfo()) {
-				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
-			}
 
 			// Reuse the matcher-produced, specialization-parameter-aligned bindings
 			// across member copying, aliases, and semantic substitution.
@@ -3409,6 +3405,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name,
 						  " -> type=", static_cast<int>(substituted_type),
 						  ", type_index=", substituted_type_index);
+			}
+
+			// Publish StructTypeInfo only after aliases are registered so mid-
+			// instantiation lookup does not see an incomplete payload.
+			struct_type_info.attachStructInfo(*struct_info);
+			struct_type_info.bindStructInfoOwnership();
+			if (struct_type_info.getStructInfo()) {
+				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Create an AST node for the instantiated struct so member functions can be code-generated
@@ -5703,7 +5707,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Create StructTypeInfo in the cold arena
-	StructTypeInfo* struct_info = &struct_type_info.createStructInfo(instantiated_name, AccessSpecifier::Public, class_decl.is_union(), decl_ns);
+	StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, AccessSpecifier::Public, class_decl.is_union(), decl_ns);
 
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments
@@ -9279,7 +9283,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	}
 
-	// StructTypeInfo already lives in the arena via createStructInfo
+	// Publish arena payload now that members/aliases/ctors are complete.
+	struct_type_info.attachStructInfo(*struct_info);
 	struct_type_info.bindStructInfoOwnership();
 
 	// Update fallback_size_bits_ from the finalized struct's total size

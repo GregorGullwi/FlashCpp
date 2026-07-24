@@ -5154,7 +5154,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		template_args_info);
 	struct_type_info.setInstantiationContext({}, template_args_info, nullptr);
 
-	StructTypeInfo* struct_info = &struct_type_info.createStructInfo(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), decl_ns);
+	StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), decl_ns);
 
 	// Copy members from the specialization
 	for (const auto& member_decl : spec_struct.members()) {
@@ -5359,6 +5359,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	struct_info->needs_default_constructor = !has_constructor;
 	FLASH_LOG(Templates, Debug, "Full spec has constructor: ", has_constructor ? "yes" : "no, needs default");
 
+	struct_type_info.attachStructInfo(*struct_info);
 	struct_type_info.bindStructInfoOwnership();
 	if (struct_type_info.getStructInfo()) {
 		struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;

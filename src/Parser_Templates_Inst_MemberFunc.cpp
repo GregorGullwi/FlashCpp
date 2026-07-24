@@ -1385,9 +1385,17 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
 				return;
 			}
+			const ConstructorDeclarationNode& concrete_ctor_ref =
+				instantiated->as<ConstructorDeclarationNode>();
+			// Only publish specializations that actually match the call. Failed
+			// probes must not enter the overload set (they would poison arity
+			// fallback and displace later, better specializations).
+			if (!matches_call_arguments(concrete_ctor_ref)) {
+				return;
+			}
 			const ConstructorDeclarationNode* concrete_ctor =
 				attachInstantiatedCtor(template_ctor, *instantiated);
-			if (concrete_ctor && matches_call_arguments(*concrete_ctor)) {
+			if (concrete_ctor != nullptr) {
 				concrete_matches.push_back(concrete_ctor);
 			}
 		};

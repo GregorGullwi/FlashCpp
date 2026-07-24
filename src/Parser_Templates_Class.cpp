@@ -1428,7 +1428,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			struct_type_info.setInstantiationContext({}, template_args_info, nullptr);
 
 			// Create struct info in the cold arena - required before parsing static members
-			StructTypeInfo* struct_info = &struct_type_info.createStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
+			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -2485,6 +2485,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 
 			// struct_type_info and struct_info were already created above in the cold arena
+			struct_type_info.attachStructInfo(*struct_info);
 			struct_type_info.bindStructInfoOwnership();
 			if (struct_type_info.getStructInfo()) {
 				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
@@ -2894,7 +2895,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			struct_type_info.setInstantiationContext({}, {}, nullptr);
 
 			// Create StructTypeInfo for this specialization in the cold arena
-			StructTypeInfo* struct_info = &struct_type_info.createStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
+			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -4070,6 +4071,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			}
 
 			// StructTypeInfo already lives in the arena via createStructInfo
+			struct_type_info.attachStructInfo(*struct_info);
 			struct_type_info.bindStructInfoOwnership();
 			if (struct_type_info.getStructInfo()) {
 				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
