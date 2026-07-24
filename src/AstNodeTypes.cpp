@@ -248,6 +248,9 @@ std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 ChunkedVector<TypeInfo::DependentQualifiedNameRecord, 4> gDependentQualifiedNameRecords;
 ChunkedVector<InlineVector<TypeInfo::TemplateArgInfo, 4>, 8> gTypeInfoTemplateArgLists;
 ChunkedVector<TypeInfo::InstantiationContext, 8> gInstantiationContexts;
+// StructTypeInfo is large; keep chunks small to avoid huge reserved slabs.
+ChunkedVector<StructTypeInfo, 4> gStructTypeInfos;
+ChunkedVector<EnumTypeInfo, 16> gEnumTypeInfos;
 
 uint32_t storeDependentQualifiedNameRecord(TypeInfo::DependentQualifiedNameRecord record) {
 	const uint32_t index = static_cast<uint32_t>(gDependentQualifiedNameRecords.size());
@@ -329,6 +332,14 @@ TypeInfo::InstantiationContext* getInstantiationContextMut(uint32_t index) {
 
 size_t getInstantiationContextCount() {
 	return gInstantiationContexts.size();
+}
+
+size_t getStructTypeInfoCount() {
+	return gStructTypeInfos.size();
+}
+
+size_t getEnumTypeInfoCount() {
+	return gEnumTypeInfos.size();
 }
 
 const TypeInfo::InstantiationContext* TypeInfo::instantiationContext() const {
@@ -482,7 +493,7 @@ TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNod
 		tryGetTypeInfo(type_spec.type_index()));
 	if (type_spec.category() == TypeCategory::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
 		if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().index()].getEnumInfo()) {
-			info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+			info.setEnumInfo(EnumTypeInfo(*enum_info));
 		}
 	}
 	emplaceTypeNameTracked("register_type_alias", info.name(), &info);
@@ -618,7 +629,7 @@ void update_type_alias_copy(
 	alias_type_info.registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
 	alias_type_info.fallback_size_bits_ = size_bits;
 	alias_type_info.is_type_alias_ = true;
-	alias_type_info.setEnumInfo(nullptr);
+	alias_type_info.clearEnumInfo();
 	const TypeInfo* enum_source_type_info = semantic_source_type_info;
 	if (enum_source_type_info == nullptr &&
 		alias_type_spec != nullptr &&
@@ -627,7 +638,7 @@ void update_type_alias_copy(
 	}
 	if (enum_source_type_info != nullptr) {
 		if (const EnumTypeInfo* enum_info = enum_source_type_info->getEnumInfo()) {
-			alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+			alias_type_info.setEnumInfo(EnumTypeInfo(*enum_info));
 		}
 	}
 	resetTypeAliasSemanticMetadata(alias_type_info);
@@ -787,6 +798,18 @@ void printTypeTableStats() {
 			  ", context_bytes=", sizeof(TypeInfo::InstantiationContext),
 			  ", estimated cold storage=",
 			  getInstantiationContextCount() * sizeof(TypeInfo::InstantiationContext),
+			  " bytes");
+	FLASH_LOG(General, Info, "  gStructTypeInfos: entries=",
+			  getStructTypeInfoCount(),
+			  ", struct_bytes=", sizeof(StructTypeInfo),
+			  ", estimated cold storage=",
+			  getStructTypeInfoCount() * sizeof(StructTypeInfo),
+			  " bytes");
+	FLASH_LOG(General, Info, "  gEnumTypeInfos: entries=",
+			  getEnumTypeInfoCount(),
+			  ", enum_bytes=", sizeof(EnumTypeInfo),
+			  ", estimated cold storage=",
+			  getEnumTypeInfoCount() * sizeof(EnumTypeInfo),
 			  " bytes");
 
 	// Break down entries by category
@@ -1483,22 +1506,58 @@ void StructTypeInfo::addConstructor(ASTNode constructor_decl, AccessSpecifier ac
 	propagateAstProperties(ctor);
 }
 
-void TypeInfo::setStructInfo(std::unique_ptr<StructTypeInfo> info) {
-	if (struct_info_) {
+StructTypeInfo& TypeInfo::createStructInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+										   NamespaceHandle ns) {
+	if (struct_info_ != nullptr) {
 		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(type_index_);
 	}
-	if (info) {
-		info->own_type_index_ = type_index_;
-		for (auto& member_func : info->member_functions) {
-			if (member_func.is_constructor) {
-				if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
-					throw InternalError("Constructor member metadata does not contain a ConstructorDeclarationNode");
-				}
-				member_func.function_decl.as<ConstructorDeclarationNode>().set_owning_type_index(type_index_);
+	StructTypeInfo& info = gStructTypeInfos.emplace_back(n, default_acc, union_type, ns);
+	info.own_type_index_ = type_index_;
+	struct_info_ = &info;
+	return info;
+}
+
+void TypeInfo::bindStructInfoOwnership() {
+	if (struct_info_ == nullptr) {
+		return;
+	}
+	struct_info_->own_type_index_ = type_index_;
+	for (auto& member_func : struct_info_->member_functions) {
+		if (member_func.is_constructor) {
+			if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				throw InternalError("Constructor member metadata does not contain a ConstructorDeclarationNode");
 			}
+			member_func.function_decl.as<ConstructorDeclarationNode>().set_owning_type_index(type_index_);
 		}
 	}
-	struct_info_ = std::move(info);
+}
+
+void TypeInfo::setStructInfo(StructTypeInfo info) {
+	if (struct_info_ != nullptr) {
+		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(type_index_);
+	}
+	info.own_type_index_ = type_index_;
+	for (auto& member_func : info.member_functions) {
+		if (member_func.is_constructor) {
+			if (!member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				throw InternalError("Constructor member metadata does not contain a ConstructorDeclarationNode");
+			}
+			member_func.function_decl.as<ConstructorDeclarationNode>().set_owning_type_index(type_index_);
+		}
+	}
+	struct_info_ = &gStructTypeInfos.push_back(std::move(info));
+}
+
+EnumTypeInfo& TypeInfo::createEnumInfo(StringHandle n, bool scoped) {
+	EnumTypeInfo& info = gEnumTypeInfos.emplace_back(n, scoped);
+	fallback_size_bits_ = info.underlying_size.value;
+	enum_info_ = &info;
+	return info;
+}
+
+void TypeInfo::setEnumInfo(EnumTypeInfo info) {
+	fallback_size_bits_ = info.underlying_size.value;
+	enum_info_ = &gEnumTypeInfos.push_back(std::move(info));
 }
 
 void TypeInfo::setInstantiationContext(InlineVector<StringHandle, 4> param_names,

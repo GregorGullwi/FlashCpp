@@ -1651,8 +1651,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 	TypeInfo& nested_type_info = add_struct_type(lazy_info->qualified_name, decl_ns);
 	TypeIndex type_index = nested_type_info.type_index_;
 
-	// Create StructTypeInfo for the nested type
-	auto nested_struct_info = std::make_unique<StructTypeInfo>(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
+	// Create StructTypeInfo for the nested type in the cold arena
+	StructTypeInfo* nested_struct_info = &nested_type_info.createStructInfo(lazy_info->qualified_name, nested_struct.default_access(), nested_struct.is_union(), decl_ns);
 
 	// Process members with template parameter substitution
 	const InlineVector<TemplateParameterNode, 4>& parent_template_params_inline =
@@ -1722,8 +1722,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 											 : nullptr,
 										 shouldCommitTemplateInstantiationArtifacts());
 
-	// Set the struct info on the type
-	nested_type_info.struct_info_ = std::move(nested_struct_info);
+	// StructTypeInfo already lives in the arena via createStructInfo
+	nested_type_info.bindStructInfoOwnership();
 
 	// Mark as instantiated (removes from lazy registry)
 	registry.markInstantiated(parent_class_name, nested_type_name);

@@ -1427,8 +1427,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				template_args_info);
 			struct_type_info.setInstantiationContext({}, template_args_info, nullptr);
 
-			// Create struct info for tracking members - required before parsing static members
-			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
+			// Create struct info in the cold arena - required before parsing static members
+			StructTypeInfo* struct_info = &struct_type_info.createStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -1566,7 +1566,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					}
 
 					// Validate and add the base class
-					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, base_name_token);
+					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info, base_access, is_virtual_base, base_name_token);
 					if (result.is_error()) {
 						return result;
 					}
@@ -1605,7 +1605,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// RAII guard ensures the stack entry is always popped, even on early returns.
 			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
 													 &struct_ref,
-													 struct_info.get(),
+													 struct_info,
 													 gSymbolTable.get_current_namespace_handle(),
 													 {}});
 			auto pop_struct_ctx_guard = [this](void*) {
@@ -1659,7 +1659,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							return enum_result;
 						}
 						if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
-							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, struct_info.get(), enum_node->as<EnumDeclarationNode>(), current_access);
+							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, struct_info, enum_node->as<EnumDeclarationNode>(), current_access);
 						}
 						continue;
 					} else if (peek() == "using"_tok) {
@@ -1685,7 +1685,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 						if (auto result_node = template_result.node()) {
 							if (result_node->is<FriendDeclarationNode>()) {
-								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
+								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info);
 							}
 						}
 						continue;
@@ -1696,7 +1696,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						auto static_result = parse_static_member_block(
 							instantiated_name,
 							struct_ref,
-							struct_info.get(),
+							struct_info,
 							current_access,
 							currentTemplateParamNames(),
 							/*use_struct_type_info=*/false,
@@ -1755,7 +1755,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register friend in AST and StructTypeInfo
 						if (auto friend_node = friend_result.node()) {
 							struct_ref.add_friend(*friend_node);
-							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
+							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info);
 						}
 						continue;
 					}
@@ -2484,15 +2484,10 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				return ParseResult::error("Expected ';' after class declaration", peek_info());
 			}
 
-			// struct_type_info and struct_info were already created above
-			// Attach struct_info to type info if not already done
-			if (!struct_type_info.getStructInfo()) {
-				// Attach here (after member parsing) so static member helpers above can use
-				// the original struct_info pointer without hitting moved-from state.
-				struct_type_info.setStructInfo(std::move(struct_info));
-				if (struct_type_info.getStructInfo()) {
-					struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
-				}
+			// struct_type_info and struct_info were already created above in the cold arena
+			struct_type_info.bindStructInfoOwnership();
+			if (struct_type_info.getStructInfo()) {
+				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Get pointer to the struct info to add member information
@@ -2898,8 +2893,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()), {});
 			struct_type_info.setInstantiationContext({}, {}, nullptr);
 
-			// Create StructTypeInfo for this specialization
-			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
+			// Create StructTypeInfo for this specialization in the cold arena
+			StructTypeInfo* struct_info = &struct_type_info.createStructInfo(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
 
 			// Parse base class list (if present): : public Base1, private Base2
 			if (peek() == ":"_tok) {
@@ -3006,7 +3001,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					}
 
 					// Validate and add the base class
-					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info.get(), base_access, is_virtual_base, base_name_token);
+					ParseResult result = validate_and_add_base_class(base_class_name, struct_ref, struct_info, base_access, is_virtual_base, base_name_token);
 					if (result.is_error()) {
 						return result;
 					}
@@ -3127,7 +3122,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// when used as template arguments in typedef declarations within the same struct body
 			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
 													 &struct_ref,
-													 struct_info.get(),
+													 struct_info,
 													 gSymbolTable.get_current_namespace_handle(),
 													 {}});
 
@@ -3171,7 +3166,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 							return enum_result;
 						}
 						if (auto enum_node = enum_result.node(); enum_node.has_value() && enum_node->is<EnumDeclarationNode>()) {
-							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, struct_info.get(), enum_node->as<EnumDeclarationNode>(), current_access);
+							addUnscopedEnumEnumeratorsAsStaticMembers(struct_ref, struct_info, enum_node->as<EnumDeclarationNode>(), current_access);
 						}
 						continue;
 					} else if (peek() == "struct"_tok || peek() == "class"_tok) {
@@ -3223,7 +3218,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						auto static_result = parse_static_member_block(
 							instantiated_name,
 							struct_ref,
-							struct_info.get(),
+							struct_info,
 							current_access,
 							currentTemplateParamNames(),
 							/*use_struct_type_info=*/false,
@@ -3256,7 +3251,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register friend in AST and StructTypeInfo
 						if (auto friend_node = friend_result.node()) {
 							struct_ref.add_friend(*friend_node);
-							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info.get());
+							registerFriendInStructInfo(friend_node->as<FriendDeclarationNode>(), struct_info);
 						}
 						continue;
 					} else if (peek() == "template"_tok) {
@@ -3268,7 +3263,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						// Register template friend classes (e.g., template<typename T> friend struct Foo;)
 						if (auto result_node = template_result.node()) {
 							if (result_node->is<FriendDeclarationNode>()) {
-								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info.get());
+								registerFriendInStructInfo(result_node->as<FriendDeclarationNode>(), struct_info);
 							}
 						}
 						continue;
@@ -4074,8 +4069,8 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 				return ParseResult::error(struct_info->getFinalizationError(), Token());
 			}
 
-			// Store struct info
-			struct_type_info.setStructInfo(std::move(struct_info));
+			// StructTypeInfo already lives in the arena via createStructInfo
+			struct_type_info.bindStructInfoOwnership();
 			if (struct_type_info.getStructInfo()) {
 				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}

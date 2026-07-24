@@ -217,8 +217,8 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				if (type_cat == TypeCategory::Struct) {
 					TypeIndex type_index = type_spec.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-						if (type_info->struct_info_) {
-							const StructTypeInfo* struct_info = type_info->struct_info_.get();
+						if (type_info->getStructInfo()) {
+							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							size_t element_size = toSizeT(struct_info->sizeInBytes());
 
 								// Generate initialization for each element
@@ -315,10 +315,10 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			if (type_cat == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
 				if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-					if (type_info->struct_info_ && type_info->struct_info_->hasAnyConstructor()) {
-						array_struct_info = type_info->struct_info_.get();
+					if (type_info->getStructInfo() && type_info->getStructInfo()->hasAnyConstructor()) {
+						array_struct_info = type_info->getStructInfo();
 						needs_ctor_loop = true;
-						op.needs_cookie = type_info->struct_info_->hasDestructor();
+						op.needs_cookie = type_info->getStructInfo()->hasDestructor();
 					}
 				}
 			}
@@ -332,8 +332,8 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				if (type_cat == TypeCategory::Struct) {
 					TypeIndex type_index = type_spec.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-						if (type_info->struct_info_) {
-							const StructTypeInfo* struct_info = type_info->struct_info_.get();
+						if (type_info->getStructInfo()) {
+							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							size_t element_size = toSizeT(struct_info->sizeInBytes());
 
 							for (size_t i = 0; i < array_inits.size(); ++i) {
@@ -490,14 +490,14 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		if (type_cat == TypeCategory::Struct) {
 			TypeIndex type_index = type_spec.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-					if (type_info->struct_info_) {
+					if (type_info->getStructInfo()) {
 						// Check if this is an abstract class
-					if (type_info->struct_info_->is_abstract) {
+					if (type_info->getStructInfo()->is_abstract) {
 						std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
 						throw CompileError("Cannot instantiate abstract class");
 					}
 
-					emit_struct_new_initializer(result_var, *type_info->struct_info_);
+					emit_struct_new_initializer(result_var, *type_info->getStructInfo());
 				}
 			}
 		}
@@ -517,14 +517,14 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		if (type_cat == TypeCategory::Struct) {
 			TypeIndex type_index = type_spec.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-				if (type_info->struct_info_) {
+				if (type_info->getStructInfo()) {
 						// Check if this is an abstract class
-					if (type_info->struct_info_->is_abstract) {
+					if (type_info->getStructInfo()->is_abstract) {
 						std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
 						throw CompileError("Cannot instantiate abstract class");
 					}
 
-					emit_struct_new_initializer(result_var, *type_info->struct_info_);
+					emit_struct_new_initializer(result_var, *type_info->getStructInfo());
 				}
 			}
 		}
@@ -1074,9 +1074,9 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	// identity instead of treating every struct cast as a raw reinterpretation.
 	if (target_type == TypeCategory::Struct && isExactComparisonCategoryType(target_type_node.type_index())) {
 		const TypeInfo* target_type_info = tryGetTypeInfo(target_type_node.type_index());
-		if (target_type_info && target_type_info->struct_info_) {
+		if (target_type_info && target_type_info->getStructInfo()) {
 			return makeExprResult(target_type_node.type_index(),
-								  SizeInBits{static_cast<int>(target_type_info->struct_info_->sizeInBits().value)},
+								  SizeInBits{static_cast<int>(target_type_info->getStructInfo()->sizeInBits().value)},
 								  expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
@@ -1162,9 +1162,9 @@ ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
 						if (type_node.category() == TypeCategory::UserDefined) {
 							StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_node.token().value());
 							auto it = getTypesByNameMap().find(type_name_handle);
-							if (it != getTypesByNameMap().end() && it->second && it->second->struct_info_ &&
-								it->second->struct_info_->own_type_index_.has_value()) {
-								return *it->second->struct_info_->own_type_index_;
+							if (it != getTypesByNameMap().end() && it->second && it->second->getStructInfo() &&
+								it->second->getStructInfo()->own_type_index_.has_value()) {
+								return *it->second->getStructInfo()->own_type_index_;
 							}
 						}
 						return {};

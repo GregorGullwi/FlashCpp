@@ -120,9 +120,9 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 			// Look up the struct by return type index or name
 			for (size_t i = 0; i < getTypeInfoCount(); ++i) {
-				if (getTypeInfo(TypeIndex{i}).struct_info_ &&
-					static_cast<int>(getTypeInfo(TypeIndex{i}).struct_info_->sizeInBits().value) == return_size) {
-					struct_info = getTypeInfo(TypeIndex{i}).struct_info_.get();
+				if (getTypeInfo(TypeIndex{i}).getStructInfo() &&
+					static_cast<int>(getTypeInfo(TypeIndex{i}).getStructInfo()->sizeInBits().value) == return_size) {
+					struct_info = getTypeInfo(TypeIndex{i}).getStructInfo();
 					break;
 				}
 			}

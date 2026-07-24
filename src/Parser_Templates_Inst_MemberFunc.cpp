@@ -28,7 +28,7 @@ std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_n
 	}
 
 	const TypeInfo* type_info = type_it->second;
-	if (!type_info->struct_info_) {
+	if (!type_info->getStructInfo()) {
 		if (type_info->isTemplateInstantiation()) {
 			return type_info->baseTemplateName();
 		}
@@ -62,7 +62,7 @@ std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_n
 		has_owner_component = true;
 	};
 
-	append_lookup_owner(append_lookup_owner, type_info->struct_info_.get());
+	append_lookup_owner(append_lookup_owner, type_info->getStructInfo());
 	if (!has_owner_component) {
 		return std::nullopt;
 	}
@@ -467,35 +467,35 @@ InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplat
 			}
 
 			const TypeInfo* struct_type_info = struct_it->second;
-			if (!struct_type_info->struct_info_) {
+			if (!struct_type_info->getStructInfo()) {
 				if (const TypeInfo* underlying_type =
 						tryGetTypeInfo(struct_type_info->type_index_);
 					underlying_type != nullptr &&
 					underlying_type != struct_type_info &&
-					underlying_type->struct_info_) {
+					underlying_type->getStructInfo()) {
 					return self(self, underlying_type->name(), depth + 1);
 				}
 				return {};
 			}
 
 			const StructTypeInfo* struct_info =
-				struct_type_info->struct_info_.get();
+				struct_type_info->getStructInfo();
 			for (const auto& base_class : struct_info->base_classes) {
 				if (base_class.is_deferred) {
 					const TypeInfo* resolved = nullptr;
 					if (base_class.type_index.is_valid()) {
 						resolved = tryGetTypeInfo(base_class.type_index);
-						if (resolved != nullptr && !resolved->struct_info_ &&
+						if (resolved != nullptr && !resolved->getStructInfo() &&
 							resolved->type_index_.is_valid()) {
 							const TypeInfo* chained_type =
 								tryGetTypeInfo(resolved->type_index_);
 							if (chained_type != nullptr &&
-								chained_type->struct_info_) {
+								chained_type->getStructInfo()) {
 								resolved = chained_type;
 							}
 						}
 					}
-					if (resolved != nullptr && resolved->struct_info_) {
+					if (resolved != nullptr && resolved->getStructInfo()) {
 						InheritedOwnerMatch inherited_owner =
 							self(self, resolved->name(), depth + 1);
 						if (inherited_owner.owner_name.isValid()) {
