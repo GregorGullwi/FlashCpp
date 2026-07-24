@@ -485,7 +485,7 @@ ParseResult Parser::parse_type_specifier() {
 			// Look up the enum type to get its underlying type
 			const TypeInfo& enum_type_info = getTypeInfo(arg_type.type_index());
 			if (enum_type_info.enum_info_) {
-				const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
+				const EnumTypeInfo* enum_info = enum_type_info.getEnumInfo();
 				TypeCategory underlying = enum_info->underlying_type;
 				int underlying_size = enum_info->sizeInBits().value;
 				FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
@@ -497,7 +497,7 @@ ParseResult Parser::parse_type_specifier() {
 		// If we have a type index, try to look up if it's an enum
 		const TypeInfo& type_info = getTypeInfo(arg_type.type_index());
 		if (type_info.enum_info_) {
-			const EnumTypeInfo* enum_info = type_info.enum_info_.get();
+			const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 			TypeCategory underlying = enum_info->underlying_type;
 			int underlying_size = enum_info->sizeInBits().value;
 			FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));

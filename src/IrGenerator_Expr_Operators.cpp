@@ -3023,8 +3023,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			if (ordering_type) {
-				const int ordering_size = static_cast<int>(ordering_type->struct_info_
-															   ? ordering_type->struct_info_->sizeInBits().value
+				const int ordering_size = static_cast<int>(ordering_type->getStructInfo()
+															   ? ordering_type->getStructInfo()->sizeInBits().value
 															   : 8);
 
 				// Compute three-way result: (a > b) - (a < b) -> -1, 0, or 1.
@@ -4129,7 +4129,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 			// Check return type for self-referential struct
 			if (return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				const TypeInfo* rti = tryGetTypeInfo(return_type.type_index());
-				if (!rti || !rti->struct_info_ || !rti->struct_info_->sizeInBytes().is_set()) {
+				if (!rti || !rti->getStructInfo() || !rti->getStructInfo()->sizeInBytes().is_set()) {
 					needs_resolution = true;
 				}
 			}
@@ -4139,7 +4139,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 						const auto& pt = param.as<DeclarationNode>().type_specifier_node();
 						if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid()) {
 							const TypeInfo* ti = tryGetTypeInfo(pt.type_index());
-							if (!ti || !ti->struct_info_ || !ti->struct_info_->sizeInBytes().is_set()) {
+							if (!ti || !ti->getStructInfo() || !ti->getStructInfo()->sizeInBytes().is_set()) {
 								needs_resolution = true;
 								break;
 							}

@@ -2385,7 +2385,7 @@ void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex encl
 		const TypeInfo* ti = tryGetTypeInfo(type.type_index());
 		if (!ti)
 			return;
-		if (!ti->struct_info_ || !ti->struct_info_->sizeInBytes().is_set()) {
+		if (!ti->getStructInfo() || !ti->getStructInfo()->sizeInBytes().is_set()) {
 			if (const TypeInfo* enc_ti = tryGetTypeInfo(enclosing_type_index)) {
 				// Verify this is actually a self-reference by checking that the unfinalized
 				// type's name matches the base name of the enclosing struct.

@@ -2748,8 +2748,8 @@ ParseResult Parser::parseMaterializedTemplateFunctionalCast(
 	if (instantiated_type_info != nullptr && instantiated_type_info->isStruct()) {
 		TypeIndex inst_type_index = instantiated_type_info->type_index_;
 		SizeInBits inst_type_size{};
-		if (instantiated_type_info->struct_info_) {
-			inst_type_size = instantiated_type_info->struct_info_->sizeInBits();
+		if (instantiated_type_info->getStructInfo()) {
+			inst_type_size = instantiated_type_info->getStructInfo()->sizeInBits();
 		}
 		type_spec_node = emplace_node<TypeSpecifierNode>(
 			inst_type_index.withCategory(TypeCategory::Struct),
@@ -3428,11 +3428,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Look up the operator function in the current struct type
 			const auto& member_ctx = member_function_context_stack_.back();
 			if (TypeInfo* type_info = tryGetTypeInfoMut(member_ctx.struct_type_index)) {
-				if (type_info->struct_info_) {
+				if (type_info->getStructInfo()) {
 					const StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
 					const OverloadableOperator desired_operator_kind = overloadableOperatorFromFunctionName(operator_name);
 					// Search for the operator member function
-					for (auto& member_func : type_info->struct_info_->member_functions) {
+					for (auto& member_func : type_info->getStructInfo()->member_functions) {
 						// Overloadable operators have canonical operator_kind metadata.
 						// Conversion operators and other non-overloadable forms still fall back
 						// to name-based lookup because they are not represented by operator_kind.
@@ -6049,8 +6049,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							const TypeInfo& type_info = *instantiated_type_info;
 							TypeIndex type_index = type_info.type_index_;
 							SizeInBits type_size{};
-							if (type_info.struct_info_) {
-								type_size = type_info.struct_info_->sizeInBits();
+							if (type_info.getStructInfo()) {
+								type_size = type_info.getStructInfo()->sizeInBits();
 							}
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(type_info.category()), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 
@@ -6302,8 +6302,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				const TypeInfo& type_info = *type_it->second;
 				TypeIndex type_index = type_info.type_index_;
 				SizeInBits type_size = type_info.sizeInBits();
-				if (type_info.struct_info_) {
-					type_size = type_info.struct_info_->sizeInBits();
+				if (type_info.getStructInfo()) {
+					type_size = type_info.getStructInfo()->sizeInBits();
 				}
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(type_info.category()), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 
@@ -6954,9 +6954,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is lambda variable: type_idx={}, getTypeInfoCount()={}",
 											 identifier_token.value(), type_idx, getTypeInfoCount());
 							if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
-								if (type_info->struct_info_) {
+								if (type_info->getStructInfo()) {
 									// Check if the struct name starts with "__lambda_"
-									std::string_view type_name = StringTable::getStringView(type_info->struct_info_->name);
+									std::string_view type_name = StringTable::getStringView(type_info->getStructInfo()->name);
 									FLASH_LOG_FORMAT(Parser, Debug, "Type name for '{}': '{}', starts_with __lambda_: {}",
 													 identifier_token.value(), type_name, type_name.starts_with("__lambda_"));
 									if (type_name.starts_with("__lambda_")) {
@@ -9507,11 +9507,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
 						if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-							if (type_info->struct_info_) {
+							if (type_info->getStructInfo()) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Struct '{}' has {} member functions",
-												 StringTable::getStringView(type_info->struct_info_->name), type_info->struct_info_->member_functions.size());
+												 StringTable::getStringView(type_info->getStructInfo()->name), type_info->getStructInfo()->member_functions.size());
 								// Check if struct has operator()
-								for (const auto& member_func : type_info->struct_info_->member_functions) {
+								for (const auto& member_func : type_info->getStructInfo()->member_functions) {
 									FLASH_LOG_FORMAT(Parser, Debug, "Member function: is_operator={}, symbol='{}'",
 													 member_func.operator_kind != OverloadableOperator::None,
 													 overloadableOperatorToString(member_func.operator_kind));

@@ -143,8 +143,8 @@ ParseResult Parser::parse_template_brace_initialization(
 	const TypeInfo& type_info = *materialized_type.resolved_type_info;
 	TypeIndex type_index = type_info.type_index_;
 	SizeInBits type_size{};
-	if (type_info.struct_info_) {
-		type_size = type_info.struct_info_->sizeInBits();
+	if (type_info.getStructInfo()) {
+		type_size = type_info.getStructInfo()->sizeInBits();
 	}
 	Token type_token(Token::Type::Identifier, materialized_type.instantiated_name,
 					 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
@@ -691,7 +691,7 @@ static const TypeInfo* tryResolveDeferredBaseToConcreteStruct(
 			base_class.name);
 		return nullptr;
 	}
-	if (deferred_type->struct_info_) {
+	if (deferred_type->getStructInfo()) {
 		FLASH_LOG_FORMAT(Templates, Debug,
 			"Deferred base '{}' has valid type_index, resolved to concrete struct '{}', recursing",
 			base_class.name, StringTable::getStringView(deferred_type->name()));
@@ -700,7 +700,7 @@ static const TypeInfo* tryResolveDeferredBaseToConcreteStruct(
 	// Underlying type is itself an alias — follow one more level.
 	if (deferred_type->type_index_.is_valid()) {
 		const TypeInfo* chained_type = tryGetTypeInfo(deferred_type->type_index_);
-		if (chained_type != nullptr && chained_type->struct_info_) {
+		if (chained_type != nullptr && chained_type->getStructInfo()) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"Deferred base '{}' resolved via alias chain to '{}', recursing",
 				base_class.name, StringTable::getStringView(chained_type->name()));
@@ -784,7 +784,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	const TypeInfo* struct_type_info = struct_it->second;
 
 	// If this is a type alias (no struct_info_), resolve the underlying type
-	if (!struct_type_info->struct_info_) {
+	if (!struct_type_info->getStructInfo()) {
 		if (struct_type_info->isTemplateInstantiation()) {
 			AliasTemplateMaterializationResult canonical_owner =
 				materializeCanonicalOwnerTypeForLookup(*struct_type_info, {});
@@ -862,7 +862,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 		if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
 			// Check if this is actually an alias (points to a different TypeInfo)
 			// by comparing the pointer addresses
-			if (underlying_type != struct_type_info && underlying_type->struct_info_) {
+			if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
 				StringHandle underlying_name = underlying_type->name();
 				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias",
 								 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
@@ -874,7 +874,7 @@ const TypeInfo* Parser::lookup_inherited_type_alias(StringHandle struct_name, St
 	}
 
 	// Search base classes recursively
-	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
+	const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
 	for (const auto& base_class : struct_info->base_classes) {
 		if (base_class.is_deferred) {
@@ -942,14 +942,14 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	const TypeInfo* struct_type_info = struct_it->second;
 
 	// If this is a type alias (no struct_info_), resolve the underlying type
-	if (!struct_type_info->struct_info_) {
+	if (!struct_type_info->getStructInfo()) {
 		// This might be a type alias - try to find the actual struct type
 		// Type aliases have a type_index that points to the underlying type
 		// Check if type_index_ is valid and points to a different TypeInfo entry
 		if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
 			// Check if this is actually an alias (points to a different TypeInfo)
 			// by comparing the pointer addresses
-			if (underlying_type != struct_type_info && underlying_type->struct_info_) {
+			if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
 				StringHandle underlying_name = underlying_type->name();
 				FLASH_LOG_FORMAT(Templates, Debug, "Type '{}' is an alias for '{}', following alias",
 								 StringTable::getStringView(struct_name), StringTable::getStringView(underlying_name));
@@ -961,7 +961,7 @@ const std::vector<ASTNode>* Parser::lookup_inherited_template(StringHandle struc
 	}
 
 	// Search base classes recursively
-	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
+	const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 	FLASH_LOG_FORMAT(Templates, Debug, "Struct '{}' has {} base classes", StringTable::getStringView(struct_name), struct_info->base_classes.size());
 	for (const auto& base_class : struct_info->base_classes) {
 		if (base_class.is_deferred) {
@@ -1210,9 +1210,9 @@ std::string_view Parser::lookup_inherited_member_variable_template_name(
 		return {};
 	}
 
-	if (!struct_type_info->struct_info_) {
+	if (!struct_type_info->getStructInfo()) {
 		if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
-			if (underlying_type != struct_type_info && underlying_type->struct_info_) {
+			if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
 				return lookup_inherited_member_variable_template_name(
 					underlying_type->name(),
 					member_name,
@@ -1222,7 +1222,7 @@ std::string_view Parser::lookup_inherited_member_variable_template_name(
 		return {};
 	}
 
-	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
+	const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 	for (const auto& base_class : struct_info->base_classes) {
 		if (base_class.is_deferred) {
 			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
@@ -1286,7 +1286,7 @@ std::string_view Parser::lookup_inherited_member_template_name(
 		return {};
 	}
 
-	if (!struct_type_info->struct_info_) {
+	if (!struct_type_info->getStructInfo()) {
 		if (struct_type_info->isTemplateInstantiation()) {
 			StringHandle alias_template_name = gNamespaceRegistry.buildQualifiedIdentifier(
 				struct_type_info->sourceNamespace(),
@@ -1332,7 +1332,7 @@ std::string_view Parser::lookup_inherited_member_template_name(
 		}
 
 		if (const TypeInfo* underlying_type = tryGetTypeInfo(struct_type_info->type_index_)) {
-			if (underlying_type != struct_type_info && underlying_type->struct_info_) {
+			if (underlying_type != struct_type_info && underlying_type->getStructInfo()) {
 				return lookup_inherited_member_template_name(
 					underlying_type->name(),
 					member_name,
@@ -1342,7 +1342,7 @@ std::string_view Parser::lookup_inherited_member_template_name(
 		return {};
 	}
 
-	const StructTypeInfo* struct_info = struct_type_info->struct_info_.get();
+	const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 	for (const auto& base_class : struct_info->base_classes) {
 		if (base_class.is_deferred) {
 			const TypeInfo* resolved = tryResolveDeferredBaseToConcreteStruct(base_class);
@@ -1725,7 +1725,7 @@ ParseResult Parser::validate_and_add_base_class(
 	// For template parameters, dependent placeholders, or dependent type aliases, skip 'final' check
 	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias) {
 		// Check if base class is final
-		if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
+		if (base_type_info->getStructInfo() && base_type_info->getStructInfo()->is_final) {
 			return ParseResult::error("Cannot inherit from final class '" + std::string(base_class_name) + "'", error_token);
 		}
 	}

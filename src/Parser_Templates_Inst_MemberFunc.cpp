@@ -28,7 +28,7 @@ std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_n
 	}
 
 	const TypeInfo* type_info = type_it->second;
-	if (!type_info->struct_info_) {
+	if (!type_info->getStructInfo()) {
 		if (type_info->isTemplateInstantiation()) {
 			return type_info->baseTemplateName();
 		}
@@ -62,7 +62,7 @@ std::optional<StringHandle> getTemplateLookupOwnerName(std::string_view struct_n
 		has_owner_component = true;
 	};
 
-	append_lookup_owner(append_lookup_owner, type_info->struct_info_.get());
+	append_lookup_owner(append_lookup_owner, type_info->getStructInfo());
 	if (!has_owner_component) {
 		return std::nullopt;
 	}
@@ -467,35 +467,35 @@ InlineVector<TemplateNameLookupCandidate, 4> Parser::lookupMemberFunctionTemplat
 			}
 
 			const TypeInfo* struct_type_info = struct_it->second;
-			if (!struct_type_info->struct_info_) {
+			if (!struct_type_info->getStructInfo()) {
 				if (const TypeInfo* underlying_type =
 						tryGetTypeInfo(struct_type_info->type_index_);
 					underlying_type != nullptr &&
 					underlying_type != struct_type_info &&
-					underlying_type->struct_info_) {
+					underlying_type->getStructInfo()) {
 					return self(self, underlying_type->name(), depth + 1);
 				}
 				return {};
 			}
 
 			const StructTypeInfo* struct_info =
-				struct_type_info->struct_info_.get();
+				struct_type_info->getStructInfo();
 			for (const auto& base_class : struct_info->base_classes) {
 				if (base_class.is_deferred) {
 					const TypeInfo* resolved = nullptr;
 					if (base_class.type_index.is_valid()) {
 						resolved = tryGetTypeInfo(base_class.type_index);
-						if (resolved != nullptr && !resolved->struct_info_ &&
+						if (resolved != nullptr && !resolved->getStructInfo() &&
 							resolved->type_index_.is_valid()) {
 							const TypeInfo* chained_type =
 								tryGetTypeInfo(resolved->type_index_);
 							if (chained_type != nullptr &&
-								chained_type->struct_info_) {
+								chained_type->getStructInfo()) {
 								resolved = chained_type;
 							}
 						}
 					}
-					if (resolved != nullptr && resolved->struct_info_) {
+					if (resolved != nullptr && resolved->getStructInfo()) {
 						InheritedOwnerMatch inherited_owner =
 							self(self, resolved->name(), depth + 1);
 						if (inherited_owner.owner_name.isValid()) {
@@ -1385,9 +1385,17 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 			if (!instantiated.has_value() || !instantiated->is<ConstructorDeclarationNode>()) {
 				return;
 			}
+			const ConstructorDeclarationNode& concrete_ctor_ref =
+				instantiated->as<ConstructorDeclarationNode>();
+			// Only publish specializations that actually match the call. Failed
+			// probes must not enter the overload set (they would poison arity
+			// fallback and displace later, better specializations).
+			if (!matches_call_arguments(concrete_ctor_ref)) {
+				return;
+			}
 			const ConstructorDeclarationNode* concrete_ctor =
 				attachInstantiatedCtor(template_ctor, *instantiated);
-			if (concrete_ctor && matches_call_arguments(*concrete_ctor)) {
+			if (concrete_ctor != nullptr) {
 				concrete_matches.push_back(concrete_ctor);
 			}
 		};
@@ -1424,17 +1432,24 @@ const ConstructorDeclarationNode* Parser::materializeMatchingConstructorTemplate
 
 	if (preferred_ctor != nullptr) {
 		if (!preferred_ctor->has_template_parameters()) {
-			return preferred_ctor;
-		}
-		if (const ConstructorDeclarationNode* concrete_ctor =
+			// A previously materialized non-template specialization must still
+			// convert from the current arguments. Otherwise a stale specialization
+			// (e.g. Inner(T*,U) kept with dependent T*) can suppress probing the
+			// correct constructor template overload.
+			if (matches_call_arguments(*preferred_ctor)) {
+				return preferred_ctor;
+			}
+			preferred_ctor = nullptr;
+		} else if (const ConstructorDeclarationNode* concrete_ctor =
 				materialize_template_ctor_candidates(preferred_ctor);
 			concrete_ctor != nullptr) {
 			return concrete_ctor;
+		} else {
+			// Instantiation failed or the instantiated ctor doesn't match call arguments.
+			// Return nullptr so callers fall back to arity-based resolution instead of
+			// forwarding an uninstantiated template constructor.
+			return nullptr;
 		}
-		// Instantiation failed or the instantiated ctor doesn't match call arguments.
-		// Return nullptr so callers fall back to arity-based resolution instead of
-		// forwarding an uninstantiated template constructor.
-		return nullptr;
 	}
 
 	return materialize_template_ctor_candidates(nullptr);

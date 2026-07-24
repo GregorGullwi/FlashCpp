@@ -1775,7 +1775,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				class_template_pack_registry_[instantiated_name] = class_template_pack_stack_.back();
 			}
 
-			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, pattern_struct.default_access(), pattern_struct.is_union(), spec_decl_ns);
+			StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, pattern_struct.default_access(), pattern_struct.is_union(), spec_decl_ns);
 
 			// Handle base classes from the pattern
 			// Base classes need to be instantiated with concrete template arguments
@@ -2400,7 +2400,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (orig_func.is_static()) {
 							substituted_body = rebindStaticMemberInitializerFunctionCalls(
 								substituted_body,
-								struct_info.get(),
+								struct_info,
 								true);
 						}
 						new_func_ref.set_definition(substituted_body);
@@ -3144,16 +3144,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Parser, Error, struct_info->getFinalizationError());
 				return std::nullopt;
 			}
-			struct_type_info.setStructInfo(std::move(struct_info));
-			if (struct_type_info.getStructInfo()) {
-				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
-			}
 
 			// Reuse the matcher-produced, specialization-parameter-aligned bindings
 			// across member copying, aliases, and semantic substitution.
 			std::span<const TemplateTypeArg> template_args_for_pattern =
 				template_args_for_member_copy;
-			StructTypeInfo* instantiated_struct_info_mut = struct_info.get();
+			StructTypeInfo* instantiated_struct_info_mut = struct_info;
 			const StructTypeInfo* instantiated_struct_info = instantiated_struct_info_mut;
 			auto [effective_pattern_template_params, effective_pattern_template_args_storage] =
 				build_effective_partial_spec_template_bindings(
@@ -3409,6 +3405,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				FLASH_LOG(Templates, Debug, "Registered type alias from pattern: ", qualified_alias_name,
 						  " -> type=", static_cast<int>(substituted_type),
 						  ", type_index=", substituted_type_index);
+			}
+
+			// Publish StructTypeInfo only after aliases are registered so mid-
+			// instantiation lookup does not see an incomplete payload.
+			struct_type_info.attachStructInfo(*struct_info);
+			struct_type_info.bindStructInfoOwnership();
+			if (struct_type_info.getStructInfo()) {
+				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Create an AST node for the instantiated struct so member functions can be code-generated
@@ -5702,8 +5706,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
-	// Create StructTypeInfo
-	auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, AccessSpecifier::Public, class_decl.is_union(), decl_ns);
+	// Create StructTypeInfo in the cold arena
+	StructTypeInfo* struct_info = &struct_type_info.emplaceStructInfo(instantiated_name, AccessSpecifier::Public, class_decl.is_union(), decl_ns);
 
 	// Handle base classes from the primary template
 	// Base classes need to be instantiated with concrete template arguments
@@ -5754,7 +5758,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					return false;
 				}
-				if (concrete_type->struct_info_ && concrete_type->struct_info_->is_final) {
+				if (concrete_type->getStructInfo() && concrete_type->getStructInfo()->is_final) {
 					FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type->name_, "'");
 					return false;
 				}
@@ -7203,7 +7207,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			non_type_categories);
 
 		auto member_ctx_scope =
-			push_replay_member_context(owning_instantiated_name, struct_info.get());
+			push_replay_member_context(owning_instantiated_name, struct_info);
 
 		restore_lexer_position_only(*static_member.initializer_position);
 
@@ -7604,7 +7608,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_initializer,
 					gSymbolTable,
 					*this,
-					struct_info.get(),
+					struct_info,
 					effective_template_params,
 					effective_template_args_vector,
 					substituted_type_index,
@@ -7697,17 +7701,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Register the nested semantic owner before producing members and signatures.
 			// Constructor current-instantiation substitution requires both the pattern
 			// and instantiated owner TypeIndex values to be canonical at this point.
-			auto nested_struct_info_owner = std::make_unique<StructTypeInfo>(
-				qualified_name,
-				nested_struct.default_access(),
-				nested_struct.is_union(),
-				decl_ns);
 			auto& nested_type_info = add_instantiated_type(
 				qualified_name,
 				TypeCategory::Struct,
 				0); // Layout is finalized after member production.
-			nested_type_info.setStructInfo(std::move(nested_struct_info_owner));
-			StructTypeInfo* nested_struct_info = nested_type_info.getStructInfo();
+			StructTypeInfo* nested_struct_info = &nested_type_info.createStructInfo(
+				qualified_name,
+				nested_struct.default_access(),
+				nested_struct.is_union(),
+				decl_ns);
 			if (nested_struct_info == nullptr || !nested_struct_info->own_type_index_.has_value()) {
 				throw InternalError("Nested class registration did not establish a canonical semantic owner");
 			}
@@ -8130,10 +8132,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				[&](const StructMemberFunctionDecl& source_member) -> ASTNode {
 					const ConstructorDeclarationNode& original_ctor =
 						source_member.function_declaration.as<ConstructorDeclarationNode>();
-					if (!original_ctor.is_materialized()) {
-						return source_member.function_declaration;
-					}
 
+					// Always materialize a nested constructor stub owned by the
+					// instantiated nested class. Constructor templates in particular
+					// must carry the enclosing class's concrete outer bindings
+					// (e.g. Outer<int>::Inner::Inner(T*, U) with T=int) so later
+					// deduction/overload ranking compares int* vs long*, not a
+					// dependent T* placeholder.
 					auto [substituted_ctor_node, substituted_ctor] =
 						emplace_node_ref<ConstructorDeclarationNode>(
 							qualified_name,
@@ -8142,8 +8147,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_ctor,
 						template_params,
 						template_args_to_use);
-					substituted_ctor.set_template_parameters(
-						original_ctor.template_parameters());
+					if (!original_ctor.is_materialized() || original_ctor.has_template_body_position()) {
+						substituted_ctor.set_template_parameters(
+							original_ctor.template_parameters());
+					}
+					if (original_ctor.has_template_body_position()) {
+						substituted_ctor.set_template_body_position(
+							original_ctor.template_body_position());
+						if (original_ctor.has_template_initializer_list_position()) {
+							substituted_ctor.set_template_initializer_list_position(
+								original_ctor.template_initializer_list_position());
+						}
+					}
 
 					const size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(
@@ -8163,11 +8178,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::span<const PackParamInfo>(
 							ctor_pack_param_info.data(),
 							ctor_pack_param_info.size()));
-					substituted_ctor.set_definition(substituteTemplateParameters(
-						*original_ctor.get_definition(),
-						template_params,
-						template_args_to_use,
-						qualified_name));
+					if (original_ctor.is_materialized()) {
+						substituted_ctor.set_definition(substituteTemplateParameters(
+							*original_ctor.get_definition(),
+							template_params,
+							template_args_to_use,
+							qualified_name));
+					}
 					pack_param_info_.resize(saved_pack_info);
 
 					substituted_ctor.set_is_implicit(original_ctor.is_implicit());
@@ -8186,9 +8203,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					instantiated_nested_struct_ref.add_constructor(
 						substituted_ctor_node,
 						source_member.access);
+					registerSourceMemberStubIdentity(
+						nested_source_member_identity_maps,
+						source_member.function_declaration,
+						substituted_ctor_node);
 					return substituted_ctor_node;
 				});
+			// Identity for non-constructor members (and any constructor that did
+			// not produce a distinct stub) still maps source→source as a fallback.
 			for (const StructMemberFunctionDecl& source_member : nested_source_member_functions) {
+				if (findSourceMemberStubByIdentity(
+						nested_source_member_identity_maps,
+						source_member.function_declaration) != nullptr) {
+					continue;
+				}
 				registerSourceMemberStubIdentity(
 					nested_source_member_identity_maps,
 					source_member.function_declaration,
@@ -8662,7 +8690,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
 												 nullptr, // struct_node — not needed; parse_struct_declaration() creates its own
-												 struct_info.get(),
+												 struct_info,
 												 decl_ns,
 												 {}});
 
@@ -8777,7 +8805,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// so members of type "Wrapper::Nested" (with size 0) remain unresolved.
 	// Now that nested classes are registered as "Wrapper$hash::Nested", update those members.
 	{
-		StructTypeInfo* si = struct_info.get();
+		StructTypeInfo* si = struct_info;
 		if (si) {
 			bool had_fixup = false;
 			for (auto& member : si->members) {
@@ -9078,7 +9106,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (substituted_type == TypeCategory::Enum && substituted_type_index.is_valid()) {
 			if (const TypeInfo* enum_alias_ti = tryGetTypeInfo(substituted_type_index)) {
 				if (const EnumTypeInfo* enum_info = enum_alias_ti->getEnumInfo()) {
-					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
+					alias_type_info.setEnumInfo(EnumTypeInfo(*enum_info));
 				}
 			}
 		}
@@ -9152,7 +9180,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						retry_initializer,
 						gSymbolTable,
 						*this,
-						struct_info.get(),
+						struct_info,
 						effective_template_params,
 						effective_template_args_vector,
 						instantiated_static_member->type_index,
@@ -9281,8 +9309,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return std::nullopt;
 	}
 
-	// Store struct info in type info
-	struct_type_info.setStructInfo(std::move(struct_info));
+	// Publish arena payload now that members/aliases/ctors are complete.
+	struct_type_info.attachStructInfo(*struct_info);
+	struct_type_info.bindStructInfoOwnership();
 
 	// Update fallback_size_bits_ from the finalized struct's total size
 	if (struct_type_info.getStructInfo()) {
@@ -11526,9 +11555,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							bool is_base_init = false;
 							StringHandle matched_base_name;
 							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
-							if (struct_type_info.struct_info_) {
+							if (struct_type_info.getStructInfo()) {
 								// Check if this is a base class by looking at the struct's base classes
-								for (const auto& base : struct_type_info.struct_info_->base_classes) {
+								for (const auto& base : struct_type_info.getStructInfo()->base_classes) {
 									std::string_view base_name = base.name;
 									bool base_names_match =
 										(base_name == init_name || extractBaseTemplateName(base_name) == init_name);
@@ -11550,8 +11579,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								}
 
-								if (!is_base_init && struct_type_info.struct_info_->has_deferred_base_classes) {
-									for (const auto& deferred_base_entry : struct_type_info.struct_info_->deferred_template_bases) {
+								if (!is_base_init && struct_type_info.getStructInfo()->has_deferred_base_classes) {
+									for (const auto& deferred_base_entry : struct_type_info.getStructInfo()->deferred_template_bases) {
 										if (deferred_base_entry.base_template_name == init_name_handle) {
 											is_base_init = true;
 											matched_base_name = deferred_base_entry.base_template_name;
@@ -11614,10 +11643,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_args_to_use);
 					ctor.set_definition(substituted_body);
 					// Also update the StructTypeInfo's copy (used by codegen)
-					if (struct_type_info.struct_info_) {
+					if (struct_type_info.getStructInfo()) {
 						OutOfLineConstructorStubResolution info_ctor_resolution =
 							findReplayedOutOfLineConstructorInStructInfo(
-								struct_type_info.struct_info_.get(),
+								struct_type_info.getStructInfo(),
 								struct_info_member_identity_maps,
 								ctor_resolution.source_member,
 								ctor,

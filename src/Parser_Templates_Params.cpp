@@ -2099,7 +2099,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								// Check if it's a concrete struct (has struct_info_)
 								// OR if it's a type alias that resolves to a concrete type
 								// Type aliases have type_index pointing to the underlying type
-								if (type_info->struct_info_ != nullptr) {
+								if (type_info->getStructInfo() != nullptr) {
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a concrete struct type, falling through to type parsing");
 								} else if (const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_)) {
@@ -2110,7 +2110,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 									// 2. It's not Type::UserDefined (i.e., it's a built-in type like int, bool, float)
 									// Template parameters are stored as Type::UserDefined without struct_info_,
 									// so this check correctly excludes them while accepting concrete types.
-									if (underlying->struct_info_ != nullptr ||
+									if (underlying->getStructInfo() != nullptr ||
 										underlying->resolvedType() != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
 										is_concrete_type = true;
@@ -2140,7 +2140,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							if (!variable_template_expression &&
 								type_it != getTypesByNameMap().end()) {
 								const TypeInfo* type_info = type_it->second;
-								if (type_info->struct_info_ != nullptr) {
+								if (type_info->getStructInfo() != nullptr) {
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "QualifiedIdentifierNode '", qualified_name, "' is a concrete type, falling through to type parsing");
 								}
