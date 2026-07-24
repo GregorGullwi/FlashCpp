@@ -2187,12 +2187,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			this_arg_storage = ValueStorage::ContainsAddress;
 		}
 		// 'this' is always passed as a pointer in the ABI, never as a by-value aggregate.
-		TypedValue this_arg = makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value);
-		if (object_type.type_index().is_valid()) {
-			this_arg.type_index = object_type.type_index().withCategory(object_type.type());
+		if (!object_type.type_index().is_valid()) {
+			throw InternalError("Member function 'this' argument requires canonical class type identity");
 		}
+		TypedValue this_arg = makeMemberThisCallArgument(
+			object_type.type_index().withCategory(object_type.type()),
+			this_arg_value);
 		this_arg.storage = this_arg_storage;
-		this_arg.pointer_depth = PointerDepth{1};
 		call_op.args.push_back(std::move(this_arg));
 
 		// Generate IR for function arguments and add to CallOp

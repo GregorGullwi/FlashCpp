@@ -1521,14 +1521,10 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 				addr_op.operand.pointer_depth = PointerDepth{};
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), unaryOperatorNode.get_token()));
 
-				TypedValue this_arg;
-				this_arg.setType(operandType);
-				this_arg.ir_type = toIrType(operandType);
-				this_arg.size_in_bits = SizeInBits{get_type_size_bits(TypeCategory::FunctionPointer)};
-				this_arg.pointer_depth = PointerDepth{1};
-				this_arg.type_index = operand_type_index.withCategory(operandType);
-				this_arg.value = this_addr;
-				call_op.args.push_back(this_arg);
+				TypedValue this_arg = makeMemberThisCallArgument(
+					operand_type_index.withCategory(operandType),
+					IrValue(this_addr));
+				call_op.args.push_back(std::move(this_arg));
 
 				const int result_size = call_op.return_size_in_bits.value;
 				const TypeIndex result_type_index = call_op.return_type_index;
@@ -1964,11 +1960,10 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	addr_op.operand.pointer_depth = PointerDepth{};
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
-	TypedValue this_arg;
-	this_arg.setType(operandType);
-	this_arg.size_in_bits = SizeInBits{64};
-	this_arg.value = this_addr;
-	call_op.args.push_back(this_arg);
+	TypedValue this_arg = makeMemberThisCallArgument(
+		operand_type_index.withCategory(operandType),
+		IrValue(this_addr));
+	call_op.args.push_back(std::move(this_arg));
 
 	// For postfix operators, pass dummy int argument (value 0)
 	// Use the matched function's actual parameter count (not the call form) to decide,

@@ -686,21 +686,16 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 								true,
 								false);
 
-							TypedValue lhs_arg;
-							lhs_arg.setType(TypeCategory::Struct);
-							lhs_arg.ir_type = IrType::Struct;
-							lhs_arg.size_in_bits = SizeInBits{64};
-							lhs_arg.value = lhs_val;
-							lhs_arg.pointer_depth = PointerDepth{1};
+							TypedValue lhs_arg = makeMemberThisCallArgument(
+								member.type_index.withCategory(TypeCategory::Struct),
+								IrValue(lhs_val));
 							call_op.args.push_back(std::move(lhs_arg));
 
-							TypedValue rhs_arg;
-							rhs_arg.setType(TypeCategory::Struct);
-							rhs_arg.ir_type = IrType::Struct;
-							rhs_arg.size_in_bits = SizeInBits{64};
-							rhs_arg.value = rhs_val;
-							rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
-							call_op.args.push_back(std::move(rhs_arg));
+							call_op.args.push_back(makeTypedValue(
+								member.type_index.withCategory(TypeCategory::Struct),
+								SizeInBits{POINTER_SIZE_BITS},
+								IrValue(rhs_val),
+								ReferenceQualifier::LValueReference));
 
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 
@@ -920,15 +915,10 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				true,
 				false);
 
-				// Pass 'this' as first arg
-			StringHandle this_handle = StringTable::getOrInternStringHandle("this");
-			TypedValue this_arg;
-			this_arg.setType(TypeCategory::Struct);
-			this_arg.ir_type = IrType::Struct;
-			this_arg.size_in_bits = SizeInBits{64};
-			this_arg.value = this_handle;
-			this_arg.pointer_depth = PointerDepth{1};
-			call_op.args.push_back(std::move(this_arg));
+			TypeIndex owner_type_index = type_it->second->type_index_.withCategory(TypeCategory::Struct);
+			call_op.args.push_back(makeMemberThisCallArgument(
+				owner_type_index,
+				IrValue(StringTable::getOrInternStringHandle("this"))));
 
 			// Pass 'other' as second arg (reference = pointer)
 			StringHandle other_handle;
@@ -941,13 +931,11 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			if (!other_handle.isValid()) {
 				other_handle = StringTable::getOrInternStringHandle("other");
 			}
-			TypedValue other_arg;
-			other_arg.setType(TypeCategory::Struct);
-			other_arg.ir_type = IrType::Struct;
-			other_arg.size_in_bits = SizeInBits{64};
-			other_arg.value = other_handle;
-			other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
-			call_op.args.push_back(std::move(other_arg));
+			call_op.args.push_back(makeTypedValue(
+				owner_type_index,
+				SizeInBits{POINTER_SIZE_BITS},
+				IrValue(other_handle),
+				ReferenceQualifier::LValueReference));
 
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 
@@ -1019,21 +1007,16 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							true,
 							false);
 
-						TypedValue lhs_arg;
-						lhs_arg.setType(TypeCategory::Struct);
-						lhs_arg.ir_type = IrType::Struct;
-						lhs_arg.size_in_bits = SizeInBits{64};
-						lhs_arg.value = lhs_val;
-						lhs_arg.pointer_depth = PointerDepth{1};
+						TypedValue lhs_arg = makeMemberThisCallArgument(
+							member.type_index.withCategory(TypeCategory::Struct),
+							IrValue(lhs_val));
 						call_op.args.push_back(std::move(lhs_arg));
 
-						TypedValue rhs_arg;
-						rhs_arg.setType(TypeCategory::Struct);
-						rhs_arg.ir_type = IrType::Struct;
-						rhs_arg.size_in_bits = SizeInBits{64};
-						rhs_arg.value = rhs_val;
-						rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
-						call_op.args.push_back(std::move(rhs_arg));
+						call_op.args.push_back(makeTypedValue(
+							member.type_index.withCategory(TypeCategory::Struct),
+							SizeInBits{POINTER_SIZE_BITS},
+							IrValue(rhs_val),
+							ReferenceQualifier::LValueReference));
 
 						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
 
