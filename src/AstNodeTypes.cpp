@@ -266,11 +266,12 @@ struct TypeInfoTemplateArgListInternStats {
 };
 
 constexpr size_t kTemplateArgListInternInlineBucketCount = 4;
-InlineVector<TypeInfoTemplateArgListInternEntry, 16> gTypeInfoTemplateArgListsBySize[kTemplateArgListInternInlineBucketCount];
-InlineVector<TypeInfoTemplateArgListInternEntry, 16> gTypeInfoTemplateArgListsBySizeOverflow;
+constexpr uint32_t kTemplateArgListInternBucketChunkSize = 512;
+ChunkedVector<TypeInfoTemplateArgListInternEntry, kTemplateArgListInternBucketChunkSize> gTypeInfoTemplateArgListsBySize[kTemplateArgListInternInlineBucketCount];
+ChunkedVector<TypeInfoTemplateArgListInternEntry, kTemplateArgListInternBucketChunkSize> gTypeInfoTemplateArgListsBySizeOverflow;
 TypeInfoTemplateArgListInternStats gTypeInfoTemplateArgListInternStats;
 
-InlineVector<TypeInfoTemplateArgListInternEntry, 16>& typeInfoTemplateArgListInternBucketForSize(size_t arg_count) {
+ChunkedVector<TypeInfoTemplateArgListInternEntry, kTemplateArgListInternBucketChunkSize>& typeInfoTemplateArgListInternBucketForSize(size_t arg_count) {
 	if (arg_count >= 1 && arg_count <= kTemplateArgListInternInlineBucketCount) {
 		return gTypeInfoTemplateArgListsBySize[arg_count - 1];
 	}
@@ -323,7 +324,7 @@ uint32_t storeTypeInfoTemplateArgs(InlineVector<TypeInfo::TemplateArgInfo, 4> ar
 	const size_t hist_bucket = arg_count >= 8 ? 8 : arg_count;
 	++gTypeInfoTemplateArgListInternStats.size_histogram[hist_bucket];
 	const std::span<const TypeInfo::TemplateArgInfo> args_span(args.data(), arg_count);
-	InlineVector<TypeInfoTemplateArgListInternEntry, 16>& candidates =
+	ChunkedVector<TypeInfoTemplateArgListInternEntry, kTemplateArgListInternBucketChunkSize>& candidates =
 		typeInfoTemplateArgListInternBucketForSize(arg_count);
 	size_t identity_hash = 0;
 	if (!candidates.empty()) {
