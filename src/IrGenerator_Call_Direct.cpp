@@ -761,18 +761,25 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					false,
 					false);
 
-				// Add the object (self) as the first argument (this pointer)
-				call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
-
-				// Generate IR for the remaining arguments and collect types for mangling
-				std::vector<TypeSpecifierNode> arg_types;
-
 				// Look up the closure type to get the proper type_index
 				TypeIndex closure_type_index{};
 				auto it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 				if (it != getTypesByNameMap().end()) {
 					closure_type_index = it->second->type_index_;
 				}
+				if (!closure_type_index.is_valid()) {
+					throw InternalError("Recursive lambda call missing canonical closure type identity");
+				}
+
+				// Add the object (self) as the first argument (this pointer)
+				call_op.args.push_back(makeTypedValue(
+					closure_type_index.withCategory(TypeCategory::Struct),
+					SizeInBits{64},
+					IrValue(func_name),
+					PointerDepth{1}));
+
+				// Generate IR for the remaining arguments and collect types for mangling
+				std::vector<TypeSpecifierNode> arg_types;
 
 				callExprNode.arguments().visit([&](ASTNode argument) {
 					// Check if this argument is the same as the callee (recursive lambda pattern)
@@ -788,7 +795,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 					if (is_self_arg) {
 						// For the self argument in recursive lambda calls, pass the reference directly
 						// Don't call visitExpressionNode which would dereference it
-						call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(func_name)));
+						call_op.args.push_back(makeTypedValue(
+							closure_type_index.withCategory(TypeCategory::Struct),
+							SizeInBits{64},
+							IrValue(func_name),
+							ReferenceQualifier::LValueReference));
 
 						// Type for mangling is lvalue reference to closure type
 						TypeSpecifierNode self_type(closure_type_index.withCategory(TypeCategory::Struct), 8, Token(), CVQualifier::None, ReferenceQualifier::None);

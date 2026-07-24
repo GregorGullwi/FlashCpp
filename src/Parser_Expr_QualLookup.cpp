@@ -2652,8 +2652,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
-		// Fallback: return a placeholder struct type
-			return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), SizeInBits{64}, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
+		throw InternalError("Lambda expression type lookup reached an unregistered closure type");
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -3214,8 +3213,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
-		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
+		throw InternalError("Lambda expression type lookup reached an unregistered closure type");
 	} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed
 		const auto& ctor_call = std::get<ConstructorCallNode>(expr);

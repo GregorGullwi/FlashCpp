@@ -2137,6 +2137,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				addr_op.operand.value = obj_temp;
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 				this_arg_value = IrValue(this_addr);
+				this_arg_is_pointer_value = true;
+				this_arg_storage = ValueStorage::ContainsAddress;
 			}
 		} else if (object_is_pointer_like) {
 			bool requires_loaded_pointer_value = false;
@@ -2181,12 +2183,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);
+			this_arg_is_pointer_value = true;
+			this_arg_storage = ValueStorage::ContainsAddress;
 		}
+		// 'this' is always passed as a pointer in the ABI, never as a by-value aggregate.
 		TypedValue this_arg = makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value);
-		this_arg.storage = this_arg_storage;
-		if (this_arg_is_pointer_value) {
-			this_arg.pointer_depth = PointerDepth{1};
+		if (object_type.type_index().is_valid()) {
+			this_arg.type_index = object_type.type_index().withCategory(object_type.type());
 		}
+		this_arg.storage = this_arg_storage;
+		this_arg.pointer_depth = PointerDepth{1};
 		call_op.args.push_back(std::move(this_arg));
 
 		// Generate IR for function arguments and add to CallOp

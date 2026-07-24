@@ -52,27 +52,18 @@ produce `CompileError`; missing canonical compiler metadata should produce
 `InternalError`; unsupported evaluator coverage must not be accepted as either a
 constant value or an ill-formed program.
 
-## SysV single-eightbyte and x87 aggregate return gaps
+## SysV x87 aggregate return gap
 
-Concrete SysV aggregate returns now plan `direct` vs `indirect` from canonical
-layout classification during IR generation. Aggregates larger than two
-eightbytes, and ≤16-byte MEMORY-class values such as unaligned packed
-aggregates, select a hidden return slot. Incomplete or placeholder return types
-are `dependent` and must not be treated as direct; concrete function/call IR
-requires a resolved plan and surfaces missing canonical metadata as
-`InternalError`.
+Concrete SysV aggregate returns plan `direct` vs `indirect` from canonical layout
+classification during IR generation, including single-eightbyte SSE-only values
+such as `struct { float; }` / `struct { double; }` that must use XMM0 rather than
+the legacy integer return path. Aggregates larger than two eightbytes, and ≤16-byte
+MEMORY-class values such as unaligned packed aggregates, select a hidden return
+slot. Incomplete or placeholder return types are `dependent` and must not be
+treated as direct; concrete function/call IR requires a resolved plan and surfaces
+missing canonical metadata as `InternalError`.
 
-Remaining gaps:
-
-Single-eightbyte aggregate lowering still uses the legacy scalar path, which is
-correct for INTEGER-class values but does not yet select an SSE register for
-aggregates containing only `float`/`double`. Enabling strict classification for
-that path currently exposes several IR producers that omit canonical type
-identity for small class values. Those producers must be closed before the
-scalar path is replaced; accepting an absent `TypeIndex` as INTEGER would only
-preserve the same non-standard guess.
-
-Aggregate returns containing `long double` also remain on the legacy path. Their
-SysV result classification uses the X87/X87UP classes, which the current backend
+Aggregate returns containing `long double` remain on the legacy path. Their SysV
+result classification uses the X87/X87UP classes, which the current backend
 return-register abstraction cannot represent yet. Aggregate parameters containing
 `long double` are still classified as MEMORY as required.

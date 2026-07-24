@@ -4066,8 +4066,14 @@ X64Register IrToObjConverter<TWriterClass>::allocateXMMRegisterWithSpilling(X64R
 template <class TWriterClass>
 std::optional<SysVAbiValueLayout> IrToObjConverter<TWriterClass>::classifySysVAggregate(const TypedValue& arg) const {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		if (isIrStructType(arg.effectiveIrType()) && arg.size_in_bits.value > 64 &&
+		// Classify every by-value aggregate from canonical layout, including single-eightbyte
+		// SSE-only values that must use XMM registers rather than the legacy GPR path.
+		if (isIrStructType(arg.effectiveIrType()) && arg.size_in_bits.value > 0 &&
 			!arg.pointer_depth.is_pointer() && !arg.is_reference()) {
+			if (!arg.type_index.is_valid()) {
+				throw InternalError(
+					"SysV ABI classification requires canonical type identity for by-value aggregates");
+			}
 			return TargetABI::classifySysVValue(
 				arg.type_index, arg.size_in_bits, arg.pointer_depth.value, arg.is_reference());
 		}
@@ -4092,7 +4098,7 @@ void IrToObjConverter<TWriterClass>::emitIntegerOrAggregateReturnValue(
 	TypeIndex type_index, SizeInBits size_in_bits,
 	int32_t frame_offset, std::optional<X64Register> live_value_register) {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		if (isIrStructType(toIrType(type_index.category())) && size_in_bits.value > 64) {
+		if (isIrStructType(toIrType(type_index.category())) && size_in_bits.value > 0) {
 			const SysVAbiValueLayout layout = TargetABI::classifySysVValue(
 				type_index, size_in_bits, /*pointer_depth=*/0, /*is_reference=*/false);
 			// x87 aggregate returns stay on the legacy direct-return path until the
@@ -4146,7 +4152,7 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitStoreReturnValue(
 	TypeIndex type_index, SizeInBits size_in_bits, int32_t frame_offset) {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		if (isIrStructType(toIrType(type_index.category())) && size_in_bits.value > 64) {
+		if (isIrStructType(toIrType(type_index.category())) && size_in_bits.value > 0) {
 			const SysVAbiValueLayout layout = TargetABI::classifySysVValue(
 				type_index, size_in_bits, /*pointer_depth=*/0, /*is_reference=*/false);
 			// Keep caller result materialization paired with the callee x87 path above.
@@ -7585,7 +7591,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	{
 		for (const auto& p : func_decl.parameters) {
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-				if (!is_variadic && is_struct_type(p.paramType()) && p.size_in_bits.value > 64 &&
+				if (!is_variadic && is_struct_type(p.paramType()) && p.size_in_bits.value > 0 &&
 					!p.pointer_depth.is_pointer() && !p.is_reference()) {
 					const SysVAbiValueLayout layout = TargetABI::classifySysVValue(
 						p.type_index, p.size_in_bits,
@@ -8305,7 +8311,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 			std::optional<SysVAbiValueLayout> sysv_aggregate_layout;
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-				if (isIrStructType(toIrType(param.paramType())) && param.size_in_bits.value > 64 &&
+				if (isIrStructType(toIrType(param.paramType())) && param.size_in_bits.value > 0 &&
 					!param.pointer_depth.is_pointer() && !param.is_reference()) {
 					sysv_aggregate_layout = TargetABI::classifySysVValue(
 						param.type_index, param.size_in_bits, param.pointer_depth.value, param.is_reference());

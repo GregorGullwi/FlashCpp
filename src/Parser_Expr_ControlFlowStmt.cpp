@@ -1387,10 +1387,17 @@ ParseResult Parser::parse_lambda_expression() {
 				false);
 		}
 
-		// addMember() already updates total_size and alignment, but ensure minimum size of 1
-		if (!closure_struct_info->total_size.is_set()) {
-			closure_struct_info->finalizeLayoutSize(1, 1, closure_struct_info->alignment);
+		// Capturing closures must publish a complete object layout. addMember updates
+		// sizes but leaves layout_is_complete false; SysV return/argument classification
+		// requires a finalized layout and must not treat these as Dependent forever.
+		const size_t final_alignment = std::max(closure_struct_info->alignment, size_t(1));
+		size_t object_size = toSizeT(closure_struct_info->total_size);
+		size_t layout_size = toSizeT(closure_struct_info->layout_data_size);
+		if (object_size == 0) {
+			object_size = 1;
+			layout_size = std::max(layout_size, size_t(1));
 		}
+		closure_struct_info->finalizeLayoutSize(layout_size, object_size, final_alignment);
 	}
 
 	// Generate operator() member function for the lambda
