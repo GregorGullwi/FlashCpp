@@ -2074,16 +2074,19 @@ ParseResult Parser::parse_static_member_block(
 	return ParseResult::success();  // Signal caller to continue
 }
 
-// Parse Microsoft __declspec(...) attributes and return linkage
 Linkage Parser::parse_declspec_attributes() {
-	Linkage linkage = Linkage::None;
+	AttributeInfo info;
+	parse_declspec_attributes_into(info);
+	return info.linkage;
+}
 
+void Parser::parse_declspec_attributes_into(AttributeInfo& info) {
 	// Parse all __declspec attributes
 	while (peek() == "__declspec"_tok) {
 		advance(); // consume "__declspec"
 
 		if (!consume("("_tok)) {
-			return linkage; // Invalid __declspec, return what we have
+			return; // Invalid __declspec, return what we have
 		}
 
 		// Parse the declspec specifier(s)
@@ -2091,9 +2094,11 @@ Linkage Parser::parse_declspec_attributes() {
 			if (peek().is_identifier() || peek().is_keyword()) {
 				std::string_view spec = peek_info().value();
 				if (spec == "dllimport") {
-					linkage = Linkage::DllImport;
+					info.linkage = Linkage::DllImport;
 				} else if (spec == "dllexport") {
-					linkage = Linkage::DllExport;
+					info.linkage = Linkage::DllExport;
+				} else if (spec == "selectany") {
+					info.is_selectany = true;
 				}
 				// else: ignore other declspec attributes like align, deprecated, allocator, restrict, etc.
 				advance();
@@ -2115,11 +2120,9 @@ Linkage Parser::parse_declspec_attributes() {
 		}
 
 		if (!consume(")"_tok)) {
-			return linkage; // Missing closing paren
+			return; // Missing closing paren
 		}
 	}
-
-	return linkage;
 }
 
 // Parse calling convention keywords and return the calling convention
@@ -2146,7 +2149,7 @@ Parser::AttributeInfo Parser::parse_attributes() {
 	AttributeInfo info;
 
 	skip_cpp_attributes();  // C++ [[...]] and GCC __attribute__(...) specifications
-	info.linkage = parse_declspec_attributes();
+	parse_declspec_attributes_into(info);
 	info.calling_convention = parse_calling_convention(info.calling_convention);
 
 	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
@@ -2158,6 +2161,9 @@ Parser::AttributeInfo Parser::parse_attributes() {
 		}
 		if (more_info.calling_convention != CallingConvention::Default) {
 			info.calling_convention = more_info.calling_convention;
+		}
+		if (more_info.is_selectany) {
+			info.is_selectany = true;
 		}
 	}
 

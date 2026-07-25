@@ -1359,6 +1359,7 @@ FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers() {
 	AttributeInfo attr_info = parse_attributes();
 	specs.linkage = attr_info.linkage;
 	specs.calling_convention = attr_info.calling_convention;
+	specs.is_selectany = attr_info.is_selectany;
 
 	// Parse storage class specifiers and constexpr/constinit/consteval keywords
 	// These can appear in any order: "static constexpr", "constexpr static", etc.

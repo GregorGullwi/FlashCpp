@@ -41,6 +41,17 @@ public:
 		ASTNode function_node,
 		NamespaceHandle namespace_handle);
 
+	// ODR-use emission for free inline/__inline definitions: skip bodies until
+	// a call (or other use) marks them needed, then emit from the deferred queue.
+	void requestInlineFunctionEmission(const FunctionDeclarationNode& node);
+	size_t generateDeferredInlineFunctions();
+	size_t deferredMemberFunctionsPending() const {
+		return deferred_member_functions_.size() - deferred_member_functions_processed_;
+	}
+	size_t deferredInlineFunctionsPending() const {
+		return inline_emission_worklist_.size() - inline_emission_worklist_processed_;
+	}
+
 	void reserveInstructions(size_t capacity) {
 		ir_.reserve(capacity);
 	}
@@ -1429,6 +1440,15 @@ private:
 		NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
 	};
 	std::vector<DeferredMemberFunctionInfo> deferred_member_functions_;
+	size_t deferred_member_functions_processed_ = 0;
+
+	// Free inline/__inline definitions deferred until ODR-use (call / address-of).
+	// Keyed by FunctionDeclarationNode identity so forward-referenced needed flags
+	// still force emission when the definition is visited later.
+	std::unordered_map<const void*, ASTNode> deferred_inline_function_nodes_;
+	std::unordered_set<const void*> needed_inline_function_nodes_;
+	std::vector<ASTNode> inline_emission_worklist_;
+	size_t inline_emission_worklist_processed_ = 0;
 
 	// Structure to hold template instantiation info for deferred generation
 	struct TemplateInstantiationInfo {

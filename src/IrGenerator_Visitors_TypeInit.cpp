@@ -383,10 +383,9 @@ std::string AstToIr::get_deferred_func_name(const ASTNode& node) const {
 }
 
 size_t AstToIr::generateDeferredMemberFunctions() {
-	size_t processed = 0;
 	size_t error_count = 0;
-	while (processed < deferred_member_functions_.size()) {
-		DeferredMemberFunctionInfo info = deferred_member_functions_[processed++];
+	while (deferred_member_functions_processed_ < deferred_member_functions_.size()) {
+		DeferredMemberFunctionInfo info = deferred_member_functions_[deferred_member_functions_processed_++];
 		StringHandle saved_function = current_function_name_;
 		auto saved_namespace = current_namespace_stack_;
 		current_struct_name_ = info.struct_name;

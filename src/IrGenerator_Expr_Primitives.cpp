@@ -1470,6 +1470,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// This is a function name being used as a value (e.g., fp = add)
 			// Generate FunctionAddress IR instruction
 		const auto& func_decl = symbol->as<FunctionDeclarationNode>();
+		requestInlineFunctionEmission(func_decl);
 
 			// Compute mangled name from the function declaration, respecting linkage
 			// (extern "C" functions must not be mangled)

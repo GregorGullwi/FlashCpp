@@ -947,6 +947,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		global_decl_node.set_is_constexpr(is_constexpr);
 		global_decl_node.set_is_constinit(is_constinit);
 		global_decl_node.set_linkage(specs.linkage);
+		global_decl_node.set_is_selectany(specs.is_selectany);
 
 		// Validate: constexpr/constinit are incompatible with dllimport
 		if (specs.linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {
@@ -1140,6 +1141,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 				next_var_decl.set_is_constexpr(is_constexpr);
 				next_var_decl.set_is_constinit(is_constinit);
 				next_var_decl.set_linkage(specs.linkage);
+				next_var_decl.set_is_selectany(specs.is_selectany);
 
 				// Validate: constexpr/constinit are incompatible with dllimport
 				if (specs.linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {

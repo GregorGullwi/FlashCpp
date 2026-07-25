@@ -407,6 +407,9 @@ public:
 	void set_linkage(Linkage linkage) { linkage_ = linkage; }
 	Linkage linkage() const { return linkage_; }
 
+	void set_is_selectany(bool is_selectany) { is_selectany_ = is_selectany; }
+	bool is_selectany() const { return is_selectany_; }
+
 	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
 		outer_template_param_names_.clear();
@@ -446,6 +449,7 @@ private:
 	bool is_thread_local_ = false;
 	bool is_constexpr_;
 	bool is_constinit_;
+	bool is_selectany_ = false;
 	const TemplateEnvironmentSnapshotNode* outer_template_environment_snapshot_node_{};
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;

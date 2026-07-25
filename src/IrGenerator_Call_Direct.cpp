@@ -1288,6 +1288,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	size_t arg_index = 0;
 	const auto& func_decl_node = callExprNode.callee().declaration();
 
+	// ODR-use: ensure free inline definitions deferred until first use are emitted.
+	if (matched_func_decl) {
+		requestInlineFunctionEmission(*matched_func_decl);
+	}
+
 	// Get parameters from the function declaration
 	std::vector<ASTNode> param_nodes;
 	if (matched_func_decl) {

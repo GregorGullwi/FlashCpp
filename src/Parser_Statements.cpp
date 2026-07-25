@@ -1052,6 +1052,7 @@ ParseResult Parser::parse_variable_declaration() {
 		var_decl.set_is_constexpr(is_constexpr);
 		var_decl.set_is_constinit(is_constinit);
 		var_decl.set_linkage(linkage);
+		var_decl.set_is_selectany(specs.is_selectany);
 
 		// Validate: constexpr/constinit are incompatible with dllimport
 		if (linkage == Linkage::DllImport && (is_constexpr || is_constinit)) {

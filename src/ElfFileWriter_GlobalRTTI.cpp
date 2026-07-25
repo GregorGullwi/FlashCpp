@@ -61,7 +61,9 @@ bool findVBaseOffset(const StructTypeInfo* si, TypeIndex target_tidx,
 } // namespace
 
 void ElfFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
-											 bool is_initialized, std::span<const char> init_data, bool is_rodata) {
+											 bool is_initialized, std::span<const char> init_data, bool is_rodata,
+											 bool is_selectany) {
+	(void)is_selectany; // MSVC COMDAT; on ELF emit a normal global (weak would be closer but unused on Windows path)
 	if (g_enable_debug_output) {
 		std::cerr << "Adding global variable: " << var_name
 				  << " size=" << size_in_bytes

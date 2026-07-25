@@ -911,6 +911,7 @@ struct GlobalVariableDeclOp {
 	StringHandle reloc_target;	   // If valid, init_data holds zeros and a data relocation (R_X86_64_64) is emitted for this symbol
 	bool is_rodata = false;			// If true, init_data is emitted to .rodata (read-only) instead of .data
 	bool is_extern_only = false;	// If true, this is an extern declaration (no local storage allocation)
+	bool is_selectany = false;		// __declspec(selectany): emit as COMDAT SELECT_ANY
 
 	// Helper to get var_name as StringHandle
 	StringHandle getVarName() const {
