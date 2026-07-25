@@ -40,6 +40,11 @@ struct Scope {
 	Scope(ScopeType scopeType, size_t scope_level, StringHandle ns_name)
 		: scope_type(scopeType), scope_handle{.scope_level = scope_level}, namespace_name(ns_name) {}
 
+	Scope(Scope&&) noexcept = default;
+	Scope& operator=(Scope&&) noexcept = default;
+	Scope(const Scope&) = default;
+	Scope& operator=(const Scope&) = default;
+
 	ScopeType scope_type = ScopeType::Block;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
 	// Use string_view keys with a dedicated ChunkedStringAllocator in SymbolTable to avoid copies
@@ -148,132 +153,184 @@ public:
 
 	bool insert(std::string_view identifier, ASTNode node) {
 		auto& current_scope = symbol_table_stack_.back();
-		// First, try to find the identifier without interning
-		auto it = current_scope.symbols.find(identifier);
+		const bool ns_scope = current_scope.scope_type == ScopeType::Namespace;
+		const bool global_scope = current_scope.scope_type == ScopeType::Global;
 
-		// If this is a new identifier, intern it and create a new vector
-		if (it == current_scope.symbols.end()) {
+		// For namespace scopes, namespace_symbols_ is the source of truth for
+		// redeclaration / overload detection across reopened blocks. Global and
+		// other scopes still use the local symbols map.
+		std::vector<ASTNode>* existing_ptr = nullptr;
+		NamespaceHandle ns_handle{};
+		StringHandle ns_key{};
+		if (ns_scope) {
+			ns_handle = get_current_namespace_handle();
+			auto& ns_symbols = namespace_symbols_[ns_handle];
+			ns_key = StringTable::getOrInternStringHandle(identifier);
+			auto ns_it = ns_symbols.find(ns_key);
+			if (ns_it != ns_symbols.end()) {
+				existing_ptr = &ns_it->second;
+			}
+		} else {
+			auto it = current_scope.symbols.find(identifier);
+			if (it != current_scope.symbols.end()) {
+				existing_ptr = &it->second;
+			}
+		}
+
+		auto sync_namespace_scope_symbols = [&](const std::vector<ASTNode>& nodes) {
+			std::string_view key = intern_string(identifier);
+			current_scope.symbols[key] = nodes;
+		};
+
+		// If this is a new identifier, create a new vector
+		if (!existing_ptr) {
 			std::string_view key = intern_string(identifier);
 			current_scope.symbols[key] = std::vector<ASTNode>{node};
-		} else {
-			// Identifier exists - check if we can add this as an overload
-			auto& existing_nodes = it->second;
-
-			// For non-function symbols (variables, etc.), don't allow duplicates in the same scope
-			// This includes DeclarationNode and VariableDeclarationNode
-			// Use helper function to check for both FunctionDeclarationNode and TemplateFunctionDeclarationNode
-			if (!is_function_or_template_function(node)) {
-				// Check if any existing symbol has a different type
-				if (!existing_nodes.empty() && existing_nodes[0].type_name() != node.type_name()) {
-					return false;
+			if (ns_scope || global_scope) {
+				if (!ns_scope) {
+					ns_handle = get_current_namespace_handle();
+					ns_key = StringTable::getOrInternStringHandle(identifier);
 				}
-				// Don't allow duplicate non-function symbols in the same scope
+				/* Global scope keys existence off scope.symbols, so namespace_symbols_ can
+				   in principle already hold entries this scope never saw. Append rather than
+				   assign so such entries are never silently dropped. For namespace scopes
+				   existing_ptr came from this very map, so absence here is authoritative and
+				   the append degenerates into a fresh vector. */
+				auto& ns_symbols = namespace_symbols_[ns_handle];
+				auto ns_it = ns_symbols.find(ns_key);
+				if (ns_it == ns_symbols.end()) {
+					ns_symbols[ns_key] = std::vector<ASTNode>{node};
+				} else {
+					ns_it->second.push_back(node);
+				}
+			}
+			return true;
+		}
+
+		// Identifier exists - check if we can add this as an overload
+		auto& existing_nodes = *existing_ptr;
+
+		// For non-function symbols (variables, etc.), don't allow duplicates in the same scope
+		// This includes DeclarationNode and VariableDeclarationNode
+		// Use helper function to check for both FunctionDeclarationNode and TemplateFunctionDeclarationNode
+		if (!is_function_or_template_function(node)) {
+			// Check if any existing symbol has a different type
+			if (!existing_nodes.empty() && existing_nodes[0].type_name() != node.type_name()) {
 				return false;
 			}
+			// Don't allow duplicate non-function symbols in the same scope
+			return false;
+		}
 
-			// For function declarations (including template functions), allow overloading
+		// For function declarations (including template functions), allow overloading
+		// Check if a function with the same signature already exists
+		const FunctionDeclarationNode* new_func = get_function_decl_node(node);
+		if (new_func) {
+			const auto& new_params = new_func->parameter_nodes();
+
 			// Check if a function with the same signature already exists
-			const FunctionDeclarationNode* new_func = get_function_decl_node(node);
-			if (new_func) {
-				const auto& new_params = new_func->parameter_nodes();
+			for (size_t i = 0; i < existing_nodes.size(); ++i) {
+				const FunctionDeclarationNode* existing_func = get_function_decl_node(existing_nodes[i]);
+				if (existing_func) {
+					const auto& existing_params = existing_func->parameter_nodes();
 
-				// Check if a function with the same signature already exists
-				for (size_t i = 0; i < existing_nodes.size(); ++i) {
-					const FunctionDeclarationNode* existing_func = get_function_decl_node(existing_nodes[i]);
-					if (existing_func) {
-						const auto& existing_params = existing_func->parameter_nodes();
+					// Check if parameter counts match
+					if (new_params.size() == existing_params.size() &&
+						new_func->is_variadic() == existing_func->is_variadic()) {
+						// Check if all parameter types match
+						bool all_match = true;
+						for (size_t j = 0; j < new_params.size(); ++j) {
+							const auto& new_param_type = new_params[j].as<DeclarationNode>().type_specifier_node();
+							const auto& existing_param_type = existing_params[j].as<DeclarationNode>().type_specifier_node();
 
-						// Check if parameter counts match
-						if (new_params.size() == existing_params.size() &&
-							new_func->is_variadic() == existing_func->is_variadic()) {
-							// Check if all parameter types match
-							bool all_match = true;
-							for (size_t j = 0; j < new_params.size(); ++j) {
-								const auto& new_param_type = new_params[j].as<DeclarationNode>().type_specifier_node();
-								const auto& existing_param_type = existing_params[j].as<DeclarationNode>().type_specifier_node();
-
-								if (!new_param_type.matches_signature(existing_param_type)) {
-									all_match = false;
-									break;
-								}
+							if (!new_param_type.matches_signature(existing_param_type)) {
+								all_match = false;
+								break;
 							}
+						}
 
-							// Also check return types for template specializations
-							// (e.g., get<0> returns int, get<1> returns double - different specializations)
-							if (all_match) {
-								const auto& new_return_type = new_func->decl_node().type_specifier_node();
-								const auto& existing_return_type = existing_func->decl_node().type_specifier_node();
-								if (!new_return_type.matches_signature(existing_return_type)) {
-									all_match = false;  // Different return types = different specializations
-								}
+						// Also check return types for template specializations
+						// (e.g., get<0> returns int, get<1> returns double - different specializations)
+						if (all_match) {
+							const auto& new_return_type = new_func->decl_node().type_specifier_node();
+							const auto& existing_return_type = existing_func->decl_node().type_specifier_node();
+							if (!new_return_type.matches_signature(existing_return_type)) {
+								all_match = false;  // Different return types = different specializations
 							}
+						}
 
-							if (all_match) {
-								const bool new_is_template =
-									node.is<TemplateFunctionDeclarationNode>();
-								const bool existing_is_template =
-									existing_nodes[i].is<TemplateFunctionDeclarationNode>();
-								if (new_is_template != existing_is_template) {
-									continue;
-								}
-								// Same signature found - replace forward declaration with definition if needed
-								// If the new one has a definition and the existing one doesn't, replace it
-								if (new_func->is_materialized() && !existing_func->is_materialized()) {
-									existing_nodes[i] = node;
+						if (all_match) {
+							const bool new_is_template =
+								node.is<TemplateFunctionDeclarationNode>();
+							const bool existing_is_template =
+								existing_nodes[i].is<TemplateFunctionDeclarationNode>();
+							if (new_is_template != existing_is_template) {
+								continue;
+							}
+							// Same signature found - replace forward declaration with definition if needed
+							// If the new one has a definition and the existing one doesn't, replace it
+							if (new_func->is_materialized() && !existing_func->is_materialized()) {
+								existing_nodes[i] = node;
 
-									// Also update the namespace_symbols_ map if we're in a namespace or global scope
-									if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
-										NamespaceHandle ns_handle = get_current_namespace_handle();
-										auto& ns_symbols = namespace_symbols_[ns_handle];
-										StringHandle key = StringTable::getOrInternStringHandle(identifier);
+								if (ns_scope) {
+									// existing_nodes is already namespace_symbols_; keep the local map in sync
+									sync_namespace_scope_symbols(existing_nodes);
+								} else if (global_scope) {
+									// Global still uses scope.symbols as primary; mirror into namespace_symbols_
+									NamespaceHandle mirror_ns = get_current_namespace_handle();
+									auto& ns_symbols = namespace_symbols_[mirror_ns];
+									StringHandle key = StringTable::getOrInternStringHandle(identifier);
 
-										auto ns_it = ns_symbols.find(key);
-										if (ns_it != ns_symbols.end()) {
-											// Find and replace the matching node in namespace_symbols_
-											for (size_t k = 0; k < ns_it->second.size(); ++k) {
-												const FunctionDeclarationNode* ns_func = get_function_decl_node(ns_it->second[k]);
-												if (ns_func) {
-													const auto& ns_params = ns_func->parameter_nodes();
+									auto ns_it = ns_symbols.find(key);
+									if (ns_it != ns_symbols.end()) {
+										for (size_t k = 0; k < ns_it->second.size(); ++k) {
+											const FunctionDeclarationNode* ns_func = get_function_decl_node(ns_it->second[k]);
+											if (ns_func) {
+												const auto& ns_params = ns_func->parameter_nodes();
 
-													// Check if this is the same signature
-													if (ns_params.size() == new_params.size() &&
-														ns_func->is_variadic() == new_func->is_variadic()) {
-														bool params_match = true;
-														for (size_t m = 0; m < ns_params.size(); ++m) {
-															const auto& ns_param_type = ns_params[m].as<DeclarationNode>().type_specifier_node();
-															const auto& new_param_type = new_params[m].as<DeclarationNode>().type_specifier_node();
-															if (!ns_param_type.matches_signature(new_param_type)) {
-																params_match = false;
-																break;
-															}
-														}
-														if (params_match) {
-															ns_it->second[k] = node;
+												if (ns_params.size() == new_params.size() &&
+													ns_func->is_variadic() == new_func->is_variadic()) {
+													bool params_match = true;
+													for (size_t m = 0; m < ns_params.size(); ++m) {
+														const auto& ns_param_type = ns_params[m].as<DeclarationNode>().type_specifier_node();
+														const auto& new_param_type = new_params[m].as<DeclarationNode>().type_specifier_node();
+														if (!ns_param_type.matches_signature(new_param_type)) {
+															params_match = false;
 															break;
 														}
+													}
+													if (params_match) {
+														ns_it->second[k] = node;
+														break;
 													}
 												}
 											}
 										}
 									}
 								}
-								// Otherwise, it's a duplicate declaration - just ignore it
-								return true;
 							}
+							// Otherwise, it's a duplicate declaration - just ignore it
+							return true;
 						}
 					}
 				}
 			}
-
-			// No matching signature found - add as new overload
-			existing_nodes.push_back(node);
 		}
 
-		// If we're in a namespace or global scope, also add to the persistent namespace map
-		// For global scope, use an empty namespace path (represents ::identifier)
-		if (current_scope.scope_type == ScopeType::Namespace || current_scope.scope_type == ScopeType::Global) {
-			NamespaceHandle ns_handle = get_current_namespace_handle();
-			auto& ns_symbols = namespace_symbols_[ns_handle];
+		// No matching signature found - add as new overload
+		existing_nodes.push_back(node);
+
+		if (ns_scope) {
+			// existing_nodes is namespace_symbols_; sync the full overload set into the
+			// local map so lookup that hits scope.symbols first still sees every overload.
+			sync_namespace_scope_symbols(existing_nodes);
+			return true;
+		}
+
+		// Global scope: also add to the persistent namespace map
+		if (global_scope) {
+			NamespaceHandle mirror_ns = get_current_namespace_handle();
+			auto& ns_symbols = namespace_symbols_[mirror_ns];
 			StringHandle key = StringTable::getOrInternStringHandle(identifier);
 
 			auto ns_it = ns_symbols.find(key);
@@ -400,7 +457,22 @@ public:
 				return symbolIt->second[0];
 			}
 
-			// Second, fall back to unresolved using declarations in this scope.
+			// For namespace scopes, probe namespace_symbols_ immediately after the local
+			// symbols map and before using-declarations/directives. Member names of the
+			// namespace itself must beat imports; once enter_namespace stops preloading,
+			// those members live only in namespace_symbols_.
+			if (scope.scope_type == ScopeType::Namespace) {
+				if (!scope_namespace.isGlobal()) {
+					StringHandle key = StringTable::getOrInternStringHandle(identifier);
+					auto result = lookup_qualified_first(scope_namespace, key);
+					if (result.has_value()) {
+						return result;
+					}
+				}
+				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
+			}
+
+			// Fall back to unresolved using declarations in this scope.
 			auto using_handle_it = scope.using_declarations_handles.find(identifier);
 			if (using_handle_it != scope.using_declarations_handles.end()) {
 				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
@@ -410,24 +482,10 @@ public:
 				}
 			}
 
-			// Third, check using directives in this scope
+			// Check using directives in this scope
 			auto using_result = lookup_using_directives_first(scope, identifier);
 			if (using_result.has_value()) {
 				return using_result;
-			}
-
-			// If we're in a namespace scope, also check namespace_symbols_ for symbols
-			// from other blocks of the same namespace (e.g., reopened namespace blocks).
-			// Use lookup_qualified() so that inline child namespaces are also searched
-			// (lookup_qualified -> lookup_qualified_all -> forEachInlineChildNamespace).
-			if (scope.scope_type == ScopeType::Namespace) {
-				if (!scope_namespace.isGlobal()) {
-					auto result = lookup_qualified(scope_namespace, identifier);
-					if (result.has_value()) {
-						return result;
-					}
-				}
-				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
 			}
 		}
 
@@ -473,24 +531,10 @@ public:
 				return symbolIt->second;
 			}
 
-			// Second, fall back to unresolved using declarations in this scope.
-			auto using_handle_it = scope.using_declarations_handles.find(identifier);
-			if (using_handle_it != scope.using_declarations_handles.end()) {
-				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
-				auto result = lookup_qualified_all(using_namespace_handle, original_name);
-				if (!result.empty()) {
-					return result;
-				}
-			}
-
-			// Third, check using directives in this scope
-			auto using_result = lookup_all_using_directives_first(scope, identifier);
-			if (!using_result.empty()) {
-				return using_result;
-			}
-
-			// If we're in a namespace scope, also check namespace_symbols_ for symbols
-			// from other blocks of the same namespace (e.g., reopened namespace blocks).
+			// For namespace scopes, probe namespace_symbols_ immediately after the local
+			// symbols map and before using-declarations/directives. Member names of the
+			// namespace itself must beat imports; once enter_namespace stops preloading,
+			// those members live only in namespace_symbols_.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
 					StringHandle key = StringTable::getOrInternStringHandle(identifier);
@@ -500,6 +544,22 @@ public:
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
+			}
+
+			// Fall back to unresolved using declarations in this scope.
+			auto using_handle_it = scope.using_declarations_handles.find(identifier);
+			if (using_handle_it != scope.using_declarations_handles.end()) {
+				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
+				auto result = lookup_qualified_all(using_namespace_handle, original_name);
+				if (!result.empty()) {
+					return result;
+				}
+			}
+
+			// Check using directives in this scope
+			auto using_result = lookup_all_using_directives_first(scope, identifier);
+			if (!using_result.empty()) {
+				return using_result;
 			}
 		}
 
@@ -868,14 +928,9 @@ public:
 			gNamespaceRegistry.markDeclared(ns_handle);
 			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
 			scope.namespace_name = entry.name;
-			// Preload existing namespace symbols so unqualified lookup works when re-entering
-			auto ns_it = namespace_symbols_.find(ns_handle);
-			if (ns_it != namespace_symbols_.end()) {
-				for (const auto& [id_handle, nodes] : ns_it->second) {
-					std::string_view key = intern_string(StringTable::getStringView(id_handle));
-					scope.symbols[key] = nodes;
-				}
-			}
+			// Namespace members live in namespace_symbols_; lookup/lookup_all probe that
+			// map for Namespace scopes, and insert() uses it as the source of truth for
+			// redeclarations across reopened blocks. Do not preload into scope.symbols.
 		}
 		symbol_table_stack_.push_back(std::move(scope));
 	}
@@ -1019,14 +1074,7 @@ public:
 	}
 
 	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, StringHandle identifier) const {
-		if (!namespace_handle.isValid()) {
-			return std::nullopt;
-		}
-		auto result = lookup_qualified_all(namespace_handle, identifier);
-		if (result.empty()) {
-			return std::nullopt;
-		}
-		return result[0];
+		return lookup_qualified_first(namespace_handle, identifier);
 	}
 
 	bool has_namespace_symbols(NamespaceHandle namespace_handle) const {
@@ -1258,6 +1306,40 @@ private:
 		std::string_view interned = sb.append(str).commit();
 		interned_strings_.insert(interned);
 		return interned;
+	}
+
+	// First-match qualified lookup without allocating an overload vector.
+	// Mirrors lookup_qualified_all's inline-child walk and ambiguity rule, but
+	// returns only the first node (same as lookup_qualified historically did via [0]).
+	std::optional<ASTNode> lookup_qualified_first(NamespaceHandle namespace_handle, StringHandle identifier) const {
+		if (!namespace_handle.isValid()) {
+			return std::nullopt;
+		}
+		const std::vector<ASTNode>* first_nodes = nullptr;
+		gNamespaceRegistry.forEachInlineChildNamespace(namespace_handle, [&](NamespaceHandle visible_ns) {
+			auto ns_it = namespace_symbols_.find(visible_ns);
+			if (ns_it == namespace_symbols_.end()) {
+				return;
+			}
+			auto symbol_it = ns_it->second.find(identifier);
+			if (symbol_it == ns_it->second.end() || symbol_it->second.empty()) {
+				return;
+			}
+			if (!first_nodes) {
+				first_nodes = &symbol_it->second;
+				return;
+			}
+			if (!is_pure_function_set(*first_nodes) || !is_pure_function_set(symbol_it->second)) {
+				// C++20 [namespace.qual]: same ambiguity rule as lookup_qualified_all.
+				throw CompileError("ambiguous lookup: '" + std::string(StringTable::getStringView(identifier)) + "' found in multiple inline namespaces");
+			}
+			// Pure function sets across inline namespaces merge into one overload set;
+			// the first match's [0] is unchanged, so nothing further is needed here.
+		});
+		if (!first_nodes) {
+			return std::nullopt;
+		}
+		return (*first_nodes)[0];
 	}
 
 	template <typename Map, typename Key, typename Value>

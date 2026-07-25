@@ -47,17 +47,15 @@ public:
 
 	// Allow moving
 	TemplateParameterScope(TemplateParameterScope&& other) noexcept
-		: registered_types_(std::move(other.registered_types_)) {
-		other.registered_types_.clear();
+		: registered_parameters_(std::move(other.registered_parameters_)) {
+		other.registered_parameters_.clear();
 	}
 	TemplateParameterScope& operator=(TemplateParameterScope&& other) noexcept {
 		if (this != &other) {
 			// Clean up current registrations first
 			restoreBindings();
-			registered_types_ = std::move(other.registered_types_);
-			previous_bindings_ = std::move(other.previous_bindings_);
-			other.registered_types_.clear();
-			other.previous_bindings_.clear();
+			registered_parameters_ = std::move(other.registered_parameters_);
+			other.registered_parameters_.clear();
 		}
 		return *this;
 	}
@@ -73,23 +71,16 @@ public:
 				previous.type_info = existing->second;
 			}
 			types_by_name.insert_or_assign(type_info->name(), type_info);
-			registered_types_.push_back(type_info);
-			previous_bindings_.push_back(previous);
+			registered_parameters_.push_back(RegisteredParameter{type_info, previous});
 		}
 	}
 
-	// Get the list of registered types (for iteration if needed)
-	std::span<TypeInfo* const> registeredTypes() const {
-		return registered_types_;
-	}
-
 	// Check if any parameters are registered
-	bool empty() const { return registered_types_.empty(); }
+	bool empty() const { return registered_parameters_.empty(); }
 
 	// Dismiss the guard (don't clean up - caller takes responsibility)
 	void dismiss() {
-		registered_types_.clear();
-		previous_bindings_.clear();
+		registered_parameters_.clear();
 	}
 
 private:
@@ -98,10 +89,16 @@ private:
 		TypeInfo* type_info = nullptr;
 	};
 
+	struct RegisteredParameter {
+		TypeInfo* type_info = nullptr;
+		PreviousBinding previous;
+	};
+
 	void restoreBindings() {
 		auto& types_by_name = getTypesByNameMap();
-		for (size_t i = registered_types_.size(); i > 0; --i) {
-			TypeInfo* type_info = registered_types_[i - 1];
+		for (size_t i = registered_parameters_.size(); i > 0; --i) {
+			const RegisteredParameter& entry = registered_parameters_[i - 1];
+			TypeInfo* type_info = entry.type_info;
 			if (!type_info) {
 				continue;
 			}
@@ -109,19 +106,17 @@ private:
 			if (current != types_by_name.end() && current->second != type_info) {
 				continue;
 			}
-			const PreviousBinding& previous = previous_bindings_[i - 1];
+			const PreviousBinding& previous = entry.previous;
 			if (previous.had_binding) {
 				types_by_name.insert_or_assign(type_info->name(), previous.type_info);
 			} else {
 				types_by_name.erase(type_info->name());
 			}
 		}
-		registered_types_.clear();
-		previous_bindings_.clear();
+		registered_parameters_.clear();
 	}
 
-	std::vector<TypeInfo*> registered_types_;
-	std::vector<PreviousBinding> previous_bindings_;
+	InlineVector<RegisteredParameter, 4> registered_parameters_;
 };
 
 // =============================================================================
