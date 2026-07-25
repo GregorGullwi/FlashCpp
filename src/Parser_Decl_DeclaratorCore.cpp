@@ -815,10 +815,9 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
 			return ParseResult::error("Expected identifier in structured binding", current_token_);
 		}
 
-		Token id_token = peek_info();
-		StringHandle id_handle = StringTable::createStringHandle(id_token.value());
+		Token id_token = advance();
+		StringHandle id_handle = id_token.getOrInternHandle();
 		identifiers.push_back(id_handle);
-		advance(); // consume identifier
 
 		FLASH_LOG(Parser, Debug, "parse_structured_binding: Parsed identifier: ", StringTable::getStringView(id_handle));
 

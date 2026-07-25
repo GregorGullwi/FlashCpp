@@ -15,30 +15,35 @@
 #include "StringLiteralTokenUtils.h"
 
 struct TokenPosition {
-	size_t cursor_;
-	size_t line_;
-	size_t column_;
-	size_t current_file_index_;
+	size_t token_index_ = 0;
 };
 
 class Lexer {
 public:
 	explicit Lexer(std::string_view source,
 				   std::span<const SourceLineMapping> line_map = {},
-				   const std::deque<std::string>& file_paths = {})
+				   const std::deque<std::string>& file_paths = {},
+				   bool msvc_seh_keywords = true)
 		: source_(source), source_size_(source.size()), cursor_(0), line_(1),
-		  column_(1), file_paths_(file_paths), line_map_(line_map.begin(), line_map.end()) {
+		  column_(1), current_file_index_(0), msvc_seh_keywords_(msvc_seh_keywords),
+		  file_paths_(file_paths), line_map_(line_map.begin(), line_map.end()) {
 		if (file_paths_.empty()) {
 			file_paths_.push_back("<unknown>");
 		}
-		update_file_index_from_line();
+		tokenize_all();
 	}
 
 	const std::deque<std::string>& file_paths() const {
 		return file_paths_;
 	}
 
-	void setMsvcSehKeywords(bool enable) { msvc_seh_keywords_ = enable; }
+	void setMsvcSehKeywords(bool enable) {
+		if (msvc_seh_keywords_ == enable) {
+			return;
+		}
+		msvc_seh_keywords_ = enable;
+		tokenize_all();
+	}
 
 	// Get the text of a specific line from the preprocessed source
 	std::string get_line_text(size_t line_num) const {
@@ -72,6 +77,93 @@ public:
 	}
 
 	Token next_token() {
+		if (token_cursor_ < tokens_.size()) {
+			return tokens_[token_cursor_++];
+		}
+		if (!tokens_.empty()) {
+			return tokens_.back();
+		}
+		return Token(Token::Type::EndOfFile, ""sv, 1, 1, current_file_index_);
+	}
+
+	TokenPosition save_token_position() {
+		return {token_cursor_};
+	}
+	void restore_token_position(const TokenPosition& token_position) {
+		token_cursor_ = std::min(token_position.token_index_, tokens_.size());
+	}
+
+	std::string_view get_source() const { return source_; }
+
+	// Look up the source line for a given preprocessed line number.
+	// Returns 0 if the line_map is empty or the line is out of range.
+	size_t getSourceLine(size_t preprocessed_line) const {
+		if (line_map_.empty() || preprocessed_line == 0 || preprocessed_line > line_map_.size())
+			return 0;
+		return line_map_[preprocessed_line - 1].source_line;
+	}
+
+	// Look up the source file index for a given preprocessed line number.
+	size_t getSourceFileIndex(size_t preprocessed_line) const {
+		if (line_map_.empty() || preprocessed_line == 0 || preprocessed_line > line_map_.size())
+			return SIZE_MAX;
+		return line_map_[preprocessed_line - 1].source_file_index;
+	}
+
+	// Get the file path for a given file index.
+	std::string_view getFilePath(size_t file_index) const {
+		if (file_index < file_paths_.size())
+			return file_paths_[file_index];
+		return "<unknown>";
+	}
+
+	// Get current position for later restoration
+	TokenPosition getCurrentPosition() const {
+		return TokenPosition{token_cursor_};
+	}
+
+	// Restore lexer to a previously saved position
+	void restorePosition(const TokenPosition& pos) {
+		token_cursor_ = std::min(pos.token_index_, tokens_.size());
+	}
+
+private:
+	std::string_view source_;
+	size_t source_size_;
+	size_t cursor_;
+	size_t line_;
+	size_t column_;
+	size_t current_file_index_ = 0;
+	bool msvc_seh_keywords_ = true;
+	mutable std::deque<std::string> file_paths_;	 // Mutable to allow adding "<unknown>" in constructor; deque for stable references
+	std::vector<SourceLineMapping> line_map_;  // Changed from reference to value to avoid dangling reference
+	std::vector<Token> tokens_;
+	size_t token_cursor_ = 0;
+
+	void reset_scan_state() {
+		cursor_ = 0;
+		line_ = 1;
+		column_ = 1;
+		update_file_index_from_line();
+	}
+
+	void tokenize_all() {
+		reset_scan_state();
+		token_cursor_ = 0;
+		tokens_.clear();
+		if (source_size_ > 0) {
+			tokens_.reserve(std::max<size_t>(16, source_size_ / 4));
+		}
+		while (true) {
+			Token token = lex_next_token_from_source();
+			tokens_.push_back(token);
+			if (token.type() == Token::Type::EndOfFile) {
+				break;
+			}
+		}
+	}
+
+	Token lex_next_token_from_source() {
 		size_t num_characters_left = source_size_ - cursor_;
 		while (cursor_ < source_size_) {
 			char c = source_[cursor_];
@@ -135,64 +227,6 @@ public:
 		return Token(Token::Type::EndOfFile, ""sv, line_, column_,
 					 current_file_index_);
 	}
-
-	TokenPosition save_token_position() {
-		return {cursor_, line_, column_, current_file_index_};
-	}
-	void restore_token_position(const TokenPosition& token_position) {
-		cursor_ = token_position.cursor_;
-		line_ = token_position.line_;
-		column_ = token_position.column_;
-		current_file_index_ = token_position.current_file_index_;
-	}
-
-	std::string_view get_source() const { return source_; }
-
-	// Look up the source line for a given preprocessed line number.
-	// Returns 0 if the line_map is empty or the line is out of range.
-	size_t getSourceLine(size_t preprocessed_line) const {
-		if (line_map_.empty() || preprocessed_line == 0 || preprocessed_line > line_map_.size())
-			return 0;
-		return line_map_[preprocessed_line - 1].source_line;
-	}
-
-	// Look up the source file index for a given preprocessed line number.
-	size_t getSourceFileIndex(size_t preprocessed_line) const {
-		if (line_map_.empty() || preprocessed_line == 0 || preprocessed_line > line_map_.size())
-			return SIZE_MAX;
-		return line_map_[preprocessed_line - 1].source_file_index;
-	}
-
-	// Get the file path for a given file index.
-	std::string_view getFilePath(size_t file_index) const {
-		if (file_index < file_paths_.size())
-			return file_paths_[file_index];
-		return "<unknown>";
-	}
-
-	// Get current position for later restoration
-	TokenPosition getCurrentPosition() const {
-		return TokenPosition{cursor_, line_, column_, current_file_index_};
-	}
-
-	// Restore lexer to a previously saved position
-	void restorePosition(const TokenPosition& pos) {
-		cursor_ = pos.cursor_;
-		line_ = pos.line_;
-		column_ = pos.column_;
-		current_file_index_ = pos.current_file_index_;
-	}
-
-private:
-	std::string_view source_;
-	size_t source_size_;
-	size_t cursor_;
-	size_t line_;
-	size_t column_;
-	size_t current_file_index_ = 0;
-	bool msvc_seh_keywords_ = true;
-	mutable std::deque<std::string> file_paths_;	 // Mutable to allow adding "<unknown>" in constructor; deque for stable references
-	std::vector<SourceLineMapping> line_map_;  // Changed from reference to value to avoid dangling reference
 
 	// Update current_file_index_ based on current line_
 	void update_file_index_from_line() {

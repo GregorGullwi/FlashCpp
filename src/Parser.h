@@ -750,6 +750,10 @@ private:
 	// Handle-based save/restore to avoid cursor position collisions
 	// Each save gets a unique handle from a static incrementing counter
 	using SaveHandle = size_t;
+	enum class SaveKind : uint8_t {
+		Persistent,
+		Ephemeral
+	};
 
 #if WITH_PARSER_RUNTIME_STATS
 	enum class RuntimePhase : uint8_t {
@@ -799,12 +803,17 @@ private:
 		size_t lookahead_peeks = 0;
 		size_t lookahead_tokens_consumed = 0;
 		size_t save_count = 0;
+		size_t save_persistent_count = 0;
+		size_t save_ephemeral_count = 0;
 		size_t restore_count = 0;
 		size_t restore_lexer_only_count = 0;
 		size_t discard_count = 0;
 		size_t missing_restore_count = 0;
 		size_t active_saves = 0;
 		size_t peak_active_saves = 0;
+		size_t active_ephemeral_saves = 0;
+		size_t peak_active_ephemeral_saves = 0;
+		size_t ephemeral_counter_mismatch_count = 0;
 		size_t saved_token_slots_peak = 0;
 		size_t saved_token_capacity_peak = 0;
 		size_t saved_token_capacity_growths = 0;
@@ -1517,6 +1526,7 @@ private:
 		size_t ast_nodes_size_ = 0;
 		TokenPosition lexer_position_;  // Store the lexer position with each save
 #if WITH_PARSER_RUNTIME_STATS
+		SaveKind kind_;
 		size_t tokens_advanced_at_save_ = 0;  // Snapshot of tokens_advanced for delta tracking
 #endif
 	};
@@ -1526,6 +1536,7 @@ private:
 	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
+	std::optional<Token> lookahead_token_1_cache_;
 #if WITH_PARSER_RUNTIME_STATS
 	bool runtime_stats_enabled_ = false;
 	size_t ast_nodes_baseline_ = 0;  // gChunkedAnyStorage.size() when stats were enabled
@@ -1553,6 +1564,8 @@ private:
 	bool consume(TokenKind kind);
 	// Consumes the current token if it matches; otherwise emits a diagnostic.
 	Token expect(TokenKind kind);
+	void invalidate_lookahead_cache();
+	SaveHandle save_token_position_impl(SaveKind kind);
 
 	// >> token splitting for nested templates (e.g., Foo<Bar<int>>)
 	// When we encounter >> and need just >, this splits it by consuming first > and injecting second >
@@ -4229,6 +4242,8 @@ private:	 // Resume private methods
 	}
 
 	SaveHandle save_token_position();
+	SaveHandle save_token_position_persistent();
+	SaveHandle save_token_position_ephemeral();
 	void restore_token_position(SaveHandle handle, const std::source_location location = std::source_location::current());
 	void restore_lexer_position_only(SaveHandle handle);	 // Restore lexer without erasing AST nodes
 	void discard_saved_token(SaveHandle handle);
