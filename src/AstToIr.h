@@ -472,8 +472,7 @@ private:
 	// When a template member function references its own class (e.g., const W& in W<T>::operator+=),
 	// the type_index may point to the unfinalized template base. This resolves it to the
 	// enclosing instantiated struct's type_index by mutating `type` in-place.
-	// Important: only resolves when the unfinalized type's name matches the base name of the
-	// enclosing struct — avoids incorrectly resolving outer class references in nested classes.
+	// Delegates to resolveSelfRefParamIndex / namesSameInjectedClassIdentity for [temp.local].
 	static void resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index);
 
 	// Helper: generate a member function call for user-defined operator++/-- overloads on structs.

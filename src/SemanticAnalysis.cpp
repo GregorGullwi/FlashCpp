@@ -222,13 +222,6 @@ namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
-// Return the name after the last scope-resolution operator:
-// `std::ReverseLike` -> `ReverseLike`.
-std::string_view unqualifiedTypeName(std::string_view name) {
-	const size_t pos = name.rfind("::");
-	return pos == std::string_view::npos ? name : name.substr(pos + 2);
-}
-
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from
@@ -4164,12 +4157,12 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 					source_namespace == named_type_info->namespaceHandle();
 				bool names_match = false;
 				if (!base_name.empty()) {
-					// Prefer the fully-qualified match, then fall back to the
-					// unqualified spelling for metadata paths that disagree on
-					// whether the template name includes its namespace prefix.
+					// Prefer the fully-qualified match, then fall back to injected-
+					// class-name identity (leaf / `$hash`-stripped) for metadata
+					// paths that disagree on namespace prefix or specialization suffix.
 					names_match = named_name == base_name;
 					if (!names_match) {
-						names_match = unqualifiedTypeName(named_name) == unqualifiedTypeName(base_name);
+						names_match = namesSameInjectedClassIdentity(named_name, base_name);
 					}
 				}
 				if (namespace_matches && names_match) {

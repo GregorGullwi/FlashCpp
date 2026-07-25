@@ -1005,6 +1005,22 @@ inline std::string_view simpleBaseName(std::string_view name) {
 	return name;
 }
 
+// C++20 [temp.local]: two spellings name the same injected-class-name identity
+// when their simple base names match (ignore namespace qualification and any
+// compiler `$hash` specialization suffix).
+inline bool namesSameInjectedClassIdentity(std::string_view left, std::string_view right) {
+	return simpleBaseName(left) == simpleBaseName(right);
+}
+
+inline bool namesSameInjectedClassIdentity(StringHandle left, StringHandle right) {
+	if (!left.isValid() || !right.isValid()) {
+		return false;
+	}
+	return namesSameInjectedClassIdentity(
+		StringTable::getStringView(left),
+		StringTable::getStringView(right));
+}
+
 // Phase 4: Explicit placeholder kind replaces string-level heuristics (e.g., name.find("::"))
 // for detecting dependent placeholder categories.  Every TypeInfo created as a
 // dependent placeholder stamps one of these values so that SFINAE viability checks,

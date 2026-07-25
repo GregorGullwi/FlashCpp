@@ -1837,7 +1837,7 @@ struct OperatorOverloadResult {
 // operator+=(const Foo& other) stores the parameter as the uninstantiated Foo
 // (whose struct_info has total_size==0). We resolve it to the concrete instantiated
 // left_type_index so that type matching works correctly.
-// This mirrors the AstToIr::resolveSelfReferentialType logic used in codegen.
+// This is the TypeIndex twin of AstToIr::resolveSelfReferentialType used in codegen.
 inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_type_index) {
 	const size_t type_info_size = getTypeInfoCount();
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
@@ -1872,6 +1872,76 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 			return left_type_index;
 	}
 	return param_idx;
+}
+
+// True when a type token spells the injected-class-name of `owner_decl`
+// (qualified, leaf, or semantic spelling). Used when pattern params never
+// received a TypeIndex and must be rewritten by name under [temp.local].
+inline bool typeTokenNamesOwnerClass(
+	const TypeSpecifierNode& type_spec,
+	const StructDeclarationNode& owner_decl) {
+	StringHandle token = type_spec.token().handle();
+	if (!token.isValid()) {
+		return false;
+	}
+	return namesSameInjectedClassIdentity(token, owner_decl.name()) ||
+		namesSameInjectedClassIdentity(token, owner_decl.semantic_name());
+}
+
+// Look up the TypeInfo for a class being defined/instantiated from its pattern
+// StructDeclarationNode. Member class templates are often registered under the
+// leaf name ("iterator") while pattern_struct.name() is qualified
+// ("outer::iterator"), so try every identity the defining class may use.
+inline TypeIndex resolveDefiningClassTypeIndex(const StructDeclarationNode& owner_decl) {
+	auto try_name = [&](StringHandle name) -> TypeIndex {
+		if (!name.isValid()) {
+			return TypeIndex{};
+		}
+		auto type_it = getTypesByNameMap().find(name);
+		if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+			return TypeIndex{};
+		}
+		TypeIndex index = type_it->second->registeredTypeIndex();
+		if (!index.is_valid()) {
+			index = type_it->second->type_index_;
+		}
+		return index.is_valid()
+			? index.withCategory(TypeCategory::Struct)
+			: TypeIndex{};
+	};
+
+	if (TypeIndex by_name = try_name(owner_decl.name()); by_name.is_valid()) {
+		return by_name;
+	}
+	if (TypeIndex by_semantic = try_name(owner_decl.semantic_name()); by_semantic.is_valid()) {
+		return by_semantic;
+	}
+
+	std::string_view owner_name_view = StringTable::getStringView(owner_decl.name());
+	std::string_view leaf_view = simpleBaseName(owner_name_view);
+	if (!leaf_view.empty() && leaf_view != owner_name_view) {
+		if (TypeIndex by_leaf = try_name(StringTable::getOrInternStringHandle(leaf_view));
+			by_leaf.is_valid()) {
+			return by_leaf;
+		}
+	}
+	return TypeIndex{};
+}
+
+// Explicit self-type rewrite requires a matched from/to pair. When either side
+// is unavailable, disable the pair (callers fall back to name-based rewrite).
+inline void bindSelfTypeRewritePair(
+	TypeIndex from_index,
+	TypeIndex to_index,
+	TypeIndex& self_rewrite_from,
+	TypeIndex& self_rewrite_to) {
+	if (from_index.is_valid() && to_index.is_valid()) {
+		self_rewrite_from = from_index;
+		self_rewrite_to = to_index;
+		return;
+	}
+	self_rewrite_from = TypeIndex{};
+	self_rewrite_to = TypeIndex{};
 }
 
 inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {
