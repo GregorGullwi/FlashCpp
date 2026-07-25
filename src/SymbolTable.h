@@ -917,14 +917,9 @@ public:
 			gNamespaceRegistry.markDeclared(ns_handle);
 			const NamespaceEntry& entry = gNamespaceRegistry.getEntry(ns_handle);
 			scope.namespace_name = entry.name;
-			// Preload existing namespace symbols so unqualified lookup works when re-entering
-			auto ns_it = namespace_symbols_.find(ns_handle);
-			if (ns_it != namespace_symbols_.end()) {
-				for (const auto& [id_handle, nodes] : ns_it->second) {
-					std::string_view key = intern_string(StringTable::getStringView(id_handle));
-					scope.symbols[key] = nodes;
-				}
-			}
+			// Namespace members live in namespace_symbols_; lookup/lookup_all probe that
+			// map for Namespace scopes, and insert() uses it as the source of truth for
+			// redeclarations across reopened blocks. Do not preload into scope.symbols.
 		}
 		symbol_table_stack_.push_back(std::move(scope));
 	}
