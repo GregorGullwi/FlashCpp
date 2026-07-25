@@ -405,26 +405,10 @@ public:
 				return symbolIt->second[0];
 			}
 
-			// Second, fall back to unresolved using declarations in this scope.
-			auto using_handle_it = scope.using_declarations_handles.find(identifier);
-			if (using_handle_it != scope.using_declarations_handles.end()) {
-				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
-				auto result = lookup_qualified(using_namespace_handle, original_name);
-				if (result.has_value()) {
-					return result;
-				}
-			}
-
-			// Third, check using directives in this scope
-			auto using_result = lookup_using_directives_first(scope, identifier);
-			if (using_result.has_value()) {
-				return using_result;
-			}
-
-			// If we're in a namespace scope, also check namespace_symbols_ for symbols
-			// from other blocks of the same namespace (e.g., reopened namespace blocks).
-			// Use allocation-free first-match lookup; inline child namespaces and
-			// ambiguity diagnostics match lookup_qualified_all.
+			// For namespace scopes, probe namespace_symbols_ immediately after the local
+			// symbols map and before using-declarations/directives. Member names of the
+			// namespace itself must beat imports; once enter_namespace stops preloading,
+			// those members live only in namespace_symbols_.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
 					StringHandle key = StringTable::getOrInternStringHandle(identifier);
@@ -434,6 +418,22 @@ public:
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
+			}
+
+			// Fall back to unresolved using declarations in this scope.
+			auto using_handle_it = scope.using_declarations_handles.find(identifier);
+			if (using_handle_it != scope.using_declarations_handles.end()) {
+				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
+				auto result = lookup_qualified(using_namespace_handle, original_name);
+				if (result.has_value()) {
+					return result;
+				}
+			}
+
+			// Check using directives in this scope
+			auto using_result = lookup_using_directives_first(scope, identifier);
+			if (using_result.has_value()) {
+				return using_result;
 			}
 		}
 
@@ -479,24 +479,10 @@ public:
 				return symbolIt->second;
 			}
 
-			// Second, fall back to unresolved using declarations in this scope.
-			auto using_handle_it = scope.using_declarations_handles.find(identifier);
-			if (using_handle_it != scope.using_declarations_handles.end()) {
-				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
-				auto result = lookup_qualified_all(using_namespace_handle, original_name);
-				if (!result.empty()) {
-					return result;
-				}
-			}
-
-			// Third, check using directives in this scope
-			auto using_result = lookup_all_using_directives_first(scope, identifier);
-			if (!using_result.empty()) {
-				return using_result;
-			}
-
-			// If we're in a namespace scope, also check namespace_symbols_ for symbols
-			// from other blocks of the same namespace (e.g., reopened namespace blocks).
+			// For namespace scopes, probe namespace_symbols_ immediately after the local
+			// symbols map and before using-declarations/directives. Member names of the
+			// namespace itself must beat imports; once enter_namespace stops preloading,
+			// those members live only in namespace_symbols_.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
 					StringHandle key = StringTable::getOrInternStringHandle(identifier);
@@ -506,6 +492,22 @@ public:
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
+			}
+
+			// Fall back to unresolved using declarations in this scope.
+			auto using_handle_it = scope.using_declarations_handles.find(identifier);
+			if (using_handle_it != scope.using_declarations_handles.end()) {
+				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
+				auto result = lookup_qualified_all(using_namespace_handle, original_name);
+				if (!result.empty()) {
+					return result;
+				}
+			}
+
+			// Check using directives in this scope
+			auto using_result = lookup_all_using_directives_first(scope, identifier);
+			if (!using_result.empty()) {
+				return using_result;
 			}
 		}
 
