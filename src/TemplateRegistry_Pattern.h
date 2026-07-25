@@ -928,7 +928,7 @@ struct TemplatePattern {
 
 // Key for template specializations
 struct SpecializationKey {
-	std::string template_name;
+	StringHandle template_name;
 	InlineVector<TemplateTypeArg, 4> template_args;
 
 	bool operator==(const SpecializationKey& other) const {
@@ -939,7 +939,7 @@ struct SpecializationKey {
 // Hash function for SpecializationKey
 struct SpecializationKeyHash {
 	size_t operator()(const SpecializationKey& key) const {
-		size_t hash = std::hash<std::string>{}(key.template_name);
+		size_t hash = StringHandleHash{}(key.template_name);
 		TemplateTypeArgHash arg_hasher;
 		for (const auto& arg : key.template_args) {
 			hash ^= arg_hasher(arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);

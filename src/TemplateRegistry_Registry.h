@@ -732,8 +732,7 @@ public:
 
 	// Look up an exact template specialization (no pattern matching)
 	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args) const {
-		std::vector<TemplateTypeArg> owned_template_args(template_args.begin(), template_args.end());
-		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(owned_template_args)};
+		SpecializationKey key{StringTable::getOrInternStringHandle(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
 
 		FLASH_LOG(Templates, Debug, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
 		if (FLASH_LOG_ENABLED(Templates, Debug)) {
@@ -754,11 +753,10 @@ public:
 
 	// Look up a template specialization (exact match first, then pattern match)
 	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, std::span<const TemplateTypeArg> template_args) const {
-		std::vector<TemplateTypeArg> owned_template_args(template_args.begin(), template_args.end());
 		FLASH_LOG(Templates, Debug, "lookupSpecialization: template_name='", template_name, "', num_args=", template_args.size());
 
 		// First, try exact match
-		auto exact = lookupExactSpecialization(template_name, owned_template_args);
+		auto exact = lookupExactSpecialization(template_name, template_args);
 		if (exact.has_value()) {
 			FLASH_LOG(Templates, Debug, "  Found exact specialization match");
 			return exact;
@@ -766,7 +764,7 @@ public:
 
 		// No exact match - try pattern matching
 		FLASH_LOG(Templates, Debug, "  No exact match, trying pattern matching...");
-		auto pattern_result = matchSpecializationPattern(template_name, owned_template_args);
+		auto pattern_result = matchSpecializationPattern(template_name, template_args);
 		if (pattern_result.has_value()) {
 			FLASH_LOG(Templates, Debug, "  Found pattern match!");
 		} else {
@@ -789,8 +787,9 @@ public:
 	}
 
 	bool hasExactSpecializationsForName(std::string_view template_name) const {
+		StringHandle name_handle = StringTable::getOrInternStringHandle(template_name);
 		for (const auto& entry : specializations_) {
-			if (entry.first.template_name == template_name) {
+			if (entry.first.template_name == name_handle) {
 				return true;
 			}
 		}
@@ -1033,7 +1032,7 @@ private:
 
 	// Register a template specialization under an already-normalized registry key.
 	void registerSpecializationByName(std::string_view template_name, std::span<const TemplateTypeArg> template_args, ASTNode specialized_node) {
-		SpecializationKey key{std::string(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
+		SpecializationKey key{StringTable::getOrInternStringHandle(template_name), canonicalizeTemplateArgsForExactSpecialization(template_args)};
 		specializations_[key] = specialized_node;
 		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
 		if (FLASH_LOG_ENABLED(Templates, Debug)) {
