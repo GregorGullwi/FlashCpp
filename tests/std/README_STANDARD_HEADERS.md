@@ -93,7 +93,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7529ms (retested 2026-05-25, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | ~10.7s wall (Windows/MSVC STL 14.44). IR/codegen: `view_interface` / `operator==`, init conversions, late `swap`. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | ~13s wall (Windows/MSVC STL 14.44). Past `checked_array_iterator` incomplete-layout / friend emission; first hard stops are now sema return/ternary/`begin`/`end` lowering. |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
@@ -152,7 +152,7 @@ First stop and the language mechanism to fix. Not a session work-log.
 
 | Header | Stop | Mechanism to fix |
 |--------|------|------------------|
-| `<iterator>` | Codegen: `view_interface` member bodies (`begin == end` / `empty` CPO); incomplete aggregate layout | Iterator `operator==`, ranges CPOs, complete layout for empty/`[[no_unique_address]]` aggregates |
+| `<iterator>` | Codegen: sema return/ternary/`begin`/`end` lowering; residual `view_interface` aggregate holes | Exact result types for ternary/return; complete types for CPO/`auto` results in ranges interface members |
 | `<ranges>` | Template-depth / `invoke` recursion | Variadic `invoke` / CPO instantiation |
 
-Regressions for recent `<limits>` fixes: `tests/test_unused_inline_no_emit_ret0.cpp`, `tests/test_used_inline_still_emitted_ret0.cpp`, `tests/test_selectany_comdat_ret0.cpp`, plus earlier typedef-assign / rvalue-assign tests.
+Regressions for class-template layout/friend fixes: `tests/test_class_tmpl_cross_spec_complete_layout_ret0.cpp`, `tests/test_class_tmpl_friend_plus_byvalue_ret0.cpp`. Regressions for recent `<limits>` fixes: `tests/test_unused_inline_no_emit_ret0.cpp`, `tests/test_used_inline_still_emitted_ret0.cpp`, `tests/test_selectany_comdat_ret0.cpp`, plus earlier typedef-assign / rvalue-assign tests.

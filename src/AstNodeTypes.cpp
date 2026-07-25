@@ -693,18 +693,33 @@ TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, Names
 }
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
-	// Check if type already exists (forward declaration case)
+	// Check if type already exists (forward declaration / placeholder case)
 	auto existing_it = gTypesByName.find(name);
 	if (existing_it != gTypesByName.end()) {
+		TypeInfo& existing = *existing_it->second;
+		// Upgrade an incomplete class-template placeholder registered under the
+		// final instantiation name into a Struct identity so layout completion
+		// can attach StructTypeInfo in place (C++20 [temp.inst]).
+		if (existing.needsClassTemplateLayoutCompletion()) {
+			TypeIndex struct_idx{existing.registeredTypeIndex().index(), TypeCategory::Struct};
+			existing.type_index_ = struct_idx;
+			existing.registered_type_index_ = struct_idx;
+			existing.is_incomplete_instantiation_ = false;
+			existing.placeholder_kind_ = DependentPlaceholderKind::None;
+			if (!existing.namespaceHandle().isValid()) {
+				existing.setNamespaceHandle(ns);
+			}
+			return TypeCreationResult{existing, struct_idx};
+		}
 		// Type already exists - return the existing one
 		// This handles the case where we have a forward declaration followed by a full definition
 		// Update namespace if not yet explicitly set (forward declaration may not have had context).
 		// We check !isValid() (INVALID_HANDLE) which means "not yet assigned", as opposed to
 		// isGlobal() which is a legitimate namespace (index 0) for types at file scope.
-		if (!existing_it->second->namespaceHandle().isValid()) {
-			existing_it->second->setNamespaceHandle(ns);
+		if (!existing.namespaceHandle().isValid()) {
+			existing.setNamespaceHandle(ns);
 		}
-		return TypeCreationResult{*existing_it->second, existing_it->second->type_index_};
+		return TypeCreationResult{existing, existing.type_index_};
 	}
 
 	TypeIndex idx{gTypeInfo.size(), TypeCategory::Struct};

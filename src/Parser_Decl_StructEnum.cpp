@@ -3,6 +3,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "ParserTemplateClassShared.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -4819,12 +4820,17 @@ ParseResult Parser::parse_friend_declaration() {
 
 			// Register directly into adl_only_symbols_ so lookup_adl() can find it
 			// but ordinary unqualified lookup cannot (C++20 [basic.lookup.argdep]).
+			// Class-template pattern friends must wait for [temp.inst]: registering the
+			// unsubstituted signature here would publish a primary-template mangling and
+			// leave incomplete dependent types in the ADL set / codegen queue.
 			StringHandle func_name_handle = StringTable::getOrInternStringHandle(function_name);
-			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node, /*adl_only=*/true);
+			if (!parsing_template_class_) {
+				gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node, /*adl_only=*/true);
 
-			// Queue for codegen: the function node must appear in the enclosing namespace's
-			// declaration list (or top-level AST) so the IR converter generates code for it.
-			pending_hidden_friend_defs_.push_back(func_decl_node);
+				// Queue for codegen: the function node must appear in the enclosing namespace's
+				// declaration list (or top-level AST) so the IR converter generates code for it.
+				pending_hidden_friend_defs_.push_back(func_decl_node);
+			}
 
 			// Create and return the friend declaration node (with the function decl attached)
 			auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
@@ -4868,14 +4874,21 @@ ParseResult Parser::parse_friend_declaration() {
 			func_ref.set_is_deleted(is_deleted_friend);
 
 			StringHandle func_name_handle = StringTable::getOrInternStringHandle(function_name);
-			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node, /*adl_only=*/true);
+			if (!parsing_template_class_) {
+				gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node, /*adl_only=*/true);
 
-			if (is_defaulted_friend) {
+				if (is_defaulted_friend) {
+					func_ref.set_is_implicit(true);
+					ASTNode block_node = create_defaulted_member_function_body(func_ref);
+					func_ref.set_definition(block_node);
+					finalize_function_after_definition(func_ref);
+					pending_hidden_friend_defs_.push_back(func_decl_node);
+				}
+			} else if (is_defaulted_friend) {
 				func_ref.set_is_implicit(true);
 				ASTNode block_node = create_defaulted_member_function_body(func_ref);
 				func_ref.set_definition(block_node);
 				finalize_function_after_definition(func_ref);
-				pending_hidden_friend_defs_.push_back(func_decl_node);
 			}
 
 			auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
@@ -5203,5 +5216,162 @@ void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl
 			struct_info->addFriendFunction(friend_decl.name());
 	} else if (friend_decl.kind() == FriendKind::MemberFunction) {
 		struct_info->addFriendMemberFunction(friend_decl.class_name(), friend_decl.name());
+	}
+}
+
+void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
+	const StructDeclarationNode& pattern_struct,
+	StructDeclarationNode& instantiated_struct,
+	StructTypeInfo* struct_info,
+	StringHandle instantiated_name,
+	TypeIndex instantiated_type_index,
+	std::span<const TemplateParameterNode> template_params,
+	std::span<const TemplateTypeArg> template_args) {
+	if (struct_info == nullptr || !instantiated_name.isValid()) {
+		return;
+	}
+	if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
+		return;
+	}
+
+	NamespaceHandle enclosing_ns = struct_info->getNamespaceHandle();
+	if (!enclosing_ns.isValid()) {
+		enclosing_ns = gSymbolTable.get_current_namespace_handle();
+	}
+
+	TypeIndex pattern_type_index{};
+	if (auto pattern_type_it = getTypesByNameMap().find(pattern_struct.name());
+		pattern_type_it != getTypesByNameMap().end() && pattern_type_it->second != nullptr) {
+		pattern_type_index =
+			pattern_type_it->second->registeredTypeIndex().withCategory(TypeCategory::Struct);
+	}
+	const TypeIndex concrete_owner_type_index =
+		instantiated_type_index.withCategory(TypeCategory::Struct);
+
+	for (const ASTNode& friend_decl_node : pattern_struct.friend_declarations()) {
+		if (!friend_decl_node.is<FriendDeclarationNode>()) {
+			continue;
+		}
+		const FriendDeclarationNode& pattern_friend = friend_decl_node.as<FriendDeclarationNode>();
+		if (pattern_friend.kind() != FriendKind::Function ||
+			!pattern_friend.function_declaration().has_value()) {
+			registerFriendInStructInfo(pattern_friend, struct_info);
+			instantiated_struct.add_friend(friend_decl_node);
+			continue;
+		}
+
+		const ASTNode& pattern_func_ast = *pattern_friend.function_declaration();
+		if (!pattern_func_ast.is<FunctionDeclarationNode>()) {
+			registerFriendInStructInfo(pattern_friend, struct_info);
+			instantiated_struct.add_friend(friend_decl_node);
+			continue;
+		}
+
+		const FunctionDeclarationNode& pattern_func = pattern_func_ast.as<FunctionDeclarationNode>();
+		const DeclarationNode& pattern_decl = pattern_func.decl_node();
+		OverloadableOperator op_kind = OverloadableOperator::None;
+		std::string_view friend_name_view = pattern_decl.identifier_token().value();
+		if (friend_name_view.starts_with("operator") && friend_name_view.size() > 8) {
+			op_kind = stringToOverloadableOperator(friend_name_view.substr(8));
+		}
+
+		InlineVector<TemplateTypeArg, 4> template_args_inline;
+		template_args_inline.reserve(template_args.size());
+		for (const TemplateTypeArg& arg : template_args) {
+			template_args_inline.push_back(arg);
+		}
+
+		const TypeSpecifierNode& pattern_return_type = pattern_decl.type_specifier_node();
+		TypeIndex return_type_override{};
+		if (pattern_type_index.is_valid()) {
+			TypeIndex pattern_return_index = pattern_return_type.type_index();
+			if (!pattern_return_index.is_valid() ||
+				pattern_return_index == pattern_type_index ||
+				pattern_return_type.token().handle() == pattern_struct.name()) {
+				return_type_override = concrete_owner_type_index;
+			}
+		}
+		TypeSpecifierNode substituted_return_type = buildSubstitutedTypeSpecifier(
+			*this,
+			pattern_return_type,
+			pattern_decl.type_node(),
+			pattern_decl.identifier_token(),
+			template_params,
+			template_args_inline,
+			[this](const ASTNode& node, const auto& params, const auto& args) {
+				return substituteTemplateParameters(node, params, args);
+			},
+			[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+				return substitute_template_parameter(type_spec, params, args);
+			},
+			&pattern_struct,
+			concrete_owner_type_index,
+			return_type_override,
+			false,
+			true);
+		if (return_type_override.is_valid() &&
+			struct_info != nullptr &&
+			!substituted_return_type.is_pointer() &&
+			!substituted_return_type.is_reference()) {
+			substituted_return_type = TypeSpecifierNode(
+				concrete_owner_type_index,
+				struct_info->sizeInBits().value,
+				substituted_return_type.token(),
+				substituted_return_type.cv_qualifier(),
+				substituted_return_type.reference_qualifier());
+		}
+
+		auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+		auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
+			substituted_return_node,
+			pattern_decl.identifier_token());
+		// Hidden friends are namespace-scope free functions (C++20 [class.friend]/6-7),
+		// not members — construct without a parent struct name.
+		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl_ref);
+		new_func_ref.set_namespace_handle(enclosing_ns);
+		(void)op_kind;
+		substituteAndCopyMemberFunctionParameters(
+			pattern_func.parameter_nodes(),
+			new_func_ref,
+			template_params,
+			template_args,
+			&pattern_struct,
+			concrete_owner_type_index,
+			pattern_type_index,
+			concrete_owner_type_index,
+			SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters,
+			true,
+			false,
+			true,
+			false);
+
+		if (pattern_func.is_materialized()) {
+			ASTNode substituted_body = substituteTemplateParameters(
+				*pattern_func.get_definition(),
+				template_params,
+				template_args,
+				instantiated_name);
+			new_func_ref.set_definition(substituted_body);
+			finalize_function_after_definition(new_func_ref);
+		} else if (pattern_func.has_template_body_position()) {
+			new_func_ref.set_template_body_position(pattern_func.template_body_position());
+		}
+
+		StringHandle func_name_handle = pattern_decl.identifier_token().handle();
+		if (!func_name_handle.isValid()) {
+			func_name_handle = pattern_friend.name();
+		}
+		gSymbolTable.insert_into_namespace(
+			enclosing_ns, func_name_handle, new_func_node, /*adl_only=*/true);
+
+		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
+		friend_node.as<FriendDeclarationNode>().set_function_declaration(new_func_node);
+		instantiated_struct.add_friend(friend_node);
+		registerFriendInStructInfo(friend_node.as<FriendDeclarationNode>(), struct_info);
+		registerAndNormalizeLateMaterializedTopLevelNode(new_func_node);
+
+		FLASH_LOG(Templates, Debug,
+			"Materialized hidden friend '", StringTable::getStringView(func_name_handle),
+			"' for class template instantiation '", StringTable::getStringView(instantiated_name), "'");
 	}
 }

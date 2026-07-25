@@ -1680,6 +1680,16 @@ private:
 	ParseResult parse_friend_declaration();	// NEW: Parse friend declarations
 	ParseResult parse_template_friend_declaration(StructDeclarationNode& struct_node);  // NEW: Parse template friend declarations
 	void registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info);	// Helper: register friend in StructTypeInfo (all kinds)
+	// C++20 [temp.friend]/1 / [temp.inst]: materialize hidden friend function
+	// definitions for a class-template specialization from the pattern friends.
+	void materializeHiddenFriendsForClassTemplateInstantiation(
+		const StructDeclarationNode& pattern_struct,
+		StructDeclarationNode& instantiated_struct,
+		StructTypeInfo* struct_info,
+		StringHandle instantiated_name,
+		TypeIndex instantiated_type_index,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 	enum class ExternTemplateDeclarationKind {
 		Normal,
 		Extern
