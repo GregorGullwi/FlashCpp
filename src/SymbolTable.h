@@ -423,11 +423,12 @@ public:
 
 			// If we're in a namespace scope, also check namespace_symbols_ for symbols
 			// from other blocks of the same namespace (e.g., reopened namespace blocks).
-			// Use lookup_qualified() so that inline child namespaces are also searched
-			// (lookup_qualified -> lookup_qualified_all -> forEachInlineChildNamespace).
+			// Use allocation-free first-match lookup; inline child namespaces and
+			// ambiguity diagnostics match lookup_qualified_all.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
-					auto result = lookup_qualified(scope_namespace, identifier);
+					StringHandle key = StringTable::getOrInternStringHandle(identifier);
+					auto result = lookup_qualified_first(scope_namespace, key);
 					if (result.has_value()) {
 						return result;
 					}
@@ -1024,14 +1025,7 @@ public:
 	}
 
 	std::optional<ASTNode> lookup_qualified(NamespaceHandle namespace_handle, StringHandle identifier) const {
-		if (!namespace_handle.isValid()) {
-			return std::nullopt;
-		}
-		auto result = lookup_qualified_all(namespace_handle, identifier);
-		if (result.empty()) {
-			return std::nullopt;
-		}
-		return result[0];
+		return lookup_qualified_first(namespace_handle, identifier);
 	}
 
 	bool has_namespace_symbols(NamespaceHandle namespace_handle) const {
@@ -1263,6 +1257,40 @@ private:
 		std::string_view interned = sb.append(str).commit();
 		interned_strings_.insert(interned);
 		return interned;
+	}
+
+	// First-match qualified lookup without allocating an overload vector.
+	// Mirrors lookup_qualified_all's inline-child walk and ambiguity rule, but
+	// returns only the first node (same as lookup_qualified historically did via [0]).
+	std::optional<ASTNode> lookup_qualified_first(NamespaceHandle namespace_handle, StringHandle identifier) const {
+		if (!namespace_handle.isValid()) {
+			return std::nullopt;
+		}
+		const std::vector<ASTNode>* first_nodes = nullptr;
+		gNamespaceRegistry.forEachInlineChildNamespace(namespace_handle, [&](NamespaceHandle visible_ns) {
+			auto ns_it = namespace_symbols_.find(visible_ns);
+			if (ns_it == namespace_symbols_.end()) {
+				return;
+			}
+			auto symbol_it = ns_it->second.find(identifier);
+			if (symbol_it == ns_it->second.end() || symbol_it->second.empty()) {
+				return;
+			}
+			if (!first_nodes) {
+				first_nodes = &symbol_it->second;
+				return;
+			}
+			if (!is_pure_function_set(*first_nodes) || !is_pure_function_set(symbol_it->second)) {
+				// C++20 [namespace.qual]: same ambiguity rule as lookup_qualified_all.
+				throw CompileError("ambiguous lookup: '" + std::string(StringTable::getStringView(identifier)) + "' found in multiple inline namespaces");
+			}
+			// Pure function sets across inline namespaces merge into one overload set;
+			// the first match's [0] is unchanged, so nothing further is needed here.
+		});
+		if (!first_nodes) {
+			return std::nullopt;
+		}
+		return (*first_nodes)[0];
 	}
 
 	template <typename Map, typename Key, typename Value>
