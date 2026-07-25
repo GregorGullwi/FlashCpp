@@ -5041,6 +5041,143 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 	return saved_position.success(friend_node);
 }
 
+void Parser::synthesize_implicit_special_members_for_aggregate(
+	StructTypeInfo& struct_info,
+	StructDeclarationNode& struct_ref,
+	TypeIndex struct_type_index,
+	StringHandle qualified_struct_name,
+	const Token& name_token) {
+	// Typedef inline struct/union bodies do not parse member functions, so there are
+	// never user-declared special members here. Still honor C++20 rules and skip
+	// during class-template pattern parsing (instantiation synthesizes later).
+	if (parsing_template_class_) {
+		return;
+	}
+
+	{
+		auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+			qualified_struct_name,
+			qualified_struct_name);
+		auto [block_node, block_ref] = create_node_ref(BlockNode());
+		default_ctor_ref.set_definition(block_node);
+		default_ctor_ref.set_is_implicit(true);
+		struct_info.addConstructor(default_ctor_node, AccessSpecifier::Public);
+		struct_ref.add_constructor(default_ctor_node, AccessSpecifier::Public);
+	}
+
+	{
+		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+			qualified_struct_name,
+			qualified_struct_name);
+		auto param_type_node = emplace_node<TypeSpecifierNode>(
+			struct_type_index.withCategory(TypeCategory::Struct),
+			struct_info.sizeInBits().value,
+			name_token,
+			CVQualifier::Const,
+			ReferenceQualifier::None);
+		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+		copy_ctor_ref.add_parameter_node(param_decl_node);
+		auto [copy_block_node, copy_block_ref] = create_node_ref(BlockNode());
+		copy_ctor_ref.set_definition(copy_block_node);
+		copy_ctor_ref.set_is_implicit(true);
+		struct_info.addConstructor(copy_ctor_node, AccessSpecifier::Public);
+		struct_ref.add_constructor(copy_ctor_node, AccessSpecifier::Public);
+	}
+
+	{
+		auto return_type_node = emplace_node<TypeSpecifierNode>(
+			struct_type_index.withCategory(TypeCategory::Struct),
+			struct_info.sizeInBits().value,
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+		Token operator_name_token(Token::Type::Identifier, "operator="sv,
+								  name_token.line(), name_token.column(),
+								  name_token.file_index());
+		auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
+		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+			operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
+		auto param_type_node = emplace_node<TypeSpecifierNode>(
+			struct_type_index.withCategory(TypeCategory::Struct),
+			struct_info.sizeInBits().value,
+			name_token,
+			CVQualifier::Const,
+			ReferenceQualifier::None);
+		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+		func_ref.add_parameter_node(param_decl_node);
+		auto [op_block_node, op_block_ref] = create_node_ref(BlockNode());
+		func_ref.set_definition(op_block_node);
+		finalize_function_after_definition(func_ref);
+		func_ref.set_is_implicit(true);
+		struct_info.addOperatorOverload(
+			OverloadableOperator::CopyAssign,
+			func_node,
+			AccessSpecifier::Public);
+		struct_ref.add_operator_overload(OverloadableOperator::CopyAssign, func_node, AccessSpecifier::Public);
+	}
+
+	{
+		auto [move_ctor_node, move_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
+			qualified_struct_name,
+			qualified_struct_name);
+		auto param_type_node = emplace_node<TypeSpecifierNode>(
+			struct_type_index.withCategory(TypeCategory::Struct),
+			struct_info.sizeInBits().value,
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+		Token param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+		auto param_decl_node = emplace_node<DeclarationNode>(param_type_node, param_token);
+		move_ctor_ref.add_parameter_node(param_decl_node);
+		auto [move_block_node, move_block_ref] = create_node_ref(BlockNode());
+		move_ctor_ref.set_definition(move_block_node);
+		move_ctor_ref.set_is_implicit(true);
+		struct_info.addConstructor(move_ctor_node, AccessSpecifier::Public);
+		struct_ref.add_constructor(move_ctor_node, AccessSpecifier::Public);
+	}
+
+	{
+		auto return_type_node = emplace_node<TypeSpecifierNode>(
+			struct_type_index.withCategory(TypeCategory::Struct),
+			struct_info.sizeInBits().value,
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
+		Token move_operator_name_token(Token::Type::Identifier, "operator="sv,
+									   name_token.line(), name_token.column(),
+									   name_token.file_index());
+		auto move_operator_decl_node = emplace_node<DeclarationNode>(return_type_node, move_operator_name_token);
+		auto [move_func_node, move_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
+			move_operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
+		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
+			struct_type_index.withCategory(TypeCategory::Struct),
+			struct_info.sizeInBits().value,
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+		move_param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+		Token move_param_token(Token::Type::Identifier, "other"sv, 0, 0, 0);
+		auto move_param_decl_node = emplace_node<DeclarationNode>(move_param_type_node, move_param_token);
+		move_func_ref.add_parameter_node(move_param_decl_node);
+		auto [move_op_block_node, move_op_block_ref] = create_node_ref(BlockNode());
+		move_func_ref.set_definition(move_op_block_node);
+		finalize_function_after_definition(move_func_ref);
+		move_func_ref.set_is_implicit(true);
+		struct_info.addOperatorOverload(
+			OverloadableOperator::MoveAssign,
+			move_func_node,
+			AccessSpecifier::Public);
+		struct_ref.add_operator_overload(OverloadableOperator::MoveAssign, move_func_node, AccessSpecifier::Public);
+	}
+}
+
 // Helper: register a friend declaration in StructTypeInfo, handling all FriendKinds and
 // adding the namespace-qualified form so access checks against fully-qualified names match.
 // Does NOT add the node to the struct's AST friend list (callers that need that call

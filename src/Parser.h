@@ -3127,6 +3127,14 @@ private:
 		StructTypeInfo& struct_info,
 		TypeIndex self_type_index,
 		StringHandle instantiated_name);
+	// Synthesize C++20 implicit special members for a class that has no user-declared
+	// constructors/assignment/destructor yet (e.g. typedef struct/union { ... } Alias).
+	void synthesize_implicit_special_members_for_aggregate(
+		StructTypeInfo& struct_info,
+		StructDeclarationNode& struct_ref,
+		TypeIndex struct_type_index,
+		StringHandle qualified_struct_name,
+		const Token& name_token);
 
 	std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<TemplateParameterNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<TemplateParameterNode, 4>& inner_template_params, const InlineVector<StringHandle, 4>& inner_template_param_names);	 // NEW: Parse out-of-line template member function
 	bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
