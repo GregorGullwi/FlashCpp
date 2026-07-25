@@ -63,7 +63,6 @@ void printParsingPhaseBreakdown(const Parser* parser, double parsing_time_ms) {
 		(stats.save_time_us + stats.restore_time_us + stats.restore_lexer_only_time_us +
 		 stats.discard_time_us) /
 		1000.0;
-	const double accounted_self_ms = save_restore_ms;
 
 	FLASH_LOG(General, Info, "Parser lexer/token hot path:");
 	printBucketRow("saved-token save", stats.save_time_us / 1000.0, parsing_time_ms, stats.save_count);
