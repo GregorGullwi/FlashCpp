@@ -39,11 +39,58 @@ std::atomic<uint64_t> g_bytes_allocated{0};
 std::atomic<uint64_t> g_bytes_deallocated{0};
 std::atomic<uint64_t> g_current_live_bytes{0};
 std::atomic<uint64_t> g_peak_live_bytes{0};
+std::atomic<uint8_t> g_current_allocation_phase{static_cast<uint8_t>(AllocationPhase::Unknown)};
+std::array<std::atomic<uint64_t>, static_cast<size_t>(AllocationPhase::Count)> g_phase_allocation_count{};
+std::array<std::atomic<uint64_t>, static_cast<size_t>(AllocationPhase::Count)> g_phase_bytes_allocated{};
 
 void updatePeakLive(uint64_t live_bytes) {
 	uint64_t peak = g_peak_live_bytes.load(std::memory_order_relaxed);
 	while (live_bytes > peak &&
 		   !g_peak_live_bytes.compare_exchange_weak(peak, live_bytes, std::memory_order_relaxed)) {
+	}
+}
+
+void printPhaseAllocationSummary(const AllocationTracker::Snapshot& stats) {
+	FLASH_LOG(General, Info, "\nAllocation totals by compile phase:");
+	for (size_t i = 0; i < static_cast<size_t>(AllocationPhase::Count); ++i) {
+		const auto phase = static_cast<AllocationPhase>(i);
+		const AllocationTracker::PhaseSnapshot& phase_stats = stats.phases[i];
+		if (phase_stats.allocation_count == 0) {
+			continue;
+		}
+		const double count_pct = stats.allocation_count > 0
+									 ? static_cast<double>(phase_stats.allocation_count) * 100.0 /
+										   static_cast<double>(stats.allocation_count)
+									 : 0.0;
+		const double bytes_pct = stats.bytes_allocated > 0
+									 ? static_cast<double>(phase_stats.bytes_allocated) * 100.0 /
+										   static_cast<double>(stats.bytes_allocated)
+									 : 0.0;
+		const double mean_bytes = phase_stats.allocation_count > 0
+									  ? static_cast<double>(phase_stats.bytes_allocated) /
+											static_cast<double>(phase_stats.allocation_count)
+									  : 0.0;
+		FLASH_LOG(General, Info, "  ", AllocationTracker::phaseName(phase),
+				  ": allocations=", phase_stats.allocation_count, " (", std::fixed, std::setprecision(2),
+				  count_pct, "%), bytes=", phase_stats.bytes_allocated, " (", bytes_pct, "%), mean=",
+				  std::setprecision(1), mean_bytes, " bytes");
+	}
+
+	const size_t parsing_index = static_cast<size_t>(AllocationPhase::Parsing);
+	const size_t preprocessing_index = static_cast<size_t>(AllocationPhase::Preprocessing);
+	const size_t codegen_index = static_cast<size_t>(AllocationPhase::CodeGeneration);
+	const uint64_t parsing_count = stats.phases[parsing_index].allocation_count;
+	const uint64_t non_bottleneck_count = stats.phases[preprocessing_index].allocation_count +
+										  stats.phases[static_cast<size_t>(AllocationPhase::LexerSetup)]
+											  .allocation_count +
+										  stats.phases[codegen_index].allocation_count;
+	if (stats.allocation_count > 0) {
+		FLASH_LOG(General, Info, "  parsing-focused remainder: ", parsing_count, " parsing allocations (",
+				  std::setprecision(2),
+				  static_cast<double>(parsing_count) * 100.0 / static_cast<double>(stats.allocation_count),
+				  "%), preprocessing+lexer+codegen: ", non_bottleneck_count, " (",
+				  static_cast<double>(non_bottleneck_count) * 100.0 / static_cast<double>(stats.allocation_count),
+				  "%)");
 	}
 }
 
@@ -62,7 +109,24 @@ struct StackSite {
 };
 
 std::mutex g_stack_sites_mutex;
-std::unordered_map<uint64_t, StackSite> g_stack_sites;
+struct PhaseStackKey {
+	uint8_t phase = 0;
+	uint64_t stack_hash = 0;
+};
+
+struct PhaseStackKeyHash {
+	size_t operator()(const PhaseStackKey& key) const noexcept {
+		return std::hash<uint64_t>{}((static_cast<uint64_t>(key.phase) << 56) ^ key.stack_hash);
+	}
+};
+
+struct PhaseStackKeyEqual {
+	bool operator()(const PhaseStackKey& left, const PhaseStackKey& right) const noexcept {
+		return left.phase == right.phase && left.stack_hash == right.stack_hash;
+	}
+};
+
+std::unordered_map<PhaseStackKey, StackSite, PhaseStackKeyHash, PhaseStackKeyEqual> g_stack_sites;
 thread_local bool g_recording_allocation_stack = false;
 
 uint64_t hashStackFrames(const void* const* frames, size_t frame_count) {
@@ -106,7 +170,7 @@ void captureAllocationStackFrames(void** frames_out, size_t& frame_count_out) {
 #endif
 }
 
-void recordAllocationStack(std::size_t size) {
+void recordAllocationStack(std::size_t size, AllocationPhase phase) {
 	if (g_recording_allocation_stack) {
 		return;
 	}
@@ -125,10 +189,10 @@ void recordAllocationStack(std::size_t size) {
 	StackSite probe;
 	probe.frame_count = frame_count;
 	std::memcpy(probe.frames.data(), frames, frame_count * sizeof(void*));
-	const uint64_t stack_hash = hashStackFrames(probe.frames.data(), probe.frame_count);
+	const PhaseStackKey key{static_cast<uint8_t>(phase), hashStackFrames(probe.frames.data(), probe.frame_count)};
 
 	std::lock_guard<std::mutex> lock(g_stack_sites_mutex);
-	StackSite& site = g_stack_sites[stack_hash];
+	StackSite& site = g_stack_sites[key];
 	if (site.frame_count == 0) {
 		site = probe;
 	} else if (!stackFramesEqual(site, probe)) {
@@ -237,44 +301,41 @@ void printResolvedStackSite(const StackSite& site, uint64_t total_allocations, u
 	}
 }
 
-void printAllocationStackSites(const AllocationTracker::Snapshot& stats) {
-	struct DisableStackRecording {
-		DisableStackRecording() { g_recording_allocation_stack = true; }
-		~DisableStackRecording() { g_recording_allocation_stack = false; }
-	} disable_stack_recording;
-
-	size_t site_count = 0;
-	{
-		std::lock_guard<std::mutex> lock(g_stack_sites_mutex);
-		site_count = g_stack_sites.size();
+bool shouldPrintDetailedStacksForPhase(AllocationPhase phase) {
+	switch (phase) {
+	case AllocationPhase::Parsing:
+	case AllocationPhase::SemanticAnalysis:
+	case AllocationPhase::IrConversion:
+	case AllocationPhase::DeferredGen:
+		return true;
+	default:
+		return false;
 	}
+}
 
-	std::vector<StackSite> site_copy;
-	site_copy.reserve(site_count);
-	{
-		std::lock_guard<std::mutex> lock(g_stack_sites_mutex);
-		site_copy.reserve(g_stack_sites.size());
-		for (const auto& entry : g_stack_sites) {
-			if (entry.second.allocation_count > 0) {
-				site_copy.push_back(entry.second);
-			}
-		}
+void printAllocationStackSitesForPhase(AllocationPhase phase,
+									   const std::vector<StackSite>& site_copy,
+									   const AllocationTracker::PhaseSnapshot& phase_stats) {
+	if (!shouldPrintDetailedStacksForPhase(phase)) {
+		return;
+	}
+	if (phase_stats.allocation_count == 0) {
+		return;
 	}
 
 	std::vector<const StackSite*> sites;
 	sites.reserve(site_copy.size());
 	for (const StackSite& site : site_copy) {
-		sites.push_back(&site);
+		if (site.allocation_count > 0) {
+			sites.push_back(&site);
+		}
 	}
-
 	if (sites.empty()) {
-		FLASH_LOG(General, Info, "Allocation stack sites: no samples captured");
 		return;
 	}
 
-	FLASH_LOG(General, Info, "\n=== Allocation Stack Sites (operator new/delete) ===");
-	FLASH_LOG(General, Info, "Unique stack patterns: ", sites.size(),
-			  " (skip ", kStackSkipFrames, " allocator frames, capture ", kStackCaptureFrames, ")");
+	FLASH_LOG(General, Info, "\nTop allocation stack sites during ", AllocationTracker::phaseName(phase), " (",
+			  phase_stats.allocation_count, " allocations, ", phase_stats.bytes_allocated, " bytes):");
 
 	std::sort(sites.begin(), sites.end(), [](const StackSite* left, const StackSite* right) {
 		if (left->allocation_count != right->allocation_count) {
@@ -283,31 +344,92 @@ void printAllocationStackSites(const AllocationTracker::Snapshot& stats) {
 		return left->bytes_allocated > right->bytes_allocated;
 	});
 
-	FLASH_LOG(General, Info, "\nTop sites by allocation count:");
 	const size_t count_limit = std::min(kTopSitesByCount, sites.size());
 	for (size_t i = 0; i < count_limit; ++i) {
 		FLASH_LOG(General, Info, "#", i + 1);
-		printResolvedStackSite(*sites[i], stats.allocation_count, stats.bytes_allocated);
+		printResolvedStackSite(*sites[i], phase_stats.allocation_count, phase_stats.bytes_allocated);
+	}
+}
+
+void printAllocationStackSites(const AllocationTracker::Snapshot& stats) {
+	struct DisableStackRecording {
+		DisableStackRecording() { g_recording_allocation_stack = true; }
+		~DisableStackRecording() { g_recording_allocation_stack = false; }
+	} disable_stack_recording;
+
+	std::array<std::vector<StackSite>, static_cast<size_t>(AllocationPhase::Count)> sites_by_phase;
+	{
+		std::lock_guard<std::mutex> lock(g_stack_sites_mutex);
+		for (const auto& entry : g_stack_sites) {
+			if (entry.second.allocation_count == 0) {
+				continue;
+			}
+			const size_t phase_index = entry.first.phase;
+			if (phase_index >= static_cast<size_t>(AllocationPhase::Count)) {
+				continue;
+			}
+			sites_by_phase[phase_index].push_back(entry.second);
+		}
 	}
 
-	std::sort(sites.begin(), sites.end(), [](const StackSite* left, const StackSite* right) {
-		if (left->bytes_allocated != right->bytes_allocated) {
-			return left->bytes_allocated > right->bytes_allocated;
+	bool any_sites = false;
+	for (const auto& phase_sites : sites_by_phase) {
+		if (!phase_sites.empty()) {
+			any_sites = true;
+			break;
 		}
-		return left->allocation_count > right->allocation_count;
-	});
+	}
+	if (!any_sites) {
+		FLASH_LOG(General, Info, "Allocation stack sites: no samples captured");
+		return;
+	}
 
-	FLASH_LOG(General, Info, "\nTop sites by bytes allocated:");
-	const size_t bytes_limit = std::min(kTopSitesByBytes, sites.size());
-	for (size_t i = 0; i < bytes_limit; ++i) {
-		FLASH_LOG(General, Info, "#", i + 1);
-		printResolvedStackSite(*sites[i], stats.allocation_count, stats.bytes_allocated);
+	FLASH_LOG(General, Info, "\n=== Allocation Stack Sites (operator new/delete) ===");
+	FLASH_LOG(General, Info, "Detailed stack traces shown for Parsing/Semantic/IR/Deferred only; see phase summary above for Preprocessing/Lexer Setup/Code Generation");
+
+	for (size_t i = 0; i < static_cast<size_t>(AllocationPhase::Count); ++i) {
+		const auto phase = static_cast<AllocationPhase>(i);
+		printAllocationStackSitesForPhase(phase, sites_by_phase[i], stats.phases[i]);
 	}
 }
 
 #endif // FLASHCPP_TRACK_ALLOCATION_STACKS
 
 } // namespace
+
+void AllocationTracker::setPhase(AllocationPhase phase) {
+	g_current_allocation_phase.store(static_cast<uint8_t>(phase), std::memory_order_relaxed);
+}
+
+AllocationPhase AllocationTracker::currentPhase() {
+	return static_cast<AllocationPhase>(g_current_allocation_phase.load(std::memory_order_relaxed));
+}
+
+const char* AllocationTracker::phaseName(AllocationPhase phase) {
+	switch (phase) {
+	case AllocationPhase::Unknown:
+		return "Unknown";
+	case AllocationPhase::Preprocessing:
+		return "Preprocessing";
+	case AllocationPhase::LexerSetup:
+		return "Lexer Setup";
+	case AllocationPhase::Parsing:
+		return "Parsing";
+	case AllocationPhase::SemanticAnalysis:
+		return "Semantic Analysis";
+	case AllocationPhase::IrConversion:
+		return "IR Conversion";
+	case AllocationPhase::DeferredGen:
+		return "Deferred Gen";
+	case AllocationPhase::CodeGeneration:
+		return "Code Generation";
+	case AllocationPhase::Other:
+		return "Other";
+	case AllocationPhase::Count:
+		break;
+	}
+	return "Invalid";
+}
 
 void AllocationTracker::setEnabled(bool enabled) {
 	g_allocation_tracking_enabled.store(enabled, std::memory_order_relaxed);
@@ -327,8 +449,15 @@ void AllocationTracker::recordAllocation(std::size_t size) {
 		g_current_live_bytes.fetch_add(static_cast<uint64_t>(size), std::memory_order_relaxed) +
 		static_cast<uint64_t>(size);
 	updatePeakLive(live_bytes);
+
+	const AllocationPhase phase = currentPhase();
+	const size_t phase_index = static_cast<size_t>(phase);
+	if (phase_index < static_cast<size_t>(AllocationPhase::Count)) {
+		++g_phase_allocation_count[phase_index];
+		g_phase_bytes_allocated[phase_index].fetch_add(static_cast<uint64_t>(size), std::memory_order_relaxed);
+	}
 #if FLASHCPP_TRACK_ALLOCATION_STACKS
-	recordAllocationStack(size);
+	recordAllocationStack(size, phase);
 #endif
 }
 
@@ -356,6 +485,10 @@ AllocationTracker::Snapshot AllocationTracker::snapshot() {
 	snapshot.bytes_deallocated = g_bytes_deallocated.load(std::memory_order_relaxed);
 	snapshot.current_live_bytes = g_current_live_bytes.load(std::memory_order_relaxed);
 	snapshot.peak_live_bytes = g_peak_live_bytes.load(std::memory_order_relaxed);
+	for (size_t i = 0; i < static_cast<size_t>(AllocationPhase::Count); ++i) {
+		snapshot.phases[i].allocation_count = g_phase_allocation_count[i].load(std::memory_order_relaxed);
+		snapshot.phases[i].bytes_allocated = g_phase_bytes_allocated[i].load(std::memory_order_relaxed);
+	}
 	return snapshot;
 }
 
@@ -373,6 +506,7 @@ void AllocationTracker::printStats() {
 			  ", bytes deallocated=", stats.bytes_deallocated);
 	FLASH_LOG(General, Info, "  current live bytes=", stats.current_live_bytes,
 			  ", peak live bytes=", stats.peak_live_bytes);
+	printPhaseAllocationSummary(stats);
 #if FLASHCPP_TRACK_ALLOCATION_STACKS
 	printAllocationStackSites(stats);
 #else
