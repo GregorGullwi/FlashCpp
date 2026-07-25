@@ -5239,14 +5239,64 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 		enclosing_ns = gSymbolTable.get_current_namespace_handle();
 	}
 
-	TypeIndex pattern_type_index{};
-	if (auto pattern_type_it = getTypesByNameMap().find(pattern_struct.name());
-		pattern_type_it != getTypesByNameMap().end() && pattern_type_it->second != nullptr) {
-		pattern_type_index =
-			pattern_type_it->second->registeredTypeIndex().withCategory(TypeCategory::Struct);
-	}
+	// Resolve the pattern class TypeInfo used for explicit self-type rewrite of
+	// injected-class-name parameters (e.g. `const iterator&` in a hidden friend).
+	// Member class templates are often stored under a leaf name ("iterator") while
+	// pattern_struct.name() is qualified ("outer::iterator"), so try every identity
+	// the defining class may have been registered under.
+	auto resolve_pattern_owner_type_index = [&]() -> TypeIndex {
+		auto try_name = [&](StringHandle name) -> TypeIndex {
+			if (!name.isValid()) {
+				return TypeIndex{};
+			}
+			auto type_it = getTypesByNameMap().find(name);
+			if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+				return TypeIndex{};
+			}
+			TypeIndex index = type_it->second->registeredTypeIndex();
+			if (!index.is_valid()) {
+				index = type_it->second->type_index_;
+			}
+			return index.is_valid()
+				? index.withCategory(TypeCategory::Struct)
+				: TypeIndex{};
+		};
+
+		if (TypeIndex by_name = try_name(pattern_struct.name()); by_name.is_valid()) {
+			return by_name;
+		}
+		if (TypeIndex by_semantic = try_name(pattern_struct.semantic_name());
+			by_semantic.is_valid()) {
+			return by_semantic;
+		}
+
+		std::string_view pattern_name_view =
+			StringTable::getStringView(pattern_struct.name());
+		if (size_t sep = pattern_name_view.rfind("::"); sep != std::string_view::npos) {
+			StringHandle leaf_name = StringTable::getOrInternStringHandle(
+				pattern_name_view.substr(sep + 2));
+			if (TypeIndex by_leaf = try_name(leaf_name); by_leaf.is_valid()) {
+				return by_leaf;
+			}
+		}
+		return TypeIndex{};
+	};
+
+	const TypeIndex pattern_type_index = resolve_pattern_owner_type_index();
 	const TypeIndex concrete_owner_type_index =
-		instantiated_type_index.withCategory(TypeCategory::Struct);
+		instantiated_type_index.is_valid()
+			? instantiated_type_index.withCategory(TypeCategory::Struct)
+			: TypeIndex{};
+	// Explicit self rewrite requires a matched from/to pair. When the pattern
+	// TypeInfo is unavailable (common for member class-template patterns before
+	// a standalone registration), disable the pair and rely on owner-decl +
+	// resolveSelfRefParamIndex via instantiated_owner_type_index.
+	const TypeIndex self_rewrite_from =
+		(pattern_type_index.is_valid() && concrete_owner_type_index.is_valid())
+			? pattern_type_index
+			: TypeIndex{};
+	const TypeIndex self_rewrite_to =
+		self_rewrite_from.is_valid() ? concrete_owner_type_index : TypeIndex{};
 
 	for (const ASTNode& friend_decl_node : pattern_struct.friend_declarations()) {
 		if (!friend_decl_node.is<FriendDeclarationNode>()) {
@@ -5283,11 +5333,30 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 
 		const TypeSpecifierNode& pattern_return_type = pattern_decl.type_specifier_node();
 		TypeIndex return_type_override{};
-		if (pattern_type_index.is_valid()) {
+		auto return_token_names_pattern = [&]() {
+			StringHandle token = pattern_return_type.token().handle();
+			if (!token.isValid()) {
+				return false;
+			}
+			if (token == pattern_struct.name() || token == pattern_struct.semantic_name()) {
+				return true;
+			}
+			std::string_view token_view = StringTable::getStringView(token);
+			std::string_view pattern_view = StringTable::getStringView(pattern_struct.name());
+			auto leaf = [](std::string_view name) -> std::string_view {
+				if (size_t sep = name.rfind("::"); sep != std::string_view::npos) {
+					return name.substr(sep + 2);
+				}
+				return name;
+			};
+			return leaf(token_view) == leaf(pattern_view);
+		};
+		if (concrete_owner_type_index.is_valid()) {
 			TypeIndex pattern_return_index = pattern_return_type.type_index();
-			if (!pattern_return_index.is_valid() ||
-				pattern_return_index == pattern_type_index ||
-				pattern_return_type.token().handle() == pattern_struct.name()) {
+			if ((pattern_type_index.is_valid() &&
+				 (!pattern_return_index.is_valid() ||
+				  pattern_return_index == pattern_type_index)) ||
+				return_token_names_pattern()) {
 				return_type_override = concrete_owner_type_index;
 			}
 		}
@@ -5337,8 +5406,8 @@ void Parser::materializeHiddenFriendsForClassTemplateInstantiation(
 			template_args,
 			&pattern_struct,
 			concrete_owner_type_index,
-			pattern_type_index,
-			concrete_owner_type_index,
+			self_rewrite_from,
+			self_rewrite_to,
 			SubstitutedDefaultArgumentPolicy::SubstituteTemplateParameters,
 			true,
 			false,
