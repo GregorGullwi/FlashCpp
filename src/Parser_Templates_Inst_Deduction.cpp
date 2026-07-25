@@ -39,6 +39,32 @@ static void logTemplateRequiresClauseFailure(
 	FLASH_LOG(Templates, Debug, "  template arguments: ", args_str);
 }
 
+// Enter all ancestor namespace scopes for a source namespace (outermost first).
+// Returns the number of scopes pushed (to be passed to exitSourceNamespaceScopes).
+static int enterSourceNamespaceScopes(NamespaceHandle source_namespace) {
+	if (!source_namespace.isValid() || source_namespace.isGlobal()) {
+		return 0;
+	}
+	// Collect chain from innermost to outermost (excluding global)
+	InlineVector<NamespaceHandle, 8> chain;
+	NamespaceHandle cur = source_namespace;
+	while (cur.isValid() && !cur.isGlobal()) {
+		chain.push_back(cur);
+		cur = gNamespaceRegistry.getParent(cur);
+	}
+	// Push from outermost to innermost so lookup finds ancestors first
+	for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
+		gSymbolTable.enter_namespace(chain[i]);
+	}
+	return static_cast<int>(chain.size());
+}
+
+static void exitSourceNamespaceScopes(int entered) {
+	for (int i = 0; i < entered; ++i) {
+		gSymbolTable.exit_scope();
+	}
+}
+
 static bool isForwardingReferenceParameter(
 	const TypeSpecifierNode& type,
 	std::span<const TemplateParameterNode> template_params) {
@@ -783,33 +809,6 @@ bool Parser::tryAppendDefaultTemplateArg(
 		return false;
 	};
 
-	// Helper to enter the source namespace for reparsing if provided
-	// Pushes ALL ancestor namespace scopes (outermost first) so that unqualified
-	// lookup correctly walks from the declaration namespace up to global.
-	// Returns the number of scopes pushed (to be passed to exitSourceNamespaceIfNeeded).
-	auto enterSourceNamespaceIfNeeded = [&]() -> int {
-		if (!source_namespace.isValid() || source_namespace.isGlobal()) {
-			return 0;
-		}
-		// Collect chain from innermost to outermost (excluding global)
-		InlineVector<NamespaceHandle, 8> chain;
-		NamespaceHandle cur = source_namespace;
-		while (cur.isValid() && !cur.isGlobal()) {
-			chain.push_back(cur);
-			cur = gNamespaceRegistry.getParent(cur);
-		}
-		// Push from outermost to innermost so lookup finds ancestors first
-		for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
-			gSymbolTable.enter_namespace(chain[i]);
-		}
-		return static_cast<int>(chain.size());
-	};
-	auto exitSourceNamespaceIfNeeded = [&](int entered) {
-		for (int i = 0; i < entered; ++i) {
-			gSymbolTable.exit_scope();
-		}
-	};
-
 	auto tryReparseNonTypeDefaultArg = [&]() -> bool {
 		if (!param.has_default_value_position() || template_args.empty()) {
 			return false;
@@ -832,9 +831,9 @@ bool Parser::tryAppendDefaultTemplateArg(
 		FlashCpp::TemplateParameterScope sfinae_scope;
 		registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
-		int entered_ns = enterSourceNamespaceIfNeeded();
+		int entered_ns = enterSourceNamespaceScopes(source_namespace);
 		auto reparse_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
-		exitSourceNamespaceIfNeeded(entered_ns);
+		exitSourceNamespaceScopes(entered_ns);
 		restore_lexer_position_only(sfinae_pos);
 
 		if (reparse_result.is_error() || !reparse_result.node().has_value() ||
@@ -866,14 +865,14 @@ bool Parser::tryAppendDefaultTemplateArg(
 			FlashCpp::TemplateParameterScope sfinae_scope;
 			registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
-			int entered_ns = enterSourceNamespaceIfNeeded();
+			int entered_ns = enterSourceNamespaceScopes(source_namespace);
 			FLASH_LOG_FORMAT(Templates, Debug, "SFINAE reparse: entered_ns={}, current_ns={}",
 				entered_ns,
 				gSymbolTable.get_current_namespace_handle().isValid()
 					? gNamespaceRegistry.getQualifiedName(gSymbolTable.get_current_namespace_handle())
 					: "(global)");
 			auto reparse_result = parse_type_specifier();
-			exitSourceNamespaceIfNeeded(entered_ns);
+			exitSourceNamespaceScopes(entered_ns);
 			restore_lexer_position_only(sfinae_pos);
 
 			if (reparse_result.is_error() || !reparse_result.node().has_value() ||
@@ -1290,30 +1289,9 @@ void Parser::reparse_template_function_body(
 	// Restore lexer to the template body start.
 	restore_lexer_position_only(func_decl.template_body_position());
 
-	auto enterSourceNamespaceIfNeeded = [&]() -> int {
-		NamespaceHandle source_namespace = func_decl.namespace_handle();
-		if (!source_namespace.isValid() || source_namespace.isGlobal()) {
-			return 0;
-		}
-		InlineVector<NamespaceHandle, 8> chain;
-		NamespaceHandle current = source_namespace;
-		while (current.isValid() && !current.isGlobal()) {
-			chain.push_back(current);
-			current = gNamespaceRegistry.getParent(current);
-		}
-		for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
-			gSymbolTable.enter_namespace(chain[i]);
-		}
-		return static_cast<int>(chain.size());
-	};
-	auto exitSourceNamespaceIfNeeded = [&](int entered) {
-		for (int i = 0; i < entered; ++i) {
-			gSymbolTable.exit_scope();
-		}
-	};
-	const int entered_namespace_count = enterSourceNamespaceIfNeeded();
+	const int entered_namespace_count = enterSourceNamespaceScopes(func_decl.namespace_handle());
 	auto exit_source_namespace = ScopeGuard([&]() {
-		exitSourceNamespaceIfNeeded(entered_namespace_count);
+		exitSourceNamespaceScopes(entered_namespace_count);
 	});
 
 	// Enter function scope, set current function, register parameters.
@@ -2660,28 +2638,6 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		}
 	};
 
-	auto enterSourceNamespaceIfNeeded = [&]() -> int {
-		NamespaceHandle source_namespace = func_decl.namespace_handle();
-		if (!source_namespace.isValid() || source_namespace.isGlobal()) {
-			return 0;
-		}
-		InlineVector<NamespaceHandle, 8> chain;
-		NamespaceHandle current = source_namespace;
-		while (current.isValid() && !current.isGlobal()) {
-			chain.push_back(current);
-			current = gNamespaceRegistry.getParent(current);
-		}
-		for (int i = static_cast<int>(chain.size()) - 1; i >= 0; --i) {
-			gSymbolTable.enter_namespace(chain[i]);
-		}
-		return static_cast<int>(chain.size());
-	};
-	auto exitSourceNamespaceIfNeeded = [&](int entered) {
-		for (int i = 0; i < entered; ++i) {
-			gSymbolTable.exit_scope();
-		}
-	};
-
 	const bool should_reparse_trailing_return_type =
 		func_decl.has_trailing_return_type_position();
 
@@ -2744,9 +2700,9 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		registerTypeParamsInScope(
 			substitution_environment,
 			template_scope);
-		const int entered_namespace_count = enterSourceNamespaceIfNeeded();
+		const int entered_namespace_count = enterSourceNamespaceScopes(func_decl.namespace_handle());
 		auto exit_source_namespace = ScopeGuard([&]() {
-			exitSourceNamespaceIfNeeded(entered_namespace_count);
+			exitSourceNamespaceScopes(entered_namespace_count);
 		});
 
 		try {
@@ -2862,9 +2818,9 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 			FlashCpp::TemplateParameterScope template_scope;
 			registerTypeParamsInScope(substitution_environment, template_scope);
-			const int entered_namespace_count = enterSourceNamespaceIfNeeded();
+			const int entered_namespace_count = enterSourceNamespaceScopes(func_decl.namespace_handle());
 			auto exit_source_namespace = ScopeGuard([&]() {
-				exitSourceNamespaceIfNeeded(entered_namespace_count);
+				exitSourceNamespaceScopes(entered_namespace_count);
 			});
 			auto return_type_result = parse_type_specifier();
 			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
@@ -2965,9 +2921,9 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 			FlashCpp::TemplateParameterScope template_scope;
 			registerTypeParamsInScope(substitution_environment, template_scope);
-			const int entered_namespace_count = enterSourceNamespaceIfNeeded();
+			const int entered_namespace_count = enterSourceNamespaceScopes(func_decl.namespace_handle());
 			auto exit_return_type_namespace = ScopeGuard([&]() {
-				exitSourceNamespaceIfNeeded(entered_namespace_count);
+				exitSourceNamespaceScopes(entered_namespace_count);
 			});
 			auto return_type_result = parse_type_specifier();
 			if (return_type_result.node().has_value() && return_type_result.node()->is<TypeSpecifierNode>()) {
@@ -2992,9 +2948,9 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			restore_lexer_position_only(func_decl.template_declaration_position());
 			FlashCpp::TemplateParameterScope template_scope2;
 			registerTypeParamsInScope(substitution_environment, template_scope2);
-			const int entered_name_parse_namespace_count = enterSourceNamespaceIfNeeded();
+			const int entered_name_parse_namespace_count = enterSourceNamespaceScopes(func_decl.namespace_handle());
 			auto exit_name_parse_namespace = ScopeGuard([&]() {
-				exitSourceNamespaceIfNeeded(entered_name_parse_namespace_count);
+				exitSourceNamespaceScopes(entered_name_parse_namespace_count);
 			});
 			auto type_and_name_result = parse_type_and_name();
 			restore_lexer_position_only(current_pos);

@@ -40,6 +40,11 @@ struct Scope {
 	Scope(ScopeType scopeType, size_t scope_level, StringHandle ns_name)
 		: scope_type(scopeType), scope_handle{.scope_level = scope_level}, namespace_name(ns_name) {}
 
+	Scope(Scope&&) noexcept = default;
+	Scope& operator=(Scope&&) noexcept = default;
+	Scope(const Scope&) = default;
+	Scope& operator=(const Scope&) = default;
+
 	ScopeType scope_type = ScopeType::Block;
 	// Changed to support function overloading: each name can map to multiple symbols (for overloaded functions)
 	// Use string_view keys with a dedicated ChunkedStringAllocator in SymbolTable to avoid copies
