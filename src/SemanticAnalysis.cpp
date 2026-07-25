@@ -222,13 +222,6 @@ namespace {
 constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 constexpr std::string_view kAnonymousNamespaceContext = "<anonymous namespace>";
 
-// Return the name after the last scope-resolution operator:
-// `std::ReverseLike` -> `ReverseLike`.
-std::string_view unqualifiedTypeName(std::string_view name) {
-	const size_t pos = name.rfind("::");
-	return pos == std::string_view::npos ? name : name.substr(pos + 2);
-}
-
 // Placeholder return-type finalization requires every return statement in the
 // body to deduce to the same full type identity, including cv/reference and
 // pointer qualifiers. This prevents plain `auto` and `decltype(auto)` from

@@ -2377,32 +2377,32 @@ void AstToIr::generateTrivialDefaultConstructors() {
 // When a template member function references its own class (e.g., const W& in W<T>::operator+=),
 // the type_index may point to the unfinalized template base. This resolves it to the
 // enclosing instantiated struct's type_index by mutating `type` in-place.
-// Important: only resolves when the unfinalized type's name matches the base name of the
-// enclosing struct — avoids incorrectly resolving outer class references in nested classes.
+// Shares the [temp.local] identity rule with resolveSelfRefParamIndex / namesSameInjectedClassIdentity.
 void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
-	if (type.category() == TypeCategory::Struct) {
-		const TypeInfo* ti = tryGetTypeInfo(type.type_index());
-		if (!ti)
-			return;
-		if (!ti->getStructInfo() || !ti->getStructInfo()->sizeInBytes().is_set()) {
-			if (const TypeInfo* enc_ti = tryGetTypeInfo(enclosing_type_index)) {
-				// Verify this is actually a self-reference by checking that the unfinalized
-				// type's name matches the base name of the enclosing struct.
-				// For template instantiations: W (unfinalized) matches W$hash (enclosing)
-				// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
-				auto unfinalized_name = StringTable::getStringView(ti->name());
-				auto enclosing_name = StringTable::getStringView(enc_ti->name());
+	if (!type.type_index().is_valid() || !enclosing_type_index.is_valid()) {
+		return;
+	}
 
-				// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
-				// Template hash: "Name$hash" -> "Name"
-				// Nested class: "Outer::Inner" -> "Inner"
-				auto base_name = simpleBaseName(enclosing_name);
+	// Prefer the shared TypeIndex rewrite used by overload resolution and template
+	// parameter copy (incomplete StructInfo, `$hash` skip, nested leaf names).
+	TypeIndex resolved =
+		resolveSelfRefParamIndex(type.type_index(), enclosing_type_index);
+	if (resolved != type.type_index()) {
+		type.set_type_index(resolved);
+		return;
+	}
 
-				if (unfinalized_name == base_name) {
-					type.set_type_index(enclosing_type_index);
-				}
-			}
-		}
+	// Pattern TypeInfos without StructInfo still need name-based rewrite:
+	// W (unfinalized) matches W$hash; Outer does not match Outer::Inner.
+	const TypeInfo* ti = tryGetTypeInfo(type.type_index());
+	const TypeInfo* enc_ti = tryGetTypeInfo(enclosing_type_index);
+	if (ti == nullptr || enc_ti == nullptr || ti->getStructInfo() != nullptr) {
+		return;
+	}
+	if (namesSameInjectedClassIdentity(
+			StringTable::getStringView(ti->name()),
+			StringTable::getStringView(enc_ti->name()))) {
+		type.set_type_index(enclosing_type_index);
 	}
 }
 

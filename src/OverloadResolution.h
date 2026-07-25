@@ -1837,7 +1837,7 @@ struct OperatorOverloadResult {
 // operator+=(const Foo& other) stores the parameter as the uninstantiated Foo
 // (whose struct_info has total_size==0). We resolve it to the concrete instantiated
 // left_type_index so that type matching works correctly.
-// This mirrors the AstToIr::resolveSelfReferentialType logic used in codegen.
+// This is the TypeIndex twin of AstToIr::resolveSelfReferentialType used in codegen.
 inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_type_index) {
 	const size_t type_info_size = getTypeInfoCount();
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
