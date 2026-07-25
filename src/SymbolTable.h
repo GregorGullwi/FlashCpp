@@ -177,25 +177,23 @@ public:
 			}
 		}
 
-		auto sync_namespace_scope_symbols = [&](const std::vector<ASTNode>& nodes) {
-			std::string_view key = intern_string(identifier);
-			current_scope.symbols[key] = nodes;
-		};
-
 		// If this is a new identifier, create a new vector
 		if (!existing_ptr) {
+			if (ns_scope) {
+				// Namespace scopes store members only in namespace_symbols_; do not
+				// mirror into scope.symbols (namespace-scope using-declarations also
+				// merge into namespace_symbols_; see materialize_using_declaration_symbols).
+				namespace_symbols_[ns_handle][ns_key] = std::vector<ASTNode>{node};
+				return true;
+			}
 			std::string_view key = intern_string(identifier);
 			current_scope.symbols[key] = std::vector<ASTNode>{node};
-			if (ns_scope || global_scope) {
-				if (!ns_scope) {
-					ns_handle = get_current_namespace_handle();
-					ns_key = StringTable::getOrInternStringHandle(identifier);
-				}
+			if (global_scope) {
+				ns_handle = get_current_namespace_handle();
+				ns_key = StringTable::getOrInternStringHandle(identifier);
 				/* Global scope keys existence off scope.symbols, so namespace_symbols_ can
 				   in principle already hold entries this scope never saw. Append rather than
-				   assign so such entries are never silently dropped. For namespace scopes
-				   existing_ptr came from this very map, so absence here is authoritative and
-				   the append degenerates into a fresh vector. */
+				   assign so such entries are never silently dropped. */
 				auto& ns_symbols = namespace_symbols_[ns_handle];
 				auto ns_it = ns_symbols.find(ns_key);
 				if (ns_it == ns_symbols.end()) {
@@ -272,10 +270,7 @@ public:
 							if (new_func->is_materialized() && !existing_func->is_materialized()) {
 								existing_nodes[i] = node;
 
-								if (ns_scope) {
-									// existing_nodes is already namespace_symbols_; keep the local map in sync
-									sync_namespace_scope_symbols(existing_nodes);
-								} else if (global_scope) {
+								if (global_scope) {
 									// Global still uses scope.symbols as primary; mirror into namespace_symbols_
 									NamespaceHandle mirror_ns = get_current_namespace_handle();
 									auto& ns_symbols = namespace_symbols_[mirror_ns];
@@ -308,6 +303,7 @@ public:
 										}
 									}
 								}
+								// Namespace scopes: existing_nodes already aliases namespace_symbols_
 							}
 							// Otherwise, it's a duplicate declaration - just ignore it
 							return true;
@@ -321,9 +317,7 @@ public:
 		existing_nodes.push_back(node);
 
 		if (ns_scope) {
-			// existing_nodes is namespace_symbols_; sync the full overload set into the
-			// local map so lookup that hits scope.symbols first still sees every overload.
-			sync_namespace_scope_symbols(existing_nodes);
+			// existing_nodes already aliases namespace_symbols_; nothing else to update.
 			return true;
 		}
 
@@ -350,6 +344,23 @@ public:
 	// with the fully-initialised VariableDeclarationNode once parsing completes.
 	bool replace_variable(std::string_view identifier, ASTNode new_node) {
 		auto& current_scope = symbol_table_stack_.back();
+		if (current_scope.scope_type == ScopeType::Namespace) {
+			NamespaceHandle ns_handle = get_current_namespace_handle();
+			StringHandle key = StringTable::getOrInternStringHandle(identifier);
+			auto ns_map_it = namespace_symbols_.find(ns_handle);
+			if (ns_map_it == namespace_symbols_.end()) {
+				return false;
+			}
+			auto it = ns_map_it->second.find(key);
+			if (it == ns_map_it->second.end() || it->second.empty()) {
+				return false;
+			}
+			if (is_function_or_template_function(it->second[0])) {
+				return false;
+			}
+			it->second[0] = new_node;
+			return true;
+		}
 		auto it = current_scope.symbols.find(identifier);
 		if (it == current_scope.symbols.end() || it->second.empty()) {
 			return false;
@@ -449,18 +460,10 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 
-			// First, check direct symbols in this scope. Using declarations are materialized
-			// here so they correctly participate in shadowing and overload formation.
-			auto symbolIt = scope.symbols.find(identifier);
-			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
-				// Return the first match for backward compatibility
-				return symbolIt->second[0];
-			}
-
-			// For namespace scopes, probe namespace_symbols_ immediately after the local
-			// symbols map and before using-declarations/directives. Member names of the
-			// namespace itself must beat imports; once enter_namespace stops preloading,
-			// those members live only in namespace_symbols_.
+			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
+			// Members and namespace-scope using-declarations live in namespace_symbols_;
+			// scope.symbols holds block/function-scope using-declarations only.
+			// Advance scope_namespace exactly once per Namespace scope regardless of hit/miss.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
 					StringHandle key = StringTable::getOrInternStringHandle(identifier);
@@ -470,6 +473,14 @@ public:
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
+			}
+
+			// Check direct symbols in this scope. Using declarations are materialized
+			// here so they correctly participate in shadowing and overload formation.
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
+				// Return the first match for backward compatibility
+				return symbolIt->second[0];
 			}
 
 			// Fall back to unresolved using declarations in this scope.
@@ -524,17 +535,10 @@ public:
 		for (auto stackIt = symbol_table_stack_.rbegin() + (get_current_scope_handle().scope_level - scope_limit_handle.scope_level); stackIt != symbol_table_stack_.rend(); ++stackIt) {
 			const Scope& scope = *stackIt;
 
-			// First, check direct symbols in this scope. Using declarations are materialized
-			// into this map so ordinary lookup sees the full reachable overload set.
-			auto symbolIt = scope.symbols.find(identifier);
-			if (symbolIt != scope.symbols.end()) {
-				return symbolIt->second;
-			}
-
-			// For namespace scopes, probe namespace_symbols_ immediately after the local
-			// symbols map and before using-declarations/directives. Member names of the
-			// namespace itself must beat imports; once enter_namespace stops preloading,
-			// those members live only in namespace_symbols_.
+			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
+			// Members and namespace-scope using-declarations live in namespace_symbols_;
+			// scope.symbols holds block/function-scope using-declarations only.
+			// Advance scope_namespace exactly once per Namespace scope regardless of hit/miss.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
 					StringHandle key = StringTable::getOrInternStringHandle(identifier);
@@ -544,6 +548,13 @@ public:
 					}
 				}
 				scope_namespace = gNamespaceRegistry.getParent(scope_namespace);
+			}
+
+			// Check direct symbols in this scope. Using declarations are materialized
+			// into this map so ordinary lookup sees the full reachable overload set.
+			auto symbolIt = scope.symbols.find(identifier);
+			if (symbolIt != scope.symbols.end()) {
+				return symbolIt->second;
 			}
 
 			// Fall back to unresolved using declarations in this scope.
@@ -990,7 +1001,9 @@ public:
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
 		// Materialize the referenced declaration(s) into the current scope so they
-		// participate in ordinary lookup and overload-set formation.
+		// participate in ordinary lookup and overload-set formation. At namespace
+		// scope this merges into namespace_symbols_ ([namespace.udecl]); elsewhere
+		// into scope.symbols.
 		materialize_using_declaration_symbols(current_scope, key, namespace_handle, orig_name);
 	}
 
@@ -1006,7 +1019,9 @@ public:
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
 		// Materialize the referenced declaration(s) into the current scope so they
-		// participate in ordinary lookup and overload-set formation.
+		// participate in ordinary lookup and overload-set formation. At namespace
+		// scope this merges into namespace_symbols_ ([namespace.udecl]); elsewhere
+		// into scope.symbols.
 		materialize_using_declaration_symbols(current_scope, key, namespace_handle, orig_name);
 	}
 
@@ -1382,6 +1397,28 @@ private:
 	void materialize_using_declaration_symbols(Scope& current_scope, std::string_view key, NamespaceHandle namespace_handle, std::string_view original_name) {
 		auto resolved_nodes = lookup_qualified_all(namespace_handle, original_name);
 		if (resolved_nodes.empty()) {
+			return;
+		}
+
+		// C++20 [namespace.udecl]: a using-declaration at namespace scope makes the
+		// name a member of that namespace. Merge into namespace_symbols_ so ordinary
+		// lookup (which probes that map first for Namespace scopes) sees the full
+		// overload set. Block/function scopes stay local to scope.symbols.
+		if (current_scope.scope_type == ScopeType::Namespace) {
+			NamespaceHandle dest_ns = get_current_namespace_handle();
+			StringHandle ns_key = StringTable::getOrInternStringHandle(key);
+			auto& ns_symbols = namespace_symbols_[dest_ns];
+			auto ns_it = ns_symbols.find(ns_key);
+			if (ns_it == ns_symbols.end()) {
+				ns_symbols[ns_key] = std::move(resolved_nodes);
+				return;
+			}
+
+			if (!is_pure_function_set(ns_it->second) || !is_pure_function_set(resolved_nodes)) {
+				return;
+			}
+
+			append_unique_function_overloads(ns_it->second, resolved_nodes);
 			return;
 		}
 
