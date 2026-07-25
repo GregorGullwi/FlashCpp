@@ -76,7 +76,15 @@ make test && ./x64/test
 
 ### Profiling builds (opt-in)
 
-Parser phase timers and allocation hooks are **off by default**. Enable them in `FlashCppMSVC.vcxproj` under the Sharded `PreprocessorDefinitions` (rebuild required):
+Parser phase timers and allocation hooks are **off by default**. Enable them when building:
+
+```powershell
+.\build_flashcpp.bat --alloc-stats              # heap tracking for --alloc-stats
+.\build_flashcpp.bat --perf-stats               # parser subphase timers for --perf-stats
+.\build_flashcpp.bat --profile                  # all profiling defines (incl. stack traces)
+```
+
+Or add these to Sharded `PreprocessorDefinitions` in `FlashCppMSVC.vcxproj`:
 
 - `WITH_PARSER_RUNTIME_STATS=1` — parser subphase timers for `--perf-stats`
 - `FLASHCPP_TRACK_ALLOCATIONS=1` — global `operator new/delete` hooks for `--alloc-stats`

@@ -1,5 +1,6 @@
 # Print global operator new/delete stats from a compile with --alloc-stats.
 # Requires a Sharded build compiled with FLASHCPP_TRACK_ALLOCATIONS=1.
+# Enable with: .\build_flashcpp.bat --alloc-stats
 #
 # Usage:
 #   pwsh tests/bench_allocations.ps1 [test.cpp]
