@@ -179,6 +179,21 @@ public:
 		specialization_match_time_.add(duration);
 	}
 
+	const TemplateProfilingAccumulator& lookupTime() const { return lookup_time_; }
+	const TemplateProfilingAccumulator& templateParsingTime() const { return parsing_time_; }
+	const TemplateProfilingAccumulator& substitutionTime() const { return substitution_time_; }
+	const TemplateProfilingAccumulator& specializationMatchTime() const {
+		return specialization_match_time_;
+	}
+	int64_t totalInstantiationDurationUs() const {
+		int64_t total = 0;
+		for (const auto& entry : instantiations_by_handle_) {
+			total += entry.second.total_duration();
+		}
+		return total;
+	}
+	size_t totalInstantiationEventCount() const { return total_instantiation_count_; }
+
 	// Print comprehensive statistics
 	void printStats() const {
 		printf("\n=== Template Instantiation Profiling ===\n\n");

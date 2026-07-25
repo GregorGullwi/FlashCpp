@@ -251,6 +251,7 @@ int main_impl(int argc, char* argv[]) {
 	bool show_debug = argsparser.hasFlag("d"_opt) || argsparser.hasFlag("debug"_opt);
 	bool show_perf_stats = argsparser.hasFlag("perf-stats"_opt) || argsparser.hasFlag("stats"_opt);
 	bool show_timing = argsparser.hasFlag("time"_opt) || argsparser.hasFlag("timing"_opt) || show_perf_stats;
+	FlashCpp::AllocationTracker::setEnabled(show_perf_stats);
 
 	// Set global debug flag (also enabled by verbose mode)
 	g_enable_debug_output = show_debug || context.isVerboseMode();
@@ -462,9 +463,11 @@ int main_impl(int argc, char* argv[]) {
 	}
 	if (parse_compile_error || parse_result.is_error()) {
 		if (show_perf_stats) {
+			FlashCpp::printParsingPhaseBreakdown(parser.get(), parsing_time);
 			parser->printRuntimeStats();
 			printTypeTableStats();
 			StackStringStats::print_stats();
+			FlashCpp::AllocationTracker::printStats();
 		}
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time,
 						   ir_conversion_time, deferred_gen_time, codegen_time, total_start);
@@ -479,9 +482,6 @@ int main_impl(int argc, char* argv[]) {
 		// Also print to stderr to ensure error is visible even with minimal logging
 		std::cerr << error_msg << std::endl;
 		return 1;
-	}
-	if (show_perf_stats) {
-		parser->printRuntimeStats();
 	}
 
 	const auto& ast = parser->get_nodes();
@@ -777,15 +777,16 @@ int main_impl(int argc, char* argv[]) {
 		FLASH_LOG(General, Info, "  Deferred Gen: lambda and local struct member function generation");
 		FLASH_LOG(General, Info, "  Other: setup, teardown, and miscellaneous operations");
 
-		// Print template profiling statistics
 #if ENABLE_TEMPLATE_PROFILING
 		TemplateProfilingStats::getInstance().printStats();
 #endif
 	}
 
 	if (show_perf_stats) {
+		FlashCpp::printParsingPhaseBreakdown(parser.get(), parsing_time);
+		parser->printRuntimeStats();
 		StackStringStats::print_stats();
-
+		FlashCpp::AllocationTracker::printStats();
 		printTypeTableStats();
 
 #ifdef USE_GLOBAL_OPERAND_STORAGE
@@ -795,7 +796,6 @@ int main_impl(int argc, char* argv[]) {
 		FLASH_LOG(General, Info, "\nNote: Chunked operand storage is disabled. Enable USE_GLOBAL_OPERAND_STORAGE to see operand stats.\n\n");
 #endif
 
-		// Print IR instruction statistics
 		ir.printStats();
 	}
 

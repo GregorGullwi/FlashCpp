@@ -40,6 +40,8 @@
 #include "NameMangling.h"
 
 #include "TemplateProfilingStats.h"
+#include "AllocationTracker.h"
+#include "ParserProfilingReport.h"
 #include "AstNodeTypes.h"
 #include "NamespaceRegistry.h"
 #include "LazyMemberResolver.h"
@@ -85,6 +87,8 @@
 #include "ConstExprEvalHelpers.cpp"
 #include "StringLiteralTokenUtils.cpp"
 #include "SemanticAnalysis.cpp"
+#include "AllocationTracker.cpp"
+#include "ParserProfilingReport.cpp"
 #endif
 
 #if defined(UNITY_SHARD_PARSER_CORE)

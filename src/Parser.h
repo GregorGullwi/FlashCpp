@@ -522,6 +522,10 @@ class Parser {
 public:
 	static constexpr size_t default_ast_tree_size_ = 256 * 1024;
 
+#if WITH_PARSER_RUNTIME_STATS
+	struct RuntimeStats;
+#endif
+
 	explicit Parser(Lexer& lexer, CompileContext& context, SemanticAnalysis& semantic_analysis);
 
 	ParseResult parse() {
@@ -579,6 +583,10 @@ public:
 	void setRuntimeStatsEnabled(bool enabled);
 	void reserveSavedTokenStorage(size_t saved_token_capacity);
 	void printRuntimeStats() const;
+#if WITH_PARSER_RUNTIME_STATS
+	bool runtimeStatsEnabled() const { return runtime_stats_enabled_; }
+	const RuntimeStats& runtimeStats() const { return runtime_stats_; }
+#endif
 
 	// Returns true if the node at `index` in `get_nodes()` was added via the
 	// late-materialization helpers (`registerLateMaterializedTopLevelNode*`),
@@ -751,6 +759,7 @@ private:
 	// Each save gets a unique handle from a static incrementing counter
 	using SaveHandle = size_t;
 
+public:
 #if WITH_PARSER_RUNTIME_STATS
 	enum class RuntimePhase : uint8_t {
 		ParseLoop,
@@ -937,6 +946,14 @@ private:
 		}
 		return "unknown";
 	}
+#endif
+
+private:
+#if WITH_PARSER_RUNTIME_STATS
+	bool runtime_stats_enabled_ = false;
+	size_t ast_nodes_baseline_ = 0;  // gChunkedAnyStorage.size() when stats were enabled
+	RuntimeStats runtime_stats_;
+	std::vector<RuntimePhaseFrame> runtime_phase_stack_;
 #endif
 
 	// Delayed function body parsing for inline member functions
@@ -1526,12 +1543,6 @@ private:
 	// speculative parser save/restore hot paths.
 	std::vector<std::optional<SavedToken>> saved_tokens_;
 	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
-#if WITH_PARSER_RUNTIME_STATS
-	bool runtime_stats_enabled_ = false;
-	size_t ast_nodes_baseline_ = 0;  // gChunkedAnyStorage.size() when stats were enabled
-	RuntimeStats runtime_stats_;
-	std::vector<RuntimePhaseFrame> runtime_phase_stack_;
-#endif
 
 	Token consume_token();
 
