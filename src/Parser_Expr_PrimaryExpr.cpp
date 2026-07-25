@@ -2855,39 +2855,236 @@ bool Parser::trySubstituteValueTemplateParameterExpression(
 	return false;
 }
 
-ParseResult Parser::tryParseExplicitTemplateBraceInitialization(
-	const Token& identifier_token,
-	const InlineVector<TemplateTypeArg, 4>& explicit_template_args) {
-	if (peek() != "{"_tok) {
-		return ParseResult();
+bool Parser::isInjectedClassTemplateBeingDefined(StringHandle name) const {
+	// C++20 [class.pre] / [temp.local]: while a class template definition is open, its
+	// injected-class-name is in scope and may be used as a template-name. Match the
+	// entity being defined by StringHandle / struct-node identity, not by spelling.
+	if (!name.isValid() || !parsing_template_class_) {
+		return false;
 	}
 
-	bool is_template_brace_initialization =
-		gTemplateRegistry.lookupTemplate(identifier_token.value()).has_value() ||
-		gTemplateRegistry.lookup_alias_template(identifier_token.value()).has_value() ||
-		tryResolveCurrentInstantiationTemplateOwner(
-			identifier_token.value(),
-			explicit_template_args).has_value();
-	if (!is_template_brace_initialization) {
-		NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
-		if (!current_namespace.isGlobal()) {
-			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-				current_namespace,
-				identifier_token.handle());
-			std::string_view qualified_name = StringTable::getStringView(qualified_handle);
-			is_template_brace_initialization =
-				gTemplateRegistry.lookupTemplate(qualified_name).has_value() ||
-				gTemplateRegistry.lookup_alias_template(qualified_name).has_value();
+	auto matches_defining_struct = [&](const StructDeclarationNode* struct_node) {
+		if (struct_node == nullptr) {
+			return false;
+		}
+		return struct_node->name() == name || struct_node->semantic_name() == name;
+	};
+
+	for (auto it = struct_parsing_context_stack_.rbegin();
+		 it != struct_parsing_context_stack_.rend();
+		 ++it) {
+		if (matches_defining_struct(it->struct_node)) {
+			return true;
 		}
 	}
-	if (!is_template_brace_initialization && !struct_parsing_context_stack_.empty()) {
-		const StructParsingContext& struct_context = struct_parsing_context_stack_.back();
-		if (struct_context.struct_name == identifier_token.value()) {
-			is_template_brace_initialization = true;
+	if (!member_function_context_stack_.empty() &&
+		matches_defining_struct(member_function_context_stack_.back().struct_node)) {
+		return true;
+	}
+	return false;
+}
+
+bool Parser::templateNameDenotesTypeProducingTemplate(StringHandle name) const {
+	// C++20 [temp.names] + [expr.type.conv]: after lookup, a template-name that names a
+	// class template or alias template produces a type. A name that only names a function
+	// template does not — `f<Args>(x)` remains a call.
+	if (!name.isValid()) {
+		return false;
+	}
+
+	auto lookup_denotes_type_template = [&](StringHandle lookup_name) {
+		if (!lookup_name.isValid()) {
+			return false;
+		}
+		TemplateNameLookupResult lookup = gTemplateRegistry.lookupTemplateName(
+			buildTemplateNameLookupRequest(
+				lookup_name,
+				TemplateNameLookupKind::Ordinary,
+				false));
+		return lookup.hasClassTemplate() || lookup.hasAliasTemplate();
+	};
+
+	if (lookup_denotes_type_template(name)) {
+		return true;
+	}
+
+	NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+	if (!current_namespace.isGlobal()) {
+		StringHandle qualified_handle =
+			gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, name);
+		if (lookup_denotes_type_template(qualified_handle)) {
+			return true;
 		}
 	}
-	if (!is_template_brace_initialization) {
-		return ParseResult();
+
+	return isInjectedClassTemplateBeingDefined(name);
+}
+
+Parser::AliasTemplateMaterializationResult
+Parser::ensureIncompleteClassTemplateSpecializationPlaceholder(
+	std::string_view template_name,
+	std::span<const TemplateTypeArg> template_args) {
+	AliasTemplateMaterializationResult result;
+	std::string_view instantiated_name =
+		get_instantiated_class_name(template_name, template_args);
+	if (instantiated_name.empty()) {
+		return result;
+	}
+
+	StringHandle instantiated_handle =
+		StringTable::getOrInternStringHandle(instantiated_name);
+	auto existing_it = getTypesByNameMap().find(instantiated_handle);
+	if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
+		TypeInfo& existing_type = *existing_it->second;
+		if (!existing_type.isTemplateInstantiation()) {
+			InlineVector<TypeInfo::TemplateArgInfo, 4> template_args_info =
+				toTemplateArgInfoList(template_args);
+			InlineVector<StringHandle, 4> placeholder_param_names;
+			if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+				template_opt.has_value() &&
+				template_opt->is<TemplateClassDeclarationNode>()) {
+				const auto& template_params =
+					template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+				const size_t count = std::min(template_params.size(), template_args.size());
+				placeholder_param_names.reserve(count);
+				for (size_t i = 0; i < count; ++i) {
+					if (const TemplateParameterNode* param =
+							tryGetTemplateParameterNode(template_params[i]);
+						param != nullptr) {
+						placeholder_param_names.push_back(param->nameHandle());
+					}
+				}
+			} else {
+				for (StringHandle param_name : currentTemplateParamNames()) {
+					placeholder_param_names.push_back(param_name);
+				}
+			}
+			existing_type.is_incomplete_instantiation_ = true;
+			if (existing_type.placeholder_kind_ == DependentPlaceholderKind::None) {
+				existing_type.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+			}
+			existing_type.setTemplateInstantiationInfo(
+				QualifiedIdentifier::fromQualifiedName(
+					template_name,
+					gSymbolTable.get_current_namespace_handle()),
+				template_args_info);
+			existing_type.setInstantiationContext(
+				std::move(placeholder_param_names),
+				template_args_info,
+				nullptr);
+		}
+		result.instantiated_name = instantiated_name;
+		result.resolved_type_info = &existing_type;
+		return result;
+	}
+
+	TypeInfo& type_info = add_empty_type_entry();
+	type_info.fallback_size_bits_ = 0;
+	type_info.name_ = instantiated_handle;
+	type_info.is_incomplete_instantiation_ = true;
+	type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
+	getTypesByNameMap()[instantiated_handle] = &type_info;
+
+	InlineVector<TypeInfo::TemplateArgInfo, 4> template_args_info =
+		toTemplateArgInfoList(template_args);
+	InlineVector<StringHandle, 4> placeholder_param_names;
+	if (auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
+		template_opt.has_value() &&
+		template_opt->is<TemplateClassDeclarationNode>()) {
+		const auto& template_params =
+			template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+		const size_t count = std::min(template_params.size(), template_args.size());
+		placeholder_param_names.reserve(count);
+		for (size_t i = 0; i < count; ++i) {
+			if (const TemplateParameterNode* param =
+					tryGetTemplateParameterNode(template_params[i]);
+				param != nullptr) {
+				placeholder_param_names.push_back(param->nameHandle());
+			}
+		}
+	} else {
+		for (StringHandle param_name : currentTemplateParamNames()) {
+			placeholder_param_names.push_back(param_name);
+		}
+	}
+	type_info.setTemplateInstantiationInfo(
+		QualifiedIdentifier::fromQualifiedName(
+			template_name,
+			gSymbolTable.get_current_namespace_handle()),
+		template_args_info);
+	type_info.setInstantiationContext(
+		std::move(placeholder_param_names),
+		template_args_info,
+		nullptr);
+
+	FLASH_LOG_FORMAT(
+		Templates,
+		Debug,
+		"Created incomplete class-template construction placeholder '{}' base='{}' args={}",
+		instantiated_name,
+		template_name,
+		template_args_info.size());
+
+	result.instantiated_name = instantiated_name;
+	result.resolved_type_info = &type_info;
+	return result;
+}
+
+Parser::AliasTemplateMaterializationResult Parser::materializeTemplateTypeForConstruction(
+	std::string_view template_name,
+	std::span<const TemplateTypeArg> template_args) {
+	if (auto current_instantiation =
+			tryResolveCurrentInstantiationTemplateOwner(template_name, template_args);
+		current_instantiation.has_value()) {
+		return *current_instantiation;
+	}
+
+	AliasTemplateMaterializationResult owner =
+		materializePrimaryTemplateOwnerForConstructorLookup(
+			template_name,
+			{},
+			template_args);
+	if (owner.resolved_type_info != nullptr) {
+		return owner;
+	}
+
+	AliasTemplateMaterializationResult lookup =
+		materializeTemplateInstantiationForLookup(template_name, template_args);
+	if (lookup.resolved_type_info != nullptr) {
+		return lookup;
+	}
+
+	// Incomplete specialization placeholder when the class/alias template is known by
+	// lookup or is the injected-class-name of the definition currently open, but full
+	// [temp.inst] cannot run yet (e.g. primary still being parsed).
+	const StringHandle template_name_handle =
+		StringTable::getOrInternStringHandle(template_name);
+	const bool may_need_incomplete_placeholder =
+		templateNameDenotesTypeProducingTemplate(template_name_handle);
+	if (may_need_incomplete_placeholder) {
+		return ensureIncompleteClassTemplateSpecializationPlaceholder(
+			template_name,
+			template_args);
+	}
+
+	if (!lookup.instantiated_name.empty()) {
+		return lookup;
+	}
+	return owner;
+}
+
+ParseResult Parser::parseExplicitTemplateTypeConstruction(
+	const Token& identifier_token,
+	const InlineVector<TemplateTypeArg, 4>& explicit_template_args,
+	ExplicitTemplateConstructionDelimiter delimiter) {
+	const bool is_brace =
+		delimiter == ExplicitTemplateConstructionDelimiter::Brace;
+	if (is_brace ? peek() != "{"_tok : peek() != "("_tok) {
+		return ParseResult::error(
+			is_brace
+				? "Expected '{' for template type construction"
+				: "Expected '(' for template type construction",
+			identifier_token);
 	}
 
 	bool has_dependent_args = false;
@@ -2898,31 +3095,48 @@ ParseResult Parser::tryParseExplicitTemplateBraceInitialization(
 		}
 	}
 
-	FLASH_LOG(Parser, Debug, "Template brace initialization detected for '", identifier_token.value(), "', has_dependent_args=", has_dependent_args);
+	FLASH_LOG_FORMAT(
+		Parser,
+		Debug,
+		"Explicit template type construction for '{}' delimiter={} dependent_args={}",
+		identifier_token.value(),
+		is_brace ? "brace" : "paren",
+		has_dependent_args);
+
+	advance(); // consume '(' or '{'
+
+	ChunkedVector<ASTNode> args;
+	while (!peek().is_eof() &&
+		   (is_brace ? peek() != "}"_tok : peek() != ")"_tok)) {
+		ParseResult arg_result =
+			parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+		if (arg_result.is_error()) {
+			return arg_result;
+		}
+		if (auto node = arg_result.node()) {
+			args.push_back(*node);
+		}
+
+		if (peek() == ","_tok) {
+			advance(); // consume ','
+		} else if (is_brace ? peek() != "}"_tok : peek() != ")"_tok) {
+			return ParseResult::error(
+				is_brace
+					? "Expected ',' or '}' in brace initializer"
+					: "Expected ',' or ')' in constructor arguments",
+				current_token_);
+		}
+	}
+
+	if (!(is_brace ? consume("}"_tok) : consume(")"_tok))) {
+		return ParseResult::error(
+			is_brace
+				? "Expected '}' after brace initializer"
+				: "Expected ')' after constructor arguments",
+			current_token_);
+	}
 
 	if (has_dependent_args) {
-		advance(); // consume '{'
-		ChunkedVector<ASTNode> args;
-		while (!peek().is_eof() && peek() != "}"_tok) {
-			ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-			if (arg_result.is_error()) {
-				return arg_result;
-			}
-			if (auto node = arg_result.node()) {
-				args.push_back(*node);
-			}
-
-			if (peek() == ","_tok) {
-				advance(); // consume ','
-			} else if (peek() != "}"_tok) {
-				return ParseResult::error("Expected ',' or '}' in brace initializer", current_token_);
-			}
-		}
-
-		if (!consume("}"_tok)) {
-			return ParseResult::error("Expected '}' after brace initializer", current_token_);
-		}
-
 		InlineVector<TypeInfo::TemplateArgInfo, 4> dependent_template_args =
 			toTemplateArgInfoList(explicit_template_args);
 		StringBuilder dependent_type_builder;
@@ -2974,10 +3188,105 @@ ParseResult Parser::tryParseExplicitTemplateBraceInitialization(
 				identifier_token)));
 	}
 
-	return parse_template_brace_initialization(
+	AliasTemplateMaterializationResult materialized_type =
+		materializeTemplateTypeForConstruction(
+			identifier_token.value(),
+			explicit_template_args);
+	if (materialized_type.instantiated_name.empty() ||
+		materialized_type.resolved_type_info == nullptr) {
+		return ParseResult::error(
+			"Template instantiation failed or type not found",
+			identifier_token);
+	}
+
+	AliasTemplateMaterializationResult canonical_owner =
+		resolveCanonicalInstantiatedOwnerForLookup(materialized_type.instantiated_name);
+	std::string_view instantiated_type_name = materialized_type.instantiated_name;
+	const TypeInfo* instantiated_type_info = materialized_type.resolved_type_info;
+	if (!canonical_owner.instantiated_name.empty()) {
+		instantiated_type_name = canonical_owner.instantiated_name;
+	}
+	if (canonical_owner.resolved_type_info != nullptr) {
+		instantiated_type_info = canonical_owner.resolved_type_info;
+	}
+	if (instantiated_type_info == nullptr) {
+		instantiated_type_info = findTypeByName(
+			StringTable::getOrInternStringHandle(instantiated_type_name));
+	}
+	if (instantiated_type_info == nullptr) {
+		return ParseResult::error(
+			"Template instantiation failed or type not found",
+			identifier_token);
+	}
+
+	Token inst_type_token(
+		Token::Type::Identifier,
+		instantiated_type_name,
+		identifier_token.line(),
+		identifier_token.column(),
+		identifier_token.file_index());
+	ASTNode type_spec_node;
+	if (instantiated_type_info->isStruct()) {
+		TypeIndex inst_type_index = instantiated_type_info->type_index_;
+		SizeInBits inst_type_size{};
+		if (instantiated_type_info->getStructInfo()) {
+			inst_type_size = instantiated_type_info->getStructInfo()->sizeInBits();
+		}
+		type_spec_node = emplace_node<TypeSpecifierNode>(
+			inst_type_index.withCategory(TypeCategory::Struct),
+			inst_type_size,
+			inst_type_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
+	} else {
+		type_spec_node = emplace_node<TypeSpecifierNode>(
+			TypeCategory::UserDefined,
+			TypeQualifier::None,
+			0,
+			inst_type_token,
+			CVQualifier::None);
+	}
+
+	return ParseResult::success(emplace_node<ExpressionNode>(
+		ConstructorCallNode(type_spec_node, std::move(args), inst_type_token)));
+}
+
+ParseResult Parser::tryParseExplicitTemplateTypeConstruction(
+	const Token& identifier_token,
+	const InlineVector<TemplateTypeArg, 4>& explicit_template_args) {
+	ExplicitTemplateConstructionDelimiter delimiter =
+		ExplicitTemplateConstructionDelimiter::Paren;
+	if (peek() == "{"_tok) {
+		delimiter = ExplicitTemplateConstructionDelimiter::Brace;
+	} else if (peek() != "("_tok) {
+		return ParseResult();
+	}
+
+	const bool is_current_instantiation =
+		tryResolveCurrentInstantiationTemplateOwner(
+			identifier_token.value(),
+			explicit_template_args)
+			.has_value();
+	if (!is_current_instantiation &&
+		!templateNameDenotesTypeProducingTemplate(identifier_token.handle())) {
+		return ParseResult();
+	}
+
+	return parseExplicitTemplateTypeConstruction(
+		identifier_token,
 		explicit_template_args,
-		identifier_token.value(),
-		identifier_token);
+		delimiter);
+}
+
+ParseResult Parser::tryParseExplicitTemplateBraceInitialization(
+	const Token& identifier_token,
+	const InlineVector<TemplateTypeArg, 4>& explicit_template_args) {
+	if (peek() != "{"_tok) {
+		return ParseResult();
+	}
+	return tryParseExplicitTemplateTypeConstruction(
+		identifier_token,
+		explicit_template_args);
 }
 
 ParseResult Parser::parse_primary_expression(ExpressionContext context) {
@@ -8145,40 +8454,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 
 						// Template arguments parsed but NOT followed by ::
+						// C++20 [expr.type.conv]: Template<Args>(...) / Template<Args>{...}
 						if (!identifierType) {
-							ParseResult brace_init_result =
-								tryParseExplicitTemplateBraceInitialization(
+							ParseResult type_ctor_result =
+								tryParseExplicitTemplateTypeConstruction(
 									identifier_token,
 									*explicit_template_args);
-							if (brace_init_result.is_error()) {
-								return brace_init_result;
+							if (type_ctor_result.is_error()) {
+								return type_ctor_result;
 							}
-							if (brace_init_result.has_value()) {
-								return brace_init_result;
-							}
-						}
-
-						// Handle functional-style cast for class templates: Template<Args>()
-						// This creates a temporary object of the instantiated class type
-						// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
-						if (!identifierType && peek() == "("_tok) {
-							bool is_current_instantiation =
-								tryResolveCurrentInstantiationTemplateOwner(
-									identifier_token.value(),
-									*explicit_template_args).has_value();
-							auto class_template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
-							if (is_current_instantiation ||
-								(class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>())) {
-								FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
-
-								AliasTemplateMaterializationResult materialized_owner =
-									materializePrimaryTemplateOwnerForConstructorLookup(
-										identifier_token.value(),
-										{},
-										*explicit_template_args);
-								return parseMaterializedTemplateFunctionalCast(
-									materialized_owner,
-									identifier_token);
+							if (type_ctor_result.has_value()) {
+								return type_ctor_result;
 							}
 						}
 
@@ -8813,15 +9099,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// If parsing failed, it might be a less-than operator, so continue normally
 
 				if (explicit_template_args.has_value()) {
-					ParseResult brace_init_result =
-						tryParseExplicitTemplateBraceInitialization(
+					ParseResult type_ctor_result =
+						tryParseExplicitTemplateTypeConstruction(
 							identifier_token,
 							*explicit_template_args);
-					if (brace_init_result.is_error()) {
-						return brace_init_result;
+					if (type_ctor_result.is_error()) {
+						return type_ctor_result;
 					}
-					if (brace_init_result.has_value()) {
-						return brace_init_result;
+					if (type_ctor_result.has_value()) {
+						return type_ctor_result;
 					}
 				}
 
@@ -9308,28 +9594,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
-			// Handle functional-style cast for class templates: ClassName<Args>()
-			// This creates a temporary object of the instantiated class type
-			// Pattern: hash<_Tp>() creates a temporary hash<_Tp> object
-			if (explicit_template_args.has_value() && peek() == "("_tok) {
-				// Check if this is a class template
-				auto class_template_opt = gTemplateRegistry.lookupTemplate(identifier_token.value());
-				bool is_current_instantiation =
-					tryResolveCurrentInstantiationTemplateOwner(
-						identifier_token.value(),
-						*explicit_template_args).has_value();
-				if (is_current_instantiation ||
-					(class_template_opt.has_value() && class_template_opt->is<TemplateClassDeclarationNode>())) {
-					FLASH_LOG_FORMAT(Parser, Debug, "Functional-style cast for class template '{}' with template args", identifier_token.value());
-
-					AliasTemplateMaterializationResult materialized_owner =
-						materializePrimaryTemplateOwnerForConstructorLookup(
-							identifier_token.value(),
-							{},
-							*explicit_template_args);
-					return parseMaterializedTemplateFunctionalCast(
-						materialized_owner,
-						identifier_token);
+			// Fallback: Template<Args>(...) type construction if earlier sites skipped it.
+			if (explicit_template_args.has_value()) {
+				ParseResult type_ctor_result =
+					tryParseExplicitTemplateTypeConstruction(
+						identifier_token,
+						*explicit_template_args);
+				if (type_ctor_result.is_error()) {
+					return type_ctor_result;
+				}
+				if (type_ctor_result.has_value()) {
+					return type_ctor_result;
 				}
 			}
 

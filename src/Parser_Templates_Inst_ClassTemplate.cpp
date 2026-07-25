@@ -1348,7 +1348,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
 		const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
-		if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
+		if (existing_type->second != nullptr &&
+			existing_type->second->needsClassTemplateLayoutCompletion()) {
+			FLASH_LOG_FORMAT(Templates, Debug,
+				"Type-map hit for '{}' is an incomplete class-template placeholder — completing layout",
+				StringTable::getStringView(instantiated_name));
+		} else if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 			FLASH_LOG_FORMAT(Templates, Debug,
 				"Type-map hit for '{}' is backed by a ShapeOnly instantiation — re-entering full instantiation",
 				StringTable::getStringView(instantiated_name));
@@ -1619,7 +1624,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 			const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
 			const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
-			if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
+			if (existing_type_with_defaults->second != nullptr &&
+				existing_type_with_defaults->second->needsClassTemplateLayoutCompletion()) {
+				FLASH_LOG(Templates, Debug,
+					"Found incomplete class-template placeholder with filled-in defaults; completing layout");
+			} else if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 				FLASH_LOG(Templates, Debug, "Found ShapeOnly instantiation with filled-in defaults; re-entering full instantiation");
 			} else {
 				FLASH_LOG(Templates, Debug, "Found existing instantiation with filled-in defaults");
@@ -4632,6 +4641,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 				instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 			} else {
+				materializeHiddenFriendsForClassTemplateInstantiation(
+					pattern_struct,
+					instantiated_struct.as<StructDeclarationNode>(),
+					struct_info,
+					instantiated_name,
+					struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+					std::span<const TemplateParameterNode>(
+						template_params.data(),
+						template_params.size()),
+					template_args_for_member_copy);
 				instantiated_struct.as<StructDeclarationNode>().mark_materialized();
 			}
 
@@ -5626,7 +5645,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		auto cached_reg = gTemplateRegistry.getInstantiation(cache_key);
 		const ASTNode* cached_node = cached_reg.has_value() ? &cached_reg.value() : nullptr;
 		const StructDeclarationNode* cached_struct = getCachedTemplateStructDecl(cached_node);
-		if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
+		if (existing_type->second != nullptr &&
+			existing_type->second->needsClassTemplateLayoutCompletion()) {
+			FLASH_LOG(Templates, Debug,
+				"Type already exists as incomplete class-template placeholder, completing layout");
+		} else if (cached_struct && cached_struct->needs_shape_only_upgrade(current_wants_full)) {
 			FLASH_LOG(Templates, Debug, "Type already exists from ShapeOnly instantiation, continuing to upgrade");
 		} else {
 			FLASH_LOG(Templates, Debug, "Type already exists, returning nullopt");
@@ -12469,6 +12492,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	if (template_instantiation_mode_ == TemplateInstantiationMode::ShapeOnly) {
 		instantiated_struct.as<StructDeclarationNode>().mark_shape_only();
 	} else {
+		materializeHiddenFriendsForClassTemplateInstantiation(
+			class_decl,
+			instantiated_struct.as<StructDeclarationNode>(),
+			struct_info_ptr,
+			instantiated_name,
+			struct_type_info.registeredTypeIndex().withCategory(TypeCategory::Struct),
+			effective_template_params,
+			effective_template_args);
 		instantiated_struct.as<StructDeclarationNode>().mark_materialized();
 	}
 

@@ -504,7 +504,12 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 		const TypeInfo* type_info = tryGetTypeInfo(runtime_type_index);
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		if (!struct_info || !struct_info->hasCompleteObjectLayout()) {
-			throw InternalError("Runtime aggregate value requires complete canonical layout metadata");
+			std::string_view type_name = type_info ? StringTable::getStringView(type_info->name()) : "<unknown>";
+			throw InternalError(std::string(StringBuilder()
+				.append("Runtime aggregate value requires complete canonical layout metadata for '")
+				.append(type_name)
+				.append("'")
+				.commit()));
 		}
 		return struct_info->sizeInBits().value;
 	}

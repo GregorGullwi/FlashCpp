@@ -1680,6 +1680,16 @@ private:
 	ParseResult parse_friend_declaration();	// NEW: Parse friend declarations
 	ParseResult parse_template_friend_declaration(StructDeclarationNode& struct_node);  // NEW: Parse template friend declarations
 	void registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info);	// Helper: register friend in StructTypeInfo (all kinds)
+	// C++20 [temp.friend]/1 / [temp.inst]: materialize hidden friend function
+	// definitions for a class-template specialization from the pattern friends.
+	void materializeHiddenFriendsForClassTemplateInstantiation(
+		const StructDeclarationNode& pattern_struct,
+		StructDeclarationNode& instantiated_struct,
+		StructTypeInfo* struct_info,
+		StringHandle instantiated_name,
+		TypeIndex instantiated_type_index,
+		std::span<const TemplateParameterNode> template_params,
+		std::span<const TemplateTypeArg> template_args);
 	enum class ExternTemplateDeclarationKind {
 		Normal,
 		Extern
@@ -3580,6 +3590,35 @@ private:	 // Resume private methods
 		std::string_view template_name,
 		const Token& identifier_token);
 	ParseResult tryParseExplicitTemplateBraceInitialization(
+		const Token& identifier_token,
+		const InlineVector<TemplateTypeArg, 4>& explicit_template_args);
+
+	// C++20 [expr.type.conv] / [temp.names] / [temp.local]:
+	// A template-id that names a class or alias template (including the injected-class-name
+	// of a class template used as a template-name) followed by ( or { is type construction.
+	// A function-template template-id followed by ( is a call. One shared expression gate.
+	enum class ExplicitTemplateConstructionDelimiter : uint8_t {
+		Paren,
+		Brace
+	};
+	// True when `name` is the injected-class-name of a class template whose definition
+	// is currently open ([class.pre], [temp.local]). Uses StringHandle / struct-node
+	// identity — not spelling compares.
+	bool isInjectedClassTemplateBeingDefined(StringHandle name) const;
+	// True when unqualified lookup of `name` finds a class or alias template, or the
+	// injected-class-name of the class template being defined.
+	bool templateNameDenotesTypeProducingTemplate(StringHandle name) const;
+	AliasTemplateMaterializationResult ensureIncompleteClassTemplateSpecializationPlaceholder(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> template_args);
+	AliasTemplateMaterializationResult materializeTemplateTypeForConstruction(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> template_args);
+	ParseResult parseExplicitTemplateTypeConstruction(
+		const Token& identifier_token,
+		const InlineVector<TemplateTypeArg, 4>& explicit_template_args,
+		ExplicitTemplateConstructionDelimiter delimiter);
+	ParseResult tryParseExplicitTemplateTypeConstruction(
 		const Token& identifier_token,
 		const InlineVector<TemplateTypeArg, 4>& explicit_template_args);
 

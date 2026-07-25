@@ -2266,14 +2266,22 @@ ParseResult Parser::parse_type_specifier() {
 						// Reuse existing placeholder if already created
 						auto existing = getTypesByNameMap().find(type_handle);
 						if (existing != getTypesByNameMap().end()) {
+							const TypeInfo* existing_info = existing->second;
+							TypeCategory reuse_cat = existing_info->getStructInfo() != nullptr
+								? TypeCategory::Struct
+								: TypeCategory::UserDefined;
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								existing->second->registeredTypeIndex().withCategory(TypeCategory::UserDefined), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
+								existing_info->registeredTypeIndex().withCategory(reuse_cat), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
 						}
 
-						// Create a new dependent placeholder with template instantiation metadata
+						// Create a new dependent placeholder with template instantiation metadata.
+						// Stamp incompleteness so later [temp.inst] can upgrade this entry in place
+						// instead of treating the `$hash` name as a completed instantiation.
 						TypeInfo& type_info = add_empty_type_entry();
-							type_info.fallback_size_bits_ = 0;
+						type_info.fallback_size_bits_ = 0;
 						type_info.name_ = type_handle;
+						type_info.is_incomplete_instantiation_ = true;
+						type_info.placeholder_kind_ = DependentPlaceholderKind::DependentArgs;
 						getTypesByNameMap()[type_handle] = &type_info;
 
 						auto template_args_info = convertToTemplateArgInfo(*template_args);

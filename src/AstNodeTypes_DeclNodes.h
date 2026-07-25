@@ -1232,6 +1232,35 @@ struct TypeInfo {
 
 	// Helper methods for template instantiations
 	bool isTemplateInstantiation() const { return base_template_.valid(); }
+	// True when this TypeInfo claims a class-template specialization identity
+	// (or an incomplete placeholder registered under that identity) but does not
+	// yet own published StructTypeInfo. Such entries must not suppress real
+	// [temp.inst] completion — they are upgraded in place.
+	//
+	// Mid-flight Struct instantiations (category == Struct, StructInfo not yet
+	// attached) must return false here so the type-map cache hit can suppress
+	// recursive re-entry while the first instantiation finishes.
+	bool needsClassTemplateLayoutCompletion() const {
+		if (getStructInfo() != nullptr || category() == TypeCategory::Struct) {
+			return false;
+		}
+		if (is_incomplete_instantiation_ ||
+			placeholder_kind_ != DependentPlaceholderKind::None) {
+			return true;
+		}
+		if (isTemplateInstantiation() && category() == TypeCategory::UserDefined) {
+			return true;
+		}
+		// Some stubs are registered under the final `$hash` instantiation name
+		// without stamping template-instantiation metadata yet.
+		if (category() == TypeCategory::UserDefined && name_.isValid()) {
+			std::string_view type_name = StringTable::getStringView(name_);
+			if (type_name.find('$') != std::string_view::npos) {
+				return true;
+			}
+		}
+		return false;
+	}
 	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
 	const InlineVector<TemplateArgInfo, 4>& templateArgs() const;

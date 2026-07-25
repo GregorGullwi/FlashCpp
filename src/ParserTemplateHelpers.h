@@ -3510,10 +3510,51 @@ void Parser::substituteAndCopyMemberFunctionParameters(
 			}
 		}
 
+		// C++20 [temp.local]: injected-class-name parameters must denote the
+		// current specialization. Prefer TypeIndex identity when available; when
+		// the pattern never registered a TypeInfo (common for member class
+		// templates), fall back to token naming the defining class.
+		auto type_token_names_owner_injected_class =
+			[&](const TypeSpecifierNode& type_spec) -> bool {
+			if (owner_decl == nullptr) {
+				return false;
+			}
+			StringHandle token = type_spec.token().handle();
+			if (!token.isValid()) {
+				return false;
+			}
+			auto leaf_name = [](std::string_view name) -> std::string_view {
+				if (size_t sep = name.rfind("::"); sep != std::string_view::npos) {
+					return name.substr(sep + 2);
+				}
+				return name;
+			};
+			std::string_view token_view = StringTable::getStringView(token);
+			std::string_view token_leaf = leaf_name(token_view);
+			auto matches_owner_name = [&](StringHandle owner_name) {
+				if (!owner_name.isValid()) {
+					return false;
+				}
+				std::string_view owner_view = StringTable::getStringView(owner_name);
+				return token_view == owner_view ||
+					token_leaf == leaf_name(owner_view);
+			};
+			return matches_owner_name(owner_decl->name()) ||
+				matches_owner_name(owner_decl->semantic_name());
+		};
+
+		TypeIndex rewritten_owner_type{};
 		if (self_type_from_index.is_valid() &&
 			self_type_to_index.is_valid() &&
 			substituted_param_type.type_index() == self_type_from_index) {
-			substituted_param_type.set_type_index(self_type_to_index);
+			rewritten_owner_type = self_type_to_index;
+		} else if (instantiated_owner_type_index.is_valid() &&
+				   !substituted_param_type.type_index().is_valid() &&
+				   type_token_names_owner_injected_class(substituted_param_type)) {
+			rewritten_owner_type = instantiated_owner_type_index;
+		}
+		if (rewritten_owner_type.is_valid()) {
+			substituted_param_type.set_type_index(rewritten_owner_type);
 			normalizeSubstitutedTypeSpec(substituted_param_type);
 		}
 
