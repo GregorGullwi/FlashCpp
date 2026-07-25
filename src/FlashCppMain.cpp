@@ -250,8 +250,9 @@ int main_impl(int argc, char* argv[]) {
 
 	bool show_debug = argsparser.hasFlag("d"_opt) || argsparser.hasFlag("debug"_opt);
 	bool show_perf_stats = argsparser.hasFlag("perf-stats"_opt) || argsparser.hasFlag("stats"_opt);
+	bool show_alloc_stats = argsparser.hasFlag("alloc-stats"_opt) || argsparser.hasFlag("mem-stats"_opt);
 	bool show_timing = argsparser.hasFlag("time"_opt) || argsparser.hasFlag("timing"_opt) || show_perf_stats;
-	FlashCpp::AllocationTracker::setEnabled(show_perf_stats);
+	FlashCpp::AllocationTracker::setEnabled(show_alloc_stats);
 
 	// Set global debug flag (also enabled by verbose mode)
 	g_enable_debug_output = show_debug || context.isVerboseMode();
@@ -467,6 +468,8 @@ int main_impl(int argc, char* argv[]) {
 			parser->printRuntimeStats();
 			printTypeTableStats();
 			StackStringStats::print_stats();
+		}
+		if (show_alloc_stats) {
 			FlashCpp::AllocationTracker::printStats();
 		}
 		printTimingSummary(preprocessing_time, lexer_setup_time, parsing_time, semantic_analysis_time,
@@ -786,7 +789,6 @@ int main_impl(int argc, char* argv[]) {
 		FlashCpp::printParsingPhaseBreakdown(parser.get(), parsing_time);
 		parser->printRuntimeStats();
 		StackStringStats::print_stats();
-		FlashCpp::AllocationTracker::printStats();
 		printTypeTableStats();
 
 #ifdef USE_GLOBAL_OPERAND_STORAGE
@@ -797,6 +799,9 @@ int main_impl(int argc, char* argv[]) {
 #endif
 
 		ir.printStats();
+	}
+	if (show_alloc_stats) {
+		FlashCpp::AllocationTracker::printStats();
 	}
 
 	return 0;

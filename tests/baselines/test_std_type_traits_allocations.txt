@@ -1,4 +1,0 @@
-# Baseline for tests/std/test_std_type_traits.cpp with --perf-stats
-# Build: Sharded with FLASHCPP_TRACK_ALLOCATIONS=1 (stacks optional/off)
-allocations=375361
-bytes_allocated=85819865
