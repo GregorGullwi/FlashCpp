@@ -181,7 +181,8 @@ public:
 		if (!existing_ptr) {
 			if (ns_scope) {
 				// Namespace scopes store members only in namespace_symbols_; do not
-				// mirror into scope.symbols (that map holds using-declarations only).
+				// mirror into scope.symbols (namespace-scope using-declarations also
+				// merge into namespace_symbols_; see materialize_using_declaration_symbols).
 				namespace_symbols_[ns_handle][ns_key] = std::vector<ASTNode>{node};
 				return true;
 			}
@@ -460,7 +461,8 @@ public:
 			const Scope& scope = *stackIt;
 
 			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
-			// Members live only in namespace_symbols_; scope.symbols holds using-declarations.
+			// Members and namespace-scope using-declarations live in namespace_symbols_;
+			// scope.symbols holds block/function-scope using-declarations only.
 			// Advance scope_namespace exactly once per Namespace scope regardless of hit/miss.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
@@ -534,7 +536,8 @@ public:
 			const Scope& scope = *stackIt;
 
 			// For namespace scopes, probe namespace_symbols_ before the local symbols map.
-			// Members live only in namespace_symbols_; scope.symbols holds using-declarations.
+			// Members and namespace-scope using-declarations live in namespace_symbols_;
+			// scope.symbols holds block/function-scope using-declarations only.
 			// Advance scope_namespace exactly once per Namespace scope regardless of hit/miss.
 			if (scope.scope_type == ScopeType::Namespace) {
 				if (!scope_namespace.isGlobal()) {
@@ -998,7 +1001,9 @@ public:
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
 		// Materialize the referenced declaration(s) into the current scope so they
-		// participate in ordinary lookup and overload-set formation.
+		// participate in ordinary lookup and overload-set formation. At namespace
+		// scope this merges into namespace_symbols_ ([namespace.udecl]); elsewhere
+		// into scope.symbols.
 		materialize_using_declaration_symbols(current_scope, key, namespace_handle, orig_name);
 	}
 
@@ -1014,7 +1019,9 @@ public:
 		update_or_insert(current_scope.using_declarations_handles, key, std::make_pair(namespace_handle, orig_name));
 
 		// Materialize the referenced declaration(s) into the current scope so they
-		// participate in ordinary lookup and overload-set formation.
+		// participate in ordinary lookup and overload-set formation. At namespace
+		// scope this merges into namespace_symbols_ ([namespace.udecl]); elsewhere
+		// into scope.symbols.
 		materialize_using_declaration_symbols(current_scope, key, namespace_handle, orig_name);
 	}
 
@@ -1390,6 +1397,28 @@ private:
 	void materialize_using_declaration_symbols(Scope& current_scope, std::string_view key, NamespaceHandle namespace_handle, std::string_view original_name) {
 		auto resolved_nodes = lookup_qualified_all(namespace_handle, original_name);
 		if (resolved_nodes.empty()) {
+			return;
+		}
+
+		// C++20 [namespace.udecl]: a using-declaration at namespace scope makes the
+		// name a member of that namespace. Merge into namespace_symbols_ so ordinary
+		// lookup (which probes that map first for Namespace scopes) sees the full
+		// overload set. Block/function scopes stay local to scope.symbols.
+		if (current_scope.scope_type == ScopeType::Namespace) {
+			NamespaceHandle dest_ns = get_current_namespace_handle();
+			StringHandle ns_key = StringTable::getOrInternStringHandle(key);
+			auto& ns_symbols = namespace_symbols_[dest_ns];
+			auto ns_it = ns_symbols.find(ns_key);
+			if (ns_it == ns_symbols.end()) {
+				ns_symbols[ns_key] = std::move(resolved_nodes);
+				return;
+			}
+
+			if (!is_pure_function_set(ns_it->second) || !is_pure_function_set(resolved_nodes)) {
+				return;
+			}
+
+			append_unique_function_overloads(ns_it->second, resolved_nodes);
 			return;
 		}
 
