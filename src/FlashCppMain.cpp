@@ -5,10 +5,18 @@ struct PhaseTimer {
 	std::chrono::high_resolution_clock::time_point start;
 	const char* phase_name;
 	bool print_enabled;
-	double* accumulator = nullptr;  // Optional accumulator for phase timing
+	double* accumulator = nullptr;
+	FlashCpp::AllocationPhase allocation_phase = FlashCpp::AllocationPhase::Unknown;
 
-	PhaseTimer(const char* name, bool print_enable, double* accum = nullptr)
-		: start(std::chrono::high_resolution_clock::now()), phase_name(name), print_enabled(print_enable), accumulator(accum) {
+	PhaseTimer(const char* name, bool print_enable, double* accum, FlashCpp::AllocationPhase alloc_phase)
+		: start(std::chrono::high_resolution_clock::now()),
+		  phase_name(name),
+		  print_enabled(print_enable),
+		  accumulator(accum),
+		  allocation_phase(alloc_phase) {
+		if (FlashCpp::AllocationTracker::isEnabled()) {
+			FlashCpp::AllocationTracker::setPhase(allocation_phase);
+		}
 	}
 
 	~PhaseTimer() {
@@ -362,7 +370,7 @@ int main_impl(int argc, char* argv[]) {
 	FileTree file_tree;
 	FileReader file_reader(context, file_tree);
 	{
-		PhaseTimer timer("Preprocessing", false, &preprocessing_time);
+		PhaseTimer timer("Preprocessing", false, &preprocessing_time, FlashCpp::AllocationPhase::Preprocessing);
 		if (!file_reader.readFile(context.getInputFile().value())) {
 			FLASH_LOG(General, Error, "Failed to read input file: ", context.getInputFile().value());
 			std::cerr << "Error: Failed to read input file: " << context.getInputFile().value() << std::endl;
@@ -429,7 +437,7 @@ int main_impl(int argc, char* argv[]) {
 	std::unique_ptr<Parser> parser;
 	setTypeTableStatsEnabled(show_perf_stats);
 	{
-		PhaseTimer timer("Lexer Setup", false, &lexer_setup_time);
+		PhaseTimer timer("Lexer Setup", false, &lexer_setup_time, FlashCpp::AllocationPhase::LexerSetup);
 		lexer_ptr = std::make_unique<Lexer>(preprocessed_source, file_reader.get_line_map(), file_reader.get_file_paths());
 		lexer_ptr->setMsvcSehKeywords(context.isMsvcMode());
 		sema = std::make_unique<SemanticAnalysis>(context, gSymbolTable);
@@ -447,7 +455,7 @@ int main_impl(int argc, char* argv[]) {
 	std::string parse_compile_error_message;
 	std::string parse_compile_error_notes;
 	{
-		PhaseTimer timer("Parsing", false, &parsing_time);
+		PhaseTimer timer("Parsing", false, &parsing_time, FlashCpp::AllocationPhase::Parsing);
 		// Note: Lexing happens lazily during parsing in this implementation
 		// Template instantiation also happens during parsing
 
@@ -499,7 +507,8 @@ int main_impl(int argc, char* argv[]) {
 	// The object is kept alive past AstToIr construction so that AstToIr can
 	// consume the semantic annotations (SemanticSlot side table, cast_info_table_).
 	{
-		PhaseTimer sema_timer("Semantic Analysis", false, &semantic_analysis_time);
+		PhaseTimer sema_timer("Semantic Analysis", false, &semantic_analysis_time,
+							  FlashCpp::AllocationPhase::SemanticAnalysis);
 		try {
 			sema->run();
 		} catch (const CompileError& e) {
@@ -560,7 +569,7 @@ int main_impl(int argc, char* argv[]) {
 	size_t ir_conversion_error_count = 0;
 	bool has_compile_errors = false;
 	{
-		PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
+		PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time, FlashCpp::AllocationPhase::IrConversion);
 		// Re-evaluate ast.size() each iteration so appended template/member
 		// instantiations are visited in the same pass. Constexpr materialization can
 		// also insert a dependency at the front; after each visit, advance to the
@@ -664,7 +673,7 @@ int main_impl(int argc, char* argv[]) {
 	// Deferred generation (lambdas and local struct member functions)
 	size_t deferred_gen_error_count = 0;
 	{
-		PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time);
+		PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time, FlashCpp::AllocationPhase::DeferredGen);
 		try {
 			// Generate all collected lambdas after visiting all nodes
 			converter.generateCollectedLambdas();
@@ -729,7 +738,7 @@ int main_impl(int argc, char* argv[]) {
 #endif
 
 	try {
-		PhaseTimer timer("Code Generation", false, &codegen_time);
+		PhaseTimer timer("Code Generation", false, &codegen_time, FlashCpp::AllocationPhase::CodeGeneration);
 
 		if (useElfFormat) {
 #if defined(__linux__) || defined(__unix__) || defined(__APPLE__)
