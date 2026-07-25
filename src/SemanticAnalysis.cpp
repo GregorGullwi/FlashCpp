@@ -4164,12 +4164,12 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 					source_namespace == named_type_info->namespaceHandle();
 				bool names_match = false;
 				if (!base_name.empty()) {
-					// Prefer the fully-qualified match, then fall back to the
-					// unqualified spelling for metadata paths that disagree on
-					// whether the template name includes its namespace prefix.
+					// Prefer the fully-qualified match, then fall back to injected-
+					// class-name identity (leaf / `$hash`-stripped) for metadata
+					// paths that disagree on namespace prefix or specialization suffix.
 					names_match = named_name == base_name;
 					if (!names_match) {
-						names_match = unqualifiedTypeName(named_name) == unqualifiedTypeName(base_name);
+						names_match = namesSameInjectedClassIdentity(named_name, base_name);
 					}
 				}
 				if (namespace_matches && names_match) {
