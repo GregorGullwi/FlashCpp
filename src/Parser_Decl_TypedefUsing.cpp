@@ -1908,12 +1908,28 @@ ParseResult Parser::parse_typedef_declaration() {
 			struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 		}
 
+		// Typedef inline struct/union parsing does not walk member functions, so
+		// synthesize the C++20 implicit special members that normal class parsing
+		// would have emitted (needed for MSVC __m128i / wchar.h wmemchr patterns).
+		Token struct_name_token(
+			Token::Type::Identifier,
+			StringTable::getStringView(struct_name_for_typedef),
+			0,
+			0,
+			0);
+		synthesize_implicit_special_members_for_aggregate(
+			*struct_info,
+			struct_ref,
+			struct_type_index,
+			struct_name_for_typedef,
+			struct_name_token);
+
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() — payload already attached via createStructInfo
 		type_spec = TypeSpecifierNode(
 			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_type_info.getStructInfo()->sizeInBits().value),
-			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
+			struct_name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);

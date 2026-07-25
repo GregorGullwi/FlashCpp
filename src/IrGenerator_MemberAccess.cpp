@@ -3583,6 +3583,17 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 		return nullptr;
 	};
 
+	// True when the expression names a const *object* (C++ [dcl.type.cv]).
+	// For pointers, only the outermost *'s cv-qualifiers apply — `const T*` is a
+	// mutable pointer to const T, while `T* const` is a const pointer.
+	auto isObjectConstQualified = [](const TypeSpecifierNode& ts) -> bool {
+		if (ts.pointer_depth() > 0) {
+			const PointerLevel& outer = ts.pointer_levels().back();
+			return (static_cast<uint8_t>(outer.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0;
+		}
+		return ts.is_const();
+	};
+
 	// IdentifierNode — look up in symbol_table, check if the declaration is const
 	if (std::holds_alternative<IdentifierNode>(expr)) {
 		const IdentifierNode& id = std::get<IdentifierNode>(expr);
@@ -3590,7 +3601,7 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 		if (!sym.has_value())
 			return false;
 		const TypeSpecifierNode* ts = getTypeSpec(*sym);
-		return ts && ts->is_const();
+		return ts && isObjectConstQualified(*ts);
 	}
 
 	// *ptr — dereference of const T* yields const T
@@ -3614,7 +3625,7 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 	}
 
 	if (auto expr_type = parser_.get_expression_type(expr_node); expr_type.has_value()) {
-		return expr_type->is_const();
+		return isObjectConstQualified(*expr_type);
 	}
 
 	return false;

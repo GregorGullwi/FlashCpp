@@ -2104,6 +2104,40 @@ inline BinaryOperatorCandidateComparison compareBinaryOperatorCandidateRanks(
 	return BinaryOperatorCandidateComparison::Incomparable;
 }
 
+// Same rank comparison, then C++20 [over.ics.rank]/3.2.3 rvalue→T&& vs const T&
+// preference on the right-hand operand (shared with free-function overload resolution).
+inline BinaryOperatorCandidateComparison compareBinaryOperatorCandidatesWithRefTiebreak(
+	ConversionRank lhs_lhs_rank,
+	ConversionRank lhs_rhs_rank,
+	const TypeSpecifierNode* lhs_rhs_param,
+	ConversionRank rhs_lhs_rank,
+	ConversionRank rhs_rhs_rank,
+	const TypeSpecifierNode* rhs_rhs_param,
+	const TypeSpecifierNode& right_arg_spec) {
+	BinaryOperatorCandidateComparison rank_cmp = compareBinaryOperatorCandidateRanks(
+		lhs_lhs_rank,
+		lhs_rhs_rank,
+		rhs_lhs_rank,
+		rhs_rhs_rank);
+	if (rank_cmp != BinaryOperatorCandidateComparison::Equivalent) {
+		return rank_cmp;
+	}
+	if (lhs_rhs_param == nullptr || rhs_rhs_param == nullptr) {
+		return BinaryOperatorCandidateComparison::Equivalent;
+	}
+
+	ArgumentConversionInfo lhs_info{lhs_rhs_rank, lhs_rhs_param, true};
+	ArgumentConversionInfo rhs_info{rhs_rhs_rank, rhs_rhs_param, true};
+	const int tie = compareArgumentConversionInfo(right_arg_spec, lhs_info, rhs_info);
+	if (tie < 0) {
+		return BinaryOperatorCandidateComparison::Better;
+	}
+	if (tie > 0) {
+		return BinaryOperatorCandidateComparison::Worse;
+	}
+	return BinaryOperatorCandidateComparison::Equivalent;
+}
+
 // Find operator overload in a struct type
 // Returns the member function that overloads the given operator, or nullptr if not found
 inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_index, OverloadableOperator operator_kind) {
@@ -2269,6 +2303,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 		ConversionRank lhs_rank;
 		ConversionRank rhs_rank;
 		const StructMemberFunction* member_func = nullptr;
+		const TypeSpecifierNode* rhs_param_type = nullptr;
 	};
 	std::vector<OperatorCandidate> candidates;
 
@@ -2308,14 +2343,15 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 			if (lhs_rank == ConversionRank::NoMatch)
 				continue;
 
+			const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
 			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
 				right_type_spec,
-				param_type_node.as<TypeSpecifierNode>(),
+				rhs_param_spec,
 				struct_idx);
 			if (rhs_rank == ConversionRank::NoMatch)
 				continue;
 
-			candidates.push_back({lhs_rank, rhs_rank, &member_func});
+			candidates.push_back({lhs_rank, rhs_rank, &member_func, &rhs_param_spec});
 		}
 
 		for (const auto& base_spec : si->base_classes) {
@@ -2340,11 +2376,14 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 		for (size_t j = 0; j < candidates.size(); ++j) {
 			if (i == j)
 				continue;
-			if (compareBinaryOperatorCandidateRanks(
+			if (compareBinaryOperatorCandidatesWithRefTiebreak(
 					candidates[j].lhs_rank,
 					candidates[j].rhs_rank,
+					candidates[j].rhs_param_type,
 					candidate.lhs_rank,
-					candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
+					candidate.rhs_rank,
+					candidate.rhs_param_type,
+					right_type_spec) == BinaryOperatorCandidateComparison::Better) {
 				is_dominated = true;
 				break;
 			}
@@ -2401,6 +2440,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		const StructMemberFunction* member_func = nullptr;
 		const FunctionDeclarationNode* free_func = nullptr;
 		bool is_free_function = false;
+		const TypeSpecifierNode* rhs_param_type = nullptr;
 	};
 	std::vector<OperatorCandidate> candidates;
 
@@ -2445,12 +2485,13 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 			if (lhs_rank == ConversionRank::NoMatch)
 				continue;
 
+			const TypeSpecifierNode& rhs_param_spec = param_type_node.as<TypeSpecifierNode>();
 			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
 				right_type_spec,
-				param_type_node.as<TypeSpecifierNode>(),
+				rhs_param_spec,
 				struct_idx);
 			if (rhs_rank != ConversionRank::NoMatch) {
-				candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false});
+				candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false, &rhs_param_spec});
 			}
 		}
 
@@ -2501,7 +2542,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		if (rhs_rank == ConversionRank::NoMatch)
 			continue;
 
-		candidates.push_back({lhs_rank, rhs_rank, nullptr, &func_decl, true});
+		candidates.push_back({lhs_rank, rhs_rank, nullptr, &func_decl, true, &p1_spec});
 	}
 
 	// --- 3. Rank all candidates per [over.match.best]/2 ---
@@ -2519,11 +2560,14 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		for (size_t j = 0; j < candidates.size(); ++j) {
 			if (i == j)
 				continue;
-			if (compareBinaryOperatorCandidateRanks(
+			if (compareBinaryOperatorCandidatesWithRefTiebreak(
 					candidates[j].lhs_rank,
 					candidates[j].rhs_rank,
+					candidates[j].rhs_param_type,
 					candidate.lhs_rank,
-					candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
+					candidate.rhs_rank,
+					candidate.rhs_param_type,
+					right_type_spec) == BinaryOperatorCandidateComparison::Better) {
 				is_dominated = true;
 				break;
 			}
