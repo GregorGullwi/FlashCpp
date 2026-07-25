@@ -19,6 +19,9 @@ void printBucketRow(const char* label, double bucket_ms, double parsing_time_ms,
 } // namespace
 
 void printParsingPhaseBreakdown(const Parser* parser, double parsing_time_ms) {
+#if !WITH_PARSER_RUNTIME_STATS
+	(void)parser;
+#endif
 	FLASH_LOG(General, Info, "\n=== Parsing Phase Breakdown (", std::fixed, std::setprecision(3),
 			  parsing_time_ms, " ms Parsing total) ===");
 
