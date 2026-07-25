@@ -51,6 +51,53 @@ void AstToIr::queueDeferredMemberFunctionFromNode(
 	deferred_member_functions_.push_back(std::move(deferred_info));
 }
 
+void AstToIr::requestInlineFunctionEmission(const FunctionDeclarationNode& node) {
+	if (!node.is_inline() || !node.is_materialized() || node.is_member_function()) {
+		return;
+	}
+	const void* node_key = static_cast<const void*>(&node);
+	if (!needed_inline_function_nodes_.insert(node_key).second) {
+		return;
+	}
+	auto deferred_it = deferred_inline_function_nodes_.find(node_key);
+	if (deferred_it != deferred_inline_function_nodes_.end()) {
+		inline_emission_worklist_.push_back(deferred_it->second);
+	}
+}
+
+size_t AstToIr::generateDeferredInlineFunctions() {
+	size_t error_count = 0;
+	while (inline_emission_worklist_processed_ < inline_emission_worklist_.size()) {
+		ASTNode function_node = inline_emission_worklist_[inline_emission_worklist_processed_++];
+		if (!function_node.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const FunctionDeclarationNode& func = function_node.as<FunctionDeclarationNode>();
+		StringHandle saved_function = current_function_name_;
+		auto saved_namespace = current_namespace_stack_;
+		current_function_name_ = StringHandle();
+		try {
+			parser_.enqueuePendingSemanticRootIfNeeded(function_node);
+			normalizePendingSemanticRoots();
+			visitFunctionDeclarationNode(func);
+		} catch (const CompileError&) {
+			current_function_name_ = saved_function;
+			current_namespace_stack_ = saved_namespace;
+			throw;
+		} catch (const std::exception& e) {
+			FLASH_LOG(Codegen, Error,
+					  "Deferred inline function '",
+					  func.decl_node().identifier_token().value(),
+					  "' generation failed: ",
+					  e.what());
+			++error_count;
+		}
+		current_function_name_ = saved_function;
+		current_namespace_stack_ = saved_namespace;
+	}
+	return error_count;
+}
+
 bool AstToIr::shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor) const {
 	if (!ctor.is_implicit()) {
 		return false;

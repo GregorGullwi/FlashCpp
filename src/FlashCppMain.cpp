@@ -682,10 +682,13 @@ int main_impl(int argc, char* argv[]) {
 			++deferred_gen_error_count;
 		}
 
-		// Generate the remaining deferred member functions that sema/codegen queued during
-		// normalization. Per-function try-catch is inside generateDeferredMemberFunctions so
-		// one failure does not block the rest.
-		deferred_gen_error_count += converter.generateDeferredMemberFunctions();
+		// Generate remaining deferred member functions and ODR-used free inlines.
+		// Emitting either queue can enqueue the other, so alternate until both drain.
+		while (converter.deferredMemberFunctionsPending() > 0 ||
+			   converter.deferredInlineFunctionsPending() > 0) {
+			deferred_gen_error_count += converter.generateDeferredMemberFunctions();
+			deferred_gen_error_count += converter.generateDeferredInlineFunctions();
+		}
 
 		// Note: Template instantiations happen during parsing, not here
 	}

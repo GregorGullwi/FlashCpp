@@ -392,6 +392,11 @@ struct StructTypeInfo {
 
 		for (const auto& member : members) {
 			if (member.size == 0 && !isZeroWidthBitfield(member.bitfield_width)) {
+				// [[no_unique_address]] empty members are intentionally zero-sized once
+				// layout is finalized; that is not an incomplete/dependent layout.
+				if (member.is_no_unique_address) {
+					continue;
+				}
 				return true;
 			}
 		}

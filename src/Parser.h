@@ -3592,6 +3592,7 @@ private:	 // Resume private methods
 	struct AttributeInfo {
 		Linkage linkage = Linkage::None;
 		CallingConvention calling_convention = CallingConvention::Default;
+		bool is_selectany = false;
 	};
 
 	// Attribute handling
@@ -3639,6 +3640,7 @@ private:	 // Resume private methods
 		bool add_functions_to_ast_nodes);
 
 	Linkage parse_declspec_attributes();			 // Parse Microsoft __declspec(...) and return linkage
+	void parse_declspec_attributes_into(AttributeInfo& info); // Parse __declspec into AttributeInfo (linkage + selectany)
 	AttributeInfo parse_attributes();			  // Parse all types of attributes and return linkage + calling convention
 	[[nodiscard]] CallingConvention parse_calling_convention(CallingConvention calling_conv); // Parse calling convention keywords
 

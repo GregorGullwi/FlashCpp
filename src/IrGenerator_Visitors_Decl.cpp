@@ -143,6 +143,23 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		return;
 	}
 
+	// C++20 [basic.def.odr]: an unused inline definition need not be emitted.
+	// Defer free inline/__inline bodies (e.g. UCRT wmemchr) until a call marks
+	// them needed, so unreferenced header helpers do not pull target intrinsics
+	// into the object file.
+	const void* node_key = static_cast<const void*>(&node);
+	const bool is_free_inline =
+		node.is_inline() &&
+		!node.is_member_function() &&
+		node.decl_node().identifier_token().value() != "main";
+	if (is_free_inline && needed_inline_function_nodes_.count(node_key) == 0) {
+		deferred_inline_function_nodes_.emplace(node_key, ASTNode(&node));
+		FLASH_LOG(Codegen, Debug,
+				  "Deferring unreferenced inline function: ",
+				  node.decl_node().identifier_token().value());
+		return;
+	}
+
 	// Phase 15: track whether sema normalized this function body.
 	sema_normalized_current_function_ = false;
 	if (node.is_materialized()) {

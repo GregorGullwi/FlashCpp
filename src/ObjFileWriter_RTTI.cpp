@@ -341,7 +341,62 @@ std::string_view ObjectFileWriter::add_string_literal(std::string_view str_conte
 
 // Add a global variable with raw initialization data
 void ObjectFileWriter::add_global_variable_data(std::string_view var_name, size_t size_in_bytes,
-												bool is_initialized, std::span<const char> init_data, bool is_rodata) {
+												bool is_initialized, std::span<const char> init_data, bool is_rodata,
+												bool is_selectany) {
+	if (is_selectany) {
+		// MSVC __declspec(selectany): each definition lives in its own COMDAT section
+		// (e.g. .data$_Avx2WmemEnabledWeakValue) with IMAGE_COMDAT_SELECT_ANY so the
+		// linker may pick any duplicate from this TU or from the CRT.
+		const char* section_prefix = is_rodata ? ".rdata$" : (is_initialized ? ".data$" : ".bss$");
+		std::string section_name = std::string(section_prefix) + std::string(var_name);
+		int32_t flags = IMAGE_SCN_LNK_COMDAT | IMAGE_SCN_ALIGN_4BYTES;
+		if (is_rodata) {
+			flags |= IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA;
+		} else if (is_initialized) {
+			flags |= IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_INITIALIZED_DATA;
+		} else {
+			flags |= IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE | IMAGE_SCN_CNT_UNINITIALIZED_DATA;
+		}
+
+		COFFI::section* section = coffi_.add_section(section_name);
+		section->set_flags(flags);
+
+		if ((is_initialized || is_rodata) && !init_data.empty()) {
+			section->append_data(init_data.data(), init_data.size());
+		} else {
+			std::vector<char> zero_data(size_in_bytes, 0);
+			section->append_data(zero_data.data(), zero_data.size());
+		}
+
+		auto section_sym = coffi_.add_symbol(section_name);
+		section_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		section_sym->set_storage_class(IMAGE_SYM_CLASS_STATIC);
+		section_sym->set_section_number(section->get_index() + 1);
+		section_sym->set_value(0);
+
+		COFFI::auxiliary_symbol_record_5 aux = {};
+		aux.length = static_cast<uint32_t>(size_in_bytes);
+		aux.number_of_relocations = 0;
+		aux.number_of_linenumbers = 0;
+		aux.check_sum = 0;
+		aux.number = 0;
+		aux.selection = IMAGE_COMDAT_SELECT_ANY;
+		COFFI::auxiliary_symbol_record aux_record;
+		std::memcpy(aux_record.value, &aux, sizeof(aux));
+		section_sym->get_auxiliary_symbols().push_back(aux_record);
+
+		auto symbol = coffi_.add_symbol(var_name);
+		symbol->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
+		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
+		symbol->set_section_number(section->get_index() + 1);
+		symbol->set_value(0);
+
+		if (g_enable_debug_output)
+			std::cerr << "Added selectany COMDAT global '" << var_name << "' in section '"
+					  << section_name << "' (size: " << size_in_bytes << " bytes)" << std::endl;
+		return;
+	}
+
 	SectionType section_type = is_rodata ? SectionType::RDATA : (is_initialized ? SectionType::DATA : SectionType::BSS);
 	auto section = coffi_.get_sections()[sectiontype_to_index[section_type]];
 	uint32_t offset = static_cast<uint32_t>(section->get_data_size());

@@ -171,6 +171,9 @@ struct DeclarationSpecifiers {
 	// Inline specifier
 	bool is_inline = false;
 
+	// MSVC __declspec(selectany): emit as COMDAT SELECT_ANY so duplicates merge
+	bool is_selectany = false;
+
 	// Linkage info (from __declspec or extern "C")
 	Linkage linkage = Linkage::None;
 

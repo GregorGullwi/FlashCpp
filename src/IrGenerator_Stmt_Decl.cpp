@@ -1231,6 +1231,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (node.is_constexpr() && op.is_initialized) {
 			op.is_rodata = true;
 		}
+		op.is_selectany = node.is_selectany();
 			// A declaration with an __asm__ rename and no initializer is purely an
 			// alias — it redirects references through the name mapping recorded above but
 			// must not emit a second GlobalVariableDeclOp that would clash with the real

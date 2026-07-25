@@ -551,7 +551,7 @@ public:
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, std::span<const TryBlockInfo> try_blocks = {}, std::span<const UnwindMapEntryInfo> unwind_map = {}, std::span<const SehTryBlockInfo> seh_try_blocks = {}, uint32_t stack_frame_size = 0);
 	void finalize_debug_info();
 	std::string_view add_string_literal(std::string_view str_content);
-	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata = false);
+	void add_global_variable_data(std::string_view var_name, size_t size_in_bytes, bool is_initialized, std::span<const char> init_data, bool is_rodata, bool is_selectany);
 	void add_vtable(std::string_view vtable_symbol, std::span<const std::string_view> function_symbols, std::string_view class_name, std::span<const std::string_view> base_class_names, std::span<const BaseClassDescriptorInfo> base_class_info, const RTTITypeInfo* rtti_info = nullptr, TypeIndex subobject_type_index = {}, int64_t offset_to_top = 0);
 	std::string get_or_create_builtin_throwinfo(TypeCategory type);
 	std::string get_or_create_type_descriptor(std::string_view class_name);

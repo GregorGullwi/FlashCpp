@@ -6578,6 +6578,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 	global_info.reloc_target = op.reloc_target;
 	global_info.is_rodata = op.is_rodata;
 	global_info.is_extern_only = op.is_extern_only;
+	global_info.is_selectany = op.is_selectany;
 
 		// Copy raw init data if present
 	if (op.is_initialized) {
@@ -16863,7 +16864,8 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			continue;
 		}
 		writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes,
-										global.is_initialized, global.init_data, global.is_rodata);
+										global.is_initialized, global.init_data, global.is_rodata,
+										global.is_selectany);
 	}
 
 		// Emit data section relocations for pointer/reference globals initialized with &symbol
