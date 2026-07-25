@@ -1763,6 +1763,15 @@ void Parser::register_builtin_functions() {
 	register_builtin("__builtin_fabsf", TypeCategory::Float, TypeCategory::Float);
 	register_builtin("__builtin_fabsl", TypeCategory::LongDouble, TypeCategory::LongDouble);
 
+	// Floating infinity / NaN builtins used by <limits> (MSVC numeric_limits specializations).
+	// GCC also accepts the double-underscore spellings.
+	register_no_param_builtin("__builtin_huge_valf", TypeCategory::Float);
+	register_no_param_builtin("__builtin_huge_valf__", TypeCategory::Float);
+	register_no_param_builtin("__builtin_huge_val", TypeCategory::Double);
+	register_no_param_builtin("__builtin_huge_val__", TypeCategory::Double);
+	register_no_param_builtin("__builtin_huge_vall", TypeCategory::LongDouble);
+	register_no_param_builtin("__builtin_huge_vall__", TypeCategory::LongDouble);
+
 	// Register optimization hint intrinsics
 	// __builtin_unreachable() - marks unreachable code paths
 	register_no_param_builtin("__builtin_unreachable", TypeCategory::Void);
@@ -1812,6 +1821,23 @@ void Parser::register_builtin_functions() {
 	const ASTNode float_type = make_builtin_type(TypeCategory::Float, CVQualifier::None, 0);
 	const ASTNode double_type = make_builtin_type(TypeCategory::Double, CVQualifier::None, 0);
 	const ASTNode long_double_type = make_builtin_type(TypeCategory::LongDouble, CVQualifier::None, 0);
+	const ASTNode const_char_ptr = make_builtin_type(TypeCategory::Char, CVQualifier::Const, 1);
+	// __builtin_nan* / __builtin_nans* take a const char* tag payload (used by <limits>).
+	auto register_nan_builtin = [&](std::string_view name, const ASTNode& return_type) {
+		register_extern_c_builtin(name, return_type, {const_char_ptr});
+	};
+	register_nan_builtin("__builtin_nanf", float_type);
+	register_nan_builtin("__builtin_nanf__", float_type);
+	register_nan_builtin("__builtin_nan", double_type);
+	register_nan_builtin("__builtin_nan__", double_type);
+	register_nan_builtin("__builtin_nanl", long_double_type);
+	register_nan_builtin("__builtin_nanl__", long_double_type);
+	register_nan_builtin("__builtin_nansf", float_type);
+	register_nan_builtin("__builtin_nansf__", float_type);
+	register_nan_builtin("__builtin_nans", double_type);
+	register_nan_builtin("__builtin_nans__", double_type);
+	register_nan_builtin("__builtin_nansl", long_double_type);
+	register_nan_builtin("__builtin_nansl__", long_double_type);
 	const ASTNode unsigned_short_type = make_builtin_type(TypeCategory::UnsignedShort, CVQualifier::None, 0);
 	const ASTNode unsigned_int_type = make_builtin_type(TypeCategory::UnsignedInt, CVQualifier::None, 0);
 	const ASTNode unsigned_long_long_type = make_builtin_type(TypeCategory::UnsignedLongLong, CVQualifier::None, 0);

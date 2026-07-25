@@ -5075,11 +5075,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						QualifiedIdentifierNode(
 							qual_id.namespace_handle(),
 							qual_id.identifier_token()));
-					finalizePostfixCallExpression(
-						result,
-						open_paren_token,
-						std::move(args),
-						std::move(arg_types));
+					if (ParseResult call_result = finalizePostfixCallExpression(
+							result,
+							open_paren_token,
+							std::move(args),
+							std::move(arg_types));
+						call_result.is_error()) {
+						return call_result;
+					}
 					return ParseResult::success(*result);
 				}
 
@@ -9627,16 +9630,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							all_op_types_known);
 					const FunctionDeclarationNode* operator_call_func =
 						call_operator_resolution.function;
-					if (call_operator_resolution.state ==
-						ConcreteCallOperatorResolution::State::Ambiguous) {
+					if (const std::optional<std::string_view> hard_failure =
+							consumeConcreteCallOperatorFailure(
+								call_operator_resolution.state,
+								operator_call_func);
+						hard_failure.has_value()) {
 						return ParseResult::error(
-							"call to overloaded operator() is ambiguous",
-							identifier_token);
-					}
-					if (call_operator_resolution.state ==
-						ConcreteCallOperatorResolution::State::NoViableMatch) {
-						return ParseResult::error(
-							"operator() not found in struct",
+							std::string(*hard_failure),
 							identifier_token);
 					}
 					if (operator_call_func == nullptr) {
