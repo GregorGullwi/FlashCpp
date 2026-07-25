@@ -191,7 +191,18 @@ public:
 					ns_handle = get_current_namespace_handle();
 					ns_key = StringTable::getOrInternStringHandle(identifier);
 				}
-				namespace_symbols_[ns_handle][ns_key] = std::vector<ASTNode>{node};
+				/* Global scope keys existence off scope.symbols, so namespace_symbols_ can
+				   in principle already hold entries this scope never saw. Append rather than
+				   assign so such entries are never silently dropped. For namespace scopes
+				   existing_ptr came from this very map, so absence here is authoritative and
+				   the append degenerates into a fresh vector. */
+				auto& ns_symbols = namespace_symbols_[ns_handle];
+				auto ns_it = ns_symbols.find(ns_key);
+				if (ns_it == ns_symbols.end()) {
+					ns_symbols[ns_key] = std::vector<ASTNode>{node};
+				} else {
+					ns_it->second.push_back(node);
+				}
 			}
 			return true;
 		}
