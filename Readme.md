@@ -69,6 +69,32 @@ make test && ./x64/test
 | `--help` | Show help message |
 | `-I path` | Add include directory |
 | `-E` | Preprocess only (output preprocessed source) |
+| `--time` | Show phase timing summary |
+| `--perf-stats` | Type table, parser phase breakdown, IR/operand stats (lightweight; no heap tracking) |
+| `--alloc-stats` | Track global `operator new/delete` counts (see profiling note below) |
+| `--mem-stats` | Alias for `--alloc-stats` |
+
+### Profiling builds (Windows Sharded)
+
+The default Sharded MSVC build enables parser runtime phase timers (`WITH_PARSER_RUNTIME_STATS=1`) and global allocation hooks (`FLASHCPP_TRACK_ALLOCATIONS=1`). Use the flags separately:
+
+```powershell
+.\build_flashcpp.bat
+
+# Lightweight compiler stats (type table, parser phases, IR)
+.\x64\Sharded\FlashCppMSVC.exe --perf-stats input.cpp
+
+# Heap allocation tracking (slower; hooks every operator new/delete)
+.\x64\Sharded\FlashCppMSVC.exe --alloc-stats input.cpp
+
+# Both, plus phase timing
+.\x64\Sharded\FlashCppMSVC.exe --time --perf-stats --alloc-stats tests\std\test_std_type_traits.cpp
+
+# Quick allocation count script
+pwsh tests/bench_allocations.ps1 tests/std/test_std_type_traits.cpp
+```
+
+Optional call-site stacks (much slower): add `FLASHCPP_TRACK_ALLOCATION_STACKS=1` to Sharded `PreprocessorDefinitions` in `FlashCppMSVC.vcxproj` and rebuild.
 
 ---
 
