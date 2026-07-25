@@ -71,7 +71,7 @@ ParseResult Parser::parse_template_brace_initialization(
 	const Token& identifier_token) {
 
 	AliasTemplateMaterializationResult materialized_type =
-		materializeTemplateInstantiationForLookup(template_name, template_args);
+		materializeTemplateTypeForConstruction(template_name, template_args);
 	if (materialized_type.instantiated_name.empty() || materialized_type.resolved_type_info == nullptr) {
 		return ParseResult::error("Template instantiation failed or type not found", identifier_token);
 	}

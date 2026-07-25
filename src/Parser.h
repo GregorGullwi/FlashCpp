@@ -3593,6 +3593,35 @@ private:	 // Resume private methods
 		const Token& identifier_token,
 		const InlineVector<TemplateTypeArg, 4>& explicit_template_args);
 
+	// C++20 [expr.type.conv] / [temp.names] / [temp.local]:
+	// A template-id that names a class or alias template (including the injected-class-name
+	// of a class template used as a template-name) followed by ( or { is type construction.
+	// A function-template template-id followed by ( is a call. One shared expression gate.
+	enum class ExplicitTemplateConstructionDelimiter : uint8_t {
+		Paren,
+		Brace
+	};
+	// True when `name` is the injected-class-name of a class template whose definition
+	// is currently open ([class.pre], [temp.local]). Uses StringHandle / struct-node
+	// identity — not spelling compares.
+	bool isInjectedClassTemplateBeingDefined(StringHandle name) const;
+	// True when unqualified lookup of `name` finds a class or alias template, or the
+	// injected-class-name of the class template being defined.
+	bool templateNameDenotesTypeProducingTemplate(StringHandle name) const;
+	AliasTemplateMaterializationResult ensureIncompleteClassTemplateSpecializationPlaceholder(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> template_args);
+	AliasTemplateMaterializationResult materializeTemplateTypeForConstruction(
+		std::string_view template_name,
+		std::span<const TemplateTypeArg> template_args);
+	ParseResult parseExplicitTemplateTypeConstruction(
+		const Token& identifier_token,
+		const InlineVector<TemplateTypeArg, 4>& explicit_template_args,
+		ExplicitTemplateConstructionDelimiter delimiter);
+	ParseResult tryParseExplicitTemplateTypeConstruction(
+		const Token& identifier_token,
+		const InlineVector<TemplateTypeArg, 4>& explicit_template_args);
+
 	// Helper to parse member template function calls: Template<T>::member<U>()
 	// Returns:
 	// - std::nullopt if not a function call (no '(' found after member name)
