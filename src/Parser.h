@@ -3487,7 +3487,10 @@ private:	 // Resume private methods
 	// True when peek is '.' or '->' immediately followed by '*' (.* / ->*).
 	bool peek_is_pointer_to_member_operator();
 	std::optional<ASTNode> try_synthesize_atomic_builtin_overload(std::string_view builtin_name, std::span<const TypeSpecifierNode> arg_types, const Token& call_token);
-	void finalizePostfixCallExpression(
+	// Finalize `expr(args)` after parentheses are parsed. In SoftProbe/SFINAE contexts,
+	// a concrete no-match / ambiguous operator() must not hard-error: requires-expressions
+	// need a deferred placeholder so constraint checking can re-resolve after substitution.
+	ParseResult finalizePostfixCallExpression(
 		std::optional<ASTNode>& result,
 		const Token& paren_token,
 		ChunkedVector<ASTNode>&& args,
@@ -3512,6 +3515,12 @@ private:	 // Resume private methods
 		std::span<const TypeSpecifierNode> arg_types,
 		size_t argument_count,
 		bool all_arg_types_known);
+	// SoftProbe/ShapeOnly must not hard-fail on concrete operator() miss/ambiguity;
+	// clear *function and return nullopt so callers can emit a deferred placeholder.
+	// HardUse returns a diagnostic message that callers should surface as an error.
+	std::optional<std::string_view> consumeConcreteCallOperatorFailure(
+		ConcreteCallOperatorResolution::State state,
+		const FunctionDeclarationNode*& function);
 	const FunctionDeclarationNode* tryResolveQualifiedCallableObjectTemplateOperator(
 		const QualifiedIdentifierNode& receiver,
 		std::span<const TypeSpecifierNode> arg_types);

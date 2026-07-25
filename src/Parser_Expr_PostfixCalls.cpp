@@ -494,6 +494,29 @@ Parser::ConcreteCallOperatorResolution Parser::tryResolveConcreteCallOperator(
 	return {ConcreteCallOperatorResolution::State::NoViableMatch, nullptr};
 }
 
+std::optional<std::string_view> Parser::consumeConcreteCallOperatorFailure(
+	ConcreteCallOperatorResolution::State state,
+	const FunctionDeclarationNode*& function) {
+	if (state == ConcreteCallOperatorResolution::State::Ambiguous) {
+		if (isHardUseLikeInstantiationMode()) {
+			return "call to overloaded operator() is ambiguous"sv;
+		}
+		function = nullptr;
+		return std::nullopt;
+	}
+	if (state == ConcreteCallOperatorResolution::State::NoViableMatch) {
+		if (isHardUseLikeInstantiationMode()) {
+			return "callable object has no matching operator()"sv;
+		}
+		// SoftProbe / ShapeOnly: keep a deferred placeholder so requires-expressions
+		// can re-resolve after template argument substitution instead of hard-failing
+		// while the callable's other operator() overloads are still being declared.
+		function = nullptr;
+		return std::nullopt;
+	}
+	return std::nullopt;
+}
+
 const FunctionDeclarationNode*
 Parser::tryResolveQualifiedCallableObjectTemplateOperator(
 	const QualifiedIdentifierNode& receiver,
@@ -542,7 +565,7 @@ Parser::tryResolveQualifiedCallableObjectTemplateOperator(
 	return &instantiated_operator->as<FunctionDeclarationNode>();
 }
 
-void Parser::finalizePostfixCallExpression(
+ParseResult Parser::finalizePostfixCallExpression(
 	std::optional<ASTNode>& result,
 	const Token& paren_token,
 	ChunkedVector<ASTNode>&& args,
@@ -598,7 +621,7 @@ void Parser::finalizePostfixCallExpression(
 						result->as<ExpressionNode>(),
 						*function_pointer_return_type_hint);
 				}
-				return;
+				return ParseResult::success(*result);
 			}
 		}
 
@@ -643,7 +666,7 @@ void Parser::finalizePostfixCallExpression(
 							result->as<ExpressionNode>(),
 							*member_function_return_type_hint);
 					}
-					return;
+					return ParseResult::success(*result);
 				}
 			}
 		}
@@ -671,7 +694,7 @@ void Parser::finalizePostfixCallExpression(
 								true,
 								false,
 								std::nullopt);
-							return;
+							return ParseResult::success(*result);
 						}
 					}
 				}
@@ -708,11 +731,10 @@ void Parser::finalizePostfixCallExpression(
 			}
 		}
 	}
-	if (call_operator_resolution.state == ConcreteCallOperatorResolution::State::Ambiguous) {
-		throw CompileError("call to overloaded operator() is ambiguous");
-	}
-	if (call_operator_resolution.state == ConcreteCallOperatorResolution::State::NoViableMatch) {
-		throw CompileError("callable object has no matching operator()");
+	if (const std::optional<std::string_view> hard_failure =
+			consumeConcreteCallOperatorFailure(call_operator_resolution.state, func_ref);
+		hard_failure.has_value()) {
+		return ParseResult::error(std::string(*hard_failure), paren_token);
 	}
 	if (!func_ref) {
 		// Keep the deferred member-call representation for unresolved/dependent
@@ -735,6 +757,7 @@ void Parser::finalizePostfixCallExpression(
 			false,
 			*func_ref);
 	}
+	return ParseResult::success(*result);
 }
 
 std::optional<ASTNode> Parser::tryInstantiateMemberFunctionTemplateCall(
@@ -1618,7 +1641,14 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-			finalizePostfixCallExpression(result, paren_token, std::move(args), std::move(args_result.arg_types));
+			if (ParseResult call_result = finalizePostfixCallExpression(
+					result,
+					paren_token,
+					std::move(args),
+					std::move(args_result.arg_types));
+				call_result.is_error()) {
+				return call_result;
+			}
 			continue;
 		}
 
@@ -2130,7 +2160,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-			finalizePostfixCallExpression(result, paren_token, std::move(args), std::move(arg_types));
+			if (ParseResult call_result = finalizePostfixCallExpression(
+					result,
+					paren_token,
+					std::move(args),
+					std::move(arg_types));
+				call_result.is_error()) {
+				return call_result;
+			}
 			continue;
 		}
 
