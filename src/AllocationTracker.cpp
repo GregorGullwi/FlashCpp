@@ -50,6 +50,8 @@ void updatePeakLive(uint64_t live_bytes) {
 	}
 }
 
+#if FLASHCPP_TRACK_ALLOCATIONS
+
 void printPhaseAllocationSummary(const AllocationTracker::Snapshot& stats) {
 	FLASH_LOG(General, Info, "\nAllocation totals by compile phase:");
 	for (size_t i = 0; i < static_cast<size_t>(AllocationPhase::Count); ++i) {
@@ -93,6 +95,8 @@ void printPhaseAllocationSummary(const AllocationTracker::Snapshot& stats) {
 				  "%)");
 	}
 }
+
+#endif // FLASHCPP_TRACK_ALLOCATIONS
 
 #if FLASHCPP_TRACK_ALLOCATION_STACKS
 
