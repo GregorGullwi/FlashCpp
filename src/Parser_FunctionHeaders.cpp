@@ -63,7 +63,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		FlashCpp::ScopedState parameter_type_id_guard(
 			parsing_parameter_declaration_type_id_);
 		parsing_parameter_declaration_type_id_ = true;
-		ParseResult type_and_name_result = parse_type_and_name();
+		ParseResult type_and_name_result = parse_type_and_name(CVQualifier::None);
 		if (type_and_name_result.is_error()) {
 			return type_and_name_result;
 		}
@@ -534,6 +534,11 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 	using enum FlashCpp::MemberLeadingSpecifiers;
 	FlashCpp::MemberLeadingSpecifiers specs = MLS_None;
 	while (true) {
+		AttributeInfo attributes;
+		if (tryParseDeclspecSpecifiers(attributes)) {
+			continue;
+		}
+
 		auto k = peek();
 		if (k == "constexpr"_tok) {
 			specs |= MLS_Constexpr;

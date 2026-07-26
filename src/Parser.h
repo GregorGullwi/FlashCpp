@@ -1572,7 +1572,7 @@ private:
 	// Parsing functions for different constructs
 	ParseResult parse_top_level_node();
 	ParseResult parse_pragma_pack_inner();   // NEW: Parse the contents of pragma pack()
-	ParseResult parse_type_and_name();
+	ParseResult parse_type_and_name(CVQualifier leading_cv_qualifier);
 	ParseResult parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier);  // NEW: Parse structured bindings: auto [a, b] = expr; auto& [x, y] = pair;
 	ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);	 // NEW: Parse declarators (function pointers, arrays, etc.)
 	ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
@@ -3690,7 +3690,7 @@ private:	 // Resume private methods
 		bool add_functions_to_ast_nodes);
 
 	Linkage parse_declspec_attributes();			 // Parse Microsoft __declspec(...) and return linkage
-	void parse_declspec_attributes_into(AttributeInfo& info); // Parse __declspec into AttributeInfo (linkage + selectany)
+	bool tryParseDeclspecSpecifiers(AttributeInfo& info); // Parse Microsoft __declspec decl-specifiers into AttributeInfo
 	AttributeInfo parse_attributes();			  // Parse all types of attributes and return linkage + calling convention
 	[[nodiscard]] CallingConvention parse_calling_convention(CallingConvention calling_conv); // Parse calling convention keywords
 

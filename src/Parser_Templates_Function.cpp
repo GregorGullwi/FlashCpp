@@ -79,7 +79,7 @@ ParseResult Parser::parse_template_function_declaration_body(
 	bool is_constinit = specs.is_constinit();
 
 	// Parse the function declaration (type and name)
-	auto type_and_name_result = parse_type_and_name();
+	auto type_and_name_result = parse_type_and_name(specs.cv_qualifier);
 	if (type_and_name_result.is_error()) {
 		return type_and_name_result;
 	}

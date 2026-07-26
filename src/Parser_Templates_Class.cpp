@@ -2251,7 +2251,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					if (!found_conversion_op) {
 						restore_token_position(conv_saved);
 						// Parse member declaration (use same logic as regular struct parsing)
-						member_result = parse_type_and_name();
+						member_result = parse_type_and_name(CVQualifier::None);
 					}
 				}
 				if (member_result.is_error()) {
@@ -3727,7 +3727,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					if (!found_conversion_op) {
 						restore_token_position(conv_saved);
 						// Parse member declaration (use same logic as regular struct parsing)
-						member_result = parse_type_and_name();
+						member_result = parse_type_and_name(CVQualifier::None);
 					}
 				}
 				if (member_result.is_error() || !member_result.node().has_value()) {
@@ -4433,7 +4433,7 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 			// Pattern: template<> ReturnType FunctionName<Args>(params) { body }
 
 			// Parse return type and function name
-			auto type_and_name_result = parse_type_and_name();
+			auto type_and_name_result = parse_type_and_name(CVQualifier::None);
 			if (type_and_name_result.is_error()) {
 				return type_and_name_result;
 			}
@@ -5288,7 +5288,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 					}
 
 					// Parse type and name
-					auto type_and_name_result = parse_type_and_name();
+					auto type_and_name_result = parse_type_and_name(CVQualifier::None);
 					if (type_and_name_result.is_error()) {
 						return type_and_name_result;
 					}
@@ -5504,7 +5504,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			}
 
 			// Parse member declaration (data member or function)
-			auto member_result = parse_type_and_name();
+			auto member_result = parse_type_and_name(CVQualifier::None);
 			if (member_result.is_error()) {
 				return member_result;
 			}
@@ -5810,7 +5810,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				}
 
 				// Parse type and name
-				auto type_and_name_result = parse_type_and_name();
+				auto type_and_name_result = parse_type_and_name(CVQualifier::None);
 				if (type_and_name_result.is_error()) {
 					return type_and_name_result;
 				}
@@ -6048,7 +6048,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		}
 
 		// Parse member declaration (data member or function)
-		auto member_result = parse_type_and_name();
+		auto member_result = parse_type_and_name(CVQualifier::None);
 		if (member_result.is_error()) {
 			return member_result;
 		}

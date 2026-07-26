@@ -1777,16 +1777,28 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Check if it's const or constexpr (some may already be consumed by parse_member_leading_specifiers)
 			CVQualifier cv_qual = CVQualifier::None;
 			bool is_static_constexpr = !!(member_specs & FlashCpp::MLS_Constexpr);
-			while (peek().is_keyword()) {
-				std::string_view kw = peek_info().value();
-				if (kw == "const") {
+			while (true) {
+				AttributeInfo attributes;
+				if (tryParseDeclspecSpecifiers(attributes)) {
+					continue;
+				}
+
+				const TokenKind keyword = peek();
+				if (!keyword.is_keyword()) {
+					break;
+				}
+
+				if (keyword == "const"_tok) {
 					cv_qual |= CVQualifier::Const;
 					advance();
-				} else if (kw == "constexpr") {
+				} else if (keyword == "volatile"_tok) {
+					cv_qual |= CVQualifier::Volatile;
+					advance();
+				} else if (keyword == "constexpr"_tok) {
 					is_static_constexpr = true;
 					cv_qual |= CVQualifier::Const; // constexpr implies const
 					advance();
-				} else if (kw == "inline") {
+				} else if (keyword == "inline"_tok) {
 					advance(); // consume 'inline'
 				} else {
 					break;
@@ -1794,7 +1806,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Parse type and name
-			auto type_and_name_result = parse_type_and_name();
+			auto type_and_name_result = parse_type_and_name(cv_qual);
 			if (type_and_name_result.is_error()) {
 				return type_and_name_result;
 			}
@@ -2476,7 +2488,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			member_result = ParseResult::success(decl_node);
 		} else {
 			// Regular member (data or function)
-			member_result = parse_type_and_name();
+			member_result = parse_type_and_name(CVQualifier::None);
 			if (member_result.is_error()) {
 				const bool missing_dependent_typename =
 					member_result.error_message().find(

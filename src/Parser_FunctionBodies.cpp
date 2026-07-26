@@ -466,7 +466,7 @@ ParseResult Parser::parse_one_catch_clause(std::vector<ASTNode>& catch_clauses) 
 		advance();
 		is_catch_all = true;
 	} else {
-		auto type_result = parse_type_and_name();
+		auto type_result = parse_type_and_name(CVQualifier::None);
 		if (type_result.is_error()) {
 			return type_result;
 		}

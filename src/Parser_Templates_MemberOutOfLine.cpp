@@ -288,6 +288,8 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 	}
 
 	ASTNode return_type_node = *return_type_result.node();
+	return_type_node.as<TypeSpecifierNode>().add_cv_qualifier(
+		declaration_specs.cv_qualifier);
 
 	// Skip pointer/reference modifiers after the return type
 	// Pattern: Type*, Type&, Type&&, Type* const, Type const*, etc.

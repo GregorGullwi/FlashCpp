@@ -53,26 +53,26 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 
 | Header | Test File | Status | Notes |
 |--------|-----------|--------|-------|
-| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~6s wall (Windows/MSVC STL 14.44). ODR-use emission for free `inline`/`__inline` + `__declspec(selectany)` COMDAT. |
-| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1221ms (`TOTAL`) / ~1.3s wall (retested 2026-07-25, Windows/MSVC STL 14.44). |
+| `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~5362ms (`TOTAL`) / ~5.4s wall (retested 2026-07-26, Windows/MSVC STL 14.44). |
+| `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~1170ms (`TOTAL`) / ~1.3s wall (retested 2026-07-26, Windows/MSVC STL 14.44). |
 | `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~0.06s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~41ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~41ms |
 | `<numbers>` | N/A | ✅ Compiled | ~510ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~32ms. Direct `std::initializer_list<T> values = {...}` object list-initialization is now covered by `tests/test_std_initializer_list_direct_brace_ret0.cpp` (retested 2026-04-20). |
-| `<ratio>` | `test_std_ratio.cpp` | 💥 Crash | ~2.69s wall (retested 2026-05-27, Linux/libstdc++-14). Still crashes with SIGSEGV while instantiating `__static_sign` (`__are_both_ratios` warnings appear first). |
-| `<optional>` | `test_std_optional.cpp` | 💥 Crash | ~3.30s wall (retested 2026-05-28, Linux/libstdc++-14). Current run now gets past the older `_Optional_payload_base` category-25/codegen stop and instead crashes after a constexpr/static-assert frontier: `Dependent function/variable template call in constant expression: is_same_v`. |
-| `<any>` | `test_std_any.cpp` | ✅ Compiled | ~1052ms (retested 2026-05-25, Linux/libstdc++-14). |
-| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1524ms (retested 2026-05-25, Linux/libstdc++-14). |
-| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1.3s wall (Windows/MSVC STL 14.44). |
+| `<ratio>` | `test_std_ratio.cpp` | ❌ Semantic Error | ~4169ms (`TOTAL`) / ~4.2s wall (retested 2026-07-26, Windows/MSVC STL 14.44). `ratio_equal<...>::value` is not materialized as a constant expression. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | ~8926ms (`TOTAL`) / ~9.0s wall (retested 2026-07-26, Windows/MSVC STL 14.44). First hard stop is structural class-type non-type template parameters in MSVC `optional:269`. |
+| `<any>` | `test_std_any.cpp` | ❌ Semantic Error | ~9.5s wall; full parse completes in ~7.9s (retested 2026-07-26, Windows/MSVC STL 14.44). Interleaved `__declspec(allocator)` and bare `__cdecl` function-type aliases now parse; current stop is ambiguous `_Get_rest` member lookup. |
+| `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~1697ms (`TOTAL`) / ~1.7s wall (retested 2026-07-26, Windows/MSVC STL 14.44). Template-parameter spelling now wins over stale dependent `TypeInfo`, so `pair<int, float>::first` has type `int`. Object generation succeeds; the linked probe still crashes at runtime, leaving a separate codegen issue. |
+| `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~1350ms (`TOTAL`) / ~1.4s wall (retested 2026-07-26, Windows/MSVC STL 14.44). |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~1083ms (retested 2026-05-23, Linux/libstdc++-14). |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~4.58s wall (retested 2026-05-27, Linux/libstdc++-14). First stop remains unresolved direct-call return type (`Type with no runtime size reached codegen in direct call return size`, type category 25) with repeated `to_address` instantiation failures; `_CharT` constructor-call struct-info failures still appear in `char_traits`. |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Lazy Replay Error | ~11.5s wall; full parse completes in ~9.8s (retested 2026-07-26, Windows/MSVC STL 14.44). Current stop is lazy member-body replay for `_String_view_iterator::operator+`. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~6.19s (`TOTAL`) / ~6.68s wall (retested 2026-05-27, Linux/libstdc++-14). Completed class-template cache hits no longer consume template-depth budget; current first hard error is now depth-guarded recursive `basic_string` instantiation. |
 | `<array>` | `test_std_array.cpp` | ✅ Compiled | ~2.64s (retested 2026-05-23, Linux/libstdc++-14). |
 | `<algorithm>` | `test_std_algorithm.cpp` | 💥 Crash | ~4.95s (retested 2026-05-21, Linux/libstdc++-14). The shared `ptr_traits` member-alias-template target now parses; current run reaches late IR/codegen (`std::partial_ordering` missing resolved constructor / unresolved semantic type category 25) and can still crash after deep template replay. |
-| `<span>` | `test_std_span.cpp` | ✅ Compiled | ~27ms (retested 2026-05-22, Linux/libstdc++-14). Statement/declaration disambiguation now keeps qualified class-template direct-initialization on the declaration path, so `std::span<int> s(arr, 5);` no longer falls through to a spurious call-expression parse. |
-| `<tuple>` | `test_std_tuple.cpp` | 💥 Codegen Crash | ~2500ms (retested 2026-05-11, Linux/libstdc++-14). The `_Head_base` default-NTTP blocker and tuple constructor pack-boundary stop are fixed; the header now reaches IR/codegen before `std::partial_ordering` unresolved semantic type category 25. |
-| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~2062ms (retested 2026-04-30, Linux/libstdc++-14). No longer stops at `Missing TypeInfo while computing template argument size`; it now reaches `Itanium name mangling: unknown type — cannot generate valid symbol` after several deferred/incomplete `reverse_iterator` instantiations. |
+| `<span>` | `test_std_span.cpp` | ❌ Template Default Error | ~8646ms (`TOTAL`) / ~8.7s wall (retested 2026-07-26, Windows/MSVC STL 14.44). Could not evaluate non-type template default parameter 1 of `std::span`. |
+| `<tuple>` | `test_std_tuple.cpp` | ❌ Template Replay Error | ~2032ms (`TOTAL`) / ~2.1s wall (retested 2026-07-26, Windows/MSVC STL 14.44). Partial-specialization nested out-of-line `tuple` cannot be attached through source-member identity mapping. |
+| `<vector>` | `test_std_vector.cpp` | ❌ Semantic Error | ~9708ms (`TOTAL`) / ~9.8s wall (retested 2026-07-26, Windows/MSVC STL 14.44). Interleaved `__declspec(allocator)` now parses; current stop is `auto` deduction for allocator state member `_Mylast`. |
 | `<deque>` | `test_std_deque.cpp` | 💥 Crash | ~2464ms (retested 2026-04-11). |
 | `<list>` | `test_std_list.cpp` | ❌ Compile Error | ~2940ms (retested 2026-05-12, Linux/libstdc++-14). The shared `_Head_base` default-NTTP stop remains fixed; after raising template nesting limits the first hard error is still depth-guarded, now `Max template instantiation depth (40) exceeded for 'polymorphic_allocator'`. |
 | `<queue>` | `test_std_queue.cpp` | 💥 Crash | ~2522ms (retested 2026-04-11). |
@@ -93,7 +93,7 @@ Language regressions that already pass belong in `tests/` (main suite), not only
 | `<typeinfo>` | `test_std_typeinfo_ret0.cpp` | ✅ Compiled | ~46ms (retested 2026-04-30, Linux/libstdc++-14). Sema now models pointer arithmetic (`T* + integral`, `T* - integral`, `T* - T*`) so the ternary in `type_info::name()` (`__name[0] == '*' ? __name + 1 : __name`) gets a sema-owned exact result type and codegen no longer throws. Regression: `tests/test_ternary_pointer_arithmetic_branches_ret0.cpp`. |
 | `<typeindex>` | N/A | ❌ Codegen Error | ~640ms (retested 2026-04-11). "Cannot use copy initialization with explicit constructor". |
 | `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~7529ms (retested 2026-05-25, Linux/libstdc++-14). **NOW WORKS**: ternary common-type fix resolved `numeric_limits` member constexpr folding. Builtin `__builtin_huge_val`/`__builtin_nan` families now handled in constexpr evaluator. |
-| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | ~13s wall (Windows/MSVC STL 14.44). Past `checked_array_iterator` incomplete-layout / friend emission; first hard stops are now sema return/ternary/`begin`/`end` lowering. |
+| `<iterator>` | `test_std_iterator.cpp` | ❌ Codegen Error | ~9.1s wall; full parse completes in ~7.3s (retested 2026-07-26, Windows/MSVC STL 14.44). First hard stops remain sema-normalized return lowering for `begin`/`end`, `view_interface` equality, and incomplete aggregate layout. |
 | `<variant>` | `test_std_variant.cpp` | ✅ Compiled | ~736ms (retested 2026-04-24, Linux/libstdc++). **NEW: Now compiles successfully on Linux!** The `_Variadic_union` arithmetic non-type template argument (`_Np-1`) inside a member initializer is now resolved. |
 | `<csetjmp>` | N/A | ✅ Compiled | ~35ms |
 | `<csignal>` | N/A | ✅ Compiled | ~140ms |
@@ -152,7 +152,14 @@ First stop and the language mechanism to fix. Not a session work-log.
 
 | Header | Stop | Mechanism to fix |
 |--------|------|------------------|
+| `<optional>` | Parse: structural class-type NTTP | Structural non-type template arguments and instantiation identity |
+| `<ratio>` | Sema/constexpr: missing `ratio_equal<...>::value` | Static member materialization through trait instantiation |
+| `<any>` | Sema: ambiguous `_Get_rest` member function | Dependent member overload lookup after allocator/function-type parsing |
+| `<span>` | Template default: extent parameter | Dependent non-type template default evaluation |
+| `<tuple>` | Replay: partial-spec nested out-of-line member | Stable source-member identity across partial specializations |
+| `<vector>` | Sema: cannot deduce `_Mylast` `auto` | Member-access result typing in allocator state |
+| `<string_view>` | Lazy replay: `_String_view_iterator::operator+` | Lazy member-body replay and source binding |
 | `<iterator>` | Codegen: sema return/ternary/`begin`/`end` lowering; residual `view_interface` aggregate holes | Exact result types for ternary/return; complete types for CPO/`auto` results in ranges interface members |
 | `<ranges>` | Template-depth / `invoke` recursion | Variadic `invoke` / CPO instantiation |
 
-Regressions for class-template layout/friend fixes: `tests/test_class_tmpl_cross_spec_complete_layout_ret0.cpp`, `tests/test_class_tmpl_friend_plus_byvalue_ret0.cpp`. Regressions for recent `<limits>` fixes: `tests/test_unused_inline_no_emit_ret0.cpp`, `tests/test_used_inline_still_emitted_ret0.cpp`, `tests/test_selectany_comdat_ret0.cpp`, plus earlier typedef-assign / rvalue-assign tests.
+Regressions for the 2026-07-26 Windows fixes: `tests/test_template_member_type_prefers_parameter_spelling_ret0.cpp`, `tests/test_interleaved_declspec_allocator_ret42.cpp`, `tests/test_interleaved_declspec_cv_qualifiers_ret42.cpp`, `tests/test_interleaved_declspec_const_assignment_fail.cpp`, and `tests/test_using_bare_function_type_calling_convention_ret42.cpp`. The shared declaration-specifier parser now carries `const`/`volatile` across interleaved Microsoft `__declspec` specifiers, and semantic analysis rejects assignment to the resulting const-qualified object. Regressions for class-template layout/friend fixes: `tests/test_class_tmpl_cross_spec_complete_layout_ret0.cpp`, `tests/test_class_tmpl_friend_plus_byvalue_ret0.cpp`. Regressions for recent `<limits>` fixes: `tests/test_unused_inline_no_emit_ret0.cpp`, `tests/test_used_inline_still_emitted_ret0.cpp`, `tests/test_selectany_comdat_ret0.cpp`, plus earlier typedef-assign / rvalue-assign tests.

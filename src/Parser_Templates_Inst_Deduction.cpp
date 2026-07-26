@@ -2952,7 +2952,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			auto exit_name_parse_namespace = ScopeGuard([&]() {
 				exitSourceNamespaceScopes(entered_name_parse_namespace_count);
 			});
-			auto type_and_name_result = parse_type_and_name();
+			auto type_and_name_result = parse_type_and_name(CVQualifier::None);
 			restore_lexer_position_only(current_pos);
 			if (!type_and_name_result.is_error() &&
 				type_and_name_result.node().has_value() &&

@@ -2096,8 +2096,21 @@ TypeIndex Parser::substitute_template_parameter(
 		return false;
 	};
 
+	bool token_names_template_parameter = false;
+	if (!type_name.empty()) {
+		for (const TemplateParameterNode& template_param : template_params) {
+			if (template_param.kind() == TemplateParameterKind::Type &&
+				template_param.name() == type_name) {
+				token_names_template_parameter = true;
+				break;
+			}
+		}
+	}
+
 	if (const TypeInfo* indexed_type_info = tryGetTypeInfo(current_type_index)) {
-		type_name = StringTable::getStringView(indexed_type_info->name());
+		if (!token_names_template_parameter) {
+			type_name = StringTable::getStringView(indexed_type_info->name());
+		}
 		FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", current_type_index,
 				  ", type_name='", type_name, "', underlying_type=", static_cast<int>(indexed_type_info->typeEnum()),
 				  ", underlying_type_index=", indexed_type_info->type_index_);

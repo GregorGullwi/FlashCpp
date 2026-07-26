@@ -107,6 +107,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	// is not replaced by createStructInfo() mid-declaration.
 	if (peek().is_keyword() &&
 		(peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok) &&
+		specs.cv_qualifier == CVQualifier::None &&
 		!looks_like_elaborated_type_variable_declaration()) {
 		// Delegate to struct parsing which will handle the full definition
 		// and any trailing variable declarations.
@@ -139,6 +140,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 			auto ctor_result = lookahead_constructor_or_destructor(first_id);
 			if (ctor_result.detected) {
+				if (specs.cv_qualifier != CVQualifier::None) {
+					return ParseResult::error(
+						"Constructors and destructors cannot have a cv-qualified return type",
+						peek_info());
+				}
 				return saved_position.propagate(parse_out_of_line_constructor_or_destructor(qualified_class_name, ctor_result.is_destructor, specs));
 			}
 		}
@@ -148,7 +154,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	// This will also extract any calling convention that appears after the type
 	SaveHandle declaration_start = save_token_position();
 	FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: About to parse type_and_name, current token: ", !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-	ParseResult type_and_name_result = parse_type_and_name();
+	ParseResult type_and_name_result = parse_type_and_name(specs.cv_qualifier);
 	if (type_and_name_result.is_error()) {
 		discard_saved_token(declaration_start);
 		FLASH_LOG(Parser, Debug, "parse_declaration_or_function_definition: parse_type_and_name failed: ", type_and_name_result.error_message());
