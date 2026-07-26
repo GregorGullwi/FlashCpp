@@ -4359,6 +4359,9 @@ void IrToObjConverter<TWriterClass>::emitSysVAggregateToRegisters(
 			X64Register target_reg = getFloatParamReg<TWriterClass>(sse_reg_index++);
 			emitMovqGprToXmm(temp_gpr, target_reg);
 			regAlloc.release(temp_gpr);
+		} else if (layout.eightbytes[0] == SysVRegisterClass::None) {
+			// Padding-only eightbyte: no register content to materialize.
+			return;
 		} else {
 			throw InternalError("Unsupported SysV constant aggregate argument register class");
 		}

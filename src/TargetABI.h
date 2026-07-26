@@ -247,6 +247,21 @@ inline SysVAbiValueLayout classifySysVValue(TypeIndex type_index, SizeInBits siz
 		return layout;
 	}
 	layout.eightbyte_count = static_cast<uint8_t>((size_in_bytes + 7) / 8);
+	// C++ empty classes usually have size 1 and no fields, so classification leaves
+	// every eightbyte as NO_CLASS/None. SysV/Itanium practice still passes such
+	// non-zero-sized empty aggregates in INTEGER registers. Trailing padding
+	// None eightbytes after a real Integer/Sse eightbyte must stay None so they
+	// do not consume an extra register (see test_external_abi trailing padding).
+	bool any_non_none = false;
+	for (size_t i = 0; i < layout.eightbyte_count; ++i) {
+		if (layout.eightbytes[i] != SysVRegisterClass::None) {
+			any_non_none = true;
+			break;
+		}
+	}
+	if (!any_non_none && layout.eightbyte_count > 0) {
+		layout.eightbytes[0] = SysVRegisterClass::Integer;
+	}
 	return layout;
 }
 
