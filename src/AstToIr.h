@@ -26,9 +26,7 @@ public:
 
 	void generateCollectedLocalStructMembers();
 
-	std::string get_deferred_func_name(const ASTNode& node) const;
-
-	size_t generateDeferredMemberFunctions();
+	void generateDeferredMemberFunctions();
 
 	void generateCollectedTemplateInstantiations();
 	void normalizePendingSemanticRoots();
@@ -44,7 +42,7 @@ public:
 	// ODR-use emission for free inline/__inline definitions: skip bodies until
 	// a call (or other use) marks them needed, then emit from the deferred queue.
 	void requestInlineFunctionEmission(const FunctionDeclarationNode& node);
-	size_t generateDeferredInlineFunctions();
+	void generateDeferredInlineFunctions();
 	size_t deferredMemberFunctionsPending() const {
 		return deferred_member_functions_.size() - deferred_member_functions_processed_;
 	}

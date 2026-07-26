@@ -1,8 +1,9 @@
-// Regression test: codegen error recovery for non-struct member access
+// Regression test: member access on <optional> must compile and run.
 // Previously, generateMemberAccessIr returned {} for error cases, causing
-// downstream SIGSEGV. Now it throws std::runtime_error which is caught by
-// the per-function error recovery mechanism.
-// This test uses <optional> which exercises the fixed code path.
+// downstream SIGSEGV. Member-access failures now throw InternalError and
+// convert() surfaces them as CompileError with the enclosing function name.
+// Blocked on <optional> parsing today (structural class-type NTTP in MSVC STL);
+// see README_STANDARD_HEADERS.md.
 #include <optional>
 
 int main() {
