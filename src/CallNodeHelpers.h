@@ -369,6 +369,14 @@ inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&
 	}
 }
 
+inline void setCallTemplateArguments(
+	ExpressionNode& expr,
+	InlineVector<ASTNode, 4>&& template_args) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_template_arguments(std::move(template_args).toVector());
+	}
+}
+
 inline void setCallDefinitionLookupRecord(ExpressionNode& expr, const FunctionCallDefinitionLookupRecord& record) {
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_definition_lookup_record(record);
@@ -409,6 +417,12 @@ inline void setCallDependentQualifiedLookupRecord(
 
 inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNode>&& template_args) {
 	call_expr.set_template_arguments(std::move(template_args));
+}
+
+inline void setCallTemplateArguments(
+	CallExprNode& call_expr,
+	InlineVector<ASTNode, 4>&& template_args) {
+	call_expr.set_template_arguments(std::move(template_args).toVector());
 }
 
 inline void setCallParserReturnTypeHint(

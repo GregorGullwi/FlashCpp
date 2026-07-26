@@ -913,11 +913,11 @@ ParseResult Parser::parse_template_template_parameter_form() {
 // Template parameters must already be registered in getTypesByNameMap() via TemplateParameterScope
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments() {
 	// Keep the no-output overload explicit so callers do not rely on default parameters.
-	std::vector<ASTNode>* out_type_nodes = nullptr;
+	InlineVector<ASTNode, 4>* out_type_nodes = nullptr;
 	return parse_explicit_template_arguments(out_type_nodes);
 }
 
-std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes) {
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes) {
 	// Recursion depth guard to prevent stack overflow on deeply nested template arguments
 	// Stack size increased to 8MB in FlashCppMSVC.vcxproj to handle deep recursion
 	static thread_local int template_arg_recursion_depth = 0;
@@ -3291,34 +3291,34 @@ try_type_template_argument_parse:
 }
 
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
-	InlineVector<ASTNode, 4>* out_type_nodes) {
+	std::vector<ASTNode>* out_type_nodes) {
 	if (out_type_nodes == nullptr) {
 		return parse_explicit_template_arguments();
 	}
 
-	std::vector<ASTNode> parsed_type_nodes;
-	auto parsed_args = parse_explicit_template_arguments(&parsed_type_nodes);
+	InlineVector<ASTNode, 4> inline_type_nodes;
+	auto parsed_args = parse_explicit_template_arguments(&inline_type_nodes);
 	if (!parsed_args.has_value()) {
 		return std::nullopt;
 	}
 
-	*out_type_nodes = std::move(parsed_type_nodes);
+	*out_type_nodes = std::move(inline_type_nodes).toVector();
 	return parsed_args;
 }
 
 void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 	std::span<const TemplateParameterNode> target_template_params,
 	InlineVector<TemplateTypeArg, 4>& template_args,
-	const std::vector<ASTNode>* argument_syntax_nodes) {
+	std::span<const ASTNode> argument_syntax_nodes) {
 	if (target_template_params.empty() || template_args.empty()) {
 		return;
 	}
 
 	auto syntaxNodeForArg = [&](size_t index) -> const ASTNode* {
-		if (argument_syntax_nodes == nullptr || index >= argument_syntax_nodes->size()) {
+		if (index >= argument_syntax_nodes.size()) {
 			return nullptr;
 		}
-		return &(*argument_syntax_nodes)[index];
+		return &argument_syntax_nodes[index];
 	};
 
 	auto nameFromExpression = [](const ExpressionNode& expr) -> StringHandle {
@@ -3888,7 +3888,9 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 		classifyExplicitTemplateArgumentsAgainstParameters(
 			target_template_params,
 			*parsed_args,
-			out_type_nodes);
+			out_type_nodes == nullptr
+				? std::span<const ASTNode>{}
+				: std::span<const ASTNode>{*out_type_nodes});
 	}
 	return parsed_args;
 }
@@ -3900,19 +3902,51 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 	if (out_type_nodes == nullptr) {
 		auto parsed_args = parse_explicit_template_arguments();
 		if (parsed_args.has_value()) {
-			classifyExplicitTemplateArgumentsAgainstParameters(target_template_params, *parsed_args, nullptr);
+			classifyExplicitTemplateArgumentsAgainstParameters(
+				target_template_params,
+				*parsed_args,
+				std::span<const ASTNode>{});
 		}
 		return parsed_args;
 	}
 
-	std::vector<ASTNode> parsed_type_nodes;
-	auto parsed_args = parse_explicit_template_arguments(target_template_params, &parsed_type_nodes);
-	if (!parsed_args.has_value()) {
-		return std::nullopt;
+	auto parsed_args = parse_explicit_template_arguments(out_type_nodes);
+	if (parsed_args.has_value()) {
+		classifyExplicitTemplateArgumentsAgainstParameters(
+			target_template_params,
+			*parsed_args,
+			std::span<const ASTNode>{*out_type_nodes});
 	}
-
-	*out_type_nodes = std::move(parsed_type_nodes);
 	return parsed_args;
+}
+
+std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(
+	const TemplateNameLookupResult& template_lookup,
+	InlineVector<ASTNode, 4>* out_type_nodes) {
+	for (const TemplateNameLookupCandidate& candidate : template_lookup.candidates) {
+		const ASTNode& declaration = candidate.declaration;
+		if (declaration.is<TemplateClassDeclarationNode>()) {
+			return parse_explicit_template_arguments(
+				declaration.as<TemplateClassDeclarationNode>().template_parameters(),
+				out_type_nodes);
+		}
+		if (declaration.is<TemplateAliasNode>()) {
+			return parse_explicit_template_arguments(
+				declaration.as<TemplateAliasNode>().template_parameters(),
+				out_type_nodes);
+		}
+		if (declaration.is<TemplateVariableDeclarationNode>()) {
+			return parse_explicit_template_arguments(
+				declaration.as<TemplateVariableDeclarationNode>().template_parameters(),
+				out_type_nodes);
+		}
+		if (declaration.is<TemplateFunctionDeclarationNode>()) {
+			return parse_explicit_template_arguments(
+				declaration.as<TemplateFunctionDeclarationNode>().template_parameters(),
+				out_type_nodes);
+		}
+	}
+	return parse_explicit_template_arguments(out_type_nodes);
 }
 
 // C++20 Template Argument Disambiguation

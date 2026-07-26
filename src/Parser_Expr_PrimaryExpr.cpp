@@ -453,7 +453,7 @@ std::optional<DependentUnqualifiedCallLookupRecord> makeDependentUnqualifiedCall
 	bool argument_dependent_lookup_included,
 	const ASTNode& resolved_decl) {
 	if (const FunctionDeclarationNode* definition_bound_function =
-			get_function_decl_node(resolved_decl);
+			FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(resolved_decl);
 		definition_bound_function != nullptr) {
 		return makeDependentUnqualifiedCallLookupRecord(
 			definition_context,
@@ -483,6 +483,25 @@ void appendUniqueOverloads(std::vector<ASTNode>& target, std::span<const ASTNode
 		}
 		target.push_back(candidate);
 	}
+}
+
+std::vector<ASTNode> lookupDefinitionContextOrdinaryCandidates(
+	const TemplateDefinitionLookupContext& definition_context,
+	StringHandle name) {
+	if (!definition_context.is_valid() || !name.isValid()) {
+		return {};
+	}
+
+	NamespaceHandle lookup_namespace = definition_context.definition_namespace;
+	while (lookup_namespace.isValid()) {
+		std::vector<ASTNode> candidates =
+			gSymbolTable.lookup_qualified_all(lookup_namespace, name);
+		if (!candidates.empty() || lookup_namespace.isGlobal()) {
+			return candidates;
+		}
+		lookup_namespace = gNamespaceRegistry.getParent(lookup_namespace);
+	}
+	return {};
 }
 
 }
@@ -618,8 +637,25 @@ std::optional<ASTNode> Parser::resolveDependentUnqualifiedCallAtPointOfInstantia
 		current_template_definition_lookup_context_,
 		record.definition_context.is_valid() ? &record.definition_context : nullptr);
 
-	std::vector<ASTNode> all_overloads =
-		gSymbolTable.lookup_all(StringTable::getStringView(record.callee_name));
+	std::vector<ASTNode> all_overloads;
+	if (record.definition_bound_function != nullptr) {
+		all_overloads.emplace_back(record.definition_bound_function);
+	} else if (record.definition_context.is_valid()) {
+		all_overloads = lookupDefinitionContextOrdinaryCandidates(
+			record.definition_context,
+			record.callee_name);
+	}
+	if (all_overloads.empty()) {
+		all_overloads =
+			gSymbolTable.lookup_all(StringTable::getStringView(record.callee_name));
+	}
+	for (ASTNode& overload : all_overloads) {
+		if (const FunctionDeclarationNode* function_decl =
+				FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(overload);
+			function_decl != nullptr) {
+			overload = ASTNode(function_decl);
+		}
+	}
 	filterPhase1OrdinaryFunctionOverloads(all_overloads);
 	if (record.argument_dependent_lookup_included && !arg_types.empty()) {
 		std::vector<ASTNode> adl_candidates =
@@ -1897,7 +1933,7 @@ void maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 	bool argument_dependent_lookup_included,
 	const ASTNode& resolved_decl) {
 	if (const FunctionDeclarationNode* definition_bound_function =
-			get_function_decl_node(resolved_decl);
+			FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(resolved_decl);
 		definition_bound_function != nullptr) {
 		maybeAttachDependentUnqualifiedLookupRecord(
 			call_expr,
@@ -1917,8 +1953,9 @@ void maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
 		nullptr);
 }
 
+template <typename TemplateArgumentNodes>
 void syncTemplateArgumentNodeMetadata(
-	std::vector<ASTNode>& template_arg_nodes,
+	TemplateArgumentNodes& template_arg_nodes,
 	std::span<const TemplateTypeArg> template_args) {
 	size_t count = std::min(template_arg_nodes.size(), template_args.size());
 	for (size_t i = 0; i < count; ++i) {
@@ -1931,10 +1968,11 @@ void syncTemplateArgumentNodeMetadata(
 	}
 }
 
+template <typename TemplateArgumentNodes>
 void attachQualifiedIdentifierTemplateArguments(
 	QualifiedIdentifierNode& qual_id,
 	const std::optional<InlineVector<TemplateTypeArg, 4>>& template_args,
-	std::vector<ASTNode>& template_arg_nodes) {
+	TemplateArgumentNodes& template_arg_nodes) {
 	if (!template_args.has_value() || template_args->empty()) {
 		return;
 	}
@@ -1945,7 +1983,11 @@ void attachQualifiedIdentifierTemplateArguments(
 		syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
 	}
 	if (!template_arg_nodes.empty()) {
-		qual_id.set_template_arguments(std::move(template_arg_nodes));
+		if constexpr (std::is_same_v<TemplateArgumentNodes, InlineVector<ASTNode, 4>>) {
+			qual_id.set_template_arguments(std::move(template_arg_nodes).toVector());
+		} else {
+			qual_id.set_template_arguments(std::move(template_arg_nodes));
+		}
 	}
 }
 
@@ -4657,7 +4699,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// after qualified identifiers, BUT check if the member is actually a template first
 			// to avoid misinterpreting comparisons like _R1::num < _R2::num
 			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
-			std::vector<ASTNode> template_arg_nodes;	 // Store the actual expression nodes
+			InlineVector<ASTNode, 4> template_arg_nodes;	 // Store the actual expression nodes
 			if (current_token_.value() == "<") {
 				// Build the qualified name from namespace handle
 				StringHandle qualified_name = StringTable::getOrInternStringHandle(buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name()));
@@ -4665,17 +4707,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// Check if the member is a known template before parsing < as template arguments
 				// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
-				auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
-				auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-				auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
-				auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
-				auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
-				auto full_alias_template_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
-
-				bool is_known_template = member_template_opt.has_value() || member_var_template_opt.has_value() ||
-										 member_alias_template_opt.has_value() ||
-										 full_template_opt.has_value() || full_var_template_opt.has_value() ||
-										 full_alias_template_opt.has_value();
+				TemplateNameLookupResult qualified_template_lookup =
+					gTemplateRegistry.lookupTemplateName(
+						buildTemplateNameLookupRequest(
+							qualified_name,
+							TemplateNameLookupKind::Qualified,
+							false));
+				TemplateNameLookupResult member_template_lookup =
+					gTemplateRegistry.lookupTemplateName(
+						buildTemplateNameLookupRequest(
+							member_name,
+							TemplateNameLookupKind::Ordinary,
+							false));
+				bool is_known_template =
+					!qualified_template_lookup.empty() ||
+					!member_template_lookup.empty();
 
 				// Also check if the base is a template parameter - if so, the member is likely NOT a template
 				bool base_is_template_param = false;
@@ -4701,7 +4747,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (should_parse_template_args) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Qualified identifier '{}' followed by '<', attempting template argument parsing", qualified_name.view());
-					template_args = parse_explicit_template_arguments(&template_arg_nodes);
+					if (is_known_template) {
+						template_args = parse_explicit_template_arguments(
+							!qualified_template_lookup.empty()
+								? qualified_template_lookup
+								: member_template_lookup,
+							&template_arg_nodes);
+					} else {
+						template_args = parse_explicit_template_arguments(&template_arg_nodes);
+					}
 				}
 
 				if (template_args.has_value()) {
@@ -5596,6 +5650,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		} else {
 			identifierType = lookup_symbol(identifier_token.handle());
 		}
+		if (!identifierType.has_value() &&
+			current_template_definition_lookup_context_ != nullptr &&
+			current_template_definition_lookup_context_->is_valid()) {
+			std::vector<ASTNode> definition_candidates =
+				lookupDefinitionContextOrdinaryCandidates(
+					*current_template_definition_lookup_context_,
+					identifier_token.handle());
+			filterPhase1OrdinaryFunctionOverloads(definition_candidates);
+			for (const ASTNode& candidate : definition_candidates) {
+				if (is_function_or_template_function(candidate)) {
+					(void)gSymbolTable.insert(identifier_token.handle(), candidate);
+				}
+			}
+			if (!definition_candidates.empty()) {
+				identifierType = definition_candidates.front();
+			}
+		}
 
 		FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' lookup result: {}, peek='{}', member_function_context_stack_ size={}",
 						 identifier_token.value(), identifierType.has_value() ? "found" : "not found",
@@ -6096,7 +6167,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// Check if final identifier is followed by template arguments: ns::Template<Args>
 			std::optional<InlineVector<TemplateTypeArg, 4>> template_args;
-			std::vector<ASTNode> template_arg_nodes;	 // Store the actual expression nodes
+			InlineVector<ASTNode, 4> template_arg_nodes;	 // Store the actual expression nodes
 			if (peek() == "<"_tok) {
 				// Before parsing < as template arguments, check if the identifier is actually a template
 				// This prevents misinterpreting patterns like R1<T>::num < R2<T>::num> where < is comparison
@@ -6128,7 +6199,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				if (is_known_template) {
 					FLASH_LOG(Parser, Debug, "Qualified identifier followed by '<', attempting to parse template arguments");
-					template_args = parse_explicit_template_arguments(&template_arg_nodes);
+					template_args = parse_explicit_template_arguments(
+						!qualified_lookup_result.empty()
+							? qualified_lookup_result
+							: simple_lookup_result,
+						&template_arg_nodes);
 					// If parsing failed, it might be a less-than operator, continue normally
 				} else if (context == ExpressionContext::TemplateTypeArg) {
 					// In template argument context, if the identifier is NOT a known template,
@@ -7700,6 +7775,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 					result = emplace_node<ExpressionNode>(
 						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(call_args), identifier_token));
+					maybeAttachDependentUnqualifiedLookupRecord(
+						result->as<ExpressionNode>(),
+						identifier_token,
+						true,
+						current_template_definition_lookup_context_,
+						true,
+						nullptr);
 					return ParseResult::success(*result);
 				};
 				auto create_unresolved_call_decl_if_deferred = [&]() {
@@ -10172,6 +10254,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 									result = emplace_node<ExpressionNode>(
 										makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+									if (identifierType.has_value()) {
+										maybeAttachDependentUnqualifiedLookupRecordFromResolvedDecl(
+											result->as<ExpressionNode>(),
+											identifier_token,
+											true,
+											current_template_definition_lookup_context_,
+											true,
+											*identifierType);
+									} else {
+										maybeAttachDependentUnqualifiedLookupRecord(
+											result->as<ExpressionNode>(),
+											identifier_token,
+											true,
+											current_template_definition_lookup_context_,
+											true,
+											nullptr);
+									}
 									return ParseResult::success(*result);
 								};
 
@@ -10577,12 +10676,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												*instantiated_func);
 									} else {
 										if (has_deferred_call_args) {
-											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
-											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-											result = emplace_node<ExpressionNode>(
-												makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
-											return ParseResult::success(*result);
+											return make_late_dependent_call_result();
 										}
 										// In SFINAE context (e.g., requires expression), function lookup failure
 										// means the constraint is not satisfied - not an error
@@ -10661,12 +10755,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													*instantiated_func);
 										} else {
 											if (has_deferred_call_args) {
-												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
-												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, get_type_size_bits(TypeCategory::Auto), identifier_token, CVQualifier::None);
-												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
-												result = emplace_node<ExpressionNode>(
-													makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
-												return ParseResult::success(*result);
+												return make_late_dependent_call_result();
 											}
 											// In SFINAE context (e.g., requires expression), function lookup failure
 											// means the constraint is not satisfied - not an error
