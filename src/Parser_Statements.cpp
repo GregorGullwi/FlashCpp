@@ -997,7 +997,7 @@ ParseResult Parser::parse_variable_declaration() {
 	Linkage linkage = specs.linkage;
 
 	// Parse the type specifier and identifier (name)
-	ParseResult type_and_name_result = parse_type_and_name();
+	ParseResult type_and_name_result = parse_type_and_name(specs.cv_qualifier);
 	if (type_and_name_result.is_error()) {
 		return type_and_name_result;
 	}

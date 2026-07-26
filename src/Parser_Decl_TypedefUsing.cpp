@@ -23,14 +23,21 @@ void Parser::bindLocalTypeAlias(
 // Returns false after restoring the token position when the next tokens are not
 // a supported alias function type.
 bool Parser::parse_type_alias_function_type(TypeSpecifierNode& type_spec, std::string_view log_context) {
+	SaveHandle func_type_saved_pos = save_token_position();
+	CallingConvention calling_conv =
+		parse_calling_convention(CallingConvention::Default);
 	if (peek() != "("_tok) {
+		restore_token_position(func_type_saved_pos);
 		return false;
 	}
 
-	SaveHandle func_type_saved_pos = save_token_position();
 	advance(); // consume '('
 
-	CallingConvention calling_conv = parse_calling_convention(CallingConvention::Default);
+	CallingConvention declarator_calling_conv =
+		parse_calling_convention(CallingConvention::Default);
+	if (declarator_calling_conv != CallingConvention::Default) {
+		calling_conv = declarator_calling_conv;
+	}
 	bool is_function_ref = false;
 	bool is_rvalue_function_ref = false;
 	bool is_function_ptr = false;

@@ -165,6 +165,9 @@ struct DeclarationSpecifiers {
 	StorageClass storage_class = StorageClass::None;
 	bool is_thread_local = false;
 
+	// CV-qualifiers are defining-type-specifiers in decl-specifier-seq.
+	CVQualifier cv_qualifier = CVQualifier::None;
+
 	// Constexpr/consteval/constinit specifiers (mutually exclusive)
 	ConstexprSpecifier constexpr_spec = ConstexprSpecifier::None;
 

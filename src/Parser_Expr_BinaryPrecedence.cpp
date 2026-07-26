@@ -1908,7 +1908,7 @@ ParseResult Parser::parse_static_member_block(
 	}
 
 	// Parse type and name
-	auto type_and_name = parse_type_and_name();
+	auto type_and_name = parse_type_and_name(CVQualifier::None);
 	if (type_and_name.is_error()) {
 		return type_and_name;
 	}
@@ -2076,17 +2076,20 @@ ParseResult Parser::parse_static_member_block(
 
 Linkage Parser::parse_declspec_attributes() {
 	AttributeInfo info;
-	parse_declspec_attributes_into(info);
+	tryParseDeclspecSpecifiers(info);
 	return info.linkage;
 }
 
-void Parser::parse_declspec_attributes_into(AttributeInfo& info) {
-	// Parse all __declspec attributes
+bool Parser::tryParseDeclspecSpecifiers(AttributeInfo& info) {
+	bool consumed_declspec = false;
+	// Microsoft extends decl-specifier-seq with __declspec. Keep this separate
+	// from C++ attribute-specifier-seq because their appertainment rules differ.
 	while (peek() == "__declspec"_tok) {
+		consumed_declspec = true;
 		advance(); // consume "__declspec"
 
 		if (!consume("("_tok)) {
-			return; // Invalid __declspec, return what we have
+			return true; // Invalid __declspec, but the specifier was consumed
 		}
 
 		// Parse the declspec specifier(s)
@@ -2120,9 +2123,10 @@ void Parser::parse_declspec_attributes_into(AttributeInfo& info) {
 		}
 
 		if (!consume(")"_tok)) {
-			return; // Missing closing paren
+			return true; // Missing closing paren after a consumed specifier
 		}
 	}
+	return consumed_declspec;
 }
 
 // Parse calling convention keywords and return the calling convention
@@ -2149,11 +2153,14 @@ Parser::AttributeInfo Parser::parse_attributes() {
 	AttributeInfo info;
 
 	skip_cpp_attributes();  // C++ [[...]] and GCC __attribute__(...) specifications
-	parse_declspec_attributes_into(info);
+	tryParseDeclspecSpecifiers(info);
 	info.calling_convention = parse_calling_convention(info.calling_convention);
 
 	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
-	if (!peek().is_eof() && (peek() == "["_tok || peek_info().value() == "__attribute__")) {
+	if (!peek().is_eof() &&
+		(peek() == "["_tok ||
+		 peek() == "__declspec"_tok ||
+		 peek_info().value() == "__attribute__")) {
 		// Recurse to handle more attributes (prefer more specific linkage)
 		AttributeInfo more_info = parse_attributes();
 		if (more_info.linkage != Linkage::None) {

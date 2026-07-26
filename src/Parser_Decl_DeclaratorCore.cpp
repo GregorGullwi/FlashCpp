@@ -11,7 +11,7 @@ constexpr int kFunctionPointerSizeBits = 64; // x64 target: always 8 bytes
 
 }
 
-ParseResult Parser::parse_type_and_name() {
+ParseResult Parser::parse_type_and_name(CVQualifier leading_cv_qualifier) {
 	// Add parsing depth check to prevent infinite loops
 	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
 		--parsing_depth_;
@@ -45,6 +45,7 @@ ParseResult Parser::parse_type_and_name() {
 
 	// Get the type specifier node to modify it with pointer levels
 	TypeSpecifierNode& type_spec = type_specifier_result.node()->as<TypeSpecifierNode>();
+	type_spec.add_cv_qualifier(leading_cv_qualifier);
 
 	// Check for structured binding: auto [a, b, c] = expr;
 	// Also support: auto& [a, b] = pair; and auto&& [x, y] = temp;
@@ -1352,49 +1353,80 @@ ParseResult Parser::parse_nested_function_pointer_type(
 // Phase 1 Consolidation: Parse declaration specifiers shared between
 // parse_declaration_or_function_definition() and parse_variable_declaration()
 // Handles: attributes ([[nodiscard]], __declspec), storage class (static, extern),
-// constexpr/constinit/consteval, inline specifiers
+// CV-qualifiers, constexpr/constinit/consteval, inline specifiers
 FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers() {
 	FlashCpp::DeclarationSpecifiers specs;
+	auto merge_attributes = [&](const AttributeInfo& attributes) {
+		if (attributes.linkage != Linkage::None) {
+			specs.linkage = attributes.linkage;
+		}
+		if (attributes.calling_convention != CallingConvention::Default) {
+			specs.calling_convention = attributes.calling_convention;
+		}
+		specs.is_selectany |= attributes.is_selectany;
+	};
+	auto tryParseMsvcDeclspec = [&]() {
+		AttributeInfo attributes;
+		if (!tryParseDeclspecSpecifiers(attributes)) {
+			return false;
+		}
+		merge_attributes(attributes);
+		return true;
+	};
+
 	// Parse any attributes before the declaration ([[nodiscard]], __declspec(dllimport), __cdecl, etc.)
-	AttributeInfo attr_info = parse_attributes();
-	specs.linkage = attr_info.linkage;
-	specs.calling_convention = attr_info.calling_convention;
-	specs.is_selectany = attr_info.is_selectany;
+	merge_attributes(parse_attributes());
 
 	// Parse storage class specifiers and constexpr/constinit/consteval keywords
 	// These can appear in any order: "static constexpr", "constexpr static", etc.
-	bool done = false;
-	while (!done && peek().is_keyword()) {
-		std::string_view kw = peek_info().value();
-		if (kw == "constexpr") {
+	while (true) {
+		if (tryParseMsvcDeclspec()) {
+			continue;
+		}
+
+		const TokenKind keyword = peek();
+		if (!keyword.is_keyword()) {
+			break;
+		}
+
+		if (keyword == "constexpr"_tok) {
 			specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constexpr;
 			advance();
-		} else if (kw == "constinit") {
+		} else if (keyword == "constinit"_tok) {
 			specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Constinit;
 			advance();
-		} else if (kw == "consteval") {
+		} else if (keyword == "consteval"_tok) {
 			specs.constexpr_spec = FlashCpp::ConstexprSpecifier::Consteval;
 			advance();
-		} else if (kw == "inline" || kw == "__inline" || kw == "__forceinline") {
+		} else if (keyword == "inline"_tok ||
+				   keyword == "__inline"_tok ||
+				   keyword == "__forceinline"_tok) {
 			specs.is_inline = true;
 			advance();
-		} else if (kw == "static") {
+		} else if (keyword == "static"_tok) {
 			specs.storage_class = StorageClass::Static;
 			advance();
-		} else if (kw == "extern") {
+		} else if (keyword == "extern"_tok) {
 			specs.storage_class = StorageClass::Extern;
 			advance();
-		} else if (kw == "thread_local" || kw == "__thread") {
+		} else if (keyword == "thread_local"_tok ||
+				   keyword == "__thread"_tok) {
 			specs.is_thread_local = true;
 			advance();
-		} else if (kw == "register") {
+		} else if (keyword == "register"_tok) {
 			specs.storage_class = StorageClass::Register;
 			advance();
-		} else if (kw == "mutable") {
+		} else if (keyword == "mutable"_tok) {
 			specs.storage_class = StorageClass::Mutable;
 			advance();
+		} else if (keyword == "const"_tok) {
+			specs.cv_qualifier |= CVQualifier::Const;
+			advance();
+		} else if (keyword == "volatile"_tok) {
+			specs.cv_qualifier |= CVQualifier::Volatile;
+			advance();
 		} else {
-			done = true;
+			break;
 		}
 	}
 

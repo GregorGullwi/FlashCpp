@@ -43,6 +43,15 @@ bool isFunctionCandidateViableForArgCount(const FunctionDeclarationNode& candida
 	return argument_count >= min_required && argument_count <= max_accepted;
 }
 
+bool isCanonicalObjectConstQualified(const CanonicalTypeDesc& type) {
+	if (!type.pointer_levels.empty()) {
+		return hasCVQualifier(
+			type.pointer_levels.back().cv_qualifier,
+			CVQualifier::Const);
+	}
+	return hasCVQualifier(type.base_cv, CVQualifier::Const);
+}
+
 template <typename OverloadContainer>
 void appendUniqueOverload(OverloadContainer& target, const ASTNode& candidate) {
 	if (std::ranges::none_of(target, [&](const ASTNode& existing) {
@@ -3758,6 +3767,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 				const bool is_shift =
 					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
+				const bool is_assignment = op == "=" || is_compound_assign;
 				const bool needs_binary_type_inference =
 					(is_arithmetic || is_bitwise || is_comparison || is_compound_assign || is_shift) &&
 					e.get_lhs().template is<ExpressionNode>() &&
@@ -3770,15 +3780,27 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(ASTNode node, const Seman
 					tryAnnotateContextualBool(e.get_lhs());
 					tryAnnotateContextualBool(e.get_rhs());
 				}
+				CanonicalTypeId assignment_lhs_type_id{};
+				if (is_assignment && e.get_lhs().template is<ExpressionNode>()) {
+					assignment_lhs_type_id = inferExpressionType(e.get_lhs());
+					if (assignment_lhs_type_id &&
+						isCanonicalObjectConstQualified(
+							type_context_.get(assignment_lhs_type_id))) {
+						throw CompileError(
+							"Assignment to const-qualified expression is not allowed");
+					}
+				}
 				// For simple assignment, annotate the RHS with the LHS type.
 				if (op == "=" &&
 					e.get_lhs().template is<ExpressionNode>() &&
 					e.get_rhs().template is<ExpressionNode>()) {
-					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
-					if (lhs_id) {
+					if (assignment_lhs_type_id) {
 						const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
-						tryAnnotateConversion(e.get_rhs(), lhs_id, rhs_id);
-						diagnoseScopedEnumConversion(e.get_rhs(), lhs_id,
+						tryAnnotateConversion(
+							e.get_rhs(),
+							assignment_lhs_type_id,
+							rhs_id);
+						diagnoseScopedEnumConversion(e.get_rhs(), assignment_lhs_type_id,
 													 " in assignment", rhs_id);
 					}
 				}
