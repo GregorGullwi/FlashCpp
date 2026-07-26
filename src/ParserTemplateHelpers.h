@@ -1397,13 +1397,43 @@ inline bool dependentTemplatePlaceholderNamesMatch(
 	std::span<const TemplateParameterNode> instantiated_template_params,
 	std::span<const TemplateParameterNode> out_of_line_template_params);
 
+inline std::string_view extractClassInjectionName(std::string_view name) {
+	if (size_t scope_pos = name.rfind("::"); scope_pos != std::string_view::npos) {
+		name = name.substr(scope_pos + 2);
+	}
+	if (size_t angle_pos = name.find('<'); angle_pos != std::string_view::npos) {
+		name = name.substr(0, angle_pos);
+	}
+	if (size_t hash_pos = name.find('$'); hash_pos != std::string_view::npos) {
+		name = name.substr(0, hash_pos);
+	}
+	return name;
+}
+
 inline bool isOutOfLineConstructorStubName(
 	std::string_view member_name,
 	std::string_view template_name,
 	std::string_view template_base_name) {
-	return !template_name.empty() &&
-		(member_name == template_name ||
-			(!template_base_name.empty() && member_name == template_base_name));
+	if (template_name.empty()) {
+		return false;
+	}
+	if (member_name == template_name) {
+		return true;
+	}
+	if (!template_base_name.empty() && member_name == template_base_name) {
+		return true;
+	}
+	const std::string_view template_injection_name = extractClassInjectionName(template_name);
+	if (!template_injection_name.empty() && member_name == template_injection_name) {
+		return true;
+	}
+	if (!template_base_name.empty()) {
+		const std::string_view base_injection_name = extractClassInjectionName(template_base_name);
+		if (!base_injection_name.empty() && member_name == base_injection_name) {
+			return true;
+		}
+	}
+	return false;
 }
 
 inline bool typeSpecifierLooksLikeDependentSignaturePlaceholder(
