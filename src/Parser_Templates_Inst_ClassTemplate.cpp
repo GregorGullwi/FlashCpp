@@ -5896,10 +5896,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				class_decl.name(),
 				template_params,
 				template_args_to_use);
+			TemplateNameLookupResult deferred_base_template_lookup =
+				gTemplateRegistry.lookupTemplateName(
+					buildTemplateNameLookupRequest(
+						deferred_base.base_template_name,
+						TemplateNameLookupKind::Ordinary,
+						false));
+			StringHandle resolved_base_template_name =
+				deferred_base_template_lookup.resolved_name.isValid()
+					? deferred_base_template_lookup.resolved_name
+					: deferred_base.base_template_name;
 
 			const InlineVector<TemplateParameterNode, 4>* deferred_base_template_params = nullptr;
-			if (auto base_template_node = gTemplateRegistry.lookupTemplate(deferred_base.base_template_name);
-				base_template_node.has_value() && base_template_node->is<TemplateClassDeclarationNode>()) {
+			if (auto base_template_node =
+					deferred_base_template_lookup.firstDeclarationOfKind(
+						TemplateDeclarationKind::ClassTemplate);
+				base_template_node.has_value() &&
+				base_template_node->is<TemplateClassDeclarationNode>()) {
 				deferred_base_template_params = &base_template_node->as<TemplateClassDeclarationNode>().template_parameters();
 			}
 			auto makeTypeIndexForDeferredBaseNttp = [&](size_t arg_index, std::span<const TemplateTypeArg> resolved_args) {
@@ -6661,7 +6674,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					continue;
 				}
 
-				std::string_view base_template_name = StringTable::getStringView(deferred_base.base_template_name);
+				std::string_view base_template_name =
+					StringTable::getStringView(resolved_base_template_name);
 				std::string_view final_base_name = base_template_name;
 				if (!deferred_base.member_type_chain.empty()) {
 					std::string_view outer_instantiated_name = instantiate_and_register_base_template(base_template_name, resolved_args);

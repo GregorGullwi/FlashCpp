@@ -1827,10 +1827,13 @@ private:
 	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(
 		std::span<const TemplateParameterNode> target_template_params,
 		InlineVector<ASTNode, 4>* out_type_nodes);
+	std::optional<InlineVector<TemplateTypeArg, 4>> parse_explicit_template_arguments(
+		const TemplateNameLookupResult& template_lookup,
+		InlineVector<ASTNode, 4>* out_type_nodes);
 	void classifyExplicitTemplateArgumentsAgainstParameters(
 		std::span<const TemplateParameterNode> target_template_params,
 		InlineVector<TemplateTypeArg, 4>& template_args,
-		const std::vector<ASTNode>* argument_syntax_nodes);
+		std::span<const ASTNode> argument_syntax_nodes);
 	bool looksLikeDependentMemberTemplateWithoutKeyword();
 	StringHandle extractDependentMemberProbeFromCurrentTemplateArg();
 	TemplateTypeArgParsingResult parse_explicit_template_arguments_as_result(TokenDestroyPattern destroy_pattern);	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)

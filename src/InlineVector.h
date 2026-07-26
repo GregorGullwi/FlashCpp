@@ -79,11 +79,20 @@ public:
 		return *this;
 	}
 
-	[[nodiscard]] std::vector<T> toVector() const {
+	[[nodiscard]] std::vector<T> toVector() const & {
 		if (!using_inline_storage_) {
 			return heap_data_;
 		}
 		return std::vector<T>(cbegin(), cend());
+	}
+
+	[[nodiscard]] std::vector<T> toVector() && {
+		if (!using_inline_storage_) {
+			return std::move(heap_data_);
+		}
+		return std::vector<T>(
+			std::make_move_iterator(begin()),
+			std::make_move_iterator(end()));
 	}
 
 	InlineVector(const InlineVector& other) {
