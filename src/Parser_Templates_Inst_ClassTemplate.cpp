@@ -796,6 +796,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
 				substituted_param_type_node, param_decl.identifier_token());
+			substituted_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 			if (param_decl.has_default_value()) {
 				ASTNode substituted_default = substituteTemplateParameters(
 					param_decl.default_value(), tmpl_params, tmpl_args);

@@ -666,7 +666,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			gTemplateRegistry.getOuterTemplateBinding(
 				lookup_candidate.identity.lookup_name.view());
 
-		if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
+		if (!functionTemplateAcceptsCallArgumentCount(func_decl, arg_types.size())) {
 			return std::nullopt;
 		}
 
@@ -2552,26 +2552,13 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
 			// Expand true function-parameter packs (including wrapped nested element
-			// types such as Wrap<Box<Ts>>...). A non-pack parameter whose type merely
-			// mentions a pack inside a template-id (e.g. const Node<U, Others...>&)
-			// must stay a single parameter — otherwise the body still names `other`
-			// while the signature materializes `other_0`.
+			// types such as Wrap<Box<Ts>>...). Pack-ness comes only from the declarator
+			// `...` flag; a non-pack parameter whose type merely mentions a pack inside
+			// a template-id (e.g. const Node<U, Others...>&) stays a single parameter.
+			// Once detected, getPackParameterName binds which variadic template param
+			// drives per-element substitution for wrapped packs.
 			bool handled_as_pack = false;
-			bool is_pack_param = param_decl.is_parameter_pack();
-
-			// Fallback when the declarator `...` flag was not set: the type name itself
-			// is a variadic template parameter (e.g. Ts args). Do not scan nested
-			// dependent names for packs; that incorrectly expands non-pack params.
-			StringHandle type_name_handle = getTypeName(param_type_spec);
-			if (!is_pack_param && type_name_handle.isValid()) {
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					const TemplateParameterNode& tparam = template_params[i];
-					if (tparam.is_variadic() && tparam.nameHandle() == type_name_handle) {
-						is_pack_param = true;
-						break;
-					}
-				}
-			}
+			bool is_pack_param = isTemplateFunctionParameterPack(param_decl);
 
 			if (is_pack_param) {
 				StringHandle primary_pack_name;

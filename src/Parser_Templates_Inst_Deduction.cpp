@@ -172,37 +172,8 @@ static void appendInstantiationContextBindingsToSubstitutionMap(
 	}
 }
 
-bool Parser::isTemplateFunctionParameterPack(
-	std::span<const TemplateParameterNode> template_params,
-	const DeclarationNode& func_param_decl) {
-	// True function-parameter packs only: declarator `...`, or a bare type that
-	// is itself a variadic template parameter (e.g. Ts args). A non-pack
-	// parameter whose type merely mentions a pack inside a template-id
-	// (e.g. const Node<U, Others...>&) must stay a single parameter so pairwise
-	// deduction can bind U / Others against the call argument.
-	if (func_param_decl.is_parameter_pack()) {
-		return true;
-	}
-
-	const TypeSpecifierNode& fp_ts = func_param_decl.type_specifier_node();
-	if (fp_ts.category() != TypeCategory::UserDefined &&
-		fp_ts.category() != TypeCategory::TypeAlias &&
-		fp_ts.category() != TypeCategory::Template) {
-		return false;
-	}
-
-	StringHandle fp_type_name = getStructuredTypeName(fp_ts);
-	if (!fp_type_name.isValid()) {
-		return false;
-	}
-
-	for (const TemplateParameterNode& template_param : template_params) {
-		if (template_param.is_variadic() && template_param.nameHandle() == fp_type_name) {
-			return true;
-		}
-	}
-
-	return false;
+bool Parser::isTemplateFunctionParameterPack(const DeclarationNode& func_param_decl) {
+	return func_param_decl.is_parameter_pack();
 }
 
 TypeInfo& registerTemplateTypeBinding(
@@ -1726,10 +1697,9 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// to std::nullopt (SFINAE) when the call arg lacks sufficient pointer depth.
 			deduction_info.positional_deducible_param_names.insert(direct_fp_type_name);
 		}
-		// Detect whether this function parameter is a pack. Prefer the declarator
-		// `...` flag; fall back to a bare type that is itself a variadic template
-		// parameter (e.g. Ts args) when the flag was not preserved on the pattern.
-		bool is_pack = isTemplateFunctionParameterPack(template_params, func_param_decl);
+		// Function-parameter packs are identified solely by the declarator `...`
+		// flag. Nested pack mentions inside a template-id do not make a pack.
+		bool is_pack = isTemplateFunctionParameterPack(func_param_decl);
 		if (is_pack) {
 			size_t required_after = countRequiredFunctionArgsAfter(i + 1);
 			deduction_info.function_pack_call_arg_start = call_arg_index;
@@ -2000,7 +1970,6 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 }
 
 bool Parser::functionTemplateAcceptsCallArgumentCount(
-	std::span<const TemplateParameterNode> template_params,
 	const FunctionDeclarationNode& func_decl,
 	size_t argument_count) {
 	const size_t min_required_args = countMinRequiredArgs(func_decl);
@@ -2015,7 +1984,7 @@ bool Parser::functionTemplateAcceptsCallArgumentCount(
 		if (!param_node.is<DeclarationNode>()) {
 			continue;
 		}
-		if (isTemplateFunctionParameterPack(template_params, param_node.as<DeclarationNode>())) {
+		if (isTemplateFunctionParameterPack(param_node.as<DeclarationNode>())) {
 			return true;
 		}
 	}
@@ -3397,7 +3366,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				? gNamespaceRegistry.getQualifiedName(func_decl.namespace_handle())
 				: "(invalid)");
 		if (call_arg_count != SIZE_MAX &&
-			!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, call_arg_count)) {
+			!functionTemplateAcceptsCallArgumentCount(func_decl, call_arg_count)) {
 			continue;
 		}
 
@@ -4629,7 +4598,7 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 			continue;
 		}
 		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
-		if (isTemplateFunctionParameterPack(template_params, param_decl)) {
+		if (isTemplateFunctionParameterPack(param_decl)) {
 			has_function_parameter_pack = true;
 			continue;
 		}
@@ -4656,7 +4625,7 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 		size_t params_before_pack = 0;
 		for (const ASTNode& param_node : func_params) {
 			if (param_node.is<DeclarationNode>() &&
-				isTemplateFunctionParameterPack(template_params, param_node.as<DeclarationNode>())) {
+				isTemplateFunctionParameterPack(param_node.as<DeclarationNode>())) {
 				break;
 			}
 			if (param_node.is<DeclarationNode>()) {
@@ -4709,7 +4678,7 @@ std::optional<Parser::TemplateDeductionCandidate> Parser::deduceTemplateCandidat
 	const FunctionDeclarationNode& func_decl,
 	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth) {
-	if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
+	if (!functionTemplateAcceptsCallArgumentCount(func_decl, arg_types.size())) {
 		size_t required_params = countMinRequiredArgs(func_decl);
 		if (arg_types.size() < required_params) {
 			FLASH_LOG_FORMAT(Templates, Debug,
