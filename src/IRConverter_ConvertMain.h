@@ -999,7 +999,6 @@ private:
 	bool current_function_returns_pointer_ = false;  // True if function returns a pointer (any pointer depth)
 	int32_t current_function_this_offset_ = 0;  // Stack home offset of the implicit this parameter in member functions
 	int32_t current_function_varargs_reg_save_offset_ = 0;  // Offset of varargs register save area (Linux only)
-	bool skip_previous_function_finalization_ = false;  // Set when a function is skipped due to codegen error
 
 	// CFI instruction tracking for exception handling
 	std::vector<ElfFileWriter::CFIInstruction> current_function_cfi_;

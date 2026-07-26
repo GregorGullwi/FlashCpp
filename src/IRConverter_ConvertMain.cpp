@@ -71,19 +71,28 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 
 	auto ir_processing_start = std::chrono::high_resolution_clock::now();
 	const auto& instructions = ir.getInstructions();
-	bool skipping_function = false;	// When true, skip until next FunctionDecl
+	// Convert IR-lowering failures into user-facing CompileError with function context.
+	// Codegen errors abort the whole translation unit rather than emitting empty symbols.
+	auto throwCodegenFailure = [&](const std::exception& e) -> void {
+		StringBuilder sb;
+		sb.append("Code generation failed"sv);
+		if (current_function_name_.isValid()) {
+			sb.append(" in function '"sv);
+			sb.append(StringTable::getStringView(current_function_name_));
+			sb.append("'"sv);
+		}
+		if (current_function_mangled_name_.isValid() &&
+			current_function_mangled_name_ != current_function_name_) {
+			sb.append(" ("sv);
+			sb.append(StringTable::getStringView(current_function_mangled_name_));
+			sb.append(")"sv);
+		}
+		sb.append(": "sv);
+		sb.append(e.what());
+		throw CompileError(std::string(sb.commit()));
+	};
 	for (size_t ir_idx = 0; ir_idx < instructions.size(); ++ir_idx) {
 		const auto& instruction = instructions[ir_idx];
-
-			// If we're skipping a failed function, only stop at the next FunctionDecl
-		if (skipping_function) {
-			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
-				skipping_function = false;
-					// fall through to process this FunctionDecl
-			} else {
-				continue;
-			}
-		}
 
 #if ENABLE_DETAILED_PROFILING
 		auto instr_start = std::chrono::high_resolution_clock::now();
@@ -474,20 +483,14 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 				break;
 			}
 		} catch (const CompileError&) {
-				// Semantic errors must propagate — they are real compilation failures
+			// Semantic errors must propagate — they are real compilation failures.
 			throw;
 		} catch (const InternalError& e) {
-				// Per-function error recovery: skip to the next function declaration
-			FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());
-			skipping_function = true;
-			skip_previous_function_finalization_ = true;
-			continue;
+			// Fail compilation with function context instead of emitting an empty symbol.
+			throwCodegenFailure(e);
 		} catch (const std::exception& e) {
-				// Per-function error recovery: skip to the next function declaration
-			FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());
-			skipping_function = true;
-			skip_previous_function_finalization_ = true;
-			continue;
+			// Same treatment for unexpected codegen failures.
+			throwCodegenFailure(e);
 		}
 
 #if ENABLE_DETAILED_PROFILING
@@ -7469,7 +7472,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	}
 
 		// Finalize previous function before starting new one
-	if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
+	if (current_function_name_.isValid()) {
 				// Branch fixups and local labels are function-scoped. Patch and clear them now
 				// before finalizing the previous function so later functions cannot reuse or
 				// overwrite label state from this one.
@@ -7651,23 +7654,6 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 			// Reset for new function
 		resetFunctionState();
-	} else if (skip_previous_function_finalization_) {
-			// Previous function was skipped due to codegen error - just clean up state
-		if (!variable_scopes.empty()) {
-			variable_scopes.pop_back();
-		}
-			// Truncate textSectionData back to the start of the failed function
-		textSectionData.resize(current_function_offset_);
-			// Remove stale relocations from the failed function
-		std::erase_if(pending_global_relocations_, [this](const PendingGlobalRelocation& r) {
-			return r.offset >= current_function_offset_;
-		});
-		resetFunctionState();
-			// Clear pending branches/labels from the skipped function
-		pending_branches_.clear();
-		label_positions_.clear();
-		elf_catch_filter_patches_.clear();
-		skip_previous_function_finalization_ = false;
 	}
 
 		// align the function to 16 bytes
@@ -16896,29 +16882,15 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 	}
 
 		// Now add pending global variable relocations (after symbols are created)
-		// First, remove stale relocations from any error-skipped last function
-	if (skip_previous_function_finalization_) {
-		std::erase_if(pending_global_relocations_, [this](const PendingGlobalRelocation& r) {
-			return r.offset >= current_function_offset_;
-		});
-			// Truncate textSectionData back to the start of the failed function
-		textSectionData.resize(current_function_offset_);
-	}
 	for (const auto& reloc : pending_global_relocations_) {
 		writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
 	}
 
 		// Patch all pending branches before finalizing
-		// Skip patching if the last function was error-skipped (branches may reference unresolved labels)
-	if (!skip_previous_function_finalization_) {
-		finalizeFunctionBranches();
-	} else {
-		pending_branches_.clear();
-		label_positions_.clear();
-	}
+	finalizeFunctionBranches();
 
 		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
-	if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
+	if (current_function_name_.isValid()) {
 			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
 			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 		size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
