@@ -175,13 +175,13 @@ static void appendInstantiationContextBindingsToSubstitutionMap(
 bool Parser::isTemplateFunctionParameterPack(
 	std::span<const TemplateParameterNode> template_params,
 	const DeclarationNode& func_param_decl) {
+	// True function-parameter packs only: declarator `...`, or a bare type that
+	// is itself a variadic template parameter (e.g. Ts args). A non-pack
+	// parameter whose type merely mentions a pack inside a template-id
+	// (e.g. const Node<U, Others...>&) must stay a single parameter so pairwise
+	// deduction can bind U / Others against the call argument.
 	if (func_param_decl.is_parameter_pack()) {
 		return true;
-	}
-
-	std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual> tparam_nodes_by_name;
-	for (const TemplateParameterNode& template_param : template_params) {
-		tparam_nodes_by_name.emplace(template_param.nameHandle(), &template_param);
 	}
 
 	const TypeSpecifierNode& fp_ts = func_param_decl.type_specifier_node();
@@ -196,21 +196,8 @@ bool Parser::isTemplateFunctionParameterPack(
 		return false;
 	}
 
-	auto it = tparam_nodes_by_name.find(fp_type_name);
-	if (it != tparam_nodes_by_name.end() && it->second->is_variadic()) {
-		return true;
-	}
-
-	std::unordered_set<StringHandle, StringHash, StringEqual> dependent_param_names;
-	StringHandle primary_name;
-	collectDependentTemplateParamNamesFromType(
-		fp_ts.type_index(),
-		tparam_nodes_by_name,
-		primary_name,
-		dependent_param_names);
-	for (StringHandle dep_name : dependent_param_names) {
-		auto dep_it = tparam_nodes_by_name.find(dep_name);
-		if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
+	for (const TemplateParameterNode& template_param : template_params) {
+		if (template_param.is_variadic() && template_param.nameHandle() == fp_type_name) {
 			return true;
 		}
 	}
@@ -1739,13 +1726,9 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 			// to std::nullopt (SFINAE) when the call arg lacks sufficient pointer depth.
 			deduction_info.positional_deducible_param_names.insert(direct_fp_type_name);
 		}
-		// Detect whether this function parameter is a pack.  The explicit
-		// `is_parameter_pack` flag is the primary signal, but for class-template
-		// member function templates the inner template's pack parameter flag
-		// may not be set on the pattern's DeclarationNode.  Fall back to checking
-		// whether the parameter type names a variadic template parameter of the
-		// enclosing template, mirroring the pattern used in
-		// instantiate_member_function_template_core.
+		// Detect whether this function parameter is a pack. Prefer the declarator
+		// `...` flag; fall back to a bare type that is itself a variadic template
+		// parameter (e.g. Ts args) when the flag was not preserved on the pattern.
 		bool is_pack = isTemplateFunctionParameterPack(template_params, func_param_decl);
 		if (is_pack) {
 			size_t required_after = countRequiredFunctionArgsAfter(i + 1);
@@ -4531,12 +4514,19 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 
 		if (param.kind() == TemplateParameterKind::Type) {
 			if (param.is_variadic()) {
+				// Prefer pack elements already bound by pairwise template-id
+				// matching (e.g. Others from const Node<U, Others...>& vs
+				// Node<int, float>). Only fall back to a function-parameter-pack
+				// call-arg slice for true packs like Wrap<Ts>... xs.
+				if (tryAppendPreDeducedArg(param.nameHandle())) {
+					continue;
+				}
 				// Gate call-arg consumption on the function-parameter pack.
 				// If this param is NOT in the set of dependent pack names for the
 				// function-parameter pack element type, it cannot be deduced from call args.
 				// Produce an empty pack and continue.
 				// The set contains the primary pack name for simple "Ts... args" cases and
-				// ALL dependent pack names for multi-dependent types like "Pair<Ts,Us>...".
+				// ALL dependent pack names for multi-dependent types like "Pair<Ts, Us>...".
 				if (!deduction_info.function_pack_dependent_param_names.count(param.nameHandle())) {
 					continue;
 				}
