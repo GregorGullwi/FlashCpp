@@ -670,36 +670,19 @@ int main_impl(int argc, char* argv[]) {
 		}
 	}
 
-	// Deferred generation (lambdas and local struct member functions)
-	size_t deferred_gen_error_count = 0;
+	// Deferred generation (lambdas and local struct member functions).
+	// Failures here abort the TU — do not soft-skip missing member/lambda bodies.
 	{
 		PhaseTimer deferred_timer("Deferred Gen", false, &deferred_gen_time, FlashCpp::AllocationPhase::DeferredGen);
-		try {
-			// Generate all collected lambdas after visiting all nodes
-			converter.generateCollectedLambdas();
-		} catch (const CompileError&) {
-			throw;  // Semantic errors must propagate
-		} catch (const std::exception& e) {
-			FLASH_LOG(General, Error, "Deferred lambda generation failed: ", e.what());
-			++deferred_gen_error_count;
-		}
-
-		try {
-			// Generate all collected local struct member functions after visiting all nodes
-			converter.generateCollectedLocalStructMembers();
-		} catch (const CompileError&) {
-			throw;  // Semantic errors must propagate
-		} catch (const std::exception& e) {
-			FLASH_LOG(General, Error, "Local struct member generation failed: ", e.what());
-			++deferred_gen_error_count;
-		}
+		converter.generateCollectedLambdas();
+		converter.generateCollectedLocalStructMembers();
 
 		// Generate remaining deferred member functions and ODR-used free inlines.
 		// Emitting either queue can enqueue the other, so alternate until both drain.
 		while (converter.deferredMemberFunctionsPending() > 0 ||
 			   converter.deferredInlineFunctionsPending() > 0) {
-			deferred_gen_error_count += converter.generateDeferredMemberFunctions();
-			deferred_gen_error_count += converter.generateDeferredInlineFunctions();
+			converter.generateDeferredMemberFunctions();
+			converter.generateDeferredInlineFunctions();
 		}
 
 		// Note: Template instantiations happen during parsing, not here
@@ -715,10 +698,9 @@ int main_impl(int argc, char* argv[]) {
 		FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
 	}
 
-	if (ir_conversion_error_count > 0 || deferred_gen_error_count > 0) {
+	if (ir_conversion_error_count > 0) {
 		FLASH_LOG(General, Error, "Compilation failed during IR generation (",
-				  ir_conversion_error_count, " top-level, ",
-				  deferred_gen_error_count, " deferred failures)");
+				  ir_conversion_error_count, " top-level failures)");
 		return 1;
 	}
 

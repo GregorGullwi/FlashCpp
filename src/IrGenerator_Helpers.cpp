@@ -65,8 +65,7 @@ void AstToIr::requestInlineFunctionEmission(const FunctionDeclarationNode& node)
 	}
 }
 
-size_t AstToIr::generateDeferredInlineFunctions() {
-	size_t error_count = 0;
+void AstToIr::generateDeferredInlineFunctions() {
 	while (inline_emission_worklist_processed_ < inline_emission_worklist_.size()) {
 		ASTNode function_node = inline_emission_worklist_[inline_emission_worklist_processed_++];
 		if (!function_node.is<FunctionDeclarationNode>()) {
@@ -80,22 +79,14 @@ size_t AstToIr::generateDeferredInlineFunctions() {
 			parser_.enqueuePendingSemanticRootIfNeeded(function_node);
 			normalizePendingSemanticRoots();
 			visitFunctionDeclarationNode(func);
-		} catch (const CompileError&) {
+		} catch (...) {
 			current_function_name_ = saved_function;
 			current_namespace_stack_ = saved_namespace;
 			throw;
-		} catch (const std::exception& e) {
-			FLASH_LOG(Codegen, Error,
-					  "Deferred inline function '",
-					  func.decl_node().identifier_token().value(),
-					  "' generation failed: ",
-					  e.what());
-			++error_count;
 		}
 		current_function_name_ = saved_function;
 		current_namespace_stack_ = saved_namespace;
 	}
-	return error_count;
 }
 
 bool AstToIr::shouldDeferImplicitConstructorCodegen(const StructTypeInfo& struct_info, const ConstructorDeclarationNode& ctor) const {

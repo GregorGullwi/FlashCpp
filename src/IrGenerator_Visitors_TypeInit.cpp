@@ -363,27 +363,7 @@ void AstToIr::generateCollectedLocalStructMembers() {
 	}
 }
 
-std::string AstToIr::get_deferred_func_name(const ASTNode& node) const {
-	if (node.is<FunctionDeclarationNode>()) {
-		return std::string(node.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-	}
-	if (node.is<ConstructorDeclarationNode>()) {
-		return std::string(StringTable::getStringView(node.as<ConstructorDeclarationNode>().struct_name())) + " constructor";
-	}
-	if (node.is<DestructorDeclarationNode>()) {
-		return std::string(StringTable::getStringView(node.as<DestructorDeclarationNode>().struct_name())) + " destructor";
-	}
-	if (node.is<TemplateFunctionDeclarationNode>()) {
-		const auto& tmpl = node.as<TemplateFunctionDeclarationNode>();
-		if (tmpl.function_declaration().is<FunctionDeclarationNode>()) {
-			return std::string(tmpl.function_declaration().as<FunctionDeclarationNode>().decl_node().identifier_token().value());
-		}
-	}
-	return "unknown";
-}
-
-size_t AstToIr::generateDeferredMemberFunctions() {
-	size_t error_count = 0;
+void AstToIr::generateDeferredMemberFunctions() {
 	while (deferred_member_functions_processed_ < deferred_member_functions_.size()) {
 		DeferredMemberFunctionInfo info = deferred_member_functions_[deferred_member_functions_processed_++];
 		StringHandle saved_function = current_function_name_;
@@ -424,21 +404,17 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
 			}
-		} catch (const CompileError&) {
-			// Semantic errors must propagate — they are real compilation failures
+		} catch (...) {
+			// Restore caller context, then fail loudly. Soft-skipping deferred
+			// members left callers with missing definitions / silent wrong objects.
 			current_function_name_ = saved_function;
 			current_namespace_stack_ = saved_namespace;
 			throw;
-		} catch (const std::exception& e) {
-			std::string func_name = get_deferred_func_name(info.function_node);
-			FLASH_LOG(Codegen, Error, "Deferred member function '", func_name, "' generation failed: ", e.what());
-			++error_count;
 		}
 
 		current_function_name_ = saved_function;
 		current_namespace_stack_ = saved_namespace;
 	}
-	return error_count;
 }
 
 void AstToIr::generateCollectedTemplateInstantiations() {
