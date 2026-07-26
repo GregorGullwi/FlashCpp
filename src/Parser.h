@@ -1983,11 +1983,11 @@ std::optional<CallArgDeductionInfo> buildDeductionMapFromCallArgs(
 	std::span<const TypeSpecifierNode> arg_types,
 	int recursion_depth,
 	const std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>* prebound_template_args);
-	bool isTemplateFunctionParameterPack(
-		std::span<const TemplateParameterNode> template_params,
-		const DeclarationNode& func_param_decl);
+	// Function-parameter packs are defined by the declarator ellipsis
+	// (DeclarationNode::is_parameter_pack). Type structure alone is not enough:
+	// Wrap<Ts>... xs is a pack, while const Node<U, Others...>& other is not.
+	bool isTemplateFunctionParameterPack(const DeclarationNode& func_param_decl);
 	bool functionTemplateAcceptsCallArgumentCount(
-		std::span<const TemplateParameterNode> template_params,
 		const FunctionDeclarationNode& func_decl,
 		size_t argument_count);
 	bool tryCollectFunctionCallArgTypes(

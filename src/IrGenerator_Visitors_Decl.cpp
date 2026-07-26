@@ -1161,9 +1161,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			TypeSpecifierNode resolved_param_type = resolve_param_type_for_codegen(param_decl);
 			if (resolved_param_type.type_index() != param_decl.type_specifier_node().type_index()) {
 				auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type, param_decl.identifier_token());
-				if (param_decl.has_default_value()) {
-					resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-				}
+				resolved_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 				symbol_param = resolved_param_decl;
 			}
 		}
@@ -1933,9 +1931,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				TypeSpecifierNode resolved_param_type = resolve_ctor_param_type_for_codegen(param_decl);
 				if (resolved_param_type.type_index() != param_decl.type_specifier_node().type_index()) {
 					auto resolved_param_decl = ASTNode::emplace_node<DeclarationNode>(resolved_param_type, param_decl.identifier_token());
-					if (param_decl.has_default_value()) {
-						resolved_param_decl.as<DeclarationNode>().set_default_value(param_decl.default_value());
-					}
+					resolved_param_decl.as<DeclarationNode>().copyMetadataFrom(param_decl);
 					param_for_scope = resolved_param_decl;
 				}
 			}

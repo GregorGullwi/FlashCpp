@@ -666,7 +666,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			gTemplateRegistry.getOuterTemplateBinding(
 				lookup_candidate.identity.lookup_name.view());
 
-		if (!functionTemplateAcceptsCallArgumentCount(template_params, func_decl, arg_types.size())) {
+		if (!functionTemplateAcceptsCallArgumentCount(func_decl, arg_types.size())) {
 			return std::nullopt;
 		}
 
@@ -754,6 +754,13 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			}
 
 			if (param.is_variadic()) {
+				// Prefer pack elements already bound by pairwise template-id
+				// matching (e.g. Others from const Node<U, Others...>&).
+				auto deduced_pack_it = deduction_info->param_name_to_arg.find(param.nameHandle());
+				if (deduced_pack_it != deduction_info->param_name_to_arg.end()) {
+					template_args.push_back(deduced_pack_it->second);
+					continue;
+				}
 				if (!deduction_info->function_pack_dependent_param_names.count(param.nameHandle())) {
 					continue;  // empty pack
 				}
@@ -2544,37 +2551,14 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type_spec = param_decl.type_specifier_node();
 
-			// Expand variadic pack parameters (including wrapped nested pack element types).
+			// Expand true function-parameter packs (including wrapped nested element
+			// types such as Wrap<Box<Ts>>...). Pack-ness comes only from the declarator
+			// `...` flag; a non-pack parameter whose type merely mentions a pack inside
+			// a template-id (e.g. const Node<U, Others...>&) stays a single parameter.
+			// Once detected, getPackParameterName binds which variadic template param
+			// drives per-element substitution for wrapped packs.
 			bool handled_as_pack = false;
-			bool is_pack_param = param_decl.is_parameter_pack();
-
-			// Also detect if type references a variadic template parameter (for cases where is_parameter_pack isn't set)
-			StringHandle type_name_handle = getTypeName(param_type_spec);
-			if (!is_pack_param && type_name_handle.isValid()) {
-				for (size_t i = 0; i < template_params.size(); ++i) {
-					const TemplateParameterNode& tparam = template_params[i];
-					if (tparam.is_variadic() && tparam.nameHandle() == type_name_handle) {
-						is_pack_param = true;
-						break;
-					}
-				}
-				if (!is_pack_param) {
-					StringHandle nested_primary_name;
-					std::unordered_set<StringHandle, StringHash, StringEqual> nested_dependent_names;
-					collectDependentTemplateParamNamesFromType(
-						param_type_spec.type_index(),
-						tparam_nodes_by_name,
-						nested_primary_name,
-						nested_dependent_names);
-					for (StringHandle dep_name : nested_dependent_names) {
-						auto dep_it = tparam_nodes_by_name.find(dep_name);
-						if (dep_it != tparam_nodes_by_name.end() && dep_it->second->is_variadic()) {
-							is_pack_param = true;
-							break;
-						}
-					}
-				}
-			}
+			bool is_pack_param = isTemplateFunctionParameterPack(param_decl);
 
 			if (is_pack_param) {
 				StringHandle primary_pack_name;
