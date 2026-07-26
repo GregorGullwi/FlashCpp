@@ -29,11 +29,6 @@ struct ScopeHandle {
 	size_t scope_level = 0;
 };
 
-struct SymbolScopeHandle {
-	ScopeHandle scope_handle;
-	std::string_view identifier;
-};
-
 struct Scope {
 	Scope() = default;
 	Scope(ScopeType scopeType, size_t scope_level) : scope_type(scopeType), scope_handle{.scope_level = scope_level} {}
@@ -633,9 +628,9 @@ public:
 	// When adl_only is true the symbol is stored in adl_only_symbols_ instead of
 	// namespace_symbols_, making it invisible to ordinary unqualified lookup while
 	// still reachable via lookup_adl() (C++20 [basic.lookup.argdep]).
-	// When adl_only is false (the default), the symbol is stored in namespace_symbols_
+	// When adl_only is false, the symbol is stored in namespace_symbols_
 	// and is visible to both ordinary unqualified lookup and ADL.
-	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node, bool adl_only = false) {
+	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node, bool adl_only) {
 		if (!ns.isValid())
 			return;
 		auto& target = adl_only ? adl_only_symbols_[ns] : namespace_symbols_[ns];
@@ -890,22 +885,6 @@ public:
 		return std::nullopt;
 	}
 
-	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier) const {
-		return get_scope_handle(identifier, get_current_scope_handle());
-	}
-
-	std::optional<SymbolScopeHandle> get_scope_handle(std::string_view identifier, [[maybe_unused]] ScopeHandle scope_limit_handle) const {
-		for (auto stackIt = symbol_table_stack_.rbegin(); stackIt != symbol_table_stack_.rend(); ++stackIt) {
-			const Scope& scope = *stackIt;
-			auto symbolIt = scope.symbols.find(identifier);
-			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
-				return SymbolScopeHandle{.scope_handle = scope.scope_handle, .identifier = identifier};
-			}
-		}
-
-		return std::nullopt;
-	}
-
 	// Return the ScopeType of the scope that directly contains this identifier.
 	// Searches scope.symbols (innermost first), then falls back to namespace_symbols_.
 	// Returns nullopt if not found anywhere.
@@ -1060,24 +1039,6 @@ public:
 		Scope& current_scope = symbol_table_stack_.back();
 		std::string_view key = intern_string(alias);
 		update_or_insert(current_scope.namespace_aliases, key, target_namespace);
-	}
-
-	// Merge all symbols from an inline namespace into its parent namespace map
-	void merge_inline_namespace(NamespaceHandle inline_handle, NamespaceHandle parent_handle) {
-		if (!inline_handle.isValid() || !parent_handle.isValid()) {
-			return;
-		}
-
-		auto inline_it = namespace_symbols_.find(inline_handle);
-		if (inline_it == namespace_symbols_.end()) {
-			return;
-		}
-
-		auto& parent_symbols = namespace_symbols_[parent_handle];
-		for (const auto& [key, vec] : inline_it->second) {
-			auto& dest_vec = parent_symbols[key];
-			dest_vec.insert(dest_vec.end(), vec.begin(), vec.end());
-		}
 	}
 
 	// Lookup a qualified identifier (e.g., "std::print" or "A::B::func")
