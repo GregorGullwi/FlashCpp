@@ -1962,8 +1962,8 @@ void syncTemplateArgumentNodeMetadata(
 		if (!template_args[i].is_pack) {
 			continue;
 		}
-		if (template_arg_nodes[i].is<TypeSpecifierNode>()) {
-			template_arg_nodes[i].as<TypeSpecifierNode>().set_pack_expansion(true);
+		if (template_arg_nodes[i].template is<TypeSpecifierNode>()) {
+			template_arg_nodes[i].template as<TypeSpecifierNode>().set_pack_expansion(true);
 		}
 	}
 }
