@@ -3795,6 +3795,9 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						return signature_result;
 					}
 
+					member_func_ref.set_is_const_member_function(member_quals.is_const());
+					member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
+
 					// Propagate noexcept specifier to the function declaration node
 					if (func_specs.is_noexcept) {
 						member_func_ref.set_noexcept(true);
@@ -3822,7 +3825,14 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 						finalize_function_after_definition(member_func_ref);
 
 						// Add member function to struct
-						struct_ref.add_member_function(member_func_node, current_access);
+						struct_ref.add_member_function(
+							member_func_node,
+							current_access,
+							!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+							func_specs.is_pure_virtual(),
+							func_specs.is_override,
+							func_specs.is_final,
+							member_quals.cv_qualifier);
 						continue;
 					}
 
@@ -3865,7 +3875,14 @@ ParseResult Parser::parse_template_declaration_impl(ExternTemplateDeclarationKin
 					}
 
 					// Add member function to struct
-					struct_ref.add_member_function(member_func_node, current_access);
+					struct_ref.add_member_function(
+						member_func_node,
+						current_access,
+						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+						func_specs.is_pure_virtual(),
+						func_specs.is_override,
+						func_specs.is_final,
+						member_quals.cv_qualifier);
 				} else {
 					// Data member - need to handle default initializers (e.g., `T* ptr = nullptr;`)
 					ASTNode member_node = *member_result.node();
