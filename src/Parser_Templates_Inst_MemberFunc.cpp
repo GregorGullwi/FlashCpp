@@ -2016,21 +2016,23 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	std::span<const TypeSpecifierNode> call_arg_types,
 	bool materialize_body) {
 
-	// Depth guard: instantiating a member function template replays its body,
-	// and body expressions can recursively trigger further member-function
-	// template instantiations.  libstdc++ container headers (<string>, <vector>,
-	// <map>) hit dozens of nested replays through iterator/alloc_traits SFINAE
-	// chains before exhausting the thread stack.  Bail cleanly instead of
-	// crashing on the guard page.
+	// Shared class/function instantiation budget + sticky abort. Member-body
+	// replay can nest through SoftProbe without entering try_instantiate_template,
+	// so this path must participate in the same circuit breaker.
+	TemplateInstantiationAttemptScope attempt_scope(StringTable::getStringView(qualified_name), template_args.size());
+	if (!attempt_scope.allowed()) {
+		return failTemplateInstantiation(attempt_scope.deny_message(), &key, reinterpret_cast<uintptr_t>(&template_node));
+	}
+
+	// Extra stack guard: member-body replay is heavier than a free-function
+	// signature probe. Keep a lower local ceiling, but sticky-abort like the
+	// shared nesting limit so SoftProbe callers cannot retry forever.
 	static thread_local size_t s_member_inst_depth = 0;
-	static thread_local bool s_member_inst_depth_warned = false;
 	static constexpr size_t MAX_MEMBER_INST_DEPTH = 40;
 	++s_member_inst_depth;
 	struct DepthGuard {
 		~DepthGuard() {
-			if (--s_member_inst_depth == 0) {
-				s_member_inst_depth_warned = false;
-			}
+			--s_member_inst_depth;
 		}
 	} depth_guard;
 	if (s_member_inst_depth > MAX_MEMBER_INST_DEPTH) {
@@ -2041,10 +2043,12 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			.append(qualified_name)
 			.append("'. Possible recursive template instantiation.")
 			.commit();
-		if (!s_member_inst_depth_warned) {
-			FLASH_LOG(Templates, Error, failure_reason);
-			s_member_inst_depth_warned = true;
-		}
+		FLASH_LOG(Templates, Error, failure_reason);
+		// Trip the shared sticky flag via a deny-style iteration trip by
+		// reusing the iteration limit path: mark tripped through a one-shot
+		// attempt_scope side channel is unavailable here, so set via helper.
+		tripTemplateInstantiationLimit(
+			failure_reason);
 		return failTemplateInstantiation(failure_reason, &key, reinterpret_cast<uintptr_t>(&template_node));
 	}
 

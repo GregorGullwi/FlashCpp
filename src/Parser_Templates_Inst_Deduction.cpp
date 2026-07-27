@@ -3286,9 +3286,12 @@ std::vector<TemplateNameLookupCandidate> Parser::lookupFunctionTemplateCandidate
 }
 
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, std::span<const TemplateTypeArg> explicit_types, size_t call_arg_count) {
-	static int recursion_depth = 0;
-	recursion_depth++;
-	struct DepthGuard { int& d; ~DepthGuard() { d--; } } depth_guard{recursion_depth};
+	TemplateInstantiationAttemptScope attempt_scope(template_name, explicit_types.size());
+	if (!attempt_scope.allowed()) {
+		FLASH_LOG(Templates, Error, attempt_scope.deny_message());
+		return std::nullopt;
+	}
+	int recursion_depth = static_cast<int>(attempt_scope.nesting_depth());
 	for (const TemplateTypeArg& arg : explicit_types) {
 		if (arg.is_dependent || arg.dependent_name.isValid()) {
 			return std::nullopt;
@@ -3985,17 +3988,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(
 std::optional<ASTNode> Parser::try_instantiate_template(std::string_view template_name, std::span<const TypeSpecifierNode> arg_types) {
 	PROFILE_TEMPLATE_INSTANTIATION(std::string(template_name) + "_func");
 
-	static int recursion_depth = 0;
-	recursion_depth++;
-	struct DepthGuard {
-		int& depth;
-		~DepthGuard() { depth--; }
-	} depth_guard{recursion_depth};
-
-	if (recursion_depth > 64) {
-		FLASH_LOG(Templates, Error, "try_instantiate_template recursion depth exceeded 64! Possible infinite loop for template '", template_name, "'");
+	TemplateInstantiationAttemptScope attempt_scope(template_name, arg_types.size());
+	if (!attempt_scope.allowed()) {
+		FLASH_LOG(Templates, Error, attempt_scope.deny_message());
 		return std::nullopt;
 	}
+	int recursion_depth = static_cast<int>(attempt_scope.nesting_depth());
 
 	std::vector<ASTNode> all_templates =
 		materializeFunctionTemplateCandidateDeclarations(
