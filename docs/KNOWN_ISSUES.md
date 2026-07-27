@@ -1,23 +1,15 @@
 # Known Issues
 
-## Variadic function-template matching with a dependent alias return
+## Empty variadic member-template specialization is not emitted
 
-FlashCpp does not yet match the valid C++20 pattern where a function template
-deduces a type pack from a class-template specialization while its return type
-is a dependent alias involving both an explicit non-type argument and that pack:
-
-```cpp
-template <unsigned Index, typename... Types>
-ElementT<Index, Tuple<Types...>>& get(Tuple<Types...>&);
-
-Tuple<int, float, double> value;
-auto result = get<0>(value);
-```
-
-The current first stop is `No matching template for call to 'get'`. This is a
-generic template argument deduction/materialization issue, not a reason to
-special-case `std::get` or tuple helper names. The expected-failure regression
-is `tests/test_variadic_function_template_dependent_alias_return_fail.cpp`.
+`tests/std/test_member_template_variadic_template_param_not_func_pack_ret0.cpp`
+compiles, but its empty-pack member-template specialization calls a regular
+overload whose symbol is not emitted, so MSVC `link.exe` reports an unresolved
+`Picker::pick` symbol. The failure is unchanged on `origin/main` at `4c8f5d7e`
+and is separate from nested template-id pack deduction: seven adjacent
+pack/alias regressions compile, link, and run successfully. The remaining fix
+belongs to deferred member-template/overload emission rather than parser or
+deduction recovery.
 
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp

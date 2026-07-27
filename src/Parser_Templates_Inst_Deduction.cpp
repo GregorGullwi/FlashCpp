@@ -1204,7 +1204,21 @@ void Parser::populateTemplateParamSubstitutions(
 	forEachEnvironmentBinding(
 		environment,
 		[&](const TemplateBinding& binding) {
-			if (binding.is_pack || binding.args.empty()) {
+			if (binding.is_pack) {
+				TemplateParamSubstitution pack_substitution;
+				pack_substitution.param_name = binding.name;
+				pack_substitution.is_pack = true;
+				pack_substitution.pack_args = binding.args;
+				FLASH_LOG_FORMAT(
+					Templates,
+					Debug,
+					"Registered template parameter pack substitution '{}' with {} argument(s)",
+					StringTable::getStringView(binding.name),
+					binding.args.size());
+				subs.push_back(std::move(pack_substitution));
+				return;
+			}
+			if (binding.args.empty()) {
 				return;
 			}
 			TemplateTypeArg arg = binding.args.front();
@@ -1441,12 +1455,108 @@ std::optional<TemplateTypeArg> extractNestedTemplateArgFromTemplateArgRecursive(
 	return std::nullopt;
 }
 
+template <typename PackMap>
 std::optional<bool> preDeduceTemplateArgsFromTemplateArgRecursive(
 	const TypeInfo::TemplateArgInfo& pattern_arg,
 	const TypeInfo::TemplateArgInfo& concrete_arg,
 	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
 		tparam_nodes_by_name,
 	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+	PackMap& param_name_to_pack_args,
+	int recursion_depth);
+
+template <typename PackMap>
+bool mergeDeducedTemplateArgPacks(
+	PackMap& destination,
+	PackMap& source,
+	int recursion_depth) {
+	for (auto& [pack_name, deduced_args] : source) {
+		auto existing_it = destination.find(pack_name);
+		if (existing_it == destination.end()) {
+			destination.emplace(pack_name, std::move(deduced_args));
+		} else if (!std::ranges::equal(existing_it->second, deduced_args)) {
+			FLASH_LOG_FORMAT(
+				Templates,
+				Error,
+				"[depth={}]: Conflicting deduction for template parameter pack '{}'",
+				recursion_depth,
+				StringTable::getStringView(pack_name));
+			return false;
+		}
+	}
+	return true;
+}
+
+template <typename PackMap>
+std::optional<bool> preDeduceTemplateArgsFromTemplateArgLists(
+	std::span<const TypeInfo::TemplateArgInfo> pattern_args,
+	std::span<const TypeInfo::TemplateArgInfo> concrete_args,
+	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+		tparam_nodes_by_name,
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+	PackMap& param_name_to_pack_args,
+	int recursion_depth) {
+	bool produced_deduction = false;
+	size_t concrete_index = 0;
+	for (size_t pattern_index = 0;
+		 pattern_index < pattern_args.size();
+		 ++pattern_index) {
+		const auto& pattern_arg = pattern_args[pattern_index];
+		const auto param_it = tparam_nodes_by_name.find(pattern_arg.dependent_name);
+		const bool expands_template_pack =
+			pattern_arg.is_pack &&
+			param_it != tparam_nodes_by_name.end() &&
+			param_it->second->is_variadic();
+		const size_t trailing_pattern_count = pattern_args.size() - pattern_index - 1;
+		if (expands_template_pack &&
+			concrete_args.size() - concrete_index < trailing_pattern_count) {
+			return std::nullopt;
+		}
+		if (!expands_template_pack && concrete_index >= concrete_args.size()) {
+			return std::nullopt;
+		}
+		const size_t concrete_end = expands_template_pack
+			? concrete_args.size() - trailing_pattern_count
+			: concrete_index + 1;
+		PackMap expansion_pack_args;
+		PackMap& target_pack_args = expands_template_pack
+			? expansion_pack_args
+			: param_name_to_pack_args;
+		for (; concrete_index < concrete_end; ++concrete_index) {
+			auto nested_result = preDeduceTemplateArgsFromTemplateArgRecursive(
+				pattern_arg,
+				concrete_args[concrete_index],
+				tparam_nodes_by_name,
+				param_name_to_arg,
+				target_pack_args,
+				recursion_depth);
+			if (!nested_result.has_value()) {
+				return std::nullopt;
+			}
+			produced_deduction = produced_deduction || *nested_result;
+		}
+		if (expands_template_pack &&
+			!mergeDeducedTemplateArgPacks(
+				param_name_to_pack_args,
+				expansion_pack_args,
+				recursion_depth)) {
+			return std::nullopt;
+		}
+	}
+	if (concrete_index != concrete_args.size()) {
+		return std::nullopt;
+	}
+	return produced_deduction;
+}
+
+template <typename PackMap>
+std::optional<bool> preDeduceTemplateArgsFromTemplateArgRecursive(
+	const TypeInfo::TemplateArgInfo& pattern_arg,
+	const TypeInfo::TemplateArgInfo& concrete_arg,
+	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
+		tparam_nodes_by_name,
+	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+	PackMap& param_name_to_pack_args,
 	int recursion_depth) {
 	bool produced_deduction = false;
 
@@ -1456,13 +1566,17 @@ std::optional<bool> preDeduceTemplateArgsFromTemplateArgRecursive(
 			TemplateTypeArg new_arg = concrete_arg.is_value
 				? TemplateTypeArg::makeValue(concrete_arg.intValue(), concrete_arg.typeEnum())
 				: TemplateTypeArg::makeTypeSpecifier(*makeTypeSpecifierFromTemplateArgInfo(concrete_arg, Token()));
-			auto [existing_it, inserted] = param_name_to_arg.emplace(pattern_arg.dependent_name, new_arg);
-			if (!inserted && !(existing_it->second == new_arg)) {
-				FLASH_LOG_FORMAT(Templates, Error,
-								 "[depth={}]: Conflicting deduction for template param '{}'",
-								 recursion_depth,
-								 StringTable::getStringView(pattern_arg.dependent_name));
-				return std::nullopt;
+			if (param_it->second->is_variadic()) {
+				param_name_to_pack_args[pattern_arg.dependent_name].push_back(std::move(new_arg));
+			} else {
+				auto [existing_it, inserted] = param_name_to_arg.emplace(pattern_arg.dependent_name, new_arg);
+				if (!inserted && !(existing_it->second == new_arg)) {
+					FLASH_LOG_FORMAT(Templates, Error,
+									 "[depth={}]: Conflicting deduction for template param '{}'",
+									 recursion_depth,
+									 StringTable::getStringView(pattern_arg.dependent_name));
+					return std::nullopt;
+				}
 			}
 			produced_deduction = true;
 		}
@@ -1479,20 +1593,17 @@ std::optional<bool> preDeduceTemplateArgsFromTemplateArgRecursive(
 
 	const auto& pattern_args = nested_pattern_info->templateArgs();
 	const auto& concrete_args = nested_concrete_info->templateArgs();
-	for (size_t i = 0; i < pattern_args.size() && i < concrete_args.size(); ++i) {
-		auto nested_result = preDeduceTemplateArgsFromTemplateArgRecursive(
-			pattern_args[i],
-			concrete_args[i],
-			tparam_nodes_by_name,
-			param_name_to_arg,
-			recursion_depth);
-		if (!nested_result.has_value()) {
-			return std::nullopt;
-		}
-		produced_deduction = produced_deduction || *nested_result;
+	auto nested_result = preDeduceTemplateArgsFromTemplateArgLists(
+		std::span<const TypeInfo::TemplateArgInfo>(pattern_args.data(), pattern_args.size()),
+		std::span<const TypeInfo::TemplateArgInfo>(concrete_args.data(), concrete_args.size()),
+		tparam_nodes_by_name,
+		param_name_to_arg,
+		param_name_to_pack_args,
+		recursion_depth);
+	if (!nested_result.has_value()) {
+		return std::nullopt;
 	}
-
-	return produced_deduction;
+	return produced_deduction || *nested_result;
 }
 }
 
@@ -1559,6 +1670,7 @@ std::optional<bool> Parser::preDeduceTemplateArgsFromMatchingTypes(
 	const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
 		tparam_nodes_by_name,
 	std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+	DeducedTemplateArgPackMap& param_name_to_pack_args,
 	int recursion_depth) {
 	const TypeInfo* pattern_info = tryGetTypeInfo(pattern_type.type_index());
 	const TypeInfo* concrete_info = tryGetTypeInfo(concrete_type.type_index());
@@ -1572,17 +1684,24 @@ std::optional<bool> Parser::preDeduceTemplateArgsFromMatchingTypes(
 	bool produced_deduction = false;
 	const auto& pattern_args = pattern_info->templateArgs();
 	const auto& concrete_args = concrete_info->templateArgs();
-	for (size_t i = 0; i < pattern_args.size() && i < concrete_args.size(); ++i) {
-		auto nested_result = preDeduceTemplateArgsFromTemplateArgRecursive(
-			pattern_args[i],
-			concrete_args[i],
-			tparam_nodes_by_name,
-			param_name_to_arg,
-			recursion_depth);
-		if (!nested_result.has_value()) {
-			return std::nullopt;
-		}
-		produced_deduction = produced_deduction || *nested_result;
+	DeducedTemplateArgPackMap slot_pack_args;
+	auto deduction_result = preDeduceTemplateArgsFromTemplateArgLists(
+		std::span<const TypeInfo::TemplateArgInfo>(pattern_args.data(), pattern_args.size()),
+		std::span<const TypeInfo::TemplateArgInfo>(concrete_args.data(), concrete_args.size()),
+		tparam_nodes_by_name,
+		param_name_to_arg,
+		slot_pack_args,
+		recursion_depth);
+	if (!deduction_result.has_value()) {
+		return std::nullopt;
+	}
+	produced_deduction = *deduction_result;
+
+	if (!mergeDeducedTemplateArgPacks(
+			param_name_to_pack_args,
+			slot_pack_args,
+			recursion_depth)) {
+		return std::nullopt;
 	}
 
 	return produced_deduction;
@@ -1804,6 +1923,7 @@ std::optional<Parser::CallArgDeductionInfo> Parser::buildDeductionMapFromCallArg
 				ca_type,
 				tparam_nodes_by_name,
 				param_name_to_arg,
+				deduction_info.param_name_to_pack_args,
 				recursion_depth);
 			if (!slot_produced_deduction.has_value()) {
 				return std::nullopt;
@@ -3036,10 +3156,15 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			if (tparam_ptr == nullptr || !tparam_ptr->is_variadic()) {
 				continue;
 			}
-			const size_t pack_count =
-				(*deduction_info)->function_pack_dependent_param_names.count(tparam_ptr->nameHandle())
-					? func_pack_call_arg_count
-					: 0;
+			size_t pack_count = 0;
+			auto deduced_pack_it =
+				(*deduction_info)->param_name_to_pack_args.find(tparam_ptr->nameHandle());
+			if (deduced_pack_it != (*deduction_info)->param_name_to_pack_args.end()) {
+				pack_count = deduced_pack_it->second.size();
+			} else if ((*deduction_info)->function_pack_dependent_param_names.count(
+						   tparam_ptr->nameHandle())) {
+				pack_count = func_pack_call_arg_count;
+			}
 			template_param_pack_sizes_.emplace_back(tparam_ptr->nameHandle(), pack_count);
 		}
 	}
@@ -3496,6 +3621,28 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					template_args.push_back(explicit_types[explicit_idx + j]);
 				}
 				explicit_idx += pack_size;
+				const InlineVector<TemplateTypeArg, 4>* deduced_pack = nullptr;
+				if (deduction_info.has_value()) {
+					auto deduced_pack_it =
+						deduction_info->param_name_to_pack_args.find(param.nameHandle());
+					if (deduced_pack_it != deduction_info->param_name_to_pack_args.end()) {
+						deduced_pack = &deduced_pack_it->second;
+					}
+				}
+				if (deduced_pack != nullptr) {
+					bool explicit_prefix_matches = pack_size <= deduced_pack->size();
+					for (size_t j = 0; explicit_prefix_matches && j < pack_size; ++j) {
+						explicit_prefix_matches =
+							template_args[arg_start_index + j] == (*deduced_pack)[j];
+					}
+					if (!explicit_prefix_matches) {
+						overload_mismatch = true;
+						break;
+					}
+					for (size_t j = pack_size; j < deduced_pack->size(); ++j) {
+						template_args.push_back((*deduced_pack)[j]);
+					}
+				}
 				// Pack-aware explicit deduction (Phase 6): explicit args can seed the
 				// front of the template-parameter pack and the remainder is deduced from
 				// the mapped function-parameter-pack call-arg slice.
@@ -3513,6 +3660,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				// pack (Ts) and co-packs (Us in "Pair<Ts,Us>...").
 				if (current_explicit_call_arg_types_ != nullptr &&
 					deduction_info.has_value() &&
+					deduced_pack == nullptr &&
 					deduction_info->function_pack_call_arg_start != SIZE_MAX &&
 					deduction_info->function_pack_dependent_param_names.count(param.nameHandle())) {
 					const size_t pack_call_arg_count =
@@ -4495,6 +4643,14 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::deduceTemplateArgsFromCa
 
 		if (param.kind() == TemplateParameterKind::Type) {
 			if (param.is_variadic()) {
+				auto deduced_pack_it =
+					deduction_info.param_name_to_pack_args.find(param.nameHandle());
+				if (deduced_pack_it != deduction_info.param_name_to_pack_args.end()) {
+					for (const TemplateTypeArg& deduced_arg : deduced_pack_it->second) {
+						template_args.push_back(deduced_arg);
+					}
+					continue;
+				}
 				// Prefer pack elements already bound by pairwise template-id
 				// matching (e.g. Others from const Node<U, Others...>& vs
 				// Node<int, float>). Only fall back to a function-parameter-pack
