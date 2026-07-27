@@ -1467,6 +1467,56 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 			SaveHandle identifier_saved_pos = save_token_position();
 			advance();
 
+			if (peek() == "..."_tok) {
+				const auto pack_substitution_it = std::ranges::find_if(
+					template_param_substitutions_,
+					[identifier_handle](const TemplateParamSubstitution& substitution) {
+						return substitution.is_pack &&
+							   substitution.param_name == identifier_handle &&
+							   std::ranges::none_of(
+								   substitution.pack_args,
+								   [](const TemplateTypeArg& arg) {
+									   return arg.is_value;
+								   });
+					});
+				if (pack_substitution_it != template_param_substitutions_.end()) {
+					advance();
+					FLASH_LOG_FORMAT(
+						Templates,
+						Debug,
+						"Expanding template type parameter pack '{}' into {} template argument(s)",
+						identifier_token.value(),
+						pack_substitution_it->pack_args.size());
+					for (const TemplateTypeArg& pack_arg : pack_substitution_it->pack_args) {
+						TemplateTypeArg expanded_arg = pack_arg;
+						expanded_arg.is_pack = false;
+						template_args.push_back(expanded_arg);
+						if (out_type_nodes) {
+							out_type_nodes->push_back(emplace_node<TypeSpecifierNode>(
+								makeTypeSpecifierFromTemplateTypeArg(
+									expanded_arg,
+									identifier_token)));
+						}
+					}
+					discard_saved_token(identifier_saved_pos);
+					discard_saved_token(arg_saved_pos);
+					if (peek() == ">>"_tok) {
+						split_right_shift_token();
+					}
+					if (peek() == ">"_tok) {
+						advance();
+						break;
+					}
+					if (peek() == ","_tok) {
+						advance();
+						continue;
+					}
+					restore_token_position(saved_pos);
+					last_failed_template_arg_parse_handle_ = saved_pos;
+					return std::nullopt;
+				}
+			}
+
 			if (peek() == "<"_tok) {
 				TemplateNameLookupRequest alias_lookup_request =
 					buildTemplateNameLookupRequest(
@@ -2163,6 +2213,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
 							bool substituted_type_param = false;
 							bool substituted_value_param = false;
+							bool substituted_pack = false;
 							bool finished_parsing = false;  // Track if we consumed '>' and should break
 							std::string_view param_name_to_check;
 
@@ -2175,7 +2226,39 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 							if (!param_name_to_check.empty()) {
 								// Check if we have a type substitution for this parameter
 								for (const auto& subst : template_param_substitutions_) {
-									if (subst.is_type_param && subst.param_name == param_name_to_check) {
+									if (subst.param_name != param_name_to_check) {
+										continue;
+									}
+									if (subst.is_pack && peek() == "..."_tok) {
+										advance();
+										FLASH_LOG_FORMAT(
+											Templates,
+											Debug,
+											"Expanding template parameter pack '{}' into {} template argument(s)",
+											param_name_to_check,
+											subst.pack_args.size());
+										for (const TemplateTypeArg& pack_arg : subst.pack_args) {
+											TemplateTypeArg expanded_arg = pack_arg;
+											expanded_arg.is_pack = false;
+											template_args.push_back(std::move(expanded_arg));
+											if (out_type_nodes && expr_result.node().has_value()) {
+												out_type_nodes->push_back(*expr_result.node());
+											}
+										}
+										discard_saved_token(arg_saved_pos);
+										substituted_pack = true;
+										if (peek() == ">>"_tok) {
+											split_right_shift_token();
+										}
+										if (peek() == ">"_tok) {
+											advance();
+											finished_parsing = true;
+										} else if (peek() == ","_tok) {
+											advance();
+										}
+										break;
+									}
+									if (subst.is_type_param) {
 										// Found a type substitution! Use it instead of creating a dependent arg
 										FLASH_LOG(Templates, Debug, "Found type substitution for parameter '",
 												  param_name_to_check, "' -> ", subst.substituted_type.toString());
@@ -2207,7 +2290,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 											advance();
 										}
 										break;  // Break from the for loop
-									} else if (subst.is_value_param && subst.param_name == param_name_to_check) {
+									} else if (subst.is_value_param) {
 										FLASH_LOG(Templates, Debug, "Found value substitution for parameter '",
 												  param_name_to_check, "' -> ", subst.value);
 
@@ -2239,7 +2322,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 								}
 							}
 
-							if (substituted_type_param || substituted_value_param) {
+							if (substituted_type_param || substituted_value_param || substituted_pack) {
 								if (finished_parsing) {
 									break;  // Break from the outer while loop - we're done
 								}
@@ -3585,6 +3668,17 @@ void Parser::classifyExplicitTemplateArgumentsAgainstParameters(
 		-> std::optional<TemplateTypeArg> {
 		if (syntax_node != nullptr && syntax_node->is<ExpressionNode>()) {
 			const ASTNode& expr_node = *syntax_node;
+			const StringHandle expression_name =
+				nameFromExpression(expr_node.as<ExpressionNode>());
+			for (const TemplateParamSubstitution& substitution :
+				 template_param_substitutions_) {
+				if (substitution.param_name == expression_name &&
+					substitution.is_value_param) {
+					return TemplateTypeArg::makeValue(
+						substitution.value,
+						substitution.value_type);
+				}
+			}
 			if (!expressionHasUnsubstitutedDependency(
 					expressionHasUnsubstitutedDependency,
 					expr_node)) {

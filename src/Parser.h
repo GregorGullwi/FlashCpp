@@ -1174,6 +1174,10 @@ private:
 		StringHandle concrete_template_name;	 // e.g. "MyVec" when Container=MyVec
 		// For pointer/reference NTTPs - full identity carrying entity_name (nullopt for plain integrals)
 		std::optional<FlashCpp::NonTypeValueIdentity> typed_value_identity;
+		// Keep pack elements out of the inline substitution record: recursive
+		// class-template parsing saves the enclosing substitution vector by value.
+		bool is_pack = false;
+		std::vector<TemplateTypeArg> pack_args;
 	};
 	InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
@@ -1896,8 +1900,12 @@ private:
 	std::vector<ASTNode> materializeFunctionTemplateCandidateDeclarations(
 		std::span<const TemplateNameLookupCandidate> candidates) const;
 	
+	using DeducedTemplateArgPackMap =
+		std::unordered_map<StringHandle, InlineVector<TemplateTypeArg, 4>, StringHash, StringEqual>;
+
 	struct CallArgDeductionInfo {
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual> param_name_to_arg;
+		DeducedTemplateArgPackMap param_name_to_pack_args;
 		std::unordered_set<size_t> pre_deduced_arg_indices;
 		std::vector<size_t> func_param_to_call_arg_index;
 		size_t function_pack_call_arg_start = SIZE_MAX;
@@ -1938,6 +1946,7 @@ private:
 		const std::unordered_map<StringHandle, const TemplateParameterNode*, StringHash, StringEqual>&
 			tparam_nodes_by_name,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHash, StringEqual>& param_name_to_arg,
+		DeducedTemplateArgPackMap& param_name_to_pack_args,
 		int recursion_depth);
 	bool tryAppendDefaultTemplateArg(
 		const TemplateParameterNode& param,
