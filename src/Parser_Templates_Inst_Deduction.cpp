@@ -1208,7 +1208,9 @@ void Parser::populateTemplateParamSubstitutions(
 				TemplateParamSubstitution pack_substitution;
 				pack_substitution.param_name = binding.name;
 				pack_substitution.is_pack = true;
-				pack_substitution.pack_args = binding.args;
+				pack_substitution.pack_args.assign(
+					binding.args.begin(),
+					binding.args.end());
 				FLASH_LOG_FORMAT(
 					Templates,
 					Debug,

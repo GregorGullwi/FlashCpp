@@ -1174,9 +1174,10 @@ private:
 		StringHandle concrete_template_name;	 // e.g. "MyVec" when Container=MyVec
 		// For pointer/reference NTTPs - full identity carrying entity_name (nullopt for plain integrals)
 		std::optional<FlashCpp::NonTypeValueIdentity> typed_value_identity;
-		// For template parameter packs - the complete ordered expansion.
+		// Keep pack elements out of the inline substitution record: recursive
+		// class-template parsing saves the enclosing substitution vector by value.
 		bool is_pack = false;
-		InlineVector<TemplateTypeArg, 4> pack_args;
+		std::vector<TemplateTypeArg> pack_args;
 	};
 	InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
