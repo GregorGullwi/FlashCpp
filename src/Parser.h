@@ -80,6 +80,7 @@ inline StringHandle makeEncodedUnderlyingTypeIntrinsicName(std::string_view arg_
 // iteration counts and trip flags from a previous compilation (e.g. in a
 // long-lived compiler driver or language server) do not bleed over.
 void resetTemplateInstantiationCounters();
+void resetTemplateCycleStacks();
 
 // Shared finite-instantiation guards for class and function templates
 // (GCC/Clang -ftemplate-depth style). Once tripped, stays tripped until reset.

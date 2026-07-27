@@ -74,6 +74,7 @@ void resetTemplateInstantiationCounters() {
 	g_template_inst_iteration_limit_tripped = false;
 	g_template_inst_nesting_depth = 0;
 	g_template_inst_depth_warned = false;
+	resetTemplateCycleStacks();
 }
 
 bool isTemplateInstantiationLimitTripped() {

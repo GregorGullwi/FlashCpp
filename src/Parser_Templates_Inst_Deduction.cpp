@@ -8,6 +8,8 @@
 #include "TemplateRegistry_Pattern.h"
 #include "TypeTraitEvaluator.h"
 
+#include <algorithm>
+#include <cassert>
 #include <numeric>
 
 static void logTemplateRequiresClauseFailure(
@@ -63,6 +65,41 @@ static void exitSourceNamespaceScopes(int entered) {
 	for (int i = 0; i < entered; ++i) {
 		gSymbolTable.exit_scope();
 	}
+}
+
+// SoftProbe cycle detectors are LIFO (RAII push/pop). InlineVector + StringHandle
+// beats unordered_set here: nesting stays shallow and handle compares are cheap.
+using TemplateCycleStack = InlineVector<StringHandle, 8>;
+
+static bool templateCycleStackContains(const TemplateCycleStack& stack, StringHandle key) {
+	return std::find(stack.begin(), stack.end(), key) != stack.end();
+}
+
+struct TemplateCycleStackGuard {
+	TemplateCycleStack& stack;
+
+	TemplateCycleStackGuard(TemplateCycleStack& stack_in, StringHandle key)
+		: stack(stack_in) {
+		stack.push_back(key);
+	}
+
+	~TemplateCycleStackGuard() {
+		assert(!stack.empty());
+		stack.pop_back();
+	}
+
+	TemplateCycleStackGuard(const TemplateCycleStackGuard&) = delete;
+	TemplateCycleStackGuard& operator=(const TemplateCycleStackGuard&) = delete;
+};
+
+static TemplateCycleStack g_trailing_return_in_progress;
+static TemplateCycleStack g_body_parse_in_progress;
+static TemplateCycleStack g_body_reparse_in_progress;
+
+void resetTemplateCycleStacks() {
+	g_trailing_return_in_progress.clear();
+	g_body_parse_in_progress.clear();
+	g_body_reparse_in_progress.clear();
 }
 
 static bool isForwardingReferenceParameter(
@@ -2558,6 +2595,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		mangled_base_name = StringTable::getStringView(key.base_template);
 	}
 	std::string_view mangled_name = gTemplateRegistry.mangleTemplateName(mangled_base_name, template_args);
+	const StringHandle mangled_name_handle = StringTable::getOrInternStringHandle(mangled_name);
 
 	auto apply_resolved_alias_metadata_local = [&](TypeSpecifierNode& type_spec) {
 		if (!type_spec.type_index().is_valid()) {
@@ -2598,17 +2636,11 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			return true;
 		}
 
-		static std::unordered_set<std::string_view> trailing_return_in_progress;
-		if (trailing_return_in_progress.count(mangled_name)) {
+		if (templateCycleStackContains(g_trailing_return_in_progress, mangled_name_handle)) {
 			FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "')");
 			return false;
 		}
-		trailing_return_in_progress.insert(mangled_name);
-		struct TrailingReturnGuard {
-			std::unordered_set<std::string_view>& set;
-			std::string_view key;
-			~TrailingReturnGuard() { set.erase(key); }
-		} trailing_return_guard{trailing_return_in_progress, mangled_name};
+		TemplateCycleStackGuard trailing_return_guard(g_trailing_return_in_progress, mangled_name_handle);
 
 		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
 		FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -2847,17 +2879,11 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		if (should_reparse_trailing_return_type) {
 			return_type = emplace_node<TypeSpecifierNode>(orig_return_type);
 		} else if (should_reparse) {
-			static std::unordered_set<std::string_view> trailing_return_in_progress;
-			if (trailing_return_in_progress.count(mangled_name)) {
+			if (templateCycleStackContains(g_trailing_return_in_progress, mangled_name_handle)) {
 				FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "'), returning auto to break cycle");
 				return std::nullopt;
 			}
-			trailing_return_in_progress.insert(mangled_name);
-			struct TrailingReturnGuard {
-				std::unordered_set<std::string_view>& set;
-				std::string_view key;
-				~TrailingReturnGuard() { set.erase(key); }
-			} trailing_return_guard{trailing_return_in_progress, mangled_name};
+			TemplateCycleStackGuard trailing_return_guard(g_trailing_return_in_progress, mangled_name_handle);
 			SaveHandle current_pos = save_token_position();
 			restore_lexer_position_only(func_decl.template_declaration_position());
 			FlashCpp::ScopedState guard_param_names(currentTemplateParamState());
@@ -3023,18 +3049,11 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		// candidates that may not be selected.
 	} else if (func_decl.has_template_body_position()) {
 		if (use_explicit_materialization) {
-			static std::unordered_set<StringHandle> body_parse_in_progress;
-			StringHandle cycle_key = StringTable::getOrInternStringHandle(mangled_name);
-			if (body_parse_in_progress.count(cycle_key)) {
+			if (templateCycleStackContains(g_body_parse_in_progress, mangled_name_handle)) {
 				FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
 				return std::nullopt;
 			}
-			body_parse_in_progress.insert(cycle_key);
-			struct BodyParseGuard {
-				std::unordered_set<StringHandle>& set;
-				StringHandle key;
-				~BodyParseGuard() { set.erase(key); }
-			} body_guard{body_parse_in_progress, cycle_key};
+			TemplateCycleStackGuard body_guard(g_body_parse_in_progress, mangled_name_handle);
 			bool saved_has_parameter_packs = has_parameter_packs_;
 			ScopeGuard restore_has_parameter_packs([&]() {
 				has_parameter_packs_ = saved_has_parameter_packs;
@@ -3044,17 +3063,10 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
 		} else {
-			static std::unordered_set<std::string_view> body_reparse_in_progress;
-			std::string_view cycle_key = mangled_name;
-			if (body_reparse_in_progress.count(cycle_key)) {
+			if (templateCycleStackContains(g_body_reparse_in_progress, mangled_name_handle)) {
 				return ASTNode(&new_func_ref);
 			}
-			body_reparse_in_progress.insert(cycle_key);
-			struct BodyReparseGuard {
-				std::unordered_set<std::string_view>& set;
-				std::string_view key;
-				~BodyReparseGuard() { set.erase(key); }
-			} body_reparse_guard{body_reparse_in_progress, cycle_key};
+			TemplateCycleStackGuard body_reparse_guard(g_body_reparse_in_progress, mangled_name_handle);
 			bool saved_has_parameter_packs = has_parameter_packs_;
 			ScopeGuard restore_has_parameter_packs([&]() {
 				has_parameter_packs_ = saved_has_parameter_packs;
