@@ -10,7 +10,7 @@ struct Picker {
 	template <typename... Types>
 	int pick(short value) const {
 		Delta delta{35};
-		return this->pick(value, delta);
+		return this->pick(value, delta) + sizeof...(Types);
 	}
 };
 
