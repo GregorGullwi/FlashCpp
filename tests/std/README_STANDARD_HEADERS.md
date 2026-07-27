@@ -24,6 +24,9 @@ pwsh tests/run_all_tests.ps1 test_std_iterator.cpp
 ```
 
 That compiles with FlashCpp, links with MSVC `link.exe`, and runs the resulting binary (expects `main` return `0` unless the name encodes another expected code via `_retN`).
+For a full parallel run, unexpected compile/link/runtime failures are retried once
+serially before the summary. Recovered high-load flakes remain listed in the
+output, while deterministic failures still fail the run.
 
 Compile-only check without the runner:
 

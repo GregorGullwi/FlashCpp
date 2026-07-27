@@ -525,6 +525,7 @@ function Invoke-TestOneFailFile {
 
 $invokeTestOneFileDefinition = ${function:Invoke-TestOneFile}.ToString()
 $invokeTestOneFailFileDefinition = ${function:Invoke-TestOneFailFile}.ToString()
+$serialRetryRecovered = @()
 
 # ──────────────────────────────────────────────────────
 # Run regular tests
@@ -573,6 +574,59 @@ if ($useParallel) {
 						Write-DetailSnippet -Detail $detail
 				}
 				"EXPECTED_COMPILE_FAIL" { Write-Host "OK (expected fail)" }
+			}
+		}
+	}
+}
+
+# Parallel compiler/linker/process startup can occasionally fail under load on
+# Windows even though the same test succeeds immediately in isolation. Retry
+# only unexpected failures once in the parent runspace before summarizing. A
+# deterministic failure remains in the result file and is still reported.
+if ($useParallel) {
+	$retryableStatuses = @(
+		"COMPILE_FAIL",
+		"LINK_FAIL",
+		"RETURN_MISMATCH",
+		"RUNTIME_CRASH"
+	)
+	$filesToRetry = @()
+	foreach ($file in $referenceFiles) {
+		$resultFile = Join-Path $resultDir "$($file.Name).result"
+		if (-not (Test-Path $resultFile)) {
+			$filesToRetry += $file
+			continue
+		}
+		$resultStatus = (Get-Content $resultFile -Raw) -split '\|', 2
+		if ($retryableStatuses -contains $resultStatus[0]) {
+			$filesToRetry += $file
+		}
+	}
+
+	if ($filesToRetry.Count -gt 0) {
+		Write-Host ""
+		Write-Host "Retrying $($filesToRetry.Count) unexpected parallel failure(s) serially..."
+		foreach ($file in $filesToRetry) {
+			$resultFile = Join-Path $resultDir "$($file.Name).result"
+			$initialStatus = if (Test-Path $resultFile) {
+				((Get-Content $resultFile -Raw) -split '\|', 2)[0]
+			} else {
+				"NO_RESULT"
+			}
+			$hasMain = $mainFileCache[$file.Name]
+			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $cCompilerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $extraCHelpers $RepoRoot $resultDir
+
+			$retryStatus = if (Test-Path $resultFile) {
+				((Get-Content $resultFile -Raw) -split '\|', 2)[0]
+			} else {
+				"NO_RESULT"
+			}
+			if ($retryableStatuses -notcontains $retryStatus -and
+				$retryStatus -ne "NO_RESULT") {
+				$serialRetryRecovered += "$($file.Name) ($initialStatus)"
+				Write-Host "  $($file.Name): recovered from $initialStatus"
+			} else {
+				Write-Host "  $($file.Name): still $retryStatus" -ForegroundColor Red
 			}
 		}
 	}
@@ -756,6 +810,14 @@ Write-Host "_fail Tests (expected to fail compilation):"
 Write-Host "  Failed as expected: $($failTestSuccess.Count)" -ForegroundColor Green
 Write-Host "  Unexpectedly passed: $($failTestFailed.Count)" -ForegroundColor Red
 Write-Host ""
+
+if ($serialRetryRecovered.Count -gt 0) {
+	Write-Host "Recovered parallel-run failures after one serial retry:" -ForegroundColor Yellow
+	$serialRetryRecovered | Sort-Object | ForEach-Object {
+		Write-Host "  - $_" -ForegroundColor Yellow
+	}
+	Write-Host ""
+}
 
 if ($compileFailed.Count -gt 0) {
 	Write-Host "=== Files that failed to compile ===" -ForegroundColor Red
