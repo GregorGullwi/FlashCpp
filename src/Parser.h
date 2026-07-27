@@ -75,12 +75,38 @@ inline StringHandle makeEncodedUnderlyingTypeIntrinsicName(std::string_view arg_
 			.commit());
 }
 
-// Resets the per-compilation template instantiation counters in
-// Parser_Templates_Inst_ClassTemplate.cpp.  Must be called once at the
-// start of every parse() invocation so that iteration counts and trip flags
-// from a previous compilation (e.g. in a long-lived compiler driver or
-// language server) do not bleed over into the new compilation unit.
+// Resets the per-compilation template instantiation counters.
+// Must be called once at the start of every parse() invocation so that
+// iteration counts and trip flags from a previous compilation (e.g. in a
+// long-lived compiler driver or language server) do not bleed over.
 void resetTemplateInstantiationCounters();
+void resetTemplateCycleStacks();
+
+// Shared finite-instantiation guards for class and function templates
+// (GCC/Clang -ftemplate-depth style). Once tripped, stays tripped until reset.
+bool isTemplateInstantiationLimitTripped();
+void tripTemplateInstantiationLimit(std::string_view reason);
+
+// RAII scope that counts one instantiation attempt and nesting level.
+// Check allowed() immediately after construction; if false, do not instantiate.
+class TemplateInstantiationAttemptScope {
+public:
+	TemplateInstantiationAttemptScope(std::string_view template_name, size_t arg_count);
+	~TemplateInstantiationAttemptScope();
+
+	TemplateInstantiationAttemptScope(const TemplateInstantiationAttemptScope&) = delete;
+	TemplateInstantiationAttemptScope& operator=(const TemplateInstantiationAttemptScope&) = delete;
+
+	bool allowed() const { return allowed_; }
+	std::string_view deny_message() const { return deny_message_; }
+	size_t nesting_depth() const { return nesting_depth_; }
+
+private:
+	bool allowed_ = true;
+	bool nesting_entered_ = false;
+	size_t nesting_depth_ = 0;
+	std::string deny_message_;
+};
 
 namespace ConstExpr {
 class Evaluator;
@@ -485,11 +511,11 @@ TemplateTypeArg templateTypeArgFromEvalResult(
 	const ConstExpr::EvalResult& eval_result,
 	const TypeSpecifierNode& target_type);
 
-// Thread-local instantiation backtrace.  Unlike current_instantiation_ctx_ (which is RAII
+// Instantiation backtrace.  Unlike current_instantiation_ctx_ (which is RAII
 // and clears during stack unwinding), this string persists through exception propagation
 // so that catch sites can report it.  Populated by ScopedParserInstantiationContext on
 // the first destructor invocation during unwinding; cleared by the catch site after use.
-inline thread_local std::string g_parser_instantiation_notes;
+inline std::string g_parser_instantiation_notes;
 
 struct DeferredBaseReplayContextScope;
 

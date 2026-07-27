@@ -513,7 +513,8 @@ std::optional<ASTNode> Parser::tryInstantiateAdlTemplateCandidates(
 	std::span<const ASTNode> overload_candidates) {
 	if (!argument_dependent_lookup_included ||
 		!callee_name.isValid() ||
-		arg_types.empty()) {
+		arg_types.empty() ||
+		isTemplateInstantiationLimitTripped()) {
 		return std::nullopt;
 	}
 
