@@ -510,11 +510,11 @@ TemplateTypeArg templateTypeArgFromEvalResult(
 	const ConstExpr::EvalResult& eval_result,
 	const TypeSpecifierNode& target_type);
 
-// Thread-local instantiation backtrace.  Unlike current_instantiation_ctx_ (which is RAII
+// Instantiation backtrace.  Unlike current_instantiation_ctx_ (which is RAII
 // and clears during stack unwinding), this string persists through exception propagation
 // so that catch sites can report it.  Populated by ScopedParserInstantiationContext on
 // the first destructor invocation during unwinding; cleared by the catch site after use.
-inline thread_local std::string g_parser_instantiation_notes;
+inline std::string g_parser_instantiation_notes;
 
 struct DeferredBaseReplayContextScope;
 

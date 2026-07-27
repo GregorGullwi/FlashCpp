@@ -920,7 +920,7 @@ std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_
 std::optional<InlineVector<TemplateTypeArg, 4>> Parser::parse_explicit_template_arguments(InlineVector<ASTNode, 4>* out_type_nodes) {
 	// Recursion depth guard to prevent stack overflow on deeply nested template arguments
 	// Stack size increased to 8MB in FlashCppMSVC.vcxproj to handle deep recursion
-	static thread_local int template_arg_recursion_depth = 0;
+	static int template_arg_recursion_depth = 0;
 	constexpr int MAX_TEMPLATE_ARG_RECURSION_DEPTH = 20;
 
 	struct TemplateArgRecursionGuard {

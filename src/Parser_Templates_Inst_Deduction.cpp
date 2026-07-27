@@ -1205,8 +1205,8 @@ void Parser::reparse_template_function_body(
 	// and each frame carries substantial parser state, quickly exhausting the
 	// thread's 16MB stack.  Bail out cleanly before we hit the guard page so the
 	// caller sees an error instead of a SIGSEGV.
-	static thread_local size_t s_body_replay_depth = 0;
-	static thread_local bool s_body_replay_depth_warned = false;
+	static size_t s_body_replay_depth = 0;
+	static bool s_body_replay_depth_warned = false;
 	static constexpr size_t MAX_BODY_REPLAY_DEPTH = 24;
 	++s_body_replay_depth;
 	struct DepthGuard {
@@ -2598,7 +2598,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			return true;
 		}
 
-		static thread_local std::unordered_set<std::string_view> trailing_return_in_progress;
+		static std::unordered_set<std::string_view> trailing_return_in_progress;
 		if (trailing_return_in_progress.count(mangled_name)) {
 			FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "')");
 			return false;
@@ -2847,7 +2847,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		if (should_reparse_trailing_return_type) {
 			return_type = emplace_node<TypeSpecifierNode>(orig_return_type);
 		} else if (should_reparse) {
-			static thread_local std::unordered_set<std::string_view> trailing_return_in_progress;
+			static std::unordered_set<std::string_view> trailing_return_in_progress;
 			if (trailing_return_in_progress.count(mangled_name)) {
 				FLASH_LOG(Templates, Debug, "Cycle detected in trailing return type for '", template_name, "' (mangled: '", mangled_name, "'), returning auto to break cycle");
 				return std::nullopt;
@@ -3023,7 +3023,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 		// candidates that may not be selected.
 	} else if (func_decl.has_template_body_position()) {
 		if (use_explicit_materialization) {
-			static thread_local std::unordered_set<StringHandle> body_parse_in_progress;
+			static std::unordered_set<StringHandle> body_parse_in_progress;
 			StringHandle cycle_key = StringTable::getOrInternStringHandle(mangled_name);
 			if (body_parse_in_progress.count(cycle_key)) {
 				FLASH_LOG(Templates, Debug, "Cycle detected in function template body parsing for '", template_name, "' (mangled: '", mangled_name, "'), skipping body");
@@ -3044,7 +3044,7 @@ std::optional<ASTNode> Parser::instantiateBoundFunctionTemplate(
 			}
 			reparse_template_function_body(new_func_ref, func_decl, template_params, template_args);
 		} else {
-			static thread_local std::unordered_set<std::string_view> body_reparse_in_progress;
+			static std::unordered_set<std::string_view> body_reparse_in_progress;
 			std::string_view cycle_key = mangled_name;
 			if (body_reparse_in_progress.count(cycle_key)) {
 				return ASTNode(&new_func_ref);

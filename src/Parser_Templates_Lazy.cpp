@@ -1068,7 +1068,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	StringHandle instantiation_key = StringTable::getOrInternStringHandle(
 		StringBuilder().append(instantiated_class_name).append("::"sv).append(member_name).commit());
-	static thread_local std::unordered_set<StringHandle> lazy_static_members_in_progress;
+	static std::unordered_set<StringHandle> lazy_static_members_in_progress;
 	if (lazy_static_members_in_progress.contains(instantiation_key)) {
 		throw CompileError("Circular dependency between lazy static member initializers: " + std::string(instantiation_key.view()));
 	}

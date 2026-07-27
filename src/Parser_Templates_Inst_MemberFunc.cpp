@@ -2027,7 +2027,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Extra stack guard: member-body replay is heavier than a free-function
 	// signature probe. Keep a lower local ceiling, but sticky-abort like the
 	// shared nesting limit so SoftProbe callers cannot retry forever.
-	static thread_local size_t s_member_inst_depth = 0;
+	static size_t s_member_inst_depth = 0;
 	static constexpr size_t MAX_MEMBER_INST_DEPTH = 40;
 	++s_member_inst_depth;
 	struct DepthGuard {

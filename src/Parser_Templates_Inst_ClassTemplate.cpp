@@ -18,11 +18,11 @@ static constexpr size_t kMaxAliasUnwrapIterations = 64;
 
 // Per-compilation instantiation budget shared by class and function templates.
 // resetTemplateInstantiationCounters() clears these at the start of each parse().
-static thread_local int g_template_inst_iteration_count = 0;
-static thread_local bool g_template_inst_iteration_limit_tripped = false;
+static int g_template_inst_iteration_count = 0;
+static bool g_template_inst_iteration_limit_tripped = false;
 static constexpr int g_template_inst_max_iterations = 10000;
-static thread_local size_t g_template_inst_nesting_depth = 0;
-static thread_local bool g_template_inst_depth_warned = false;
+static size_t g_template_inst_nesting_depth = 0;
+static bool g_template_inst_depth_warned = false;
 // Shared nesting ceiling for class and function templates (was function-only at
 // 64 with soft nullopt). Keep aligned with the prior class-template guard; FlashCpp
 // inheritance chains can still overflow the process stack before this fires
