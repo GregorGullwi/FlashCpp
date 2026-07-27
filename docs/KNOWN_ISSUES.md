@@ -1,5 +1,24 @@
 # Known Issues
 
+## Variadic function-template matching with a dependent alias return
+
+FlashCpp does not yet match the valid C++20 pattern where a function template
+deduces a type pack from a class-template specialization while its return type
+is a dependent alias involving both an explicit non-type argument and that pack:
+
+```cpp
+template <unsigned Index, typename... Types>
+ElementT<Index, Tuple<Types...>>& get(Tuple<Types...>&);
+
+Tuple<int, float, double> value;
+auto result = get<0>(value);
+```
+
+The current first stop is `No matching template for call to 'get'`. This is a
+generic template argument deduction/materialization issue, not a reason to
+special-case `std::get` or tuple helper names. The expected-failure regression
+is `tests/test_variadic_function_template_dependent_alias_return_fail.cpp`.
+
 ## Non-standard layout/constexpr acceptance gaps tracked as compatibility tests
 These tests are intentionally kept in compatibility form so the current FlashCpp
 suite stays green, even though they are not strictly standard-conforming under a

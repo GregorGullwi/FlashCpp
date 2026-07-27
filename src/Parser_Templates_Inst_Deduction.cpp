@@ -805,7 +805,7 @@ bool Parser::tryAppendDefaultTemplateArg(
 	};
 
 	auto tryReparseNonTypeDefaultArg = [&]() -> bool {
-		if (!param.has_default_value_position() || template_args.empty()) {
+		if (!param.has_default_value_position()) {
 			return false;
 		}
 
@@ -827,8 +827,10 @@ bool Parser::tryAppendDefaultTemplateArg(
 		registerTypeParamsInScope(template_params, template_args, sfinae_scope, &sfinae_type_map_);
 
 		int entered_ns = enterSourceNamespaceScopes(source_namespace);
+		auto source_namespace_guard = ScopeGuard([&]() {
+			exitSourceNamespaceScopes(entered_ns);
+		});
 		auto reparse_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::TemplateTypeArg);
-		exitSourceNamespaceScopes(entered_ns);
 		restore_lexer_position_only(sfinae_pos);
 
 		if (reparse_result.is_error() || !reparse_result.node().has_value() ||
